@@ -1,0 +1,19 @@
+{
+  "name": "tenkings-monorepo",
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.12.0",
+  "private": true,
+  "workspaces": [
+    "backend/*",
+    "frontend/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "install:all": "npm install --workspaces",
+    "lint": "echo \"(placeholder) configure ESLint\"",
+    "format": "echo \"(placeholder) configure Prettier\"",
+    "db:generate": "npm run generate --workspace @tenkings/database",
+    "db:migrate": "npm run migrate:dev --workspace @tenkings/database",
+    "db:push": "npm run db:push --workspace @tenkings/database"
+  }
+}

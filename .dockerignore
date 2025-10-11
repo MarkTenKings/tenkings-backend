@@ -1,0 +1,7 @@
+node_modules
+.pnpm-store
+frontend/nextjs-app/.next
+**/.DS_Store
+.tmp
+.env*
+.git

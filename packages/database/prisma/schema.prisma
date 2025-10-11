@@ -1,0 +1,191 @@
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
+}
+
+enum TransactionSource {
+  BUYBACK
+  SALE
+  PACK_PURCHASE
+  REDEMPTION
+  ADJUSTMENT
+}
+
+enum ItemStatus {
+  STORED
+  LISTED
+  SOLD
+  REDEEMED
+  IN_TRANSFER
+}
+
+enum ListingStatus {
+  ACTIVE
+  SOLD
+  REMOVED
+}
+
+enum PackStatus {
+  UNOPENED
+  OPENED
+  REDEEMED
+}
+
+enum IngestionStatus {
+  PENDING
+  REVIEW
+  APPROVED
+  REJECTED
+}
+
+model User {
+  id              String        @id @default(uuid())
+  email           String?       @unique
+  phone           String?       @unique
+  phoneVerifiedAt DateTime?
+  displayName     String?
+  createdAt       DateTime      @default(now())
+  wallet          Wallet?
+  items           Item[]
+  ownerships      ItemOwnership[]
+  listings        Listing[]     @relation("SellerListings")
+  packs           PackInstance[]
+  ingestions      IngestionTask[]
+  sessions        Session[]
+}
+
+model Wallet {
+  id           String             @id @default(uuid())
+  userId       String             @unique
+  balance      Int                @default(0)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+}
+
+model WalletTransaction {
+  id          String            @id @default(uuid())
+  walletId    String
+  amount      Int
+  type        TransactionType
+  source      TransactionSource
+  note        String?
+  referenceId String?
+  createdAt   DateTime          @default(now())
+  wallet      Wallet            @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}
+
+model Item {
+  id             String          @id @default(uuid())
+  name           String
+  set            String
+  number         String?
+  language       String?
+  foil           Boolean         @default(false)
+  estimatedValue Int?
+  status         ItemStatus      @default(STORED)
+  vaultLocation  String?
+  ownerId        String
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  owner          User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  listings       Listing?
+  ownerships     ItemOwnership[]
+  packSlots      PackSlot[]
+  ingestionTask  IngestionTask?
+}
+
+model AuthVerification {
+  id        String   @id @default(uuid())
+  phone     String   @unique
+  status    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Session {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model ItemOwnership {
+  id         String   @id @default(uuid())
+  itemId     String
+  ownerId    String
+  note       String?
+  acquiredAt DateTime @default(now())
+  item       Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  owner      User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+}
+
+model Listing {
+  id        String         @id @default(uuid())
+  itemId    String         @unique
+  sellerId  String
+  price     Int
+  status    ListingStatus  @default(ACTIVE)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  item      Item           @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  seller    User           @relation("SellerListings", fields: [sellerId], references: [id], onDelete: Cascade)
+}
+
+model PackDefinition {
+  id             String         @id @default(uuid())
+  name           String
+  description    String?
+  price          Int
+  inventoryCount Int             @default(0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  packs          PackInstance[]
+}
+
+model PackInstance {
+  id               String      @id @default(uuid())
+  packDefinitionId String
+  ownerId          String?
+  status           PackStatus  @default(UNOPENED)
+  createdAt        DateTime    @default(now())
+  openedAt         DateTime?
+  packDefinition   PackDefinition @relation(fields: [packDefinitionId], references: [id], onDelete: Cascade)
+  owner            User?       @relation(fields: [ownerId], references: [id])
+  slots            PackSlot[]
+}
+
+model PackSlot {
+  id             String   @id @default(uuid())
+  packInstanceId String
+  itemId         String
+  packInstance   PackInstance @relation(fields: [packInstanceId], references: [id], onDelete: Cascade)
+  item           Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+}
+
+model IngestionTask {
+  id         String          @id @default(uuid())
+  externalId String?
+  status     IngestionStatus  @default(PENDING)
+  itemId     String?         @unique
+  ownerId    String
+  rawPayload Json?
+  notes      String?
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+  item       Item?           @relation(fields: [itemId], references: [id])
+  owner      User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+}

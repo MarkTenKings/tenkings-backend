@@ -1,0 +1,8 @@
+# Monorepo ignore rules
+node_modules/
+dist/
+.env
+.env.local
+.next/
+coverage/
+.DS_Store

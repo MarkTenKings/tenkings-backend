@@ -1,0 +1,157 @@
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+http:
+  middlewares:
+    strip-auth:
+      stripPrefix:
+        prefixes:
+          - /auth
+    strip-wallet:
+      stripPrefix:
+        prefixes:
+          - /wallet
+    strip-vault:
+      stripPrefix:
+        prefixes:
+          - /vault
+    strip-marketplace:
+      stripPrefix:
+        prefixes:
+          - /marketplace
+    strip-pricing:
+      stripPrefix:
+        prefixes:
+          - /pricing
+    strip-pack:
+      stripPrefix:
+        prefixes:
+          - /pack
+    strip-ingestion:
+      stripPrefix:
+        prefixes:
+          - /ingestion
+    strip-vending:
+      stripPrefix:
+        prefixes:
+          - /vending
+  routers:
+    wallet:
+      rule: "PathPrefix(`/wallet`)"
+      service: wallet
+      entryPoints:
+        - websecure
+      middlewares:
+        - strip-wallet
+      tls:
+        certResolver: letsencrypt
+    auth:
+      rule: "PathPrefix(`/auth`)"
+      service: auth
+      entryPoints:
+        - websecure
+      middlewares:
+        - strip-auth
+      tls:
+        certResolver: letsencrypt
+    vault:
+      rule: "PathPrefix(`/vault`)"
+      service: vault
+      entryPoints:
+        - websecure
+      middlewares:
+        - strip-vault
+      tls:
+        certResolver: letsencrypt
+    marketplace:
+      rule: "PathPrefix(`/marketplace`)"
+      service: marketplace
+      entryPoints:
+        - websecure
+      middlewares:
+        - strip-marketplace
+      tls:
+        certResolver: letsencrypt
+    pricing:
+      rule: "PathPrefix(`/pricing`)"
+      service: pricing
+      entryPoints:
+        - websecure
+      middlewares:
+        - strip-pricing
+      tls:
+        certResolver: letsencrypt
+    pack:
+      rule: "PathPrefix(`/pack`)"
+      service: pack
+      entryPoints:
+        - websecure
+      middlewares:
+        - strip-pack
+      tls:
+        certResolver: letsencrypt
+    ingestion:
+      rule: "PathPrefix(`/ingestion`)"
+      service: ingestion
+      entryPoints:
+        - websecure
+      middlewares:
+        - strip-ingestion
+      tls:
+        certResolver: letsencrypt
+    vending:
+      rule: "PathPrefix(`/vending`)"
+      service: vending
+      entryPoints:
+        - websecure
+      middlewares:
+        - strip-vending
+      tls:
+        certResolver: letsencrypt
+    frontend:
+      rule: "PathPrefix(`/`)"
+      service: frontend
+      entryPoints:
+        - websecure
+      tls:
+        certResolver: letsencrypt
+  services:
+    wallet:
+      loadBalancer:
+        servers:
+          - url: "http://wallet-service:8080"
+    auth:
+      loadBalancer:
+        servers:
+          - url: "http://auth-service:8080"
+    vault:
+      loadBalancer:
+        servers:
+          - url: "http://vault-service:8080"
+    marketplace:
+      loadBalancer:
+        servers:
+          - url: "http://marketplace-service:8080"
+    pricing:
+      loadBalancer:
+        servers:
+          - url: "http://pricing-service:8080"
+    pack:
+      loadBalancer:
+        servers:
+          - url: "http://pack-service:8080"
+    ingestion:
+      loadBalancer:
+        servers:
+          - url: "http://ingestion-service:8080"
+    vending:
+      loadBalancer:
+        servers:
+          - url: "http://vending-gw:8080"
+    frontend:
+      loadBalancer:
+        servers:
+          - url: "http://frontend:3000"

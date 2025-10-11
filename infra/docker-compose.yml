@@ -1,0 +1,192 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: tenkings
+      POSTGRES_PASSWORD: tenkings
+      POSTGRES_DB: tenkings
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - CADDY_EMAIL=${TRAEFIK_ACME_EMAIL:-mark@tenkings.co}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+      - ./certs/auth_fullchain.pem:/etc/certs/auth_fullchain.pem:ro
+      - ./certs/auth_privkey.pem:/etc/certs/auth_privkey.pem:ro
+    depends_on:
+      - wallet-service
+      - auth-service
+      - vault-service
+      - marketplace-service
+      - pricing-service
+      - pack-service
+      - ingestion-service
+      - vending-gw
+      - frontend
+
+  wallet-service:
+    build:
+      context: ..
+      dockerfile: backend/wallet-service/Dockerfile
+    env_file: /home/mark/tenkings/env/wallet-service.env
+    ports:
+      - "8081:8080"
+    depends_on:
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wallet.rule=PathPrefix(`/wallet`)"
+      - "traefik.http.routers.wallet.entrypoints=websecure"
+      - "traefik.http.routers.wallet.tls.certresolver=letsencrypt"
+      - "traefik.http.services.wallet.loadbalancer.server.port=8080"
+
+  auth-service:
+    build:
+      context: ..
+      dockerfile: backend/auth-service/Dockerfile
+    env_file: /home/mark/tenkings/env/auth-service.env
+    ports:
+      - "8088:8080"
+    depends_on:
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.auth.rule=PathPrefix(`/auth`)"
+      - "traefik.http.routers.auth.entrypoints=websecure"
+      - "traefik.http.routers.auth.tls.certresolver=letsencrypt"
+      - "traefik.http.services.auth.loadbalancer.server.port=8080"
+
+  vault-service:
+    build:
+      context: ..
+      dockerfile: backend/vault-service/Dockerfile
+    env_file: /home/mark/tenkings/env/vault-service.env
+    ports:
+      - "8082:8080"
+    depends_on:
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vault.rule=PathPrefix(`/vault`)"
+      - "traefik.http.routers.vault.entrypoints=websecure"
+      - "traefik.http.routers.vault.tls.certresolver=letsencrypt"
+      - "traefik.http.services.vault.loadbalancer.server.port=8080"
+
+  marketplace-service:
+    build:
+      context: ..
+      dockerfile: backend/marketplace-service/Dockerfile
+    env_file: /home/mark/tenkings/env/marketplace-service.env
+    ports:
+      - "8083:8080"
+    depends_on:
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.marketplace.rule=PathPrefix(`/marketplace`)"
+      - "traefik.http.routers.marketplace.entrypoints=websecure"
+      - "traefik.http.routers.marketplace.tls.certresolver=letsencrypt"
+      - "traefik.http.services.marketplace.loadbalancer.server.port=8080"
+
+  pricing-service:
+    build:
+      context: ..
+      dockerfile: backend/pricing-service/Dockerfile
+    env_file: /home/mark/tenkings/env/pricing-service.env
+    ports:
+      - "8084:8080"
+    depends_on:
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pricing.rule=PathPrefix(`/pricing`)"
+      - "traefik.http.routers.pricing.entrypoints=websecure"
+      - "traefik.http.routers.pricing.tls.certresolver=letsencrypt"
+      - "traefik.http.services.pricing.loadbalancer.server.port=8080"
+
+  pack-service:
+    build:
+      context: ..
+      dockerfile: backend/pack-service/Dockerfile
+    env_file: /home/mark/tenkings/env/pack-service.env
+    ports:
+      - "8085:8080"
+    depends_on:
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pack.rule=PathPrefix(`/pack`)"
+      - "traefik.http.routers.pack.entrypoints=websecure"
+      - "traefik.http.routers.pack.tls.certresolver=letsencrypt"
+      - "traefik.http.services.pack.loadbalancer.server.port=8080"
+
+  ingestion-service:
+    build:
+      context: ..
+      dockerfile: backend/ingestion-service/Dockerfile
+    env_file: /home/mark/tenkings/env/ingestion-service.env
+    ports:
+      - "8086:8080"
+    depends_on:
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ingestion.rule=PathPrefix(`/ingestion`)"
+      - "traefik.http.routers.ingestion.entrypoints=websecure"
+      - "traefik.http.routers.ingestion.tls.certresolver=letsencrypt"
+      - "traefik.http.services.ingestion.loadbalancer.server.port=8080"
+
+  vending-gw:
+    build:
+      context: ..
+      dockerfile: backend/vending-gw/Dockerfile
+    env_file: /home/mark/tenkings/env/vending-gw.env
+    ports:
+      - "8087:8080"
+    depends_on:
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.vending.rule=PathPrefix(`/vending`)"
+      - "traefik.http.routers.vending.entrypoints=websecure"
+      - "traefik.http.routers.vending.tls.certresolver=letsencrypt"
+      - "traefik.http.services.vending.loadbalancer.server.port=8080"
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/nextjs-app/Dockerfile
+    env_file: /home/mark/tenkings/env/frontend.env
+    depends_on:
+      - wallet-service
+      - vault-service
+      - marketplace-service
+      - pricing-service
+      - pack-service
+      - ingestion-service
+      - vending-gw
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - "traefik.http.routers.frontend.priority=-1"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:
