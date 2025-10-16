@@ -51,6 +51,7 @@ app.post(["/auth/send-code", "/send-code"], async (req, res, next) => {
 
     res.json({ status: "sent" });
   } catch (error) {
+    console.error("auth send-code failed", error);
     next(error);
   }
 });
@@ -129,6 +130,7 @@ app.post(["/auth/verify", "/verify"], async (req, res, next) => {
       },
     });
   } catch (error) {
+    console.error("auth verify failed", error);
     next(error);
   }
 });
