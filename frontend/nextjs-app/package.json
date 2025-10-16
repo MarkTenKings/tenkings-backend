@@ -9,6 +9,9 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@tenkings/database": "workspace:*",
+    "@tenkings/shared": "workspace:*",
+    "@prisma/client": "^5.22.0",
     "@stripe/react-stripe-js": "^2.3.4",
     "@stripe/stripe-js": "^3.4.1",
     "next": "14.2.5",
