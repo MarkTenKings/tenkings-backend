@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --font-body: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-display: "Bebas Neue", sans-serif;
+  --font-lightning: "Faster One", cursive;
+}
+
+body {
+  min-height: 100vh;
+  background-color: #05060a;
+  color: #f8fafc;
+  font-family: var(--font-body);
+  letter-spacing: 0.01em;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+}
