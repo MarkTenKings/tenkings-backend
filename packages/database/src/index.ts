@@ -1,5 +1,5 @@
 export { prisma } from "./client";
-export type { Prisma } from "@prisma/client";
+export type { Prisma, ProcessingJob } from "@prisma/client";
 export {
   TransactionType,
   TransactionSource,
@@ -7,4 +7,9 @@ export {
   ListingStatus,
   PackStatus,
   IngestionStatus,
+  CardAssetStatus,
+  ProcessingJobType,
+  ProcessingJobStatus,
 } from "@prisma/client";
+
+export * from "./processingJobs";

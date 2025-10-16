@@ -3,6 +3,9 @@ node_modules/
 dist/
 .env
 .env.local
+.env.*
 .next/
 coverage/
 .DS_Store
+.vercel
+tenkings-backend/

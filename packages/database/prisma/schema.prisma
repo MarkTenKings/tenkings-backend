@@ -48,6 +48,45 @@ enum IngestionStatus {
   REJECTED
 }
 
+enum CardAssetStatus {
+  UPLOADING
+  UPLOADED
+  OCR_PENDING
+  OCR_COMPLETE
+  CLASSIFY_PENDING
+  CLASSIFIED
+  VALUATION_PENDING
+  READY
+  ASSIGNED
+  ERROR
+}
+
+enum ProcessingJobType {
+  OCR
+  CLASSIFY
+  VALUATION
+}
+
+enum ProcessingJobStatus {
+  QUEUED
+  IN_PROGRESS
+  COMPLETE
+  FAILED
+}
+
+enum CollectibleCategory {
+  SPORTS
+  POKEMON
+  COMICS
+}
+
+enum PackTier {
+  TIER_25
+  TIER_50
+  TIER_100
+  TIER_500
+}
+
 model User {
   id              String        @id @default(uuid())
   email           String?       @unique
@@ -61,6 +100,9 @@ model User {
   listings        Listing[]     @relation("SellerListings")
   packs           PackInstance[]
   ingestions      IngestionTask[]
+  cardBatches     CardBatch[]
+  cardNotes       CardNote[]
+  reviewedCards   CardAsset[]   @relation("CardAssetHumanReviewer")
   sessions        Session[]
 }
 
@@ -151,9 +193,12 @@ model PackDefinition {
   description    String?
   price          Int
   inventoryCount Int             @default(0)
+  category       CollectibleCategory @default(SPORTS)
+  tier           PackTier           @default(TIER_50)
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
   packs          PackInstance[]
+  cardAssets     CardAsset[]
 }
 
 model PackInstance {
@@ -188,4 +233,86 @@ model IngestionTask {
   updatedAt  DateTime        @updatedAt
   item       Item?           @relation(fields: [itemId], references: [id])
   owner      User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+}
+
+model CardBatch {
+  id             String   @id @default(uuid())
+  label          String?
+  notes          String?
+  uploadedById   String
+  totalCount     Int      @default(0)
+  processedCount Int      @default(0)
+  status         String   @default("UPLOADING")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  uploadedBy User       @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  cards      CardAsset[]
+}
+
+model CardAsset {
+  id                    String           @id @default(uuid())
+  batchId               String
+  storageKey            String
+  fileName              String
+  fileSize              Int
+  mimeType              String
+  imageUrl              String
+  thumbnailUrl          String?
+  status                CardAssetStatus @default(UPLOADING)
+  ocrText               String?
+  ocrJson               Json?
+  classificationJson    Json?
+  valuationMinor        Int?
+  valuationCurrency     String?         @default("USD")
+  valuationSource       String?
+  marketplaceUrl        String?
+  assignedDefinitionId  String?
+  assignedAt            DateTime?
+  errorMessage          String?
+  createdAt             DateTime        @default(now())
+  updatedAt             DateTime        @updatedAt
+  processingStartedAt   DateTime?
+  processingCompletedAt DateTime?
+  customTitle           String?
+  customDetails         String?
+  ebaySoldUrl           String?
+  ebaySoldUrlVariant    String?
+  ebaySoldUrlHighGrade  String?
+  ebaySoldUrlPlayerComp String?
+  humanReviewedAt       DateTime?
+  humanReviewedById     String?
+
+  batch              CardBatch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  assignedDefinition PackDefinition? @relation(fields: [assignedDefinitionId], references: [id], onDelete: SetNull)
+  notes              CardNote[]
+  jobs               ProcessingJob[]
+  humanReviewer      User?          @relation("CardAssetHumanReviewer", fields: [humanReviewedById], references: [id])
+}
+
+model CardNote {
+  id        String   @id @default(uuid())
+  cardId    String
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+
+  card   CardAsset @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  author User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+}
+
+model ProcessingJob {
+  id           String              @id @default(uuid())
+  cardAssetId  String
+  type         ProcessingJobType
+  status       ProcessingJobStatus @default(QUEUED)
+  payload      Json?
+  attempts     Int                 @default(0)
+  errorMessage String?
+  lockedAt     DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  cardAsset CardAsset @relation(fields: [cardAssetId], references: [id], onDelete: Cascade)
 }

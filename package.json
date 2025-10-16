@@ -14,6 +14,7 @@
     "format": "echo \"(placeholder) configure Prettier\"",
     "db:generate": "npm run generate --workspace @tenkings/database",
     "db:migrate": "npm run migrate:dev --workspace @tenkings/database",
+    "db:deploy": "npm run migrate:deploy --workspace @tenkings/database",
     "db:push": "npm run db:push --workspace @tenkings/database"
   }
 }

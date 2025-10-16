@@ -38,3 +38,10 @@ export interface PackDefinition {
   inventoryCount?: number;
   tiers: Array<{ tier: string; odds: number }>;
 }
+
+export {
+  buildEbaySoldUrlFromText,
+  buildEbaySoldUrlFromQuery,
+  buildComparableEbayUrls,
+} from "./ebay";
+export type { EbayComparableUrls } from "./ebay";
