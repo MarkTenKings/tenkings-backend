@@ -105,6 +105,7 @@ app.post(["/auth/verify", "/verify"], async (req, res, next) => {
         create: { userId: user.id },
       });
 
+      await tx.session.deleteMany({ where: { userId: user.id } });
       await tx.session.create({
         data: {
           userId: user.id,
