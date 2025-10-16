@@ -38,6 +38,8 @@ app.post(["/auth/send-code", "/send-code"], async (req, res, next) => {
 
     const { phone } = sendCodeSchema.parse(req.body);
 
+    console.log(`[auth] send-code request`, { phone });
+
     await twilioClient.verify.v2.services(verifyServiceSid).verifications.create({
       to: phone,
       channel: "sms",
@@ -116,6 +118,8 @@ app.post(["/auth/verify", "/verify"], async (req, res, next) => {
 
       return { user, wallet };
     });
+
+    console.log(`[auth] verify success`, { userId: payload.user.id, tokenHash });
 
     res.json({
       token: sessionToken,
