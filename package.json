@@ -15,6 +15,7 @@
     "db:generate": "npm run generate --workspace @tenkings/database",
     "db:migrate": "npm run migrate:dev --workspace @tenkings/database",
     "db:deploy": "npm run migrate:deploy --workspace @tenkings/database",
-    "db:push": "npm run db:push --workspace @tenkings/database"
+    "db:push": "npm run db:push --workspace @tenkings/database",
+    "vercel:build": "pnpm --filter @tenkings/database run generate && mkdir -p frontend/nextjs-app/node_modules && cp -R packages/database/node_modules/.prisma frontend/nextjs-app/node_modules/.prisma && pnpm --filter @tenkings/database run build && pnpm --filter @tenkings/shared run build && pnpm --filter @tenkings/nextjs-app run build"
   }
 }
