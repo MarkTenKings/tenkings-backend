@@ -1,13 +1,36 @@
-     {
-     auto_https off
-     debug
-     }
-     http://auth.collect.tenkings.co {
-     handle {
-       redir https://auth.collect.tenkings.co{uri}
-     }
-     }
-     auth.collect.tenkings.co {
-     tls /etc/certs/auth_fullchain.pem /etc/certs/auth_privkey.pem
-     reverse_proxy auth-service:8080
-     }
+
+  {
+    email mark@tenkings.co
+  }
+
+  wallet.api.tenkings.co {
+    reverse_proxy wallet-service:8080
+  }
+
+  auth.api.tenkings.co {
+    reverse_proxy auth-service:8080
+  }
+
+  vault.api.tenkings.co {
+    reverse_proxy vault-service:8080
+  }
+
+  marketplace.api.tenkings.co {
+    reverse_proxy marketplace-service:8080
+  }
+
+  pricing.api.tenkings.co {
+    reverse_proxy pricing-service:8080
+  }
+
+  pack.api.tenkings.co {
+    reverse_proxy pack-service:8080
+  }
+
+  ingestion.api.tenkings.co {
+    reverse_proxy ingestion-service:8080
+  }
+
+  vending.api.tenkings.co {
+    reverse_proxy vending-gw:8080
+  }

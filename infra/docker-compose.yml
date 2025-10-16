@@ -18,14 +18,10 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    environment:
-      - CADDY_EMAIL=${TRAEFIK_ACME_EMAIL:-mark@tenkings.co}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-      - ./certs/auth_fullchain.pem:/etc/certs/auth_fullchain.pem:ro
-      - ./certs/auth_privkey.pem:/etc/certs/auth_privkey.pem:ro
     depends_on:
       - wallet-service
       - auth-service
@@ -35,13 +31,12 @@ services:
       - pack-service
       - ingestion-service
       - vending-gw
-      - frontend
 
   wallet-service:
     build:
       context: ..
       dockerfile: backend/wallet-service/Dockerfile
-    env_file: /home/mark/tenkings/env/wallet-service.env
+    env_file: ../env/wallet-service.env
     ports:
       - "8081:8080"
     depends_on:
@@ -57,7 +52,7 @@ services:
     build:
       context: ..
       dockerfile: backend/auth-service/Dockerfile
-    env_file: /home/mark/tenkings/env/auth-service.env
+    env_file: ../env/auth-service.env
     ports:
       - "8088:8080"
     depends_on:
@@ -73,7 +68,7 @@ services:
     build:
       context: ..
       dockerfile: backend/vault-service/Dockerfile
-    env_file: /home/mark/tenkings/env/vault-service.env
+    env_file: ../env/vault-service.env
     ports:
       - "8082:8080"
     depends_on:
@@ -89,7 +84,7 @@ services:
     build:
       context: ..
       dockerfile: backend/marketplace-service/Dockerfile
-    env_file: /home/mark/tenkings/env/marketplace-service.env
+    env_file: ../env/marketplace-service.env
     ports:
       - "8083:8080"
     depends_on:
@@ -105,7 +100,7 @@ services:
     build:
       context: ..
       dockerfile: backend/pricing-service/Dockerfile
-    env_file: /home/mark/tenkings/env/pricing-service.env
+    env_file: ../env/pricing-service.env
     ports:
       - "8084:8080"
     depends_on:
@@ -121,7 +116,7 @@ services:
     build:
       context: ..
       dockerfile: backend/pack-service/Dockerfile
-    env_file: /home/mark/tenkings/env/pack-service.env
+    env_file: ../env/pack-service.env
     ports:
       - "8085:8080"
     depends_on:
@@ -137,7 +132,7 @@ services:
     build:
       context: ..
       dockerfile: backend/ingestion-service/Dockerfile
-    env_file: /home/mark/tenkings/env/ingestion-service.env
+    env_file: ../env/ingestion-service.env
     ports:
       - "8086:8080"
     depends_on:
@@ -153,7 +148,7 @@ services:
     build:
       context: ..
       dockerfile: backend/vending-gw/Dockerfile
-    env_file: /home/mark/tenkings/env/vending-gw.env
+    env_file: ../env/vending-gw.env
     ports:
       - "8087:8080"
     depends_on:
@@ -164,27 +159,6 @@ services:
       - "traefik.http.routers.vending.entrypoints=websecure"
       - "traefik.http.routers.vending.tls.certresolver=letsencrypt"
       - "traefik.http.services.vending.loadbalancer.server.port=8080"
-
-  frontend:
-    build:
-      context: ..
-      dockerfile: frontend/nextjs-app/Dockerfile
-    env_file: /home/mark/tenkings/env/frontend.env
-    depends_on:
-      - wallet-service
-      - vault-service
-      - marketplace-service
-      - pricing-service
-      - pack-service
-      - ingestion-service
-      - vending-gw
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
-      - "traefik.http.routers.frontend.priority=-1"
-      - "traefik.http.routers.frontend.entrypoints=websecure"
-      - "traefik.http.routers.frontend.tls.certresolver=letsencrypt"
-      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
 
 volumes:
   postgres-data:

@@ -8,8 +8,10 @@
   COPY tsconfig.base.json ./
   COPY backend ./backend
   COPY packages ./packages
-  RUN pnpm install --frozen-lockfile
-  RUN pnpm --filter @tenkings/database run generate
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @tenkings/database run generate
+RUN pnpm --filter @tenkings/database run build
+RUN pnpm --filter @tenkings/shared run build
   RUN pnpm --filter @tenkings/wallet-service run build
   WORKDIR /app/backend/wallet-service
   ENV NODE_ENV=production
