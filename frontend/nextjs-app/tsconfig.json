@@ -22,7 +22,9 @@
     "baseUrl": ".",
     "paths": {
       "@tenkings/database": ["../../packages/database/dist"],
-      "@tenkings/database/*": ["../../packages/database/dist/*"]
+      "@tenkings/database/*": ["../../packages/database/dist/*"],
+      "@tenkings/shared": ["../../packages/shared/dist"],
+      "@tenkings/shared/*": ["../../packages/shared/dist/*"]
     },
     "jsx": "preserve"
   },
