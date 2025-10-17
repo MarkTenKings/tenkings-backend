@@ -99,30 +99,6 @@ const PLAYER_STOPWORDS = new Set(
     "AUTOGRAPH",
     "SIGNATURE",
     "SILVER",
-    "GREEN",
-    "BLUE",
-    "RED",
-    "GOLD",
-    "PURPLE",
-    "ORANGE",
-    "BLACK",
-    "WHITE",
-    "YELLOW",
-    "PINK",
-    "TEAL",
-    "BRONZE",
-    "RAINBOW",
-    "ICE",
-    "CRACKED",
-    "SCOPE",
-    "VELOCITY",
-    "LASER",
-    "SHIMMER",
-    "WAVE",
-    "HYPER",
-    "FLASH",
-    "MOJO",
-    "SNAKESKIN",
     "SELECT",
     "PRIZM",
     "PRISM",
@@ -378,7 +354,10 @@ function extractPlayerName(lines: string[]): string | null {
       const token = tokens[j];
       const isSuffix = PLAYER_SUFFIX_ALLOW.has(token.upper);
       if (!isSuffix && !isLikelyNameToken(token.original)) {
-        break;
+        const looksLikeName = /^[A-Z][A-Z'-]{1,}$/i.test(token.original) && token.original.length >= 2;
+        if (!looksLikeName || sequence.length === 0) {
+          break;
+        }
       }
       sequence.push(token.original);
       consumed += 1;

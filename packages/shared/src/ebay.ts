@@ -18,6 +18,58 @@ interface ComparableOptions {
   attributes?: CardAttributes;
 }
 
+const POSITION_STOPWORDS = new Set(
+  [
+    "QB",
+    "RB",
+    "WR",
+    "TE",
+    "LB",
+    "CB",
+    "DB",
+    "FS",
+    "SS",
+    "C",
+    "PF",
+    "SF",
+    "SG",
+    "PG",
+    "G",
+    "F",
+    "CENTER",
+    "FORWARD",
+    "GUARD",
+    "PITCHER",
+    "CATCHER",
+    "SHORTSTOP",
+    "SECOND",
+    "BASE",
+    "THIRD",
+    "BASEMAN",
+    "OUTFIELD",
+    "DEFENSE",
+    "OFFENSE",
+  ].map((word) => word.toUpperCase())
+);
+
+function sanitizeTerm(term: string | null | undefined): string | null {
+  if (!term) {
+    return null;
+  }
+  const tokens = term
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+    .filter((token) => !/^\d{5,}$/.test(token))
+    .filter((token) => !POSITION_STOPWORDS.has(token.toUpperCase()));
+
+  if (tokens.length === 0) {
+    return null;
+  }
+
+  return tokens.join(" ");
+}
+
 function normalizeForQuery(raw: string | null | undefined): string | null {
   if (!raw) {
     return null;
@@ -52,8 +104,8 @@ export function buildEbaySoldUrlFromQuery(raw: string | null | undefined): strin
 
 function uniqueQuery(terms: Array<string | null | undefined>): string | null {
   const filtered = terms
-    .map((term) => term?.trim())
-    .filter((term): term is string => Boolean(term && term.length > 0));
+    .map((term) => sanitizeTerm(term))
+    .filter((term): term is string => Boolean(term && term.trim().length > 0));
 
   if (filtered.length === 0) {
     return null;
@@ -135,6 +187,27 @@ function buildAutoQuery(attributes: CardAttributes): string | null {
   ]);
 }
 
+function buildExactQuery(attributes: CardAttributes, original: string | null | undefined): string | null {
+  const gradePhrase = attributes.gradeValue
+    ? attributes.gradeCompany
+      ? `${attributes.gradeCompany} ${attributes.gradeValue}`
+      : attributes.gradeValue
+    : null;
+
+  return uniqueQuery([
+    attributes.playerName,
+    attributes.year,
+    attributes.brand ?? attributes.setName,
+    ...attributes.variantKeywords,
+    attributes.rookie ? "rookie" : null,
+    attributes.autograph ? "autograph" : null,
+    attributes.memorabilia ? "patch" : null,
+    gradePhrase,
+    attributes.serialNumber,
+    original,
+  ]);
+}
+
 export function buildComparableEbayUrls(options: ComparableOptions): EbayComparableUrls {
   const ocrText = options.ocrText ?? "";
   const attributes =
@@ -143,7 +216,8 @@ export function buildComparableEbayUrls(options: ComparableOptions): EbayCompara
       bestMatch: options.bestMatch,
     });
 
-  const exact = buildEbaySoldUrlFromText(ocrText);
+  const exactQuery = buildExactQuery(attributes, ocrText);
+  const exact = buildEbaySoldUrlFromQuery(exactQuery);
   const variant = buildEbaySoldUrlFromQuery(buildVariantQuery(attributes));
   const premium = buildEbaySoldUrlFromQuery(buildPremiumQuery(attributes));
   const player = buildEbaySoldUrlFromQuery(buildPlayerCompQuery(attributes));
