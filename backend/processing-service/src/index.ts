@@ -74,14 +74,6 @@ async function loadAssetBuffer(asset: { id: string; storageKey: string; imageUrl
   throw new Error(`Storage mode ${config.storageMode} not yet supported`);
 }
 
-async function loadAssetBase64(asset: { id: string; storageKey: string; imageUrl: string | null }) {
-  if (config.storageMode === "mock") {
-    return extractMockBase64(asset);
-  }
-  const buffer = await loadAssetBuffer(asset);
-  return buffer.toString("base64");
-}
-
 async function handleOcrJob(job: ProcessingJob) {
   const asset = await prisma.cardAsset.findUnique({ where: { id: job.cardAssetId } });
   if (!asset) {

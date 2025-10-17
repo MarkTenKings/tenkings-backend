@@ -1,4 +1,4 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+import type { NextApiHandler, NextApiRequest, NextApiResponse } from "next";
 import { randomUUID } from "node:crypto";
 import { CardAssetStatus, prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
@@ -9,6 +9,7 @@ import {
   publicUrlFor,
 } from "../../../../lib/server/storage";
 import { MAX_UPLOAD_BYTES } from "../../../../lib/server/uploads";
+import { withAdminCors } from "../../../../lib/server/cors";
 
 interface PresignResponse {
   uploadUrl: string;
@@ -19,7 +20,7 @@ interface PresignResponse {
   storageMode: string;
 }
 
-export default async function handler(
+const handler: NextApiHandler<PresignResponse | { message: string }> = async function handler(
   req: NextApiRequest,
   res: NextApiResponse<PresignResponse | { message: string }>
 ) {
@@ -124,4 +125,6 @@ export default async function handler(
     const result = toErrorResponse(error);
     return res.status(result.status).json({ message: result.message });
   }
-}
+};
+
+export default withAdminCors(handler);

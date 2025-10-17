@@ -61,6 +61,7 @@ function sanitizeTerm(term: string | null | undefined): string | null {
     .map((token) => token.trim())
     .filter((token) => token.length > 0)
     .filter((token) => !/^\d{5,}$/.test(token))
+    .filter((token) => !token.includes("#"))
     .filter((token) => !POSITION_STOPWORDS.has(token.toUpperCase()));
 
   if (tokens.length === 0) {

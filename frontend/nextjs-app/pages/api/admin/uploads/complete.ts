@@ -1,4 +1,4 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+import type { NextApiHandler, NextApiRequest, NextApiResponse } from "next";
 import {
   CardAssetStatus,
   ProcessingJobType,
@@ -7,6 +7,7 @@ import {
   prisma,
 } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { withAdminCors } from "../../../../lib/server/cors";
 
 interface CompletePayload {
   assetId?: unknown;
@@ -15,7 +16,10 @@ interface CompletePayload {
   size?: unknown;
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse<{ message: string }>) {
+const handler: NextApiHandler<{ message: string }> = async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<{ message: string }>
+) {
   if (req.method !== "POST") {
     return res.status(405).json({ message: "Method not allowed" });
   }
@@ -78,4 +82,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const result = toErrorResponse(error);
     return res.status(result.status).json({ message: result.message });
   }
-}
+};
+
+export default withAdminCors(handler);

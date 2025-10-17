@@ -1,8 +1,9 @@
-import type { NextApiRequest, NextApiResponse } from "next";
+import type { NextApiHandler, NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { getStorageMode, writeLocalFile } from "../../../../lib/server/storage";
 import { MAX_UPLOAD_BYTES } from "../../../../lib/server/uploads";
+import { withAdminCors } from "../../../../lib/server/cors";
 
 export const config = {
   api: {
@@ -11,7 +12,10 @@ export const config = {
   },
 };
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse<{ message: string }>) {
+const handler: NextApiHandler<{ message: string }> = async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse<{ message: string }>
+) {
   if (req.method !== "PUT") {
     return res.status(405).json({ message: "Method not allowed" });
   }
@@ -75,4 +79,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const result = toErrorResponse(error);
     return res.status(result.status).json({ message: result.message });
   }
-}
+};
+
+export default withAdminCors(handler);

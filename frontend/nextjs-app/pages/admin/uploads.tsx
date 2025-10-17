@@ -6,7 +6,14 @@ import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 
-type UploadStatus = "pending" | "recorded" | "error";
+type UploadStatus =
+  | "pending"
+  | "compressing"
+  | "presigning"
+  | "uploading"
+  | "processing"
+  | "recorded"
+  | "error";
 
 interface UploadResult {
   fileName: string;
@@ -61,6 +68,49 @@ export default function AdminUploads() {
   const [batchesLoading, setBatchesLoading] = useState(false);
   const [batchesError, setBatchesError] = useState<string | null>(null);
 
+  const apiBase = useMemo(() => {
+    const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
+    if (!raw) {
+      return "";
+    }
+    return raw.endsWith("/") ? raw.slice(0, -1) : raw;
+  }, []);
+
+  const uploadConcurrency = useMemo(() => {
+    const parsed = Number(process.env.NEXT_PUBLIC_UPLOAD_CONCURRENCY ?? "3");
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return 3;
+    }
+    return Math.min(10, Math.max(1, Math.floor(parsed)));
+  }, []);
+
+  const statusLabels: Record<UploadStatus, string> = {
+    pending: "Queued",
+    compressing: "Optimizing",
+    presigning: "Preparing",
+    uploading: "Uploading",
+    processing: "Recording",
+    recorded: "Complete",
+    error: "Error",
+  };
+
+  const statusTone: Record<UploadStatus, string> = {
+    pending: "text-slate-500",
+    compressing: "text-sky-300",
+    presigning: "text-sky-300",
+    uploading: "text-sky-300",
+    processing: "text-sky-300",
+    recorded: "text-emerald-300",
+    error: "text-rose-300",
+  };
+
+  const uploadSummary = useMemo(() => {
+    const total = results.length > 0 ? results.length : files.length;
+    const completed = results.filter((result) => result.status === "recorded").length;
+    const errors = results.filter((result) => result.status === "error").length;
+    return { total, completed, errors };
+  }, [results, files]);
+
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
     [session?.user.id, session?.user.phone]
@@ -70,6 +120,18 @@ export default function AdminUploads() {
     typeof window !== "undefined" &&
     process.env.NEXT_PUBLIC_ADMIN_USER_IDS === undefined &&
     process.env.NEXT_PUBLIC_ADMIN_PHONES === undefined;
+
+  useEffect(() => {
+    if (!submitting) {
+      return;
+    }
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [submitting]);
 
   const fetchBatches = useCallback(
     async (signal?: AbortSignal) => {
@@ -122,6 +184,19 @@ export default function AdminUploads() {
     setBatchId(null);
   };
 
+  const resolveApiUrl = useCallback(
+    (path: string) => {
+      if (/^https?:\/\//.test(path)) {
+        return path;
+      }
+      if (!apiBase) {
+        return path;
+      }
+      return `${apiBase}${path.startsWith("/") ? path : `/${path}`}`;
+    },
+    [apiBase]
+  );
+
   const submitUploads = async (event: FormEvent) => {
     event.preventDefault();
     if (!files.length) {
@@ -137,29 +212,60 @@ export default function AdminUploads() {
 
     setSubmitting(true);
     setFlash(null);
-    const nextResults: UploadResult[] = [];
-    let activeBatchId: string | null = null;
 
-    for (const file of files) {
-      const base: UploadResult = { fileName: file.name, assetId: null, status: "pending" };
+    const fileEntries = files.map((file, index) => ({ file, index }));
+    const initialResults: UploadResult[] = fileEntries.map(({ file }) => ({
+      fileName: file.name,
+      assetId: null,
+      status: "pending",
+    }));
+    setResults(initialResults);
+
+    const resultsBuffer = initialResults.slice();
+
+    const updateResult = (index: number, updates: Partial<UploadResult>) => {
+      resultsBuffer[index] = { ...resultsBuffer[index], ...updates };
+      setResults((prev) => {
+        if (prev.length === resultsBuffer.length) {
+          const next = [...prev];
+          next[index] = { ...next[index], ...updates };
+          return next;
+        }
+        return [...resultsBuffer];
+      });
+    };
+
+    let sharedBatchId: string | null = null;
+    let latestBatchId: string | null = null;
+
+    const isRemoteApi =
+      typeof window !== "undefined" && apiBase.length > 0 && !apiBase.startsWith(window.location.origin);
+
+    const processEntry = async (entry: { file: File; index: number }) => {
+      const { file, index } = entry;
       try {
+        updateResult(index, { status: "compressing", message: undefined });
+        const optimizedFile = await compressImage(file);
+
+        updateResult(index, { status: "presigning" });
         const presignBody: {
           fileName: string;
           size: number;
           mimeType: string;
           batchId?: string;
         } = {
-          fileName: file.name,
-          size: file.size,
-          mimeType: file.type,
+          fileName: optimizedFile.name,
+          size: optimizedFile.size,
+          mimeType: optimizedFile.type || file.type,
         };
 
-        if (activeBatchId) {
-          presignBody.batchId = activeBatchId;
+        if (sharedBatchId) {
+          presignBody.batchId = sharedBatchId;
         }
 
-        const presignRes = await fetch("/api/admin/uploads/presign", {
+        const presignRes = await fetch(resolveApiUrl("/api/admin/uploads/presign"), {
           method: "POST",
+          mode: isRemoteApi ? "cors" : "same-origin",
           headers: {
             "Content-Type": "application/json",
             ...buildAdminHeaders(token),
@@ -172,46 +278,54 @@ export default function AdminUploads() {
           throw new Error(payload?.message ?? "Failed to generate upload URL");
         }
 
-        const presignPayload: {
+        const presignPayload = (await presignRes.json()) as {
           assetId: string;
           batchId: string;
           uploadUrl: string;
           fields: Record<string, string>;
           publicUrl: string;
           storageMode: string;
-        } = await presignRes.json();
+        };
 
-        activeBatchId = presignPayload.batchId;
+        if (!sharedBatchId) {
+          sharedBatchId = presignPayload.batchId;
+          latestBatchId = presignPayload.batchId;
+          setBatchId(presignPayload.batchId);
+        }
 
-        if (presignPayload.storageMode === "local" || presignPayload.storageMode === "mock") {
-          const uploadRes = await fetch(presignPayload.uploadUrl, {
-            method: "PUT",
-            headers: {
-              ...buildAdminHeaders(token),
-              "Content-Type": file.type,
-            },
-            body: file,
-          });
-
-          if (!uploadRes.ok) {
-            const text = await uploadRes.text().catch(() => "");
-            throw new Error(text || "Failed to store file");
-          }
-        } else {
+        if (presignPayload.storageMode !== "local" && presignPayload.storageMode !== "mock") {
           throw new Error("Unsupported storage mode returned by server");
         }
 
-        const completeRes = await fetch("/api/admin/uploads/complete", {
+        updateResult(index, { status: "uploading" });
+        const uploadRes = await fetch(resolveApiUrl(presignPayload.uploadUrl), {
+          method: "PUT",
+          mode: isRemoteApi ? "cors" : "same-origin",
+          headers: {
+            ...buildAdminHeaders(token),
+            "Content-Type": optimizedFile.type || file.type,
+          },
+          body: optimizedFile,
+        });
+
+        if (!uploadRes.ok) {
+          const text = await uploadRes.text().catch(() => "");
+          throw new Error(text || "Failed to store file");
+        }
+
+        updateResult(index, { status: "processing" });
+        const completeRes = await fetch(resolveApiUrl("/api/admin/uploads/complete"), {
           method: "POST",
+          mode: isRemoteApi ? "cors" : "same-origin",
           headers: {
             "Content-Type": "application/json",
             ...buildAdminHeaders(token),
           },
           body: JSON.stringify({
             assetId: presignPayload.assetId,
-            fileName: file.name,
-            mimeType: file.type,
-            size: file.size,
+            fileName: optimizedFile.name,
+            mimeType: optimizedFile.type || file.type,
+            size: optimizedFile.size,
           }),
         });
 
@@ -220,23 +334,68 @@ export default function AdminUploads() {
           throw new Error(payload?.message ?? "Failed to record upload");
         }
 
-        nextResults.push({
-          ...base,
+        updateResult(index, {
           assetId: presignPayload.assetId,
           status: "recorded",
           publicUrl: presignPayload.publicUrl,
+          message: undefined,
         });
+        latestBatchId = sharedBatchId ?? presignPayload.batchId;
+        return { success: true, batchId: presignPayload.batchId };
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error";
-        nextResults.push({ ...base, status: "error", message });
+        updateResult(index, { status: "error", message });
+        return { success: false, batchId: null };
       }
-    }
+    };
 
-    setResults(nextResults);
-    setSubmitting(false);
-    setBatchId(activeBatchId);
-    setFlash(nextResults.every((result) => result.status === "recorded") ? "Upload complete." : "Uploads finished with some errors.");
-    fetchBatches().catch(() => undefined);
+    try {
+      let nextIndex = 0;
+      for (; nextIndex < fileEntries.length; nextIndex += 1) {
+        await processEntry(fileEntries[nextIndex]);
+        if (sharedBatchId) {
+          nextIndex += 1;
+          break;
+        }
+      }
+
+      if (!sharedBatchId) {
+        latestBatchId = null;
+        return;
+      }
+
+      const queue = fileEntries.slice(nextIndex);
+      let pointer = 0;
+
+      const worker = async () => {
+        while (pointer < queue.length) {
+          const current = queue[pointer];
+          pointer += 1;
+          if (!current) {
+            break;
+          }
+          await processEntry(current);
+        }
+      };
+
+      const workerCount = Math.min(uploadConcurrency, queue.length);
+      await Promise.all(Array.from({ length: workerCount }, worker));
+      latestBatchId = sharedBatchId;
+    } finally {
+      const successes = resultsBuffer.filter((result) => result.status === "recorded").length;
+      const errors = resultsBuffer.filter((result) => result.status === "error").length;
+      if (successes === resultsBuffer.length && resultsBuffer.length > 0) {
+        setFlash("Upload complete.");
+      } else if (errors > 0) {
+        setFlash(`Uploads finished with ${errors} error${errors === 1 ? "" : "s"}.`);
+      } else if (resultsBuffer.length > 0) {
+        setFlash("Uploads finished.");
+      }
+
+      setSubmitting(false);
+      setBatchId(latestBatchId);
+      fetchBatches().catch(() => undefined);
+    }
   };
 
   const renderGate = () => {
@@ -344,7 +503,9 @@ export default function AdminUploads() {
               disabled={submitting}
               className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.3em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/20 disabled:bg-white/10 disabled:text-slate-500"
             >
-              {submitting ? "Uploading…" : "Upload & queue"}
+              {submitting
+                ? `Uploading… (${uploadSummary.completed}/${uploadSummary.total || files.length})`
+                : "Upload & queue"}
             </button>
           </form>
 
@@ -380,16 +541,8 @@ export default function AdminUploads() {
                   >
                     <div className="flex items-center justify-between">
                       <span>{result.fileName}</span>
-                      <span
-                        className={
-                          result.status === "recorded"
-                            ? "text-emerald-300"
-                            : result.status === "error"
-                              ? "text-rose-300"
-                              : "text-slate-400"
-                        }
-                      >
-                        {result.status}
+                      <span className={statusTone[result.status] ?? "text-slate-400"}>
+                        {statusLabels[result.status] ?? result.status}
                       </span>
                     </div>
                     {result.assetId && <p className="text-xs text-slate-500">assetId: {result.assetId}</p>}
@@ -398,7 +551,12 @@ export default function AdminUploads() {
                         preview: <span className="break-all">{result.publicUrl}</span>
                       </p>
                     )}
-                    {result.message && <p className="text-xs text-rose-300">{result.message}</p>}
+                    {result.message && result.status === "error" && (
+                      <p className="text-xs text-rose-300">{result.message}</p>
+                    )}
+                    {result.message && result.status !== "error" && (
+                      <p className="text-xs text-slate-400">{result.message}</p>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -485,6 +643,98 @@ export default function AdminUploads() {
           )}
         </section>
       </div>
+      {submitting && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-night-900/60 backdrop-blur-sm">
+          <div className="rounded-3xl border border-white/10 bg-night-900/90 px-8 py-6 text-center text-slate-100">
+            <p className="text-xs uppercase tracking-[0.32em] text-slate-400">Uploading</p>
+            <p className="mt-2 text-sm text-white">
+              {uploadSummary.completed}/{uploadSummary.total || files.length} files complete
+            </p>
+            <p className="mt-1 text-xs text-slate-400">
+              Keep this tab open until all uploads finish.
+            </p>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
+}
+
+async function compressImage(file: File): Promise<File> {
+  const MIN_BYTES_FOR_COMPRESSION = 1_200_000; // ~1.2 MB
+  const MAX_DIMENSION = 2000;
+
+  if (!file.type.startsWith("image/") || file.size <= MIN_BYTES_FOR_COMPRESSION) {
+    return file;
+  }
+
+  if (typeof window === "undefined") {
+    return file;
+  }
+
+  const drawToCanvas = async (
+    dimensions: { width: number; height: number },
+    draw: (ctx: CanvasRenderingContext2D, width: number, height: number) => void
+  ) => {
+    const scale = Math.min(1, MAX_DIMENSION / Math.max(dimensions.width, dimensions.height));
+    const targetWidth = Math.max(1, Math.round(dimensions.width * scale));
+    const targetHeight = Math.max(1, Math.round(dimensions.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas not supported");
+    }
+    draw(context, targetWidth, targetHeight);
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/webp", 0.82)
+    );
+    if (!blob || blob.size >= file.size) {
+      return file;
+    }
+    const newName = file.name.replace(/\.[^.]+$/, "") + ".webp";
+    return new File([blob], newName, { type: "image/webp", lastModified: Date.now() });
+  };
+
+  try {
+    if (typeof createImageBitmap === "function") {
+      const bitmap = await createImageBitmap(file);
+      const optimized = await drawToCanvas(
+        { width: bitmap.width, height: bitmap.height },
+        (ctx, width, height) => ctx.drawImage(bitmap, 0, 0, width, height)
+      );
+      bitmap.close();
+      return optimized;
+    }
+  } catch (error) {
+    // fall through to HTMLImageElement path
+  }
+
+  try {
+    const optimized = await new Promise<File>((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = async () => {
+        URL.revokeObjectURL(url);
+        try {
+          const result = await drawToCanvas(
+            { width: image.width, height: image.height },
+            (ctx, width, height) => ctx.drawImage(image, 0, 0, width, height)
+          );
+          resolve(result);
+        } catch (canvasError) {
+          reject(canvasError);
+        }
+      };
+      image.onerror = (event) => {
+        URL.revokeObjectURL(url);
+        reject(event);
+      };
+      image.src = url;
+    });
+    return optimized;
+  } catch (error) {
+    return file;
+  }
 }
