@@ -6,6 +6,7 @@ import { buildEbaySoldUrlFromText } from "@tenkings/shared";
 import AppShell from "../../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
 import { useSession } from "../../../hooks/useSession";
+import { buildAdminHeaders } from "../../../lib/adminHeaders";
 
 type CardNote = {
   id: string;
@@ -114,7 +115,7 @@ export default function AdminCardDetail() {
       setError(null);
       try {
         const res = await fetch(`/api/admin/cards/${cardId}`, {
-          headers: { Authorization: `Bearer ${session.token}` },
+          headers: buildAdminHeaders(session.token),
           signal: controller.signal,
         });
         if (!res.ok) {
@@ -279,10 +280,7 @@ export default function AdminCardDetail() {
     try {
       const res = await fetch(`/api/admin/cards/${card.id}`, {
         method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${session.token}`,
-          "Content-Type": "application/json",
-        },
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
         body: JSON.stringify(payload),
       });
       if (!res.ok) {

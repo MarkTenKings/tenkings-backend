@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
+import { buildAdminHeaders } from "../../lib/adminHeaders";
 
 type UploadStatus = "pending" | "recorded" | "error";
 
@@ -35,19 +36,6 @@ interface BatchSummary {
   latestAssetAt: string | null;
   assignments: BatchAssignmentSummary[];
 }
-
-const operatorKey = process.env.NEXT_PUBLIC_OPERATOR_KEY;
-
-const buildAdminHeaders = (token?: string) => {
-  const headers: Record<string, string> = {};
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  if (operatorKey) {
-    headers["X-Operator-Key"] = operatorKey;
-  }
-  return headers;
-};
 
 const CATEGORY_LABELS: Record<string, string> = {
   SPORTS: "Sports",

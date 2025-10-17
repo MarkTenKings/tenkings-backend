@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/router";
 import AppShell from "../components/AppShell";
 import { PlaceholderImage } from "../components/PlaceholderImage";
@@ -71,6 +71,14 @@ const formatCurrency = (value: number) =>
 export default function Home() {
   const router = useRouter();
   const [pulls, setPulls] = useState<PullCard[]>(fallbackPulls);
+
+  const handleScrollToMachines = useCallback(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const section = document.getElementById("collectible-machines");
+    section?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -160,7 +168,7 @@ export default function Home() {
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
               <button
                 type="button"
-                onClick={() => router.push("/packs")}
+                onClick={handleScrollToMachines}
                 className="inline-flex items-center justify-center whitespace-nowrap rounded-full bg-gold-500 px-10 py-4 text-sm font-semibold uppercase tracking-[0.2em] text-night-900 shadow-glow transition hover:bg-gold-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold-500"
               >
                 Pick & Rip Now
@@ -264,7 +272,7 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="bg-night-900/80 py-20">
+      <section id="collectible-machines" className="bg-night-900/80 py-20">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6">
           <header className="flex flex-col gap-3">
             <p className="uppercase tracking-[0.3em] text-violet-300">Choose your arena</p>
@@ -285,6 +293,7 @@ export default function Home() {
                     alt={`${category.label} vending machine`}
                     width={2813}
                     height={5000}
+                    sizes="(max-width: 768px) 70vw, 220px"
                     className="mx-auto h-auto w-[60%] object-contain transition duration-500 group-hover:scale-105"
                   />
                 </div>

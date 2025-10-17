@@ -5,6 +5,7 @@ import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import AppShell from "../../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
 import { useSession } from "../../../hooks/useSession";
+import { buildAdminHeaders } from "../../../lib/adminHeaders";
 
 type BatchAsset = {
   id: string;
@@ -186,7 +187,7 @@ export default function AdminBatchDetail() {
       setError(null);
       try {
         const res = await fetch(`/api/admin/batches/${batchId}`, {
-          headers: { Authorization: `Bearer ${session.token}` },
+          headers: buildAdminHeaders(session.token),
           signal: controller.signal,
         });
         if (!res.ok) {
@@ -230,7 +231,7 @@ export default function AdminBatchDetail() {
       setDefinitionsError(null);
       try {
         const res = await fetch('/api/admin/packs/definitions', {
-          headers: { Authorization: `Bearer ${session.token}` },
+          headers: buildAdminHeaders(session.token),
           signal: controller.signal,
         });
         if (!res.ok) {
@@ -398,10 +399,7 @@ const handleAssignToDefinition = async () => {
   try {
     const res = await fetch('/api/admin/cards/assign', {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${session.token}`,
-        'Content-Type': 'application/json',
-      },
+      headers: buildAdminHeaders(session.token, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ cardIds: selectedCards, packDefinitionId: definitionId }),
     });
     if (!res.ok) {
@@ -508,10 +506,7 @@ const handleBulkSave = async (cardId: string) => {
   try {
     const res = await fetch(`/api/admin/cards/${cardId}`, {
       method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${session.token}`,
-        "Content-Type": "application/json",
-      },
+      headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
       body: JSON.stringify({
         customTitle: formState.customTitle.trim() || null,
         customDetails: formState.customDetails.trim() || null,
