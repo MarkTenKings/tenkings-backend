@@ -61,7 +61,7 @@ const catalog: PackCategory[] = [
   {
     id: "sports",
     label: "Sports",
-    hero: "/images/machine-sports.png",
+    hero: "/images/tenkings-vendingmachine-sports.png",
     blurb: "NBA, MLB, NFL, and F1 grails. Certified pulls ready for immediate vault transfer.",
     tiers: [
       {
@@ -134,7 +134,7 @@ const catalog: PackCategory[] = [
   {
     id: "pokemon",
     label: "Pokémon",
-    hero: "/images/machine-pokemon.png",
+    hero: "/images/tenkings-vendingmachine-pokemon.png",
     blurb: "Vintage holos, modern alt-art chases, and Japanese exclusives in every grid.",
     tiers: [
       {
@@ -214,7 +214,7 @@ const catalog: PackCategory[] = [
   {
     id: "comics",
     label: "Comics",
-    hero: "/images/machine-comics.png",
+    hero: "/images/tenkings-vendingmachine-comics.png",
     blurb: "Slabbed keys, virgin variants, and silver-age surprises.",
     tiers: [
       {
@@ -711,7 +711,13 @@ export default function Packs() {
                   }`}
                 >
                   <div className="relative mb-6 h-60 w-full overflow-hidden rounded-2xl border border-white/10">
-                    <Image src={entry.hero} alt={`${entry.label} vending machine`} fill className="object-cover transition duration-500 group-hover:scale-105" />
+                    <Image
+                      src={entry.hero}
+                      alt={`${entry.label} vending machine`}
+                      fill
+                      sizes="(max-width: 768px) 80vw, 320px"
+                      className="object-cover transition duration-500 group-hover:scale-105"
+                    />
                   </div>
                   <h3 className="font-heading text-3xl uppercase tracking-[0.24em] text-white">{entry.label}</h3>
                   <p className="mt-3 text-sm text-slate-300">{entry.blurb}</p>
@@ -762,6 +768,7 @@ export default function Packs() {
                             alt={`${currentTier.label} pack art`}
                             width={320}
                             height={320}
+                            sizes="(max-width: 768px) 60vw, 220px"
                             className="h-auto w-[70%] max-w-[220px] object-contain"
                           />
                         </div>
