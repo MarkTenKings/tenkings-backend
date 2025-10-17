@@ -36,6 +36,19 @@ interface BatchSummary {
   assignments: BatchAssignmentSummary[];
 }
 
+const operatorKey = process.env.NEXT_PUBLIC_OPERATOR_KEY;
+
+const buildAdminHeaders = (token?: string) => {
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  if (operatorKey) {
+    headers["X-Operator-Key"] = operatorKey;
+  }
+  return headers;
+};
+
 const CATEGORY_LABELS: Record<string, string> = {
   SPORTS: "Sports",
   POKEMON: "Pokémon",
@@ -80,7 +93,7 @@ export default function AdminUploads() {
       setBatchesError(null);
       try {
         const res = await fetch("/api/admin/batches?limit=20", {
-          headers: { Authorization: `Bearer ${session.token}` },
+          headers: buildAdminHeaders(session.token),
           signal,
         });
         if (!res.ok) {
@@ -161,7 +174,7 @@ export default function AdminUploads() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
+            ...buildAdminHeaders(token),
           },
           body: JSON.stringify(presignBody),
         });
@@ -186,7 +199,7 @@ export default function AdminUploads() {
           const uploadRes = await fetch(presignPayload.uploadUrl, {
             method: "PUT",
             headers: {
-              Authorization: `Bearer ${token}`,
+              ...buildAdminHeaders(token),
               "Content-Type": file.type,
             },
             body: file,
@@ -204,7 +217,7 @@ export default function AdminUploads() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
+            ...buildAdminHeaders(token),
           },
           body: JSON.stringify({
             assetId: presignPayload.assetId,
