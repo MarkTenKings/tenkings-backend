@@ -52,16 +52,34 @@ function toInputJson(value: unknown): Prisma.InputJsonValue {
 
 
 
-async function loadAssetBuffer(storageKey: string) {
-  if (config.storageMode !== "local") {
-    throw new Error(`Storage mode ${config.storageMode} not yet supported`);
+function extractMockBase64(asset: { id: string; imageUrl: string | null }) {
+  if (!asset.imageUrl) {
+    throw new Error(`[processing-service] asset ${asset.id} missing image data for mock storage`);
   }
-  const filePath = path.join(config.localStorageRoot, storageKey);
-  return fs.readFile(filePath);
+  const match = asset.imageUrl.match(/^data:(?:[^;]+);base64,(.+)$/);
+  if (!match) {
+    throw new Error(`[processing-service] asset ${asset.id} imageUrl is not a base64 data URI`);
+  }
+  return match[1];
 }
 
-async function loadAssetBase64(storageKey: string) {
-  const buffer = await loadAssetBuffer(storageKey);
+async function loadAssetBuffer(asset: { id: string; storageKey: string; imageUrl: string | null }) {
+  if (config.storageMode === "mock") {
+    const base64 = extractMockBase64(asset);
+    return Buffer.from(base64, "base64");
+  }
+  if (config.storageMode === "local") {
+    const filePath = path.join(config.localStorageRoot, asset.storageKey);
+    return fs.readFile(filePath);
+  }
+  throw new Error(`Storage mode ${config.storageMode} not yet supported`);
+}
+
+async function loadAssetBase64(asset: { id: string; storageKey: string; imageUrl: string | null }) {
+  if (config.storageMode === "mock") {
+    return extractMockBase64(asset);
+  }
+  const buffer = await loadAssetBuffer(asset);
   return buffer.toString("base64");
 }
 
@@ -121,7 +139,7 @@ async function handleOcrJob(job: ProcessingJob) {
 
   const existingEbayUrl = (asset as unknown as { ebaySoldUrl?: string | null }).ebaySoldUrl ?? null;
   const startedAt = asset.processingStartedAt ?? new Date();
-  const base64 = await loadAssetBase64(asset.storageKey);
+  const base64 = await loadAssetBase64(asset);
   console.log(
     `[processing-service] OCR begin asset=${asset.id} visionKey=${Boolean(config.googleVisionApiKey)} storageMode=${config.storageMode}`
   );
@@ -180,7 +198,7 @@ async function handleClassifyJob(job: ProcessingJob) {
     throw new Error(`Card asset ${job.cardAssetId} missing`);
   }
 
-  const originalBuffer = await loadAssetBuffer(asset.storageKey);
+  const originalBuffer = await loadAssetBuffer(asset);
   const base64 = await prepareXimilarBase64(originalBuffer);
   console.log(
     `[processing-service] CLASSIFY begin asset=${asset.id} ximilarKey=${Boolean(config.ximilarApiKey)}`

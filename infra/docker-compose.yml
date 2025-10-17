@@ -144,6 +144,14 @@ services:
       - "traefik.http.routers.ingestion.tls.certresolver=letsencrypt"
       - "traefik.http.services.ingestion.loadbalancer.server.port=8080"
 
+  processing-service:
+    build:
+      context: ..
+      dockerfile: backend/processing-service/Dockerfile
+    env_file: ../env/processing-service.env
+    depends_on:
+      - postgres
+
   vending-gw:
     build:
       context: ..

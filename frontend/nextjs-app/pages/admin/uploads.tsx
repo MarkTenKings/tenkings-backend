@@ -344,7 +344,7 @@ export default function AdminUploads() {
               disabled={submitting}
               className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.3em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/20 disabled:bg-white/10 disabled:text-slate-500"
             >
-              {submitting ? "Uploading…" : "Upload (mock)"}
+              {submitting ? "Uploading…" : "Upload & queue"}
             </button>
           </form>
 
@@ -371,7 +371,7 @@ export default function AdminUploads() {
 
           {results.length > 0 && (
             <div className="space-y-3">
-              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Upload results (mock)</p>
+              <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Upload results</p>
               <ul className="grid gap-2 text-sm text-slate-300">
                 {results.map((result, index) => (
                   <li
