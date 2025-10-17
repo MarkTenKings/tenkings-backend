@@ -80,6 +80,16 @@ const buildSportsSummary = (sportsDb: BatchAsset["sportsDb"]) => {
   const stats = latestSeason && typeof latestSeason === "object" && "stats" in latestSeason
     ? (latestSeason.stats as Record<string, unknown> | null | undefined)
     : null;
+  const rawSeason =
+    latestSeason && typeof latestSeason === "object" && "season" in latestSeason
+      ? (latestSeason as Record<string, unknown>).season
+      : null;
+  const seasonLabel =
+    typeof rawSeason === "string"
+      ? rawSeason
+      : typeof rawSeason === "number"
+      ? String(rawSeason)
+      : null;
 
   return {
     playerName: sportsDb.playerName,
@@ -88,7 +98,7 @@ const buildSportsSummary = (sportsDb: BatchAsset["sportsDb"]) => {
     matchConfidence: sportsDb.matchConfidence,
     sport: sportsDb.sport,
     league: sportsDb.league,
-    seasonLabel: (latestSeason as Record<string, unknown> | null | undefined)?.season ?? null,
+    seasonLabel,
     statEntries: pickStatEntries(stats),
   };
 };

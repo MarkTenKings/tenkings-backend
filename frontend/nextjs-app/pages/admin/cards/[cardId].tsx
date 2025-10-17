@@ -182,6 +182,16 @@ export default function AdminCardDetail() {
     const stats = latestSeason && typeof latestSeason === "object" && "stats" in latestSeason
       ? (latestSeason.stats as Record<string, unknown> | null | undefined)
       : null;
+    const rawSeason =
+      latestSeason && typeof latestSeason === "object" && "season" in latestSeason
+        ? (latestSeason as Record<string, unknown>).season
+        : null;
+    const seasonLabel =
+      typeof rawSeason === "string"
+        ? rawSeason
+        : typeof rawSeason === "number"
+        ? String(rawSeason)
+        : null;
 
     return {
       playerName: summary.playerName,
@@ -190,7 +200,7 @@ export default function AdminCardDetail() {
       matchConfidence: summary.matchConfidence,
       sport: summary.sport,
       league: summary.league,
-      seasonLabel: (latestSeason as Record<string, unknown> | null | undefined)?.season ?? null,
+      seasonLabel,
       statEntries: pickStatEntries(stats ?? null),
     };
   }, [card?.sportsDb]);
