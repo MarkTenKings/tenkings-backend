@@ -112,13 +112,15 @@ export default async function handler(
       ? `/api/admin/uploads/file?assetId=${assetId}`
       : "https://example-upload-configure-s3";
 
+    const responseMode = mode === "mock" ? "local" : mode;
+
     return res.status(200).json({
       uploadUrl,
       assetId,
       batchId: batch.id,
       fields: {},
       publicUrl: publicUrlFor(storageKey),
-      storageMode: mode,
+      storageMode: responseMode,
     });
   } catch (error) {
     const result = toErrorResponse(error);
