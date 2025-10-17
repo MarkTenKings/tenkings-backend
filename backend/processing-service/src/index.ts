@@ -1,6 +1,5 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import sharp from "sharp";
 import {
   type Prisma,
   CardAssetStatus,
@@ -15,7 +14,6 @@ import {
 import { config } from "./config";
 import { buildComparableEbayUrls, buildEbaySoldUrlFromText } from "@tenkings/shared";
 import { extractTextFromImage } from "./processors/vision";
-import { classifyAsset } from "./processors/ximilar";
 import { estimateValue } from "./processors/valuation";
 
 const JSON_NULL = null as unknown as Prisma.NullableJsonNullValueInput;
@@ -83,54 +81,6 @@ async function loadAssetBase64(asset: { id: string; storageKey: string; imageUrl
   return buffer.toString("base64");
 }
 
-async function prepareXimilarBase64(buffer: Buffer) {
-  const maxBytes = Number.isFinite(config.ximilarMaxImageBytes) && config.ximilarMaxImageBytes > 0
-    ? config.ximilarMaxImageBytes
-    : null;
-
-  if (!maxBytes || buffer.byteLength <= maxBytes) {
-    return buffer.toString("base64");
-  }
-
-  const resizeOptions = {
-    width: 1600,
-    height: 1600,
-    fit: "inside" as const,
-    withoutEnlargement: true,
-  };
-
-  let quality = 85;
-  let attempt = 0;
-  let output = buffer;
-
-  while (quality >= 40) {
-    const pipeline = sharp(buffer)
-      .resize(resizeOptions)
-      .jpeg({ quality, mozjpeg: true });
-
-    output = await pipeline.toBuffer();
-
-    if (output.byteLength <= maxBytes) {
-      break;
-    }
-
-    quality -= 10;
-    attempt += 1;
-  }
-
-  if (output.byteLength > maxBytes) {
-    console.warn(
-      `[processing-service] Ximilar payload still above limit after resizing (size=${output.byteLength} limit=${maxBytes})`
-    );
-  } else {
-    console.log(
-      `[processing-service] compressed asset for Ximilar (${buffer.byteLength} -> ${output.byteLength} bytes, quality ${quality}, attempts ${attempt})`
-    );
-  }
-
-  return output.toString("base64");
-}
-
 async function handleOcrJob(job: ProcessingJob) {
   const asset = await prisma.cardAsset.findUnique({ where: { id: job.cardAssetId } });
   if (!asset) {
@@ -179,13 +129,13 @@ async function handleOcrJob(job: ProcessingJob) {
       await enqueueProcessingJob({
         client: tx,
         cardAssetId: asset.id,
-        type: ProcessingJobType.CLASSIFY,
+        type: ProcessingJobType.VALUATION,
         payload: { sourceJobId: job.id },
       });
 
       await tx.cardAsset.update({
         where: { id: asset.id },
-        data: { status: CardAssetStatus.CLASSIFY_PENDING },
+        data: { status: CardAssetStatus.VALUATION_PENDING },
       });
     },
     { timeout: TRANSACTION_TIMEOUT_MS }
@@ -198,58 +148,24 @@ async function handleClassifyJob(job: ProcessingJob) {
     throw new Error(`Card asset ${job.cardAssetId} missing`);
   }
 
-  const originalBuffer = await loadAssetBuffer(asset);
-  const base64 = await prepareXimilarBase64(originalBuffer);
-  console.log(
-    `[processing-service] CLASSIFY begin asset=${asset.id} ximilarKey=${Boolean(config.ximilarApiKey)}`
-  );
-
-  const classification = await classifyAsset({ imageBase64: base64, ocrText: asset.ocrText ?? null });
-  const classificationJson = toInputJson({
-    endpoint: classification.endpoint,
-    labels: classification.labels,
-    tags: classification.tags,
-    bestMatch: classification.bestMatch,
-    raw: classification.raw ?? null,
-  });
+  console.log(`[processing-service] CLASSIFY skipped for asset=${asset.id} (Ximilar disabled)`);
 
   await prisma.$transaction(
     async (tx) => {
-      const classificationUpdate: Prisma.CardAssetUpdateInput = {
-        status: CardAssetStatus.CLASSIFIED,
-        classificationJson,
-        errorMessage: null,
-      };
-
-      const comparables = buildComparableEbayUrls({
-        ocrText: asset.ocrText ?? undefined,
-        bestMatch: classification.bestMatch ?? undefined,
-      });
-      if (comparables.variant && asset.ebaySoldUrlVariant !== comparables.variant) {
-        (classificationUpdate as any).ebaySoldUrlVariant = comparables.variant;
-      }
-      if (comparables.premiumHighGrade && asset.ebaySoldUrlHighGrade !== comparables.premiumHighGrade) {
-        (classificationUpdate as any).ebaySoldUrlHighGrade = comparables.premiumHighGrade;
-      }
-      if (comparables.playerComp && asset.ebaySoldUrlPlayerComp !== comparables.playerComp) {
-        (classificationUpdate as any).ebaySoldUrlPlayerComp = comparables.playerComp;
-      }
-
       await tx.cardAsset.update({
         where: { id: asset.id },
-        data: classificationUpdate,
+        data: {
+          status: CardAssetStatus.VALUATION_PENDING,
+          classificationJson: JSON_NULL,
+          errorMessage: null,
+        },
       });
 
       await enqueueProcessingJob({
         client: tx,
         cardAssetId: asset.id,
         type: ProcessingJobType.VALUATION,
-        payload: { sourceJobId: job.id },
-      });
-
-      await tx.cardAsset.update({
-        where: { id: asset.id },
-        data: { status: CardAssetStatus.VALUATION_PENDING },
+        payload: { sourceJobId: job.id, note: "classification_skipped" },
       });
     },
     { timeout: TRANSACTION_TIMEOUT_MS }
