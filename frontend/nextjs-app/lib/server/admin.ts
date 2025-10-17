@@ -35,13 +35,38 @@ export async function requireAdminSession(req: NextApiRequest): Promise<AdminSes
   const operatorKeyHeader = req.headers["x-operator-key"];
   const operatorKey = process.env.OPERATOR_API_KEY ?? process.env.NEXT_PUBLIC_OPERATOR_KEY;
   if (operatorKey && typeof operatorKeyHeader === "string" && operatorKeyHeader === operatorKey) {
+    const operatorUserId = process.env.OPERATOR_USER_ID;
+    const operatorUserPhone = process.env.OPERATOR_USER_PHONE ?? process.env.NEXT_PUBLIC_ADMIN_PHONES;
+
+    let operatorUser = null;
+
+    if (operatorUserId) {
+      operatorUser = await prisma.user.findUnique({ where: { id: operatorUserId } });
+    }
+
+    if (!operatorUser && operatorUserPhone) {
+      const normalizedPhone = operatorUserPhone
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .map((value) => (value.startsWith("+") ? value : `+1${value}`))[0];
+
+      if (normalizedPhone) {
+        operatorUser = await prisma.user.findFirst({ where: { phone: normalizedPhone } });
+      }
+    }
+
+    if (!operatorUser) {
+      throw new HttpError(403, "Configured operator user not found");
+    }
+
     return {
-      sessionId: "operator-key",
+      sessionId: `operator-key:${operatorUser.id}`,
       tokenHash: "operator-key",
       user: {
-        id: "operator",
-        phone: null,
-        displayName: "Operator",
+        id: operatorUser.id,
+        phone: operatorUser.phone,
+        displayName: operatorUser.displayName,
       },
     };
   }
