@@ -183,7 +183,7 @@ export default function AdminUploads() {
 
         activeBatchId = presignPayload.batchId;
 
-        if (presignPayload.storageMode === "local") {
+        if (presignPayload.storageMode === "local" || presignPayload.storageMode === "mock") {
           const uploadRes = await fetch(presignPayload.uploadUrl, {
             method: "PUT",
             headers: {
