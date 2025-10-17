@@ -1,5 +1,6 @@
 import {
   extractCardAttributes,
+  inferPlayerNameFromText,
   type CardAttributes,
 } from "./cardAttributes";
 
@@ -129,9 +130,9 @@ function uniqueQuery(terms: Array<string | null | undefined>): string | null {
   return deduped.join(" ");
 }
 
-function buildVariantQuery(attributes: CardAttributes): string | null {
+function buildVariantQuery(attributes: CardAttributes, playerName: string | null): string | null {
   return uniqueQuery([
-    attributes.playerName,
+    playerName,
     attributes.brand ?? attributes.setName,
     ...attributes.variantKeywords,
     attributes.serialNumber,
@@ -141,7 +142,7 @@ function buildVariantQuery(attributes: CardAttributes): string | null {
   ]);
 }
 
-function buildPremiumQuery(attributes: CardAttributes): string | null {
+function buildPremiumQuery(attributes: CardAttributes, playerName: string | null): string | null {
   const gradePhrase = attributes.gradeValue
     ? attributes.gradeCompany
       ? `${attributes.gradeCompany} ${attributes.gradeValue}`
@@ -149,46 +150,50 @@ function buildPremiumQuery(attributes: CardAttributes): string | null {
     : "PSA 10";
 
   return uniqueQuery([
-    attributes.playerName,
+    playerName,
     attributes.brand ?? attributes.setName,
     attributes.variantKeywords[0],
     gradePhrase,
   ]);
 }
 
-function buildPlayerCompQuery(attributes: CardAttributes): string | null {
+function buildPlayerCompQuery(attributes: CardAttributes, playerName: string | null): string | null {
   return uniqueQuery([
-    attributes.playerName,
+    playerName,
     attributes.teamName ?? attributes.brand,
     attributes.rookie ? "rookie card" : "trading card",
   ]);
 }
 
-function buildMemorabiliaQuery(attributes: CardAttributes): string | null {
+function buildMemorabiliaQuery(attributes: CardAttributes, playerName: string | null): string | null {
   if (!attributes.memorabilia) {
     return null;
   }
   return uniqueQuery([
-    attributes.playerName,
+    playerName,
     attributes.brand ?? attributes.setName,
     "patch",
     attributes.serialNumber,
   ]);
 }
 
-function buildAutoQuery(attributes: CardAttributes): string | null {
+function buildAutoQuery(attributes: CardAttributes, playerName: string | null): string | null {
   if (!attributes.autograph) {
     return null;
   }
   return uniqueQuery([
-    attributes.playerName,
+    playerName,
     attributes.brand ?? attributes.setName,
     "autograph",
     attributes.serialNumber,
   ]);
 }
 
-function buildExactQuery(attributes: CardAttributes, original: string | null | undefined): string | null {
+function buildExactQuery(
+  attributes: CardAttributes,
+  playerName: string | null,
+  original: string | null | undefined
+): string | null {
   const gradePhrase = attributes.gradeValue
     ? attributes.gradeCompany
       ? `${attributes.gradeCompany} ${attributes.gradeValue}`
@@ -196,7 +201,7 @@ function buildExactQuery(attributes: CardAttributes, original: string | null | u
     : null;
 
   return uniqueQuery([
-    attributes.playerName,
+    playerName,
     attributes.year,
     attributes.brand ?? attributes.setName,
     ...attributes.variantKeywords,
@@ -217,13 +222,14 @@ export function buildComparableEbayUrls(options: ComparableOptions): EbayCompara
       bestMatch: options.bestMatch,
     });
 
-  const exactQuery = buildExactQuery(attributes, ocrText);
+  const playerName = attributes.playerName ?? inferPlayerNameFromText(ocrText);
+  const exactQuery = buildExactQuery(attributes, playerName, ocrText);
   const exact = buildEbaySoldUrlFromQuery(exactQuery);
-  const variant = buildEbaySoldUrlFromQuery(buildVariantQuery(attributes));
-  const premium = buildEbaySoldUrlFromQuery(buildPremiumQuery(attributes));
-  const player = buildEbaySoldUrlFromQuery(buildPlayerCompQuery(attributes));
-  const memorabilia = buildEbaySoldUrlFromQuery(buildMemorabiliaQuery(attributes));
-  const autograph = buildEbaySoldUrlFromQuery(buildAutoQuery(attributes));
+  const variant = buildEbaySoldUrlFromQuery(buildVariantQuery(attributes, playerName));
+  const premium = buildEbaySoldUrlFromQuery(buildPremiumQuery(attributes, playerName));
+  const player = buildEbaySoldUrlFromQuery(buildPlayerCompQuery(attributes, playerName));
+  const memorabilia = buildEbaySoldUrlFromQuery(buildMemorabiliaQuery(attributes, playerName));
+  const autograph = buildEbaySoldUrlFromQuery(buildAutoQuery(attributes, playerName));
 
   return {
     exact,

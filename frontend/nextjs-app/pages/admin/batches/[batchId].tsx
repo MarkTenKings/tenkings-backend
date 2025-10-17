@@ -32,6 +32,65 @@ type BatchAsset = {
   assignedDefinitionId: string | null;
   humanReviewedAt: string | null;
   humanReviewerName: string | null;
+  sportsDb: {
+    playerId: string | null;
+    matchConfidence: number;
+    playerName: string | null;
+    teamName: string | null;
+    teamLogoUrl: string | null;
+    sport: string | null;
+    league: string | null;
+    snapshot: Record<string, unknown> | null;
+  };
+};
+
+const STAT_LABELS: Record<string, string> = {
+  intGamesPlayed: "Games",
+  intPoints: "Points",
+  intGoals: "Goals",
+  intAssists: "Assists",
+  intWins: "Wins",
+  intLosses: "Losses",
+  intHomeRuns: "Home runs",
+  intRBIs: "RBIs",
+};
+
+const pickStatEntries = (stats: Record<string, unknown> | null | undefined) => {
+  if (!stats || typeof stats !== "object") {
+    return [] as Array<{ label: string; value: string }>;
+  }
+  const entries: Array<{ label: string; value: string }> = [];
+  for (const [key, label] of Object.entries(STAT_LABELS)) {
+    if (Object.prototype.hasOwnProperty.call(stats, key)) {
+      const raw = stats[key];
+      if (raw !== null && raw !== undefined && String(raw).trim().length > 0) {
+        entries.push({ label, value: String(raw) });
+      }
+    }
+  }
+  return entries;
+};
+
+const buildSportsSummary = (sportsDb: BatchAsset["sportsDb"]) => {
+  const snapshot = sportsDb.snapshot as Record<string, unknown> | null | undefined;
+  const seasons = Array.isArray((snapshot as any)?.seasons)
+    ? ((snapshot as any).seasons as Array<Record<string, unknown>>)
+    : [];
+  const latestSeason = seasons[0] ?? null;
+  const stats = latestSeason && typeof latestSeason === "object" && "stats" in latestSeason
+    ? (latestSeason.stats as Record<string, unknown> | null | undefined)
+    : null;
+
+  return {
+    playerName: sportsDb.playerName,
+    teamName: sportsDb.teamName,
+    teamLogoUrl: sportsDb.teamLogoUrl,
+    matchConfidence: sportsDb.matchConfidence,
+    sport: sportsDb.sport,
+    league: sportsDb.league,
+    seasonLabel: (latestSeason as Record<string, unknown> | null | undefined)?.season ?? null,
+    statEntries: pickStatEntries(stats),
+  };
 };
 
 type BatchDetail = {
@@ -753,7 +812,25 @@ const handleBulkSave = async (cardId: string) => {
                 {batch.assets.map((asset) => {
                   const previewSrc = asset.thumbnailUrl ?? asset.imageUrl;
                   const attributes = asset.classification ?? null;
-                  const attributeTags = buildAttributeTags(attributes);
+                  const sportsSummary = buildSportsSummary(asset.sportsDb);
+                  const baseAttributeTags = buildAttributeTags(attributes);
+                  const attributeTags = (() => {
+                    const seen = new Set<string>();
+                    const candidates = [
+                      sportsSummary.playerName,
+                      sportsSummary.teamName,
+                      ...baseAttributeTags,
+                    ].filter((value): value is string => Boolean(value && value.trim().length > 0));
+                    const result: string[] = [];
+                    for (const value of candidates) {
+                      const key = value.toUpperCase();
+                      if (!seen.has(key)) {
+                        seen.add(key);
+                        result.push(value);
+                      }
+                    }
+                    return result;
+                  })();
                   const displayTitle = asset.customTitle ?? buildTitleFromAttributes(attributes, asset.fileName);
                   const valuationText =
                     asset.valuationMinor !== null
@@ -914,6 +991,40 @@ const handleBulkSave = async (cardId: string) => {
                                 </div>
                               )}
 
+                              {sportsSummary.playerName && (
+                                <div className="rounded-2xl border border-white/5 bg-night-900/60 p-3">
+                                  <p className="text-[11px] uppercase tracking-[0.25em] text-emerald-300">SportsDB Match</p>
+                                  <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-slate-200">
+                                    {sportsSummary.teamLogoUrl ? (
+                                      // eslint-disable-next-line @next/next/no-img-element
+                                      <img
+                                        src={sportsSummary.teamLogoUrl}
+                                        alt={sportsSummary.teamName ?? "Team"}
+                                        className="h-10 w-10 rounded-full border border-white/10 bg-night-800 object-contain p-1"
+                                      />
+                                    ) : null}
+                                    <div className="flex flex-col gap-1">
+                                      <span className="uppercase tracking-[0.25em] text-slate-100">{sportsSummary.playerName}</span>
+                                      <span className="text-[10px] uppercase tracking-[0.3em] text-slate-400">
+                                        {sportsSummary.teamName ?? "Unknown team"}
+                                      </span>
+                                      <span className="text-[10px] uppercase tracking-[0.3em] text-emerald-300">
+                                        Confidence {(sportsSummary.matchConfidence * 100).toFixed(0)}%
+                                      </span>
+                                    </div>
+                                  </div>
+                                  {sportsSummary.statEntries.length > 0 && (
+                                    <ul className="mt-2 flex flex-wrap gap-1 text-[10px] uppercase tracking-[0.25em] text-emerald-200">
+                                      {sportsSummary.statEntries.slice(0, 4).map((entry) => (
+                                        <li key={`${asset.id}-${entry.label}`} className="rounded-full bg-emerald-500/15 px-2 py-0.5">
+                                          {entry.label}: {entry.value}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  )}
+                                </div>
+                              )}
+
                               {attributeTags.length > 0 && (
                                 <div className="rounded-2xl border border-white/5 bg-night-900/60 p-3">
                                   <p className="text-[11px] uppercase tracking-[0.25em] text-amber-300">Attributes</p>
@@ -1035,6 +1146,45 @@ const handleBulkSave = async (cardId: string) => {
                           <div className="rounded-2xl border border-white/5 bg-night-900/60 p-3">
                             <p className="text-[11px] uppercase tracking-[0.25em] text-violet-300">OCR</p>
                             <p className="text-xs text-slate-200 line-clamp-3">{asset.ocrText}</p>
+                          </div>
+                        )}
+
+                        {sportsSummary.playerName && (
+                          <div className="rounded-2xl border border-white/5 bg-night-900/60 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.25em] text-emerald-300">SportsDB Match</p>
+                            <div className="mt-2 flex items-center gap-3">
+                              {sportsSummary.teamLogoUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={sportsSummary.teamLogoUrl}
+                                  alt={sportsSummary.teamName ?? "Team"}
+                                  className="h-12 w-12 rounded-full border border-white/10 bg-night-800 object-contain p-2"
+                                />
+                              ) : null}
+                              <div className="flex flex-col gap-1 text-[11px] text-slate-200">
+                                <span className="uppercase tracking-[0.25em] text-slate-100">{sportsSummary.playerName}</span>
+                                <span className="text-[10px] uppercase tracking-[0.3em] text-slate-400">
+                                  {sportsSummary.teamName ?? "Unknown team"}
+                                </span>
+                                <span className="text-[10px] uppercase tracking-[0.3em] text-emerald-300">
+                                  Confidence {(sportsSummary.matchConfidence * 100).toFixed(0)}%
+                                </span>
+                                {sportsSummary.seasonLabel && (
+                                  <span className="text-[9px] uppercase tracking-[0.3em] text-slate-500">
+                                    Latest season {sportsSummary.seasonLabel}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            {sportsSummary.statEntries.length > 0 && (
+                              <ul className="mt-2 flex flex-wrap gap-1 text-[10px] uppercase tracking-[0.25em] text-emerald-200">
+                                {sportsSummary.statEntries.slice(0, 4).map((entry) => (
+                                  <li key={`${asset.id}-${entry.label}`} className="rounded-full bg-emerald-500/15 px-2 py-0.5">
+                                    {entry.label}: {entry.value}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
                           </div>
                         )}
 

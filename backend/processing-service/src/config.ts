@@ -51,4 +51,7 @@ export const config = {
   ebayBearerToken: process.env.EBAY_BEARER_TOKEN ?? null,
   ebayMarketplaceId: process.env.EBAY_MARKETPLACE_ID ?? "EBAY_US",
   concurrency: parsePositiveInt(process.env.PROCESSING_CONCURRENCY, 1, 1),
+  sportsDbApiKey: process.env.SPORTSDB_API_KEY ?? null,
+  sportsDbBaseUrl: process.env.SPORTSDB_BASE_URL ?? "https://www.thesportsdb.com/api/v2/json",
+  sportsDbSyncStats: (process.env.SPORTSDB_SYNC_STATS ?? "true").toLowerCase() !== "false",
 };

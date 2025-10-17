@@ -27,6 +27,16 @@ interface BatchAssetSummary {
   assignedDefinitionId: string | null;
   humanReviewedAt: string | null;
   humanReviewerName: string | null;
+  sportsDb: {
+    playerId: string | null;
+    matchConfidence: number;
+    playerName: string | null;
+    teamName: string | null;
+    teamLogoUrl: string | null;
+    sport: string | null;
+    league: string | null;
+    snapshot: Record<string, unknown> | null;
+  };
 }
 
 interface BatchResponse {
@@ -64,6 +74,21 @@ export default async function handler(
           include: {
             humanReviewer: {
               select: { id: true, displayName: true },
+            },
+            sportsDbPlayer: {
+              select: {
+                id: true,
+                fullName: true,
+                sport: true,
+                league: true,
+                team: {
+                  select: {
+                    id: true,
+                    name: true,
+                    logoUrl: true,
+                  },
+                },
+              },
             },
           },
         },
@@ -117,6 +142,16 @@ export default async function handler(
         assignedDefinitionId: asset.assignedDefinitionId ?? null,
         humanReviewedAt: asset.humanReviewedAt ? asset.humanReviewedAt.toISOString() : null,
         humanReviewerName: asset.humanReviewer?.displayName ?? asset.humanReviewer?.id ?? null,
+        sportsDb: {
+          playerId: asset.sportsDbPlayerId ?? null,
+          matchConfidence: asset.sportsDbMatchConfidence ?? 0,
+          playerName: asset.resolvedPlayerName ?? asset.sportsDbPlayer?.fullName ?? null,
+          teamName: asset.resolvedTeamName ?? asset.sportsDbPlayer?.team?.name ?? null,
+          teamLogoUrl: asset.sportsDbPlayer?.team?.logoUrl ?? null,
+          sport: asset.sportsDbPlayer?.sport ?? null,
+          league: asset.sportsDbPlayer?.league ?? null,
+          snapshot: (asset.playerStatsSnapshot as Record<string, unknown> | null) ?? null,
+        },
       })),
     };
 

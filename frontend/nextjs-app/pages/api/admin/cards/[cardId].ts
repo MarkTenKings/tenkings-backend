@@ -11,6 +11,17 @@ interface CardNotePayload {
   createdAt: string;
 }
 
+interface SportsDbSummary {
+  playerId: string | null;
+  matchConfidence: number;
+  playerName: string | null;
+  teamName: string | null;
+  teamLogoUrl: string | null;
+  sport: string | null;
+  league: string | null;
+  snapshot: Record<string, unknown> | null;
+}
+
 interface CardResponse {
   id: string;
   batchId: string;
@@ -39,6 +50,7 @@ interface CardResponse {
   updatedAt: string;
   humanReviewedAt: string | null;
   humanReviewerName: string | null;
+  sportsDb: SportsDbSummary;
 }
 
 
@@ -70,6 +82,22 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
       },
       humanReviewer: {
         select: { id: true, displayName: true },
+      },
+      sportsDbPlayer: {
+        select: {
+          id: true,
+          fullName: true,
+          sport: true,
+          league: true,
+          headshotUrl: true,
+          team: {
+            select: {
+              id: true,
+              name: true,
+              logoUrl: true,
+            },
+          },
+        },
       },
     },
   });
@@ -112,6 +140,16 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     updatedAt: card.updatedAt.toISOString(),
     humanReviewedAt: card.humanReviewedAt ? card.humanReviewedAt.toISOString() : null,
     humanReviewerName: card.humanReviewer?.displayName ?? card.humanReviewer?.id ?? null,
+    sportsDb: {
+      playerId: card.sportsDbPlayerId ?? null,
+      matchConfidence: card.sportsDbMatchConfidence ?? 0,
+      playerName: card.resolvedPlayerName ?? card.sportsDbPlayer?.fullName ?? null,
+      teamName: card.resolvedTeamName ?? card.sportsDbPlayer?.team?.name ?? null,
+      teamLogoUrl: card.sportsDbPlayer?.team?.logoUrl ?? null,
+      sport: card.sportsDbPlayer?.sport ?? null,
+      league: card.sportsDbPlayer?.league ?? null,
+      snapshot: (card.playerStatsSnapshot as Record<string, unknown> | null) ?? null,
+    },
   };
 }
 

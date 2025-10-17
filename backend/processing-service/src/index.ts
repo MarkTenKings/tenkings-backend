@@ -16,6 +16,7 @@ import { config } from "./config";
 import { buildComparableEbayUrls, buildEbaySoldUrlFromText, extractCardAttributes } from "@tenkings/shared";
 import { extractTextFromImage } from "./processors/vision";
 import { estimateValue } from "./processors/valuation";
+import { matchPlayerFromOcr } from "./sportsdb/matcher";
 
 const JSON_NULL = null as unknown as Prisma.NullableJsonNullValueInput;
 const TRANSACTION_TIMEOUT_MS =
@@ -93,6 +94,10 @@ async function handleOcrJob(job: ProcessingJob) {
     vision.raw === null || vision.raw === undefined ? JSON_NULL : toInputJson(vision.raw);
   const normalizedOcr = vision.text ?? asset.ocrText ?? undefined;
   const attributes = extractCardAttributes(normalizedOcr);
+  const playerMatch = await matchPlayerFromOcr({
+    ocrText: normalizedOcr,
+    attributes,
+  });
   const generatedEbayUrl = buildEbaySoldUrlFromText(normalizedOcr);
   const comparableUrls = buildComparableEbayUrls({
     ocrText: normalizedOcr,
@@ -137,6 +142,11 @@ async function handleOcrJob(job: ProcessingJob) {
       if ((asset as any).ebaySoldUrlPlayerComp == null && comparableUrls.playerComp) {
         (updateData as any).ebaySoldUrlPlayerComp = comparableUrls.playerComp;
       }
+      (updateData as any).sportsDbPlayerId = playerMatch.playerId;
+      (updateData as any).sportsDbMatchConfidence = playerMatch.confidence;
+      (updateData as any).resolvedPlayerName = playerMatch.resolvedName;
+      (updateData as any).resolvedTeamName = playerMatch.resolvedTeam;
+      (updateData as any).playerStatsSnapshot = playerMatch.snapshot ?? JSON_NULL;
       await tx.cardAsset.update({
         where: { id: asset.id },
         data: updateData,

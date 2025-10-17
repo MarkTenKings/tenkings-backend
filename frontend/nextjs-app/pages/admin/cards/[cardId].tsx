@@ -44,6 +44,16 @@ type CardDetail = {
   updatedAt: string;
   humanReviewedAt: string | null;
   humanReviewerName: string | null;
+  sportsDb: {
+    playerId: string | null;
+    matchConfidence: number;
+    playerName: string | null;
+    teamName: string | null;
+    teamLogoUrl: string | null;
+    sport: string | null;
+    league: string | null;
+    snapshot: Record<string, unknown> | null;
+  };
 };
 
 type CardFormState = {
@@ -57,6 +67,35 @@ type CardFormState = {
   ebaySoldUrl: string;
   humanReviewed: boolean;
 };
+
+const STAT_LABELS: Record<string, string> = {
+  intGamesPlayed: "Games",
+  intPoints: "Points",
+  intGoals: "Goals",
+  intAssists: "Assists",
+  intWins: "Wins",
+  intLosses: "Losses",
+  intHomeRuns: "Home runs",
+  intRBIs: "RBIs",
+  intHits: "Hits",
+  intBattingAverage: "AVG",
+};
+
+function pickStatEntries(stats: Record<string, unknown> | null | undefined) {
+  if (!stats || typeof stats !== "object") {
+    return [] as Array<{ label: string; value: string }>;
+  }
+  const entries: Array<{ label: string; value: string }> = [];
+  for (const [key, label] of Object.entries(STAT_LABELS)) {
+    if (Object.prototype.hasOwnProperty.call(stats, key)) {
+      const raw = stats[key];
+      if (raw !== null && raw !== undefined && String(raw).trim().length > 0) {
+        entries.push({ label, value: String(raw) });
+      }
+    }
+  }
+  return entries;
+}
 
 export default function AdminCardDetail() {
   const router = useRouter();
@@ -129,6 +168,32 @@ export default function AdminCardDetail() {
 
     return entries.filter((entry) => entry.value.trim().length > 0);
   }, [card?.classification]);
+
+  const sportsDbSummary = useMemo(() => {
+    const summary = card?.sportsDb;
+    if (!summary) {
+      return null;
+    }
+    const rawSnapshot = summary.snapshot as Record<string, unknown> | null | undefined;
+    const seasons = Array.isArray((rawSnapshot as any)?.seasons)
+      ? ((rawSnapshot as any).seasons as Array<Record<string, unknown>>)
+      : [];
+    const latestSeason = seasons[0] ?? null;
+    const stats = latestSeason && typeof latestSeason === "object" && "stats" in latestSeason
+      ? (latestSeason.stats as Record<string, unknown> | null | undefined)
+      : null;
+
+    return {
+      playerName: summary.playerName,
+      teamName: summary.teamName,
+      teamLogoUrl: summary.teamLogoUrl,
+      matchConfidence: summary.matchConfidence,
+      sport: summary.sport,
+      league: summary.league,
+      seasonLabel: (latestSeason as Record<string, unknown> | null | undefined)?.season ?? null,
+      statEntries: pickStatEntries(stats ?? null),
+    };
+  }, [card?.sportsDb]);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -550,10 +615,10 @@ export default function AdminCardDetail() {
                   </p>
                 )}
 
-                {comparables.length > 0 && (
-                  <div className="mt-4 rounded-2xl border border-white/5 bg-night-900/60 p-4">
-                    <p className="text-[11px] uppercase tracking-[0.3em] text-sky-300">Quick eBay Links</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
+              {comparables.length > 0 && (
+                <div className="mt-4 rounded-2xl border border-white/5 bg-night-900/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.3em] text-sky-300">Quick eBay Links</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
                       {comparables.map(({ label, href }) => (
                         <Link
                           key={`${card.id}-preview-${label}`}
@@ -565,10 +630,63 @@ export default function AdminCardDetail() {
                           {label}
                         </Link>
                       ))}
-                    </div>
                   </div>
-                )}
-              </div>
+                </div>
+              )}
+            </div>
+
+              {sportsDbSummary && (
+                <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+                  <p className="text-[11px] uppercase tracking-[0.3em] text-emerald-300">SportsDB Match</p>
+                  <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div className="flex items-center gap-4">
+                      {sportsDbSummary.teamLogoUrl ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={sportsDbSummary.teamLogoUrl}
+                          alt={sportsDbSummary.teamName ?? "Team"}
+                          className="h-14 w-14 rounded-full border border-white/10 bg-night-800 object-contain p-2"
+                        />
+                      ) : (
+                        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                          No Logo
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-sm uppercase tracking-[0.25em] text-slate-200">
+                          {sportsDbSummary.playerName ?? "No player matched"}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          {sportsDbSummary.teamName ?? "Unknown team"}
+                        </p>
+                        <p className="text-[11px] uppercase tracking-[0.3em] text-emerald-300">
+                          Confidence {(sportsDbSummary.matchConfidence * 100).toFixed(0)}%
+                        </p>
+                        {(sportsDbSummary.sport || sportsDbSummary.league) && (
+                          <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                            {[sportsDbSummary.sport, sportsDbSummary.league].filter(Boolean).join(" · ")}
+                          </p>
+                        )}
+                        {sportsDbSummary.seasonLabel && (
+                          <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                            Latest season {sportsDbSummary.seasonLabel}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    {sportsDbSummary.statEntries.length > 0 && (
+                      <dl className="grid w-full grid-cols-2 gap-3 md:w-auto md:grid-cols-3">
+                        {sportsDbSummary.statEntries.map((entry) => (
+                          <div key={entry.label} className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-center">
+                            <dt className="text-[10px] uppercase tracking-[0.25em] text-emerald-200">{entry.label}</dt>
+                            <dd className="text-sm font-semibold text-emerald-100">{entry.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {attributeEntries.length > 0 && (
                 <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">

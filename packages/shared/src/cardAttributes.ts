@@ -380,6 +380,75 @@ function extractPlayerName(lines: string[]): string | null {
   return null;
 }
 
+function scoreCandidate(tokens: string[]): number {
+  if (tokens.length === 0) {
+    return 0;
+  }
+  const lengthScore = tokens.reduce((sum, token) => sum + Math.min(token.length, 12), 0);
+  const diversityScore = new Set(tokens.map((token) => token.toUpperCase())).size * 3;
+  return lengthScore + diversityScore + tokens.length * 5;
+}
+
+function fallbackPlayerName(lines: string[]): string | null {
+  const cleanedTokens = lines.flatMap((line) =>
+    line
+      .split(/[^A-Za-z']+/)
+      .map((piece) => piece.trim())
+      .filter((piece) => piece.length > 0)
+  );
+
+  const candidates: Array<{ tokens: string[]; score: number }> = [];
+
+  for (let i = 0; i < cleanedTokens.length; i += 1) {
+    const current: string[] = [];
+    for (let j = i; j < cleanedTokens.length && current.length < 3; j += 1) {
+      const token = cleanedTokens[j];
+      const upper = token.toUpperCase();
+      const isSuffix = PLAYER_SUFFIX_ALLOW.has(upper);
+
+      if (!isSuffix) {
+        if (PLAYER_STOPWORDS.has(upper) || TEAM_WORDS.has(upper)) {
+          break;
+        }
+        if (!/^[A-Za-z][A-Za-z'-]*$/.test(token)) {
+          break;
+        }
+      }
+
+      current.push(token);
+
+      const meaningfulCount = current.filter((value) => !PLAYER_SUFFIX_ALLOW.has(value.toUpperCase())).length;
+      if (meaningfulCount >= 2) {
+        const score = scoreCandidate(current);
+        candidates.push({ tokens: [...current], score });
+      }
+
+      if (!isSuffix && current.length >= 2) {
+        // allow a third token only if it is a suffix like Jr/III
+        const next = cleanedTokens[j + 1];
+        if (!next || !PLAYER_SUFFIX_ALLOW.has(next.toUpperCase())) {
+          break;
+        }
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  candidates.sort((a, b) => b.score - a.score);
+  return formatTitle(candidates[0].tokens);
+}
+
+function inferPlayerNameFromLines(lines: string[]): string | null {
+  const direct = extractPlayerName(lines);
+  if (direct) {
+    return direct;
+  }
+  return fallbackPlayerName(lines);
+}
+
 function extractTeamName(lines: string[]): string | null {
   for (const line of lines) {
     const tokens = line.split(/[^A-Za-z']+/).filter((piece) => piece.length > 0);
@@ -513,7 +582,7 @@ export function extractCardAttributes(
 
   const playerFromMatch =
     deriveBestMatchValue(bestMatch, "full_name") ?? deriveBestMatchValue(bestMatch, "name");
-  const playerName = playerFromMatch ?? extractPlayerName(lines);
+  const playerName = playerFromMatch ?? inferPlayerNameFromLines(lines);
 
   const teamFromMatch =
     deriveBestMatchValue(bestMatch, "team") ?? deriveBestMatchValue(bestMatch, "club");
@@ -539,4 +608,16 @@ export function extractCardAttributes(
     gradeCompany,
     gradeValue,
   };
+}
+
+export function inferPlayerNameFromText(ocrText: string | null | undefined): string | null {
+  const rawText = (ocrText ?? "").trim();
+  if (!rawText) {
+    return null;
+  }
+  const lines = rawText
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return inferPlayerNameFromLines(lines);
 }

@@ -1,11 +1,10 @@
-
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
@@ -89,31 +88,31 @@ enum PackTier {
 }
 
 model User {
-  id              String        @id @default(uuid())
-  email           String?       @unique
-  phone           String?       @unique
+  id              String          @id @default(uuid())
+  email           String?         @unique
+  phone           String?         @unique
   phoneVerifiedAt DateTime?
   displayName     String?
-  createdAt       DateTime      @default(now())
+  createdAt       DateTime        @default(now())
   wallet          Wallet?
   items           Item[]
   ownerships      ItemOwnership[]
-  listings        Listing[]     @relation("SellerListings")
+  listings        Listing[]       @relation("SellerListings")
   packs           PackInstance[]
   ingestions      IngestionTask[]
   cardBatches     CardBatch[]
   cardNotes       CardNote[]
-  reviewedCards   CardAsset[]   @relation("CardAssetHumanReviewer")
+  reviewedCards   CardAsset[]     @relation("CardAssetHumanReviewer")
   sessions        Session[]
 }
 
 model Wallet {
-  id           String             @id @default(uuid())
-  userId       String             @unique
-  balance      Int                @default(0)
-  createdAt    DateTime           @default(now())
-  updatedAt    DateTime           @updatedAt
-  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String              @id @default(uuid())
+  userId       String              @unique
+  balance      Int                 @default(0)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   transactions WalletTransaction[]
 }
 
@@ -177,55 +176,55 @@ model ItemOwnership {
 }
 
 model Listing {
-  id        String         @id @default(uuid())
-  itemId    String         @unique
+  id        String        @id @default(uuid())
+  itemId    String        @unique
   sellerId  String
   price     Int
-  status    ListingStatus  @default(ACTIVE)
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-  item      Item           @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  seller    User           @relation("SellerListings", fields: [sellerId], references: [id], onDelete: Cascade)
+  status    ListingStatus @default(ACTIVE)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  item      Item          @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  seller    User          @relation("SellerListings", fields: [sellerId], references: [id], onDelete: Cascade)
 }
 
 model PackDefinition {
-  id             String         @id @default(uuid())
+  id             String              @id @default(uuid())
   name           String
   description    String?
   price          Int
-  inventoryCount Int             @default(0)
+  inventoryCount Int                 @default(0)
   category       CollectibleCategory @default(SPORTS)
-  tier           PackTier           @default(TIER_50)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  tier           PackTier            @default(TIER_50)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
   packs          PackInstance[]
   cardAssets     CardAsset[]
 }
 
 model PackInstance {
-  id               String      @id @default(uuid())
+  id               String         @id @default(uuid())
   packDefinitionId String
   ownerId          String?
-  status           PackStatus  @default(UNOPENED)
-  createdAt        DateTime    @default(now())
+  status           PackStatus     @default(UNOPENED)
+  createdAt        DateTime       @default(now())
   openedAt         DateTime?
   packDefinition   PackDefinition @relation(fields: [packDefinitionId], references: [id], onDelete: Cascade)
-  owner            User?       @relation(fields: [ownerId], references: [id])
+  owner            User?          @relation(fields: [ownerId], references: [id])
   slots            PackSlot[]
 }
 
 model PackSlot {
-  id             String   @id @default(uuid())
+  id             String       @id @default(uuid())
   packInstanceId String
   itemId         String
   packInstance   PackInstance @relation(fields: [packInstanceId], references: [id], onDelete: Cascade)
-  item           Item     @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  item           Item         @relation(fields: [itemId], references: [id], onDelete: Cascade)
 }
 
 model IngestionTask {
   id         String          @id @default(uuid())
   externalId String?
-  status     IngestionStatus  @default(PENDING)
+  status     IngestionStatus @default(PENDING)
   itemId     String?         @unique
   ownerId    String
   rawPayload Json?
@@ -247,48 +246,56 @@ model CardBatch {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  uploadedBy User       @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  uploadedBy User        @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
   cards      CardAsset[]
 }
 
 model CardAsset {
-  id                    String           @id @default(uuid())
-  batchId               String
-  storageKey            String
-  fileName              String
-  fileSize              Int
-  mimeType              String
-  imageUrl              String
-  thumbnailUrl          String?
-  status                CardAssetStatus @default(UPLOADING)
-  ocrText               String?
-  ocrJson               Json?
-  classificationJson    Json?
-  valuationMinor        Int?
-  valuationCurrency     String?         @default("USD")
-  valuationSource       String?
-  marketplaceUrl        String?
-  assignedDefinitionId  String?
-  assignedAt            DateTime?
-  errorMessage          String?
-  createdAt             DateTime        @default(now())
-  updatedAt             DateTime        @updatedAt
-  processingStartedAt   DateTime?
-  processingCompletedAt DateTime?
-  customTitle           String?
-  customDetails         String?
-  ebaySoldUrl           String?
-  ebaySoldUrlVariant    String?
-  ebaySoldUrlHighGrade  String?
-  ebaySoldUrlPlayerComp String?
-  humanReviewedAt       DateTime?
-  humanReviewedById     String?
+  id                      String          @id @default(uuid())
+  batchId                 String
+  storageKey              String
+  fileName                String
+  fileSize                Int
+  mimeType                String
+  imageUrl                String
+  thumbnailUrl            String?
+  status                  CardAssetStatus @default(UPLOADING)
+  ocrText                 String?
+  ocrJson                 Json?
+  classificationJson      Json?
+  valuationMinor          Int?
+  valuationCurrency       String?         @default("USD")
+  valuationSource         String?
+  marketplaceUrl          String?
+  assignedDefinitionId    String?
+  assignedAt              DateTime?
+  errorMessage            String?
+  createdAt               DateTime        @default(now())
+  updatedAt               DateTime        @updatedAt
+  processingStartedAt     DateTime?
+  processingCompletedAt   DateTime?
+  customTitle             String?
+  customDetails           String?
+  ebaySoldUrl             String?
+  ebaySoldUrlVariant      String?
+  ebaySoldUrlHighGrade    String?
+  ebaySoldUrlPlayerComp   String?
+  humanReviewedAt         DateTime?
+  humanReviewedById       String?
+  sportsDbPlayerId        String?
+  sportsDbMatchConfidence Float?
+  resolvedPlayerName      String?
+  resolvedTeamName        String?
+  playerStatsSnapshot     Json?
 
-  batch              CardBatch      @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  batch              CardBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
   assignedDefinition PackDefinition? @relation(fields: [assignedDefinitionId], references: [id], onDelete: SetNull)
   notes              CardNote[]
   jobs               ProcessingJob[]
-  humanReviewer      User?          @relation("CardAssetHumanReviewer", fields: [humanReviewedById], references: [id])
+  humanReviewer      User?           @relation("CardAssetHumanReviewer", fields: [humanReviewedById], references: [id])
+  sportsDbPlayer     SportsDbPlayer? @relation(fields: [sportsDbPlayerId], references: [id], onDelete: SetNull)
+
+  @@index([sportsDbPlayerId])
 }
 
 model CardNote {
@@ -316,4 +323,65 @@ model ProcessingJob {
   updatedAt    DateTime            @updatedAt
 
   cardAsset CardAsset @relation(fields: [cardAssetId], references: [id], onDelete: Cascade)
+}
+
+model SportsDbTeam {
+  id             String    @id
+  name           String
+  alternateNames String[]  @default([])
+  sport          String
+  league         String?
+  city           String?
+  abbreviation   String?
+  logoUrl        String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  lastSyncedAt   DateTime?
+
+  players SportsDbPlayer[]
+
+  @@index([sport, league])
+  @@index([name])
+}
+
+model SportsDbPlayer {
+  id             String    @id
+  fullName       String
+  displayName    String?
+  alternateNames String[]  @default([])
+  sport          String
+  league         String?
+  nationality    String?
+  position       String?
+  birthDate      DateTime?
+  active         Boolean   @default(true)
+  teamId         String?
+  headshotUrl    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  lastSyncedAt   DateTime?
+
+  team       SportsDbTeam?          @relation(fields: [teamId], references: [id], onDelete: SetNull)
+  seasons    SportsDbPlayerSeason[]
+  cardAssets CardAsset[]
+
+  @@index([sport, league])
+  @@index([fullName])
+  @@index([teamId])
+}
+
+model SportsDbPlayerSeason {
+  id           String    @id @default(uuid())
+  playerId     String
+  season       String
+  league       String?
+  statsJson    Json
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastSyncedAt DateTime?
+
+  player SportsDbPlayer @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([playerId, season, league])
+  @@index([season])
 }
