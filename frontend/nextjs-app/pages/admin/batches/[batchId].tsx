@@ -6,6 +6,7 @@ import AppShell from "../../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
 import { useSession } from "../../../hooks/useSession";
 import { buildAdminHeaders } from "../../../lib/adminHeaders";
+import type { CardAttributes } from "@tenkings/shared";
 
 type BatchAsset = {
   id: string;
@@ -16,7 +17,7 @@ type BatchAsset = {
   mimeType: string;
   uploadedAt: string;
   ocrText: string | null;
-  classification: Record<string, unknown> | null;
+  classification: CardAttributes | null;
   customTitle: string | null;
   customDetails: string | null;
   valuationMinor: number | null;
@@ -43,6 +44,59 @@ type BatchDetail = {
   assets: BatchAsset[];
 };
 
+const buildTitleFromAttributes = (attributes: CardAttributes | null, fallback: string) => {
+  if (!attributes) {
+    return fallback;
+  }
+  const parts = [
+    attributes.year,
+    attributes.brand ?? attributes.setName,
+    attributes.playerName,
+    attributes.variantKeywords[0],
+  ].filter((part): part is string => Boolean(part && part.trim().length > 0));
+
+  return parts.length > 0 ? parts.join(" ") : fallback;
+};
+
+const buildAttributeTags = (attributes: CardAttributes | null): string[] => {
+  if (!attributes) {
+    return [];
+  }
+
+  const raw = [
+    attributes.playerName,
+    attributes.teamName,
+    ...attributes.variantKeywords.slice(0, 2),
+    attributes.serialNumber,
+    attributes.autograph ? "Autograph" : null,
+    attributes.memorabilia ? "Patch" : null,
+    attributes.rookie ? "Rookie" : null,
+    attributes.gradeValue
+      ? attributes.gradeCompany
+        ? `${attributes.gradeCompany} ${attributes.gradeValue}`
+        : attributes.gradeValue
+      : null,
+  ];
+
+  const seen = new Set<string>();
+  const tags: string[] = [];
+  for (const value of raw) {
+    if (typeof value !== "string") {
+      continue;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const key = trimmed.toUpperCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      tags.push(trimmed);
+    }
+  }
+  return tags;
+};
+
 type CardEditForm = {
   customTitle: string;
   customDetails: string;
@@ -55,7 +109,7 @@ type CardEditForm = {
   humanReviewed: boolean;
 };
 
- type CardApiResponse = {
+type CardApiResponse = {
   id: string;
   status: string;
   fileName: string;
@@ -63,7 +117,7 @@ type CardEditForm = {
   imageUrl: string;
   mimeType: string;
   ocrText: string | null;
-  classification: Record<string, unknown> | null;
+  classification: CardAttributes | null;
   customTitle: string | null;
   customDetails: string | null;
   valuationMinor: number | null;
@@ -696,12 +750,9 @@ const handleBulkSave = async (cardId: string) => {
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {batch.assets.map((asset) => {
                   const previewSrc = asset.imageUrl;
-                  const labels = Array.isArray(
-                    (asset.classification as { labels?: Array<{ label: string; score: number }> } | null)?.labels
-                  )
-                    ? ((asset.classification as { labels?: Array<{ label: string; score: number }> }).labels ?? [])
-                    : [];
-                  const displayTitle = asset.customTitle ?? (labels[0]?.label ?? asset.fileName);
+                  const attributes = asset.classification ?? null;
+                  const attributeTags = buildAttributeTags(attributes);
+                  const displayTitle = asset.customTitle ?? buildTitleFromAttributes(attributes, asset.fileName);
                   const valuationText =
                     asset.valuationMinor !== null
                       ? `${asset.valuationCurrency ?? "USD"} ${(asset.valuationMinor / 100).toFixed(2)}`
@@ -861,13 +912,13 @@ const handleBulkSave = async (cardId: string) => {
                                 </div>
                               )}
 
-                              {labels.length > 0 && (
+                              {attributeTags.length > 0 && (
                                 <div className="rounded-2xl border border-white/5 bg-night-900/60 p-3">
-                                  <p className="text-[11px] uppercase tracking-[0.25em] text-amber-300">Classification</p>
+                                  <p className="text-[11px] uppercase tracking-[0.25em] text-amber-300">Attributes</p>
                                   <ul className="flex flex-wrap gap-1 text-[11px] text-slate-200">
-                                    {labels.slice(0, 4).map((label, index) => (
-                                      <li key={`${asset.id}-label-${index}`} className="rounded-full bg-white/10 px-2 py-0.5">
-                                        {label.label} ({Math.round(label.score * 100)}%)
+                                    {attributeTags.slice(0, 6).map((tag) => (
+                                      <li key={`${asset.id}-${tag}`} className="rounded-full bg-white/10 px-2 py-0.5">
+                                        {tag}
                                       </li>
                                     ))}
                                   </ul>
@@ -985,13 +1036,13 @@ const handleBulkSave = async (cardId: string) => {
                           </div>
                         )}
 
-                        {labels.length > 0 && (
+                        {attributeTags.length > 0 && (
                           <div className="rounded-2xl border border-white/5 bg-night-900/60 p-3">
-                            <p className="text-[11px] uppercase tracking-[0.25em] text-amber-300">Classification</p>
+                            <p className="text-[11px] uppercase tracking-[0.25em] text-amber-300">Attributes</p>
                             <ul className="flex flex-wrap gap-1 text-[11px] text-slate-200">
-                              {labels.slice(0, 4).map((label, index) => (
-                                <li key={`${asset.id}-label-${index}`} className="rounded-full bg-white/10 px-2 py-0.5">
-                                  {label.label} ({Math.round(label.score * 100)}%)
+                              {attributeTags.slice(0, 6).map((tag) => (
+                                <li key={`${asset.id}-${tag}`} className="rounded-full bg-white/10 px-2 py-0.5">
+                                  {tag}
                                 </li>
                               ))}
                             </ul>

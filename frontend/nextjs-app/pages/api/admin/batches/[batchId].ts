@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { CardAssetStatus, prisma } from "@tenkings/database";
+import type { CardAttributes } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 interface BatchAssetSummary {
@@ -11,7 +12,7 @@ interface BatchAssetSummary {
   mimeType: string;
   uploadedAt: string;
   ocrText: string | null;
-  classification: Record<string, unknown> | null;
+  classification: CardAttributes | null;
   customTitle: string | null;
   customDetails: string | null;
   valuationMinor: number | null;
@@ -100,7 +101,7 @@ export default async function handler(
         mimeType: asset.mimeType,
         uploadedAt: asset.createdAt.toISOString(),
         ocrText: typeof asset.ocrText === "string" ? asset.ocrText : null,
-        classification: asset.classificationJson as Record<string, unknown> | null,
+        classification: asset.classificationJson as CardAttributes | null,
         customTitle: asset.customTitle ?? null,
         customDetails: asset.customDetails ?? null,
         valuationMinor: asset.valuationMinor ?? null,

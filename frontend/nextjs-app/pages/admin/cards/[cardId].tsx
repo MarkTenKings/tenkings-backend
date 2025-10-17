@@ -2,7 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
-import { buildEbaySoldUrlFromText } from "@tenkings/shared";
+import { buildEbaySoldUrlFromText, type CardAttributes } from "@tenkings/shared";
 import AppShell from "../../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
 import { useSession } from "../../../hooks/useSession";
@@ -26,7 +26,7 @@ type CardDetail = {
   thumbnailUrl: string | null;
   mimeType: string;
   ocrText: string | null;
-  classification: Record<string, unknown> | null;
+  classification: CardAttributes | null;
   customTitle: string | null;
   customDetails: string | null;
   valuationMinor: number | null;
@@ -87,6 +87,48 @@ export default function AdminCardDetail() {
     const reviewedAt = new Date(card.humanReviewedAt).toLocaleString();
     return card.humanReviewerName ? `${reviewedAt} · ${card.humanReviewerName}` : reviewedAt;
   }, [card]);
+
+  const attributeEntries = useMemo(() => {
+    const attributes = card?.classification;
+    if (!attributes) {
+      return [] as Array<{ label: string; value: string }>;
+    }
+
+    const entries: Array<{ label: string; value: string }> = [];
+
+    if (attributes.playerName) {
+      entries.push({ label: "Player", value: attributes.playerName });
+    }
+    if (attributes.teamName) {
+      entries.push({ label: "Team", value: attributes.teamName });
+    }
+    if (attributes.year) {
+      entries.push({ label: "Year", value: attributes.year });
+    }
+    if (attributes.brand) {
+      entries.push({ label: "Brand", value: attributes.brand });
+    }
+    if (attributes.setName) {
+      entries.push({ label: "Set", value: attributes.setName });
+    }
+    if (attributes.variantKeywords.length > 0) {
+      entries.push({ label: "Variants", value: attributes.variantKeywords.join(", ") });
+    }
+    if (attributes.serialNumber) {
+      entries.push({ label: "Serial", value: attributes.serialNumber });
+    }
+    if (attributes.gradeValue) {
+      const gradeLabel = attributes.gradeCompany
+        ? `${attributes.gradeCompany} ${attributes.gradeValue}`
+        : attributes.gradeValue;
+      entries.push({ label: "Grade", value: gradeLabel });
+    }
+    entries.push({ label: "Rookie", value: attributes.rookie ? "Yes" : "No" });
+    entries.push({ label: "Autograph", value: attributes.autograph ? "Yes" : "No" });
+    entries.push({ label: "Memorabilia", value: attributes.memorabilia ? "Yes" : "No" });
+
+    return entries.filter((entry) => entry.value.trim().length > 0);
+  }, [card?.classification]);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -309,16 +351,6 @@ export default function AdminCardDetail() {
     }
   };
 
-  const classification = card?.classification as
-    | {
-        endpoint?: string;
-        labels?: Array<{ label: string; score: number }>;
-        tags?: string[];
-        bestMatch?: Record<string, unknown> | null;
-      }
-    | null
-    | undefined;
-
   return (
     <AppShell>
       <Head>
@@ -445,7 +477,7 @@ export default function AdminCardDetail() {
                 <div className="rounded-3xl border border-white/10 bg-night-900/60 p-4">
                   <p className="text-[11px] uppercase tracking-[0.3em] text-sky-300">eBay Sold Comparables</p>
                   <p className="mt-1 text-[11px] text-slate-400">
-                    Generated from OCR and classification. Use these quick links when you need broader comps.
+                    Generated from OCR attributes. Use these quick links when you need broader comps.
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {comparables.map(({ label, href }) => (
@@ -534,45 +566,17 @@ export default function AdminCardDetail() {
                 )}
               </div>
 
-              {classification && (
+              {attributeEntries.length > 0 && (
                 <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-                  <p className="text-[11px] uppercase tracking-[0.3em] text-amber-300">Classification Data</p>
-                  {classification.endpoint && (
-                    <p className="mt-2 text-xs text-slate-300">Endpoint: {classification.endpoint}</p>
-                  )}
-                  {Array.isArray(classification.labels) && classification.labels.length > 0 && (
-                    <div className="mt-3">
-                      <p className="text-[11px] uppercase tracking-[0.25em] text-slate-400">Labels</p>
-                      <ul className="mt-1 flex flex-wrap gap-1 text-[11px] text-slate-200">
-                        {classification.labels.map((label, index) => (
-                          <li key={`${card.id}-label-${index}`} className="rounded-full bg-white/10 px-2 py-0.5">
-                            {label.label} ({Math.round(label.score * 100)}%)
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  {Array.isArray(classification.tags) && classification.tags.length > 0 && (
-                    <div className="mt-3">
-                      <p className="text-[11px] uppercase tracking-[0.25em] text-slate-400">Tags</p>
-                      <p className="text-xs text-slate-300">{classification.tags.join(", ")}</p>
-                    </div>
-                  )}
-                  {classification.bestMatch && (
-                    <div className="mt-3">
-                      <p className="text-[11px] uppercase tracking-[0.25em] text-slate-400">Best Match</p>
-                      <dl className="mt-1 grid grid-cols-1 gap-1 text-xs text-slate-300">
-                        {Object.entries(classification.bestMatch)
-                          .filter(([, value]) => value !== null && value !== "")
-                          .map(([key, value]) => (
-                            <div key={key} className="flex justify-between gap-4">
-                              <dt className="uppercase tracking-[0.2em] text-slate-500">{key}</dt>
-                              <dd className="text-right text-slate-200">{String(value)}</dd>
-                            </div>
-                          ))}
-                      </dl>
-                    </div>
-                  )}
+                  <p className="text-[11px] uppercase tracking-[0.3em] text-amber-300">Detected Attributes</p>
+                  <dl className="mt-3 grid grid-cols-1 gap-2 text-xs text-slate-200">
+                    {attributeEntries.map((entry) => (
+                      <div key={entry.label} className="flex justify-between gap-4">
+                        <dt className="uppercase tracking-[0.25em] text-slate-500">{entry.label}</dt>
+                        <dd className="text-right text-slate-200">{entry.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
                 </div>
               )}
 

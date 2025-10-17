@@ -45,3 +45,5 @@ export {
   buildComparableEbayUrls,
 } from "./ebay";
 export type { EbayComparableUrls } from "./ebay";
+export type { CardAttributes, AttributeExtractionOptions } from "./cardAttributes";
+export { extractCardAttributes } from "./cardAttributes";

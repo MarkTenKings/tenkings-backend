@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, Prisma } from "@tenkings/database";
-import { buildEbaySoldUrlFromText } from "@tenkings/shared";
+import { buildEbaySoldUrlFromText, type CardAttributes } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 interface CardNotePayload {
@@ -21,7 +21,7 @@ interface CardResponse {
   thumbnailUrl: string | null;
   mimeType: string;
   ocrText: string | null;
-  classification: Record<string, unknown> | null;
+  classification: CardAttributes | null;
   customTitle: string | null;
   customDetails: string | null;
   valuationMinor: number | null;
@@ -88,7 +88,7 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     thumbnailUrl: card.thumbnailUrl,
     mimeType: card.mimeType,
     ocrText: card.ocrText,
-    classification: (card.classificationJson as Record<string, unknown> | null) ?? null,
+    classification: (card.classificationJson as CardAttributes | null) ?? null,
     customTitle: card.customTitle ?? null,
     customDetails: card.customDetails ?? null,
     valuationMinor: card.valuationMinor ?? null,

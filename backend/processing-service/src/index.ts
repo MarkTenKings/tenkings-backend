@@ -12,7 +12,7 @@ import {
   type ProcessingJob,
 } from "@tenkings/database";
 import { config } from "./config";
-import { buildComparableEbayUrls, buildEbaySoldUrlFromText } from "@tenkings/shared";
+import { buildComparableEbayUrls, buildEbaySoldUrlFromText, extractCardAttributes } from "@tenkings/shared";
 import { extractTextFromImage } from "./processors/vision";
 import { estimateValue } from "./processors/valuation";
 
@@ -97,8 +97,13 @@ async function handleOcrJob(job: ProcessingJob) {
   const vision = await extractTextFromImage(base64);
   const ocrJson =
     vision.raw === null || vision.raw === undefined ? JSON_NULL : toInputJson(vision.raw);
-  const generatedEbayUrl = buildEbaySoldUrlFromText(vision.text ?? asset.ocrText ?? undefined);
-  const comparableUrls = buildComparableEbayUrls({ ocrText: vision.text ?? asset.ocrText ?? undefined });
+  const normalizedOcr = vision.text ?? asset.ocrText ?? undefined;
+  const attributes = extractCardAttributes(normalizedOcr);
+  const generatedEbayUrl = buildEbaySoldUrlFromText(normalizedOcr);
+  const comparableUrls = buildComparableEbayUrls({
+    ocrText: normalizedOcr,
+    attributes,
+  });
 
   await prisma.$transaction(
     async (tx) => {
@@ -107,6 +112,7 @@ async function handleOcrJob(job: ProcessingJob) {
         status: CardAssetStatus.OCR_COMPLETE,
         ocrText: vision.text,
         ocrJson,
+        classificationJson: toInputJson(attributes),
         errorMessage: null,
       };
       if (!existingEbayUrl && generatedEbayUrl) {
@@ -156,7 +162,6 @@ async function handleClassifyJob(job: ProcessingJob) {
         where: { id: asset.id },
         data: {
           status: CardAssetStatus.VALUATION_PENDING,
-          classificationJson: JSON_NULL,
           errorMessage: null,
         },
       });
