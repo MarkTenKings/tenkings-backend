@@ -61,11 +61,13 @@ export default async function handler(
     const storageKey = buildStorageKey(admin.user.id, assetId, fileName);
     const mode = getStorageMode();
 
-    if (mode !== "local") {
-      throw new Error("S3 storage mode is not configured yet. Set CARD_STORAGE_MODE=local for dev uploads.");
+    if (mode === "s3") {
+      throw new Error("S3 storage mode is not configured yet. Set CARD_STORAGE_MODE=local or mock.");
     }
 
-    await ensureLocalRoot();
+    if (mode === "local") {
+      await ensureLocalRoot();
+    }
 
     const batch = await prisma.$transaction(async (tx) => {
       let activeBatchId = batchId ?? null;
@@ -106,7 +108,7 @@ export default async function handler(
       });
     });
 
-    const uploadUrl = mode === "local"
+    const uploadUrl = mode === "local" || mode === "mock"
       ? `/api/admin/uploads/file?assetId=${assetId}`
       : "https://example-upload-configure-s3";
 

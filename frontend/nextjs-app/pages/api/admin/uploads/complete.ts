@@ -6,6 +6,7 @@ import {
   enqueueProcessingJob,
   prisma,
 } from "@tenkings/database";
+import { getStorageMode } from "../../../../lib/server/storage";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 interface CompletePayload {
@@ -41,10 +42,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(403).json({ message: "You do not own this batch" });
     }
 
+    const storageMode = getStorageMode();
+    const mockMode = storageMode === "mock";
+
     const updates: Prisma.CardAssetUpdateInput = {
-      status: CardAssetStatus.OCR_PENDING,
-      processingStartedAt: null,
-      processingCompletedAt: null,
+      status: mockMode ? CardAssetStatus.READY : CardAssetStatus.OCR_PENDING,
+      processingStartedAt: mockMode ? new Date() : null,
+      processingCompletedAt: mockMode ? new Date() : null,
       errorMessage: null,
     };
 
@@ -66,11 +70,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         data: updates,
       });
 
-      await enqueueProcessingJob({
-        client: tx,
-        cardAssetId: asset.id,
-        type: ProcessingJobType.OCR,
-      });
+      if (mockMode) {
+        await tx.cardBatch.update({
+          where: { id: asset.batchId },
+          data: {
+            processedCount: { increment: 1 },
+          },
+        });
+      } else {
+        await enqueueProcessingJob({
+          client: tx,
+          cardAssetId: asset.id,
+          type: ProcessingJobType.OCR,
+        });
+      }
     });
 
     return res.status(200).json({ message: "Upload recorded." });

@@ -25,8 +25,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const mode = getStorageMode();
-    if (mode !== "local") {
-      return res.status(400).json({ message: "Direct uploads are only supported in local storage mode" });
+    if (mode === "s3") {
+      return res.status(400).json({ message: "Direct uploads are only supported in local or mock storage modes" });
     }
 
     const asset = await prisma.cardAsset.findUnique({
@@ -56,7 +56,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(400).json({ message: "Uploaded file exceeds limit" });
     }
 
-    await writeLocalFile(asset.storageKey, buffer);
+    if (mode === "local") {
+      await writeLocalFile(asset.storageKey, buffer);
+    }
+
+    const mimeType = (req.headers["content-type"] as string | undefined) ?? asset.mimeType ?? "application/octet-stream";
+    const base64 = buffer.toString("base64");
+
+    await prisma.cardAsset.update({
+      where: { id: assetId },
+      data: {
+        imageUrl: `data:${mimeType};base64,${base64}`,
+      },
+    });
 
     return res.status(200).json({ message: "File stored" });
   } catch (error) {

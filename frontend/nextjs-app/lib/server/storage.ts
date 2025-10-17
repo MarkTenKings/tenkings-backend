@@ -4,11 +4,12 @@ import { promises as fs } from "node:fs";
 const DEFAULT_MODE = "local";
 const DEFAULT_PUBLIC_PREFIX = "/uploads/cards";
 
-const mode = (process.env.CARD_STORAGE_MODE ?? DEFAULT_MODE).toLowerCase();
+const rawMode = (process.env.CARD_STORAGE_MODE ?? DEFAULT_MODE).toLowerCase();
+const mode = rawMode === "mock" ? "mock" : rawMode;
 const publicPrefix = (process.env.CARD_STORAGE_PUBLIC_PREFIX ?? DEFAULT_PUBLIC_PREFIX).replace(/\/$/, "");
 const localRoot = process.env.CARD_STORAGE_LOCAL_ROOT ?? path.join(process.cwd(), "public/uploads/cards");
 
-export type StorageMode = "local" | "s3";
+export type StorageMode = "local" | "s3" | "mock";
 
 export interface StoragePlan {
   mode: StorageMode;
@@ -20,6 +21,9 @@ export interface StoragePlan {
 }
 
 export function getStorageMode(): StorageMode {
+  if (mode === "mock") {
+    return "mock";
+  }
   return mode === "s3" ? "s3" : "local";
 }
 
