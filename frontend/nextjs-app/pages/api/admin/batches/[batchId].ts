@@ -9,6 +9,7 @@ interface BatchAssetSummary {
   fileName: string;
   fileSize: number;
   imageUrl: string;
+  thumbnailUrl: string | null;
   mimeType: string;
   uploadedAt: string;
   ocrText: string | null;
@@ -98,6 +99,7 @@ export default async function handler(
         fileName: asset.fileName,
         fileSize: asset.fileSize,
         imageUrl: asset.imageUrl,
+        thumbnailUrl: asset.thumbnailUrl ?? null,
         mimeType: asset.mimeType,
         uploadedAt: asset.createdAt.toISOString(),
         ocrText: typeof asset.ocrText === "string" ? asset.ocrText : null,

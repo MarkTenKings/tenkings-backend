@@ -30,10 +30,18 @@ const localRootFallback = path.resolve(
     path.join(process.cwd(), "../../frontend/nextjs-app/public/uploads/cards")
 );
 
+function parsePositiveInt(value: string | undefined, fallback: number, minimum = 1) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric < minimum) {
+    return fallback;
+  }
+  return Math.max(minimum, Math.floor(numeric));
+}
+
 export const config = {
-  pollIntervalMs: Number(process.env.PROCESSING_POLL_INTERVAL_MS ?? 5000),
-  maxRetries: Number(process.env.PROCESSING_JOB_RETRIES ?? 3),
-  transactionTimeoutMs: Number(process.env.PROCESSING_TX_TIMEOUT_MS ?? 15000),
+  pollIntervalMs: parsePositiveInt(process.env.PROCESSING_POLL_INTERVAL_MS, 1500, 250),
+  maxRetries: parsePositiveInt(process.env.PROCESSING_JOB_RETRIES, 3, 0),
+  transactionTimeoutMs: parsePositiveInt(process.env.PROCESSING_TX_TIMEOUT_MS, 15000, 1000),
   storageMode: (process.env.CARD_STORAGE_MODE ?? "local").toLowerCase(),
   localStorageRoot: localRootFallback,
   googleVisionApiKey: process.env.GOOGLE_VISION_API_KEY ?? null,
@@ -42,4 +50,5 @@ export const config = {
   ximilarMaxImageBytes: Number(process.env.XIMILAR_MAX_IMAGE_BYTES ?? 2_500_000),
   ebayBearerToken: process.env.EBAY_BEARER_TOKEN ?? null,
   ebayMarketplaceId: process.env.EBAY_MARKETPLACE_ID ?? "EBAY_US",
+  concurrency: parsePositiveInt(process.env.PROCESSING_CONCURRENCY, 1, 1),
 };

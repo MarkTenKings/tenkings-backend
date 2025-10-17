@@ -526,7 +526,11 @@ export default function AdminCardDetail() {
                 <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Card Preview</p>
                 <div className="mt-3 aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-800">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={card.imageUrl} alt={card.fileName} className="h-full w-full object-cover" />
+                  <img
+                    src={card.thumbnailUrl ?? card.imageUrl}
+                    alt={card.fileName}
+                    className="h-full w-full object-cover"
+                  />
                 </div>
                 {humanReviewSummary ? (
                   <div className="mt-3 inline-flex flex-wrap items-center gap-2 rounded-full bg-emerald-500/15 px-3 py-1 text-[10px] uppercase tracking-[0.25em] text-emerald-200">

@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import sharp from "sharp";
 import {
   type Prisma,
   CardAssetStatus,
@@ -89,7 +90,8 @@ async function handleOcrJob(job: ProcessingJob) {
 
   const existingEbayUrl = (asset as unknown as { ebaySoldUrl?: string | null }).ebaySoldUrl ?? null;
   const startedAt = asset.processingStartedAt ?? new Date();
-  const base64 = await loadAssetBase64(asset);
+  const buffer = await loadAssetBuffer(asset);
+  const base64 = buffer.toString("base64");
   console.log(
     `[processing-service] OCR begin asset=${asset.id} visionKey=${Boolean(config.googleVisionApiKey)} storageMode=${config.storageMode}`
   );
@@ -105,6 +107,19 @@ async function handleOcrJob(job: ProcessingJob) {
     attributes,
   });
 
+  let thumbnailDataUrl: string | null = null;
+  try {
+    const thumbnailBuffer = await sharp(buffer)
+      .rotate()
+      .resize({ width: 512, height: 512, fit: "inside", withoutEnlargement: true })
+      .webp({ quality: 80 })
+      .toBuffer();
+    thumbnailDataUrl = `data:image/webp;base64,${thumbnailBuffer.toString("base64")}`;
+  } catch (thumbnailError) {
+    const message = thumbnailError instanceof Error ? thumbnailError.message : String(thumbnailError);
+    console.warn(`[processing-service] failed to generate thumbnail for asset ${asset.id}: ${message}`);
+  }
+
   await prisma.$transaction(
     async (tx) => {
       const updateData: Prisma.CardAssetUpdateInput = {
@@ -115,6 +130,9 @@ async function handleOcrJob(job: ProcessingJob) {
         classificationJson: toInputJson(attributes),
         errorMessage: null,
       };
+      if (thumbnailDataUrl) {
+        (updateData as any).thumbnailUrl = thumbnailDataUrl;
+      }
       if (!existingEbayUrl && generatedEbayUrl) {
         (updateData as any).ebaySoldUrl = generatedEbayUrl;
       }
@@ -240,8 +258,10 @@ async function processJob(job: ProcessingJob) {
   }
 }
 
-async function runLoop() {
-  console.log("[processing-service] worker online, polling interval", config.pollIntervalMs, "ms");
+async function workerLoop(workerId: number) {
+  console.log(
+    `[processing-service] worker ${workerId} online (poll interval ${config.pollIntervalMs}ms)`
+  );
   while (true) {
     const job = await fetchNextQueuedJob();
     if (!job) {
@@ -249,12 +269,14 @@ async function runLoop() {
       continue;
     }
 
-    console.log("[processing-service] picked job", job.id, job.type);
+    console.log(
+      `[processing-service] worker ${workerId} picked job ${job.id} (${job.type})`
+    );
 
     try {
       await runWithRetries(() => processJob(job), job.id, config.maxRetries);
       await markJobStatus(job.id, ProcessingJobStatus.COMPLETE);
-      console.log("[processing-service] job", job.id, "completed");
+      console.log(`[processing-service] worker ${workerId} completed job ${job.id}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown failure";
       await prisma.cardAsset.update({
@@ -265,12 +287,22 @@ async function runLoop() {
         },
       });
       await markJobStatus(job.id, ProcessingJobStatus.FAILED, message);
-      console.error("[processing-service] job", job.id, "failed:", message);
+      console.error(
+        `[processing-service] worker ${workerId} job ${job.id} failed: ${message}`
+      );
     }
   }
 }
 
-runLoop().catch((error) => {
+async function runWorkers() {
+  const workerCount = Math.max(1, config.concurrency);
+  console.log(`[processing-service] starting ${workerCount} worker(s)`);
+  await Promise.all(
+    Array.from({ length: workerCount }, (_, index) => workerLoop(index + 1))
+  );
+}
+
+runWorkers().catch((error) => {
   console.error("[processing-service] fatal error", error);
   process.exit(1);
 });

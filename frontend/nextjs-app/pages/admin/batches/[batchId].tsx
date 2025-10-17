@@ -14,6 +14,7 @@ type BatchAsset = {
   fileName: string;
   fileSize: number;
   imageUrl: string;
+  thumbnailUrl: string | null;
   mimeType: string;
   uploadedAt: string;
   ocrText: string | null;
@@ -115,6 +116,7 @@ type CardApiResponse = {
   fileName: string;
   fileSize: number;
   imageUrl: string;
+  thumbnailUrl: string | null;
   mimeType: string;
   ocrText: string | null;
   classification: CardAttributes | null;
@@ -749,7 +751,7 @@ const handleBulkSave = async (cardId: string) => {
 
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
                 {batch.assets.map((asset) => {
-                  const previewSrc = asset.imageUrl;
+                  const previewSrc = asset.thumbnailUrl ?? asset.imageUrl;
                   const attributes = asset.classification ?? null;
                   const attributeTags = buildAttributeTags(attributes);
                   const displayTitle = asset.customTitle ?? buildTitleFromAttributes(attributes, asset.fileName);
