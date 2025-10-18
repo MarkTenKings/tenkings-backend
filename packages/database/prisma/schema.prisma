@@ -263,6 +263,7 @@ model CardAsset {
   ocrText                 String?
   ocrJson                 Json?
   classificationJson      Json?
+  classificationSourcesJson Json?
   valuationMinor          Int?
   valuationCurrency       String?         @default("USD")
   valuationSource         String?
@@ -280,6 +281,7 @@ model CardAsset {
   ebaySoldUrlVariant      String?
   ebaySoldUrlHighGrade    String?
   ebaySoldUrlPlayerComp   String?
+  ebaySoldUrlAiGrade      String?
   humanReviewedAt         DateTime?
   humanReviewedById       String?
   sportsDbPlayerId        String?
@@ -287,6 +289,13 @@ model CardAsset {
   resolvedPlayerName      String?
   resolvedTeamName        String?
   playerStatsSnapshot     Json?
+  aiGradingJson           Json?
+  aiGradeFinal            Float?
+  aiGradeLabel            String?
+  aiGradePsaEquivalent    Int?
+  aiGradeRangeLow         Int?
+  aiGradeRangeHigh        Int?
+  aiGradeGeneratedAt      DateTime?
 
   batch              CardBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
   assignedDefinition PackDefinition? @relation(fields: [assignedDefinitionId], references: [id], onDelete: SetNull)

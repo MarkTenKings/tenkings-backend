@@ -37,6 +37,7 @@ type CardDetail = {
   ebaySoldUrlVariant: string | null;
   ebaySoldUrlHighGrade: string | null;
   ebaySoldUrlPlayerComp: string | null;
+  ebaySoldUrlAiGrade: string | null;
   assignedDefinitionId: string | null;
   assignedAt: string | null;
   notes: CardNote[];
@@ -54,6 +55,17 @@ type CardDetail = {
     league: string | null;
     snapshot: Record<string, unknown> | null;
   };
+  aiGrade: {
+    final: number | null;
+    label: string | null;
+    psaEquivalent: number | null;
+    rangeLow: number | null;
+    rangeHigh: number | null;
+    generatedAt: string | null;
+    visualizationUrl: string | null;
+    exactVisualizationUrl: string | null;
+  } | null;
+  classificationSources: Record<string, unknown> | null;
 };
 
 type CardFormState = {
@@ -116,6 +128,14 @@ export default function AdminCardDetail() {
       card.ebaySoldUrlVariant ? { label: "Variant search", href: card.ebaySoldUrlVariant } : null,
       card.ebaySoldUrlHighGrade ? { label: "High grade comps", href: card.ebaySoldUrlHighGrade } : null,
       card.ebaySoldUrlPlayerComp ? { label: "Player comps", href: card.ebaySoldUrlPlayerComp } : null,
+      card.ebaySoldUrlAiGrade
+        ? {
+            label: card.aiGrade?.psaEquivalent
+              ? `AI grade comps (PSA ${card.aiGrade.psaEquivalent})`
+              : "AI grade comps",
+            href: card.ebaySoldUrlAiGrade,
+          }
+        : null,
     ].filter((link): link is { label: string; href: string } => Boolean(link));
   }, [card]);
 
@@ -645,7 +665,60 @@ export default function AdminCardDetail() {
               )}
             </div>
 
-              {sportsDbSummary && (
+            {card.aiGrade && (
+              <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+                <p className="text-[11px] uppercase tracking-[0.3em] text-indigo-300">AI Grading Estimate</p>
+                <div className="mt-4 flex flex-col gap-2 text-sm text-slate-200">
+                  <p className="text-lg font-semibold uppercase tracking-[0.25em] text-white">
+                    {card.aiGrade.final !== null ? `Grade ${card.aiGrade.final.toFixed(1)}` : "Pending"}
+                  </p>
+                  {card.aiGrade.psaEquivalent !== null && (
+                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+                      PSA Estimate · {card.aiGrade.psaEquivalent}
+                    </p>
+                  )}
+                  {card.aiGrade.rangeLow !== null && card.aiGrade.rangeHigh !== null && (
+                    <p className="text-xs text-slate-400">
+                      Likely range: PSA {card.aiGrade.rangeLow} – PSA {card.aiGrade.rangeHigh}
+                    </p>
+                  )}
+                  {card.aiGrade.label && (
+                    <p className="text-xs uppercase tracking-[0.28em] text-emerald-300">Condition {card.aiGrade.label}</p>
+                  )}
+                  {card.aiGrade.generatedAt && (
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                      Generated {new Date(card.aiGrade.generatedAt).toLocaleString()}
+                    </p>
+                  )}
+                </div>
+                {(card.aiGrade.visualizationUrl || card.aiGrade.exactVisualizationUrl) && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {card.aiGrade.visualizationUrl && (
+                      <a
+                        href={card.aiGrade.visualizationUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center rounded-full border border-indigo-400/40 px-4 py-1 text-[11px] uppercase tracking-[0.28em] text-indigo-200 transition hover:border-indigo-300 hover:text-indigo-100"
+                      >
+                        View overlays
+                      </a>
+                    )}
+                    {card.aiGrade.exactVisualizationUrl && (
+                      <a
+                        href={card.aiGrade.exactVisualizationUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center justify-center rounded-full border border-indigo-400/40 px-4 py-1 text-[11px] uppercase tracking-[0.28em] text-indigo-200 transition hover:border-indigo-300 hover:text-indigo-100"
+                      >
+                        Centering view
+                      </a>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {sportsDbSummary && (
                 <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
                   <p className="text-[11px] uppercase tracking-[0.3em] text-emerald-300">SportsDB Match</p>
                   <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">

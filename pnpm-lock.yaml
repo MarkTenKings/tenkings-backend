@@ -319,18 +319,18 @@ importers:
       '@prisma/client':
         specifier: ^5.22.0
         version: 5.22.0(prisma@5.22.0)
-      '@tenkings/database':
-        specifier: workspace:*
-        version: link:../packages/database
-      '@tenkings/shared':
-        specifier: workspace:*
-        version: link:../packages/shared
       '@stripe/react-stripe-js':
         specifier: ^2.3.4
         version: 2.9.0(@stripe/stripe-js@3.5.0)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@stripe/stripe-js':
         specifier: ^3.4.1
         version: 3.5.0
+      '@tenkings/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@tenkings/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       next:
         specifier: 14.2.5
         version: 14.2.5(react-dom@18.3.1(react@18.3.1))(react@18.3.1)

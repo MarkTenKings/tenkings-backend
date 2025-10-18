@@ -29,6 +29,15 @@ type BatchAsset = {
   ebaySoldUrlVariant: string | null;
   ebaySoldUrlHighGrade: string | null;
   ebaySoldUrlPlayerComp: string | null;
+  ebaySoldUrlAiGrade: string | null;
+  aiGrade: {
+    final: number | null;
+    label: string | null;
+    psaEquivalent: number | null;
+    rangeLow: number | null;
+    rangeHigh: number | null;
+    generatedAt: string | null;
+  } | null;
   assignedDefinitionId: string | null;
   humanReviewedAt: string | null;
   humanReviewerName: string | null;
@@ -199,6 +208,15 @@ type CardApiResponse = {
   ebaySoldUrlVariant: string | null;
   ebaySoldUrlHighGrade: string | null;
   ebaySoldUrlPlayerComp: string | null;
+  ebaySoldUrlAiGrade: string | null;
+  aiGrade: {
+    final: number | null;
+    label: string | null;
+    psaEquivalent: number | null;
+    rangeLow: number | null;
+    rangeHigh: number | null;
+    generatedAt: string | null;
+  } | null;
   assignedDefinitionId: string | null;
   assignedAt: string | null;
   humanReviewedAt: string | null;
@@ -676,6 +694,8 @@ const handleBulkSave = async (cardId: string) => {
           ebaySoldUrlVariant: updated.ebaySoldUrlVariant,
           ebaySoldUrlHighGrade: updated.ebaySoldUrlHighGrade,
           ebaySoldUrlPlayerComp: updated.ebaySoldUrlPlayerComp,
+          ebaySoldUrlAiGrade: updated.ebaySoldUrlAiGrade,
+          aiGrade: updated.aiGrade,
           humanReviewedAt: updated.humanReviewedAt,
           humanReviewerName: updated.humanReviewerName,
         };
@@ -855,6 +875,14 @@ const handleBulkSave = async (cardId: string) => {
                     asset.ebaySoldUrlVariant ? { label: "Variant search", href: asset.ebaySoldUrlVariant } : null,
                     asset.ebaySoldUrlHighGrade ? { label: "High grade comps", href: asset.ebaySoldUrlHighGrade } : null,
                     asset.ebaySoldUrlPlayerComp ? { label: "Player comps", href: asset.ebaySoldUrlPlayerComp } : null,
+                    asset.ebaySoldUrlAiGrade
+                      ? {
+                          label: asset.aiGrade?.psaEquivalent
+                            ? `AI grade comps (PSA ${asset.aiGrade.psaEquivalent})`
+                            : "AI grade comps",
+                          href: asset.ebaySoldUrlAiGrade,
+                        }
+                      : null,
                   ].filter((link): link is { label: string; href: string } => Boolean(link));
                   const humanReviewSummary = asset.humanReviewedAt
                     ? `Reviewed ${new Date(asset.humanReviewedAt).toLocaleString()}${
@@ -1227,6 +1255,30 @@ const handleBulkSave = async (cardId: string) => {
                               >
                                 View comparable
                               </Link>
+                            )}
+                          </div>
+                        )}
+
+                        {asset.aiGrade && (
+                          <div className="rounded-2xl border border-white/5 bg-night-900/60 p-3">
+                            <p className="text-[11px] uppercase tracking-[0.25em] text-indigo-300">AI Grade</p>
+                            <p className="text-xs text-slate-200">
+                              {asset.aiGrade.final !== null
+                                ? `Grade ${asset.aiGrade.final.toFixed(1)}`
+                                : "Pending"}
+                              {asset.aiGrade.psaEquivalent !== null
+                                ? ` · PSA ${asset.aiGrade.psaEquivalent}`
+                                : ""}
+                            </p>
+                            {asset.aiGrade.rangeLow !== null && asset.aiGrade.rangeHigh !== null && (
+                              <p className="text-[11px] text-slate-400">
+                                Range {asset.aiGrade.rangeLow} – {asset.aiGrade.rangeHigh}
+                              </p>
+                            )}
+                            {asset.aiGrade.label && (
+                              <p className="text-[10px] uppercase tracking-[0.25em] text-emerald-300">
+                                {asset.aiGrade.label}
+                              </p>
                             )}
                           </div>
                         )}

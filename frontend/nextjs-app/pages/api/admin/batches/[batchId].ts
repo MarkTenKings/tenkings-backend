@@ -24,6 +24,12 @@ interface BatchAssetSummary {
   ebaySoldUrlVariant: string | null;
   ebaySoldUrlHighGrade: string | null;
   ebaySoldUrlPlayerComp: string | null;
+  ebaySoldUrlAiGrade: string | null;
+  aiGrade: {
+    final: number | null;
+    label: string | null;
+    psaEquivalent: number | null;
+  } | null;
   assignedDefinitionId: string | null;
   humanReviewedAt: string | null;
   humanReviewerName: string | null;
@@ -139,6 +145,15 @@ export default async function handler(
         ebaySoldUrlVariant: asset.ebaySoldUrlVariant ?? null,
         ebaySoldUrlHighGrade: asset.ebaySoldUrlHighGrade ?? null,
         ebaySoldUrlPlayerComp: asset.ebaySoldUrlPlayerComp ?? null,
+        ebaySoldUrlAiGrade: asset.ebaySoldUrlAiGrade ?? null,
+        aiGrade:
+          asset.aiGradeFinal == null && asset.aiGradePsaEquivalent == null && asset.aiGradeLabel == null
+            ? null
+            : {
+                final: asset.aiGradeFinal ?? null,
+                label: asset.aiGradeLabel ?? null,
+                psaEquivalent: asset.aiGradePsaEquivalent ?? null,
+              },
         assignedDefinitionId: asset.assignedDefinitionId ?? null,
         humanReviewedAt: asset.humanReviewedAt ? asset.humanReviewedAt.toISOString() : null,
         humanReviewerName: asset.humanReviewer?.displayName ?? asset.humanReviewer?.id ?? null,

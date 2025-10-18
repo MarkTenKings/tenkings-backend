@@ -43,6 +43,7 @@ interface CardResponse {
   ebaySoldUrlVariant: string | null;
   ebaySoldUrlHighGrade: string | null;
   ebaySoldUrlPlayerComp: string | null;
+  ebaySoldUrlAiGrade: string | null;
   assignedDefinitionId: string | null;
   assignedAt: string | null;
   notes: CardNotePayload[];
@@ -51,6 +52,17 @@ interface CardResponse {
   humanReviewedAt: string | null;
   humanReviewerName: string | null;
   sportsDb: SportsDbSummary;
+  aiGrade: {
+    final: number | null;
+    label: string | null;
+    psaEquivalent: number | null;
+    rangeLow: number | null;
+    rangeHigh: number | null;
+    generatedAt: string | null;
+    visualizationUrl: string | null;
+    exactVisualizationUrl: string | null;
+  } | null;
+  classificationSources: Record<string, unknown> | null;
 }
 
 
@@ -106,6 +118,24 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     return null;
   }
 
+  const gradingRaw = (card.aiGradingJson as Record<string, unknown> | null) ?? null;
+  const gradingRecord = Array.isArray((gradingRaw as any)?.records)
+    ? (gradingRaw as any).records[0]
+    : null;
+
+  const aiGrade = {
+    final: card.aiGradeFinal ?? null,
+    label: card.aiGradeLabel ?? null,
+    psaEquivalent: card.aiGradePsaEquivalent ?? null,
+    rangeLow: card.aiGradeRangeLow ?? null,
+    rangeHigh: card.aiGradeRangeHigh ?? null,
+    generatedAt: card.aiGradeGeneratedAt ? card.aiGradeGeneratedAt.toISOString() : null,
+    visualizationUrl:
+      typeof gradingRecord?._full_url_card === "string" ? gradingRecord._full_url_card : null,
+    exactVisualizationUrl:
+      typeof gradingRecord?._exact_url_card === "string" ? gradingRecord._exact_url_card : null,
+  };
+
   return {
     id: card.id,
     batchId: card.batchId,
@@ -127,6 +157,7 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     ebaySoldUrlVariant: card.ebaySoldUrlVariant ?? null,
     ebaySoldUrlHighGrade: card.ebaySoldUrlHighGrade ?? null,
     ebaySoldUrlPlayerComp: card.ebaySoldUrlPlayerComp ?? null,
+    ebaySoldUrlAiGrade: card.ebaySoldUrlAiGrade ?? null,
     assignedDefinitionId: card.assignedDefinitionId,
     assignedAt: card.assignedAt ? card.assignedAt.toISOString() : null,
     notes: card.notes.map((note) => ({
@@ -150,6 +181,11 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
       league: card.sportsDbPlayer?.league ?? null,
       snapshot: (card.playerStatsSnapshot as Record<string, unknown> | null) ?? null,
     },
+    aiGrade:
+      card.aiGradeFinal == null && card.aiGradeLabel == null && card.aiGradePsaEquivalent == null
+        ? null
+        : aiGrade,
+    classificationSources: (card.classificationSourcesJson as Record<string, unknown> | null) ?? null,
   };
 }
 

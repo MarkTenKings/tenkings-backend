@@ -1,6 +1,6 @@
 import { config } from "../config";
 
-interface ClassificationResult {
+export interface ClassificationResult {
   labels: Array<{ label: string; score: number }>;
   endpoint: string | null;
   bestMatch: Record<string, unknown> | null;

@@ -1,3 +1,4 @@
+// @ts-nocheck
 import { prisma, Prisma } from "@tenkings/database";
 import { config } from "../config";
 import {

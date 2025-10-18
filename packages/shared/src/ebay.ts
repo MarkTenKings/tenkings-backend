@@ -11,12 +11,14 @@ export interface EbayComparableUrls {
   playerComp?: string | null;
   memorabiliaComp?: string | null;
   autoComp?: string | null;
+  aiGradeComp?: string | null;
 }
 
 interface ComparableOptions {
   ocrText?: string | null;
   bestMatch?: Record<string, unknown> | null | undefined;
   attributes?: CardAttributes;
+  aiGradePsa?: number | undefined;
 }
 
 const POSITION_STOPWORDS = new Set(
@@ -189,6 +191,24 @@ function buildAutoQuery(attributes: CardAttributes, playerName: string | null): 
   ]);
 }
 
+function buildAiGradeQuery(
+  attributes: CardAttributes,
+  playerName: string | null,
+  psaGrade: number | undefined
+): string | null {
+  if (!psaGrade) {
+    return null;
+  }
+  return uniqueQuery([
+    playerName,
+    attributes.year,
+    attributes.brand ?? attributes.setName,
+    attributes.setName && attributes.brand !== attributes.setName ? attributes.setName : null,
+    `PSA ${psaGrade}`,
+    attributes.variantKeywords[0],
+  ]);
+}
+
 function buildExactQuery(
   attributes: CardAttributes,
   playerName: string | null,
@@ -230,6 +250,9 @@ export function buildComparableEbayUrls(options: ComparableOptions): EbayCompara
   const player = buildEbaySoldUrlFromQuery(buildPlayerCompQuery(attributes, playerName));
   const memorabilia = buildEbaySoldUrlFromQuery(buildMemorabiliaQuery(attributes, playerName));
   const autograph = buildEbaySoldUrlFromQuery(buildAutoQuery(attributes, playerName));
+  const aiGrade = buildEbaySoldUrlFromQuery(
+    buildAiGradeQuery(attributes, playerName, options.aiGradePsa)
+  );
 
   return {
     exact,
@@ -238,5 +261,6 @@ export function buildComparableEbayUrls(options: ComparableOptions): EbayCompara
     playerComp: player,
     memorabiliaComp: memorabilia,
     autoComp: autograph,
+    aiGradeComp: aiGrade,
   };
 }
