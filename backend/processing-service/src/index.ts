@@ -232,22 +232,40 @@ async function handleClassifyJob(job: ProcessingJob) {
     console.warn(`[processing-service] Ximilar classification failed for ${asset.id}: ${message}`);
   }
 
+  const classificationSnapshot = ximilarClassification?.snapshot ?? null;
   const bestMatch = ximilarClassification?.bestMatch ?? null;
+  const classificationSummary = ximilarClassification?.summary ?? {
+    playerName: null,
+    teamName: null,
+    year: null,
+    setName: null,
+  };
+
   const attributes = extractCardAttributes(asset.ocrText, {
     bestMatch,
   });
 
-  const playerMatch = await matchPlayerFromOcr({
-    ocrText: asset.ocrText,
-    attributes,
-    classificationHints: ximilarClassification
-      ? {
-          bestMatch,
-          labels: ximilarClassification.labels.map((entry) => entry.label),
-          tags: ximilarClassification.tags,
-        }
-      : undefined,
-  });
+  const shouldUseSportsDb = classificationSnapshot?.categoryType === "sport";
+
+  const playerMatch = shouldUseSportsDb
+    ? await matchPlayerFromOcr({
+        ocrText: asset.ocrText,
+        attributes,
+        classificationHints: ximilarClassification
+          ? {
+              bestMatch,
+              labels: ximilarClassification.labels.map((entry) => entry.label),
+              tags: ximilarClassification.tags,
+            }
+          : undefined,
+      })
+    : {
+        playerId: null,
+        confidence: classificationSnapshot?.bestMatchScore ?? 0,
+        resolvedName: attributes.playerName ?? classificationSummary.playerName ?? null,
+        resolvedTeam: attributes.teamName ?? classificationSummary.teamName ?? null,
+        snapshot: null,
+      };
 
   let grading = null;
   try {
@@ -288,8 +306,8 @@ async function handleClassifyJob(job: ProcessingJob) {
 
       const updateDataAny = updateData as any;
 
-      if (ximilarClassification) {
-        updateDataAny.classificationSourcesJson = toInputJson(ximilarClassification);
+      if (classificationSnapshot) {
+        updateDataAny.classificationSourcesJson = toInputJson(classificationSnapshot);
       }
 
       updateDataAny.sportsDbPlayerId = playerMatch.playerId;
