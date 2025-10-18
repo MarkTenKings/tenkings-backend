@@ -234,7 +234,7 @@ async function handleClassifyJob(job: ProcessingJob) {
 
   const classificationSnapshot = ximilarClassification?.snapshot ?? null;
   const bestMatch = ximilarClassification?.bestMatch ?? null;
-  const classificationSummary = ximilarClassification?.summary ?? {
+  const classificationSummary = classificationSnapshot?.summary ?? ximilarClassification?.summary ?? {
     playerName: null,
     teamName: null,
     year: null,
@@ -245,6 +245,7 @@ async function handleClassifyJob(job: ProcessingJob) {
     bestMatch,
   });
 
+  const isGraded = classificationSnapshot?.graded === "yes";
   const shouldUseSportsDb = classificationSnapshot?.categoryType === "sport";
 
   const playerMatch = shouldUseSportsDb
@@ -268,14 +269,16 @@ async function handleClassifyJob(job: ProcessingJob) {
       };
 
   let grading = null;
-  try {
-    grading = await gradeCard({
-      imageBase64: base64,
-      approximateBytes: approxBytes,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[processing-service] Ximilar grading failed for ${asset.id}: ${message}`);
+  if (!isGraded) {
+    try {
+      grading = await gradeCard({
+        imageBase64: base64,
+        approximateBytes: approxBytes,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[processing-service] Ximilar grading failed for ${asset.id}: ${message}`);
+    }
   }
 
   const aiGradeFinal = grading?.finalGrade ?? null;
@@ -294,6 +297,7 @@ async function handleClassifyJob(job: ProcessingJob) {
     bestMatch,
     attributes,
     aiGradePsa: aiGradePsaEquivalent ?? undefined,
+    isGraded,
   });
 
   await prisma.$transaction(
