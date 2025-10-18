@@ -1,6 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, Prisma } from "@tenkings/database";
-import { buildEbaySoldUrlFromText, type CardAttributes } from "@tenkings/shared";
+import {
+  buildComparableEbayUrls,
+  buildEbaySoldUrlFromText,
+  extractCardAttributes,
+  type CardAttributes,
+} from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 interface CardNotePayload {
@@ -75,6 +80,10 @@ type CardUpdatePayload = {
   valuationSource?: string | null;
   marketplaceUrl?: string | null;
   ebaySoldUrl?: string | null;
+  ebaySoldUrlVariant?: string | null;
+  ebaySoldUrlHighGrade?: string | null;
+  ebaySoldUrlPlayerComp?: string | null;
+  ebaySoldUrlAiGrade?: string | null;
   humanReviewed?: boolean;
   generateEbaySoldUrl?: boolean;
 };
@@ -218,6 +227,9 @@ export default async function handler(
           ocrText: true,
           humanReviewedAt: true,
           humanReviewedById: true,
+          classificationJson: true,
+          classificationSourcesJson: true,
+          aiGradePsaEquivalent: true,
         },
       });
 
@@ -269,6 +281,34 @@ export default async function handler(
         touched = true;
       }
 
+      if (Object.prototype.hasOwnProperty.call(body, "ebaySoldUrlVariant")) {
+        updateDataAny.ebaySoldUrlVariant = body.ebaySoldUrlVariant
+          ? body.ebaySoldUrlVariant.trim()
+          : null;
+        touched = true;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, "ebaySoldUrlHighGrade")) {
+        updateDataAny.ebaySoldUrlHighGrade = body.ebaySoldUrlHighGrade
+          ? body.ebaySoldUrlHighGrade.trim()
+          : null;
+        touched = true;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, "ebaySoldUrlPlayerComp")) {
+        updateDataAny.ebaySoldUrlPlayerComp = body.ebaySoldUrlPlayerComp
+          ? body.ebaySoldUrlPlayerComp.trim()
+          : null;
+        touched = true;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, "ebaySoldUrlAiGrade")) {
+        updateDataAny.ebaySoldUrlAiGrade = body.ebaySoldUrlAiGrade
+          ? body.ebaySoldUrlAiGrade.trim()
+          : null;
+        touched = true;
+      }
+
       if (Object.prototype.hasOwnProperty.call(body, "humanReviewed")) {
         if (body.humanReviewed) {
           if (!card.humanReviewedAt) {
@@ -285,7 +325,7 @@ export default async function handler(
       if (body.generateEbaySoldUrl) {
         const sourceText = typeof body.ocrText === "string" ? body.ocrText : card.ocrText;
         const generated = buildEbaySoldUrlFromText(sourceText);
-        updateDataAny.ebaySoldUrl = generated;
+        updateDataAny.ebaySoldUrl = generated ?? null;
         touched = true;
       }
 

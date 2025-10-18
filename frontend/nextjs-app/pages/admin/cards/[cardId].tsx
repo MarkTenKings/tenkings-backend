@@ -77,6 +77,10 @@ type CardFormState = {
   valuationSource: string;
   marketplaceUrl: string;
   ebaySoldUrl: string;
+  ebaySoldUrlVariant: string;
+  ebaySoldUrlHighGrade: string;
+  ebaySoldUrlPlayerComp: string;
+  ebaySoldUrlAiGrade: string;
   humanReviewed: boolean;
 };
 
@@ -116,6 +120,7 @@ export default function AdminCardDetail() {
   const [form, setForm] = useState<CardFormState | null>(null);
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [regeneratingComps, setRegeneratingComps] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -271,6 +276,10 @@ export default function AdminCardDetail() {
             valuationSource: data.valuationSource ?? "",
             marketplaceUrl: data.marketplaceUrl ?? "",
             ebaySoldUrl: data.ebaySoldUrl ?? "",
+            ebaySoldUrlVariant: data.ebaySoldUrlVariant ?? "",
+            ebaySoldUrlHighGrade: data.ebaySoldUrlHighGrade ?? "",
+            ebaySoldUrlPlayerComp: data.ebaySoldUrlPlayerComp ?? "",
+            ebaySoldUrlAiGrade: data.ebaySoldUrlAiGrade ?? "",
             humanReviewed: data.humanReviewedAt !== null,
           });
         }
@@ -381,6 +390,59 @@ export default function AdminCardDetail() {
     setMessage(generated ? "Generated eBay sold URL" : "Unable to generate eBay URL from OCR text");
   };
 
+  const handleRegenerateComps = async () => {
+    if (!card || !form || !session?.token) {
+      return;
+    }
+
+    setRegeneratingComps(true);
+    setError(null);
+    setMessage(null);
+
+    try {
+      const res = await fetch(`/api/admin/cards/${card.id}/regenerate-comps`, {
+        method: "POST",
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to regenerate comps");
+      }
+
+      const updatedRes = await fetch(`/api/admin/cards/${card.id}`, {
+        headers: buildAdminHeaders(session.token),
+      });
+      if (!updatedRes.ok) {
+        const payload = await updatedRes.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to refresh card");
+      }
+
+      const updated = (await updatedRes.json()) as CardDetail;
+      setCard(updated);
+      setForm({
+        customTitle: updated.customTitle ?? "",
+        customDetails: updated.customDetails ?? "",
+        ocrText: updated.ocrText ?? "",
+        valuation: updated.valuationMinor !== null ? (updated.valuationMinor / 100).toFixed(2) : "",
+        valuationCurrency: updated.valuationCurrency ?? "USD",
+        valuationSource: updated.valuationSource ?? "",
+        marketplaceUrl: updated.marketplaceUrl ?? "",
+        ebaySoldUrl: updated.ebaySoldUrl ?? "",
+        ebaySoldUrlVariant: updated.ebaySoldUrlVariant ?? "",
+        ebaySoldUrlHighGrade: updated.ebaySoldUrlHighGrade ?? "",
+        ebaySoldUrlPlayerComp: updated.ebaySoldUrlPlayerComp ?? "",
+        ebaySoldUrlAiGrade: updated.ebaySoldUrlAiGrade ?? "",
+        humanReviewed: updated.humanReviewedAt !== null,
+      });
+      setMessage("eBay comps regenerated");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to regenerate comps";
+      setError(message);
+    } finally {
+      setRegeneratingComps(false);
+    }
+  };
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!form || !card || !session?.token) {
@@ -411,6 +473,10 @@ export default function AdminCardDetail() {
       valuationSource: form.valuationSource.trim() || null,
       marketplaceUrl: form.marketplaceUrl.trim() || null,
       ebaySoldUrl: form.ebaySoldUrl.trim() || null,
+      ebaySoldUrlVariant: form.ebaySoldUrlVariant.trim() || null,
+      ebaySoldUrlHighGrade: form.ebaySoldUrlHighGrade.trim() || null,
+      ebaySoldUrlPlayerComp: form.ebaySoldUrlPlayerComp.trim() || null,
+      ebaySoldUrlAiGrade: form.ebaySoldUrlAiGrade.trim() || null,
       humanReviewed: form.humanReviewed,
     };
 
@@ -435,6 +501,10 @@ export default function AdminCardDetail() {
         valuationSource: updated.valuationSource ?? "",
         marketplaceUrl: updated.marketplaceUrl ?? "",
         ebaySoldUrl: updated.ebaySoldUrl ?? "",
+        ebaySoldUrlVariant: updated.ebaySoldUrlVariant ?? "",
+        ebaySoldUrlHighGrade: updated.ebaySoldUrlHighGrade ?? "",
+        ebaySoldUrlPlayerComp: updated.ebaySoldUrlPlayerComp ?? "",
+        ebaySoldUrlAiGrade: updated.ebaySoldUrlAiGrade ?? "",
         humanReviewed: updated.humanReviewedAt !== null,
       });
       setMessage("Card details saved");
@@ -568,6 +638,48 @@ export default function AdminCardDetail() {
                 />
               </div>
 
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="flex flex-col gap-2 text-xs text-slate-300">
+                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Variant URL</span>
+                  <input
+                    value={form.ebaySoldUrlVariant}
+                    onChange={handleChange("ebaySoldUrlVariant")}
+                    placeholder="Variant comps search"
+                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                  />
+                </label>
+                <label className="flex flex-col gap-2 text-xs text-slate-300">
+                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">High Grade URL</span>
+                  <input
+                    value={form.ebaySoldUrlHighGrade}
+                    onChange={handleChange("ebaySoldUrlHighGrade")}
+                    placeholder="High grade comps"
+                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                  />
+                </label>
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="flex flex-col gap-2 text-xs text-slate-300">
+                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Player Comp URL</span>
+                  <input
+                    value={form.ebaySoldUrlPlayerComp}
+                    onChange={handleChange("ebaySoldUrlPlayerComp")}
+                    placeholder="Player comp search"
+                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                  />
+                </label>
+                <label className="flex flex-col gap-2 text-xs text-slate-300">
+                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">AI Grade URL</span>
+                  <input
+                    value={form.ebaySoldUrlAiGrade}
+                    onChange={handleChange("ebaySoldUrlAiGrade")}
+                    placeholder="AI grade comps"
+                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                  />
+                </label>
+              </div>
+
               {comparables.length > 0 && (
                 <div className="rounded-3xl border border-white/10 bg-night-900/60 p-4">
                   <p className="text-[11px] uppercase tracking-[0.3em] text-sky-300">eBay Sold Comparables</p>
@@ -589,6 +701,15 @@ export default function AdminCardDetail() {
                   </div>
                 </div>
               )}
+
+              <button
+                type="button"
+                onClick={handleRegenerateComps}
+                disabled={regeneratingComps}
+                className="inline-flex items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-500/15 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {regeneratingComps ? "Regenerating…" : "Regenerate eBay comps"}
+              </button>
 
               <label className="mt-2 flex items-center gap-3 text-xs text-slate-300">
                 <input
