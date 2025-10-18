@@ -98,10 +98,15 @@ async function handleOcrJob(job: ProcessingJob) {
     ocrText: normalizedOcr,
     attributes,
   });
+  const enhancedAttributes = {
+    ...attributes,
+    playerName: playerMatch.resolvedName ?? attributes.playerName,
+    teamName: playerMatch.resolvedTeam ?? attributes.teamName,
+  };
   const generatedEbayUrl = buildEbaySoldUrlFromText(normalizedOcr);
   const comparableUrls = buildComparableEbayUrls({
     ocrText: normalizedOcr,
-    attributes,
+    attributes: enhancedAttributes,
   });
 
   let thumbnailDataUrl: string | null = null;
@@ -124,7 +129,7 @@ async function handleOcrJob(job: ProcessingJob) {
         status: CardAssetStatus.OCR_COMPLETE,
         ocrText: vision.text,
         ocrJson,
-        classificationJson: toInputJson(attributes),
+        classificationJson: toInputJson(enhancedAttributes),
         errorMessage: null,
       };
       if (thumbnailDataUrl) {

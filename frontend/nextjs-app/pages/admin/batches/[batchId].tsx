@@ -1081,14 +1081,14 @@ const handleBulkSave = async (cardId: string) => {
                           )}
 
                           <div className="flex gap-2 pt-1">
-                            <Link
+                            <a
                               href={previewSrc}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center justify-center rounded-full border border-white/20 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
                             >
                               View Full
-                            </Link>
+                            </a>
                             <Link
                               href={`/admin/cards/${asset.id}`}
                               className="inline-flex items-center justify-center rounded-full border border-emerald-400/30 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-emerald-300 transition hover:border-emerald-400 hover:text-emerald-200"
