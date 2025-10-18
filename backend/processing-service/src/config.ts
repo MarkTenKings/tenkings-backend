@@ -30,6 +30,18 @@ const localRootFallback = path.resolve(
     path.join(process.cwd(), "../../frontend/nextjs-app/public/uploads/cards")
 );
 
+function normalizePrefix(input: string | undefined, fallback: string): string {
+  const raw = (input ?? fallback).trim();
+  if (!raw) {
+    return fallback;
+  }
+  const withoutTrailing = raw.replace(/\/+$/, "");
+  if (/^https?:/i.test(withoutTrailing)) {
+    return withoutTrailing;
+  }
+  return withoutTrailing.startsWith("/") ? withoutTrailing : `/${withoutTrailing}`;
+}
+
 function parsePositiveInt(value: string | undefined, fallback: number, minimum = 1) {
   const numeric = Number(value);
   if (!Number.isFinite(numeric) || numeric < minimum) {
@@ -44,6 +56,7 @@ export const config = {
   transactionTimeoutMs: parsePositiveInt(process.env.PROCESSING_TX_TIMEOUT_MS, 15000, 1000),
   storageMode: (process.env.CARD_STORAGE_MODE ?? "local").toLowerCase(),
   localStorageRoot: localRootFallback,
+  storagePublicPrefix: normalizePrefix(process.env.CARD_STORAGE_PUBLIC_PREFIX, "/uploads/cards"),
   googleVisionApiKey: process.env.GOOGLE_VISION_API_KEY ?? null,
   ximilarApiKey: process.env.XIMILAR_API_KEY ?? null,
   ximilarCollectionId: process.env.XIMILAR_COLLECTION_ID ?? null,

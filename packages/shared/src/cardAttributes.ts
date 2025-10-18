@@ -147,6 +147,13 @@ const PLAYER_STOPWORDS = new Set(
     "USED",
     "PLAYER",
     "TEAM",
+    "OBSIDIAN",
+    "CLEARLY",
+    "HOUSE",
+    "MY",
+    "LOS",
+    "ANGELES",
+    "DARO",
   ].map((word) => word.toUpperCase())
 );
 
@@ -239,6 +246,12 @@ const TEAM_WORDS = new Set(
     "UNITED",
     "CITY",
     "REAL",
+    "LOS",
+    "LAS",
+    "VEGAS",
+    "ANGELES",
+    "ATL",
+    "RAMS",
     "BAYERN",
     "BARCELONA",
     "MADRID",

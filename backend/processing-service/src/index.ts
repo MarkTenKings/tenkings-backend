@@ -50,6 +50,38 @@ function toInputJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
+function normalizeStorageKey(storageKey: string) {
+  return storageKey.replace(/\\/g, "/");
+}
+
+function deriveThumbnailKey(storageKey: string) {
+  const normalized = normalizeStorageKey(storageKey);
+  const ext = path.posix.extname(normalized);
+  const baseName = path.posix.basename(normalized, ext);
+  const dir = path.posix.dirname(normalized);
+  const thumbName = `${baseName}-thumbnail.webp`;
+  return dir === "." ? thumbName : `${dir}/${thumbName}`;
+}
+
+async function persistThumbnail(buffer: Buffer, storageKey: string): Promise<string | null> {
+  if (config.storageMode === "mock") {
+    return `data:image/webp;base64,${buffer.toString("base64")}`;
+  }
+
+  const thumbnailKey = deriveThumbnailKey(storageKey);
+
+  if (config.storageMode === "local") {
+    const filePath = path.join(config.localStorageRoot, thumbnailKey);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, buffer);
+    const cleanedKey = thumbnailKey.replace(/^\/+/, "");
+    return `${config.storagePublicPrefix}/${cleanedKey}`;
+  }
+
+  console.warn(`[processing-service] storage mode ${config.storageMode} not supported for thumbnails; using data URI fallback`);
+  return `data:image/webp;base64,${buffer.toString("base64")}`;
+}
+
 
 
 function extractMockBase64(asset: { id: string; imageUrl: string | null }) {
@@ -109,14 +141,14 @@ async function handleOcrJob(job: ProcessingJob) {
     attributes: enhancedAttributes,
   });
 
-  let thumbnailDataUrl: string | null = null;
+  let thumbnailUrl: string | null = null;
   try {
     const thumbnailBuffer = await sharp(buffer)
       .rotate()
       .resize({ width: 512, height: 512, fit: "inside", withoutEnlargement: true })
       .webp({ quality: 80 })
       .toBuffer();
-    thumbnailDataUrl = `data:image/webp;base64,${thumbnailBuffer.toString("base64")}`;
+    thumbnailUrl = await persistThumbnail(thumbnailBuffer, asset.storageKey);
   } catch (thumbnailError) {
     const message = thumbnailError instanceof Error ? thumbnailError.message : String(thumbnailError);
     console.warn(`[processing-service] failed to generate thumbnail for asset ${asset.id}: ${message}`);
@@ -132,8 +164,8 @@ async function handleOcrJob(job: ProcessingJob) {
         classificationJson: toInputJson(enhancedAttributes),
         errorMessage: null,
       };
-      if (thumbnailDataUrl) {
-        (updateData as any).thumbnailUrl = thumbnailDataUrl;
+      if (thumbnailUrl) {
+        (updateData as any).thumbnailUrl = thumbnailUrl;
       }
       if (!existingEbayUrl && generatedEbayUrl) {
         (updateData as any).ebaySoldUrl = generatedEbayUrl;

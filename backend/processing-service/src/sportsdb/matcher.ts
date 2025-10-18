@@ -22,6 +22,14 @@ type PlayerWithRelations = Prisma.SportsDbPlayerGetPayload<{
   };
 }>;
 
+const playerInclude: Prisma.SportsDbPlayerInclude = {
+  team: true,
+  seasons: {
+    orderBy: { season: "desc" },
+    take: 5,
+  },
+};
+
 function tokenize(input: string): string[] {
   return input
     .toLowerCase()
@@ -103,6 +111,83 @@ function buildSnapshot(player: PlayerWithRelations | null): Prisma.InputJsonValu
   } satisfies Prisma.InputJsonValue;
 }
 
+async function loadRosterPlayers(teamName: string | null): Promise<PlayerWithRelations[]> {
+  if (!teamName) {
+    return [];
+  }
+  const trimmed = teamName.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const teamFilters: Prisma.SportsDbTeamWhereInput[] = [
+    { name: { equals: trimmed, mode: "insensitive" } },
+    { name: { contains: trimmed, mode: "insensitive" } },
+    { alternateNames: { has: trimmed } },
+    { alternateNames: { has: trimmed.toUpperCase() } },
+  ];
+
+  const tokens = tokenize(trimmed).filter((token) => token.length >= 3);
+  for (const token of tokens) {
+    teamFilters.push({ name: { contains: token, mode: "insensitive" } });
+    teamFilters.push({ alternateNames: { has: token } });
+    teamFilters.push({ alternateNames: { has: token.toUpperCase() } });
+  }
+
+  const teams = await prisma.sportsDbTeam.findMany({
+    where: { OR: teamFilters },
+    select: { id: true },
+    take: 5,
+  });
+
+  if (teams.length === 0) {
+    return [];
+  }
+
+  const teamIds = teams.map((team) => team.id);
+
+  return prisma.sportsDbPlayer.findMany({
+    where: {
+      teamId: { in: teamIds },
+    },
+    include: playerInclude,
+    orderBy: { updatedAt: "desc" },
+    take: 150,
+  });
+}
+
+function evaluateCandidates(
+  players: PlayerWithRelations[],
+  nameTokens: string[],
+  context: MatchContext,
+  rosterIds: Set<string>
+): { player: PlayerWithRelations; score: number } | null {
+  if (players.length === 0) {
+    return null;
+  }
+
+  let best: { player: PlayerWithRelations; score: number } | null = null;
+
+  for (const player of players) {
+    const candidateTokens = tokenize(player.fullName);
+    const nameScore = computeNameScore(nameTokens, candidateTokens);
+    const teamScore = computeTeamScore(context.attributes.teamName, player.team?.name ?? null);
+    const aliases = player.alternateNames ?? [];
+    const aliasTokens = aliases.flatMap((alias) => tokenize(alias));
+    const aliasOverlap = aliasTokens.filter((token) => nameTokens.includes(token)).length;
+    const aliasScore = aliasOverlap > 0 ? 10 : 0;
+    const sportBonus = computeSportBonus(context.attributes, player.sport);
+    const rosterBonus = rosterIds.has(player.id) && context.attributes.teamName ? 10 : 0;
+    const totalScore = Math.min(100, nameScore + teamScore + aliasScore + sportBonus + rosterBonus);
+
+    if (!best || totalScore > best.score) {
+      best = { player, score: totalScore };
+    }
+  }
+
+  return best;
+}
+
 export async function matchPlayerFromOcr(context: MatchContext): Promise<PlayerMatchResult> {
   if (!config.sportsDbApiKey) {
     return {
@@ -136,34 +221,39 @@ export async function matchPlayerFromOcr(context: MatchContext): Promise<PlayerM
     };
   }
 
-  const [firstToken] = nameTokens;
-  const lastToken = nameTokens[nameTokens.length - 1];
+  const rosterPlayers = await loadRosterPlayers(context.attributes.teamName);
+  const rosterIds = new Set(rosterPlayers.map((player) => player.id));
 
-  const players: PlayerWithRelations[] = await prisma.sportsDbPlayer.findMany({
+  const directPlayers: PlayerWithRelations[] = await prisma.sportsDbPlayer.findMany({
     where: {
       OR: [
         { fullName: { equals: candidateName, mode: "insensitive" } },
+        { displayName: { equals: candidateName, mode: "insensitive" } },
         {
-          AND: [
-            { fullName: { contains: firstToken, mode: "insensitive" } },
-            { fullName: { contains: lastToken, mode: "insensitive" } },
-          ],
+          AND: nameTokens.map((token) => ({ fullName: { contains: token, mode: "insensitive" } })),
         },
         { alternateNames: { has: candidateName } },
         { alternateNames: { has: candidateName.toUpperCase() } },
+        { alternateNames: { hasSome: nameTokens.map((token) => token.toUpperCase()) } },
       ],
     },
-    include: {
-      team: true,
-      seasons: {
-        orderBy: { season: "desc" },
-        take: 5,
-      },
-    },
-    take: 25,
+    include: playerInclude,
+    take: 50,
   });
 
-  if (players.length === 0) {
+  const candidateMap = new Map<string, PlayerWithRelations>();
+  for (const player of rosterPlayers) {
+    candidateMap.set(player.id, player);
+  }
+  for (const player of directPlayers) {
+    if (!candidateMap.has(player.id)) {
+      candidateMap.set(player.id, player);
+    }
+  }
+
+  const candidates = Array.from(candidateMap.values());
+
+  if (candidates.length === 0) {
     return {
       playerId: null,
       confidence: 0,
@@ -173,21 +263,15 @@ export async function matchPlayerFromOcr(context: MatchContext): Promise<PlayerM
     };
   }
 
-  let best = { player: players[0], score: 0 };
-  for (const player of players) {
-    const candidateTokens = tokenize(player.fullName);
-    const nameScore = computeNameScore(nameTokens, candidateTokens);
-    const teamScore = computeTeamScore(context.attributes.teamName, player.team?.name ?? null);
-    const aliases = player.alternateNames ?? [];
-    const aliasTokens = aliases.flatMap((alias) => tokenize(alias));
-    const aliasOverlap = aliasTokens.filter((token) => nameTokens.includes(token)).length;
-    const aliasScore = aliasOverlap > 0 ? 10 : 0;
-    const sportBonus = computeSportBonus(context.attributes, player.sport);
-    const totalScore = Math.min(100, nameScore + teamScore + aliasScore + sportBonus);
-
-    if (totalScore > best.score) {
-      best = { player, score: totalScore };
-    }
+  const best = evaluateCandidates(candidates, nameTokens, context, rosterIds);
+  if (!best) {
+    return {
+      playerId: null,
+      confidence: 0,
+      resolvedName: candidateName,
+      resolvedTeam: context.attributes.teamName,
+      snapshot: null,
+    };
   }
 
   const matched = best.score >= 40;
