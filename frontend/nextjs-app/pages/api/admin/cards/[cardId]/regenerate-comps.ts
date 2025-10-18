@@ -46,7 +46,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const bestMatch = sources && typeof sources === "object" ? (sources as any).bestMatchData ?? null : null;
 
     const attributes = classification ?? extractCardAttributes(card.ocrText, { bestMatch });
-    const isGraded = sources && (sources as any).graded === "yes";
+    const isGraded = Boolean(sources && (sources as any).graded === "yes");
 
     const urls = buildComparableEbayUrls({
       ocrText: card.ocrText,
