@@ -10,6 +10,7 @@ export {
   CardAssetStatus,
   ProcessingJobType,
   ProcessingJobStatus,
+  ShippingStatus,
 } from "@prisma/client";
 
 export * from "./processingJobs";

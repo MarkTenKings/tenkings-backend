@@ -1,5 +1,5 @@
 import express from "express";
-import cors from "cors";
+import cors, { CorsOptions } from "cors";
 import {
   prisma,
   Prisma,
@@ -8,6 +8,7 @@ import {
   ListingStatus,
   TransactionSource,
   TransactionType,
+  ShippingStatus,
 } from "@tenkings/database";
 import { z } from "zod";
 import Stripe from "stripe";
@@ -20,12 +21,26 @@ const stripeClient = stripeSecretKey
   : null;
 
 const houseUserEmail = process.env.HOUSE_USER_EMAIL ?? "tenkings@system.local";
+const defaultShippingProcessingFeeMinor = Number(process.env.SHIPPING_PROCESSING_FEE_MINOR ?? "1200");
 
 const app = express();
 const port = process.env.PORT ? Number(process.env.PORT) : 8183;
 const serviceName = "pack-service";
 
-app.use(cors());
+const corsOptions: CorsOptions = {
+  origin: true,
+  credentials: false,
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Operator-Key",
+    "X-Requested-With",
+  ],
+  methods: ["GET", "POST", "PATCH", "OPTIONS"],
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json());
 
 async function ensureHouseAccount(tx: Prisma.TransactionClient) {
@@ -331,7 +346,7 @@ app.post("/items/:itemId/buyback", async (req, res, next) => {
 
       const listing = item.listings && item.listings.status === ListingStatus.ACTIVE ? item.listings : null;
       const sourceValue = item.estimatedValue ?? listing?.price ?? 0;
-      const buybackAmount = Math.floor(sourceValue * 0.8);
+      const buybackAmount = Math.floor(sourceValue * 0.75);
 
       if (buybackAmount <= 0) {
         throw Object.assign(new Error("buyback unavailable"), { statusCode: 400 });
@@ -390,6 +405,236 @@ app.post("/items/:itemId/buyback", async (req, res, next) => {
     });
 
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+const shippingRequestSchema = z.object({
+  userId: z.string().uuid(),
+  recipientName: z.string().min(1),
+  addressLine1: z.string().min(1),
+  addressLine2: z.string().optional(),
+  city: z.string().min(1),
+  state: z.string().optional(),
+  postalCode: z.string().min(1),
+  country: z.string().min(1),
+  phone: z.string().optional(),
+  email: z.string().email().optional(),
+  shippingFeeMinor: z.number().int().nonnegative().optional(),
+  notes: z.string().optional(),
+});
+
+app.post("/items/:itemId/request-shipping", async (req, res, next) => {
+  try {
+    const payload = shippingRequestSchema.parse(req.body ?? {});
+    const { itemId } = req.params;
+
+    const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const item = await tx.item.findUnique({
+        where: { id: itemId },
+        include: { shippingRequest: true },
+      });
+      if (!item) {
+        throw Object.assign(new Error("item missing"), { statusCode: 404 });
+      }
+      if (item.ownerId !== payload.userId) {
+        throw Object.assign(new Error("item not owned by user"), { statusCode: 409 });
+      }
+      if (item.shippingRequest) {
+        throw Object.assign(new Error("shipping already requested"), { statusCode: 409 });
+      }
+
+      const wallet = await tx.wallet.findUnique({ where: { userId: payload.userId } });
+      if (!wallet) {
+        throw Object.assign(new Error("wallet missing"), { statusCode: 404 });
+      }
+
+      const processingFeeMinor = defaultShippingProcessingFeeMinor;
+      const shippingFeeMinor = payload.shippingFeeMinor ?? 0;
+      const totalFeeMinor = processingFeeMinor + shippingFeeMinor;
+
+      if (wallet.balance < totalFeeMinor) {
+        throw Object.assign(new Error("insufficient balance"), { statusCode: 400 });
+      }
+
+      const updatedWallet = await tx.wallet.update({
+        where: { id: wallet.id },
+        data: { balance: { decrement: totalFeeMinor } },
+      });
+
+      await tx.walletTransaction.create({
+        data: {
+          walletId: updatedWallet.id,
+          amount: totalFeeMinor,
+          type: TransactionType.DEBIT,
+          source: TransactionSource.REDEMPTION,
+          referenceId: item.id,
+          note: "Shipping request",
+        },
+      });
+
+      const request = await tx.shippingRequest.create({
+        data: {
+          itemId: item.id,
+          userId: payload.userId,
+          status: ShippingStatus.PENDING,
+          recipientName: payload.recipientName,
+          addressLine1: payload.addressLine1,
+          addressLine2: payload.addressLine2 ?? null,
+          city: payload.city,
+          state: payload.state ?? null,
+          postalCode: payload.postalCode,
+          country: payload.country,
+          phone: payload.phone ?? null,
+          email: payload.email ?? null,
+          processingFeeMinor,
+          shippingFeeMinor,
+          totalFeeMinor,
+          notes: payload.notes ?? null,
+        },
+      });
+
+      await tx.item.update({
+        where: { id: item.id },
+        data: { status: ItemStatus.IN_TRANSFER },
+      });
+
+      return { request, walletBalance: updatedWallet.balance };
+    });
+
+    res.status(201).json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/shipping/requests", async (req, res, next) => {
+  try {
+    const statusParam = Array.isArray(req.query.status) ? req.query.status[0] : req.query.status;
+    const userId = Array.isArray(req.query.userId) ? req.query.userId[0] : req.query.userId;
+
+    const where: Prisma.ShippingRequestWhereInput = {};
+    if (statusParam) {
+      if (!Object.values(ShippingStatus).includes(statusParam as ShippingStatus)) {
+        return res.status(400).json({ message: "Invalid status" });
+      }
+      where.status = statusParam as ShippingStatus;
+    }
+    if (userId) {
+      where.userId = userId;
+    }
+
+    const requests = await prisma.shippingRequest.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      include: {
+        item: true,
+        user: { select: { id: true, email: true, displayName: true } },
+      },
+    });
+
+    const payload = requests.map((request) => ({
+      id: request.id,
+      itemId: request.itemId,
+      userId: request.userId,
+      status: request.status,
+      recipientName: request.recipientName,
+      addressLine1: request.addressLine1,
+      addressLine2: request.addressLine2,
+      city: request.city,
+      state: request.state,
+      postalCode: request.postalCode,
+      country: request.country,
+      phone: request.phone,
+      email: request.email,
+      processingFeeMinor: request.processingFeeMinor,
+      shippingFeeMinor: request.shippingFeeMinor,
+      totalFeeMinor: request.totalFeeMinor,
+      notes: request.notes,
+      trackingNumber: request.trackingNumber,
+      carrier: request.carrier,
+      fulfilledAt: request.fulfilledAt ? request.fulfilledAt.toISOString() : null,
+      createdAt: request.createdAt.toISOString(),
+      updatedAt: request.updatedAt.toISOString(),
+      item: {
+        name: request.item.name,
+        set: request.item.set,
+        status: request.item.status,
+        estimatedValue: request.item.estimatedValue,
+      },
+      user: request.user,
+    }));
+
+    res.json({ requests: payload });
+  } catch (error) {
+    next(error);
+  }
+});
+
+const updateShippingSchema = z.object({
+  status: z.nativeEnum(ShippingStatus).optional(),
+  trackingNumber: z.string().min(1).optional(),
+  carrier: z.string().min(1).optional(),
+  notes: z.string().optional(),
+  fulfilledAt: z.string().datetime().optional(),
+});
+
+app.patch("/shipping/requests/:requestId", async (req, res, next) => {
+  try {
+    const { requestId } = req.params;
+    const payload = updateShippingSchema.parse(req.body ?? {});
+
+    const request = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const existing = await tx.shippingRequest.findUnique({
+        where: { id: requestId },
+        include: { item: true },
+      });
+      if (!existing) {
+        throw Object.assign(new Error("shipping request missing"), { statusCode: 404 });
+      }
+
+      const updates: Prisma.ShippingRequestUpdateInput = {};
+      if (payload.status) {
+        updates.status = payload.status;
+      }
+      if (payload.trackingNumber !== undefined) {
+        updates.trackingNumber = payload.trackingNumber;
+      }
+      if (payload.carrier !== undefined) {
+        updates.carrier = payload.carrier;
+      }
+      if (payload.notes !== undefined) {
+        updates.notes = payload.notes;
+      }
+      if (payload.fulfilledAt) {
+        updates.fulfilledAt = new Date(payload.fulfilledAt);
+      }
+      if (payload.status === ShippingStatus.SHIPPED && !payload.fulfilledAt) {
+        updates.fulfilledAt = new Date();
+      }
+
+      const updated = await tx.shippingRequest.update({
+        where: { id: requestId },
+        data: updates,
+      });
+
+      if (payload.status === ShippingStatus.SHIPPED) {
+        await tx.item.update({
+          where: { id: existing.itemId },
+          data: { status: ItemStatus.REDEEMED },
+        });
+      } else if (payload.status === ShippingStatus.CANCELLED) {
+        await tx.item.update({
+          where: { id: existing.itemId },
+          data: { status: ItemStatus.STORED },
+        });
+      }
+
+      return updated;
+    });
+
+    res.json({ request });
   } catch (error) {
     next(error);
   }

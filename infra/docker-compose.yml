@@ -3,6 +3,7 @@ version: "3.9"
 services:
   postgres:
     image: postgres:15
+    restart: unless-stopped
     environment:
       POSTGRES_USER: tenkings
       POSTGRES_PASSWORD: tenkings
@@ -36,6 +37,7 @@ services:
     build:
       context: ..
       dockerfile: backend/wallet-service/Dockerfile
+    restart: unless-stopped
     env_file: ../env/wallet-service.env
     ports:
       - "8081:8080"
@@ -52,6 +54,7 @@ services:
     build:
       context: ..
       dockerfile: backend/auth-service/Dockerfile
+    restart: unless-stopped
     env_file: ../env/auth-service.env
     ports:
       - "8088:8080"
@@ -68,6 +71,7 @@ services:
     build:
       context: ..
       dockerfile: backend/vault-service/Dockerfile
+    restart: unless-stopped
     env_file: ../env/vault-service.env
     ports:
       - "8082:8080"
@@ -84,6 +88,7 @@ services:
     build:
       context: ..
       dockerfile: backend/marketplace-service/Dockerfile
+    restart: unless-stopped
     env_file: ../env/marketplace-service.env
     ports:
       - "8083:8080"
@@ -100,6 +105,7 @@ services:
     build:
       context: ..
       dockerfile: backend/pricing-service/Dockerfile
+    restart: unless-stopped
     env_file: ../env/pricing-service.env
     ports:
       - "8084:8080"
@@ -116,6 +122,7 @@ services:
     build:
       context: ..
       dockerfile: backend/pack-service/Dockerfile
+    restart: unless-stopped
     env_file: ../env/pack-service.env
     ports:
       - "8085:8080"
@@ -132,6 +139,7 @@ services:
     build:
       context: ..
       dockerfile: backend/ingestion-service/Dockerfile
+    restart: unless-stopped
     env_file: ../env/ingestion-service.env
     ports:
       - "8086:8080"
@@ -148,6 +156,7 @@ services:
     build:
       context: ..
       dockerfile: backend/processing-service/Dockerfile
+    restart: unless-stopped
     env_file: ../env/processing-service.env
     depends_on:
       - postgres
@@ -156,6 +165,7 @@ services:
     build:
       context: ..
       dockerfile: backend/vending-gw/Dockerfile
+    restart: unless-stopped
     env_file: ../env/vending-gw.env
     ports:
       - "8087:8080"

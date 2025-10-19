@@ -87,6 +87,13 @@ enum PackTier {
   TIER_500
 }
 
+enum ShippingStatus {
+  PENDING
+  IN_PROGRESS
+  SHIPPED
+  CANCELLED
+}
+
 model User {
   id              String          @id @default(uuid())
   email           String?         @unique
@@ -98,6 +105,7 @@ model User {
   items           Item[]
   ownerships      ItemOwnership[]
   listings        Listing[]       @relation("SellerListings")
+  shippingRequests ShippingRequest[]
   packs           PackInstance[]
   ingestions      IngestionTask[]
   cardBatches     CardBatch[]
@@ -146,6 +154,7 @@ model Item {
   ownerships     ItemOwnership[]
   packSlots      PackSlot[]
   ingestionTask  IngestionTask?
+  shippingRequest ShippingRequest?
 }
 
 model AuthVerification {
@@ -185,6 +194,36 @@ model Listing {
   updatedAt DateTime      @updatedAt
   item      Item          @relation(fields: [itemId], references: [id], onDelete: Cascade)
   seller    User          @relation("SellerListings", fields: [sellerId], references: [id], onDelete: Cascade)
+}
+
+model ShippingRequest {
+  id                String          @id @default(uuid())
+  itemId            String          @unique
+  userId            String
+  status            ShippingStatus  @default(PENDING)
+  recipientName     String
+  addressLine1      String
+  addressLine2      String?
+  city              String
+  state             String?
+  postalCode        String
+  country           String
+  phone             String?
+  email             String?
+  processingFeeMinor Int
+  shippingFeeMinor  Int
+  totalFeeMinor     Int
+  notes             String?
+  trackingNumber    String?
+  carrier           String?
+  fulfilledAt       DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model PackDefinition {
