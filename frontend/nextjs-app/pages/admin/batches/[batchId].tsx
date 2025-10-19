@@ -551,6 +551,7 @@ const handleAssignToDefinition = async () => {
     }
     const payload = (await res.json()) as {
       updated: Array<{ id: string; status: string; assignedDefinitionId: string | null; assignedAt: string | null }>;
+      mint?: { mintedItems: number; createdPacks: number; skippedCards: number };
     };
 
     setBatch((current) => {
@@ -570,8 +571,13 @@ const handleAssignToDefinition = async () => {
     });
 
     const summary = `${formatCategory(assignCategory)} · ${formatTier(assignTier)}`;
+    const mintedSummary = payload.mint
+      ? ` Minted ${payload.mint.createdPacks} pack${payload.mint.createdPacks === 1 ? '' : 's'}${
+          payload.mint.skippedCards ? ` (skipped ${payload.mint.skippedCards}).` : '.'
+        }`
+      : '.';
     setAssignMessage(
-      `Assigned ${payload.updated.length} card${payload.updated.length === 1 ? '' : 's'} to ${summary}`
+      `Assigned ${payload.updated.length} card${payload.updated.length === 1 ? '' : 's'} to ${summary}${mintedSummary}`
     );
     setSelectedCards([]);
     setAssignModalOpen(false);

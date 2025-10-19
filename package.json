@@ -16,6 +16,7 @@
     "db:migrate": "npm run migrate:dev --workspace @tenkings/database",
     "db:deploy": "npm run migrate:deploy --workspace @tenkings/database",
     "db:push": "npm run db:push --workspace @tenkings/database",
-    "vercel:build": "bash scripts/vercel-build.sh"
+    "vercel:build": "bash scripts/vercel-build.sh",
+    "packs:mint": "node scripts/mint-pack-inventory.js"
   }
 }

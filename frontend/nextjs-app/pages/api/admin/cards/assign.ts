@@ -1,6 +1,6 @@
 
 import type { NextApiRequest, NextApiResponse } from "next";
-import { CardAssetStatus, prisma } from "@tenkings/database";
+import { CardAssetStatus, mintAssignedCardAssets, prisma, type MintResult } from "@tenkings/database";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
@@ -11,6 +11,7 @@ type AssignResponse = {
     assignedDefinitionId: string | null;
     assignedAt: string | null;
   }>;
+  mint?: MintResult;
 };
 
 const assignSchema = z.object({
@@ -84,6 +85,12 @@ export default async function handler(
       );
     }
 
+    const mintResult = await mintAssignedCardAssets({
+      packDefinitionId,
+      cardIds,
+      prismaClient: prisma,
+    });
+
     const updated = await prisma.cardAsset.findMany({
       where: { id: { in: cardIds } },
       select: {
@@ -101,6 +108,7 @@ export default async function handler(
         assignedDefinitionId: card.assignedDefinitionId ?? null,
         assignedAt: card.assignedAt ? card.assignedAt.toISOString() : null,
       })),
+      mint: mintResult,
     });
   } catch (error) {
     const result = toErrorResponse(error);
