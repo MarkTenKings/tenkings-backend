@@ -183,6 +183,12 @@ app.post("/purchase", async (req, res, next) => {
         update: {},
         create: { id: payload.userId },
       });
+
+      const purchaserWallet = await tx.wallet.upsert({
+        where: { userId: purchaser.id },
+        update: {},
+        create: { userId: purchaser.id },
+      });
       const definition = await tx.packDefinition.findUnique({ where: { id: payload.packDefinitionId } });
       if (!definition) {
         throw Object.assign(new Error("pack definition missing"), { statusCode: 404 });
@@ -201,10 +207,7 @@ app.post("/purchase", async (req, res, next) => {
       let walletBalance: number | null = null;
 
       if (payload.paymentMethod === "wallet") {
-        const wallet = await tx.wallet.findUnique({ where: { userId: payload.userId } });
-        if (!wallet) {
-          throw Object.assign(new Error("wallet missing"), { statusCode: 404 });
-        }
+        const wallet = purchaserWallet;
 
         if (wallet.balance < definition.price) {
           throw Object.assign(new Error("insufficient balance"), { statusCode: 400 });
