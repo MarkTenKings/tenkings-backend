@@ -497,7 +497,10 @@ export default function CollectionPage() {
                 </dl>
 
                 {(() => {
-                  const sportsDetails = (modalItem.details as any)?.sports ?? (modalItem.details as any)?.sportsDb ?? null;
+                  const rawDetails = modalItem.details as any;
+                  const normalized = rawDetails?.normalized ?? null;
+                  const sportsDetails =
+                    normalized?.sport ?? rawDetails?.sport ?? rawDetails?.sports ?? rawDetails?.sportsDb ?? null;
                   if (!sportsDetails) {
                     return null;
                   }

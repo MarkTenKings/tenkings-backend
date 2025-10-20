@@ -1,5 +1,6 @@
 import { prisma as defaultPrisma } from "./client";
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { parseClassificationPayload } from "@tenkings/shared";
 
 type Nullable<T> = T | null | undefined;
 
@@ -34,35 +35,73 @@ const toSentence = (value: Nullable<string>) => {
 
 type CardRecord = Prisma.CardAssetGetPayload<{}>;
 
+const extractClassification = (card: CardRecord) => {
+  const payload = parseClassificationPayload(card.classificationJson);
+  return {
+    attributes: payload?.attributes ?? null,
+    normalized: payload?.normalized ?? null,
+  };
+};
+
 const resolveCardName = (card: CardRecord) => {
-  const classification = (card.classificationJson as Record<string, unknown> | null) ?? null;
+  const { attributes, normalized } = extractClassification(card);
+
+  const customTitle = toSentence(card.customTitle);
+  if (customTitle) {
+    return customTitle;
+  }
+
+  const normalizedDisplay = toSentence(normalized?.displayName ?? undefined);
+  if (normalizedDisplay) {
+    return normalizedDisplay;
+  }
 
   const nameParts: string[] = [];
-  const year = typeof classification?.year === "string" ? classification.year.trim() : "";
-  const brand = typeof classification?.brand === "string" ? classification.brand.trim() : "";
-  const player = typeof classification?.playerName === "string" ? classification.playerName.trim() : "";
+  const primaryYear = toSentence(normalized?.year ?? attributes?.year ?? undefined);
+  const primaryBrand = toSentence(
+    normalized?.company ?? normalized?.setName ?? attributes?.brand ?? attributes?.setName ?? undefined
+  );
+  const primaryName = toSentence(
+    attributes?.playerName ??
+      normalized?.sport?.playerName ??
+      normalized?.tcg?.cardName ??
+      normalized?.comics?.title ??
+      undefined
+  );
 
-  if (year) nameParts.push(year);
-  if (brand) nameParts.push(brand);
-  if (player) nameParts.push(player);
+  if (primaryYear) nameParts.push(primaryYear);
+  if (primaryBrand) nameParts.push(primaryBrand);
+  if (primaryName) nameParts.push(primaryName);
+
+  if (nameParts.length) {
+    return nameParts.join(" ");
+  }
 
   const firstLine = typeof card.ocrText === "string" ? card.ocrText.split(/\n+/)[0]?.slice(0, 140) ?? null : null;
+  const firstLineSentence = toSentence(firstLine);
+  if (firstLineSentence) {
+    return firstLineSentence;
+  }
 
-  return toSentence(card.customTitle) ||
-    (nameParts.length ? nameParts.join(" ") : null) ||
-    toSentence(firstLine) ||
-    `Card ${card.id}`;
+  return `Card ${card.id}`;
 };
 
 const resolveSetName = (card: CardRecord) => {
-  const classification = (card.classificationJson as Record<string, unknown> | null) ?? null;
+  const { attributes, normalized } = extractClassification(card);
 
-  const setName = typeof classification?.setName === "string" ? classification.setName.trim() : "";
-  if (setName) {
-    return setName;
+  const normalizedSet = toSentence(
+    normalized?.setName ?? normalized?.comics?.title ?? normalized?.tcg?.series ?? undefined
+  );
+  if (normalizedSet) {
+    return normalizedSet;
   }
 
-  const brand = typeof classification?.brand === "string" ? classification.brand.trim() : "";
+  const attributeSet = toSentence(attributes?.setName ?? undefined);
+  if (attributeSet) {
+    return attributeSet;
+  }
+
+  const brand = toSentence(attributes?.brand ?? normalized?.company ?? undefined);
   if (brand) {
     return brand;
   }
@@ -71,10 +110,18 @@ const resolveSetName = (card: CardRecord) => {
 };
 
 const resolveFoil = (card: CardRecord) => {
-  const classification = (card.classificationJson as Record<string, unknown> | null) ?? null;
-  const variants = Array.isArray(classification?.variantKeywords)
-    ? classification.variantKeywords
-    : [];
+  const { attributes, normalized } = extractClassification(card);
+
+  const normalizedFoil =
+    normalized?.sport?.foil ??
+    normalized?.tcg?.foil ??
+    (typeof normalized?.rarity === "string" && /foil/i.test(normalized.rarity) ? true : null);
+
+  if (normalizedFoil != null) {
+    return normalizedFoil;
+  }
+
+  const variants = attributes?.variantKeywords ?? [];
   return variants.some((entry) => typeof entry === "string" && /foil/i.test(entry));
 };
 

@@ -6,7 +6,14 @@ import AppShell from "../../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
 import { useSession } from "../../../hooks/useSession";
 import { buildAdminHeaders } from "../../../lib/adminHeaders";
-import type { CardAttributes } from "@tenkings/shared";
+import type {
+  CardAttributes,
+  ClassificationCategory,
+  NormalizedClassification,
+  NormalizedClassificationSport,
+  NormalizedClassificationTcg,
+  NormalizedClassificationComics,
+} from "@tenkings/shared";
 
 type BatchAsset = {
   id: string;
@@ -19,6 +26,7 @@ type BatchAsset = {
   uploadedAt: string;
   ocrText: string | null;
   classification: CardAttributes | null;
+  classificationNormalized: NormalizedClassification | null;
   customTitle: string | null;
   customDetails: string | null;
   valuationMinor: number | null;
@@ -176,6 +184,83 @@ const buildAttributeTags = (attributes: CardAttributes | null): string[] => {
   return tags;
 };
 
+type AttributeFormState = {
+  playerName: string;
+  teamName: string;
+  year: string;
+  brand: string;
+  setName: string;
+  variantKeywords: string;
+  serialNumber: string;
+  rookie: boolean;
+  autograph: boolean;
+  memorabilia: boolean;
+  gradeCompany: string;
+  gradeValue: string;
+};
+
+type TriState = "unknown" | "yes" | "no";
+
+type NormalizedSportFormState = {
+  playerName: string;
+  teamName: string;
+  league: string;
+  sport: string;
+  cardType: string;
+  subcategory: string;
+  autograph: TriState;
+  foil: TriState;
+  graded: TriState;
+  gradeCompany: string;
+  grade: string;
+};
+
+type NormalizedTcgFormState = {
+  cardName: string;
+  game: string;
+  series: string;
+  color: string;
+  type: string;
+  language: string;
+  foil: TriState;
+  rarity: string;
+  outOf: string;
+  subcategory: string;
+};
+
+type NormalizedComicsFormState = {
+  title: string;
+  issueNumber: string;
+  date: string;
+  originDate: string;
+  storyArc: string;
+  graded: TriState;
+  gradeCompany: string;
+  grade: string;
+};
+
+type NormalizedLinkEntry = {
+  id: string;
+  key: string;
+  value: string;
+};
+
+type NormalizedFormState = {
+  enabled: boolean;
+  categoryType: ClassificationCategory;
+  displayName: string;
+  cardNumber: string;
+  setName: string;
+  setCode: string;
+  year: string;
+  company: string;
+  rarity: string;
+  links: NormalizedLinkEntry[];
+  sport: NormalizedSportFormState;
+  tcg: NormalizedTcgFormState;
+  comics: NormalizedComicsFormState;
+};
+
 type CardEditForm = {
   customTitle: string;
   customDetails: string;
@@ -185,7 +270,121 @@ type CardEditForm = {
   valuationSource: string;
   marketplaceUrl: string;
   ebaySoldUrl: string;
+  ebaySoldUrlVariant: string;
+  ebaySoldUrlHighGrade: string;
+  ebaySoldUrlPlayerComp: string;
+  ebaySoldUrlAiGrade: string;
   humanReviewed: boolean;
+  aiGradeFinal: string;
+  aiGradeLabel: string;
+  aiGradePsaEquivalent: string;
+  aiGradeRangeLow: string;
+  aiGradeRangeHigh: string;
+  attributes: AttributeFormState;
+  normalized: NormalizedFormState;
+};
+
+const triStateFromBoolean = (value: boolean | null | undefined): TriState => {
+  if (value === true) return "yes";
+  if (value === false) return "no";
+  return "unknown";
+};
+
+const triStateToBoolean = (value: TriState): boolean | null => {
+  if (value === "yes") return true;
+  if (value === "no") return false;
+  return null;
+};
+
+const makeLinkEntryId = () => `link-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+const buildAttributeFormState = (attributes: CardAttributes | null): AttributeFormState => ({
+  playerName: attributes?.playerName ?? "",
+  teamName: attributes?.teamName ?? "",
+  year: attributes?.year ?? "",
+  brand: attributes?.brand ?? "",
+  setName: attributes?.setName ?? "",
+  variantKeywords: (attributes?.variantKeywords ?? []).join(", "),
+  serialNumber: attributes?.serialNumber ?? "",
+  rookie: attributes?.rookie ?? false,
+  autograph: attributes?.autograph ?? false,
+  memorabilia: attributes?.memorabilia ?? false,
+  gradeCompany: attributes?.gradeCompany ?? "",
+  gradeValue: attributes?.gradeValue ?? "",
+});
+
+const buildNormalizedFormState = (
+  normalized: NormalizedClassification | null
+): NormalizedFormState => {
+  const rawLinks = normalized?.links ?? {};
+  const links: NormalizedLinkEntry[] = Object.entries(rawLinks).map(([key, value]) => ({
+    id: makeLinkEntryId(),
+    key,
+    value,
+  }));
+
+  const sport = normalized?.sport ?? ({} as NormalizedClassificationSport | undefined);
+  const tcg = normalized?.tcg ?? ({} as NormalizedClassificationTcg | undefined);
+  const comics = normalized?.comics ?? ({} as NormalizedClassificationComics | undefined);
+
+  return {
+    enabled: Boolean(normalized),
+    categoryType: normalized?.categoryType ?? "unknown",
+    displayName: normalized?.displayName ?? "",
+    cardNumber: normalized?.cardNumber ?? "",
+    setName: normalized?.setName ?? "",
+    setCode: normalized?.setCode ?? "",
+    year: normalized?.year ?? "",
+    company: normalized?.company ?? "",
+    rarity: normalized?.rarity ?? "",
+    links,
+    sport: {
+      playerName: sport?.playerName ?? "",
+      teamName: sport?.teamName ?? "",
+      league: sport?.league ?? "",
+      sport: sport?.sport ?? "",
+      cardType: sport?.cardType ?? "",
+      subcategory: sport?.subcategory ?? "",
+      autograph: triStateFromBoolean(sport?.autograph ?? null),
+      foil: triStateFromBoolean(sport?.foil ?? null),
+      graded: triStateFromBoolean(sport?.graded ?? null),
+      gradeCompany: sport?.gradeCompany ?? "",
+      grade: sport?.grade ?? "",
+    },
+    tcg: {
+      cardName: tcg?.cardName ?? "",
+      game: tcg?.game ?? "",
+      series: tcg?.series ?? "",
+      color: tcg?.color ?? "",
+      type: tcg?.type ?? "",
+      language: tcg?.language ?? "",
+      foil: triStateFromBoolean(tcg?.foil ?? null),
+      rarity: tcg?.rarity ?? "",
+      outOf: tcg?.outOf ?? "",
+      subcategory: tcg?.subcategory ?? "",
+    },
+    comics: {
+      title: comics?.title ?? "",
+      issueNumber: comics?.issueNumber ?? "",
+      date: comics?.date ?? "",
+      originDate: comics?.originDate ?? "",
+      storyArc: comics?.storyArc ?? "",
+      graded: triStateFromBoolean(comics?.graded ?? null),
+      gradeCompany: comics?.gradeCompany ?? "",
+      grade: comics?.grade ?? "",
+    },
+  };
+};
+
+const parseVariantKeywords = (value: string): string[] =>
+  value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+const emptyToNull = (value: string): string | null => {
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 };
 
 type CardApiResponse = {
@@ -198,6 +397,7 @@ type CardApiResponse = {
   mimeType: string;
   ocrText: string | null;
   classification: CardAttributes | null;
+  classificationNormalized: NormalizedClassification | null;
   customTitle: string | null;
   customDetails: string | null;
   valuationMinor: number | null;
@@ -444,6 +644,8 @@ export default function AdminBatchDetail() {
     }
     const next: Record<string, CardEditForm> = {};
     batch.assets.forEach((asset) => {
+      const attributeState = buildAttributeFormState(asset.classification);
+      const normalizedState = buildNormalizedFormState(asset.classificationNormalized ?? null);
       next[asset.id] = {
         customTitle: asset.customTitle ?? '',
         customDetails: asset.customDetails ?? '',
@@ -453,7 +655,19 @@ export default function AdminBatchDetail() {
         valuationSource: asset.valuationSource ?? '',
         marketplaceUrl: asset.marketplaceUrl ?? '',
         ebaySoldUrl: asset.ebaySoldUrl ?? '',
+        ebaySoldUrlVariant: asset.ebaySoldUrlVariant ?? '',
+        ebaySoldUrlHighGrade: asset.ebaySoldUrlHighGrade ?? '',
+        ebaySoldUrlPlayerComp: asset.ebaySoldUrlPlayerComp ?? '',
+        ebaySoldUrlAiGrade: asset.ebaySoldUrlAiGrade ?? '',
         humanReviewed: asset.humanReviewedAt !== null,
+        aiGradeFinal: asset.aiGrade?.final != null ? String(asset.aiGrade.final) : '',
+        aiGradeLabel: asset.aiGrade?.label ?? '',
+        aiGradePsaEquivalent:
+          asset.aiGrade?.psaEquivalent != null ? String(asset.aiGrade.psaEquivalent) : '',
+        aiGradeRangeLow: asset.aiGrade?.rangeLow != null ? String(asset.aiGrade.rangeLow) : '',
+        aiGradeRangeHigh: asset.aiGrade?.rangeHigh != null ? String(asset.aiGrade.rangeHigh) : '',
+        attributes: attributeState,
+        normalized: normalizedState,
       };
     });
     setForms(next);
@@ -635,6 +849,252 @@ const handleFormCheckboxChange = (cardId: string) => (event: ChangeEvent<HTMLInp
   });
 };
 
+const handleAttributeFieldChange = (
+  cardId: string,
+  field: keyof AttributeFormState
+) =>
+  (event: ChangeEvent<HTMLInputElement>) => {
+    const { value } = event.currentTarget;
+    setForms((prev) => {
+      const current = prev[cardId];
+      if (!current) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [cardId]: {
+          ...current,
+          attributes: {
+            ...current.attributes,
+            [field]: value,
+          },
+        },
+      };
+    });
+  };
+
+const handleAttributeCheckboxChange = (cardId: string, field: "rookie" | "autograph" | "memorabilia") =>
+  (event: ChangeEvent<HTMLInputElement>) => {
+    const { checked } = event.currentTarget;
+    setForms((prev) => {
+      const current = prev[cardId];
+      if (!current) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [cardId]: {
+          ...current,
+          attributes: {
+            ...current.attributes,
+            [field]: checked,
+          },
+        },
+      };
+    });
+  };
+
+const handleNormalizedEnabledToggle = (cardId: string) => (event: ChangeEvent<HTMLInputElement>) => {
+  const { checked } = event.currentTarget;
+  setForms((prev) => {
+    const current = prev[cardId];
+    if (!current) {
+      return prev;
+    }
+    return {
+      ...prev,
+      [cardId]: {
+        ...current,
+        normalized: {
+          ...current.normalized,
+          enabled: checked,
+        },
+      },
+    };
+  });
+};
+
+const handleNormalizedFieldChange = (
+  cardId: string,
+  field: keyof Omit<NormalizedFormState, "enabled" | "links" | "sport" | "tcg" | "comics">
+) =>
+  (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const raw = event.currentTarget.value;
+    setForms((prev) => {
+      const current = prev[cardId];
+      if (!current) {
+        return prev;
+      }
+      if (field === "categoryType") {
+        return {
+          ...prev,
+          [cardId]: {
+            ...current,
+            normalized: {
+              ...current.normalized,
+              categoryType: raw as ClassificationCategory,
+            },
+          },
+        };
+      }
+      return {
+        ...prev,
+        [cardId]: {
+          ...current,
+          normalized: {
+            ...current.normalized,
+            [field]: raw,
+          },
+        },
+      };
+    });
+  };
+
+const handleNormalizedSportChange = (
+  cardId: string,
+  field: keyof NormalizedSportFormState
+) =>
+  (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const raw = event.currentTarget.value;
+    setForms((prev) => {
+      const current = prev[cardId];
+      if (!current) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [cardId]: {
+          ...current,
+          normalized: {
+            ...current.normalized,
+            sport: {
+              ...current.normalized.sport,
+              [field]: field === "autograph" || field === "foil" || field === "graded" ? (raw as TriState) : raw,
+            },
+          },
+        },
+      };
+    });
+  };
+
+const handleNormalizedTcgChange = (
+  cardId: string,
+  field: keyof NormalizedTcgFormState
+) =>
+  (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const raw = event.currentTarget.value;
+    setForms((prev) => {
+      const current = prev[cardId];
+      if (!current) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [cardId]: {
+          ...current,
+          normalized: {
+            ...current.normalized,
+            tcg: {
+              ...current.normalized.tcg,
+              [field]: field === "foil" ? (raw as TriState) : raw,
+            },
+          },
+        },
+      };
+    });
+  };
+
+const handleNormalizedComicsChange = (
+  cardId: string,
+  field: keyof NormalizedComicsFormState
+) =>
+  (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const raw = event.currentTarget.value;
+    setForms((prev) => {
+      const current = prev[cardId];
+      if (!current) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [cardId]: {
+          ...current,
+          normalized: {
+            ...current.normalized,
+            comics: {
+              ...current.normalized.comics,
+              [field]: field === "graded" ? (raw as TriState) : raw,
+            },
+          },
+        },
+      };
+    });
+  };
+
+const handleNormalizedLinkFieldChange = (
+  cardId: string,
+  linkId: string,
+  field: "key" | "value",
+  value: string
+) => {
+  setForms((prev) => {
+    const current = prev[cardId];
+    if (!current) {
+      return prev;
+    }
+    return {
+      ...prev,
+      [cardId]: {
+        ...current,
+        normalized: {
+          ...current.normalized,
+          links: current.normalized.links.map((entry) =>
+            entry.id === linkId ? { ...entry, [field]: value } : entry
+          ),
+        },
+      },
+    };
+  });
+};
+
+const handleAddNormalizedLink = (cardId: string) => () => {
+  setForms((prev) => {
+    const current = prev[cardId];
+    if (!current) {
+      return prev;
+    }
+    return {
+      ...prev,
+      [cardId]: {
+        ...current,
+        normalized: {
+          ...current.normalized,
+          links: [...current.normalized.links, { id: makeLinkEntryId(), key: "", value: "" }],
+        },
+      },
+    };
+  });
+};
+
+const handleRemoveNormalizedLink = (cardId: string, linkId: string) => () => {
+  setForms((prev) => {
+    const current = prev[cardId];
+    if (!current) {
+      return prev;
+    }
+    return {
+      ...prev,
+      [cardId]: {
+        ...current,
+        normalized: {
+          ...current.normalized,
+          links: current.normalized.links.filter((entry) => entry.id !== linkId),
+        },
+      },
+    };
+  });
+};
+
 const handleBulkSave = async (cardId: string) => {
   if (!session?.token || !batch) {
     return;
@@ -661,20 +1121,171 @@ const handleBulkSave = async (cardId: string) => {
   setCardMessages((prev) => ({ ...prev, [cardId]: null }));
 
   try {
+    const parseOptionalNumber = (value: string, label: string, opts?: { integer?: boolean }) => {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+      const parsed = Number(trimmed);
+      if (!Number.isFinite(parsed)) {
+        setCardErrors((prev) => ({ ...prev, [cardId]: `${label} must be a number` }));
+        setSavingCards((prev) => ({ ...prev, [cardId]: false }));
+        return undefined;
+      }
+      return opts?.integer ? Math.round(parsed) : parsed;
+    };
+
+    const aiGradeFinalValue = parseOptionalNumber(formState.aiGradeFinal, "AI grade final");
+    if (aiGradeFinalValue === undefined) {
+      return;
+    }
+    const aiGradePsaValue = parseOptionalNumber(formState.aiGradePsaEquivalent, "PSA equivalent", {
+      integer: true,
+    });
+    if (aiGradePsaValue === undefined) {
+      return;
+    }
+    const aiGradeRangeLowValue = parseOptionalNumber(formState.aiGradeRangeLow, "AI grade range (low)", {
+      integer: true,
+    });
+    if (aiGradeRangeLowValue === undefined) {
+      return;
+    }
+    const aiGradeRangeHighValue = parseOptionalNumber(
+      formState.aiGradeRangeHigh,
+      "AI grade range (high)",
+      { integer: true }
+    );
+    if (aiGradeRangeHighValue === undefined) {
+      return;
+    }
+
+    const originalAsset = batch.assets.find((asset) => asset.id === cardId) ?? null;
+
+    let classificationUpdates: Record<string, unknown> | null = null;
+
+    const attributePayload = {
+      playerName: emptyToNull(formState.attributes.playerName),
+      teamName: emptyToNull(formState.attributes.teamName),
+      year: emptyToNull(formState.attributes.year),
+      brand: emptyToNull(formState.attributes.brand),
+      setName: emptyToNull(formState.attributes.setName),
+      variantKeywords: parseVariantKeywords(formState.attributes.variantKeywords),
+      serialNumber: emptyToNull(formState.attributes.serialNumber),
+      rookie: formState.attributes.rookie,
+      autograph: formState.attributes.autograph,
+      memorabilia: formState.attributes.memorabilia,
+      gradeCompany: emptyToNull(formState.attributes.gradeCompany),
+      gradeValue: emptyToNull(formState.attributes.gradeValue),
+    };
+
+    classificationUpdates = { attributes: attributePayload };
+
+    if (!formState.normalized.enabled) {
+      (classificationUpdates as Record<string, unknown>).normalized = null;
+    } else {
+      const normalizedLinks: Record<string, string | null> = {};
+      const seenKeys = new Set<string>();
+      formState.normalized.links.forEach((entry) => {
+        const key = entry.key.trim();
+        if (!key) {
+          return;
+        }
+        seenKeys.add(key);
+        const value = entry.value.trim();
+        normalizedLinks[key] = value.length > 0 ? value : null;
+      });
+
+      const existingLinkKeys = Object.keys(originalAsset?.classificationNormalized?.links ?? {});
+      existingLinkKeys.forEach((key) => {
+        if (!seenKeys.has(key)) {
+          normalizedLinks[key] = null;
+        }
+      });
+
+      const sportPayload = {
+        playerName: emptyToNull(formState.normalized.sport.playerName),
+        teamName: emptyToNull(formState.normalized.sport.teamName),
+        league: emptyToNull(formState.normalized.sport.league),
+        sport: emptyToNull(formState.normalized.sport.sport),
+        cardType: emptyToNull(formState.normalized.sport.cardType),
+        subcategory: emptyToNull(formState.normalized.sport.subcategory),
+        autograph: triStateToBoolean(formState.normalized.sport.autograph),
+        foil: triStateToBoolean(formState.normalized.sport.foil),
+        graded: triStateToBoolean(formState.normalized.sport.graded),
+        gradeCompany: emptyToNull(formState.normalized.sport.gradeCompany),
+        grade: emptyToNull(formState.normalized.sport.grade),
+      } as Partial<NormalizedClassificationSport>;
+
+      const tcgPayload = {
+        cardName: emptyToNull(formState.normalized.tcg.cardName),
+        game: emptyToNull(formState.normalized.tcg.game),
+        series: emptyToNull(formState.normalized.tcg.series),
+        color: emptyToNull(formState.normalized.tcg.color),
+        type: emptyToNull(formState.normalized.tcg.type),
+        language: emptyToNull(formState.normalized.tcg.language),
+        foil: triStateToBoolean(formState.normalized.tcg.foil),
+        rarity: emptyToNull(formState.normalized.tcg.rarity),
+        outOf: emptyToNull(formState.normalized.tcg.outOf),
+        subcategory: emptyToNull(formState.normalized.tcg.subcategory),
+      } as Partial<NormalizedClassificationTcg>;
+
+      const comicsPayload = {
+        title: emptyToNull(formState.normalized.comics.title),
+        issueNumber: emptyToNull(formState.normalized.comics.issueNumber),
+        date: emptyToNull(formState.normalized.comics.date),
+        originDate: emptyToNull(formState.normalized.comics.originDate),
+        storyArc: emptyToNull(formState.normalized.comics.storyArc),
+        graded: triStateToBoolean(formState.normalized.comics.graded),
+        gradeCompany: emptyToNull(formState.normalized.comics.gradeCompany),
+        grade: emptyToNull(formState.normalized.comics.grade),
+      } as Partial<NormalizedClassificationComics>;
+
+      (classificationUpdates as Record<string, unknown>).normalized = {
+        categoryType: formState.normalized.categoryType,
+        displayName: emptyToNull(formState.normalized.displayName),
+        cardNumber: emptyToNull(formState.normalized.cardNumber),
+        setName: emptyToNull(formState.normalized.setName),
+        setCode: emptyToNull(formState.normalized.setCode),
+        year: emptyToNull(formState.normalized.year),
+        company: emptyToNull(formState.normalized.company),
+        rarity: emptyToNull(formState.normalized.rarity),
+        links: normalizedLinks,
+        sport: sportPayload,
+        tcg: tcgPayload,
+        comics: comicsPayload,
+      };
+    }
+
+    const payload: Record<string, unknown> = {
+      customTitle: formState.customTitle.trim() || null,
+      customDetails: formState.customDetails.trim() || null,
+      ocrText: formState.ocrText.trim() || null,
+      valuationMinor,
+      valuationCurrency: formState.valuationCurrency.trim() || null,
+      valuationSource: formState.valuationSource.trim() || null,
+      marketplaceUrl: formState.marketplaceUrl.trim() || null,
+      ebaySoldUrl: formState.ebaySoldUrl.trim() || null,
+      ebaySoldUrlVariant: formState.ebaySoldUrlVariant.trim() || null,
+      ebaySoldUrlHighGrade: formState.ebaySoldUrlHighGrade.trim() || null,
+      ebaySoldUrlPlayerComp: formState.ebaySoldUrlPlayerComp.trim() || null,
+      ebaySoldUrlAiGrade: formState.ebaySoldUrlAiGrade.trim() || null,
+      humanReviewed: formState.humanReviewed,
+      aiGradeFinal: aiGradeFinalValue,
+      aiGradeLabel: emptyToNull(formState.aiGradeLabel) ?? null,
+      aiGradePsaEquivalent: aiGradePsaValue,
+      aiGradeRangeLow: aiGradeRangeLowValue,
+      aiGradeRangeHigh: aiGradeRangeHighValue,
+    };
+
+    if (classificationUpdates) {
+      payload.classificationUpdates = classificationUpdates;
+    }
+
     const res = await fetch(`/api/admin/cards/${cardId}`, {
       method: "PATCH",
       headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        customTitle: formState.customTitle.trim() || null,
-        customDetails: formState.customDetails.trim() || null,
-        ocrText: formState.ocrText.trim() || null,
-        valuationMinor,
-        valuationCurrency: formState.valuationCurrency.trim() || null,
-        valuationSource: formState.valuationSource.trim() || null,
-        marketplaceUrl: formState.marketplaceUrl.trim() || null,
-        ebaySoldUrl: formState.ebaySoldUrl.trim() || null,
-        humanReviewed: formState.humanReviewed,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
@@ -710,6 +1321,8 @@ const handleBulkSave = async (cardId: string) => {
           ebaySoldUrlPlayerComp: updated.ebaySoldUrlPlayerComp,
           ebaySoldUrlAiGrade: updated.ebaySoldUrlAiGrade,
           aiGrade: updated.aiGrade,
+          classification: updated.classification,
+          classificationNormalized: updated.classificationNormalized,
           humanReviewedAt: updated.humanReviewedAt,
           humanReviewerName: updated.humanReviewerName,
         };
@@ -728,7 +1341,19 @@ const handleBulkSave = async (cardId: string) => {
         valuationSource: updated.valuationSource ?? "",
         marketplaceUrl: updated.marketplaceUrl ?? "",
         ebaySoldUrl: updated.ebaySoldUrl ?? "",
+        ebaySoldUrlVariant: updated.ebaySoldUrlVariant ?? "",
+        ebaySoldUrlHighGrade: updated.ebaySoldUrlHighGrade ?? "",
+        ebaySoldUrlPlayerComp: updated.ebaySoldUrlPlayerComp ?? "",
+        ebaySoldUrlAiGrade: updated.ebaySoldUrlAiGrade ?? "",
         humanReviewed: updated.humanReviewedAt !== null,
+        aiGradeFinal: updated.aiGrade?.final != null ? String(updated.aiGrade.final) : "",
+        aiGradeLabel: updated.aiGrade?.label ?? "",
+        aiGradePsaEquivalent:
+          updated.aiGrade?.psaEquivalent != null ? String(updated.aiGrade.psaEquivalent) : "",
+        aiGradeRangeLow: updated.aiGrade?.rangeLow != null ? String(updated.aiGrade.rangeLow) : "",
+        aiGradeRangeHigh: updated.aiGrade?.rangeHigh != null ? String(updated.aiGrade.rangeHigh) : "",
+        attributes: buildAttributeFormState(updated.classification ?? null),
+        normalized: buildNormalizedFormState(updated.classificationNormalized ?? null),
       },
     }));
 
@@ -1023,6 +1648,556 @@ const handleBulkSave = async (cardId: string) => {
                                   className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
                                 />
                               </label>
+
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <label className="flex flex-col gap-2 text-[11px] uppercase tracking-[0.25em] text-slate-400">
+                                  <span>Variant eBay URL</span>
+                                  <input
+                                    value={formState.ebaySoldUrlVariant}
+                                    onChange={handleFormFieldChange(asset.id, "ebaySoldUrlVariant")}
+                                    placeholder="Variant comps search"
+                                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                  />
+                                </label>
+                                <label className="flex flex-col gap-2 text-[11px] uppercase tracking-[0.25em] text-slate-400">
+                                  <span>High Grade URL</span>
+                                  <input
+                                    value={formState.ebaySoldUrlHighGrade}
+                                    onChange={handleFormFieldChange(asset.id, "ebaySoldUrlHighGrade")}
+                                    placeholder="High grade comps"
+                                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                  />
+                                </label>
+                              </div>
+
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <label className="flex flex-col gap-2 text-[11px] uppercase tracking-[0.25em] text-slate-400">
+                                  <span>Player Comp URL</span>
+                                  <input
+                                    value={formState.ebaySoldUrlPlayerComp}
+                                    onChange={handleFormFieldChange(asset.id, "ebaySoldUrlPlayerComp")}
+                                    placeholder="Player comp search"
+                                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                  />
+                                </label>
+                                <label className="flex flex-col gap-2 text-[11px] uppercase tracking-[0.25em] text-slate-400">
+                                  <span>AI Grade URL</span>
+                                  <input
+                                    value={formState.ebaySoldUrlAiGrade}
+                                    onChange={handleFormFieldChange(asset.id, "ebaySoldUrlAiGrade")}
+                                    placeholder="AI grade comps"
+                                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                  />
+                                </label>
+                              </div>
+
+                              <details className="rounded-2xl border border-white/10 bg-night-900/60 p-3">
+                                <summary className="cursor-pointer text-[11px] uppercase tracking-[0.25em] text-emerald-300">Card Attributes</summary>
+                                <div className="mt-3 grid gap-2 text-xs text-slate-300">
+                                  <div className="grid gap-2">
+                                    <input
+                                      value={formState.attributes.playerName}
+                                      onChange={handleAttributeFieldChange(asset.id, "playerName")}
+                                      placeholder="Player name"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                    />
+                                    <input
+                                      value={formState.attributes.teamName}
+                                      onChange={handleAttributeFieldChange(asset.id, "teamName")}
+                                      placeholder="Team"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                    />
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <input
+                                        value={formState.attributes.year}
+                                        onChange={handleAttributeFieldChange(asset.id, "year")}
+                                        placeholder="Year"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                      />
+                                      <input
+                                        value={formState.attributes.serialNumber}
+                                        onChange={handleAttributeFieldChange(asset.id, "serialNumber")}
+                                        placeholder="Serial"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                      />
+                                    </div>
+                                    <input
+                                      value={formState.attributes.brand}
+                                      onChange={handleAttributeFieldChange(asset.id, "brand")}
+                                      placeholder="Brand"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                    />
+                                    <input
+                                      value={formState.attributes.setName}
+                                      onChange={handleAttributeFieldChange(asset.id, "setName")}
+                                      placeholder="Set name"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                    />
+                                    <input
+                                      value={formState.attributes.variantKeywords}
+                                      onChange={handleAttributeFieldChange(asset.id, "variantKeywords")}
+                                      placeholder="Variants (comma separated)"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                    />
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <input
+                                        value={formState.attributes.gradeCompany}
+                                        onChange={handleAttributeFieldChange(asset.id, "gradeCompany")}
+                                        placeholder="Grade company"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                      />
+                                      <input
+                                        value={formState.attributes.gradeValue}
+                                        onChange={handleAttributeFieldChange(asset.id, "gradeValue")}
+                                        placeholder="Grade value"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                      />
+                                    </div>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-400">
+                                    <label className="inline-flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        className="h-4 w-4 accent-emerald-400"
+                                        checked={formState.attributes.rookie}
+                                        onChange={handleAttributeCheckboxChange(asset.id, "rookie")}
+                                      />
+                                      Rookie
+                                    </label>
+                                    <label className="inline-flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        className="h-4 w-4 accent-emerald-400"
+                                        checked={formState.attributes.autograph}
+                                        onChange={handleAttributeCheckboxChange(asset.id, "autograph")}
+                                      />
+                                      Autograph
+                                    </label>
+                                    <label className="inline-flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        className="h-4 w-4 accent-emerald-400"
+                                        checked={formState.attributes.memorabilia}
+                                        onChange={handleAttributeCheckboxChange(asset.id, "memorabilia")}
+                                      />
+                                      Memorabilia
+                                    </label>
+                                  </div>
+                                </div>
+                              </details>
+
+                              <details className="rounded-2xl border border-white/10 bg-night-900/60 p-3">
+                                <summary className="cursor-pointer text-[11px] uppercase tracking-[0.25em] text-sky-300">Normalized Classification</summary>
+                                <div className="mt-3 flex flex-col gap-3 text-[11px] text-slate-300">
+                                  <label className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-400">
+                                    <input
+                                      type="checkbox"
+                                      className="h-4 w-4 accent-sky-400"
+                                      checked={formState.normalized.enabled}
+                                      onChange={handleNormalizedEnabledToggle(asset.id)}
+                                    />
+                                    Enabled
+                                  </label>
+                                  <div className="grid gap-2">
+                                    <select
+                                      value={formState.normalized.categoryType}
+                                      onChange={handleNormalizedFieldChange(asset.id, "categoryType")}
+                                      disabled={!formState.normalized.enabled}
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                      <option value="unknown">Unknown</option>
+                                      <option value="sport">Sport</option>
+                                      <option value="tcg">TCG</option>
+                                      <option value="comics">Comics</option>
+                                    </select>
+                                    <input
+                                      value={formState.normalized.displayName}
+                                      onChange={handleNormalizedFieldChange(asset.id, "displayName")}
+                                      disabled={!formState.normalized.enabled}
+                                      placeholder="Display name"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                    />
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <input
+                                        value={formState.normalized.cardNumber}
+                                        onChange={handleNormalizedFieldChange(asset.id, "cardNumber")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Card number"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.setCode}
+                                        onChange={handleNormalizedFieldChange(asset.id, "setCode")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Set code"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <input
+                                        value={formState.normalized.setName}
+                                        onChange={handleNormalizedFieldChange(asset.id, "setName")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Set name"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.year}
+                                        onChange={handleNormalizedFieldChange(asset.id, "year")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Year"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                    </div>
+                                    <input
+                                      value={formState.normalized.company}
+                                      onChange={handleNormalizedFieldChange(asset.id, "company")}
+                                      disabled={!formState.normalized.enabled}
+                                      placeholder="Company / Publisher"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                    />
+                                    <input
+                                      value={formState.normalized.rarity}
+                                      onChange={handleNormalizedFieldChange(asset.id, "rarity")}
+                                      disabled={!formState.normalized.enabled}
+                                      placeholder="Rarity"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                    />
+                                  </div>
+                                  <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                                    <div className="flex items-center justify-between">
+                                      <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400">Reference Links</p>
+                                      <button
+                                        type="button"
+                                        onClick={handleAddNormalizedLink(asset.id)}
+                                        disabled={!formState.normalized.enabled}
+                                        className="rounded-full border border-sky-400/40 px-3 py-1 text-[10px] uppercase tracking-[0.25em] text-sky-300 transition hover:border-sky-300 hover:text-sky-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                      >
+                                        Add Link
+                                      </button>
+                                    </div>
+                                    <div className="mt-2 flex flex-col gap-2">
+                                      {formState.normalized.links.length === 0 && (
+                                        <p className="text-[11px] text-slate-500">No links captured.</p>
+                                      )}
+                                      {formState.normalized.links.map((entry) => (
+                                        <div key={entry.id} className="flex flex-col gap-2 md:flex-row">
+                                          <input
+                                            value={entry.key}
+                                            onChange={(event) =>
+                                              handleNormalizedLinkFieldChange(asset.id, entry.id, "key", event.currentTarget.value)
+                                            }
+                                            disabled={!formState.normalized.enabled}
+                                            placeholder="Provider"
+                                            className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50 md:w-32"
+                                          />
+                                          <div className="flex flex-1 gap-2">
+                                            <input
+                                              value={entry.value}
+                                              onChange={(event) =>
+                                                handleNormalizedLinkFieldChange(asset.id, entry.id, "value", event.currentTarget.value)
+                                              }
+                                              disabled={!formState.normalized.enabled}
+                                              placeholder="https://..."
+                                              className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                            />
+                                            <button
+                                              type="button"
+                                              onClick={handleRemoveNormalizedLink(asset.id, entry.id)}
+                                              disabled={!formState.normalized.enabled}
+                                              className="rounded-full border border-rose-400/40 px-3 py-2 text-[10px] uppercase tracking-[0.25em] text-rose-300 transition hover:border-rose-300 hover:text-rose-200 disabled:cursor-not-allowed disabled:opacity-50"
+                                            >
+                                              Remove
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                                    <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400">Sport Fields</p>
+                                    <div className="mt-2 grid gap-2 text-xs">
+                                      <input
+                                        value={formState.normalized.sport.playerName}
+                                        onChange={handleNormalizedSportChange(asset.id, "playerName")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Player name"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.sport.teamName}
+                                        onChange={handleNormalizedSportChange(asset.id, "teamName")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Team"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.sport.league}
+                                        onChange={handleNormalizedSportChange(asset.id, "league")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="League"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.sport.sport}
+                                        onChange={handleNormalizedSportChange(asset.id, "sport")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Sport"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.sport.cardType}
+                                        onChange={handleNormalizedSportChange(asset.id, "cardType")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Card type"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.sport.subcategory}
+                                        onChange={handleNormalizedSportChange(asset.id, "subcategory")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Subcategory"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <div className="grid grid-cols-3 gap-2 text-[10px] uppercase tracking-[0.25em] text-slate-400">
+                                        <select
+                                          value={formState.normalized.sport.autograph}
+                                          onChange={handleNormalizedSportChange(asset.id, "autograph")}
+                                          disabled={!formState.normalized.enabled}
+                                          className="rounded-2xl border border-white/10 bg-night-800 px-2 py-2 text-xs text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                          <option value="unknown">Autograph?</option>
+                                          <option value="yes">Yes</option>
+                                          <option value="no">No</option>
+                                        </select>
+                                        <select
+                                          value={formState.normalized.sport.foil}
+                                          onChange={handleNormalizedSportChange(asset.id, "foil")}
+                                          disabled={!formState.normalized.enabled}
+                                          className="rounded-2xl border border-white/10 bg-night-800 px-2 py-2 text-xs text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                          <option value="unknown">Foil?</option>
+                                          <option value="yes">Yes</option>
+                                          <option value="no">No</option>
+                                        </select>
+                                        <select
+                                          value={formState.normalized.sport.graded}
+                                          onChange={handleNormalizedSportChange(asset.id, "graded")}
+                                          disabled={!formState.normalized.enabled}
+                                          className="rounded-2xl border border-white/10 bg-night-800 px-2 py-2 text-xs text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                          <option value="unknown">Graded?</option>
+                                          <option value="yes">Yes</option>
+                                          <option value="no">No</option>
+                                        </select>
+                                      </div>
+                                      <input
+                                        value={formState.normalized.sport.gradeCompany}
+                                        onChange={handleNormalizedSportChange(asset.id, "gradeCompany")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Grade company"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.sport.grade}
+                                        onChange={handleNormalizedSportChange(asset.id, "grade")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Grade value"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                                    <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400">TCG Fields</p>
+                                    <div className="mt-2 grid gap-2 text-xs">
+                                      <input
+                                        value={formState.normalized.tcg.cardName}
+                                        onChange={handleNormalizedTcgChange(asset.id, "cardName")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Card name"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.tcg.game}
+                                        onChange={handleNormalizedTcgChange(asset.id, "game")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Game"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.tcg.series}
+                                        onChange={handleNormalizedTcgChange(asset.id, "series")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Series"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.tcg.color}
+                                        onChange={handleNormalizedTcgChange(asset.id, "color")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Color"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.tcg.type}
+                                        onChange={handleNormalizedTcgChange(asset.id, "type")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Type"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.tcg.language}
+                                        onChange={handleNormalizedTcgChange(asset.id, "language")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Language"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <select
+                                        value={formState.normalized.tcg.foil}
+                                        onChange={handleNormalizedTcgChange(asset.id, "foil")}
+                                        disabled={!formState.normalized.enabled}
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-2 py-2 text-xs text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      >
+                                        <option value="unknown">Foil?</option>
+                                        <option value="yes">Yes</option>
+                                        <option value="no">No</option>
+                                      </select>
+                                      <input
+                                        value={formState.normalized.tcg.rarity}
+                                        onChange={handleNormalizedTcgChange(asset.id, "rarity")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Rarity"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.tcg.outOf}
+                                        onChange={handleNormalizedTcgChange(asset.id, "outOf")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Out of"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.tcg.subcategory}
+                                        onChange={handleNormalizedTcgChange(asset.id, "subcategory")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Subcategory"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                    </div>
+                                  </div>
+
+                                  <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                                    <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400">Comics Fields</p>
+                                    <div className="mt-2 grid gap-2 text-xs">
+                                      <input
+                                        value={formState.normalized.comics.title}
+                                        onChange={handleNormalizedComicsChange(asset.id, "title")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Title"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <input
+                                        value={formState.normalized.comics.issueNumber}
+                                        onChange={handleNormalizedComicsChange(asset.id, "issueNumber")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Issue number"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <input
+                                          value={formState.normalized.comics.date}
+                                          onChange={handleNormalizedComicsChange(asset.id, "date")}
+                                          disabled={!formState.normalized.enabled}
+                                          placeholder="Release date"
+                                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                        />
+                                        <input
+                                          value={formState.normalized.comics.originDate}
+                                          onChange={handleNormalizedComicsChange(asset.id, "originDate")}
+                                          disabled={!formState.normalized.enabled}
+                                          placeholder="Origin date"
+                                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                        />
+                                      </div>
+                                      <input
+                                        value={formState.normalized.comics.storyArc}
+                                        onChange={handleNormalizedComicsChange(asset.id, "storyArc")}
+                                        disabled={!formState.normalized.enabled}
+                                        placeholder="Story arc"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                      />
+                                      <div className="grid grid-cols-3 gap-2 text-[10px] uppercase tracking-[0.25em] text-slate-400">
+                                        <select
+                                          value={formState.normalized.comics.graded}
+                                          onChange={handleNormalizedComicsChange(asset.id, "graded")}
+                                          disabled={!formState.normalized.enabled}
+                                          className="rounded-2xl border border-white/10 bg-night-800 px-2 py-2 text-xs text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                          <option value="unknown">Graded?</option>
+                                          <option value="yes">Yes</option>
+                                          <option value="no">No</option>
+                                        </select>
+                                        <input
+                                          value={formState.normalized.comics.gradeCompany}
+                                          onChange={handleNormalizedComicsChange(asset.id, "gradeCompany")}
+                                          disabled={!formState.normalized.enabled}
+                                          placeholder="Grade company"
+                                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                        />
+                                        <input
+                                          value={formState.normalized.comics.grade}
+                                          onChange={handleNormalizedComicsChange(asset.id, "grade")}
+                                          disabled={!formState.normalized.enabled}
+                                          placeholder="Grade"
+                                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-sky-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                                        />
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              </details>
+
+                              <details className="rounded-2xl border border-white/10 bg-night-900/60 p-3">
+                                <summary className="cursor-pointer text-[11px] uppercase tracking-[0.25em] text-indigo-300">AI Grade Overrides</summary>
+                                <div className="mt-3 grid gap-2 text-xs text-slate-300">
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <input
+                                      value={formState.aiGradeFinal}
+                                      onChange={handleFormFieldChange(asset.id, "aiGradeFinal")}
+                                      placeholder="AI final"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-indigo-400/60"
+                                    />
+                                    <input
+                                      value={formState.aiGradePsaEquivalent}
+                                      onChange={handleFormFieldChange(asset.id, "aiGradePsaEquivalent")}
+                                      placeholder="PSA equivalent"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-indigo-400/60"
+                                    />
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <input
+                                      value={formState.aiGradeRangeLow}
+                                      onChange={handleFormFieldChange(asset.id, "aiGradeRangeLow")}
+                                      placeholder="Range low"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-indigo-400/60"
+                                    />
+                                    <input
+                                      value={formState.aiGradeRangeHigh}
+                                      onChange={handleFormFieldChange(asset.id, "aiGradeRangeHigh")}
+                                      placeholder="Range high"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-indigo-400/60"
+                                    />
+                                  </div>
+                                  <input
+                                    value={formState.aiGradeLabel}
+                                    onChange={handleFormFieldChange(asset.id, "aiGradeLabel")}
+                                    placeholder="Grade label"
+                                    className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-indigo-400/60"
+                                  />
+                                </div>
+                              </details>
 
                               {comparables.length > 0 && (
                                 <div className="rounded-2xl border border-white/5 bg-night-900/60 p-3">

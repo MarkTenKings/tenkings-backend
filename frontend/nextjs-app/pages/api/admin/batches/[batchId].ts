@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { CardAssetStatus, prisma } from "@tenkings/database";
-import type { CardAttributes } from "@tenkings/shared";
+import type { CardAttributes, NormalizedClassification } from "@tenkings/shared";
+import { parseClassificationPayload } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 interface BatchAssetSummary {
@@ -14,6 +15,7 @@ interface BatchAssetSummary {
   uploadedAt: string;
   ocrText: string | null;
   classification: CardAttributes | null;
+  classificationNormalized?: NormalizedClassification | null;
   customTitle: string | null;
   customDetails: string | null;
   valuationMinor: number | null;
@@ -124,50 +126,57 @@ export default async function handler(
       processedCount: readyCount,
       createdAt: batch.createdAt.toISOString(),
       updatedAt: batch.updatedAt.toISOString(),
-      assets: batch.cards.map((asset) => ({
-        id: asset.id,
-        status: asset.status,
-        fileName: asset.fileName,
-        fileSize: asset.fileSize,
-        imageUrl: asset.imageUrl,
-        thumbnailUrl: asset.thumbnailUrl ?? null,
-        mimeType: asset.mimeType,
-        uploadedAt: asset.createdAt.toISOString(),
-        ocrText: typeof asset.ocrText === "string" ? asset.ocrText : null,
-        classification: asset.classificationJson as CardAttributes | null,
-        customTitle: asset.customTitle ?? null,
-        customDetails: asset.customDetails ?? null,
-        valuationMinor: asset.valuationMinor ?? null,
-        valuationCurrency: asset.valuationCurrency ?? null,
-        valuationSource: asset.valuationSource ?? null,
-        marketplaceUrl: asset.marketplaceUrl ?? null,
-        ebaySoldUrl: asset.ebaySoldUrl ?? null,
-        ebaySoldUrlVariant: asset.ebaySoldUrlVariant ?? null,
-        ebaySoldUrlHighGrade: asset.ebaySoldUrlHighGrade ?? null,
-        ebaySoldUrlPlayerComp: asset.ebaySoldUrlPlayerComp ?? null,
-        ebaySoldUrlAiGrade: asset.ebaySoldUrlAiGrade ?? null,
-        aiGrade:
-          asset.aiGradeFinal == null && asset.aiGradePsaEquivalent == null && asset.aiGradeLabel == null
-            ? null
-            : {
-                final: asset.aiGradeFinal ?? null,
-                label: asset.aiGradeLabel ?? null,
-                psaEquivalent: asset.aiGradePsaEquivalent ?? null,
-              },
-        assignedDefinitionId: asset.assignedDefinitionId ?? null,
-        humanReviewedAt: asset.humanReviewedAt ? asset.humanReviewedAt.toISOString() : null,
-        humanReviewerName: asset.humanReviewer?.displayName ?? asset.humanReviewer?.id ?? null,
-        sportsDb: {
-          playerId: asset.sportsDbPlayerId ?? null,
-          matchConfidence: asset.sportsDbMatchConfidence ?? 0,
-          playerName: asset.resolvedPlayerName ?? asset.sportsDbPlayer?.fullName ?? null,
-          teamName: asset.resolvedTeamName ?? asset.sportsDbPlayer?.team?.name ?? null,
-          teamLogoUrl: asset.sportsDbPlayer?.team?.logoUrl ?? null,
-          sport: asset.sportsDbPlayer?.sport ?? null,
-          league: asset.sportsDbPlayer?.league ?? null,
-          snapshot: (asset.playerStatsSnapshot as Record<string, unknown> | null) ?? null,
-        },
-      })),
+      assets: batch.cards.map((asset) => {
+        const classificationPayload = parseClassificationPayload(asset.classificationJson);
+        const classificationAttributes = classificationPayload?.attributes ?? null;
+        const classificationNormalized = classificationPayload?.normalized ?? null;
+
+        return {
+          id: asset.id,
+          status: asset.status,
+          fileName: asset.fileName,
+          fileSize: asset.fileSize,
+          imageUrl: asset.imageUrl,
+          thumbnailUrl: asset.thumbnailUrl ?? null,
+          mimeType: asset.mimeType,
+          uploadedAt: asset.createdAt.toISOString(),
+          ocrText: typeof asset.ocrText === "string" ? asset.ocrText : null,
+          classification: classificationAttributes,
+          classificationNormalized,
+          customTitle: asset.customTitle ?? null,
+          customDetails: asset.customDetails ?? null,
+          valuationMinor: asset.valuationMinor ?? null,
+          valuationCurrency: asset.valuationCurrency ?? null,
+          valuationSource: asset.valuationSource ?? null,
+          marketplaceUrl: asset.marketplaceUrl ?? null,
+          ebaySoldUrl: asset.ebaySoldUrl ?? null,
+          ebaySoldUrlVariant: asset.ebaySoldUrlVariant ?? null,
+          ebaySoldUrlHighGrade: asset.ebaySoldUrlHighGrade ?? null,
+          ebaySoldUrlPlayerComp: asset.ebaySoldUrlPlayerComp ?? null,
+          ebaySoldUrlAiGrade: asset.ebaySoldUrlAiGrade ?? null,
+          aiGrade:
+            asset.aiGradeFinal == null && asset.aiGradePsaEquivalent == null && asset.aiGradeLabel == null
+              ? null
+              : {
+                  final: asset.aiGradeFinal ?? null,
+                  label: asset.aiGradeLabel ?? null,
+                  psaEquivalent: asset.aiGradePsaEquivalent ?? null,
+                },
+          assignedDefinitionId: asset.assignedDefinitionId ?? null,
+          humanReviewedAt: asset.humanReviewedAt ? asset.humanReviewedAt.toISOString() : null,
+          humanReviewerName: asset.humanReviewer?.displayName ?? asset.humanReviewer?.id ?? null,
+          sportsDb: {
+            playerId: asset.sportsDbPlayerId ?? null,
+            matchConfidence: asset.sportsDbMatchConfidence ?? 0,
+            playerName: asset.resolvedPlayerName ?? asset.sportsDbPlayer?.fullName ?? null,
+            teamName: asset.resolvedTeamName ?? asset.sportsDbPlayer?.team?.name ?? null,
+            teamLogoUrl: asset.sportsDbPlayer?.team?.logoUrl ?? null,
+            sport: asset.sportsDbPlayer?.sport ?? null,
+            league: asset.sportsDbPlayer?.league ?? null,
+            snapshot: (asset.playerStatsSnapshot as Record<string, unknown> | null) ?? null,
+          },
+        };
+      }),
     };
 
     return res.status(200).json(payload);

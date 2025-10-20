@@ -47,3 +47,23 @@ export {
 export type { EbayComparableUrls } from "./ebay";
 export type { CardAttributes, AttributeExtractionOptions } from "./cardAttributes";
 export { extractCardAttributes, inferPlayerNameFromText } from "./cardAttributes";
+export type {
+  CardClassificationPayload,
+  NormalizedClassification,
+  NormalizedClassificationSport,
+  NormalizedClassificationTcg,
+  NormalizedClassificationComics,
+  NormalizedPricingEntry,
+  NormalizedClassificationLinks,
+  ClassificationCategory,
+  ClassificationSnapshotLike,
+  ClassificationSnapshotSummaryLike,
+} from "./classification";
+export {
+  buildClassificationPayload,
+  createClassificationPayloadFromAttributes,
+  buildNormalizedClassificationFromXimilar,
+  parseClassificationPayload,
+  getCardAttributesFromClassification,
+  getNormalizedClassification,
+} from "./classification";

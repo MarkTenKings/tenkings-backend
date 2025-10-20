@@ -18,6 +18,8 @@ import {
   buildComparableEbayUrls,
   buildEbaySoldUrlFromText,
   extractCardAttributes,
+  createClassificationPayloadFromAttributes,
+  buildNormalizedClassificationFromXimilar,
 } from "@tenkings/shared";
 import { extractTextFromImage } from "./processors/vision";
 import { estimateValue } from "./processors/valuation";
@@ -148,6 +150,8 @@ async function handleOcrJob(job: ProcessingJob) {
     attributes: enhancedAttributes,
   });
 
+  const classificationPayload = createClassificationPayloadFromAttributes(enhancedAttributes);
+
   let thumbnailUrl: string | null = null;
   try {
     const thumbnailBuffer = await sharp(buffer)
@@ -168,7 +172,7 @@ async function handleOcrJob(job: ProcessingJob) {
         status: CardAssetStatus.CLASSIFY_PENDING,
         ocrText: vision.text,
         ocrJson,
-        classificationJson: toInputJson(enhancedAttributes),
+        classificationJson: toInputJson(classificationPayload),
         errorMessage: null,
       };
       if (thumbnailUrl) {
@@ -241,9 +245,14 @@ async function handleClassifyJob(job: ProcessingJob) {
     setName: null,
   };
 
-  const attributes = extractCardAttributes(asset.ocrText, {
+  let attributes = extractCardAttributes(asset.ocrText, {
     bestMatch,
   });
+
+  const normalizedClassification = buildNormalizedClassificationFromXimilar(
+    bestMatch && typeof bestMatch === "object" ? (bestMatch as Record<string, unknown>) : null,
+    classificationSnapshot
+  );
 
   const isGraded = classificationSnapshot?.graded === "yes";
   const shouldUseSportsDb = classificationSnapshot?.categoryType === "sport";
@@ -267,6 +276,12 @@ async function handleClassifyJob(job: ProcessingJob) {
         resolvedTeam: attributes.teamName ?? classificationSummary.teamName ?? null,
         snapshot: null,
       };
+
+  attributes = {
+    ...attributes,
+    playerName: playerMatch.resolvedName ?? attributes.playerName,
+    teamName: playerMatch.resolvedTeam ?? attributes.teamName,
+  };
 
   let grading = null;
   if (!isGraded) {
@@ -300,10 +315,15 @@ async function handleClassifyJob(job: ProcessingJob) {
     isGraded,
   });
 
+  const classificationPayload = createClassificationPayloadFromAttributes(
+    attributes,
+    normalizedClassification
+  );
+
   await prisma.$transaction(
     async (tx) => {
       const updateData: Prisma.CardAssetUpdateInput = {
-        classificationJson: toInputJson(attributes),
+        classificationJson: toInputJson(classificationPayload),
         errorMessage: null,
         status: CardAssetStatus.VALUATION_PENDING,
       };

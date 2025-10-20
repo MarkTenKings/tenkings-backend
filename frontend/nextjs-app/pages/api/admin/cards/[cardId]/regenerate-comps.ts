@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import {
   buildComparableEbayUrls,
   extractCardAttributes,
+  getCardAttributesFromClassification,
 } from "@tenkings/shared";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
@@ -42,7 +43,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const sources = card.classificationSourcesJson as Record<string, unknown> | null;
-    const classification = card.classificationJson as ReturnType<typeof extractCardAttributes> | null;
+    const classification = getCardAttributesFromClassification(card.classificationJson);
     const bestMatch = sources && typeof sources === "object" ? (sources as any).bestMatchData ?? null : null;
 
     const attributes = classification ?? extractCardAttributes(card.ocrText, { bestMatch });

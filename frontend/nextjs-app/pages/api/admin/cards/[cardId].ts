@@ -4,9 +4,368 @@ import {
   buildComparableEbayUrls,
   buildEbaySoldUrlFromText,
   extractCardAttributes,
+  parseClassificationPayload,
+  createClassificationPayloadFromAttributes,
   type CardAttributes,
+  type NormalizedClassification,
+  type ClassificationCategory,
+  type NormalizedClassificationSport,
+  type NormalizedClassificationTcg,
+  type NormalizedClassificationComics,
 } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+
+const defaultCardAttributes: CardAttributes = {
+  playerName: null,
+  teamName: null,
+  year: null,
+  brand: null,
+  setName: null,
+  variantKeywords: [],
+  serialNumber: null,
+  rookie: false,
+  autograph: false,
+  memorabilia: false,
+  gradeCompany: null,
+  gradeValue: null,
+};
+
+const cloneCardAttributes = (attributes: CardAttributes): CardAttributes => ({
+  playerName: attributes.playerName,
+  teamName: attributes.teamName,
+  year: attributes.year,
+  brand: attributes.brand,
+  setName: attributes.setName,
+  variantKeywords: [...attributes.variantKeywords],
+  serialNumber: attributes.serialNumber,
+  rookie: attributes.rookie,
+  autograph: attributes.autograph,
+  memorabilia: attributes.memorabilia,
+  gradeCompany: attributes.gradeCompany,
+  gradeValue: attributes.gradeValue,
+});
+
+type AttributeUpdatePayload = Partial<CardAttributes> & {
+  variantKeywords?: string[] | null;
+};
+
+type NormalizedUpdatePayload = {
+  categoryType?: ClassificationCategory;
+  displayName?: string | null;
+  cardNumber?: string | null;
+  setName?: string | null;
+  setCode?: string | null;
+  year?: string | null;
+  company?: string | null;
+  rarity?: string | null;
+  links?: Record<string, string | null | undefined>;
+  sport?: Partial<NormalizedClassificationSport> | null;
+  tcg?: Partial<NormalizedClassificationTcg> | null;
+  comics?: Partial<NormalizedClassificationComics> | null;
+};
+
+type ClassificationUpdatePayload = {
+  attributes?: AttributeUpdatePayload;
+  normalized?: NormalizedUpdatePayload | null;
+};
+
+const sanitizeStringInput = (value: unknown): string | null => {
+  if (value === undefined) {
+    return null;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+};
+
+const sanitizeStringOptional = (value: unknown, current: string | null): string | null => {
+  if (value === undefined) {
+    return current;
+  }
+  return sanitizeStringInput(value);
+};
+
+const sanitizeVariantKeywords = (value: unknown): string[] => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  const keywords: string[] = [];
+  value.forEach((entry) => {
+    if (typeof entry === "string") {
+      const trimmed = entry.trim();
+      if (trimmed.length > 0) {
+        keywords.push(trimmed);
+      }
+    }
+  });
+  return keywords;
+};
+
+const coerceBooleanInput = (value: unknown, fallback: boolean): boolean => {
+  if (value === undefined) {
+    return fallback;
+  }
+  if (value === null) {
+    return false;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  if (typeof value === "number") {
+    return value !== 0;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "yes", "y", "1"].includes(normalized)) {
+      return true;
+    }
+    if (["false", "no", "n", "0"].includes(normalized)) {
+      return false;
+    }
+  }
+  return fallback;
+};
+
+const readNumberInput = (value: unknown): number | null => {
+  if (value === undefined) {
+    return null;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+};
+
+const readIntegerInput = (value: unknown): number | null => {
+  const numeric = readNumberInput(value);
+  if (numeric === null) {
+    return null;
+  }
+  return Math.round(numeric);
+};
+
+const applyAttributeUpdates = (
+  current: CardAttributes,
+  updates: AttributeUpdatePayload
+): CardAttributes => {
+  const next = cloneCardAttributes(current);
+
+  if (Object.prototype.hasOwnProperty.call(updates, "playerName")) {
+    next.playerName = sanitizeStringOptional(updates.playerName, next.playerName);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "teamName")) {
+    next.teamName = sanitizeStringOptional(updates.teamName, next.teamName);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "year")) {
+    next.year = sanitizeStringOptional(updates.year, next.year);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "brand")) {
+    next.brand = sanitizeStringOptional(updates.brand, next.brand);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "setName")) {
+    next.setName = sanitizeStringOptional(updates.setName, next.setName);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "serialNumber")) {
+    next.serialNumber = sanitizeStringOptional(updates.serialNumber, next.serialNumber);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "gradeCompany")) {
+    next.gradeCompany = sanitizeStringOptional(updates.gradeCompany, next.gradeCompany);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "gradeValue")) {
+    next.gradeValue = sanitizeStringOptional(updates.gradeValue, next.gradeValue);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "variantKeywords")) {
+    next.variantKeywords = sanitizeVariantKeywords(updates.variantKeywords ?? []);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, "rookie")) {
+    next.rookie = coerceBooleanInput(updates.rookie, next.rookie);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "autograph")) {
+    next.autograph = coerceBooleanInput(updates.autograph, next.autograph);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "memorabilia")) {
+    next.memorabilia = coerceBooleanInput(updates.memorabilia, next.memorabilia);
+  }
+
+  return next;
+};
+
+const sanitizeLinkUpdates = (
+  current: Record<string, string>,
+  updates?: Record<string, string | null | undefined>
+) => {
+  if (!updates) {
+    return current;
+  }
+  const next = { ...current };
+  for (const [key, value] of Object.entries(updates)) {
+    const trimmedKey = typeof key === "string" ? key.trim() : "";
+    if (!trimmedKey) {
+      continue;
+    }
+    if (value === null || value === undefined) {
+      delete next[trimmedKey];
+      continue;
+    }
+    if (typeof value === "string") {
+      const trimmedValue = value.trim();
+      if (trimmedValue.length === 0) {
+        delete next[trimmedKey];
+      } else {
+        next[trimmedKey] = trimmedValue;
+      }
+    }
+  }
+  return next;
+};
+
+const applyNormalizedSectionUpdate = <T extends Record<string, unknown>>(
+  current: T | undefined,
+  updates: Partial<T> | null | undefined
+): T | undefined => {
+  if (updates === undefined) {
+    return current;
+  }
+  if (updates === null) {
+    return undefined;
+  }
+  const base: any = current ? { ...current } : {};
+  for (const [key, value] of Object.entries(updates)) {
+    if (typeof value === "string") {
+      base[key] = value.trim().length > 0 ? value.trim() : null;
+    } else if (typeof value === "boolean" || typeof value === "number" || value === null) {
+      base[key] = value;
+    } else if (value !== undefined) {
+      base[key] = value;
+    }
+  }
+  return base;
+};
+
+const isNormalizedSportEmpty = (sport?: NormalizedClassificationSport): boolean => {
+  if (!sport) {
+    return true;
+  }
+  const { playerName, teamName, league, sport: sportName, cardType, subcategory, autograph, foil, graded, gradeCompany, grade } = sport;
+  return [playerName, teamName, league, sportName, cardType, subcategory, gradeCompany, grade].every((value) => !value) &&
+    autograph == null &&
+    foil == null &&
+    graded == null;
+};
+
+const isNormalizedTcgEmpty = (tcg?: NormalizedClassificationTcg): boolean => {
+  if (!tcg) {
+    return true;
+  }
+  const { cardName, game, series, color, type, language, rarity, outOf, subcategory, foil } = tcg;
+  return [cardName, game, series, color, type, language, rarity, outOf, subcategory].every((value) => !value) &&
+    foil == null;
+};
+
+const isNormalizedComicsEmpty = (comics?: NormalizedClassificationComics): boolean => {
+  if (!comics) {
+    return true;
+  }
+  const { title, issueNumber, date, originDate, storyArc, graded, gradeCompany, grade } = comics;
+  return [title, issueNumber, date, originDate, storyArc, gradeCompany, grade].every((value) => !value) && graded == null;
+};
+
+const applyNormalizedUpdates = (
+  current: NormalizedClassification | null,
+  updates: NormalizedUpdatePayload | null | undefined
+): NormalizedClassification | null => {
+  if (updates === undefined) {
+    return current;
+  }
+  if (updates === null) {
+    return null;
+  }
+
+  const base: NormalizedClassification = current
+    ? {
+        ...current,
+        links: { ...current.links },
+        pricing: Array.isArray(current.pricing) ? [...current.pricing] : [],
+        sport: current.sport ? { ...current.sport } : undefined,
+        tcg: current.tcg ? { ...current.tcg } : undefined,
+        comics: current.comics ? { ...current.comics } : undefined,
+      }
+    : {
+        categoryType: updates.categoryType ?? "unknown",
+        displayName: null,
+        cardNumber: null,
+        setName: null,
+        setCode: null,
+        year: null,
+        company: null,
+        rarity: null,
+        links: {},
+        pricing: [],
+      };
+
+  if (updates.categoryType) {
+    base.categoryType = updates.categoryType;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "displayName")) {
+    base.displayName = sanitizeStringOptional(updates.displayName ?? null, base.displayName);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "cardNumber")) {
+    base.cardNumber = sanitizeStringOptional(updates.cardNumber ?? null, base.cardNumber);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "setName")) {
+    base.setName = sanitizeStringOptional(updates.setName ?? null, base.setName);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "setCode")) {
+    base.setCode = sanitizeStringOptional(updates.setCode ?? null, base.setCode);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "year")) {
+    base.year = sanitizeStringOptional(updates.year ?? null, base.year);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "company")) {
+    base.company = sanitizeStringOptional(updates.company ?? null, base.company);
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, "rarity")) {
+    base.rarity = sanitizeStringOptional(updates.rarity ?? null, base.rarity);
+  }
+
+  base.links = sanitizeLinkUpdates(base.links, updates.links);
+
+  base.sport = applyNormalizedSectionUpdate(base.sport, updates.sport);
+  if (isNormalizedSportEmpty(base.sport)) {
+    base.sport = undefined;
+  }
+
+  base.tcg = applyNormalizedSectionUpdate(base.tcg, updates.tcg);
+  if (isNormalizedTcgEmpty(base.tcg)) {
+    base.tcg = undefined;
+  }
+
+  base.comics = applyNormalizedSectionUpdate(base.comics, updates.comics);
+  if (isNormalizedComicsEmpty(base.comics)) {
+    base.comics = undefined;
+  }
+
+  return base;
+};
 
 interface CardNotePayload {
   id: string;
@@ -38,6 +397,7 @@ interface CardResponse {
   mimeType: string;
   ocrText: string | null;
   classification: CardAttributes | null;
+  classificationNormalized: NormalizedClassification | null;
   customTitle: string | null;
   customDetails: string | null;
   valuationMinor: number | null;
@@ -86,6 +446,12 @@ type CardUpdatePayload = {
   ebaySoldUrlAiGrade?: string | null;
   humanReviewed?: boolean;
   generateEbaySoldUrl?: boolean;
+  classificationUpdates?: ClassificationUpdatePayload;
+  aiGradeFinal?: number | string | null;
+  aiGradeLabel?: string | null;
+  aiGradePsaEquivalent?: number | string | null;
+  aiGradeRangeLow?: number | string | null;
+  aiGradeRangeHigh?: number | string | null;
 };
 
 async function fetchCard(cardId: string, uploadedById: string): Promise<CardResponse | null> {
@@ -132,6 +498,10 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     ? (gradingRaw as any).records[0]
     : null;
 
+  const classificationPayload = parseClassificationPayload(card.classificationJson);
+  const classificationAttributes = classificationPayload?.attributes ?? null;
+  const normalizedClassification = classificationPayload?.normalized ?? null;
+
   const aiGrade = {
     final: card.aiGradeFinal ?? null,
     label: card.aiGradeLabel ?? null,
@@ -155,7 +525,9 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     thumbnailUrl: card.thumbnailUrl,
     mimeType: card.mimeType,
     ocrText: card.ocrText,
-    classification: (card.classificationJson as CardAttributes | null) ?? null,
+    classification: classificationAttributes,
+    classificationNormalized: normalizedClassification,
+    classificationNormalized: normalizedClassification,
     customTitle: card.customTitle ?? null,
     customDetails: card.customDetails ?? null,
     valuationMinor: card.valuationMinor ?? null,
@@ -226,12 +598,18 @@ export default async function handler(
           id: true,
           ocrText: true,
           humanReviewedAt: true,
-          humanReviewedById: true,
-          classificationJson: true,
-          classificationSourcesJson: true,
-          aiGradePsaEquivalent: true,
-        },
-      });
+        humanReviewedById: true,
+        classificationJson: true,
+        classificationSourcesJson: true,
+        aiGradePsaEquivalent: true,
+        aiGradingJson: true,
+        aiGradeFinal: true,
+        aiGradeLabel: true,
+        aiGradeRangeLow: true,
+        aiGradeRangeHigh: true,
+        aiGradeGeneratedAt: true,
+      },
+    });
 
       if (!card) {
         return res.status(404).json({ message: "Card not found" });
@@ -240,6 +618,31 @@ export default async function handler(
       const updateData: Prisma.CardAssetUpdateInput = {};
       const updateDataAny = updateData as Record<string, unknown>;
       let touched = false;
+
+      if (body.classificationUpdates) {
+        const existingPayload = parseClassificationPayload(card.classificationJson);
+        let attributes = cloneCardAttributes(existingPayload?.attributes ?? defaultCardAttributes);
+        let normalized = existingPayload?.normalized ?? null;
+        let classificationTouched = false;
+
+        if (body.classificationUpdates.attributes) {
+          attributes = applyAttributeUpdates(attributes, body.classificationUpdates.attributes);
+          classificationTouched = true;
+        }
+
+        if (Object.prototype.hasOwnProperty.call(body.classificationUpdates, "normalized")) {
+          normalized = applyNormalizedUpdates(normalized, body.classificationUpdates.normalized ?? null);
+          classificationTouched = true;
+        }
+
+        if (classificationTouched) {
+          const payload = createClassificationPayloadFromAttributes(attributes, normalized ?? null);
+          updateDataAny.classificationJson = JSON.parse(JSON.stringify(payload));
+          updateDataAny.resolvedPlayerName = attributes.playerName;
+          updateDataAny.resolvedTeamName = attributes.teamName;
+          touched = true;
+        }
+      }
 
       if (Object.prototype.hasOwnProperty.call(body, "ocrText")) {
         updateData.ocrText = body.ocrText ? body.ocrText.trim() : null;
@@ -309,6 +712,38 @@ export default async function handler(
         touched = true;
       }
 
+      let gradeTouched = false;
+
+      if (Object.prototype.hasOwnProperty.call(body, "aiGradeFinal")) {
+        updateDataAny.aiGradeFinal = readNumberInput(body.aiGradeFinal);
+        gradeTouched = true;
+        touched = true;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, "aiGradeLabel")) {
+        updateDataAny.aiGradeLabel = sanitizeStringInput(body.aiGradeLabel);
+        gradeTouched = true;
+        touched = true;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, "aiGradePsaEquivalent")) {
+        updateDataAny.aiGradePsaEquivalent = readIntegerInput(body.aiGradePsaEquivalent);
+        gradeTouched = true;
+        touched = true;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, "aiGradeRangeLow")) {
+        updateDataAny.aiGradeRangeLow = readIntegerInput(body.aiGradeRangeLow);
+        gradeTouched = true;
+        touched = true;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, "aiGradeRangeHigh")) {
+        updateDataAny.aiGradeRangeHigh = readIntegerInput(body.aiGradeRangeHigh);
+        gradeTouched = true;
+        touched = true;
+      }
+
       if (Object.prototype.hasOwnProperty.call(body, "humanReviewed")) {
         if (body.humanReviewed) {
           if (!card.humanReviewedAt) {
@@ -320,6 +755,37 @@ export default async function handler(
           updateData.humanReviewer = { disconnect: true };
         }
         touched = true;
+      }
+
+      if (gradeTouched) {
+        const nextFinal = Object.prototype.hasOwnProperty.call(updateDataAny, "aiGradeFinal")
+          ? (updateDataAny.aiGradeFinal as number | null)
+          : (card as any).aiGradeFinal ?? null;
+        const nextLabel = Object.prototype.hasOwnProperty.call(updateDataAny, "aiGradeLabel")
+          ? (updateDataAny.aiGradeLabel as string | null)
+          : (card as any).aiGradeLabel ?? null;
+        const nextPsa = Object.prototype.hasOwnProperty.call(updateDataAny, "aiGradePsaEquivalent")
+          ? (updateDataAny.aiGradePsaEquivalent as number | null)
+          : card.aiGradePsaEquivalent ?? null;
+        const nextRangeLow = Object.prototype.hasOwnProperty.call(updateDataAny, "aiGradeRangeLow")
+          ? (updateDataAny.aiGradeRangeLow as number | null)
+          : (card as any).aiGradeRangeLow ?? null;
+        const nextRangeHigh = Object.prototype.hasOwnProperty.call(updateDataAny, "aiGradeRangeHigh")
+          ? (updateDataAny.aiGradeRangeHigh as number | null)
+          : (card as any).aiGradeRangeHigh ?? null;
+
+        if (
+          nextFinal == null &&
+          nextLabel == null &&
+          nextPsa == null &&
+          nextRangeLow == null &&
+          nextRangeHigh == null
+        ) {
+          updateDataAny.aiGradeGeneratedAt = null;
+        } else {
+          updateDataAny.aiGradeGeneratedAt = new Date();
+        }
+        updateDataAny.aiGradingJson = null;
       }
 
       if (body.generateEbaySoldUrl) {
