@@ -248,7 +248,7 @@ const applyNormalizedSectionUpdate = <T extends Record<string, unknown>>(
   if (updates === null) {
     return undefined;
   }
-  const base: any = current ? { ...current } : {};
+  const base: Record<string, unknown> = current ? { ...current } : {};
   for (const [key, value] of Object.entries(updates)) {
     if (typeof value === "string") {
       base[key] = value.trim().length > 0 ? value.trim() : null;
@@ -258,7 +258,7 @@ const applyNormalizedSectionUpdate = <T extends Record<string, unknown>>(
       base[key] = value;
     }
   }
-  return base;
+  return base as T;
 };
 
 const isNormalizedSportEmpty = (sport?: NormalizedClassificationSport): boolean => {
