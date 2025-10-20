@@ -21,10 +21,10 @@
     ],
     "baseUrl": ".",
     "paths": {
-      "@tenkings/database": ["../../packages/database/dist"],
-      "@tenkings/database/*": ["../../packages/database/dist/*"],
-      "@tenkings/shared": ["../../packages/shared/dist"],
-      "@tenkings/shared/*": ["../../packages/shared/dist/*"]
+      "@tenkings/database": ["../../packages/database/src/index.ts"],
+      "@tenkings/database/*": ["../../packages/database/src/*"],
+      "@tenkings/shared": ["../../packages/shared/src/index.ts"],
+      "@tenkings/shared/*": ["../../packages/shared/src/*"]
     },
     "jsx": "preserve"
   },
