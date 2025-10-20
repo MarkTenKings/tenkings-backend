@@ -20,7 +20,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
       include: {
         slots: {
-          include: { item: true },
+          include: {
+            item: {
+              include: {
+                ingestionTask: true,
+              },
+            },
+          },
         },
       },
     });
@@ -38,6 +44,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         itemSet: slot.item?.set ?? "",
         estimatedValue: slot.item?.estimatedValue ?? null,
         status: slot.item?.status ?? ItemStatus.STORED,
+        imageUrl:
+          slot.item?.thumbnailUrl ??
+          slot.item?.imageUrl ??
+          ((slot.item?.ingestionTask?.rawPayload as { imageUrl?: string } | undefined)?.imageUrl ?? null),
       })),
     }));
 

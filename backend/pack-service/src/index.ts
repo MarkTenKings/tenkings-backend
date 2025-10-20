@@ -196,7 +196,17 @@ app.post("/purchase", async (req, res, next) => {
 
       const pack = await tx.packInstance.findFirst({
         where: { packDefinitionId: payload.packDefinitionId, status: PackStatus.UNOPENED, ownerId: null },
-        include: { slots: { include: { item: true } } },
+        include: {
+          slots: {
+            include: {
+              item: {
+                include: {
+                  ingestionTask: true,
+                },
+              },
+            },
+          },
+        },
         orderBy: { createdAt: "asc" },
       });
 
@@ -255,7 +265,17 @@ app.post("/purchase", async (req, res, next) => {
       const claimedPack = await tx.packInstance.update({
         where: { id: pack.id },
         data: { ownerId: purchaser.id },
-        include: { slots: { include: { item: true } } },
+        include: {
+          slots: {
+            include: {
+              item: {
+                include: {
+                  ingestionTask: true,
+                },
+              },
+            },
+          },
+        },
       });
 
       await tx.packDefinition.update({
@@ -279,7 +299,18 @@ app.post("/packs/:packId/open", async (req, res, next) => {
     const pack = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const existing = await tx.packInstance.findUnique({
         where: { id: req.params.packId },
-        include: { packDefinition: true, slots: { include: { item: true } } },
+        include: {
+          packDefinition: true,
+          slots: {
+            include: {
+              item: {
+                include: {
+                  ingestionTask: true,
+                },
+              },
+            },
+          },
+        },
       });
 
       if (!existing) {
@@ -295,7 +326,18 @@ app.post("/packs/:packId/open", async (req, res, next) => {
       const updated = await tx.packInstance.update({
         where: { id: existing.id },
         data: { status: PackStatus.OPENED, openedAt: new Date() },
-        include: { packDefinition: true, slots: { include: { item: true } } },
+        include: {
+          packDefinition: true,
+          slots: {
+            include: {
+              item: {
+                include: {
+                  ingestionTask: true,
+                },
+              },
+            },
+          },
+        },
       });
 
       const slotItemIds = updated.slots.map((slot: { itemId: string }) => slot.itemId);
@@ -321,7 +363,15 @@ app.get("/users/:userId/packs", async (req, res, next) => {
       where: { ownerId: userId },
       include: {
         packDefinition: true,
-        slots: { include: { item: true } },
+        slots: {
+          include: {
+            item: {
+              include: {
+                ingestionTask: true,
+              },
+            },
+          },
+        },
       },
       orderBy: [{ status: "asc" }, { createdAt: "desc" }],
     });

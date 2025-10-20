@@ -1,4 +1,5 @@
 import Head from "next/head";
+import Image from "next/image";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
 import { useSession } from "../hooks/useSession";
@@ -29,6 +30,9 @@ interface CollectionItem {
   estimatedValue: number | null;
   status: string;
   vaultLocation: string | null;
+  imageUrl: string | null;
+  thumbnailUrl: string | null;
+  details: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
   pack: {
@@ -84,6 +88,8 @@ const formatMinor = (value: number | null) => {
   return `${(value / 100).toFixed(2)} TKD`;
 };
 
+const placeholderCardImage = "/images/card-pull-1.png";
+
 export default function CollectionPage() {
   const { session, loading, ensureSession, updateWalletBalance } = useSession();
   const [items, setItems] = useState<CollectionItem[]>([]);
@@ -94,10 +100,141 @@ export default function CollectionPage() {
   const [formBusy, setFormBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
+  const [modalItem, setModalItem] = useState<CollectionItem | null>(null);
+  const [showShippingForm, setShowShippingForm] = useState(false);
 
   const processingFeeDisplay = useMemo(
     () => `${(PROCESSING_FEE_MINOR / 100).toFixed(2)} TKD`,
     []
+  );
+
+  const walletBalanceDisplay = useMemo(
+    () => `${((session?.wallet.balance ?? 0) / 100).toFixed(2)} TKD`,
+    [session?.wallet.balance]
+  );
+
+  const segments = useMemo(() => {
+    const shipped: CollectionItem[] = [];
+    const sold: CollectionItem[] = [];
+    const owned: CollectionItem[] = [];
+
+    items.forEach((item) => {
+      const shippingStatus = item.shippingRequest?.status ?? null;
+      const isShipped = shippingStatus === "SHIPPED";
+      const isSold = item.status === "SOLD" || item.status === "REDEEMED";
+
+      if (isShipped) {
+        shipped.push(item);
+        return;
+      }
+
+      if (isSold) {
+        sold.push(item);
+        return;
+      }
+
+      owned.push(item);
+    });
+
+    return { owned, sold, shipped };
+  }, [items]);
+
+  const openItemModal = (item: CollectionItem) => {
+    setModalItem(item);
+    setSelectedItemId(item.id);
+    setForm(initialForm);
+    setFormError(null);
+    setFormSuccess(null);
+    setShowShippingForm(false);
+  };
+
+  const closeItemModal = () => {
+    setModalItem(null);
+    setSelectedItemId(null);
+    setForm(initialForm);
+    setFormError(null);
+    setFormSuccess(null);
+    setShowShippingForm(false);
+  };
+
+  const getItemImage = (item: CollectionItem) => item.thumbnailUrl ?? item.imageUrl ?? placeholderCardImage;
+
+  const renderSection = (
+    title: string,
+    subtitle: string,
+    data: CollectionItem[],
+    emptyMessage: string
+  ) => (
+    <section key={title} className="space-y-4">
+      <div>
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">{title}</h2>
+          <span className="text-xs uppercase tracking-[0.3em] text-slate-500">{data.length} cards</span>
+        </div>
+        <p className="text-sm text-slate-400">{subtitle}</p>
+      </div>
+      {data.length === 0 ? (
+        <div className="rounded-3xl border border-white/10 bg-night-900/60 px-6 py-8 text-center text-sm text-slate-400">
+          {emptyMessage}
+        </div>
+      ) : (
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {data.map((item) => {
+            const shippingStatus = item.shippingRequest?.status ?? null;
+            const hasPendingShipment = shippingStatus && shippingStatus !== "SHIPPED" && shippingStatus !== "CANCELLED";
+            const badgeLabel = shippingStatus === "SHIPPED" ? "Shipped" : item.status.replace(/_/g, " ");
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => openItemModal(item)}
+                className="group flex flex-col gap-3 rounded-3xl border border-white/10 bg-night-900/70 p-4 text-left transition hover:border-gold-400/40 hover:shadow-glow-gold"
+              >
+                <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-night-900/80">
+                  <div className="relative aspect-[3/4]">
+                    <Image src={getItemImage(item)} alt={item.name} fill className="object-cover" sizes="(min-width: 1024px) 240px, 40vw" />
+                  </div>
+                  {hasPendingShipment && (
+                    <span className="absolute left-3 top-3 rounded-full bg-amber-500/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.28em] text-night-900">
+                      Shipping pending
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.32em] text-slate-500">#{item.id.slice(0, 8)}</p>
+                    <h3 className="font-heading text-lg uppercase tracking-[0.18em] text-white group-hover:text-gold-200">{item.name}</h3>
+                    <p className="text-xs text-slate-400">{item.set}{item.number ? ` · ${item.number}` : ""}</p>
+                  </div>
+                  <span className="rounded-full border border-white/20 px-3 py-1 text-xs uppercase tracking-[0.3em] text-slate-300">
+                    {badgeLabel}
+                  </span>
+                </div>
+                <dl className="grid gap-1 text-xs text-slate-400">
+                  <div className="flex justify-between">
+                    <dt>Vault value</dt>
+                    <dd className="text-slate-200">{formatMinor(item.estimatedValue)}</dd>
+                  </div>
+                  {item.pack && (
+                    <div className="flex justify-between">
+                      <dt>Pack</dt>
+                      <dd className="text-slate-200">{item.pack.definitionName ?? "Mystery Pack"}</dd>
+                    </div>
+                  )}
+                  {shippingStatus && (
+                    <div className="flex justify-between">
+                      <dt>Shipping</dt>
+                      <dd className="text-slate-200">{shippingStatus}</dd>
+                    </div>
+                  )}
+                </dl>
+                <span className="text-xs uppercase tracking-[0.3em] text-gold-300">View details</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 
   const loadItems = () => {
@@ -137,20 +274,6 @@ export default function CollectionPage() {
     loadItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, session?.token]);
-
-  const handleSelectItem = (itemId: string) => {
-    if (selectedItemId === itemId) {
-      setSelectedItemId(null);
-      setForm(initialForm);
-      setFormError(null);
-      setFormSuccess(null);
-      return;
-    }
-    setSelectedItemId(itemId);
-    setForm(initialForm);
-    setFormError(null);
-    setFormSuccess(null);
-  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -203,6 +326,12 @@ export default function CollectionPage() {
             : item
         )
       );
+      setModalItem((prev) =>
+        prev && prev.id === selectedItemId
+          ? { ...prev, status: "IN_TRANSFER", shippingRequest: payload.request }
+          : prev
+      );
+      setShowShippingForm(false);
       setFormSuccess("Shipping request submitted. Our vault team will process it shortly.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to request shipping";
@@ -212,212 +341,7 @@ export default function CollectionPage() {
     }
   };
 
-  const renderItem = (item: CollectionItem) => {
-    const shipping = item.shippingRequest;
-    const pendingRequest = shipping && shipping.status !== "SHIPPED" && shipping.status !== "CANCELLED";
 
-    return (
-      <div key={item.id} className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-1">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">#{item.id.slice(0, 8)}</p>
-            <h3 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">{item.name}</h3>
-            <p className="text-sm text-slate-400">{item.set}{item.number ? ` · ${item.number}` : ""}</p>
-            <p className="text-xs text-slate-400">Value: {formatMinor(item.estimatedValue)}</p>
-            {item.pack && (
-              <p className="text-xs text-slate-500">
-                Pulled from {item.pack.definitionName ?? "Mystery Pack"} ({item.pack.tier})
-              </p>
-            )}
-          </div>
-          <div className="text-right text-xs uppercase tracking-[0.28em] text-slate-400">
-            <p>Status: {item.status}</p>
-            {shipping && <p>Shipping: {shipping.status}</p>}
-          </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={() => handleSelectItem(item.id)}
-            className="rounded-full border border-white/20 px-6 py-2 text-xs uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white disabled:cursor-not-allowed disabled:border-white/10 disabled:text-slate-500"
-            disabled={pendingRequest || item.status === "IN_TRANSFER" || item.status === "REDEEMED"}
-          >
-            {selectedItemId === item.id ? "Hide shipping form" : "Request shipping"}
-          </button>
-        </div>
-
-        {shipping && (
-          <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900/60 p-4 text-sm text-slate-300">
-            <p>
-              Requested on {new Date(shipping.createdAt).toLocaleString()} – Status {shipping.status}
-            </p>
-            <p>Processing fee: {formatMinor(shipping.processingFeeMinor)}</p>
-            <p>Shipping fee: {formatMinor(shipping.shippingFeeMinor)}</p>
-            <p>Total: {formatMinor(shipping.totalFeeMinor)}</p>
-            {shipping.trackingNumber && (
-              <p>Tracking: {shipping.carrier ?? ""} {shipping.trackingNumber}</p>
-            )}
-            {shipping.notes && <p>Notes: {shipping.notes}</p>}
-          </div>
-        )}
-
-        {selectedItemId === item.id && !pendingRequest && item.status !== "IN_TRANSFER" && (
-          <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="flex flex-col gap-2 text-sm">
-                <span className="text-slate-300">Recipient name</span>
-                <input
-                  type="text"
-                  required
-                  value={form.recipientName}
-                  onChange={(event) => setForm((prev) => ({ ...prev, recipientName: event.target.value }))}
-                  className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
-                />
-              </label>
-              <label className="flex flex-col gap-2 text-sm">
-                <span className="text-slate-300">Contact email</span>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
-                  className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
-                />
-              </label>
-              <label className="flex flex-col gap-2 text-sm">
-                <span className="text-slate-300">Contact phone</span>
-                <input
-                  type="tel"
-                  value={form.phone}
-                  onChange={(event) => setForm((prev) => ({ ...prev, phone: event.target.value }))}
-                  className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
-                />
-              </label>
-              <label className="flex flex-col gap-2 text-sm">
-                <span className="text-slate-300">Address line 1</span>
-                <input
-                  type="text"
-                  required
-                  value={form.addressLine1}
-                  onChange={(event) => setForm((prev) => ({ ...prev, addressLine1: event.target.value }))}
-                  className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
-                />
-              </label>
-              <label className="flex flex-col gap-2 text-sm">
-                <span className="text-slate-300">Address line 2</span>
-                <input
-                  type="text"
-                  value={form.addressLine2}
-                  onChange={(event) => setForm((prev) => ({ ...prev, addressLine2: event.target.value }))}
-                  className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
-                />
-              </label>
-              <label className="flex flex-col gap-2 text-sm">
-                <span className="text-slate-300">City</span>
-                <input
-                  type="text"
-                  required
-                  value={form.city}
-                  onChange={(event) => setForm((prev) => ({ ...prev, city: event.target.value }))}
-                  className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
-                />
-              </label>
-              <label className="flex flex-col gap-2 text-sm">
-                <span className="text-slate-300">State / Region</span>
-                <input
-                  type="text"
-                  value={form.state}
-                  onChange={(event) => setForm((prev) => ({ ...prev, state: event.target.value }))}
-                  className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
-                />
-              </label>
-              <label className="flex flex-col gap-2 text-sm">
-                <span className="text-slate-300">Postal code</span>
-                <input
-                  type="text"
-                  required
-                  value={form.postalCode}
-                  onChange={(event) => setForm((prev) => ({ ...prev, postalCode: event.target.value }))}
-                  className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
-                />
-              </label>
-              <label className="flex flex-col gap-2 text-sm">
-                <span className="text-slate-300">Country</span>
-                <input
-                  type="text"
-                  required
-                  value={form.country}
-                  onChange={(event) => setForm((prev) => ({ ...prev, country: event.target.value }))}
-                  className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
-                />
-              </label>
-            </div>
-
-            <label className="flex flex-col gap-2 text-sm">
-              <span className="text-slate-300">Additional notes</span>
-              <textarea
-                value={form.notes}
-                onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
-                className="h-24 rounded-xl border border-white/10 bg-night-900/60 px-4 py-3 text-slate-100 outline-none focus:border-gold-400"
-              />
-            </label>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4 text-sm text-slate-200">
-                <p className="font-semibold text-white">Fees</p>
-                <p className="text-xs text-slate-400">Processing fee: {processingFeeDisplay}</p>
-                <label className="mt-3 flex flex-col gap-2 text-xs">
-                  <span className="text-slate-400">Additional shipping fee (TKD)</span>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={form.shippingFee}
-                    onChange={(event) => setForm((prev) => ({ ...prev, shippingFee: event.target.value }))}
-                    className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
-                  />
-                </label>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4 text-sm text-slate-200">
-                <p className="font-semibold text-white">Summary</p>
-                <p className="text-xs text-slate-400">
-                  Total debit: {((PROCESSING_FEE_MINOR + toMinor(form.shippingFee)) / 100).toFixed(2)} TKD
-                </p>
-              </div>
-            </div>
-
-            {formError && (
-              <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-                {formError}
-              </div>
-            )}
-            {formSuccess && (
-              <div className="rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                {formSuccess}
-              </div>
-            )}
-
-            <div className="flex items-center gap-3">
-              <button
-                type="submit"
-                className="rounded-full border border-gold-500/60 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/15 disabled:bg-white/10 disabled:text-slate-500"
-                disabled={formBusy}
-              >
-                {formBusy ? "Submitting…" : "Submit shipping request"}
-              </button>
-              <button
-                type="button"
-                onClick={() => handleSelectItem(item.id)}
-                className="rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
-              >
-                Cancel
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
-    );
-  };
 
   if (loading) {
     return (
@@ -445,20 +369,35 @@ export default function CollectionPage() {
     );
   }
 
+  const { owned, sold, shipped } = segments;
+
   return (
     <AppShell>
       <Head>
         <title>Ten Kings · My Collection</title>
         <meta name="robots" content="noindex" />
       </Head>
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-12">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6 py-12">
         <header className="space-y-2">
           <p className="text-sm uppercase tracking-[0.32em] text-violet-300">Vault</p>
           <h1 className="font-heading text-4xl uppercase tracking-[0.2em] text-white">My Collection</h1>
           <p className="text-sm text-slate-400">
-            Review the cards you’ve pulled and request shipping from the Ten Kings vault whenever you’re ready.
+            Track every pull you own, monitor shipped and sold hits, and request delivery straight from the Ten Kings vault.
           </p>
         </header>
+
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">TKD Wallet</p>
+            <p className="mt-2 text-3xl font-semibold text-gold-300">{walletBalanceDisplay}</p>
+            <p className="mt-2 text-xs text-slate-500">Updated in real time when you accept instant buybacks or shipping requests.</p>
+          </div>
+          <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Shipping Processing Fee</p>
+            <p className="mt-2 text-2xl font-semibold text-white">{processingFeeDisplay}</p>
+            <p className="mt-2 text-xs text-slate-500">Added once per shipment. Set your own additional shipping fee during checkout.</p>
+          </div>
+        </div>
 
         {itemsError && (
           <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">
@@ -475,11 +414,292 @@ export default function CollectionPage() {
             You haven’t pulled any cards yet. Open a mystery pack to get started!
           </div>
         ) : (
-          <div className="grid gap-5">
-            {items.map(renderItem)}
+          <div className="space-y-12">
+            {renderSection(
+              "Vaulted cards",
+              "Cards currently stored with Ten Kings. Tap a card to view details, SportsDB intel, and request shipping.",
+              owned,
+              "No vaulted cards yet—rip a pack to add something special to your collection."
+            )}
+            {renderSection(
+              "Shipped",
+              "Cards that have already been dispatched from the vault.",
+              shipped,
+              "No shipments yet. Once a request is fulfilled it will appear here."
+            )}
+            {renderSection(
+              "Sold / Redeemed",
+              "Cards you’ve sold or redeemed through Ten Kings.",
+              sold,
+              "You haven’t sold or redeemed any cards yet."
+            )}
           </div>
         )}
       </div>
+
+      {modalItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-6 py-10">
+          <div className="absolute inset-0 bg-black/70" onClick={closeItemModal} />
+          <div className="relative z-10 w-full max-w-4xl rounded-3xl border border-white/10 bg-night-900/95 shadow-2xl">
+            <button
+              type="button"
+              onClick={closeItemModal}
+              className="absolute right-4 top-4 rounded-full border border-white/20 px-3 py-1 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
+            >
+              Close
+            </button>
+            <div className="grid gap-6 md:grid-cols-[300px_1fr]">
+              <div className="relative">
+                <div className="relative m-6 overflow-hidden rounded-3xl border border-white/10 bg-night-900/70">
+                  <div className="relative aspect-[3/4]">
+                    <Image src={getItemImage(modalItem)} alt={modalItem.name} fill className="object-cover" sizes="(min-width: 768px) 300px, 60vw" />
+                  </div>
+                </div>
+              </div>
+              <div className="space-y-6 p-6">
+                <div className="space-y-1">
+                  <p className="text-xs uppercase tracking-[0.32em] text-slate-500">#{modalItem.id.slice(0, 8)}</p>
+                  <h2 className="font-heading text-3xl uppercase tracking-[0.2em] text-white">{modalItem.name}</h2>
+                  <p className="text-sm text-slate-400">{modalItem.set}{modalItem.number ? ` · ${modalItem.number}` : ""}</p>
+                  <div className="flex flex-wrap gap-2 text-xs uppercase tracking-[0.3em] text-slate-300">
+                    <span className="rounded-full border border-white/20 px-3 py-1">{modalItem.status.replace(/_/g, " ")}</span>
+                    {modalItem.shippingRequest && <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-amber-200">Shipping {modalItem.shippingRequest.status}</span>}
+                  </div>
+                </div>
+
+                <dl className="grid gap-2 text-sm text-slate-300">
+                  <div className="flex justify-between">
+                    <dt>Vault value</dt>
+                    <dd className="text-gold-300">{formatMinor(modalItem.estimatedValue)}</dd>
+                  </div>
+                  {modalItem.pack && (
+                    <div className="flex justify-between">
+                      <dt>Pulled from</dt>
+                      <dd>{modalItem.pack.definitionName ?? "Mystery Pack"}</dd>
+                    </div>
+                  )}
+                  {modalItem.vaultLocation && (
+                    <div className="flex justify-between">
+                      <dt>Vault slot</dt>
+                      <dd>{modalItem.vaultLocation}</dd>
+                    </div>
+                  )}
+                  {modalItem.language && (
+                    <div className="flex justify-between">
+                      <dt>Language</dt>
+                      <dd>{modalItem.language}</dd>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <dt>Foil</dt>
+                    <dd>{modalItem.foil ? "Yes" : "No"}</dd>
+                  </div>
+                </dl>
+
+                {(() => {
+                  const sportsDetails = (modalItem.details as any)?.sports ?? (modalItem.details as any)?.sportsDb ?? null;
+                  if (!sportsDetails) {
+                    return null;
+                  }
+                  return (
+                    <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-300">
+                      <p className="text-xs uppercase tracking-[0.3em] text-violet-300">SportsDB Insight</p>
+                      <p className="mt-2 font-semibold text-white">{sportsDetails.playerName ?? sportsDetails.name ?? "Player"}</p>
+                      {sportsDetails.teamName && <p className="text-xs text-slate-400">{sportsDetails.teamName}</p>}
+                      {sportsDetails.snapshot && (
+                        <pre className="mt-3 max-h-40 overflow-auto rounded-xl border border-white/10 bg-night-900/80 p-3 text-xs text-slate-400">
+{JSON.stringify(sportsDetails.snapshot, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {modalItem.shippingRequest && (
+                  <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-300">
+                    <p className="text-xs uppercase tracking-[0.3em] text-emerald-300">Shipping request</p>
+                    <p className="mt-2 text-xs text-slate-400">Status {modalItem.shippingRequest.status}</p>
+                    <p className="text-xs text-slate-400">Processing fee {formatMinor(modalItem.shippingRequest.processingFeeMinor)}</p>
+                    <p className="text-xs text-slate-400">Shipping fee {formatMinor(modalItem.shippingRequest.shippingFeeMinor)}</p>
+                    {modalItem.shippingRequest.trackingNumber && (
+                      <p className="text-xs text-slate-400">Tracking {modalItem.shippingRequest.carrier ?? ""} {modalItem.shippingRequest.trackingNumber}</p>
+                    )}
+                  </div>
+                )}
+
+                {!modalItem.shippingRequest && modalItem.status !== "SOLD" && modalItem.status !== "REDEEMED" && (
+                  <div className="space-y-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedItemId(modalItem.id);
+                        setShowShippingForm((prev) => !prev);
+                      }}
+                      className="w-full rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400"
+                    >
+                      {showShippingForm ? "Hide shipping form" : "Request shipping"}
+                    </button>
+                    {showShippingForm && (
+                      <form className="space-y-4" onSubmit={handleSubmit}>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <label className="flex flex-col gap-2 text-xs">
+                            <span className="text-slate-300">Recipient name</span>
+                            <input
+                              type="text"
+                              required
+                              value={form.recipientName}
+                              onChange={(event) => setForm((prev) => ({ ...prev, recipientName: event.target.value }))}
+                              className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-2 text-xs">
+                            <span className="text-slate-300">Email</span>
+                            <input
+                              type="email"
+                              value={form.email}
+                              onChange={(event) => setForm((prev) => ({ ...prev, email: event.target.value }))}
+                              className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-2 text-xs">
+                            <span className="text-slate-300">Phone</span>
+                            <input
+                              type="tel"
+                              value={form.phone}
+                              onChange={(event) => setForm((prev) => ({ ...prev, phone: event.target.value }))}
+                              className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-2 text-xs">
+                            <span className="text-slate-300">Address line 1</span>
+                            <input
+                              type="text"
+                              required
+                              value={form.addressLine1}
+                              onChange={(event) => setForm((prev) => ({ ...prev, addressLine1: event.target.value }))}
+                              className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-2 text-xs">
+                            <span className="text-slate-300">Address line 2</span>
+                            <input
+                              type="text"
+                              value={form.addressLine2}
+                              onChange={(event) => setForm((prev) => ({ ...prev, addressLine2: event.target.value }))}
+                              className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-2 text-xs">
+                            <span className="text-slate-300">City</span>
+                            <input
+                              type="text"
+                              required
+                              value={form.city}
+                              onChange={(event) => setForm((prev) => ({ ...prev, city: event.target.value }))}
+                              className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-2 text-xs">
+                            <span className="text-slate-300">State / region</span>
+                            <input
+                              type="text"
+                              value={form.state}
+                              onChange={(event) => setForm((prev) => ({ ...prev, state: event.target.value }))}
+                              className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-2 text-xs">
+                            <span className="text-slate-300">Postal code</span>
+                            <input
+                              type="text"
+                              required
+                              value={form.postalCode}
+                              onChange={(event) => setForm((prev) => ({ ...prev, postalCode: event.target.value }))}
+                              className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
+                            />
+                          </label>
+                        </div>
+
+                        <label className="flex flex-col gap-2 text-xs">
+                          <span className="text-slate-300">Country</span>
+                          <input
+                            type="text"
+                            required
+                            value={form.country}
+                            onChange={(event) => setForm((prev) => ({ ...prev, country: event.target.value }))}
+                            className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
+                          />
+                        </label>
+
+                        <label className="flex flex-col gap-2 text-xs">
+                          <span className="text-slate-300">Additional notes</span>
+                          <textarea
+                            value={form.notes}
+                            onChange={(event) => setForm((prev) => ({ ...prev, notes: event.target.value }))}
+                            className="h-20 rounded-xl border border-white/10 bg-night-900/60 px-4 py-3 text-slate-100 outline-none focus:border-gold-400"
+                          />
+                        </label>
+
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-xs text-slate-200">
+                            <p className="font-semibold text-white">Fees</p>
+                            <p className="mt-1 text-slate-400">Processing {processingFeeDisplay}</p>
+                            <label className="mt-3 flex flex-col gap-2">
+                              <span className="text-slate-400">Additional shipping fee (TKD)</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={form.shippingFee}
+                                onChange={(event) => setForm((prev) => ({ ...prev, shippingFee: event.target.value }))}
+                                className="rounded-xl border border-white/10 bg-night-900/60 px-4 py-2 text-slate-100 outline-none focus:border-gold-400"
+                              />
+                            </label>
+                          </div>
+                          <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-xs text-slate-200">
+                            <p className="font-semibold text-white">Summary</p>
+                            <p className="mt-1 text-slate-400">
+                              Total debit {((PROCESSING_FEE_MINOR + toMinor(form.shippingFee)) / 100).toFixed(2)} TKD
+                            </p>
+                          </div>
+                        </div>
+
+                        {formError && (
+                          <div className="rounded-xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+                            {formError}
+                          </div>
+                        )}
+                        {formSuccess && (
+                          <div className="rounded-xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-3 text-xs text-emerald-200">
+                            {formSuccess}
+                          </div>
+                        )}
+
+                        <div className="flex items-center gap-3">
+                          <button
+                            type="submit"
+                            className="rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/10 disabled:text-slate-500"
+                            disabled={formBusy}
+                          >
+                            {formBusy ? "Submitting…" : "Submit shipping request"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowShippingForm(false)}
+                            className="rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

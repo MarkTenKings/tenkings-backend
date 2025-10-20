@@ -100,6 +100,9 @@ app.post("/ingestions/:ingestionId/approve", async (req, res, next) => {
           foil: typeof payload.foil === "boolean" ? payload.foil : false,
           estimatedValue: typeof payload.estimatedValue === "number" ? payload.estimatedValue : undefined,
           vaultLocation: typeof payload.vaultLocation === "string" ? payload.vaultLocation : undefined,
+          imageUrl: typeof payload.imageUrl === "string" ? payload.imageUrl : undefined,
+          thumbnailUrl: typeof payload.thumbnailUrl === "string" ? payload.thumbnailUrl : undefined,
+          detailsJson: payload.details ? (payload.details as Prisma.JsonValue) : undefined,
           ownerId: ingestion.ownerId,
         },
       });

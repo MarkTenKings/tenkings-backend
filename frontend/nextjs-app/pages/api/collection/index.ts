@@ -15,6 +15,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       orderBy: { createdAt: "desc" },
       include: {
         shippingRequest: true,
+        ingestionTask: true,
         packSlots: {
           include: {
             packInstance: {
@@ -41,6 +42,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         estimatedValue: item.estimatedValue,
         status: item.status,
         vaultLocation: item.vaultLocation,
+         imageUrl:
+           item.thumbnailUrl ??
+           item.imageUrl ??
+           ((item.ingestionTask?.rawPayload as { imageUrl?: string } | undefined)?.imageUrl ?? null),
+         thumbnailUrl: item.thumbnailUrl,
+         details: item.detailsJson ?? (item.ingestionTask?.rawPayload as Record<string, unknown> | null) ?? null,
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString(),
         pack: slot

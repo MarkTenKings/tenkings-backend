@@ -373,7 +373,11 @@ export default function Packs() {
         valueMinor: Number.isFinite(estimated)
           ? estimated
           : currentTier.expectedValue * 100,
-        image: highlightSlot.item.imageUrl ?? currentTier.image,
+        image:
+          highlightSlot.item.thumbnailUrl ??
+          highlightSlot.item.imageUrl ??
+          (highlightSlot.item.ingestionTask?.rawPayload as { imageUrl?: string } | undefined)?.imageUrl ??
+          currentTier.image,
         buybackAvailable: Boolean(
           (highlightSlot.itemId ?? highlightSlot.item.id) && estimated > 0
         ),
