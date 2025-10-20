@@ -248,17 +248,19 @@ const applyNormalizedSectionUpdate = <T extends Record<string, unknown>>(
   if (updates === null) {
     return undefined;
   }
-  const base: Record<string, unknown> = current ? { ...current } : {};
+  const base = { ...(current ?? {}) } as T;
   for (const [key, value] of Object.entries(updates)) {
+    const typedKey = key as keyof T;
     if (typeof value === "string") {
-      base[key] = value.trim().length > 0 ? value.trim() : null;
+      const sanitized = value.trim().length > 0 ? value.trim() : null;
+      base[typedKey] = sanitized as T[typeof typedKey];
     } else if (typeof value === "boolean" || typeof value === "number" || value === null) {
-      base[key] = value;
+      base[typedKey] = value as T[typeof typedKey];
     } else if (value !== undefined) {
-      base[key] = value;
+      base[typedKey] = value as T[typeof typedKey];
     }
   }
-  return base as T;
+  return base;
 };
 
 const isNormalizedSportEmpty = (sport?: NormalizedClassificationSport): boolean => {
