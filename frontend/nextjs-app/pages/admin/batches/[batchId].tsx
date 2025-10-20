@@ -381,10 +381,18 @@ export default function AdminBatchDetail() {
           const payload = await res.json().catch(() => ({}));
           throw new Error(payload?.message ?? 'Unable to load pack definitions');
         }
-        const data = (await res.json()) as PackDefinitionSummary[];
-        if (!cancelled) {
-          setDefinitions(data);
-        }
+        const json = (await res.json().catch(() => ({}))) as {
+            definitions?: PackDefinitionSummary[];
+            message?: string;
+          };
+
+          if (!Array.isArray(json.definitions)) {
+            throw new Error(json.message ?? "Unable to load pack definitions");
+          }
+
+          if (!cancelled) {
+            setDefinitions(json.definitions);
+          }
       } catch (error) {
         if (!cancelled) {
           const message = error instanceof Error ? error.message : 'Unable to load pack definitions';
