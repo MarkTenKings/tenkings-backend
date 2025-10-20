@@ -238,7 +238,7 @@ const sanitizeLinkUpdates = (
   return next;
 };
 
-const applyNormalizedSectionUpdate = <T extends Record<string, unknown>>(
+const applyNormalizedSectionUpdate = <T extends object>(
   current: T | undefined,
   updates: Partial<T> | null | undefined
 ): T | undefined => {
