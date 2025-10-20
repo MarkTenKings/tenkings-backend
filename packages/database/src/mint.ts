@@ -118,6 +118,8 @@ export async function mintAssignedCardAssets({
         const name = resolveCardName(card);
         const set = resolveSetName(card);
         const foil = resolveFoil(card);
+        const classificationDetails = (card.classificationJson as Prisma.InputJsonValue | null) ?? null;
+        const ocrDetails = (card.ocrJson as Prisma.InputJsonValue | null) ?? null;
 
         item = await tx.item.create({
           data: {
@@ -128,6 +130,9 @@ export async function mintAssignedCardAssets({
             foil,
             estimatedValue: card.valuationMinor ?? null,
             ownerId: seller.id,
+            imageUrl: card.imageUrl,
+            thumbnailUrl: card.thumbnailUrl ?? null,
+            detailsJson: classificationDetails ?? ocrDetails ?? undefined,
           },
         });
         itemCreated = true;
@@ -142,6 +147,28 @@ export async function mintAssignedCardAssets({
               ownerId: seller.id,
               note: `Minted from card asset ${card.id}`,
             },
+          });
+        }
+      } else {
+        const updates: Prisma.ItemUpdateInput = {};
+        if (!item.imageUrl && card.imageUrl) {
+          updates.imageUrl = card.imageUrl;
+        }
+        if (!item.thumbnailUrl && card.thumbnailUrl) {
+          updates.thumbnailUrl = card.thumbnailUrl;
+        }
+        if (!item.detailsJson) {
+          const classificationDetails = (card.classificationJson as Prisma.InputJsonValue | null) ?? null;
+          const ocrDetails = (card.ocrJson as Prisma.InputJsonValue | null) ?? null;
+          const combined = classificationDetails ?? ocrDetails;
+          if (combined) {
+            updates.detailsJson = combined;
+          }
+        }
+        if (Object.keys(updates).length > 0) {
+          item = await tx.item.update({
+            where: { id: item.id },
+            data: updates,
           });
         }
       }
