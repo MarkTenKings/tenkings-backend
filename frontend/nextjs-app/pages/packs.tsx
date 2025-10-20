@@ -43,7 +43,7 @@ type PackCategory = {
   comingSoon?: boolean;
 };
 
-type Alert = { type: "success" | "error"; text: string };
+type Alert = { type: "success" | "error" | "info"; text: string };
 
 type RevealItem = {
   packId: string;
@@ -286,6 +286,7 @@ export default function Packs() {
   >(null);
   const [activePack, setActivePack] = useState<any | null>(null);
   const [reveal, setReveal] = useState<RevealItem | null>(null);
+  const [resolution, setResolution] = useState<"collection" | "buyback" | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -362,6 +363,7 @@ export default function Packs() {
       const estimated = Number(
         highlightSlot.item.estimatedValue ?? highlightSlot.item.marketValue ?? 0
       );
+      setResolution(null);
       setReveal({
         packId: opened.pack.id,
         slotId: highlightSlot.id,
@@ -379,6 +381,7 @@ export default function Packs() {
       });
     } else {
       setReveal(placeholderReveal(currentCategory, currentTier));
+      setResolution("collection");
     }
 
     setAlert({
@@ -479,6 +482,7 @@ export default function Packs() {
     setPaymentMethod("card");
     setActivePack(null);
     setReveal(null);
+    setResolution(null);
     setStep(nextCategory?.comingSoon ? "category" : "tier");
     if (nextCategory && !nextCategory.comingSoon) {
       router.replace({ pathname: router.pathname, query: { category: id } }, undefined, { shallow: true }).catch(() => undefined);
@@ -492,12 +496,21 @@ export default function Packs() {
     setPaymentMethod("card");
     setActivePack(null);
     setReveal(null);
+    setResolution(null);
     setStep("pick");
   };
 
   const handleReturn = (target: typeof step) => {
     setAlert(null);
     setStripeIntent(null);
+    if (step === "reveal" && reveal && resolution === null) {
+      keepInCollection({
+        message:
+          "Saved to your collection by default. You can review or request buyback anytime from My Collection.",
+        type: "info",
+        annotate: true,
+      });
+    }
     if (target === "category") {
       setCategoryId(null);
       setTierId(null);
@@ -513,6 +526,7 @@ export default function Packs() {
     }
     setActivePack(null);
     setReveal(null);
+    setResolution(null);
     setStep(target);
   };
 
@@ -641,6 +655,7 @@ export default function Packs() {
             }
           : prev
       );
+      setResolution("buyback");
       setAlert({ type: "success", text: `Instant buyback credited ${formatTkd(result.buybackAmount)} to your wallet.` });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Buyback failed";
@@ -650,13 +665,38 @@ export default function Packs() {
     }
   };
 
+  function keepInCollection(options?: { message?: string; type?: Alert["type"]; annotate?: boolean }) {
+    if (!reveal) {
+      setAlert({ type: "error", text: "No pull to save right now." });
+      return;
+    }
+    setResolution("collection");
+    if (options?.annotate) {
+      setReveal((prev) =>
+        prev
+          ? {
+              ...prev,
+              description: prev.description.includes("Saved to your collection")
+                ? prev.description
+                : `${prev.description}\n\nSaved to your collection.`,
+            }
+          : prev
+      );
+    }
+    const message = options?.message ?? "Saved to your collection. You can review it anytime under My Collection.";
+    const type = options?.type ?? "success";
+    setAlert({ type, text: message });
+  }
+
   const alertBanner =
     alert && (
       <div
         className={`mx-auto mt-6 w-full max-w-6xl rounded-2xl border px-5 py-4 text-sm ${
           alert.type === "error"
             ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
-            : "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+            : alert.type === "success"
+              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+              : "border-sky-500/40 bg-sky-500/10 text-sky-200"
         }`}
       >
         {alert.text}
@@ -1060,15 +1100,26 @@ export default function Packs() {
                       type="button"
                       onClick={acceptBuyback}
                       className="rounded-full border border-gold-500/60 bg-gold-500 px-7 py-3 text-xs font-semibold uppercase tracking-[0.3em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/15 disabled:bg-white/10 disabled:text-slate-500"
-                      disabled={!reveal.buybackAvailable || reveal.buybackAccepted || buybackBusy}
+                      disabled={
+                        !reveal.buybackAvailable ||
+                        reveal.buybackAccepted ||
+                        buybackBusy ||
+                        resolution === "collection"
+                      }
                     >
                       {reveal.buybackAccepted ? "Buyback accepted" : buybackBusy ? "Processing…" : "Accept buyback"}
                     </button>
                     <button
                       type="button"
-                      className="rounded-full border border-white/20 px-7 py-3 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
+                      onClick={() => keepInCollection({ annotate: true })}
+                      className={`rounded-full border px-7 py-3 text-xs uppercase tracking-[0.3em] transition ${
+                        resolution === "collection"
+                          ? "border-emerald-400/50 bg-emerald-500/10 text-emerald-200"
+                          : "border-white/20 text-slate-300 hover:border-white/40 hover:text-white"
+                      }`}
+                      disabled={resolution === "collection" || reveal.buybackAccepted}
                     >
-                      Save to collection
+                      {resolution === "collection" ? "Saved to collection" : "Save to collection"}
                     </button>
                   </div>
                 </div>
