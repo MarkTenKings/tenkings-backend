@@ -33,7 +33,7 @@ export default function AppShell({ children, background = "default" }: AppShellP
               <Link className="transition hover:text-white" href="/marketplace">
                 Marketplace
               </Link>
-              <Link className="transition hover:text-white" href="/wallet">
+              <Link className="transition hover:text-white" href="/collection">
                 My Collection
               </Link>
               {session ? (
