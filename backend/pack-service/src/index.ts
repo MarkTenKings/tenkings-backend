@@ -178,6 +178,11 @@ app.post("/purchase", async (req, res, next) => {
     const payload = purchaseSchema.parse(req.body);
 
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const purchaser = await tx.user.upsert({
+        where: { id: payload.userId },
+        update: {},
+        create: { id: payload.userId },
+      });
       const definition = await tx.packDefinition.findUnique({ where: { id: payload.packDefinitionId } });
       if (!definition) {
         throw Object.assign(new Error("pack definition missing"), { statusCode: 404 });
@@ -246,7 +251,7 @@ app.post("/purchase", async (req, res, next) => {
 
       const claimedPack = await tx.packInstance.update({
         where: { id: pack.id },
-        data: { ownerId: payload.userId },
+        data: { ownerId: purchaser.id },
         include: { slots: { include: { item: true } } },
       });
 
