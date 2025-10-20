@@ -529,7 +529,6 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     ocrText: card.ocrText,
     classification: classificationAttributes,
     classificationNormalized: normalizedClassification,
-    classificationNormalized: normalizedClassification,
     customTitle: card.customTitle ?? null,
     customDetails: card.customDetails ?? null,
     valuationMinor: card.valuationMinor ?? null,
