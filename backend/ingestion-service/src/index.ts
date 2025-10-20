@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
-import { prisma, Prisma, IngestionStatus } from "@tenkings/database";
+import { prisma, IngestionStatus } from "@tenkings/database";
+import type { Prisma } from "@tenkings/database";
 import { z } from "zod";
 
 const app = express();
@@ -91,6 +92,11 @@ app.post("/ingestions/:ingestionId/approve", async (req, res, next) => {
         throw Object.assign(new Error("missing card metadata"), { statusCode: 400 });
       }
 
+      const detailsValue =
+        payload.details === undefined || payload.details === null
+          ? undefined
+          : (payload.details as Prisma.InputJsonValue);
+
       const item = await tx.item.create({
         data: {
           name,
@@ -102,7 +108,7 @@ app.post("/ingestions/:ingestionId/approve", async (req, res, next) => {
           vaultLocation: typeof payload.vaultLocation === "string" ? payload.vaultLocation : undefined,
           imageUrl: typeof payload.imageUrl === "string" ? payload.imageUrl : undefined,
           thumbnailUrl: typeof payload.thumbnailUrl === "string" ? payload.thumbnailUrl : undefined,
-          detailsJson: payload.details ? (payload.details as Prisma.JsonValue) : undefined,
+          detailsJson: detailsValue,
           ownerId: ingestion.ownerId,
         },
       });
