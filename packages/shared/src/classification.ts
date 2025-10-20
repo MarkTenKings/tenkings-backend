@@ -260,12 +260,17 @@ export function parseClassificationPayload(value: unknown): CardClassificationPa
     return null;
   }
 
-  const payload = value as CardClassificationPayload & Record<string, unknown>;
-  if (payload.attributes && typeof payload.attributes === "object") {
-    const attributes = coerceCardAttributes(payload.attributes);
-    const normalized = payload.normalized && typeof payload.normalized === "object"
-      ? coerceNormalizedClassification(payload.normalized)
-      : null;
+  const payload = value as Record<string, unknown> & Partial<CardClassificationPayload>;
+  const rawAttributes = payload.attributes;
+  if (rawAttributes && typeof rawAttributes === "object") {
+    const attributes =
+      coerceCardAttributes(rawAttributes as unknown as Record<string, unknown>) ??
+      extractCardAttributes(null);
+    const rawNormalized = payload.normalized;
+    const normalized =
+      rawNormalized && typeof rawNormalized === "object"
+        ? coerceNormalizedClassification(rawNormalized as unknown as Record<string, unknown>)
+        : null;
     return {
       attributes,
       normalized,

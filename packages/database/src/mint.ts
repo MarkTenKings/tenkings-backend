@@ -121,8 +121,10 @@ const resolveFoil = (card: CardRecord) => {
     return normalizedFoil;
   }
 
-  const variants = attributes?.variantKeywords ?? [];
-  return variants.some((entry) => typeof entry === "string" && /foil/i.test(entry));
+  const variants: string[] = Array.isArray(attributes?.variantKeywords)
+    ? attributes.variantKeywords.filter((value: unknown): value is string => typeof value === "string")
+    : [];
+  return variants.some((entry) => /foil/i.test(entry));
 };
 
 export async function mintAssignedCardAssets({
