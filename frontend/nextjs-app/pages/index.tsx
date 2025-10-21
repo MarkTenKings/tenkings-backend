@@ -18,6 +18,7 @@ type PullCard = {
   ownerId: string | null;
   ownerLabel: string;
   ownerAvatar: string | null;
+  packLabel: string | null;
 };
 
 const fallbackPulls: PullCard[] = Array.from({ length: 3 }).map((_, index) => ({
@@ -28,7 +29,40 @@ const fallbackPulls: PullCard[] = Array.from({ length: 3 }).map((_, index) => ({
   ownerId: null,
   ownerLabel: "User Name",
   ownerAvatar: null,
+  packLabel: null,
 }));
+
+const parseDetailsImage = (raw: unknown): string | null => {
+  if (!raw) {
+    return null;
+  }
+  const value = typeof raw === "string" ? (() => {
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      return null;
+    }
+  })() : raw;
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const imageCandidates = [
+    (value as Record<string, unknown>).thumbnailUrl,
+    (value as Record<string, unknown>).imageUrl,
+    (value as Record<string, unknown>).cardImage,
+    (value as Record<string, unknown>).fullImage,
+  ];
+
+  for (const candidate of imageCandidates) {
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate;
+    }
+  }
+
+  return null;
+};
 
 const categories = [
   {
@@ -110,6 +144,7 @@ export default function Home() {
           const cardName = typeof item?.name === "string" && item.name.trim() ? item.name.trim() : "Card Title";
           const thumbnail = typeof item?.thumbnailUrl === "string" && item.thumbnailUrl.trim() ? item.thumbnailUrl : null;
           const fallbackImage = typeof item?.imageUrl === "string" && item.imageUrl.trim() ? item.imageUrl : null;
+          const detailsImage = parseDetailsImage(item?.detailsJson);
           const owner = pull?.owner ?? {};
           const ownerId = typeof owner?.id === "string" && owner.id.trim() ? owner.id : null;
           const ownerLabelRaw =
@@ -121,14 +156,19 @@ export default function Home() {
           const ownerLabel = ownerLabelRaw.trim() ? ownerLabelRaw.trim() : "User Name";
           const ownerAvatar =
             typeof owner?.avatarUrl === "string" && owner.avatarUrl.trim().length > 0 ? owner.avatarUrl : null;
+          const pack = pull?.packDefinition ?? null;
           return {
             itemId,
             cardName,
             marketValueMinor,
-            image: thumbnail ?? fallbackImage,
+            image: thumbnail ?? fallbackImage ?? detailsImage,
             ownerId,
             ownerLabel,
             ownerAvatar,
+            packLabel:
+              typeof pack?.name === "string" && pack.name.trim().length > 0
+                ? pack.name
+                : pull?.packId ?? null,
           };
         });
         if (mapped.length && !cancelled) {
@@ -281,6 +321,7 @@ export default function Home() {
                             fill
                             className="object-cover"
                             sizes="(max-width: 768px) 280px, 320px"
+                            unoptimized
                           />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center bg-night-900/80 text-xs uppercase tracking-[0.3em] text-slate-500">
@@ -318,6 +359,9 @@ export default function Home() {
                           </Link>
                         ) : (
                           <span className="text-sm text-white">{item.ownerLabel}</span>
+                        )}
+                        {item.packLabel && (
+                          <p className="text-[10px] uppercase tracking-[0.28em] text-slate-500">{item.packLabel}</p>
                         )}
                       </div>
                     </footer>
