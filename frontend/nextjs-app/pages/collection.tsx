@@ -1,10 +1,12 @@
 import Head from "next/head";
 import Image from "next/image";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import AppShell from "../components/AppShell";
 import { useSession } from "../hooks/useSession";
+import { buybackItem } from "../lib/api";
 
 const PROCESSING_FEE_MINOR = Number(process.env.NEXT_PUBLIC_SHIPPING_PROCESSING_FEE_MINOR ?? "1200");
+const BUYBACK_RATE = 0.75;
 
 interface ShippingRequestSummary {
   id: string;
@@ -102,6 +104,8 @@ export default function CollectionPage() {
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [modalItem, setModalItem] = useState<CollectionItem | null>(null);
   const [showShippingForm, setShowShippingForm] = useState(false);
+  const [buybackBusyItems, setBuybackBusyItems] = useState<Record<string, boolean>>({});
+  const [flash, setFlash] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const processingFeeDisplay = useMemo(
     () => `${(PROCESSING_FEE_MINOR / 100).toFixed(2)} TKD`,
@@ -183,12 +187,23 @@ export default function CollectionPage() {
             const shippingStatus = item.shippingRequest?.status ?? null;
             const hasPendingShipment = shippingStatus && shippingStatus !== "SHIPPED" && shippingStatus !== "CANCELLED";
             const badgeLabel = shippingStatus === "SHIPPED" ? "Shipped" : item.status.replace(/_/g, " ");
+            const estimatedBuyback = item.estimatedValue ? Math.round(item.estimatedValue * BUYBACK_RATE) : null;
+            const busy = Boolean(buybackBusyItems[item.id]);
+            const buybackDisabled = busy || hasPendingShipment || item.status === "SOLD" || item.status === "REDEEMED";
+            const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                openItemModal(item);
+              }
+            };
             return (
-              <button
+              <div
                 key={item.id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onClick={() => openItemModal(item)}
-                className="group flex flex-col gap-3 rounded-3xl border border-white/10 bg-night-900/70 p-4 text-left transition hover:border-gold-400/40 hover:shadow-glow-gold"
+                onKeyDown={handleKeyDown}
+                className="group flex cursor-pointer flex-col gap-3 rounded-3xl border border-white/10 bg-night-900/70 p-4 text-left transition hover:border-gold-400/40 hover:shadow-glow-gold"
               >
                 <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-night-900/80">
                   <div className="relative aspect-[3/4]">
@@ -228,8 +243,24 @@ export default function CollectionPage() {
                     </div>
                   )}
                 </dl>
+                <div className="flex items-center justify-between pt-2">
+                  <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                    {estimatedBuyback ? `Buyback ${formatMinor(estimatedBuyback)}` : "Instant buyback"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={async (event: MouseEvent<HTMLButtonElement>) => {
+                      event.stopPropagation();
+                      await handleInstantBuyback(item);
+                    }}
+                    className="rounded-full border border-emerald-400/40 bg-emerald-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    disabled={buybackDisabled}
+                  >
+                    {busy ? "Processing…" : buybackDisabled ? "Unavailable" : "Instant Buyback"}
+                  </button>
+                </div>
                 <span className="text-xs uppercase tracking-[0.3em] text-gold-300">View details</span>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -263,6 +294,73 @@ export default function CollectionPage() {
       .finally(() => setItemsLoading(false));
   };
 
+  const handleInstantBuyback = useCallback(
+    async (item: CollectionItem): Promise<boolean> => {
+      if (item.status === "SOLD" || item.status === "REDEEMED") {
+        setFlash({ type: "error", text: "Instant buyback already completed for this card." });
+        return false;
+      }
+
+      let activeSession = session;
+      if (!activeSession) {
+        try {
+          activeSession = await ensureSession();
+        } catch (error) {
+          if (error instanceof Error && error.message === "Authentication cancelled") {
+            return false;
+          }
+          setFlash({ type: "error", text: "Sign in to accept instant buybacks." });
+          return false;
+        }
+      }
+
+      if (!activeSession) {
+        return false;
+      }
+
+      setBuybackBusyItems((prev) => ({ ...prev, [item.id]: true }));
+
+      try {
+        const result = await buybackItem(item.id, activeSession.user.id);
+        updateWalletBalance(result.walletBalance);
+        setItems((prev) =>
+          prev.map((entry) =>
+            entry.id === item.id
+              ? {
+                  ...entry,
+                  status: "SOLD",
+                }
+              : entry
+          )
+        );
+        setModalItem((prev) =>
+          prev && prev.id === item.id
+            ? {
+                ...prev,
+                status: "SOLD",
+              }
+            : prev
+        );
+        setFlash({
+          type: "success",
+          text: `Instant buyback credited ${formatMinor(result.buybackAmount)} to your wallet.`,
+        });
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Instant buyback failed";
+        setFlash({ type: "error", text: message });
+        return false;
+      } finally {
+        setBuybackBusyItems((prev) => {
+          const next = { ...prev };
+          delete next[item.id];
+          return next;
+        });
+      }
+    },
+    [ensureSession, session, updateWalletBalance]
+  );
+
   useEffect(() => {
     if (loading) {
       return;
@@ -274,6 +372,14 @@ export default function CollectionPage() {
     loadItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loading, session?.token]);
+
+  useEffect(() => {
+    if (!flash) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setFlash(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [flash]);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -399,6 +505,18 @@ export default function CollectionPage() {
           </div>
         </div>
 
+        {flash && (
+          <div
+            className={`rounded-2xl border px-6 py-4 text-sm ${
+              flash.type === "success"
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+                : "border-rose-500/40 bg-rose-500/10 text-rose-200"
+            }`}
+          >
+            {flash.text}
+          </div>
+        )}
+
         {itemsError && (
           <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-6 py-4 text-sm text-rose-200">
             {itemsError}
@@ -517,6 +635,37 @@ export default function CollectionPage() {
                     </div>
                   );
                 })()}
+
+                {modalItem.status !== "SOLD" && modalItem.status !== "REDEEMED" && (
+                  (() => {
+                    const estimate = modalItem.estimatedValue ? Math.round(modalItem.estimatedValue * BUYBACK_RATE) : null;
+                    const busy = Boolean(buybackBusyItems[modalItem.id]);
+                    const disabled = busy || Boolean(modalItem.shippingRequest);
+                    return (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const success = await handleInstantBuyback(modalItem);
+                          if (success) {
+                            closeItemModal();
+                          }
+                        }}
+                        className="w-full rounded-full border border-emerald-400/40 bg-emerald-500/20 px-6 py-3 text-xs uppercase tracking-[0.32em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        disabled={disabled}
+                      >
+                        {disabled
+                          ? modalItem.shippingRequest
+                            ? "Shipping in progress"
+                            : "Buyback unavailable"
+                          : busy
+                            ? "Processing…"
+                            : estimate
+                              ? `Instant buyback ${formatMinor(estimate)}`
+                              : "Instant buyback"}
+                      </button>
+                    );
+                  })()
+                )}
 
                 {modalItem.shippingRequest && (
                   <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-300">

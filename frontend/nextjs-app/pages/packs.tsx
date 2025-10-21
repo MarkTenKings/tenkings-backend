@@ -1,7 +1,7 @@
 import Head from "next/head";
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/router";
 import AppShell from "../components/AppShell";
 import { ChaseCarousel } from "../components/ChaseCarousel";
@@ -54,6 +54,8 @@ type RevealItem = {
   description: string;
   valueMinor: number;
   image: string;
+  packImage: string;
+  packLabel: string;
   buybackAvailable: boolean;
   buybackAccepted: boolean;
   normalized: NormalizedClassification | null;
@@ -422,10 +424,157 @@ const placeholderReveal = (category: PackCategory, tier: PackTier): RevealItem =
   description: tier.details,
   valueMinor: tier.expectedValue * 100,
   image: tier.image,
+  packImage: tier.image,
+  packLabel: `${category.label} · ${tier.label}`,
   buybackAvailable: tier.expectedValue > 0,
   buybackAccepted: false,
   normalized: null,
 });
+
+interface RevealModalProps {
+  reveal: RevealItem;
+  stage: "intro" | "rip" | "card";
+  onClose: () => void;
+  onAcceptBuyback: () => void;
+  buybackBusy: boolean;
+  canAcceptBuyback: boolean;
+  buybackAccepted: boolean;
+}
+
+function RevealModal({ reveal, stage, onClose, onAcceptBuyback, buybackBusy, canAcceptBuyback, buybackAccepted }: RevealModalProps) {
+  const cardImage = reveal.image || reveal.packImage;
+
+  useEffect(() => {
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = original;
+    };
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-3xl overflow-hidden rounded-3xl border border-white/10 bg-night-900/95 shadow-2xl">
+        <button
+          type="button"
+          onClick={onClose}
+          className="absolute right-4 top-4 rounded-full border border-white/20 px-3 py-1 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
+        >
+          Close
+        </button>
+        <div className="flex flex-col items-center gap-6 p-8">
+          <div className="relative flex h-80 w-full items-center justify-center">
+            {stage !== "card" && (
+              <div
+                className="relative h-64 w-48"
+                style={{
+                  animation: stage === "intro" ? "packFloat 1.2s ease-in-out infinite" : "packRip 0.6s ease forwards",
+                }}
+              >
+                <Image src={reveal.packImage} alt={reveal.packLabel} fill className="object-contain" sizes="192px" priority unoptimized />
+              </div>
+            )}
+            {stage === "card" && (
+              <div className="card-reveal relative h-80 w-56">
+                <div className="absolute inset-0 rounded-[2rem] border border-gold-400/50 bg-night-900/70 shadow-[0_0_55px_rgba(250,204,21,0.35)]" />
+                <Image
+                  src={cardImage}
+                  alt={reveal.name}
+                  fill
+                  className="rounded-[2rem] object-cover"
+                  sizes="224px"
+                  unoptimized
+                />
+              </div>
+            )}
+          </div>
+          <div className="space-y-3 text-center">
+            <p className="text-xs uppercase tracking-[0.32em] text-slate-400">{reveal.packLabel}</p>
+            {stage === "card" ? (
+              <>
+                <h2 className="font-heading text-3xl uppercase tracking-[0.2em] text-white">{reveal.name}</h2>
+                <p className="whitespace-pre-line text-sm text-slate-300">{reveal.description}</p>
+                <div className="flex flex-wrap justify-center gap-8 pt-4 text-sm text-slate-300">
+                  <div>
+                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Estimated Value</p>
+                    <p className="text-xl text-gold-300">{formatTkd(reveal.valueMinor)}</p>
+                  </div>
+                  {reveal.buybackAvailable && (
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Instant Buyback (75%)</p>
+                      <p className="text-xl text-emerald-300">{formatTkd(Math.round(reveal.valueMinor * BUYBACK_RATE))}</p>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <h2 className="font-heading text-3xl uppercase tracking-[0.2em] text-white">Pack Ripping…</h2>
+            )}
+          </div>
+          {stage === "card" && (
+            <div className="mt-4 flex flex-wrap justify-center gap-3">
+              {reveal.buybackAvailable && (
+                <button
+                  type="button"
+                  onClick={onAcceptBuyback}
+                  disabled={!canAcceptBuyback || buybackBusy || buybackAccepted}
+                  className="rounded-full border border-emerald-400/40 bg-emerald-500/20 px-6 py-3 text-xs uppercase tracking-[0.32em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {buybackAccepted ? "Buyback accepted" : buybackBusy ? "Processing…" : "Accept buyback"}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.32em] text-slate-200 transition hover:border-gold-300 hover:text-gold-200"
+              >
+                View card details
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+      <style jsx>{`
+        @keyframes packFloat {
+          0%, 100% {
+            transform: translateY(0);
+          }
+          50% {
+            transform: translateY(-12px);
+          }
+        }
+        @keyframes packRip {
+          0% {
+            transform: scale(1);
+            opacity: 1;
+          }
+          60% {
+            transform: scale(1.1);
+            opacity: 0.8;
+          }
+          100% {
+            transform: scale(0.6);
+            opacity: 0;
+          }
+        }
+        @keyframes cardReveal {
+          0% {
+            transform: translateY(40px);
+            opacity: 0;
+          }
+          100% {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
+        .card-reveal {
+          animation: cardReveal 0.5s ease forwards;
+        }
+      `}</style>
+    </div>
+  );
+}
 
 export default function Packs() {
   const router = useRouter();
@@ -447,6 +596,9 @@ export default function Packs() {
   const [activePack, setActivePack] = useState<any | null>(null);
   const [reveal, setReveal] = useState<RevealItem | null>(null);
   const [resolution, setResolution] = useState<"collection" | "buyback" | null>(null);
+  const [showRevealModal, setShowRevealModal] = useState(false);
+  const [revealStage, setRevealStage] = useState<"intro" | "rip" | "card">("intro");
+  const revealSectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -539,6 +691,8 @@ export default function Packs() {
           highlightSlot.item.imageUrl ??
           (highlightSlot.item.ingestionTask?.rawPayload as { imageUrl?: string } | undefined)?.imageUrl ??
           currentTier.image,
+        packImage: currentTier.image,
+        packLabel: `${currentCategory.label} · ${currentTier.label}`,
         buybackAvailable: Boolean(
           (highlightSlot.itemId ?? highlightSlot.item.id) && estimated > 0
         ),
@@ -550,9 +704,11 @@ export default function Packs() {
       setResolution("collection");
     }
 
+    setShowRevealModal(true);
+    setRevealStage("intro");
     setAlert({
       type: "success",
-      text: `Pack ${opened.pack.id} opened. Scroll to reveal your hit.`,
+      text: `Pack ${opened.pack.id} ripped! Enjoy the reveal.`,
     });
     setStep("reveal");
   };
@@ -585,8 +741,23 @@ export default function Packs() {
     setPaymentMethod("card");
     setActivePack(null);
     setReveal(null);
+    setShowRevealModal(false);
+    setRevealStage("intro");
     setStep(matchedCategory.comingSoon ? "category" : "tier");
   }, [router.isReady, router.query.category, categoryId]);
+
+  useEffect(() => {
+    if (!showRevealModal) {
+      return;
+    }
+    setRevealStage("intro");
+    const ripTimer = window.setTimeout(() => setRevealStage("rip"), 800);
+    const cardTimer = window.setTimeout(() => setRevealStage("card"), 1700);
+    return () => {
+      window.clearTimeout(ripTimer);
+      window.clearTimeout(cardTimer);
+    };
+  }, [showRevealModal]);
 
   const resolveDefinition = useCallback(
     (currentCategory: PackCategory | null, currentTier: PackTier | null) => {
@@ -666,6 +837,8 @@ export default function Packs() {
     setActivePack(null);
     setReveal(null);
     setResolution(null);
+    setShowRevealModal(false);
+    setRevealStage("intro");
     setStep(nextCategory?.comingSoon ? "category" : "tier");
     if (nextCategory && !nextCategory.comingSoon) {
       router.replace({ pathname: router.pathname, query: { category: id } }, undefined, { shallow: true }).catch(() => undefined);
@@ -680,6 +853,8 @@ export default function Packs() {
     setActivePack(null);
     setReveal(null);
     setResolution(null);
+    setShowRevealModal(false);
+    setRevealStage("intro");
     setStep("pick");
   };
 
@@ -710,8 +885,17 @@ export default function Packs() {
     setActivePack(null);
     setReveal(null);
     setResolution(null);
+    setShowRevealModal(false);
+    setRevealStage("intro");
     setStep(target);
   };
+
+  const closeRevealModal = useCallback(() => {
+    setShowRevealModal(false);
+    window.setTimeout(() => {
+      revealSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 200);
+  }, []);
 
   const proceedToCheckout = async () => {
     if (!category || !tier) {
@@ -1242,7 +1426,7 @@ export default function Packs() {
       )}
 
       {step === "reveal" && reveal && tier && category && (
-        <section className="bg-night-900/85 py-20">
+        <section ref={revealSectionRef} className="bg-night-900/85 py-20">
           <div className="mx-auto flex w-full max-w-5xl flex-col gap-10 px-6">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
@@ -1382,6 +1566,18 @@ export default function Packs() {
             ) : null}
           </div>
         </section>
+      )}
+
+      {showRevealModal && reveal && (
+        <RevealModal
+          reveal={reveal}
+          stage={revealStage}
+          onClose={closeRevealModal}
+          onAcceptBuyback={acceptBuyback}
+          buybackBusy={buybackBusy}
+          canAcceptBuyback={reveal.buybackAvailable && !reveal.buybackAccepted}
+          buybackAccepted={reveal.buybackAccepted}
+        />
       )}
     </AppShell>
   );

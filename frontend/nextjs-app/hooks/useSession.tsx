@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { requestLoginCode, verifyLoginCode, setAuthToken } from "../lib/api";
+import { requestLoginCode, verifyLoginCode, setAuthToken, fetchProfile } from "../lib/api";
 import AuthModal from "../components/AuthModal";
 
 export interface SessionPayload {
@@ -9,6 +9,7 @@ export interface SessionPayload {
     id: string;
     phone: string | null;
     displayName: string | null;
+    avatarUrl: string | null;
   };
   wallet: {
     id: string;
@@ -22,6 +23,7 @@ interface SessionContextValue {
   ensureSession: () => Promise<SessionPayload>;
   logout: () => void;
   updateWalletBalance: (balance: number) => void;
+  updateProfile: (changes: { displayName?: string | null; avatarUrl?: string | null }) => void;
 }
 
 type Resolver = {
@@ -111,6 +113,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [authState, setAuthState] = useState<AuthState>(initialAuthState);
   const resolverRef = useRef<Resolver | null>(null);
+  const profileRefreshRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -123,6 +126,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         return;
       }
       const stored: SessionPayload = JSON.parse(raw);
+      stored.user = {
+        id: stored.user?.id ?? "",
+        phone: stored.user?.phone ?? null,
+        displayName: stored.user?.displayName ?? null,
+        avatarUrl: stored.user?.avatarUrl ?? null,
+      };
       if (new Date(stored.expiresAt).getTime() <= Date.now()) {
         window.localStorage.removeItem(storageKey);
         setLoading(false);
@@ -139,16 +148,32 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const persistSession = (payload: SessionPayload) => {
-    setSession(payload);
-    setAuthToken(payload.token);
+    const normalized: SessionPayload = {
+      token: payload.token,
+      expiresAt: payload.expiresAt,
+      user: {
+        id: payload.user.id,
+        phone: payload.user.phone ?? null,
+        displayName: payload.user.displayName ?? null,
+        avatarUrl: payload.user.avatarUrl ?? null,
+      },
+      wallet: {
+        id: payload.wallet.id,
+        balance: payload.wallet.balance ?? 0,
+      },
+    };
+    setSession(normalized);
+    setAuthToken(normalized.token);
+    profileRefreshRef.current = false;
     if (typeof window !== "undefined") {
-      window.localStorage.setItem(storageKey, JSON.stringify(payload));
+      window.localStorage.setItem(storageKey, JSON.stringify(normalized));
     }
   };
 
   const clearSession = () => {
     setSession(null);
     setAuthToken(null);
+    profileRefreshRef.current = false;
     if (typeof window !== "undefined") {
       window.localStorage.removeItem(storageKey);
     }
@@ -168,6 +193,60 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       }
       return updated;
     });
+  }, []);
+
+  const updateProfile = useCallback((changes: { displayName?: string | null; avatarUrl?: string | null }) => {
+    setSession((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const updatedUser = { ...prev.user };
+      if (Object.prototype.hasOwnProperty.call(changes, "displayName")) {
+        updatedUser.displayName = changes.displayName ?? null;
+      }
+      if (Object.prototype.hasOwnProperty.call(changes, "avatarUrl")) {
+        updatedUser.avatarUrl = changes.avatarUrl ?? null;
+      }
+      const updated = { ...prev, user: updatedUser };
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(storageKey, JSON.stringify(updated));
+      }
+      return updated;
+    });
+  }, []);
+
+  const refreshProfile = useCallback(async () => {
+    try {
+      const result = await fetchProfile();
+      setSession((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        const updated = {
+          ...prev,
+          user: {
+            ...prev.user,
+            phone: result.user?.phone ?? prev.user.phone,
+            displayName: result.user?.displayName ?? null,
+            avatarUrl: result.user?.avatarUrl ?? null,
+          },
+          wallet: result.wallet
+            ? {
+                id: result.wallet.id,
+                balance: result.wallet.balance ?? prev.wallet.balance,
+              }
+            : prev.wallet,
+        };
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(storageKey, JSON.stringify(updated));
+        }
+        return updated;
+      });
+    } catch (error) {
+      // Silent refresh failure; session remains usable
+    } finally {
+      profileRefreshRef.current = true;
+    }
   }, []);
 
   const ensureSession = () => {
@@ -227,6 +306,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         wallet: payload.wallet,
       };
       persistSession(sessionPayload);
+      refreshProfile().catch(() => undefined);
       setAuthState(initialAuthState);
       if (resolverRef.current) {
         resolverRef.current.resolve(sessionPayload);
@@ -242,6 +322,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     clearSession();
   };
 
+  useEffect(() => {
+    if (!session || loading) {
+      return;
+    }
+    if (profileRefreshRef.current) {
+      return;
+    }
+    refreshProfile().catch(() => undefined);
+  }, [session, loading, refreshProfile]);
+
   const contextValue = useMemo<SessionContextValue>(
     () => ({
       session,
@@ -249,8 +339,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       ensureSession,
       logout,
       updateWalletBalance,
+      updateProfile,
     }),
-    [session, loading, ensureSession, logout, updateWalletBalance]
+    [session, loading, ensureSession, logout, updateWalletBalance, updateProfile]
   );
 
   return (

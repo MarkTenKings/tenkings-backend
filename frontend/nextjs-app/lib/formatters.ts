@@ -9,3 +9,10 @@ export function formatTkd(amount: number | null | undefined): string {
   }
   return `${currencyFormatter.format(amount / 100)} TKD`;
 }
+
+export function formatUsdMinor(amount: number | null | undefined): string {
+  if (amount === null || amount === undefined) {
+    return "–";
+  }
+  return `$${currencyFormatter.format(amount / 100)}`;
+}

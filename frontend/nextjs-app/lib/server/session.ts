@@ -34,6 +34,7 @@ export interface UserSession {
     id: string;
     phone: string | null;
     displayName: string | null;
+    avatarUrl: string | null;
   };
 }
 
@@ -67,6 +68,7 @@ export async function requireUserSession(req: NextApiRequest): Promise<UserSessi
       id: session.user.id,
       phone: session.user.phone,
       displayName: session.user.displayName,
+      avatarUrl: session.user.avatarUrl,
     },
   };
 }
@@ -103,7 +105,7 @@ async function lookupViaAuthService(token: string): Promise<UserSession | null> 
       session: {
         id: string;
         tokenHash: string;
-        user: { id: string; phone: string | null; displayName: string | null };
+        user: { id: string; phone: string | null; displayName: string | null; avatarUrl: string | null };
       };
     };
 

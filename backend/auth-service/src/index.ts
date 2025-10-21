@@ -35,6 +35,35 @@ const extractBearerToken = (req: Request) => {
   return token;
 };
 
+const fetchActiveSession = async (token: string) => {
+  const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+  const session = await prisma.session.findUnique({
+    where: { tokenHash },
+    include: {
+      user: {
+        include: {
+          wallet: true,
+        },
+      },
+    },
+  });
+  if (!session || !session.user) {
+    return null;
+  }
+  if (session.expiresAt.getTime() <= Date.now()) {
+    return null;
+  }
+  return session;
+};
+
+const resolveWallet = async (userId: string, existing?: { id: string; balance: number } | null) => {
+  if (existing) {
+    return existing;
+  }
+  const wallet = await prisma.wallet.findUnique({ where: { userId } });
+  return wallet ? { id: wallet.id, balance: wallet.balance } : null;
+};
+
 const sendCodeSchema = z.object({
   phone: phoneSchema,
 });
@@ -70,6 +99,11 @@ app.post(["/auth/send-code", "/send-code"], async (req, res, next) => {
 const verifySchema = z.object({
   phone: phoneSchema,
   code: z.string().min(3).max(10),
+});
+
+const profileUpdateSchema = z.object({
+  displayName: z.string().max(64).optional(),
+  avatarUrl: z.union([z.string().max(100_000), z.literal(""), z.null()]).optional(),
 });
 
 app.post(["/auth/verify", "/verify"], async (req, res, next) => {
@@ -137,6 +171,7 @@ app.post(["/auth/verify", "/verify"], async (req, res, next) => {
         id: payload.user.id,
         phone: payload.user.phone,
         displayName: payload.user.displayName,
+        avatarUrl: payload.user.avatarUrl,
       },
       wallet: {
         id: payload.wallet.id,
@@ -156,24 +191,13 @@ app.get(["/auth/session", "/session"], async (req, res, next) => {
       return res.status(401).json({ message: "Missing or invalid Authorization header" });
     }
 
-    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
-    console.log("[auth] session lookup", { tokenHash, path: req.path });
-    const session = await prisma.session.findUnique({
-      where: { tokenHash },
-      include: { user: { include: { wallet: true } } },
-    });
-
+    const session = await fetchActiveSession(token);
     if (!session || !session.user) {
-      console.warn("[auth] session not found", { tokenHash });
+      console.warn("[auth] session not found", { path: req.path });
       return res.status(401).json({ message: "Session not found" });
     }
 
-    if (session.expiresAt.getTime() <= Date.now()) {
-      console.warn("[auth] session expired", { tokenHash, expiresAt: session.expiresAt });
-      return res.status(401).json({ message: "Session expired" });
-    }
-
-    const wallet = session.user.wallet ?? (await prisma.wallet.findUnique({ where: { userId: session.user.id } }));
+    const wallet = await resolveWallet(session.user.id, session.user.wallet);
 
     res.json({
       session: {
@@ -184,6 +208,7 @@ app.get(["/auth/session", "/session"], async (req, res, next) => {
           id: session.user.id,
           phone: session.user.phone,
           displayName: session.user.displayName,
+          avatarUrl: session.user.avatarUrl,
         },
       },
       wallet: wallet
@@ -199,8 +224,113 @@ app.get(["/auth/session", "/session"], async (req, res, next) => {
   }
 });
 
+app.get("/profile", async (req, res, next) => {
+  try {
+    const token = extractBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Missing or invalid Authorization header" });
+    }
+
+    const session = await fetchActiveSession(token);
+    if (!session || !session.user) {
+      return res.status(401).json({ message: "Session not found" });
+    }
+
+    const wallet = await resolveWallet(session.user.id, session.user.wallet);
+
+    res.json({
+      user: {
+        id: session.user.id,
+        phone: session.user.phone,
+        displayName: session.user.displayName,
+        avatarUrl: session.user.avatarUrl,
+      },
+      wallet: wallet
+        ? {
+            id: wallet.id,
+            balance: wallet.balance,
+          }
+        : null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.put("/profile", async (req, res, next) => {
+  try {
+    const token = extractBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Missing or invalid Authorization header" });
+    }
+
+    const session = await fetchActiveSession(token);
+    if (!session || !session.user) {
+      return res.status(401).json({ message: "Session not found" });
+    }
+
+    const payload = profileUpdateSchema.parse(req.body ?? {});
+
+    const updateData: Prisma.UserUpdateInput = {};
+    if (Object.prototype.hasOwnProperty.call(payload, "displayName")) {
+      const raw = payload.displayName ?? null;
+      const trimmed = typeof raw === "string" ? raw.trim() : null;
+      updateData.displayName = trimmed && trimmed.length > 0 ? trimmed : null;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, "avatarUrl")) {
+      const raw = typeof payload.avatarUrl === "string" ? payload.avatarUrl.trim() : payload.avatarUrl;
+      if (raw === null || raw === "") {
+        updateData.avatarUrl = null;
+      } else if (typeof raw === "string") {
+        const looksLikeHttp = /^https?:\/\//i.test(raw);
+        const looksLikeDataUrl = raw.startsWith("data:");
+        if (!looksLikeHttp && !looksLikeDataUrl) {
+          throw Object.assign(new Error("avatarUrl must be an http(s) URL or data URI"), { statusCode: 400 });
+        }
+        updateData.avatarUrl = raw;
+      }
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: session.user.id },
+      data: updateData,
+    });
+
+    res.json({
+      user: {
+        id: updatedUser.id,
+        phone: updatedUser.phone,
+        displayName: updatedUser.displayName,
+        avatarUrl: updatedUser.avatarUrl,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", service: serviceName });
+});
+
+app.get("/users/:userId", async (req, res, next) => {
+  try {
+    const userId = z.string().uuid().parse(req.params.userId);
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        displayName: true,
+        avatarUrl: true,
+      },
+    });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    res.json({ user });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/version", (_req, res) => {

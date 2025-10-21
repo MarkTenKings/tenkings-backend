@@ -1,45 +1,34 @@
 import Head from "next/head";
 import Image from "next/image";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useRouter } from "next/router";
 import AppShell from "../components/AppShell";
-import { PlaceholderImage } from "../components/PlaceholderImage";
-import { PLACEHOLDER_IDS } from "../constants/placeholders";
 import { listRecentPulls } from "../lib/api";
+import CardDetailModal from "../components/CardDetailModal";
+import { formatUsdMinor } from "../lib/formatters";
 
 const BUYBACK_RATE = 0.75;
 
 type PullCard = {
+  itemId: string;
   cardName: string;
-  marketValue: number | null;
+  marketValueMinor: number | null;
   image: string | null;
-  userFirstName: string;
-  userAvatar: string | null;
+  ownerId: string | null;
+  ownerLabel: string;
+  ownerAvatar: string | null;
 };
 
-const fallbackPulls: PullCard[] = [
-  {
-    cardName: "Card Title",
-    marketValue: null,
-    image: null,
-    userFirstName: "User Name",
-    userAvatar: null,
-  },
-  {
-    cardName: "Card Title",
-    marketValue: null,
-    image: null,
-    userFirstName: "User Name",
-    userAvatar: null,
-  },
-  {
-    cardName: "Card Title",
-    marketValue: null,
-    image: null,
-    userFirstName: "User Name",
-    userAvatar: null,
-  },
-];
+const fallbackPulls: PullCard[] = Array.from({ length: 3 }).map((_, index) => ({
+  itemId: `placeholder-${index}`,
+  cardName: "Card Title",
+  marketValueMinor: null,
+  image: null,
+  ownerId: null,
+  ownerLabel: "User Name",
+  ownerAvatar: null,
+}));
 
 const categories = [
   {
@@ -62,15 +51,10 @@ const categories = [
   },
 ];
 
-const formatCurrency = (value: number) =>
-  value.toLocaleString(undefined, {
-    minimumFractionDigits: value % 1 === 0 ? 0 : 2,
-    maximumFractionDigits: 2,
-  });
-
 export default function Home() {
   const router = useRouter();
   const [pulls, setPulls] = useState<PullCard[]>(fallbackPulls);
+  const [activeItemId, setActiveItemId] = useState<string | null>(null);
 
   const handleScrollToMachines = useCallback(() => {
     if (typeof window === "undefined") {
@@ -80,6 +64,36 @@ export default function Home() {
     section?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
 
+  const handleOpenCard = useCallback((pull: PullCard) => {
+    if (!pull.itemId || pull.itemId.startsWith("placeholder")) {
+      return;
+    }
+    setActiveItemId(pull.itemId);
+  }, []);
+
+  const handleCardKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLElement>, pull: PullCard) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        handleOpenCard(pull);
+      }
+    },
+    [handleOpenCard]
+  );
+
+  const handleCollectorClick = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>, ownerId: string | null) => {
+      event.stopPropagation();
+      if (!ownerId) {
+        return;
+      }
+      router.push(`/collectors/${ownerId}`).catch(() => undefined);
+    },
+    [router]
+  );
+
+  const closeModal = useCallback(() => setActiveItemId(null), []);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -88,27 +102,33 @@ export default function Home() {
         if (cancelled || !pulls?.length) {
           return;
         }
-        const mapped: PullCard[] = pulls.slice(0, 6).map((pull: any): PullCard => {
+        const mapped: PullCard[] = pulls.slice(0, 6).map((pull: any, index: number): PullCard => {
           const item = pull?.item ?? {};
+          const itemId = typeof item?.id === "string" && item.id.trim() ? item.id : `recent-${index}`;
           const rawValue = Number(item?.estimatedValue ?? 0);
-          const marketValue = Number.isFinite(rawValue) && rawValue > 0 ? rawValue / 100 : null;
+          const marketValueMinor = Number.isFinite(rawValue) && rawValue > 0 ? rawValue : null;
           const cardName = typeof item?.name === "string" && item.name.trim() ? item.name.trim() : "Card Title";
           const thumbnail = typeof item?.thumbnailUrl === "string" && item.thumbnailUrl.trim() ? item.thumbnailUrl : null;
           const fallbackImage = typeof item?.imageUrl === "string" && item.imageUrl.trim() ? item.imageUrl : null;
           const owner = pull?.owner ?? {};
-          const ownerLabel =
+          const ownerId = typeof owner?.id === "string" && owner.id.trim() ? owner.id : null;
+          const ownerLabelRaw =
             typeof owner?.displayName === "string" && owner.displayName?.trim()
               ? owner.displayName
               : typeof owner?.phone === "string" && owner.phone?.trim()
                 ? owner.phone
                 : "User Name";
-          const userFirstName = ownerLabel.trim() ? ownerLabel.trim() : "User Name";
+          const ownerLabel = ownerLabelRaw.trim() ? ownerLabelRaw.trim() : "User Name";
+          const ownerAvatar =
+            typeof owner?.avatarUrl === "string" && owner.avatarUrl.trim().length > 0 ? owner.avatarUrl : null;
           return {
+            itemId,
             cardName,
-            marketValue,
+            marketValueMinor,
             image: thumbnail ?? fallbackImage,
-            userFirstName,
-            userAvatar: null,
+            ownerId,
+            ownerLabel,
+            ownerAvatar,
           };
         });
         if (mapped.length && !cancelled) {
@@ -230,32 +250,56 @@ export default function Home() {
             <div className="pointer-events-none absolute inset-y-0 right-0 w-32 bg-gradient-to-l from-night-900 via-night-900/80 to-transparent" aria-hidden />
             <div className="flex min-w-full gap-6 motion-reduce:animate-none motion-safe:animate-marquee">
               {marqueeItems.map((item, index) => {
-                const hasValue = typeof item.marketValue === "number" && Number.isFinite(item.marketValue) && item.marketValue > 0;
+                const hasValue =
+                  typeof item.marketValueMinor === "number" &&
+                  Number.isFinite(item.marketValueMinor) &&
+                  item.marketValueMinor > 0;
+                const canOpen = Boolean(item.itemId && !item.itemId.startsWith("placeholder"));
                 return (
                   <article
-                    key={`${item.cardName}-${index}`}
-                    className="flex min-w-[280px] max-w-[280px] flex-col justify-between rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-gold-400/60 hover:shadow-glow"
+                    key={`${item.itemId}-${index}`}
+                    className="group flex min-w-[280px] max-w-[280px] flex-col gap-4 rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-gold-400/60 hover:shadow-glow"
+                    role="button"
+                    tabIndex={canOpen ? 0 : -1}
+                    onClick={() => handleOpenCard(item)}
+                    onKeyDown={(event) => handleCardKeyDown(event, item)}
+                    aria-label={`Recent pull ${item.cardName}`}
                   >
                     <header className="space-y-2">
                       <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Recent Pull</p>
                       <h3 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">{item.cardName ?? "Card Title"}</h3>
-                      <p className="text-sm text-gold-400">
-                        {hasValue ? `$${formatCurrency(item.marketValue as number)}` : "Card value"}
+                      <p className="text-3xl font-semibold text-gold-300">
+                        {hasValue ? formatUsdMinor(item.marketValueMinor) : "Card value"}
                       </p>
                     </header>
-                    <div className="relative mt-4 h-32 w-full overflow-hidden rounded-2xl border border-white/10">
-                      {item.image ? (
-                        <Image src={item.image} alt={item.cardName ?? "Card image"} fill className="object-cover" />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center bg-night-900/80 text-xs uppercase tracking-[0.3em] text-slate-500">
-                          Card image goes here
-                        </div>
-                      )}
+                    <div className="relative mt-2 flex-1 overflow-hidden rounded-2xl border border-white/10 bg-night-900/60">
+                      <div className="relative h-full min-h-[240px] w-full">
+                        {item.image ? (
+                          <Image
+                            src={item.image}
+                            alt={item.cardName ?? "Card image"}
+                            fill
+                            className="object-cover"
+                            sizes="(max-width: 768px) 280px, 320px"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center bg-night-900/80 text-xs uppercase tracking-[0.3em] text-slate-500">
+                            Card image goes here
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    <footer className="mt-4 flex items-center gap-3">
+                    <footer className="flex items-center gap-3 pt-2">
                       <div className="relative h-10 w-10 overflow-hidden rounded-full border border-violet-400/40">
-                        {item.userAvatar ? (
-                          <Image src={item.userAvatar} alt={`${item.userFirstName ?? "User"} profile`} fill className="object-cover" />
+                        {item.ownerAvatar ? (
+                          <Image
+                            src={item.ownerAvatar}
+                            alt={`${item.ownerLabel ?? "User"} avatar`}
+                            fill
+                            className="object-cover"
+                            sizes="40px"
+                            unoptimized
+                          />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center bg-night-900/80 text-[10px] uppercase tracking-[0.28em] text-slate-500">
                             User
@@ -264,7 +308,17 @@ export default function Home() {
                       </div>
                       <div>
                         <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Pulled by</p>
-                        <p className="text-sm text-white">{item.userFirstName ?? "User Name"}</p>
+                        {item.ownerId ? (
+                          <Link
+                            href={`/collectors/${item.ownerId}`}
+                            onClick={(event) => handleCollectorClick(event, item.ownerId)}
+                            className="text-sm text-white transition hover:text-gold-200"
+                          >
+                            {item.ownerLabel}
+                          </Link>
+                        ) : (
+                          <span className="text-sm text-white">{item.ownerLabel}</span>
+                        )}
                       </div>
                     </footer>
                   </article>
@@ -335,6 +389,8 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {activeItemId && <CardDetailModal itemId={activeItemId} onClose={closeModal} />}
     </AppShell>
   );
 }

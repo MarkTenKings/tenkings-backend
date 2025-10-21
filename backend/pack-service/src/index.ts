@@ -403,6 +403,7 @@ app.get("/pulls/recent", async (req, res, next) => {
                 id: true,
                 displayName: true,
                 phone: true,
+                avatarUrl: true,
               },
             },
             packDefinition: {
@@ -467,6 +468,7 @@ app.get("/pulls/recent", async (req, res, next) => {
               id: owner.id,
               displayName: owner.displayName,
               phone: owner.phone,
+              avatarUrl: owner.avatarUrl,
             }
           : null,
       };

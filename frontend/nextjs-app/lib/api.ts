@@ -245,3 +245,27 @@ export async function verifyLoginCode(payload: { phone: string; code: string }) 
     skipAuth: true,
   });
 }
+
+export async function fetchProfile() {
+  return handle<{ user: any; wallet: any }>(service("auth/profile"));
+}
+
+export async function updateProfile(payload: { displayName?: string | null; avatarUrl?: string | null }) {
+  return handle<{ user: any }>(service("auth/profile"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function fetchCollector(userId: string) {
+  return handle<{ user: any }>(service(`auth/users/${userId}`));
+}
+
+export async function listCollectorItems(userId: string) {
+  return handle<{ items: any[] }>(service(`vault/owners/${userId}/items`));
+}
+
+export async function fetchVaultItem(itemId: string) {
+  return handle<{ item: any }>(service(`vault/items/${itemId}`));
+}
