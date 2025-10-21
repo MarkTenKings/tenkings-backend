@@ -26,6 +26,15 @@ const phoneSchema = z
   .transform((value) => value.replace(/[^+\d]/g, ""))
   .refine((value) => value.startsWith("+"), "Phone number must be in E.164 format (start with +)");
 
+const extractBearerToken = (req: Request) => {
+  const header = req.headers.authorization ?? "";
+  const [scheme, token] = header.trim().split(/\s+/);
+  if (!scheme || scheme.toLowerCase() !== "bearer" || !token) {
+    return null;
+  }
+  return token;
+};
+
 const sendCodeSchema = z.object({
   phone: phoneSchema,
 });
@@ -136,6 +145,53 @@ app.post(["/auth/verify", "/verify"], async (req, res, next) => {
     });
   } catch (error) {
     console.error("auth verify failed", error);
+    next(error);
+  }
+});
+
+app.get(["/auth/session", "/session"], async (req, res, next) => {
+  try {
+    const token = extractBearerToken(req);
+    if (!token) {
+      return res.status(401).json({ message: "Missing or invalid Authorization header" });
+    }
+
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const session = await prisma.session.findUnique({
+      where: { tokenHash },
+      include: { user: { include: { wallet: true } } },
+    });
+
+    if (!session || !session.user) {
+      return res.status(401).json({ message: "Session not found" });
+    }
+
+    if (session.expiresAt.getTime() <= Date.now()) {
+      return res.status(401).json({ message: "Session expired" });
+    }
+
+    const wallet = session.user.wallet ?? (await prisma.wallet.findUnique({ where: { userId: session.user.id } }));
+
+    res.json({
+      session: {
+        id: session.id,
+        tokenHash: session.tokenHash,
+        expiresAt: session.expiresAt,
+        user: {
+          id: session.user.id,
+          phone: session.user.phone,
+          displayName: session.user.displayName,
+        },
+      },
+      wallet: wallet
+        ? {
+            id: wallet.id,
+            balance: wallet.balance,
+          }
+        : null,
+    });
+  } catch (error) {
+    console.error("auth session lookup failed", error);
     next(error);
   }
 });
