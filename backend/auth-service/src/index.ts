@@ -157,16 +157,19 @@ app.get(["/auth/session", "/session"], async (req, res, next) => {
     }
 
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    console.log("[auth] session lookup", { tokenHash, path: req.path });
     const session = await prisma.session.findUnique({
       where: { tokenHash },
       include: { user: { include: { wallet: true } } },
     });
 
     if (!session || !session.user) {
+      console.warn("[auth] session not found", { tokenHash });
       return res.status(401).json({ message: "Session not found" });
     }
 
     if (session.expiresAt.getTime() <= Date.now()) {
+      console.warn("[auth] session expired", { tokenHash, expiresAt: session.expiresAt });
       return res.status(401).json({ message: "Session expired" });
     }
 
