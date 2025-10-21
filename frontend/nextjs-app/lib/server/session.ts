@@ -78,21 +78,25 @@ async function lookupViaAuthService(token: string): Promise<UserSession | null> 
   }
 
   try {
+    console.log("[session] contacting auth service", { url });
     const response = await fetch(url, {
       headers: { Authorization: `Bearer ${token}` },
     });
 
-    if (response.status === 401) {
-      throw new HttpError(401, "Session not found");
-    }
+    console.log("[session] auth service response", { status: response.status });
 
-    if (response.status === 404) {
+    if (response.status === 401 || response.status === 404) {
+      console.warn("[session] auth service reported missing session", { status: response.status });
       return null;
     }
 
     if (!response.ok) {
       const message = await response.text().catch(() => "Auth service error");
-      throw new HttpError(response.status, message || "Auth service error");
+      console.warn("[session] auth service returned non-ok status", {
+        status: response.status,
+        message,
+      });
+      return null;
     }
 
     const payload = (await response.json()) as {
@@ -104,7 +108,8 @@ async function lookupViaAuthService(token: string): Promise<UserSession | null> 
     };
 
     if (!payload?.session?.id) {
-      throw new HttpError(500, "Auth service returned an invalid session payload");
+      console.warn("[session] auth service returned invalid payload", payload);
+      return null;
     }
 
     return {
@@ -113,10 +118,7 @@ async function lookupViaAuthService(token: string): Promise<UserSession | null> 
       user: payload.session.user,
     };
   } catch (error) {
-    if (error instanceof HttpError) {
-      throw error;
-    }
-    console.warn("[session] auth service lookup failed, falling back to database", error);
+    console.warn("[session] auth service lookup threw", error);
     return null;
   }
 }
