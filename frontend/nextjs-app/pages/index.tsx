@@ -5,7 +5,7 @@ import { useRouter } from "next/router";
 import AppShell from "../components/AppShell";
 import { PlaceholderImage } from "../components/PlaceholderImage";
 import { PLACEHOLDER_IDS } from "../constants/placeholders";
-import { listListings } from "../lib/api";
+import { listRecentPulls } from "../lib/api";
 
 const BUYBACK_RATE = 0.75;
 
@@ -84,28 +84,31 @@ export default function Home() {
     let cancelled = false;
     const load = async () => {
       try {
-        const { listings } = await listListings();
-        if (cancelled || !listings?.length) {
+        const { pulls } = await listRecentPulls({ limit: 12 });
+        if (cancelled || !pulls?.length) {
           return;
         }
-        const mapped: PullCard[] = listings.slice(0, 6).map((listing: any): PullCard => {
-          const item = listing?.item ?? {};
-          const rawValue = Number(item?.estimatedValue ?? listing?.price ?? 0);
+        const mapped: PullCard[] = pulls.slice(0, 6).map((pull: any): PullCard => {
+          const item = pull?.item ?? {};
+          const rawValue = Number(item?.estimatedValue ?? 0);
           const marketValue = Number.isFinite(rawValue) && rawValue > 0 ? rawValue / 100 : null;
           const cardName = typeof item?.name === "string" && item.name.trim() ? item.name.trim() : "Card Title";
-          const image = typeof item?.imageUrl === "string" && item.imageUrl.trim() ? item.imageUrl : null;
-          const sellerName = listing?.seller?.displayName ?? listing?.seller?.phone ?? "User Name";
-          const userFirstName = typeof sellerName === "string" && sellerName.trim() ? sellerName.trim() : "User Name";
-          const userAvatar =
-            typeof listing?.seller?.avatarUrl === "string" && listing.seller.avatarUrl.trim()
-              ? listing.seller.avatarUrl
-              : null;
+          const thumbnail = typeof item?.thumbnailUrl === "string" && item.thumbnailUrl.trim() ? item.thumbnailUrl : null;
+          const fallbackImage = typeof item?.imageUrl === "string" && item.imageUrl.trim() ? item.imageUrl : null;
+          const owner = pull?.owner ?? {};
+          const ownerLabel =
+            typeof owner?.displayName === "string" && owner.displayName?.trim()
+              ? owner.displayName
+              : typeof owner?.phone === "string" && owner.phone?.trim()
+                ? owner.phone
+                : "User Name";
+          const userFirstName = ownerLabel.trim() ? ownerLabel.trim() : "User Name";
           return {
             cardName,
             marketValue,
-            image,
+            image: thumbnail ?? fallbackImage,
             userFirstName,
-            userAvatar,
+            userAvatar: null,
           };
         });
         if (mapped.length && !cancelled) {

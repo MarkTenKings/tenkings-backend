@@ -381,6 +381,103 @@ app.get("/users/:userId/packs", async (req, res, next) => {
   }
 });
 
+app.get("/pulls/recent", async (req, res, next) => {
+  try {
+    const rawLimit = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+    const limitValue = Number.parseInt(typeof rawLimit === "string" ? rawLimit : "", 10);
+    const limit = Number.isFinite(limitValue) && limitValue > 0 ? Math.min(limitValue, 24) : 12;
+
+    const slots = await prisma.packSlot.findMany({
+      where: {
+        packInstance: {
+          status: PackStatus.OPENED,
+          openedAt: { not: null },
+        },
+      },
+      include: {
+        item: true,
+        packInstance: {
+          include: {
+            owner: {
+              select: {
+                id: true,
+                displayName: true,
+                phone: true,
+              },
+            },
+            packDefinition: {
+              select: {
+                id: true,
+                name: true,
+                category: true,
+                tier: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [
+        {
+          packInstance: {
+            openedAt: "desc",
+          },
+        },
+        {
+          packInstance: {
+            createdAt: "desc",
+          },
+        },
+      ],
+      take: limit,
+    });
+
+    const pulls = slots.map((slot) => {
+      const pack = slot.packInstance;
+      const item = slot.item;
+      const owner = pack.owner;
+      const definition = pack.packDefinition;
+
+      return {
+        slotId: slot.id,
+        packId: pack.id,
+        packDefinitionId: pack.packDefinitionId,
+        packDefinition: definition
+          ? {
+              id: definition.id,
+              name: definition.name,
+              category: definition.category,
+              tier: definition.tier,
+            }
+          : null,
+        openedAt: (pack.openedAt ?? pack.createdAt).toISOString(),
+        item: {
+          id: item.id,
+          name: item.name,
+          set: item.set,
+          number: item.number,
+          language: item.language,
+          foil: item.foil,
+          estimatedValue: item.estimatedValue,
+          imageUrl: item.imageUrl,
+          thumbnailUrl: item.thumbnailUrl,
+          detailsJson: item.detailsJson,
+        },
+        owner: owner
+          ? {
+              id: owner.id,
+              displayName: owner.displayName,
+              phone: owner.phone,
+            }
+          : null,
+      };
+    });
+
+    res.json({ pulls });
+  } catch (error) {
+    next(error);
+  }
+});
+
 const buybackSchema = z.object({
   userId: z.string().uuid(),
 });

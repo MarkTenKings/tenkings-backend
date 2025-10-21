@@ -15,6 +15,7 @@ import {
   purchasePack,
 } from "../lib/api";
 import { formatTkd } from "../lib/formatters";
+import type { NormalizedClassification } from "@tenkings/shared";
 
 const BUYBACK_RATE = 0.75;
 
@@ -55,6 +56,7 @@ type RevealItem = {
   image: string;
   buybackAvailable: boolean;
   buybackAccepted: boolean;
+  normalized: NormalizedClassification | null;
 };
 
 const catalog: PackCategory[] = [
@@ -257,6 +259,163 @@ const tierEnumByPrice: Record<number, string> = {
   500: "TIER_500",
 };
 
+type Fact = { label: string; value: string };
+type LinkFact = { label: string; href: string };
+type NormalizedFacts = {
+  core: Fact[];
+  sport: Fact[];
+  tcg: Fact[];
+  comics: Fact[];
+  links: LinkFact[];
+};
+
+const extractNormalizedClassification = (item: any): NormalizedClassification | null => {
+  if (!item) {
+    return null;
+  }
+
+  const direct = item.classificationNormalized;
+  if (direct && typeof direct === "object") {
+    return direct as NormalizedClassification;
+  }
+
+  const fromDetailsJson = item.detailsJson;
+  if (fromDetailsJson && typeof fromDetailsJson === "object") {
+    const candidate =
+      (fromDetailsJson as Record<string, unknown>).classificationNormalized ??
+      (fromDetailsJson as Record<string, unknown>).normalized ??
+      null;
+    if (candidate && typeof candidate === "object") {
+      return candidate as NormalizedClassification;
+    }
+  }
+
+  const fromDetails = item.details;
+  if (fromDetails && typeof fromDetails === "object") {
+    const candidate =
+      (fromDetails as Record<string, unknown>).classificationNormalized ??
+      (fromDetails as Record<string, unknown>).normalized ??
+      null;
+    if (candidate && typeof candidate === "object") {
+      return candidate as NormalizedClassification;
+    }
+  }
+
+  const ingestion = (item as Record<string, unknown>)?.ingestionTask;
+  if (ingestion && typeof ingestion === "object") {
+    const directIngestion =
+      (ingestion as Record<string, unknown>).classificationNormalized ??
+      (ingestion as Record<string, unknown>).normalized ??
+      null;
+    if (directIngestion && typeof directIngestion === "object") {
+      return directIngestion as NormalizedClassification;
+    }
+
+    const rawPayload = (ingestion as Record<string, unknown>).rawPayload;
+    if (rawPayload && typeof rawPayload === "object") {
+      const candidate =
+        (rawPayload as Record<string, unknown>).classificationNormalized ??
+        (rawPayload as Record<string, unknown>).normalized ??
+        null;
+      if (candidate && typeof candidate === "object") {
+        return candidate as NormalizedClassification;
+      }
+    }
+  }
+
+  return null;
+};
+
+const boolToLabel = (value: boolean | null | undefined) =>
+  value === true ? "Yes" : value === false ? "No" : "";
+
+const pushFact = (facts: Fact[], label: string, raw: unknown) => {
+  if (raw === null || raw === undefined) {
+    return;
+  }
+  const value = String(raw).trim();
+  if (value.length === 0) {
+    return;
+  }
+  facts.push({ label, value });
+};
+
+const buildNormalizedFacts = (normalized: NormalizedClassification | null): NormalizedFacts => {
+  const facts: NormalizedFacts = {
+    core: [],
+    sport: [],
+    tcg: [],
+    comics: [],
+    links: [],
+  };
+
+  if (!normalized) {
+    return facts;
+  }
+
+  pushFact(facts.core, "Display Name", normalized.displayName);
+  pushFact(facts.core, "Set", normalized.setName);
+  pushFact(facts.core, "Card Number", normalized.cardNumber);
+  pushFact(facts.core, "Year", normalized.year);
+  pushFact(facts.core, "Company", normalized.company);
+  pushFact(facts.core, "Rarity", normalized.rarity);
+
+  const sport = normalized.sport ?? null;
+  if (sport) {
+    pushFact(facts.sport, "Player", sport.playerName);
+    pushFact(facts.sport, "Team", sport.teamName);
+    pushFact(facts.sport, "League", sport.league);
+    pushFact(facts.sport, "Sport", sport.sport);
+    pushFact(facts.sport, "Card Type", sport.cardType);
+    pushFact(facts.sport, "Subcategory", sport.subcategory);
+    const autograph = boolToLabel(sport.autograph ?? null);
+    if (autograph) pushFact(facts.sport, "Autograph", autograph);
+    const foil = boolToLabel(sport.foil ?? null);
+    if (foil) pushFact(facts.sport, "Foil", foil);
+    const graded = boolToLabel(sport.graded ?? null);
+    if (graded) pushFact(facts.sport, "Graded", graded);
+    pushFact(facts.sport, "Grade Company", sport.gradeCompany);
+    pushFact(facts.sport, "Grade", sport.grade);
+  }
+
+  const tcg = normalized.tcg ?? null;
+  if (tcg) {
+    pushFact(facts.tcg, "Card Name", tcg.cardName);
+    pushFact(facts.tcg, "Game", tcg.game);
+    pushFact(facts.tcg, "Series", tcg.series);
+    pushFact(facts.tcg, "Color", tcg.color);
+    pushFact(facts.tcg, "Type", tcg.type);
+    pushFact(facts.tcg, "Language", tcg.language);
+    const foil = boolToLabel(tcg.foil ?? null);
+    if (foil) pushFact(facts.tcg, "Foil", foil);
+    pushFact(facts.tcg, "Rarity", tcg.rarity);
+    pushFact(facts.tcg, "Out Of", tcg.outOf);
+    pushFact(facts.tcg, "Subcategory", tcg.subcategory);
+  }
+
+  const comics = normalized.comics ?? null;
+  if (comics) {
+    pushFact(facts.comics, "Title", comics.title);
+    pushFact(facts.comics, "Issue", comics.issueNumber);
+    pushFact(facts.comics, "Release Date", comics.date);
+    pushFact(facts.comics, "Origin Date", comics.originDate);
+    pushFact(facts.comics, "Story Arc", comics.storyArc);
+    const graded = boolToLabel(comics.graded ?? null);
+    if (graded) pushFact(facts.comics, "Graded", graded);
+    pushFact(facts.comics, "Grade Company", comics.gradeCompany);
+    pushFact(facts.comics, "Grade", comics.grade);
+  }
+
+  const links = normalized.links ?? {};
+  Object.entries(links).forEach(([label, href]) => {
+    if (typeof href === "string" && href.trim().length > 0) {
+      facts.links.push({ label, href });
+    }
+  });
+
+  return facts;
+};
+
 const placeholderReveal = (category: PackCategory, tier: PackTier): RevealItem => ({
   packId: "placeholder",
   name: `${category.label} Vault Hit`,
@@ -265,6 +424,7 @@ const placeholderReveal = (category: PackCategory, tier: PackTier): RevealItem =
   image: tier.image,
   buybackAvailable: tier.expectedValue > 0,
   buybackAccepted: false,
+  normalized: null,
 });
 
 export default function Packs() {
@@ -363,6 +523,7 @@ export default function Packs() {
       const estimated = Number(
         highlightSlot.item.estimatedValue ?? highlightSlot.item.marketValue ?? 0
       );
+      const normalized = extractNormalizedClassification(highlightSlot.item);
       setResolution(null);
       setReveal({
         packId: opened.pack.id,
@@ -382,6 +543,7 @@ export default function Packs() {
           (highlightSlot.itemId ?? highlightSlot.item.id) && estimated > 0
         ),
         buybackAccepted: false,
+        normalized,
       });
     } else {
       setReveal(placeholderReveal(currentCategory, currentTier));
@@ -476,6 +638,23 @@ export default function Packs() {
   );
 
   const definition = useMemo(() => resolveDefinition(category, tier), [category, tier, resolveDefinition]);
+
+  const normalizedFacts = useMemo(() => buildNormalizedFacts(reveal?.normalized ?? null), [reveal?.normalized]);
+
+  const normalizedFactSections = useMemo(
+    () =>
+      (
+        [
+          { key: "core", title: "Card Facts", facts: normalizedFacts.core },
+          { key: "sport", title: "Sport Details", facts: normalizedFacts.sport },
+          { key: "tcg", title: "TCG Details", facts: normalizedFacts.tcg },
+          { key: "comics", title: "Comics Details", facts: normalizedFacts.comics },
+        ] as Array<{ key: string; title: string; facts: Fact[] }>
+      ).filter((section) => section.facts.length > 0),
+    [normalizedFacts]
+  );
+
+  const hasNormalizedFacts = normalizedFactSections.length > 0 || normalizedFacts.links.length > 0;
 
   const handleSelectCategory = (id: CategoryId) => {
     const nextCategory = catalog.find((entry) => entry.id === id);
@@ -1099,6 +1278,51 @@ export default function Packs() {
                       </div>
                     </dl>
                   </div>
+                  {hasNormalizedFacts ? (
+                    <div className="rounded-2xl border border-white/5 bg-night-900/70 p-5">
+                      <p className="text-[10px] uppercase tracking-[0.28em] text-sky-300">Normalized Metadata</p>
+                      <div className="mt-3 grid gap-4 md:grid-cols-2">
+                        {normalizedFactSections.map((section) => (
+                          <div
+                            key={section.key}
+                            className="rounded-xl border border-white/5 bg-night-900/60 p-4"
+                          >
+                            <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">{section.title}</p>
+                            <dl className="mt-3 space-y-2 text-xs">
+                              {section.facts.map((fact) => (
+                                <div
+                                  key={`${section.key}-${fact.label}-${fact.value}`}
+                                  className="flex items-start justify-between gap-3"
+                                >
+                                  <dt className="text-slate-400">{fact.label}</dt>
+                                  <dd className="max-w-[60%] break-words text-right text-slate-100">{fact.value}</dd>
+                                </div>
+                              ))}
+                            </dl>
+                          </div>
+                        ))}
+                        {normalizedFacts.links.length ? (
+                          <div className="rounded-xl border border-white/5 bg-night-900/60 p-4">
+                            <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">Research Links</p>
+                            <ul className="mt-3 space-y-2 text-xs">
+                              {normalizedFacts.links.map((link) => (
+                                <li key={`${link.label}-${link.href}`}>
+                                  <a
+                                    href={link.href}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-sky-300 transition hover:text-sky-100"
+                                  >
+                                    {link.label}
+                                  </a>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap gap-3">
                     <button
                       type="button"

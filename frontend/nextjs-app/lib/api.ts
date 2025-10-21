@@ -90,6 +90,11 @@ export async function listListings() {
   return handle<{ listings: any[] }>(service("marketplace/listings"));
 }
 
+export async function listRecentPulls(params?: { limit?: number }) {
+  const query = params?.limit ? `?limit=${encodeURIComponent(String(params.limit))}` : "";
+  return handle<{ pulls: any[] }>(service(`pack/pulls/recent${query}`));
+}
+
 export async function purchaseListing(listingId: string, buyerId: string) {
   return handle(service(`marketplace/listings/${listingId}/purchase`), {
     method: "POST",
