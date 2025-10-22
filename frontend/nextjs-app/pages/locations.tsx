@@ -336,7 +336,11 @@ function LocationsPage() {
         ) : (
           <div className="space-y-16">
             {locations.map((location) => (
-              <section key={location.id} className="space-y-6 rounded-[2.5rem] border border-white/10 bg-night-900/70 p-6 shadow-card md:p-10">
+              <section
+                key={location.id}
+                id={location.slug}
+                className="space-y-6 rounded-[2.5rem] border border-white/10 bg-night-900/70 p-6 shadow-card md:p-10"
+              >
                 <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                   <div className="space-y-3">
                     <h2 className="font-heading text-3xl uppercase tracking-[0.24em] text-white">{location.name}</h2>
