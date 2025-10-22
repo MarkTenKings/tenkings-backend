@@ -188,7 +188,7 @@ export default function CollectionPage() {
             const shippingStatus = item.shippingRequest?.status ?? null;
             const hasPendingShipment = shippingStatus && shippingStatus !== "SHIPPED" && shippingStatus !== "CANCELLED";
             const badgeLabel = shippingStatus === "SHIPPED" ? "Shipped" : item.status.replace(/_/g, " ");
-            const estimatedBuyback = item.estimatedValue ? Math.round(item.estimatedValue * BUYBACK_RATE) : null;
+            const cardEstimatedBuyback = item.estimatedValue ? Math.round(item.estimatedValue * BUYBACK_RATE) : null;
             const busy = Boolean(buybackBusyItems[item.id]);
             const buybackDisabled = busy || hasPendingShipment || item.status === "SOLD" || item.status === "REDEEMED";
             const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -197,9 +197,6 @@ export default function CollectionPage() {
                 openItemModal(item);
               }
             };
-            const estimatedBuyback = item.estimatedValue ? Math.round(item.estimatedValue * BUYBACK_RATE) : null;
-            const busy = Boolean(buybackBusyItems[item.id]);
-            const buybackDisabled = busy || hasPendingShipment || item.status === "SOLD" || item.status === "REDEEMED";
 
             return (
               <div
@@ -250,7 +247,7 @@ export default function CollectionPage() {
                 </dl>
                 <div className="flex items-center justify-between pt-2">
                   <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                    {estimatedBuyback ? `Buyback ${formatMinor(estimatedBuyback)}` : "Instant buyback"}
+                    {cardEstimatedBuyback ? `Buyback ${formatMinor(cardEstimatedBuyback)}` : "Instant buyback"}
                   </span>
                   <button
                     type="button"
