@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-pnpm --filter @tenkings/database run migrate:deploy
+if [ "${RUN_DB_MIGRATIONS:-false}" = "true" ]; then
+  pnpm --filter @tenkings/database run migrate:deploy
+fi
 pnpm --filter @tenkings/database run generate
 
 PRISMA_SRC=$(find node_modules -path "*/.pnpm/@prisma+client@*/node_modules/.prisma" -print -quit)
