@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import AppShell from "../components/AppShell";
 import { useSession } from "../hooks/useSession";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
@@ -101,7 +101,7 @@ const renderMedia = (videoUrl: string) => {
 type EditMode = "create" | "edit" | null;
 
 export default function LivePage() {
-  const { session } = useSession();
+  const { session, ensureSession } = useSession();
   const [liveRips, setLiveRips] = useState<LiveRipRecord[]>([]);
   const [locations, setLocations] = useState<LocationRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -111,6 +111,8 @@ export default function LivePage() {
   const [formState, setFormState] = useState<LiveRipFormState>(emptyFormState);
   const [saving, setSaving] = useState(false);
   const [filterLocation, setFilterLocation] = useState<string>("");
+  const [uploadingVideo, setUploadingVideo] = useState(false);
+  const [uploadingThumbnail, setUploadingThumbnail] = useState(false);
 
   const isAdmin = useMemo(() => {
     if (!session) {
@@ -137,35 +139,57 @@ export default function LivePage() {
       headers.Authorization = `Bearer ${session.token}`;
     }
 
-    Promise.all([
-      fetch("/api/live-rips"),
-      fetch("/api/locations", { headers }),
-    ])
-      .then(async ([liveRes, locationRes]) => {
-        if (!liveRes.ok) {
-          const payload = await liveRes.json().catch(() => ({}));
-          throw new Error(payload?.message ?? "Failed to load live rips");
-        }
-        if (!locationRes.ok) {
-          const payload = await locationRes.json().catch(() => ({}));
-          throw new Error(payload?.message ?? "Failed to load locations");
-        }
+    const loadLiveRips = async () => {
+      const res = await fetch("/api/live-rips");
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const message = typeof payload?.message === "string" ? payload.message : "Failed to load live rips";
+        throw new Error(message);
+      }
+      return payload as { liveRips?: LiveRipRecord[] };
+    };
 
-        const livePayload = (await liveRes.json()) as { liveRips: LiveRipRecord[] };
-        const locationPayload = (await locationRes.json()) as { locations: any[] };
+    const loadLocations = async () => {
+      const res = await fetch("/api/locations", { headers });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const message = typeof payload?.message === "string" ? payload.message : "Failed to load locations";
+        throw new Error(message);
+      }
+      return payload as { locations?: Array<{ id: string; name: string; slug: string }> };
+    };
 
+    Promise.allSettled([loadLiveRips(), loadLocations()])
+      .then(([liveResult, locationResult]) => {
         if (!mounted) {
           return;
         }
 
-        setLiveRips(livePayload.liveRips ?? []);
-        setLocations(
-          (locationPayload.locations ?? []).map((location) => ({
-            id: location.id,
-            name: location.name,
-            slug: location.slug,
-          }))
-        );
+        let liveError: string | null = null;
+        if (liveResult.status === "fulfilled") {
+          setLiveRips(liveResult.value.liveRips ?? []);
+        } else {
+          liveError = liveResult.reason instanceof Error ? liveResult.reason.message : "Failed to load live rips";
+        }
+
+        if (locationResult.status === "fulfilled") {
+          const list = locationResult.value.locations ?? [];
+          setLocations(
+            list.map((location) => ({
+              id: location.id,
+              name: location.name,
+              slug: location.slug,
+            }))
+          );
+        } else {
+          const message =
+            locationResult.reason instanceof Error
+              ? locationResult.reason.message
+              : "Failed to load locations";
+          setFlash(message);
+        }
+
+        setError(liveError);
       })
       .catch((err: unknown) => {
         if (!mounted) {
@@ -220,6 +244,89 @@ export default function LivePage() {
     setFormState((prev) => ({ ...prev, [field]: value }));
   };
 
+  const uploadMediaFile = useCallback(
+    async (file: File, kind: "video" | "thumbnail") => {
+      let activeSession = session;
+      if (!activeSession) {
+        try {
+          activeSession = await ensureSession();
+        } catch (error) {
+          if (!(error instanceof Error && error.message === "Authentication cancelled")) {
+            setFlash("Sign in to upload media.");
+          }
+          return null;
+        }
+      }
+
+      if (!activeSession) {
+        return null;
+      }
+
+      const params = new URLSearchParams({
+        kind,
+        fileName: file.name,
+      });
+      if (file.type) {
+        params.set("contentType", file.type);
+      }
+
+      const headers = new Headers();
+      headers.set("Authorization", `Bearer ${activeSession.token}`);
+      headers.set("Content-Type", file.type || "application/octet-stream");
+
+      const response = await fetch(`/api/live-rips/upload?${params.toString()}`, {
+        method: "PUT",
+        headers,
+        body: file,
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const message = typeof payload?.message === "string" ? payload.message : "Upload failed";
+        throw new Error(message);
+      }
+
+      return payload as {
+        url: string;
+        storageKey: string;
+        contentType: string;
+        size: number;
+        kind: "video" | "thumbnail";
+      };
+    },
+    [ensureSession, session]
+  );
+
+  const handleFileUpload = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>, kind: "video" | "thumbnail") => {
+      const file = event.target.files?.[0];
+      event.target.value = "";
+      if (!file) {
+        return;
+      }
+      const setBusy = kind === "video" ? setUploadingVideo : setUploadingThumbnail;
+      setBusy(true);
+      try {
+        const result = await uploadMediaFile(file, kind);
+        if (!result) {
+          return;
+        }
+        setFormState((prev) =>
+          kind === "video"
+            ? { ...prev, videoUrl: result.url }
+            : { ...prev, thumbnailUrl: result.url }
+        );
+        setFlash(kind === "video" ? "Video uploaded" : "Thumbnail uploaded");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Upload failed";
+        setFlash(message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [uploadMediaFile]
+  );
+
   const refreshLiveRips = useCallback(async () => {
     try {
       const res = await fetch("/api/live-rips");
@@ -241,10 +348,32 @@ export default function LivePage() {
     }
     setSaving(true);
 
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    if (session?.token) {
-      headers.Authorization = `Bearer ${session.token}`;
+    let activeSession = session;
+    if (!activeSession) {
+      try {
+        activeSession = await ensureSession();
+      } catch (authError) {
+        const message =
+          authError instanceof Error && authError.message === "Authentication cancelled"
+            ? null
+            : "Sign in to manage live rips.";
+        if (message) {
+          setFlash(message);
+        }
+        setSaving(false);
+        return;
+      }
     }
+
+    if (!activeSession) {
+      setSaving(false);
+      return;
+    }
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${activeSession.token}`,
+    };
 
     const body = {
       title: formState.title.trim(),
@@ -279,7 +408,7 @@ export default function LivePage() {
     } finally {
       setSaving(false);
     }
-  }, [editMode, formState, session?.token, refreshLiveRips, closeEditor]);
+  }, [editMode, formState, session?.token, refreshLiveRips, closeEditor, ensureSession, session]);
 
   const handleCopyLink = async (slug: string) => {
     if (typeof window === "undefined") {
@@ -446,6 +575,22 @@ export default function LivePage() {
                   className="rounded-xl border border-white/10 bg-night-900/70 px-4 py-3 text-white outline-none focus:border-gold-400"
                   placeholder="https://"
                 />
+                <span className="text-[11px] text-slate-500">Paste a link or upload a file below.</span>
+              </label>
+              <label className="flex flex-col gap-2">
+                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Upload video</span>
+                <input
+                  type="file"
+                  accept="video/mp4,video/*"
+                  onChange={(event) => handleFileUpload(event, "video")}
+                  disabled={uploadingVideo}
+                  className="rounded-xl border border-dashed border-white/10 bg-night-900/60 px-4 py-3 text-xs text-slate-300 focus:border-gold-400"
+                />
+                {uploadingVideo ? (
+                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-500">Uploading…</span>
+                ) : formState.videoUrl ? (
+                  <span className="text-[11px] text-emerald-300">Video ready</span>
+                ) : null}
               </label>
               <label className="flex flex-col gap-2">
                 <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Thumbnail URL (optional)</span>
@@ -455,6 +600,23 @@ export default function LivePage() {
                   className="rounded-xl border border-white/10 bg-night-900/70 px-4 py-3 text-white outline-none focus:border-gold-400"
                   placeholder="https://"
                 />
+              </label>
+              <label className="flex flex-col gap-2">
+                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Upload thumbnail</span>
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={(event) => handleFileUpload(event, "thumbnail")}
+                  disabled={uploadingThumbnail}
+                  className="rounded-xl border border-dashed border-white/10 bg-night-900/60 px-4 py-3 text-xs text-slate-300 focus:border-gold-400"
+                />
+                {uploadingThumbnail ? (
+                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-500">Uploading…</span>
+                ) : formState.thumbnailUrl ? (
+                  <span className="text-[11px] text-emerald-300">Thumbnail ready</span>
+                ) : (
+                  <span className="text-[11px] text-slate-500">Optional image that shows in previews.</span>
+                )}
               </label>
               <label className="flex flex-col gap-2">
                 <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Description</span>

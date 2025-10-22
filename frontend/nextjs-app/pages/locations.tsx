@@ -71,7 +71,7 @@ const embedForMedia = (mediaUrl: string | null) => {
 };
 
 function LocationsPage() {
-  const { session } = useSession();
+  const { session, ensureSession } = useSession();
   const [locations, setLocations] = useState<LocationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -194,6 +194,24 @@ function LocationsPage() {
     setSaving(true);
     setFlash(null);
 
+    let activeSession = session;
+    if (!activeSession) {
+      try {
+        activeSession = await ensureSession();
+      } catch (error) {
+        if (!(error instanceof Error && error.message === "Authentication cancelled")) {
+          setFlash("Sign in to manage locations.");
+        }
+        setSaving(false);
+        return;
+      }
+    }
+
+    if (!activeSession) {
+      setSaving(false);
+      return;
+    }
+
     const body = {
       name: formState.name.trim(),
       slug: (formState.slug || formState.name).trim(),
@@ -207,10 +225,10 @@ function LocationsPage() {
     try {
       const endpoint = editMode === "create" ? "/api/locations" : `/api/locations/${formState.id}`;
       const method = editMode === "create" ? "POST" : "PUT";
-      const headers: Record<string, string> = { "Content-Type": "application/json" };
-      if (session?.token) {
-        headers.Authorization = `Bearer ${session.token}`;
-      }
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${activeSession.token}`,
+      };
 
       const response = await fetch(endpoint, {
         method,

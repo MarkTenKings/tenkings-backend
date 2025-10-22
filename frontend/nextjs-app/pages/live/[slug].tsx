@@ -2,6 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { GetServerSideProps } from "next";
 import AppShell from "../../components/AppShell";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@tenkings/database";
 
 const embedForMedia = (videoUrl: string) => {
@@ -175,34 +176,56 @@ export const getServerSideProps: GetServerSideProps<LiveRipPageProps> = async (c
     return { notFound: true };
   }
 
-  const liveRip = await prisma.liveRip.findUnique({
-    where: { slug },
-    include: {
-      location: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
+  let liveRip;
+  try {
+    liveRip = await prisma.liveRip.findUnique({
+      where: { slug },
+      include: {
+        location: {
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+          },
         },
       },
-    },
-  });
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") {
+      return {
+        redirect: {
+          destination: "/live",
+          permanent: false,
+        },
+      };
+    }
+    throw error;
+  }
 
   if (!liveRip) {
     return { notFound: true };
   }
 
-  const more = await prisma.liveRip.findMany({
-    where: {
-      slug: { not: slug },
-    },
-    select: {
-      slug: true,
-      title: true,
-    },
-    orderBy: { createdAt: "desc" },
-    take: 6,
-  });
+  let more: Array<{ slug: string; title: string }>;
+  try {
+    more = await prisma.liveRip.findMany({
+      where: {
+        slug: { not: slug },
+      },
+      select: {
+        slug: true,
+        title: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 6,
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") {
+      more = [];
+    } else {
+      throw error;
+    }
+  }
 
   return {
     props: {

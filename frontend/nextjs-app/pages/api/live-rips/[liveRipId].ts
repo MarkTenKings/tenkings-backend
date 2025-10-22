@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
@@ -87,6 +88,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     res.status(200).json({ liveRip: withLocation(liveRip) });
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") {
+      return res.status(404).json({ message: "Live rip not available" });
+    }
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: error.issues[0]?.message ?? "Invalid payload" });
     }

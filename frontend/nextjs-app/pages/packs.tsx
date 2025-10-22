@@ -486,15 +486,19 @@ function RevealModal({
           Close
         </button>
         <div className="flex flex-col items-center gap-6 p-8">
-          <div className="relative flex h-80 w-full items-center justify-center">
+          <div className="relative flex h-80 w-full items-center justify-center" style={{ perspective: "1200px" }}>
             {stage !== "card" && (
               <div
                 className="relative h-64 w-48"
                 style={{
                   animation:
                     stage === "intro"
-                      ? "packSpinFloat 1.8s ease-in-out infinite"
-                      : "packRip 0.6s ease forwards",
+                      ? "packSpinFloat 1.6s ease-in-out infinite"
+                      : stage === "rip"
+                        ? "packRip 0.6s ease forwards"
+                        : undefined,
+                  transformStyle: "preserve-3d",
+                  backfaceVisibility: "hidden",
                 }}
               >
                 <Image src={reveal.packImage} alt={reveal.packLabel} fill className="object-contain" sizes="192px" priority unoptimized />
@@ -1338,7 +1342,7 @@ export default function Packs() {
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-3 gap-4 sm:grid-cols-3 lg:grid-cols-3">
               {Array.from({ length: 9 }).map((_, index) => {
                 const selected = selectedSlot === index;
                 return (
@@ -1346,7 +1350,7 @@ export default function Packs() {
                     key={index}
                     type="button"
                     onClick={() => setSelectedSlot(index)}
-                    className={`group relative flex aspect-[3/4] items-center justify-center overflow-hidden rounded-[2.1rem] border border-white/10 bg-slate-900/70 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold-500 ${
+                    className={`group relative flex aspect-[3/4] w-full items-center justify-center overflow-hidden rounded-[2.1rem] border border-white/10 bg-slate-900/70 transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold-500 ${
                       selected ? "border-gold-400/80 shadow-glow" : "hover:border-gold-300/40"
                     }`}
                   >
