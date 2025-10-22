@@ -91,7 +91,11 @@ function LocationsPage() {
     let mounted = true;
     setLoading(true);
     setError(null);
-    fetch("/api/locations")
+    const headers: Record<string, string> = {};
+    if (session?.token) {
+      headers.Authorization = `Bearer ${session.token}`;
+    }
+    fetch("/api/locations", { headers })
       .then(async (res) => {
         if (!res.ok) {
           const payload = await res.json().catch(() => ({}));
@@ -126,7 +130,7 @@ function LocationsPage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [session?.token]);
 
   useEffect(() => {
     if (!flash) {
@@ -203,9 +207,14 @@ function LocationsPage() {
     try {
       const endpoint = editMode === "create" ? "/api/locations" : `/api/locations/${formState.id}`;
       const method = editMode === "create" ? "POST" : "PUT";
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (session?.token) {
+        headers.Authorization = `Bearer ${session.token}`;
+      }
+
       const response = await fetch(endpoint, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(body),
       });
 

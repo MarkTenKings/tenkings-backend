@@ -4,11 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { useRouter } from "next/router";
 import AppShell from "../components/AppShell";
-import { listRecentPulls } from "../lib/api";
+import { fetchCollector, listRecentPulls } from "../lib/api";
 import CardDetailModal from "../components/CardDetailModal";
 import { formatUsdMinor } from "../lib/formatters";
 
 const BUYBACK_RATE = 0.75;
+
+const UNKNOWN_OWNER_LABEL = "Collector";
 
 type PullCard = {
   itemId: string;
@@ -27,7 +29,7 @@ const fallbackPulls: PullCard[] = Array.from({ length: 3 }).map((_, index) => ({
   marketValueMinor: null,
   image: null,
   ownerId: null,
-  ownerLabel: "User Name",
+  ownerLabel: UNKNOWN_OWNER_LABEL,
   ownerAvatar: null,
   packLabel: null,
 }));
@@ -88,6 +90,7 @@ const categories = [
 export default function Home() {
   const router = useRouter();
   const [pulls, setPulls] = useState<PullCard[]>(fallbackPulls);
+  const [collectorNames, setCollectorNames] = useState<Record<string, string>>({});
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
 
   const handleScrollToMachines = useCallback(() => {
@@ -132,11 +135,12 @@ export default function Home() {
     let cancelled = false;
     const load = async () => {
       try {
-        const { pulls } = await listRecentPulls({ limit: 12 });
+        const { pulls } = await listRecentPulls({ limit: 16 });
         if (cancelled || !pulls?.length) {
           return;
         }
-        const mapped: PullCard[] = pulls.slice(0, 6).map((pull: any, index: number): PullCard => {
+        const prefetchedNames: Record<string, string> = {};
+        const mapped: PullCard[] = pulls.slice(0, 10).map((pull: any, index: number): PullCard => {
           const item = pull?.item ?? {};
           const itemId = typeof item?.id === "string" && item.id.trim() ? item.id : `recent-${index}`;
           const rawValue = Number(item?.estimatedValue ?? 0);
@@ -152,11 +156,15 @@ export default function Home() {
               ? owner.displayName
               : typeof owner?.phone === "string" && owner.phone?.trim()
                 ? owner.phone
-                : "User Name";
-          const ownerLabel = ownerLabelRaw.trim() ? ownerLabelRaw.trim() : "User Name";
+                : UNKNOWN_OWNER_LABEL;
+          const ownerLabel = ownerLabelRaw.trim() ? ownerLabelRaw.trim() : UNKNOWN_OWNER_LABEL;
           const ownerAvatar =
             typeof owner?.avatarUrl === "string" && owner.avatarUrl.trim().length > 0 ? owner.avatarUrl : null;
           const pack = pull?.packDefinition ?? null;
+          if (ownerId && ownerLabel !== UNKNOWN_OWNER_LABEL) {
+            prefetchedNames[ownerId] = ownerLabel;
+          }
+
           return {
             itemId,
             cardName,
@@ -173,6 +181,9 @@ export default function Home() {
         });
         if (mapped.length && !cancelled) {
           setPulls(mapped);
+          if (Object.keys(prefetchedNames).length) {
+            setCollectorNames((prev) => ({ ...prefetchedNames, ...prev }));
+          }
         }
       } catch (error) {
         // Silent fallback to static pulls
@@ -184,7 +195,51 @@ export default function Home() {
     };
   }, []);
 
-  const marqueeItems = useMemo(() => [...pulls, ...pulls], [pulls]);
+  const marqueeItems = useMemo(() => {
+    if (!pulls.length) {
+      return pulls;
+    }
+    return [...pulls, ...pulls, ...pulls];
+  }, [pulls]);
+
+  useEffect(() => {
+    const missingIds = pulls
+      .map((pull) => pull.ownerId)
+      .filter((id): id is string => Boolean(id) && !collectorNames[id]);
+    if (!missingIds.length) {
+      return;
+    }
+    let cancelled = false;
+    const load = async () => {
+      const lookups = await Promise.all(
+        missingIds.map(async (id) => {
+          try {
+            const response = await fetchCollector(id);
+            const candidate = response.user?.displayName || response.user?.phone || null;
+            return [id, candidate?.trim() ?? null] as const;
+          } catch (error) {
+            return [id, null] as const;
+          }
+        })
+      );
+      if (cancelled) {
+        return;
+      }
+      setCollectorNames((prev) => {
+        const next = { ...prev };
+        lookups.forEach(([id, name]) => {
+          if (name) {
+            next[id] = name;
+          }
+        });
+        return next;
+      });
+    };
+    load().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [pulls, collectorNames]);
 
   return (
     <AppShell background="hero">
@@ -288,13 +343,17 @@ export default function Home() {
           <div className="relative mx-auto flex w-full max-w-6xl items-center gap-6 overflow-hidden px-6 py-8">
             <div className="pointer-events-none absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-night-900 via-night-900/80 to-transparent" aria-hidden />
             <div className="pointer-events-none absolute inset-y-0 right-0 w-32 bg-gradient-to-l from-night-900 via-night-900/80 to-transparent" aria-hidden />
-            <div className="flex min-w-full gap-6 motion-reduce:animate-none motion-safe:animate-marquee">
+            <div
+              className="flex min-w-full gap-6 motion-reduce:animate-none motion-safe:animate-marquee"
+              style={{ animationDuration: `${Math.max(18, marqueeItems.length * 2)}s` }}
+            >
               {marqueeItems.map((item, index) => {
                 const hasValue =
                   typeof item.marketValueMinor === "number" &&
                   Number.isFinite(item.marketValueMinor) &&
                   item.marketValueMinor > 0;
                 const canOpen = Boolean(item.itemId && !item.itemId.startsWith("placeholder"));
+                const displayOwnerLabel = item.ownerId ? collectorNames[item.ownerId] ?? item.ownerLabel : item.ownerLabel;
                 return (
                   <article
                     key={`${item.itemId}-${index}`}
@@ -313,7 +372,7 @@ export default function Home() {
                       </p>
                     </header>
                     <div className="relative mt-2 flex-1 overflow-hidden rounded-2xl border border-white/10 bg-night-900/60">
-                      <div className="relative h-full min-h-[240px] w-full">
+                      <div className="relative h-0 w-full pb-[133%]">
                         {item.image ? (
                           <Image
                             src={item.image}
@@ -355,10 +414,10 @@ export default function Home() {
                             onClick={(event) => handleCollectorClick(event, item.ownerId)}
                             className="text-sm text-white transition hover:text-gold-200"
                           >
-                            {item.ownerLabel}
+                            {displayOwnerLabel}
                           </Link>
                         ) : (
-                          <span className="text-sm text-white">{item.ownerLabel}</span>
+                          <span className="text-sm text-white">{displayOwnerLabel}</span>
                         )}
                         {item.packLabel && (
                           <p className="text-[10px] uppercase tracking-[0.28em] text-slate-500">{item.packLabel}</p>

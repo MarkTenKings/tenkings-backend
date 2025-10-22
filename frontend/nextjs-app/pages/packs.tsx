@@ -1242,7 +1242,7 @@ export default function Packs() {
                 return (
                   <article
                     key={currentTier.id}
-                    className={`relative rounded-[2rem] border border-white/10 bg-slate-900/60 p-7 shadow-card transition ${
+                    className={`relative w-full rounded-[2rem] border border-white/10 bg-slate-900/60 p-7 shadow-card transition ${
                       tierComingSoon ? "opacity-70" : "hover:border-gold-400/70 hover:shadow-glow"
                     }`}
                   >
@@ -1258,7 +1258,11 @@ export default function Packs() {
                             className="h-auto w-[75%] max-w-[240px] object-contain"
                           />
                         </div>
-                        {showChaseCarousel && <ChaseCarousel labels={placeholderChases} />}
+                        {showChaseCarousel && (
+                          <div className="hidden md:block">
+                            <ChaseCarousel labels={placeholderChases} />
+                          </div>
+                        )}
                       </div>
                       <div className="flex-1 space-y-4">
                         <header className="space-y-1">
