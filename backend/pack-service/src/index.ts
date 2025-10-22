@@ -395,7 +395,18 @@ app.get("/pulls/recent", async (req, res, next) => {
         },
       },
       include: {
-        item: true,
+        item: {
+          include: {
+            owner: {
+              select: {
+                id: true,
+                displayName: true,
+                phone: true,
+                avatarUrl: true,
+              },
+            },
+          },
+        },
         packInstance: {
           include: {
             owner: {
@@ -435,7 +446,7 @@ app.get("/pulls/recent", async (req, res, next) => {
     const pulls = slots.map((slot) => {
       const pack = slot.packInstance;
       const item = slot.item;
-      const owner = pack.owner;
+      const owner = pack.owner ?? item.owner ?? null;
       const definition = pack.packDefinition;
 
       return {

@@ -436,12 +436,26 @@ interface RevealModalProps {
   stage: "intro" | "rip" | "card";
   onClose: () => void;
   onAcceptBuyback: () => void;
+  onSaveToCollection: () => void;
   buybackBusy: boolean;
   canAcceptBuyback: boolean;
   buybackAccepted: boolean;
+  collectionSaved: boolean;
 }
 
-function RevealModal({ reveal, stage, onClose, onAcceptBuyback, buybackBusy, canAcceptBuyback, buybackAccepted }: RevealModalProps) {
+const PROSPECT_LINE = "Entry-tier mystery with slabbed rookies, numbered parallels, and authenticated memorabilia chips.";
+
+function RevealModal({
+  reveal,
+  stage,
+  onClose,
+  onAcceptBuyback,
+  onSaveToCollection,
+  buybackBusy,
+  canAcceptBuyback,
+  buybackAccepted,
+  collectionSaved,
+}: RevealModalProps) {
   const cardImage = reveal.image || reveal.packImage;
 
   useEffect(() => {
@@ -451,6 +465,9 @@ function RevealModal({ reveal, stage, onClose, onAcceptBuyback, buybackBusy, can
       document.body.style.overflow = original;
     };
   }, []);
+
+  const shouldShowDescription =
+    stage === "card" && Boolean(reveal.description?.trim()) && reveal.description?.trim() !== PROSPECT_LINE;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8">
@@ -494,7 +511,9 @@ function RevealModal({ reveal, stage, onClose, onAcceptBuyback, buybackBusy, can
             {stage === "card" ? (
               <>
                 <h2 className="font-heading text-3xl uppercase tracking-[0.2em] text-white">{reveal.name}</h2>
-                <p className="whitespace-pre-line text-sm text-slate-300">{reveal.description}</p>
+                {shouldShowDescription && (
+                  <p className="mx-auto max-w-xl whitespace-pre-line text-sm text-slate-300">{reveal.description}</p>
+                )}
                 <div className="flex flex-wrap justify-center gap-8 pt-4 text-sm text-slate-300">
                   <div>
                     <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Estimated Value</p>
@@ -529,7 +548,15 @@ function RevealModal({ reveal, stage, onClose, onAcceptBuyback, buybackBusy, can
                 onClick={onClose}
                 className="rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.32em] text-slate-200 transition hover:border-gold-300 hover:text-gold-200"
               >
-                View card details
+                VIEW CARD DETAILS
+              </button>
+              <button
+                type="button"
+                onClick={onSaveToCollection}
+                disabled={collectionSaved}
+                className="rounded-full border border-gold-400/50 px-6 py-3 text-xs uppercase tracking-[0.32em] text-gold-200 transition hover:border-gold-300 hover:text-gold-100 disabled:cursor-not-allowed disabled:border-white/15 disabled:text-slate-500"
+              >
+                {collectionSaved ? "SAVED TO YOUR COLLECTION" : "SAVE TO YOUR COLLECTION"}
               </button>
             </div>
           )}
@@ -1574,9 +1601,11 @@ export default function Packs() {
           stage={revealStage}
           onClose={closeRevealModal}
           onAcceptBuyback={acceptBuyback}
+          onSaveToCollection={() => keepInCollection({ annotate: true })}
           buybackBusy={buybackBusy}
           canAcceptBuyback={reveal.buybackAvailable && !reveal.buybackAccepted}
           buybackAccepted={reveal.buybackAccepted}
+          collectionSaved={resolution === "collection"}
         />
       )}
     </AppShell>

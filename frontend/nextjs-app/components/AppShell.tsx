@@ -30,6 +30,9 @@ export default function AppShell({ children, background = "default" }: AppShellP
               <Link className="transition hover:text-white" href="/packs">
                 Packs
               </Link>
+              <Link className="transition hover:text-white" href="/locations">
+                Locations
+              </Link>
               <Link className="transition hover:text-white" href="/marketplace">
                 Marketplace
               </Link>

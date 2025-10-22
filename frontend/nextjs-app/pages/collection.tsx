@@ -104,6 +104,7 @@ export default function CollectionPage() {
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
   const [modalItem, setModalItem] = useState<CollectionItem | null>(null);
   const [showShippingForm, setShowShippingForm] = useState(false);
+  const [confirmBuybackItem, setConfirmBuybackItem] = useState<CollectionItem | null>(null);
   const [buybackBusyItems, setBuybackBusyItems] = useState<Record<string, boolean>>({});
   const [flash, setFlash] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
@@ -196,6 +197,10 @@ export default function CollectionPage() {
                 openItemModal(item);
               }
             };
+            const estimatedBuyback = item.estimatedValue ? Math.round(item.estimatedValue * BUYBACK_RATE) : null;
+            const busy = Boolean(buybackBusyItems[item.id]);
+            const buybackDisabled = busy || hasPendingShipment || item.status === "SOLD" || item.status === "REDEEMED";
+
             return (
               <div
                 key={item.id}
@@ -249,14 +254,14 @@ export default function CollectionPage() {
                   </span>
                   <button
                     type="button"
-                    onClick={async (event: MouseEvent<HTMLButtonElement>) => {
+                    onClick={(event: MouseEvent<HTMLButtonElement>) => {
                       event.stopPropagation();
-                      await handleInstantBuyback(item);
+                      setConfirmBuybackItem(item);
                     }}
                     className="rounded-full border border-emerald-400/40 bg-emerald-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                     disabled={buybackDisabled}
                   >
-                    {busy ? "Processing…" : buybackDisabled ? "Unavailable" : "Instant Buyback"}
+                    {busy ? "Processing…" : buybackDisabled ? "Unavailable" : "Instant buyback"}
                   </button>
                 </div>
                 <span className="text-xs uppercase tracking-[0.3em] text-gold-300">View details</span>
@@ -644,12 +649,7 @@ export default function CollectionPage() {
                     return (
                       <button
                         type="button"
-                        onClick={async () => {
-                          const success = await handleInstantBuyback(modalItem);
-                          if (success) {
-                            closeItemModal();
-                          }
-                        }}
+                        onClick={() => setConfirmBuybackItem(modalItem)}
                         className="w-full rounded-full border border-emerald-400/40 bg-emerald-500/20 px-6 py-3 text-xs uppercase tracking-[0.32em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                         disabled={disabled}
                       >
@@ -848,6 +848,69 @@ export default function CollectionPage() {
                   </div>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmBuybackItem && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-6 py-10">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setConfirmBuybackItem(null)} />
+          <div className="relative z-10 w-full max-w-md space-y-6 rounded-3xl border border-white/10 bg-night-900/95 p-6 text-center shadow-2xl">
+            <h3 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Instant Buyback</h3>
+            <p className="text-sm text-slate-300">
+              You can take {formatMinor(confirmBuybackItem.estimatedValue)} and receive
+              {" "}
+              <span className="text-emerald-300">
+                {formatMinor(
+                  confirmBuybackItem.estimatedValue ? Math.round(confirmBuybackItem.estimatedValue * BUYBACK_RATE) : 0
+                )}
+              </span>
+              {" "} in Ten Kings Dollars (TKD). TKD can be used immediately online or at any Ten Kings physical machine.
+            </p>
+            <div className="grid gap-3 text-left text-xs text-slate-400">
+              <div className="flex items-center justify-between">
+                <span>Market value</span>
+                <span className="text-slate-200">{formatMinor(confirmBuybackItem.estimatedValue)}</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>Buyback rate</span>
+                <span className="text-slate-200">75%</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>TKD credited</span>
+                <span className="text-emerald-300">
+                  {formatMinor(
+                    confirmBuybackItem.estimatedValue ? Math.round(confirmBuybackItem.estimatedValue * BUYBACK_RATE) : 0
+                  )}
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-wrap justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => setConfirmBuybackItem(null)}
+                className="rounded-full border border-white/20 px-6 py-2 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  const item = confirmBuybackItem;
+                  const success = await handleInstantBuyback(item);
+                  if (success && modalItem?.id === item.id) {
+                    closeItemModal();
+                  }
+                  if (success) {
+                    setConfirmBuybackItem(null);
+                  }
+                }}
+                className="rounded-full border border-emerald-400/40 bg-emerald-500/20 px-6 py-2 text-xs uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100"
+                disabled={Boolean(buybackBusyItems[confirmBuybackItem.id])}
+              >
+                {buybackBusyItems[confirmBuybackItem.id] ? "Processing…" : "Accept buyback"}
+              </button>
             </div>
           </div>
         </div>

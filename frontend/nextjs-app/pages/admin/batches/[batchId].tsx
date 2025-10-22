@@ -474,6 +474,7 @@ export default function AdminBatchDetail() {
   const [bulkEdit, setBulkEdit] = useState(false);
   const [forms, setForms] = useState<Record<string, CardEditForm>>({});
   const [savingCards, setSavingCards] = useState<Record<string, boolean>>({});
+  const [regeneratingCards, setRegeneratingCards] = useState<Record<string, boolean>>({});
   const [cardErrors, setCardErrors] = useState<Record<string, string | null>>({});
   const [cardMessages, setCardMessages] = useState<Record<string, string | null>>({});
   const [assignModalOpen, setAssignModalOpen] = useState(false);
@@ -1095,6 +1096,71 @@ const handleRemoveNormalizedLink = (cardId: string, linkId: string) => () => {
   });
 };
 
+const applyCardUpdate = (cardId: string, updated: CardApiResponse, message: string) => {
+  setBatch((current) => {
+    if (!current) return current;
+    const updatedAssets = current.assets.map((asset) =>
+      asset.id === cardId
+        ? {
+            ...asset,
+            status: updated.status,
+            fileName: updated.fileName,
+            fileSize: updated.fileSize,
+            imageUrl: updated.imageUrl,
+            mimeType: updated.mimeType,
+            ocrText: updated.ocrText,
+            customTitle: updated.customTitle,
+            customDetails: updated.customDetails,
+            valuationMinor: updated.valuationMinor,
+            valuationCurrency: updated.valuationCurrency,
+            valuationSource: updated.valuationSource,
+            marketplaceUrl: updated.marketplaceUrl,
+            ebaySoldUrl: updated.ebaySoldUrl,
+            ebaySoldUrlVariant: updated.ebaySoldUrlVariant,
+            ebaySoldUrlHighGrade: updated.ebaySoldUrlHighGrade,
+            ebaySoldUrlPlayerComp: updated.ebaySoldUrlPlayerComp,
+            ebaySoldUrlAiGrade: updated.ebaySoldUrlAiGrade,
+            aiGrade: updated.aiGrade,
+            classification: updated.classification,
+            classificationNormalized: updated.classificationNormalized,
+            humanReviewedAt: updated.humanReviewedAt,
+            humanReviewerName: updated.humanReviewerName,
+          }
+        : asset
+    );
+    return { ...current, assets: updatedAssets };
+  });
+
+  setForms((current) => ({
+    ...current,
+    [cardId]: {
+      customTitle: updated.customTitle ?? "",
+      customDetails: updated.customDetails ?? "",
+      ocrText: updated.ocrText ?? "",
+      valuation: updated.valuationMinor !== null ? (updated.valuationMinor / 100).toFixed(2) : "",
+      valuationCurrency: updated.valuationCurrency ?? "USD",
+      valuationSource: updated.valuationSource ?? "",
+      marketplaceUrl: updated.marketplaceUrl ?? "",
+      ebaySoldUrl: updated.ebaySoldUrl ?? "",
+      ebaySoldUrlVariant: updated.ebaySoldUrlVariant ?? "",
+      ebaySoldUrlHighGrade: updated.ebaySoldUrlHighGrade ?? "",
+      ebaySoldUrlPlayerComp: updated.ebaySoldUrlPlayerComp ?? "",
+      ebaySoldUrlAiGrade: updated.ebaySoldUrlAiGrade ?? "",
+      humanReviewed: updated.humanReviewedAt !== null,
+      aiGradeFinal: updated.aiGrade?.final != null ? String(updated.aiGrade.final) : "",
+      aiGradeLabel: updated.aiGrade?.label ?? "",
+      aiGradePsaEquivalent:
+        updated.aiGrade?.psaEquivalent != null ? String(updated.aiGrade.psaEquivalent) : "",
+      aiGradeRangeLow: updated.aiGrade?.rangeLow != null ? String(updated.aiGrade.rangeLow) : "",
+      aiGradeRangeHigh: updated.aiGrade?.rangeHigh != null ? String(updated.aiGrade.rangeHigh) : "",
+      attributes: buildAttributeFormState(updated.classification ?? null),
+      normalized: buildNormalizedFormState(updated.classificationNormalized ?? null),
+    },
+  }));
+
+  setCardMessages((prev) => ({ ...prev, [cardId]: message }));
+};
+
 const handleBulkSave = async (cardId: string) => {
   if (!session?.token || !batch) {
     return;
@@ -1295,74 +1361,51 @@ const handleBulkSave = async (cardId: string) => {
 
     const updated = (await res.json()) as CardApiResponse;
 
-    setBatch((current) => {
-      if (!current) return current;
-      const updatedAssets = current.assets.map((asset) => {
-        if (asset.id !== cardId) {
-          return asset;
-        }
-        return {
-          ...asset,
-          status: updated.status,
-          fileName: updated.fileName,
-          fileSize: updated.fileSize,
-          imageUrl: updated.imageUrl,
-          mimeType: updated.mimeType,
-          ocrText: updated.ocrText,
-          customTitle: updated.customTitle,
-          customDetails: updated.customDetails,
-          valuationMinor: updated.valuationMinor,
-          valuationCurrency: updated.valuationCurrency,
-          valuationSource: updated.valuationSource,
-          marketplaceUrl: updated.marketplaceUrl,
-          ebaySoldUrl: updated.ebaySoldUrl,
-          ebaySoldUrlVariant: updated.ebaySoldUrlVariant,
-          ebaySoldUrlHighGrade: updated.ebaySoldUrlHighGrade,
-          ebaySoldUrlPlayerComp: updated.ebaySoldUrlPlayerComp,
-          ebaySoldUrlAiGrade: updated.ebaySoldUrlAiGrade,
-          aiGrade: updated.aiGrade,
-          classification: updated.classification,
-          classificationNormalized: updated.classificationNormalized,
-          humanReviewedAt: updated.humanReviewedAt,
-          humanReviewerName: updated.humanReviewerName,
-        };
-      });
-      return { ...current, assets: updatedAssets };
-    });
-
-    setForms((current) => ({
-      ...current,
-      [cardId]: {
-        customTitle: updated.customTitle ?? "",
-        customDetails: updated.customDetails ?? "",
-        ocrText: updated.ocrText ?? "",
-        valuation: updated.valuationMinor !== null ? (updated.valuationMinor / 100).toFixed(2) : "",
-        valuationCurrency: updated.valuationCurrency ?? "USD",
-        valuationSource: updated.valuationSource ?? "",
-        marketplaceUrl: updated.marketplaceUrl ?? "",
-        ebaySoldUrl: updated.ebaySoldUrl ?? "",
-        ebaySoldUrlVariant: updated.ebaySoldUrlVariant ?? "",
-        ebaySoldUrlHighGrade: updated.ebaySoldUrlHighGrade ?? "",
-        ebaySoldUrlPlayerComp: updated.ebaySoldUrlPlayerComp ?? "",
-        ebaySoldUrlAiGrade: updated.ebaySoldUrlAiGrade ?? "",
-        humanReviewed: updated.humanReviewedAt !== null,
-        aiGradeFinal: updated.aiGrade?.final != null ? String(updated.aiGrade.final) : "",
-        aiGradeLabel: updated.aiGrade?.label ?? "",
-        aiGradePsaEquivalent:
-          updated.aiGrade?.psaEquivalent != null ? String(updated.aiGrade.psaEquivalent) : "",
-        aiGradeRangeLow: updated.aiGrade?.rangeLow != null ? String(updated.aiGrade.rangeLow) : "",
-        aiGradeRangeHigh: updated.aiGrade?.rangeHigh != null ? String(updated.aiGrade.rangeHigh) : "",
-        attributes: buildAttributeFormState(updated.classification ?? null),
-        normalized: buildNormalizedFormState(updated.classificationNormalized ?? null),
-      },
-    }));
-
-    setCardMessages((prev) => ({ ...prev, [cardId]: "Saved" }));
+    applyCardUpdate(cardId, updated, "Saved");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to update card";
     setCardErrors((prev) => ({ ...prev, [cardId]: message }));
   } finally {
     setSavingCards((prev) => ({ ...prev, [cardId]: false }));
+  }
+};
+
+const handleBulkRegenerate = async (cardId: string) => {
+  if (!session?.token) {
+    return;
+  }
+
+  setRegeneratingCards((prev) => ({ ...prev, [cardId]: true }));
+  setCardErrors((prev) => ({ ...prev, [cardId]: null }));
+  setCardMessages((prev) => ({ ...prev, [cardId]: null }));
+
+  try {
+    const res = await fetch(`/api/admin/cards/${cardId}/regenerate-comps`, {
+      method: "POST",
+      headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+    });
+
+    if (!res.ok) {
+      const payload = await res.json().catch(() => ({}));
+      throw new Error(payload?.message ?? "Failed to regenerate comps");
+    }
+
+    const refreshed = await fetch(`/api/admin/cards/${cardId}`, {
+      headers: buildAdminHeaders(session.token),
+    });
+
+    if (!refreshed.ok) {
+      const payload = await refreshed.json().catch(() => ({}));
+      throw new Error(payload?.message ?? "Failed to refresh card");
+    }
+
+    const updated = (await refreshed.json()) as CardApiResponse;
+    applyCardUpdate(cardId, updated, "eBay comps regenerated");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to regenerate comps";
+    setCardErrors((prev) => ({ ...prev, [cardId]: message }));
+  } finally {
+    setRegeneratingCards((prev) => ({ ...prev, [cardId]: false }));
   }
 };
 
@@ -1529,6 +1572,7 @@ const handleBulkSave = async (cardId: string) => {
                       }`
                     : null;
                   const isSaving = Boolean(savingCards[asset.id]);
+                  const isRegenerating = Boolean(regeneratingCards[asset.id]);
 
                   if (bulkEdit) {
                     const formState = forms[asset.id];
@@ -2282,11 +2326,19 @@ const handleBulkSave = async (cardId: string) => {
                                 <p className="text-[11px] uppercase tracking-[0.2em] text-emerald-300">{cardMessages[asset.id]}</p>
                               )}
 
-                              <div className="flex justify-end pt-2">
+                              <div className="flex justify-end gap-2 pt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleBulkRegenerate(asset.id)}
+                                  disabled={isSaving || isRegenerating}
+                                  className="rounded-full border border-sky-400/40 bg-sky-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {isRegenerating ? "Regenerating…" : "Regenerate eBay comps"}
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => handleBulkSave(asset.id)}
-                                  disabled={isSaving}
+                                  disabled={isSaving || isRegenerating}
                                   className="rounded-full border border-emerald-400/40 bg-emerald-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                   {isSaving ? "Saving…" : "Save Card"}

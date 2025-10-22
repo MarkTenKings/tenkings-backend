@@ -238,7 +238,7 @@ export default function Home() {
               </button>
               <button
                 type="button"
-                onClick={() => router.push("/packs")}
+                onClick={() => router.push("/locations")}
                 className="inline-flex items-center justify-center whitespace-nowrap rounded-full border border-white/20 px-10 py-4 text-sm font-semibold uppercase tracking-[0.2em] text-white transition hover:border-white/40 hover:text-gold-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
               >
                 Find a Location
