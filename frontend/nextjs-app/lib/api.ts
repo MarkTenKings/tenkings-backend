@@ -92,7 +92,7 @@ export async function listListings() {
 
 export async function listRecentPulls(params?: { limit?: number }) {
   const query = params?.limit ? `?limit=${encodeURIComponent(String(params.limit))}` : "";
-  return handle<{ pulls: any[] }>(service(`pack/pulls/recent${query}`));
+  return handle<{ pulls: any[] }>(service(`pack/pulls/recent${query}`), { skipAuth: true });
 }
 
 export async function purchaseListing(listingId: string, buyerId: string) {

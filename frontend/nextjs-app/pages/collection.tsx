@@ -144,6 +144,20 @@ export default function CollectionPage() {
     return { owned, sold, shipped };
   }, [items]);
 
+  const { owned, sold, shipped } = segments;
+  const totals = useMemo(() => {
+    const ownedValue = owned.reduce((sum, item) => sum + (item.estimatedValue ?? 0), 0);
+    const soldValue = sold.reduce((sum, item) => sum + (item.estimatedValue ?? 0), 0);
+    return {
+      ownedCount: owned.length,
+      ownedValue,
+      soldCount: sold.length,
+      soldValue,
+      shippedCount: shipped.length,
+      totalCount: items.length,
+    };
+  }, [owned, sold, shipped, items]);
+
   const openItemModal = (item: CollectionItem) => {
     setModalItem(item);
     setSelectedItemId(item.id);
@@ -477,8 +491,6 @@ export default function CollectionPage() {
     );
   }
 
-  const { owned, sold, shipped } = segments;
-
   return (
     <AppShell>
       <Head>
@@ -494,17 +506,33 @@ export default function CollectionPage() {
           </p>
         </header>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
             <p className="text-xs uppercase tracking-[0.3em] text-slate-400">TKD Wallet</p>
             <p className="mt-2 text-3xl font-semibold text-gold-300">{walletBalanceDisplay}</p>
-            <p className="mt-2 text-xs text-slate-500">Updated in real time when you accept instant buybacks or shipping requests.</p>
+            <p className="mt-2 text-xs text-slate-500">Instant buybacks and redemptions update this balance automatically.</p>
           </div>
           <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Shipping Processing Fee</p>
-            <p className="mt-2 text-2xl font-semibold text-white">{processingFeeDisplay}</p>
-            <p className="mt-2 text-xs text-slate-500">Added once per shipment. Set your own additional shipping fee during checkout.</p>
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Active Collectibles</p>
+            <p className="mt-2 text-3xl font-semibold text-white">{totals.ownedCount}</p>
+            <p className="mt-2 text-xs text-slate-500">Market value {formatMinor(totals.ownedValue)}</p>
           </div>
+          <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Sold / Redeemed</p>
+            <p className="mt-2 text-3xl font-semibold text-white">{totals.soldCount}</p>
+            <p className="mt-2 text-xs text-slate-500">Value moved to TKD {totals.soldValue ? formatMinor(totals.soldValue) : "—"}</p>
+          </div>
+          <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Shipped Home</p>
+            <p className="mt-2 text-3xl font-semibold text-white">{totals.shippedCount}</p>
+            <p className="mt-2 text-xs text-slate-500">Completed deliveries from the vault.</p>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Shipping Processing Fee</p>
+          <p className="mt-2 text-2xl font-semibold text-white">{processingFeeDisplay}</p>
+          <p className="mt-2 text-xs text-slate-500">Added once per shipment. Set your own additional shipping fee during checkout.</p>
         </div>
 
         {flash && (

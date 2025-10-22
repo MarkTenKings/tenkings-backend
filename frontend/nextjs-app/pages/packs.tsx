@@ -33,6 +33,7 @@ type PackTier = {
   expectedValue: number;
   odds: OddsRow[];
   disclaimer: string;
+  comingSoon?: boolean;
 };
 
 type PackCategory = {
@@ -76,6 +77,7 @@ const catalog: PackCategory[] = [
         details:
           "Platinum-grade slabs and low-numbered ink from championship rosters. Guaranteed serial-numbered hits with spotlight odds on on-card autos.",
         expectedValue: 500,
+        comingSoon: true,
         odds: [
           { range: "$300 – $450", probability: "48%" },
           { range: "$450 – $650", probability: "24%" },
@@ -94,6 +96,7 @@ const catalog: PackCategory[] = [
         details:
           "All-star rookies, refractor parallels, and authenticated vintage inserts. Balanced for chase value without filler commons.",
         expectedValue: 100,
+        comingSoon: true,
         odds: [
           { range: "$60 – $110", probability: "54%" },
           { range: "$110 – $175", probability: "23%" },
@@ -149,6 +152,7 @@ const catalog: PackCategory[] = [
         details:
           "Enter the high-end vault: Shadowless holos, Gold Star chases, and BGS/PSA 9+ classics. Every pack hides authenticated slabs with premium shine.",
         expectedValue: 500,
+        comingSoon: true,
         odds: [
           { range: "$250 – $375", probability: "49%" },
           { range: "$375 – $500", probability: "21%" },
@@ -167,6 +171,7 @@ const catalog: PackCategory[] = [
         details:
           "Chances at vintage WotC holos, modern alt arts, and Japanese exclusives. Each pack includes at least one graded hit (PSA 8+).",
         expectedValue: 100,
+        comingSoon: true,
         odds: [
           { range: "$60 – $120", probability: "50%" },
           { range: "$120 – $175", probability: "20%" },
@@ -486,7 +491,10 @@ function RevealModal({
               <div
                 className="relative h-64 w-48"
                 style={{
-                  animation: stage === "intro" ? "packFloat 1.2s ease-in-out infinite" : "packRip 0.6s ease forwards",
+                  animation:
+                    stage === "intro"
+                      ? "packSpinFloat 1.8s ease-in-out infinite"
+                      : "packRip 0.6s ease forwards",
                 }}
               >
                 <Image src={reveal.packImage} alt={reveal.packLabel} fill className="object-contain" sizes="192px" priority unoptimized />
@@ -569,6 +577,23 @@ function RevealModal({
           }
           50% {
             transform: translateY(-12px);
+          }
+        }
+        @keyframes packSpinFloat {
+          0% {
+            transform: translateY(0) rotateY(0deg);
+          }
+          25% {
+            transform: translateY(-8px) rotateY(90deg);
+          }
+          50% {
+            transform: translateY(-16px) rotateY(180deg);
+          }
+          75% {
+            transform: translateY(-8px) rotateY(270deg);
+          }
+          100% {
+            transform: translateY(0) rotateY(360deg);
           }
         }
         @keyframes packRip {
@@ -873,6 +898,14 @@ export default function Packs() {
   };
 
   const handleSelectTier = (id: string) => {
+    if (!category) {
+      return;
+    }
+    const nextTier = category.tiers.find((entry) => entry.id === id);
+    if (nextTier?.comingSoon) {
+      setAlert({ type: "info", text: "That tier is stocking now. Check back when it goes live." });
+      return;
+    }
     setAlert(null);
     setTierId(id);
     setSelectedSlot(null);
@@ -1028,6 +1061,10 @@ export default function Packs() {
     }
   };
 
+  const redirectToCollection = useCallback(() => {
+    router.push("/collection").catch(() => undefined);
+  }, [router]);
+
   const acceptBuyback = async () => {
     if (!reveal?.itemId) {
       setAlert({ type: "error", text: "Buyback unavailable for this pull." });
@@ -1051,6 +1088,11 @@ export default function Packs() {
       );
       setResolution("buyback");
       setAlert({ type: "success", text: `Instant buyback credited ${formatTkd(result.buybackAmount)} to your wallet.` });
+      setShowRevealModal(false);
+      setRevealStage("intro");
+      window.setTimeout(() => {
+        redirectToCollection();
+      }, 250);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Buyback failed";
       setAlert({ type: "error", text: message });
@@ -1082,6 +1124,13 @@ export default function Packs() {
     setAlert({ type, text: message });
   }
 
+  const handleSaveToCollection = () => {
+    keepInCollection({ annotate: true });
+    setShowRevealModal(false);
+    setRevealStage("intro");
+    redirectToCollection();
+  };
+
   const alertBanner =
     alert && (
       <div
@@ -1100,14 +1149,14 @@ export default function Packs() {
   return (
     <AppShell>
       <Head>
-        <title>Ten Kings · Pick Your Mystery Pack</title>
+        <title>Ten Kings · Pick Your Pack</title>
         <meta name="description" content="Choose your mystery collectible pack: select a machine, tier, and the pack you rip." />
       </Head>
 
       <section className="bg-night-900/80 py-16">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-6">
           <header className="space-y-4">
-            <h1 className="font-heading text-5xl uppercase tracking-[0.14em] text-white">Pick Your Price</h1>
+            <h1 className="font-heading text-5xl uppercase tracking-[0.14em] text-white">Pick Your Pack</h1>
           </header>
 
           <nav aria-label="Progress" className="flex flex-col gap-4">
@@ -1186,13 +1235,16 @@ export default function Packs() {
             <div className="grid gap-8 md:grid-cols-2">
               {category.tiers.map((currentTier) => {
                 const overrideImage = tierImageOverrides[currentTier.id] ?? currentTier.image;
+                const tierComingSoon = Boolean(currentTier.comingSoon);
                 const showChaseCarousel = ["pokemon", "sports", "comics"].includes(category.id);
                 const placeholderChases = Array.from({ length: 5 }, (_, index) => `Chase Card ${index + 1}`);
 
                 return (
                   <article
                     key={currentTier.id}
-                    className="rounded-[2rem] border border-white/10 bg-slate-900/60 p-7 shadow-card transition hover:border-gold-400/70 hover:shadow-glow"
+                    className={`relative rounded-[2rem] border border-white/10 bg-slate-900/60 p-7 shadow-card transition ${
+                      tierComingSoon ? "opacity-70" : "hover:border-gold-400/70 hover:shadow-glow"
+                    }`}
                   >
                     <div className="flex flex-col gap-6 lg:flex-row">
                       <div className="flex w-full flex-col gap-4 lg:w-56">
@@ -1202,8 +1254,8 @@ export default function Packs() {
                             alt={`${currentTier.label} pack art`}
                             width={320}
                             height={320}
-                            sizes="(max-width: 768px) 60vw, 220px"
-                            className="h-auto w-[70%] max-w-[220px] object-contain"
+                            sizes="(max-width: 768px) 70vw, 240px"
+                            className="h-auto w-[75%] max-w-[240px] object-contain"
                           />
                         </div>
                         {showChaseCarousel && <ChaseCarousel labels={placeholderChases} />}
@@ -1236,14 +1288,26 @@ export default function Packs() {
                           </p>
                           <button
                             type="button"
-                            onClick={() => handleSelectTier(currentTier.id)}
-                            className="rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400"
+                            onClick={() => !tierComingSoon && handleSelectTier(currentTier.id)}
+                            disabled={tierComingSoon}
+                            className={`w-full rounded-full border px-6 py-3 text-center text-xs font-semibold uppercase tracking-[0.32em] transition sm:w-auto ${
+                              tierComingSoon
+                                ? "cursor-not-allowed border-white/15 bg-white/5 text-slate-500"
+                                : "border-gold-500/60 bg-gold-500 text-night-900 shadow-glow hover:bg-gold-400"
+                            }`}
                           >
-                            Choose Tier
+                            {tierComingSoon ? "Coming Soon" : "Choose Tier"}
                           </button>
                         </div>
                       </div>
                     </div>
+                    {tierComingSoon && (
+                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-[2rem] bg-gold-500/12 backdrop-blur-[1px]">
+                        <span className="rounded-full border border-gold-400/60 bg-night-900/80 px-6 py-2 text-xs uppercase tracking-[0.32em] text-gold-200 shadow-glow">
+                          Coming Soon
+                        </span>
+                      </div>
+                    )}
                   </article>
                 );
               })}
@@ -1550,7 +1614,7 @@ export default function Packs() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => keepInCollection({ annotate: true })}
+                      onClick={handleSaveToCollection}
                       className={`rounded-full border px-7 py-3 text-xs uppercase tracking-[0.3em] transition ${
                         resolution === "collection"
                           ? "border-emerald-400/50 bg-emerald-500/10 text-emerald-200"
@@ -1601,7 +1665,7 @@ export default function Packs() {
           stage={revealStage}
           onClose={closeRevealModal}
           onAcceptBuyback={acceptBuyback}
-          onSaveToCollection={() => keepInCollection({ annotate: true })}
+          onSaveToCollection={handleSaveToCollection}
           buybackBusy={buybackBusy}
           canAcceptBuyback={reveal.buybackAvailable && !reveal.buybackAccepted}
           buybackAccepted={reveal.buybackAccepted}

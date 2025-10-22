@@ -388,14 +388,14 @@ export default function Home() {
                 onClick={() => router.push(`/packs?category=${category.id}`)}
                 className="group relative mx-auto overflow-hidden rounded-[2.25rem] border border-white/10 bg-slate-900/60 p-6 text-left transition hover:border-gold-400/70 hover:shadow-glow focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold-500 md:w-[80%]"
               >
-                <div className="relative mb-6 flex h-72 w-full items-center justify-center overflow-hidden rounded-2xl border border-white/10">
+                <div className="relative mb-6 flex h-[22rem] w-full items-center justify-center overflow-hidden rounded-2xl border border-white/10 sm:h-[24rem] xl:h-[27rem]">
                   <Image
                     src={category.image}
                     alt={`${category.label} vending machine`}
                     width={2813}
                     height={5000}
                     sizes="(max-width: 768px) 70vw, 220px"
-                    className="mx-auto h-auto w-[60%] object-contain transition duration-500 group-hover:scale-105"
+                    className="mx-auto h-full w-auto max-w-[75%] object-contain transition duration-500 group-hover:scale-105"
                   />
                 </div>
                 <h3 className="font-heading text-3xl uppercase tracking-[0.24em] text-white">{category.label}</h3>
