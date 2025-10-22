@@ -103,6 +103,12 @@ export async function storeLiveAsset(options: StoreLiveAssetOptions) {
 
   const storageKey = buildStorageKey(userId, fileName || "live");
 
+  if (storageMode === "local" && process.env.VERCEL) {
+    throw new Error(
+      "Live video uploads require LIVE_STORAGE_MODE=s3 when deployed on Vercel. Configure S3/Spaces credentials to continue."
+    );
+  }
+
   if (storageMode === "mock") {
     return {
       storageKey,

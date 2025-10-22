@@ -1,5 +1,11 @@
 import { FormEvent, useState } from "react";
-import { CardElement, useElements, useStripe } from "@stripe/react-stripe-js";
+import {
+  CardCvcElement,
+  CardExpiryElement,
+  CardNumberElement,
+  useElements,
+  useStripe,
+} from "@stripe/react-stripe-js";
 
 interface StripeCheckoutProps {
   clientSecret: string;
@@ -21,7 +27,7 @@ export default function StripeCheckout({ clientSecret, paymentIntentId, onSucces
       setError("Stripe is not ready yet. Please try again in a moment.");
       return;
     }
-    const card = elements.getElement(CardElement);
+    const card = elements.getElement(CardNumberElement);
     if (!card) {
       setError("Unable to find card element");
       return;
@@ -58,8 +64,9 @@ export default function StripeCheckout({ clientSecret, paymentIntentId, onSucces
           setStatus("succeeded");
           setInfo("Payment confirmed. Finalizing your pack…");
           await onSuccess(paymentIntentId);
-          const cardElement = elements.getElement(CardElement);
-          cardElement?.clear();
+          card.clear();
+          elements.getElement(CardExpiryElement)?.clear();
+          elements.getElement(CardCvcElement)?.clear();
           break;
         }
         case "processing": {
@@ -87,34 +94,78 @@ export default function StripeCheckout({ clientSecret, paymentIntentId, onSucces
   };
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: "grid", gap: "0.75rem", maxWidth: 420 }}>
-      <div style={{
-        padding: "0.75rem",
-        border: "1px solid #ccc",
-        borderRadius: "0.5rem",
-        backgroundColor: "#fff",
-      }}>
-        <CardElement
+    <form onSubmit={handleSubmit} className="grid w-full max-w-[520px] gap-3" style={{ gridAutoRows: "max-content" }}>
+      <div className="rounded-2xl border border-white/10 bg-white/95 p-3 shadow-sm">
+        <CardNumberElement
           options={{
+            placeholder: "Card number",
             style: {
               base: {
                 fontSize: "16px",
-                color: "#32325d",
+                color: "#0f172a",
                 fontFamily: '"Helvetica Neue", Helvetica, sans-serif',
-                "::placeholder": { color: "#a0aec0" },
+                letterSpacing: "0.08em",
+                lineHeight: "1.6",
+                "::placeholder": { color: "#94a3b8" },
               },
               invalid: {
-                color: "#e53e3e",
+                color: "#b91c1c",
               },
             },
           }}
         />
       </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="rounded-2xl border border-white/10 bg-white/95 p-3 shadow-sm">
+          <CardExpiryElement
+            options={{
+              placeholder: "MM / YY",
+              style: {
+                base: {
+                  fontSize: "16px",
+                  color: "#0f172a",
+                  fontFamily: '"Helvetica Neue", Helvetica, sans-serif',
+                  letterSpacing: "0.08em",
+                  lineHeight: "1.6",
+                  "::placeholder": { color: "#94a3b8" },
+                },
+                invalid: {
+                  color: "#b91c1c",
+                },
+              },
+            }}
+          />
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-white/95 p-3 shadow-sm">
+          <CardCvcElement
+            options={{
+              placeholder: "CVC",
+              style: {
+                base: {
+                  fontSize: "16px",
+                  color: "#0f172a",
+                  fontFamily: '"Helvetica Neue", Helvetica, sans-serif',
+                  letterSpacing: "0.08em",
+                  lineHeight: "1.6",
+                  "::placeholder": { color: "#94a3b8" },
+                },
+                invalid: {
+                  color: "#b91c1c",
+                },
+              },
+            }}
+          />
+        </div>
+      </div>
       {info && (
         <p style={{ color: status === "succeeded" ? "green" : "#4b5563", margin: 0 }}>{info}</p>
       )}
       {error && <p style={{ color: "#c00", margin: 0 }}>{error}</p>}
-      <button type="submit" disabled={submitting || !stripe || status === "succeeded"}>
+      <button
+        type="submit"
+        disabled={submitting || !stripe || status === "succeeded"}
+        className="w-full rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-sm font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/15 disabled:bg-white/10 disabled:text-slate-500"
+      >
         {submitting ? "Processing…" : status === "succeeded" ? "Payment complete" : "Confirm Payment"}
       </button>
     </form>

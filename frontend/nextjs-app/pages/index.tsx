@@ -66,6 +66,20 @@ const parseDetailsImage = (raw: unknown): string | null => {
   return null;
 };
 
+type HeroMedia =
+  | { type: "video"; src: string }
+  | { type: "image"; src: string }
+  | { type: "stacked" };
+
+const heroVideoUrl = (process.env.NEXT_PUBLIC_HERO_VIDEO_URL ?? "").trim();
+const heroImageOverride = (process.env.NEXT_PUBLIC_HERO_IMAGE_URL ?? "").trim();
+
+const heroMediaConfig: HeroMedia = heroVideoUrl
+  ? { type: "video", src: heroVideoUrl }
+  : heroImageOverride
+      ? { type: "image", src: heroImageOverride }
+      : { type: "stacked" };
+
 const categories = [
   {
     id: "sports",
@@ -92,6 +106,41 @@ export default function Home() {
   const [pulls, setPulls] = useState<PullCard[]>(fallbackPulls);
   const [collectorNames, setCollectorNames] = useState<Record<string, string>>({});
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  const heroMedia = heroMediaConfig;
+
+  const heroVisual = useMemo(() => {
+    if (heroMedia.type === "video") {
+      return (
+        <div className="relative w-full max-w-xl overflow-hidden rounded-[2.5rem] border border-white/10 shadow-card">
+          <video
+            key={heroMedia.src}
+            src={heroMedia.src}
+            className="h-full w-full object-cover"
+            autoPlay
+            loop
+            muted
+            playsInline
+            preload="auto"
+          />
+        </div>
+      );
+    }
+    if (heroMedia.type === "image") {
+      return (
+        <div className="relative w-full max-w-xl overflow-hidden rounded-[2.5rem] border border-white/10 shadow-card">
+          <Image
+            src={heroMedia.src}
+            alt="Ten Kings collectible machines"
+            width={1600}
+            height={1200}
+            priority
+            className="h-full w-full object-cover"
+          />
+        </div>
+      );
+    }
+    return <DefaultHeroMachines />;
+  }, [heroMedia]);
 
   const handleScrollToMachines = useCallback(() => {
     if (typeof window === "undefined") {
@@ -257,35 +306,22 @@ export default function Home() {
       </Head>
 
       <section className="relative overflow-hidden bg-night-900/70">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-14 px-6 pb-16 pt-16 lg:flex-row lg:items-center">
-          <div className="relative z-10 max-w-[650px] space-y-6">
-            <p className="uppercase tracking-[0.6em] text-slate-500">Same mystery, more control</p>
-            <h1 className="font-heading text-[4rem] uppercase leading-none tracking-[0.14em] text-white md:text-[5.75rem]">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-6 pb-16 pt-16 lg:flex-row lg:items-center lg:gap-16">
+          <div className="relative z-10 order-1 max-w-[650px] space-y-6">
+            <h1 className="font-heading text-[3.5rem] uppercase leading-tight tracking-[0.14em] text-white sm:text-[4.5rem] md:text-[5.5rem]">
               COLLECTIBLE MYSTERY PACKS
             </h1>
-            <p className="font-lightning text-2xl uppercase tracking-[0.04em] text-transparent -skew-x-[20deg] whitespace-nowrap md:text-[2.5rem] lg:text-[2.8rem]">
+            <p className="font-lightning text-3xl uppercase tracking-[0.04em] text-transparent -skew-x-[12deg] sm:text-4xl md:text-[2.8rem]">
               <span
                 className="inline-block text-transparent"
                 style={{
-                  backgroundImage: "linear-gradient(110deg, #f8fafc 0%, #e0f2fe 25%, #93c5fd 55%, #dbeafe 85%, #ffffff 100%)",
+                  backgroundImage: "linear-gradient(110deg, #f8fafc 0%, #e0f2fe 30%, #93c5fd 65%, #ffffff 100%)",
                   backgroundClip: "text",
                   WebkitBackgroundClip: "text",
                   filter: "drop-shadow(0 0 18px rgba(147, 197, 253, 0.75)) drop-shadow(0 10px 24px rgba(15, 23, 42, 0.45))",
                 }}
               >
-                Pick It And
-              </span>
-              {" "}
-              <span
-                className="inline-block text-transparent"
-                style={{
-                  backgroundImage: "linear-gradient(110deg, #e0f2fe 0%, #cbd5f5 30%, #a5b4fc 60%, #bfdbfe 90%, #ffffff 100%)",
-                  backgroundClip: "text",
-                  WebkitBackgroundClip: "text",
-                  filter: "drop-shadow(0 0 18px rgba(165, 180, 252, 0.75)) drop-shadow(0 10px 24px rgba(30, 58, 138, 0.45))",
-                }}
-              >
-                Rip It
+                Pick It & Rip It
               </span>
             </p>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
@@ -294,53 +330,20 @@ export default function Home() {
                 onClick={handleScrollToMachines}
                 className="inline-flex items-center justify-center whitespace-nowrap rounded-full bg-gold-500 px-10 py-4 text-sm font-semibold uppercase tracking-[0.2em] text-night-900 shadow-glow transition hover:bg-gold-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold-500"
               >
-                Pick & Rip Now
+                Pick It & Rip It Now
               </button>
               <button
                 type="button"
                 onClick={() => router.push("/locations")}
                 className="inline-flex items-center justify-center whitespace-nowrap rounded-full border border-white/20 px-10 py-4 text-sm font-semibold uppercase tracking-[0.2em] text-white transition hover:border-white/40 hover:text-gold-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
               >
-                Find a Location
+                Find a Location & Rip It Live
               </button>
             </div>
-            <p className="text-sm text-slate-400">Tap your card, the door opens, and you pick your pack—no coils.</p>
           </div>
 
-          <div className="relative hidden flex-1 justify-end lg:flex">
-            <div className="relative h-[560px] w-[640px]" style={{ transform: "translateX(100px)" }}>
-              <div className="absolute inset-0 rounded-[3rem] border border-white/10 bg-night-900/80 shadow-card" aria-hidden />
-              <div className="absolute left-[calc(1.5rem-25px)] top-[calc(7rem-40px)] w-[200px] -rotate-8 drop-shadow-[0_28px_45px_rgba(168,85,247,0.45)] md:left-[calc(2.5rem-25px)] md:w-[230px] lg:left-[calc(3rem-25px)] lg:w-[250px]">
-                <Image
-                  src="/images/tenkings-vendingmachine-pokemon.png"
-                  alt="Pokémon vending machine"
-                  width={2813}
-                  height={5000}
-                  priority
-                  className="h-auto w-full"
-                />
-              </div>
-              <div className="absolute left-1/2 top-[100px] z-10 w-[220px] -translate-x-1/2 drop-shadow-[0_45px_70px_rgba(234,179,8,0.4)] md:w-[255px] lg:w-[275px]">
-                <Image
-                  src="/images/tenkings-vendingmachine-sports.png"
-                  alt="Sports vending machine"
-                  width={2813}
-                  height={5000}
-                  priority
-                  className="h-auto w-full"
-                />
-              </div>
-              <div className="absolute right-[calc(1.5rem-25px)] top-[calc(8rem-50px)] z-0 w-[200px] rotate-10 drop-shadow-[0_28px_45px_rgba(248,113,113,0.45)] md:right-[calc(2.5rem-25px)] md:w-[230px] lg:right-[calc(3rem-25px)] lg:w-[250px]">
-                <Image
-                  src="/images/tenkings-vendingmachine-comics.png"
-                  alt="Comics vending machine"
-                  width={2813}
-                  height={5000}
-                  priority
-                  className="h-auto w-full"
-                />
-              </div>
-            </div>
+          <div className="relative order-2 mt-8 flex w-full flex-1 justify-center lg:order-2 lg:mt-0">
+            {heroVisual}
           </div>
         </div>
 
@@ -500,5 +503,45 @@ export default function Home() {
 
       {activeItemId && <CardDetailModal itemId={activeItemId} onClose={closeModal} />}
     </AppShell>
+  );
+}
+
+function DefaultHeroMachines() {
+  return (
+    <div className="relative flex w-full max-w-xl items-center justify-center">
+      <div className="absolute inset-0 rounded-[2.5rem] border border-white/10 bg-night-900/70 shadow-card" aria-hidden />
+      <div className="relative flex h-[340px] w-full items-center justify-center gap-6 sm:h-[420px] md:h-[520px]">
+        <div className="relative hidden h-full w-[40%] -rotate-6 overflow-hidden rounded-[2rem] border border-white/10 bg-night-900/80 shadow-[0_28px_45px_rgba(168,85,247,0.35)] sm:block">
+          <Image
+            src="/images/tenkings-vendingmachine-pokemon.png"
+            alt="Pokémon vending machine"
+            fill
+            priority
+            className="object-contain"
+            sizes="(max-width: 1024px) 30vw, 220px"
+          />
+        </div>
+        <div className="relative h-full w-[60%] overflow-hidden rounded-[2.5rem] border border-white/10 bg-night-900/80 shadow-[0_45px_70px_rgba(234,179,8,0.4)]">
+          <Image
+            src="/images/tenkings-vendingmachine-sports.png"
+            alt="Sports vending machine"
+            fill
+            priority
+            className="object-contain"
+            sizes="(max-width: 1024px) 40vw, 280px"
+          />
+        </div>
+        <div className="relative hidden h-full w-[40%] rotate-6 overflow-hidden rounded-[2rem] border border-white/10 bg-night-900/80 shadow-[0_28px_45px_rgba(248,113,113,0.35)] sm:block">
+          <Image
+            src="/images/tenkings-vendingmachine-comics.png"
+            alt="Comics vending machine"
+            fill
+            priority
+            className="object-contain"
+            sizes="(max-width: 1024px) 30vw, 220px"
+          />
+        </div>
+      </div>
+    </div>
   );
 }
