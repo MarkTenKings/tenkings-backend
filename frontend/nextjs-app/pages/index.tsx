@@ -203,10 +203,15 @@ export default function Home() {
   }, [pulls]);
 
   useEffect(() => {
-    const missingIds = pulls
-      .map((pull) => pull.ownerId)
-      .filter((id): id is string => Boolean(id) && !collectorNames[id]);
-    if (!missingIds.length) {
+    const missingIds = pulls.reduce<string[]>((acc, pull) => {
+      const ownerId = pull.ownerId;
+      if (ownerId && !collectorNames[ownerId] && !acc.includes(ownerId)) {
+        acc.push(ownerId);
+      }
+      return acc;
+    }, []);
+
+    if (missingIds.length === 0) {
       return;
     }
     let cancelled = false;
