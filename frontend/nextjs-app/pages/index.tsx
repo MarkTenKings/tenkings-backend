@@ -1,7 +1,15 @@
 import Head from "next/head";
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import { useRouter } from "next/router";
 import AppShell from "../components/AppShell";
 import { fetchCollector, listRecentPulls } from "../lib/api";
@@ -13,6 +21,7 @@ const BUYBACK_RATE = 0.75;
 const UNKNOWN_OWNER_LABEL = "Collector";
 
 type PullCard = {
+  type: "card";
   itemId: string;
   cardName: string;
   marketValueMinor: number | null;
@@ -23,7 +32,20 @@ type PullCard = {
   packLabel: string | null;
 };
 
+type LiveRipTile = {
+  type: "live";
+  id: string;
+  title: string;
+  videoUrl: string;
+  locationLabel: string | null;
+  thumbnailUrl: string | null;
+  slug: string | null;
+};
+
+type DisplayTile = PullCard | LiveRipTile;
+
 const fallbackPulls: PullCard[] = Array.from({ length: 3 }).map((_, index) => ({
+  type: "card",
   itemId: `placeholder-${index}`,
   cardName: "Card Title",
   marketValueMinor: null,
@@ -106,41 +128,46 @@ export default function Home() {
   const [pulls, setPulls] = useState<PullCard[]>(fallbackPulls);
   const [collectorNames, setCollectorNames] = useState<Record<string, string>>({});
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
+  const [liveRipTiles, setLiveRipTiles] = useState<LiveRipTile[]>([]);
   const heroMedia = heroMediaConfig;
 
-  const heroVisual = useMemo(() => {
-    if (heroMedia.type === "video") {
-      return (
-        <div className="relative w-full max-w-xl overflow-hidden rounded-[2.5rem] border border-white/10 shadow-card">
-          <video
-            key={heroMedia.src}
-            src={heroMedia.src}
-            className="h-full w-full object-cover"
-            autoPlay
-            loop
-            muted
-            playsInline
-            preload="auto"
-          />
-        </div>
-      );
-    }
-    if (heroMedia.type === "image") {
-      return (
-        <div className="relative w-full max-w-xl overflow-hidden rounded-[2.5rem] border border-white/10 shadow-card">
-          <Image
-            src={heroMedia.src}
-            alt="Ten Kings collectible machines"
-            width={1600}
-            height={1200}
-            priority
-            className="h-full w-full object-cover"
-          />
-        </div>
-      );
-    }
-    return <DefaultHeroMachines />;
-  }, [heroMedia]);
+  const renderHeroMedia = useCallback(
+    (viewport: "mobile" | "desktop") => {
+      if (heroMedia.type === "video") {
+        return (
+          <ResponsiveMediaFrame viewport={viewport}>
+            <video
+              key={`${heroMedia.src}-${viewport}`}
+              src={heroMedia.src}
+              className="absolute inset-0 h-full w-full object-cover"
+              autoPlay
+              loop
+              muted
+              playsInline
+              preload="auto"
+            />
+          </ResponsiveMediaFrame>
+        );
+      }
+
+      if (heroMedia.type === "image") {
+        return (
+          <ResponsiveMediaFrame viewport={viewport}>
+            <Image
+              src={heroMedia.src}
+              alt="Ten Kings collectible machines"
+              fill
+              priority
+              className="object-cover"
+            />
+          </ResponsiveMediaFrame>
+        );
+      }
+
+      return viewport === "desktop" ? <StackedHeroMachinesDesktop /> : <StackedHeroMachinesMobile />;
+    },
+    [heroMedia]
+  );
 
   const handleScrollToMachines = useCallback(() => {
     if (typeof window === "undefined") {
@@ -168,11 +195,8 @@ export default function Home() {
   );
 
   const handleCollectorClick = useCallback(
-    (event: MouseEvent<HTMLAnchorElement>, ownerId: string | null) => {
+    (event: MouseEvent<HTMLAnchorElement>, ownerId: string) => {
       event.stopPropagation();
-      if (!ownerId) {
-        return;
-      }
       router.push(`/collectors/${ownerId}`).catch(() => undefined);
     },
     [router]
@@ -215,6 +239,7 @@ export default function Home() {
           }
 
           return {
+            type: "card",
             itemId,
             cardName,
             marketValueMinor,
@@ -244,12 +269,77 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    const loadLiveRips = async () => {
+      try {
+        const response = await fetch("/api/live-rips?featured=true");
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as { liveRips?: Array<any> };
+        const tiles = (payload.liveRips ?? [])
+          .filter((entry) => typeof entry?.videoUrl === "string" && entry.videoUrl.trim())
+          .slice(0, 6)
+          .map((entry): LiveRipTile => ({
+            type: "live",
+            id: entry.id ?? entry.slug ?? entry.title ?? `live-${Math.random().toString(36).slice(2)}`,
+            title: entry.title ?? "Live Rip",
+            videoUrl: entry.videoUrl,
+            locationLabel: entry.location?.name ?? null,
+            thumbnailUrl: entry.thumbnailUrl ?? null,
+            slug: entry.slug ?? null,
+          }));
+        if (!cancelled) {
+          setLiveRipTiles(tiles);
+        }
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("Failed to load live rip tiles", error);
+        }
+      }
+    };
+    loadLiveRips().catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const marqueeItems = useMemo(() => {
-    if (!pulls.length) {
+    const maxItems = 10;
+    const standard = pulls.slice(0, maxItems);
+    const liveCandidates = liveRipTiles.slice(0, Math.min(5, Math.floor(maxItems / 2)));
+    const result: DisplayTile[] = [];
+    let cardIndex = 0;
+    let liveIndex = 0;
+
+    while (result.length < maxItems && (cardIndex < standard.length || liveIndex < liveCandidates.length)) {
+      const shouldUseLive = liveIndex < liveCandidates.length &&
+        ((result.length % 2 === 1 && cardIndex < standard.length) || cardIndex >= standard.length);
+
+      if (shouldUseLive) {
+        result.push(liveCandidates[liveIndex++]);
+      } else if (cardIndex < standard.length) {
+        result.push(standard[cardIndex++]);
+      } else if (liveIndex < liveCandidates.length) {
+        result.push(liveCandidates[liveIndex++]);
+      } else {
+        break;
+      }
+    }
+
+    while (result.length < maxItems && cardIndex < standard.length) {
+      result.push(standard[cardIndex++]);
+    }
+    while (result.length < maxItems && liveIndex < liveCandidates.length) {
+      result.push(liveCandidates[liveIndex++]);
+    }
+
+    if (!result.length) {
       return pulls;
     }
-    return [...pulls, ...pulls, ...pulls];
-  }, [pulls]);
+    return [...result, ...result, ...result];
+  }, [pulls, liveRipTiles]);
 
   useEffect(() => {
     const missingIds = pulls.reduce<string[]>((acc, pull) => {
@@ -308,22 +398,20 @@ export default function Home() {
       <section className="relative overflow-hidden bg-night-900/70">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-6 pb-16 pt-16 lg:flex-row lg:items-center lg:gap-16">
           <div className="relative z-10 order-1 max-w-[650px] space-y-6">
-            <h1 className="font-heading text-[3.5rem] uppercase leading-tight tracking-[0.14em] text-white sm:text-[4.5rem] md:text-[5.5rem]">
-              COLLECTIBLE MYSTERY PACKS
-            </h1>
-            <p className="font-lightning text-3xl uppercase tracking-[0.04em] text-transparent -skew-x-[12deg] sm:text-4xl md:text-[2.8rem]">
+            <h1 className="font-lightning text-4xl uppercase tracking-[0.08em] text-transparent -skew-x-[12deg] sm:text-[3.75rem] md:text-[4.75rem] lg:text-[5.5rem]">
               <span
                 className="inline-block text-transparent"
                 style={{
-                  backgroundImage: "linear-gradient(110deg, #f8fafc 0%, #e0f2fe 30%, #93c5fd 65%, #ffffff 100%)",
+                  backgroundImage: "linear-gradient(110deg, #f8fafc 0%, #e0f2fe 28%, #93c5fd 62%, #ffffff 100%)",
                   backgroundClip: "text",
                   WebkitBackgroundClip: "text",
-                  filter: "drop-shadow(0 0 18px rgba(147, 197, 253, 0.75)) drop-shadow(0 10px 24px rgba(15, 23, 42, 0.45))",
+                  filter: "drop-shadow(0 0 22px rgba(147, 197, 253, 0.9)) drop-shadow(0 12px 28px rgba(15, 23, 42, 0.45))",
                 }}
               >
                 Pick It & Rip It
               </span>
-            </p>
+            </h1>
+            <p className="text-xl uppercase tracking-[0.32em] text-slate-300 sm:text-2xl">Collectible Mystery Packs</p>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
               <button
                 type="button"
@@ -340,10 +428,11 @@ export default function Home() {
                 Find a Location & Rip It Live
               </button>
             </div>
+            <div className="mt-8 flex justify-center lg:hidden">{renderHeroMedia("mobile")}</div>
           </div>
 
-          <div className="relative order-2 mt-8 flex w-full flex-1 justify-center lg:order-2 lg:mt-0">
-            {heroVisual}
+          <div className="relative order-2 mt-8 hidden w-full flex-1 justify-end lg:flex lg:order-2 lg:mt-0">
+            {renderHeroMedia("desktop")}
           </div>
         </div>
 
@@ -353,23 +442,69 @@ export default function Home() {
             <div className="pointer-events-none absolute inset-y-0 right-0 w-32 bg-gradient-to-l from-night-900 via-night-900/80 to-transparent" aria-hidden />
             <div
               className="flex min-w-full gap-6 motion-reduce:animate-none motion-safe:animate-marquee"
-              style={{ animationDuration: `${Math.max(18, marqueeItems.length * 2)}s` }}
+              style={{
+                animationDuration: `${Math.max(12, ((marqueeItems.length / 3) || 1) * 1.5)}s`,
+              }}
             >
               {marqueeItems.map((item, index) => {
+                if (item.type === "live") {
+                  return (
+                    <article
+                      key={`live-${item.id}-${index}`}
+                      className="group flex min-w-[280px] max-w-[280px] flex-col gap-3 rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-sky-400/60 hover:shadow-glow"
+                    >
+                      <header className="space-y-2">
+                        <p className="text-xs uppercase tracking-[0.3em] text-sky-300">Live Rip</p>
+                        <h3 className="font-heading text-xl uppercase tracking-[0.18em] text-white">{item.title}</h3>
+                      </header>
+                      <div className="relative mt-2 flex-1 overflow-hidden rounded-2xl border border-white/10 bg-night-900/60">
+                        <div className="relative h-0 w-full pb-[133%]">
+                          <video
+                            key={`${item.videoUrl}-${index}`}
+                            src={item.videoUrl}
+                            className="absolute inset-0 h-full w-full object-cover"
+                            autoPlay
+                            loop
+                            muted
+                            playsInline
+                            poster={item.thumbnailUrl ?? undefined}
+                          />
+                        </div>
+                      </div>
+                      <footer className="space-y-1">
+                        {item.locationLabel && (
+                          <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">@{item.locationLabel}</p>
+                        )}
+                        {item.slug ? (
+                          <Link
+                            href={`/live/${item.slug}`}
+                            className="text-xs uppercase tracking-[0.24em] text-sky-300 transition hover:text-sky-100"
+                          >
+                            Watch on Ten Kings Live →
+                          </Link>
+                        ) : (
+                          <p className="text-xs text-slate-400">Watch on Ten Kings Live</p>
+                        )}
+                      </footer>
+                    </article>
+                  );
+                }
+
                 const hasValue =
                   typeof item.marketValueMinor === "number" &&
                   Number.isFinite(item.marketValueMinor) &&
                   item.marketValueMinor > 0;
                 const canOpen = Boolean(item.itemId && !item.itemId.startsWith("placeholder"));
                 const displayOwnerLabel = item.ownerId ? collectorNames[item.ownerId] ?? item.ownerLabel : item.ownerLabel;
+
                 return (
                   <article
                     key={`${item.itemId}-${index}`}
                     className="group flex min-w-[280px] max-w-[280px] flex-col gap-4 rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-gold-400/60 hover:shadow-glow"
                     role="button"
                     tabIndex={canOpen ? 0 : -1}
-                    onClick={() => handleOpenCard(item)}
-                    onKeyDown={(event) => handleCardKeyDown(event, item)}
+                    onClick={() => canOpen && handleOpenCard(item)}
+                    onKeyDown={(event) => canOpen && handleCardKeyDown(event, item)}
                     aria-label={`Recent pull ${item.cardName}`}
                   >
                     <header className="space-y-2">
@@ -419,7 +554,7 @@ export default function Home() {
                         {item.ownerId ? (
                           <Link
                             href={`/collectors/${item.ownerId}`}
-                            onClick={(event) => handleCollectorClick(event, item.ownerId)}
+                            onClick={(event) => handleCollectorClick(event, item.ownerId!)}
                             className="text-sm text-white transition hover:text-gold-200"
                           >
                             {displayOwnerLabel}
@@ -506,42 +641,67 @@ export default function Home() {
   );
 }
 
-function DefaultHeroMachines() {
+function ResponsiveMediaFrame({ viewport, children }: { viewport: "mobile" | "desktop"; children: React.ReactNode }) {
+  const frameClass = viewport === "desktop" ? "w-[640px] max-w-full" : "w-full max-w-md";
+  const paddingClass = viewport === "desktop" ? "pb-[60%]" : "pb-[62%]";
   return (
-    <div className="relative flex w-full max-w-xl items-center justify-center">
-      <div className="absolute inset-0 rounded-[2.5rem] border border-white/10 bg-night-900/70 shadow-card" aria-hidden />
-      <div className="relative flex h-[340px] w-full items-center justify-center gap-6 sm:h-[420px] md:h-[520px]">
-        <div className="relative hidden h-full w-[40%] -rotate-6 overflow-hidden rounded-[2rem] border border-white/10 bg-night-900/80 shadow-[0_28px_45px_rgba(168,85,247,0.35)] sm:block">
-          <Image
-            src="/images/tenkings-vendingmachine-pokemon.png"
-            alt="Pokémon vending machine"
-            fill
-            priority
-            className="object-contain"
-            sizes="(max-width: 1024px) 30vw, 220px"
-          />
-        </div>
-        <div className="relative h-full w-[60%] overflow-hidden rounded-[2.5rem] border border-white/10 bg-night-900/80 shadow-[0_45px_70px_rgba(234,179,8,0.4)]">
-          <Image
-            src="/images/tenkings-vendingmachine-sports.png"
-            alt="Sports vending machine"
-            fill
-            priority
-            className="object-contain"
-            sizes="(max-width: 1024px) 40vw, 280px"
-          />
-        </div>
-        <div className="relative hidden h-full w-[40%] rotate-6 overflow-hidden rounded-[2rem] border border-white/10 bg-night-900/80 shadow-[0_28px_45px_rgba(248,113,113,0.35)] sm:block">
-          <Image
-            src="/images/tenkings-vendingmachine-comics.png"
-            alt="Comics vending machine"
-            fill
-            priority
-            className="object-contain"
-            sizes="(max-width: 1024px) 30vw, 220px"
-          />
-        </div>
+    <div className={`relative overflow-hidden rounded-[2.5rem] border border-white/10 bg-night-900/70 shadow-card ${frameClass}`}>
+      <div className={`relative h-0 ${paddingClass}`}>
+        <div className="absolute inset-0">{children}</div>
       </div>
+    </div>
+  );
+}
+
+function StackedHeroMachinesDesktop() {
+  return (
+    <div className="relative h-[560px] w-[640px]" style={{ transform: "translateX(100px)" }}>
+      <div className="absolute inset-0 rounded-[3rem] border border-white/10 bg-night-900/80 shadow-card" aria-hidden />
+      <div className="absolute left-[calc(1.5rem-25px)] top-[calc(7rem-40px)] w-[200px] -rotate-8 drop-shadow-[0_28px_45px_rgba(168,85,247,0.45)] md:left-[calc(2.5rem-25px)] md:w-[230px] lg:left-[calc(3rem-25px)] lg:w-[250px]">
+        <Image
+          src="/images/tenkings-vendingmachine-pokemon.png"
+          alt="Pokémon vending machine"
+          width={2813}
+          height={5000}
+          priority
+          className="h-auto w-full"
+        />
+      </div>
+      <div className="absolute left-1/2 top-[100px] z-10 w-[220px] -translate-x-1/2 drop-shadow-[0_45px_70px_rgba(234,179,8,0.4)] md:w-[255px] lg:w-[275px]">
+        <Image
+          src="/images/tenkings-vendingmachine-sports.png"
+          alt="Sports vending machine"
+          width={2813}
+          height={5000}
+          priority
+          className="h-auto w-full"
+        />
+      </div>
+      <div className="absolute right-[calc(1.5rem-25px)] top-[calc(8rem-50px)] z-0 w-[200px] rotate-10 drop-shadow-[0_28px_45px_rgba(248,113,113,0.45)] md:right-[calc(2.5rem-25px)] md:w-[230px] lg:right-[calc(3rem-25px)] lg:w-[250px]">
+        <Image
+          src="/images/tenkings-vendingmachine-comics.png"
+          alt="Comics vending machine"
+          width={2813}
+          height={5000}
+          priority
+          className="h-auto w-full"
+        />
+      </div>
+    </div>
+  );
+}
+
+function StackedHeroMachinesMobile() {
+  return (
+    <div className="relative w-full max-w-md overflow-hidden rounded-[2.5rem] border border-white/10 bg-night-900/80 shadow-card">
+      <Image
+        src="/images/tenkings-vendingmachine-sports.png"
+        alt="Ten Kings collectible vending machines"
+        width={2813}
+        height={5000}
+        priority
+        className="h-auto w-full object-contain"
+      />
     </div>
   );
 }
