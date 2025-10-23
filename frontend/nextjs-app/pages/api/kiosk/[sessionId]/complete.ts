@@ -74,7 +74,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           thumbnailUrl: payload.thumbnailUrl ?? session.thumbnailUrl ?? null,
           locationId: session.locationId,
           featured: payload.featured ?? true,
-          kioskSession: { connect: { id: session.id } },
+          kioskSessionId: session.id,
         },
       });
     }
