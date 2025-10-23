@@ -398,10 +398,9 @@ export default function Home() {
       <section className="relative overflow-hidden bg-night-900/70">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-6 pb-16 pt-16 lg:flex-row lg:items-center lg:gap-16">
           <div className="relative z-10 order-1 max-w-[650px] space-y-6">
-            <h1 className="hero-heading font-lightning text-[3.5rem] uppercase tracking-[0.08em] text-transparent -skew-x-[10deg] leading-[0.94] text-left sm:text-[4.1rem] md:text-[4.8rem] lg:text-[5.6rem] xl:text-[6.1rem]">
+            <h1 className="hero-heading font-lightning text-[4rem] uppercase tracking-[0.08em] text-transparent -skew-x-[10deg] leading-[0.94] text-left sm:text-[4.8rem] md:text-[5.5rem] lg:text-[6.4rem] xl:text-[7rem]">
               <span className="lightning-line">Pick It</span>
-              <span className="lightning-line">Rip It</span>
-              <span className="lightning-line accent">Live</span>
+              <span className="lightning-line accent">Rip It Live</span>
             </h1>
             <style jsx>{`
               .hero-heading {
@@ -456,7 +455,7 @@ export default function Home() {
                 animation-delay: 0s, 0.8s;
               }
             `}</style>
-            <p className="text-xl uppercase tracking-[0.32em] text-slate-300 sm:text-2xl">Collectible Mystery Packs</p>
+            <p className="text-xl uppercase tracking-[0.24em] text-slate-300 sm:text-2xl">Collectible Mystery Packs</p>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
               <button
                 type="button"
@@ -470,9 +469,12 @@ export default function Home() {
                 onClick={() => router.push("/locations")}
                 className="inline-flex items-center justify-center whitespace-nowrap rounded-full border border-white/20 px-10 py-4 text-sm font-semibold uppercase tracking-[0.2em] text-white transition hover:border-white/40 hover:text-gold-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
               >
-                Find a Location & Rip It Live
+                Rip It Live Near You
               </button>
             </div>
+            <p className="text-sm uppercase tracking-[0.22em] text-slate-400">
+              Pick and rip online or visit a live location near you.
+            </p>
             <div className="mt-8 flex justify-center lg:hidden">{renderHeroMedia("mobile")}</div>
           </div>
 
