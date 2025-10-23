@@ -417,16 +417,16 @@ export default function Home() {
                 background-clip: text;
                 -webkit-background-clip: text;
                 color: transparent;
-                text-shadow: 0 6px 0 rgba(255, 255, 255, 0.32), 0 14px 24px rgba(15, 23, 42, 0.55);
-                filter: drop-shadow(0 0 16px rgba(147, 197, 253, 0.82)) drop-shadow(0 18px 36px rgba(15, 23, 42, 0.5));
-                animation: lightningFlow 6s linear infinite, lightningPulse 2.6s ease-in-out infinite;
+                text-shadow: 0 3px 0 rgba(255, 255, 255, 0.18);
+                filter: drop-shadow(0 0 8px rgba(147, 197, 253, 0.55));
+                animation: lightningFlow 6s linear infinite, lightningPulse 3s ease-in-out infinite;
               }
               .hero-heading .lightning-line:nth-child(2) {
                 background-image: linear-gradient(110deg, #ecfeff 0%, #bae6fd 35%, #60a5fa 70%, #f8fafc 100%);
               }
               .hero-heading .lightning-line.accent {
                 background-image: linear-gradient(110deg, #fff7ed 0%, #fde68a 32%, #facc15 68%, #fff7ed 100%);
-                filter: drop-shadow(0 0 20px rgba(250, 204, 21, 0.82)) drop-shadow(0 20px 38px rgba(250, 204, 21, 0.55));
+                filter: drop-shadow(0 0 10px rgba(250, 204, 21, 0.65));
               }
               @keyframes lightningFlow {
                 0% {
@@ -437,26 +437,21 @@ export default function Home() {
                 }
               }
               @keyframes lightningPulse {
-                0%, 18%, 100% {
+                0%, 100% {
+                  opacity: 0.9;
+                }
+                10% {
                   opacity: 1;
-                  text-shadow: 0 6px 0 rgba(255, 255, 255, 0.35), 0 16px 28px rgba(15, 23, 42, 0.52);
-                  filter: drop-shadow(0 0 18px rgba(147, 197, 253, 0.88)) drop-shadow(0 18px 36px rgba(15, 23, 42, 0.5));
                 }
-                32% {
-                  opacity: 0.94;
-                  text-shadow: 0 4px 0 rgba(226, 232, 240, 0.4), 0 12px 20px rgba(30, 41, 59, 0.5);
-                  filter: drop-shadow(0 0 10px rgba(147, 197, 253, 0.6)) drop-shadow(0 12px 24px rgba(15, 23, 42, 0.45));
-                }
-                46% {
-                  opacity: 1;
-                  text-shadow: 0 8px 0 rgba(255, 255, 255, 0.5), 0 20px 32px rgba(59, 130, 246, 0.45);
-                  filter: drop-shadow(0 0 24px rgba(191, 219, 254, 0.95)) drop-shadow(0 24px 40px rgba(59, 130, 246, 0.48));
-                }
-                60% {
-                  opacity: 0.96;
-                  text-shadow: 0 5px 0 rgba(226, 232, 240, 0.42), 0 14px 26px rgba(30, 41, 59, 0.48);
-                  filter: drop-shadow(0 0 14px rgba(147, 197, 253, 0.7)) drop-shadow(0 16px 30px rgba(15, 23, 42, 0.48));
-                }
+              }
+              .hero-heading .lightning-line:nth-child(1) {
+                animation-delay: 0s, 0s;
+              }
+              .hero-heading .lightning-line:nth-child(2) {
+                animation-delay: 0s, 0.4s;
+              }
+              .hero-heading .lightning-line:nth-child(3) {
+                animation-delay: 0s, 0.8s;
               }
             `}</style>
             <p className="text-xl uppercase tracking-[0.32em] text-slate-300 sm:text-2xl">Collectible Mystery Packs</p>
