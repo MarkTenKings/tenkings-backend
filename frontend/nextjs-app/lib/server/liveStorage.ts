@@ -1,4 +1,4 @@
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { ObjectCannedACL, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -19,7 +19,22 @@ const s3PublicBaseUrl = process.env.LIVE_STORAGE_PUBLIC_BASE_URL?.replace(/\/$/,
 const s3AccessKeyId = process.env.LIVE_STORAGE_ACCESS_KEY_ID;
 const s3SecretAccessKey = process.env.LIVE_STORAGE_SECRET_ACCESS_KEY;
 const s3ForcePathStyle = String(process.env.LIVE_STORAGE_FORCE_PATH_STYLE ?? "false").toLowerCase() === "true";
-const s3ObjectAcl = process.env.LIVE_STORAGE_ACL ?? "public-read";
+const allowedAcls: ObjectCannedACL[] = [
+  "private",
+  "public-read",
+  "public-read-write",
+  "authenticated-read",
+  "aws-exec-read",
+  "bucket-owner-read",
+  "bucket-owner-full-control",
+  "log-delivery-write",
+];
+
+const s3ObjectAclEnv = process.env.LIVE_STORAGE_ACL;
+const resolvedAcl = s3ObjectAclEnv ? s3ObjectAclEnv.toLowerCase() : "public-read";
+const s3ObjectAcl: ObjectCannedACL = allowedAcls.includes(resolvedAcl as ObjectCannedACL)
+  ? (resolvedAcl as ObjectCannedACL)
+  : "public-read";
 
 export const LIVE_MAX_UPLOAD_BYTES = Number(process.env.LIVE_UPLOAD_MAX_BYTES ?? 150 * 1024 * 1024);
 
