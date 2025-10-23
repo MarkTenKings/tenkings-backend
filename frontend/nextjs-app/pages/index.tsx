@@ -398,7 +398,7 @@ export default function Home() {
       <section className="relative overflow-hidden bg-night-900/70">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-6 pb-16 pt-16 lg:flex-row lg:items-center lg:gap-16">
           <div className="relative z-10 order-1 max-w-[650px] space-y-6">
-            <h1 className="font-lightning text-[10rem] uppercase tracking-[0.12em] text-transparent -skew-x-[12deg] leading-[1.02] sm:text-[11.6rem] md:text-[13.8rem] lg:text-[16rem] xl:text-[17.5rem]">
+            <h1 className="font-lightning text-[5rem] uppercase tracking-[0.12em] text-transparent -skew-x-[12deg] leading-[1.05] sm:text-[5.8rem] md:text-[6.9rem] lg:text-[8rem] xl:text-[8.75rem]">
               <span
                 className="inline-block px-1 py-[0.2em] text-transparent"
                 style={{
