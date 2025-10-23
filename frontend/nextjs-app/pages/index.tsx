@@ -398,14 +398,16 @@ export default function Home() {
       <section className="relative overflow-hidden bg-night-900/70">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-6 pb-16 pt-16 lg:flex-row lg:items-center lg:gap-16">
           <div className="relative z-10 order-1 max-w-[650px] space-y-6">
-            <h1 className="font-lightning text-4xl uppercase tracking-[0.08em] text-transparent -skew-x-[12deg] leading-[0.95] sm:text-[3.75rem] md:text-[4.75rem] lg:text-[5.5rem]">
+            <h1 className="font-lightning text-[10rem] uppercase tracking-[0.12em] text-transparent -skew-x-[12deg] leading-[1.02] sm:text-[11.6rem] md:text-[13.8rem] lg:text-[16rem] xl:text-[17.5rem]">
               <span
-                className="inline-block text-transparent"
+                className="inline-block px-1 py-[0.2em] text-transparent"
                 style={{
-                  backgroundImage: "linear-gradient(110deg, #f8fafc 0%, #e0f2fe 28%, #93c5fd 62%, #ffffff 100%)",
+                  backgroundImage: "linear-gradient(110deg, #f0f9ff 0%, #e0f2fe 28%, #93c5fd 62%, #ffffff 100%)",
                   backgroundClip: "text",
                   WebkitBackgroundClip: "text",
-                  filter: "drop-shadow(0 0 22px rgba(147, 197, 253, 0.9)) drop-shadow(0 12px 28px rgba(15, 23, 42, 0.45))",
+                  WebkitFontSmoothing: "antialiased",
+                  MozOsxFontSmoothing: "grayscale",
+                  filter: "drop-shadow(0 0 18px rgba(147, 197, 253, 0.78)) drop-shadow(0 18px 40px rgba(15, 23, 42, 0.55))",
                 }}
               >
                 Pick It & Rip It
