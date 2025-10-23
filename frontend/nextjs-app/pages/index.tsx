@@ -398,22 +398,67 @@ export default function Home() {
       <section className="relative overflow-hidden bg-night-900/70">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-6 pb-16 pt-16 lg:flex-row lg:items-center lg:gap-16">
           <div className="relative z-10 order-1 max-w-[650px] space-y-6">
-            <h1 className="font-lightning text-[3.5rem] uppercase tracking-[0.12em] text-transparent -skew-x-[12deg] leading-[1.04] sm:text-[4.2rem] md:text-[5rem] lg:text-[5.8rem] xl:text-[6.3rem]">
-              <span
-                className="inline-block px-1 py-[0.2em] text-transparent"
-                style={{
-                  backgroundImage: "linear-gradient(110deg, #f0f9ff 0%, #e0f2fe 28%, #93c5fd 62%, #ffffff 100%)",
-                  backgroundClip: "text",
-                  WebkitBackgroundClip: "text",
-                  WebkitFontSmoothing: "antialiased",
-                  MozOsxFontSmoothing: "grayscale",
-                  filter: "drop-shadow(0 0 16px rgba(147, 197, 253, 0.75)) drop-shadow(0 14px 32px rgba(15, 23, 42, 0.5))",
-                  textShadow: "0 4px 0 rgba(148, 163, 184, 0.35), 0 10px 18px rgba(15, 23, 42, 0.45)",
-                }}
-              >
-                Pick It & Rip It
-              </span>
+            <h1 className="hero-heading font-lightning text-[5rem] uppercase tracking-[0.12em] text-transparent -skew-x-[12deg] leading-[1.04] sm:text-[5.8rem] md:text-[6.9rem] lg:text-[8rem] xl:text-[8.75rem]">
+              <span className="lightning-line">Pick It</span>
+              <span className="lightning-line">Rip It</span>
+              <span className="lightning-line accent">Live</span>
             </h1>
+            <style jsx>{`
+              .hero-heading {
+                -webkit-font-smoothing: antialiased;
+                -moz-osx-font-smoothing: grayscale;
+              }
+              .hero-heading .lightning-line {
+                display: block;
+                padding: 0.08em 0.1em;
+                background-image: linear-gradient(110deg, #f8fcff 0%, #dbeafe 26%, #93c5fd 58%, #f8fafc 100%);
+                background-size: 220% 100%;
+                background-position: 0% 50%;
+                background-clip: text;
+                -webkit-background-clip: text;
+                color: transparent;
+                text-shadow: 0 6px 0 rgba(255, 255, 255, 0.32), 0 14px 24px rgba(15, 23, 42, 0.55);
+                filter: drop-shadow(0 0 16px rgba(147, 197, 253, 0.82)) drop-shadow(0 18px 36px rgba(15, 23, 42, 0.5));
+                animation: lightningFlow 6s linear infinite, lightningPulse 2.6s ease-in-out infinite;
+              }
+              .hero-heading .lightning-line:nth-child(2) {
+                background-image: linear-gradient(110deg, #ecfeff 0%, #bae6fd 35%, #60a5fa 70%, #f8fafc 100%);
+              }
+              .hero-heading .lightning-line.accent {
+                background-image: linear-gradient(110deg, #fff7ed 0%, #fde68a 32%, #facc15 68%, #fff7ed 100%);
+                filter: drop-shadow(0 0 20px rgba(250, 204, 21, 0.82)) drop-shadow(0 20px 38px rgba(250, 204, 21, 0.55));
+              }
+              @keyframes lightningFlow {
+                0% {
+                  background-position: 0% 50%;
+                }
+                100% {
+                  background-position: 200% 50%;
+                }
+              }
+              @keyframes lightningPulse {
+                0%, 18%, 100% {
+                  opacity: 1;
+                  text-shadow: 0 6px 0 rgba(255, 255, 255, 0.35), 0 16px 28px rgba(15, 23, 42, 0.52);
+                  filter: drop-shadow(0 0 18px rgba(147, 197, 253, 0.88)) drop-shadow(0 18px 36px rgba(15, 23, 42, 0.5));
+                }
+                32% {
+                  opacity: 0.94;
+                  text-shadow: 0 4px 0 rgba(226, 232, 240, 0.4), 0 12px 20px rgba(30, 41, 59, 0.5);
+                  filter: drop-shadow(0 0 10px rgba(147, 197, 253, 0.6)) drop-shadow(0 12px 24px rgba(15, 23, 42, 0.45));
+                }
+                46% {
+                  opacity: 1;
+                  text-shadow: 0 8px 0 rgba(255, 255, 255, 0.5), 0 20px 32px rgba(59, 130, 246, 0.45);
+                  filter: drop-shadow(0 0 24px rgba(191, 219, 254, 0.95)) drop-shadow(0 24px 40px rgba(59, 130, 246, 0.48));
+                }
+                60% {
+                  opacity: 0.96;
+                  text-shadow: 0 5px 0 rgba(226, 232, 240, 0.42), 0 14px 26px rgba(30, 41, 59, 0.48);
+                  filter: drop-shadow(0 0 14px rgba(147, 197, 253, 0.7)) drop-shadow(0 16px 30px rgba(15, 23, 42, 0.48));
+                }
+              }
+            `}</style>
             <p className="text-xl uppercase tracking-[0.32em] text-slate-300 sm:text-2xl">Collectible Mystery Packs</p>
             <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
               <button
