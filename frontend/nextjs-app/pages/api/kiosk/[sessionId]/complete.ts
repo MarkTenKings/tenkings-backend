@@ -14,6 +14,14 @@ const completeSchema = z.object({
   publish: z.boolean().optional().default(true),
 });
 
+function extractRevealName(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return undefined;
+  }
+  const maybeName = (payload as Record<string, unknown>).name;
+  return typeof maybeName === "string" ? maybeName : undefined;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const { sessionId } = req.query;
   if (typeof sessionId !== "string") {
@@ -43,7 +51,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const now = new Date();
 
     if (payload.publish) {
-      const baseTitle = payload.title?.trim() || session.revealPayload?.name || "Live Rip";
+      const revealName = extractRevealName(session.revealPayload) || session.revealItem?.name;
+      const baseTitle = payload.title?.trim() || revealName || "Live Rip";
       const baseSlugInput = payload.title?.trim() || `${session.code}-${baseTitle}`;
       let slugBase = slugify(baseSlugInput);
       if (!slugBase) {
