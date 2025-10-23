@@ -227,19 +227,28 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
           <div className="flex flex-col items-start gap-8 text-left">
             <p className="text-sm uppercase tracking-[0.4em] text-emerald-300">Big hit</p>
             <h2 className="font-heading text-5xl uppercase tracking-[0.14em] text-white">
-              {session.reveal?.name ?? "Vault Hit"}
+              {typeof session.reveal === "object" && session.reveal && !Array.isArray(session.reveal)
+                ? ((session.reveal as Record<string, unknown>).name as string | undefined) ?? "Vault Hit"
+                : "Vault Hit"}
             </h2>
-            <p className="text-lg text-slate-300">{session.reveal?.set}</p>
-            {session.reveal?.imageUrl ? (
+            <p className="text-lg text-slate-300">
+              {typeof session.reveal === "object" && session.reveal && !Array.isArray(session.reveal)
+                ? ((session.reveal as Record<string, unknown>).set as string | undefined) ?? ""
+                : ""}
+            </p>
+            {typeof session.reveal === "object" && session.reveal && !Array.isArray(session.reveal) &&
+            (session.reveal as Record<string, unknown>).imageUrl ? (
               <img
-                src={session.reveal.imageUrl}
-                alt={session.reveal.name ?? "Live rip"}
+                src={String((session.reveal as Record<string, unknown>).imageUrl)}
+                alt={String((session.reveal as Record<string, unknown>).name ?? "Live rip")}
                 className="max-h-[360px] w-auto rounded-3xl border border-white/10 bg-night-950/80 p-6 shadow-card"
               />
             ) : null}
-            {session.reveal?.buybackOffer ? (
+            {typeof session.reveal === "object" && session.reveal && !Array.isArray(session.reveal) &&
+            (session.reveal as Record<string, unknown>).buybackOffer ? (
               <p className="text-lg text-emerald-300">
-                Instant Buyback Offer · {Math.round(session.reveal.buybackOffer).toLocaleString()} TKD
+                Instant Buyback Offer ·
+                {Math.round(Number((session.reveal as Record<string, unknown>).buybackOffer)).toLocaleString()} TKD
               </p>
             ) : null}
           </div>
