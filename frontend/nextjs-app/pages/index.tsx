@@ -421,6 +421,7 @@ export default function Home() {
                 filter: drop-shadow(0 0 6px rgba(147, 197, 253, 0.5));
                 animation: lightningFlow 6s linear infinite, lightningPulse 3s ease-in-out infinite;
                 transform-origin: left center;
+                white-space: nowrap;
               }
               .hero-heading .lightning-line:nth-child(2) {
                 background-image: linear-gradient(110deg, #ecfeff 0%, #bae6fd 35%, #60a5fa 70%, #f8fafc 100%);
@@ -473,7 +474,7 @@ export default function Home() {
               </button>
             </div>
             <p className="text-sm uppercase tracking-[0.22em] text-slate-400">
-              Pick and rip online or visit a live location near you.
+              Pick and rip packs online or visit a live location near you.
             </p>
             <div className="mt-8 flex justify-center lg:hidden">{renderHeroMedia("mobile")}</div>
           </div>
