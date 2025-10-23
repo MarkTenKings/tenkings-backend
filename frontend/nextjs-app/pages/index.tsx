@@ -398,7 +398,7 @@ export default function Home() {
       <section className="relative overflow-hidden bg-night-900/70">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-6 pb-16 pt-16 lg:flex-row lg:items-center lg:gap-16">
           <div className="relative z-10 order-1 max-w-[650px] space-y-6">
-            <h1 className="hero-heading font-lightning text-[5rem] uppercase tracking-[0.12em] text-transparent -skew-x-[12deg] leading-[1.04] sm:text-[5.8rem] md:text-[6.9rem] lg:text-[8rem] xl:text-[8.75rem]">
+            <h1 className="hero-heading font-lightning text-[3.5rem] uppercase tracking-[0.08em] text-transparent -skew-x-[10deg] leading-[0.94] text-left sm:text-[4.1rem] md:text-[4.8rem] lg:text-[5.6rem] xl:text-[6.1rem]">
               <span className="lightning-line">Pick It</span>
               <span className="lightning-line">Rip It</span>
               <span className="lightning-line accent">Live</span>
@@ -407,26 +407,28 @@ export default function Home() {
               .hero-heading {
                 -webkit-font-smoothing: antialiased;
                 -moz-osx-font-smoothing: grayscale;
+                max-width: min(100%, 28rem);
               }
               .hero-heading .lightning-line {
                 display: block;
-                padding: 0.08em 0.1em;
+                padding: 0.04em 0.06em;
                 background-image: linear-gradient(110deg, #f8fcff 0%, #dbeafe 26%, #93c5fd 58%, #f8fafc 100%);
                 background-size: 220% 100%;
                 background-position: 0% 50%;
                 background-clip: text;
                 -webkit-background-clip: text;
                 color: transparent;
-                text-shadow: 0 3px 0 rgba(255, 255, 255, 0.18);
-                filter: drop-shadow(0 0 8px rgba(147, 197, 253, 0.55));
+                text-shadow: 0 2px 0 rgba(255, 255, 255, 0.18);
+                filter: drop-shadow(0 0 6px rgba(147, 197, 253, 0.5));
                 animation: lightningFlow 6s linear infinite, lightningPulse 3s ease-in-out infinite;
+                transform-origin: left center;
               }
               .hero-heading .lightning-line:nth-child(2) {
                 background-image: linear-gradient(110deg, #ecfeff 0%, #bae6fd 35%, #60a5fa 70%, #f8fafc 100%);
               }
               .hero-heading .lightning-line.accent {
                 background-image: linear-gradient(110deg, #fff7ed 0%, #fde68a 32%, #facc15 68%, #fff7ed 100%);
-                filter: drop-shadow(0 0 10px rgba(250, 204, 21, 0.65));
+                filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.55));
               }
               @keyframes lightningFlow {
                 0% {
