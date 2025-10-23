@@ -398,7 +398,7 @@ export default function Home() {
       <section className="relative overflow-hidden bg-night-900/70">
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-6 pb-16 pt-16 lg:flex-row lg:items-center lg:gap-16">
           <div className="relative z-10 order-1 max-w-[650px] space-y-6">
-            <h1 className="font-lightning text-[5rem] uppercase tracking-[0.12em] text-transparent -skew-x-[12deg] leading-[1.05] sm:text-[5.8rem] md:text-[6.9rem] lg:text-[8rem] xl:text-[8.75rem]">
+            <h1 className="font-lightning text-[3.5rem] uppercase tracking-[0.12em] text-transparent -skew-x-[12deg] leading-[1.04] sm:text-[4.2rem] md:text-[5rem] lg:text-[5.8rem] xl:text-[6.3rem]">
               <span
                 className="inline-block px-1 py-[0.2em] text-transparent"
                 style={{
@@ -407,7 +407,8 @@ export default function Home() {
                   WebkitBackgroundClip: "text",
                   WebkitFontSmoothing: "antialiased",
                   MozOsxFontSmoothing: "grayscale",
-                  filter: "drop-shadow(0 0 18px rgba(147, 197, 253, 0.78)) drop-shadow(0 18px 40px rgba(15, 23, 42, 0.55))",
+                  filter: "drop-shadow(0 0 16px rgba(147, 197, 253, 0.75)) drop-shadow(0 14px 32px rgba(15, 23, 42, 0.5))",
+                  textShadow: "0 4px 0 rgba(148, 163, 184, 0.35), 0 10px 18px rgba(15, 23, 42, 0.45)",
                 }}
               >
                 Pick It & Rip It
@@ -418,10 +419,10 @@ export default function Home() {
               <button
                 type="button"
                 onClick={handleScrollToMachines}
-                className="inline-flex items-center justify-center whitespace-nowrap rounded-full bg-gold-500 px-10 py-4 text-sm font-semibold uppercase tracking-[0.2em] text-night-900 shadow-glow transition hover:bg-gold-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold-500"
-              >
-                Pick It & Rip It Now
-              </button>
+                  className="inline-flex items-center justify-center whitespace-nowrap rounded-full bg-gold-500 px-10 py-4 text-sm font-semibold uppercase tracking-[0.2em] text-night-900 shadow-glow transition hover:bg-gold-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold-500"
+                >
+                  Pick & Rip Now
+                </button>
               <button
                 type="button"
                 onClick={() => router.push("/locations")}
