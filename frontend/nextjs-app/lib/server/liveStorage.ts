@@ -27,7 +27,6 @@ const allowedAcls: ObjectCannedACL[] = [
   "aws-exec-read",
   "bucket-owner-read",
   "bucket-owner-full-control",
-  "log-delivery-write",
 ];
 
 const s3ObjectAclEnv = process.env.LIVE_STORAGE_ACL;
