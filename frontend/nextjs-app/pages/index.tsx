@@ -400,7 +400,9 @@ export default function Home() {
           <div className="relative z-10 order-1 max-w-[650px] space-y-6">
             <h1 className="hero-heading font-lightning text-[4rem] uppercase tracking-[0.08em] text-transparent -skew-x-[10deg] leading-[0.94] text-left sm:text-[4.8rem] md:text-[5.5rem] lg:text-[6.4rem] xl:text-[7rem]">
               <span className="lightning-line">Pick It</span>
-              <span className="lightning-line accent">Rip It Live</span>
+              <span className="lightning-line">
+                Rip It <span className="accent-word">Live</span>
+              </span>
             </h1>
             <style jsx>{`
               .hero-heading {
@@ -426,8 +428,17 @@ export default function Home() {
               .hero-heading .lightning-line:nth-child(2) {
                 background-image: linear-gradient(110deg, #ecfeff 0%, #bae6fd 35%, #60a5fa 70%, #f8fafc 100%);
               }
-              .hero-heading .lightning-line.accent {
+              .hero-heading .accent-word {
+                display: inline-block;
+                margin-left: 0.15em;
+                padding: 0.02em 0.04em;
                 background-image: linear-gradient(110deg, #fff7ed 0%, #fde68a 32%, #facc15 68%, #fff7ed 100%);
+                background-size: 220% 100%;
+                background-position: 0% 50%;
+                background-clip: text;
+                -webkit-background-clip: text;
+                color: transparent;
+                text-shadow: 0 2px 0 rgba(250, 204, 21, 0.3);
                 filter: drop-shadow(0 0 8px rgba(250, 204, 21, 0.55));
               }
               @keyframes lightningFlow {
