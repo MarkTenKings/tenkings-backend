@@ -19,6 +19,7 @@ const s3PublicBaseUrl = process.env.LIVE_STORAGE_PUBLIC_BASE_URL?.replace(/\/$/,
 const s3AccessKeyId = process.env.LIVE_STORAGE_ACCESS_KEY_ID;
 const s3SecretAccessKey = process.env.LIVE_STORAGE_SECRET_ACCESS_KEY;
 const s3ForcePathStyle = String(process.env.LIVE_STORAGE_FORCE_PATH_STYLE ?? "false").toLowerCase() === "true";
+const s3ObjectAcl = process.env.LIVE_STORAGE_ACL ?? "public-read";
 
 export const LIVE_MAX_UPLOAD_BYTES = Number(process.env.LIVE_UPLOAD_MAX_BYTES ?? 150 * 1024 * 1024);
 
@@ -136,6 +137,7 @@ export async function storeLiveAsset(options: StoreLiveAssetOptions) {
       Key: storageKey,
       Body: buffer,
       ContentType: contentType,
+      ACL: s3ObjectAcl,
     })
   );
 

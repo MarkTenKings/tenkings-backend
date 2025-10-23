@@ -1,3 +1,4 @@
+import sharp from "sharp";
 import { config } from "../config";
 
 export interface CardGradingResult {
@@ -68,17 +69,65 @@ export async function gradeCard(options: {
   }
 
   const limit = options.maxBytes ?? config.ximilarMaxImageBytes ?? 2_500_000;
-  if (options.approximateBytes > limit) {
+
+  const prepareImage = async (): Promise<{ base64: string; bytes: number } | null> => {
+    let buffer = Buffer.from(options.imageBase64, "base64");
+    if (buffer.length <= limit) {
+      return { base64: options.imageBase64, bytes: buffer.length };
+    }
+
+    const attempts: Array<() => Promise<Buffer>> = [
+      () =>
+        sharp(buffer)
+          .rotate()
+          .jpeg({ quality: 90 })
+          .toBuffer(),
+      () =>
+        sharp(buffer)
+          .rotate()
+          .resize({ width: 2000, height: 2000, fit: "inside", withoutEnlargement: true })
+          .jpeg({ quality: 85 })
+          .toBuffer(),
+      () =>
+        sharp(buffer)
+          .rotate()
+          .resize({ width: 1600, height: 1600, fit: "inside", withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer(),
+    ];
+
+    for (const attempt of attempts) {
+      try {
+        const resized = await attempt();
+        if (resized.length <= limit) {
+          return { base64: resized.toString("base64"), bytes: resized.length };
+        }
+        buffer = resized;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`[processing-service] grading image compression failed: ${message}`);
+      }
+    }
+
+    if (buffer.length <= limit) {
+      return { base64: buffer.toString("base64"), bytes: buffer.length };
+    }
+
     console.warn(
-      `[processing-service] Ximilar grading skipped (image too large: ${options.approximateBytes} bytes, limit ${limit} bytes)`
+      `[processing-service] Ximilar grading skipped after compression attempts (size ${buffer.length} bytes, limit ${limit})`
     );
+    return null;
+  };
+
+  const prepared = await prepareImage();
+  if (!prepared) {
     return null;
   }
 
   const body = {
     records: [
       {
-        _base64: options.imageBase64,
+        _base64: prepared.base64,
       },
     ],
   };

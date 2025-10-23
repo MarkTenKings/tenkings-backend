@@ -94,6 +94,14 @@ enum ShippingStatus {
   CANCELLED
 }
 
+enum KioskSessionStatus {
+  COUNTDOWN
+  LIVE
+  REVEAL
+  COMPLETE
+  CANCELLED
+}
+
 model User {
   id              String          @id @default(uuid())
   email           String?         @unique
@@ -127,6 +135,7 @@ model Location {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   liveRips    LiveRip[]
+  kioskSessions KioskSession[]
 }
 
 model LiveRip {
@@ -141,6 +150,8 @@ model LiveRip {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
   location     Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  kioskSessionId String?  @unique
+  kioskSession   KioskSession? @relation("KioskSessionLiveRip", fields: [kioskSessionId], references: [id], onDelete: SetNull)
 }
 
 model Wallet {
@@ -187,6 +198,7 @@ model Item {
   packSlots      PackSlot[]
   ingestionTask  IngestionTask?
   shippingRequest ShippingRequest?
+  kioskReveals   KioskSession[]  @relation("KioskReveal")
 }
 
 model AuthVerification {
@@ -282,6 +294,34 @@ model PackInstance {
   packDefinition   PackDefinition @relation(fields: [packDefinitionId], references: [id], onDelete: Cascade)
   owner            User?          @relation(fields: [ownerId], references: [id])
   slots            PackSlot[]
+  kioskSessions    KioskSession[]
+}
+
+model KioskSession {
+  id                 String             @id @default(uuid())
+  code               String             @unique
+  controlTokenHash   String
+  packInstanceId     String?
+  locationId         String?
+  status             KioskSessionStatus @default(COUNTDOWN)
+  countdownSeconds   Int                @default(10)
+  liveSeconds        Int                @default(30)
+  countdownStartedAt DateTime           @default(now())
+  liveStartedAt      DateTime?
+  revealItemId       String?
+  videoUrl           String?
+  thumbnailUrl       String?
+  qrLinkUrl          String?
+  buybackLinkUrl     String?
+  revealPayload      Json?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  completedAt        DateTime?
+
+  packInstance PackInstance? @relation(fields: [packInstanceId], references: [id], onDelete: SetNull)
+  location     Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  revealItem   Item?         @relation("KioskReveal", fields: [revealItemId], references: [id], onDelete: SetNull)
+  liveRip      LiveRip?        @relation("KioskSessionLiveRip")
 }
 
 model PackSlot {

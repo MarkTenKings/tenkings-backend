@@ -41,7 +41,7 @@ const emptyFormState: LiveRipFormState = {
   videoUrl: "",
   thumbnailUrl: "",
   locationId: "",
-  featured: false,
+  featured: true,
 };
 
 const embedForMedia = (videoUrl: string) => {

@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
+import { slugify } from "../../../lib/slugify";
 import { requireUserSession, toUserErrorResponse } from "../../../lib/server/session";
 
 const liveRipSchema = z.object({
@@ -14,13 +15,6 @@ const liveRipSchema = z.object({
   locationId: z.string().uuid().optional().or(z.literal("")),
   featured: z.boolean().optional(),
 });
-
-const slugify = (value: string) =>
-  value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/(^-|-$)+/g, "");
 
 const withLocation = (liveRip: any) => ({
   ...liveRip,

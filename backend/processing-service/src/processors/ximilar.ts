@@ -1,4 +1,5 @@
 // @ts-nocheck
+import sharp from "sharp";
 import { config } from "../config";
 
 const COLLECTIBLES_BASE_URL = "https://api.ximilar.com/collectibles";
@@ -8,6 +9,62 @@ const MAX_RECORDS = 5;
 const MIN_TOKEN_MATCH = 2;
 const MIN_SCORE_THRESHOLD = 0.55;
 const SECONDARY_SCORE_THRESHOLD = 0.4;
+const IMAGE_SIZE_LIMIT = config.ximilarMaxImageBytes ?? 2_500_000;
+
+async function prepareImageForXimilar(base64: string): Promise<string | null> {
+  let buffer = Buffer.from(base64, "base64");
+  if (buffer.length <= IMAGE_SIZE_LIMIT) {
+    return base64;
+  }
+
+  const attempts: Array<() => Promise<Buffer>> = [
+    () =>
+      sharp(buffer)
+        .rotate()
+        .jpeg({ quality: 90 })
+        .toBuffer(),
+    () =>
+      sharp(buffer)
+        .rotate()
+        .resize({ width: 2200, height: 2200, fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toBuffer(),
+    () =>
+      sharp(buffer)
+        .rotate()
+        .resize({ width: 1800, height: 1800, fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 80 })
+        .toBuffer(),
+    () =>
+      sharp(buffer)
+        .rotate()
+        .resize({ width: 1400, height: 1400, fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 75 })
+        .toBuffer(),
+  ];
+
+  for (const attempt of attempts) {
+    try {
+      const resized = await attempt();
+      if (resized.length <= IMAGE_SIZE_LIMIT) {
+        return resized.toString("base64");
+      }
+      buffer = resized;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[processing-service] classification image compression failed: ${message}`);
+    }
+  }
+
+  if (buffer.length <= IMAGE_SIZE_LIMIT) {
+    return buffer.toString("base64");
+  }
+
+  console.warn(
+    `[processing-service] Ximilar classification skipped after compression attempts (size ${buffer.length} bytes, limit ${IMAGE_SIZE_LIMIT})`
+  );
+  return null;
+}
 
 interface RawAnalyzeRecord {
   _tags?: Record<string, Array<{ name?: string; prob?: number; label?: string }>>;
@@ -329,8 +386,13 @@ async function identifyCollectible(
     return null;
   }
 
+  const preparedImage = await prepareImageForXimilar(imageBase64);
+  if (!preparedImage) {
+    return null;
+  }
+
   const record: Record<string, unknown> = {
-    _base64: imageBase64,
+    _base64: preparedImage,
     ...buildRecordExtras(analyzeRecord),
   };
 
@@ -543,13 +605,17 @@ export async function classifyAsset(options: {
     };
   }
 
-  const analyzePayload = await ximilarFetch("v2/analyze", {
-    records: [
-      {
-        _base64: options.imageBase64,
-      },
-    ],
-  });
+  const preparedImage = await prepareImageForXimilar(options.imageBase64);
+
+  const analyzePayload = preparedImage
+    ? await ximilarFetch("v2/analyze", {
+        records: [
+          {
+            _base64: preparedImage,
+          },
+        ],
+      })
+    : null;
 
   const analyzeRecord: RawAnalyzeRecord | null = Array.isArray(analyzePayload?.records)
     ? (analyzePayload.records[0] as RawAnalyzeRecord)
@@ -557,13 +623,15 @@ export async function classifyAsset(options: {
 
   const categoryInfo = detectCategory(analyzeRecord);
 
-  const identifyPayload = await identifyCollectible(
-    options.imageBase64,
-    options.ocrText,
-    analyzeRecord,
-    categoryInfo.categoryType,
-    categoryInfo.graded
-  );
+  const identifyPayload = preparedImage
+    ? await identifyCollectible(
+        preparedImage,
+        options.ocrText,
+        analyzeRecord,
+        categoryInfo.categoryType,
+        categoryInfo.graded
+      )
+    : null;
 
   const slabObject = analyzeRecord?._objects?.find((object) => object?.name === "Slab Label") ?? null;
   const slabMatch = slabObject?._identification?.best_match && typeof slabObject._identification.best_match === "object"
