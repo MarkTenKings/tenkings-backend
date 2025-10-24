@@ -702,7 +702,7 @@ export default function Home() {
 
 function ResponsiveMediaFrame({ viewport, children }: { viewport: "mobile" | "desktop"; children: React.ReactNode }) {
   const frameClass = viewport === "desktop" ? "w-[640px] max-w-full" : "w-full max-w-md";
-  const paddingClass = viewport === "desktop" ? "pb-[60%]" : "pb-[62%]";
+  const paddingClass = "pb-[100%]";
   return (
     <div className={`relative overflow-hidden rounded-[2.5rem] border border-white/10 bg-night-900/70 shadow-card ${frameClass}`}>
       <div className={`relative h-0 ${paddingClass}`}>
