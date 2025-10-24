@@ -2264,7 +2264,7 @@ const handleBulkRegenerate = async (cardId: string) => {
 
                               {sportsSummary.playerName && (
                                 <div className="rounded-2xl border border-white/5 bg-night-900/60 p-3">
-                                  <p className="text-[11px] uppercase tracking-[0.25em] text-emerald-300">SportsDB Match</p>
+                                  <p className="text-[11px] uppercase tracking-[0.25em] text-emerald-300">Ximilar Match</p>
                                   <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-slate-200">
                                     {sportsSummary.teamLogoUrl ? (
                                       // eslint-disable-next-line @next/next/no-img-element
@@ -2430,7 +2430,7 @@ const handleBulkRegenerate = async (cardId: string) => {
 
                         {sportsSummary.playerName && (
                           <div className="rounded-2xl border border-white/5 bg-night-900/60 p-3">
-                            <p className="text-[11px] uppercase tracking-[0.25em] text-emerald-300">SportsDB Match</p>
+                            <p className="text-[11px] uppercase tracking-[0.25em] text-emerald-300">Ximilar Match</p>
                             <div className="mt-2 flex items-center gap-3">
                               {sportsSummary.teamLogoUrl ? (
                                 // eslint-disable-next-line @next/next/no-img-element

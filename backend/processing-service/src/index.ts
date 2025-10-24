@@ -23,7 +23,6 @@ import {
 } from "@tenkings/shared";
 import { extractTextFromImage } from "./processors/vision";
 import { estimateValue } from "./processors/valuation";
-import { matchPlayerFromOcr } from "./sportsdb/matcher";
 import { classifyAsset } from "./processors/ximilar";
 import { gradeCard } from "./processors/grading";
 
@@ -135,14 +134,8 @@ async function handleOcrJob(job: ProcessingJob) {
     vision.raw === null || vision.raw === undefined ? JSON_NULL : toInputJson(vision.raw);
   const normalizedOcr = vision.text ?? asset.ocrText ?? undefined;
   const attributes = extractCardAttributes(normalizedOcr);
-  const playerMatch = await matchPlayerFromOcr({
-    ocrText: normalizedOcr,
-    attributes,
-  });
   const enhancedAttributes = {
     ...attributes,
-    playerName: playerMatch.resolvedName ?? attributes.playerName,
-    teamName: playerMatch.resolvedTeam ?? attributes.teamName,
   };
   const generatedEbayUrl = buildEbaySoldUrlFromText(normalizedOcr);
   const comparableUrls = buildComparableEbayUrls({
@@ -190,11 +183,11 @@ async function handleOcrJob(job: ProcessingJob) {
       if ((asset as any).ebaySoldUrlPlayerComp == null && comparableUrls.playerComp) {
         (updateData as any).ebaySoldUrlPlayerComp = comparableUrls.playerComp;
       }
-      (updateData as any).sportsDbPlayerId = playerMatch.playerId;
-      (updateData as any).sportsDbMatchConfidence = playerMatch.confidence;
-      (updateData as any).resolvedPlayerName = playerMatch.resolvedName;
-      (updateData as any).resolvedTeamName = playerMatch.resolvedTeam;
-      (updateData as any).playerStatsSnapshot = playerMatch.snapshot ?? JSON_NULL;
+      (updateData as any).sportsDbPlayerId = null;
+      (updateData as any).sportsDbMatchConfidence = null;
+      (updateData as any).resolvedPlayerName = enhancedAttributes.playerName ?? null;
+      (updateData as any).resolvedTeamName = enhancedAttributes.teamName ?? null;
+      (updateData as any).playerStatsSnapshot = JSON_NULL;
       await tx.cardAsset.update({
         where: { id: asset.id },
         data: updateData,
@@ -255,32 +248,14 @@ async function handleClassifyJob(job: ProcessingJob) {
   );
 
   const isGraded = classificationSnapshot?.graded === "yes";
-  const shouldUseSportsDb = classificationSnapshot?.categoryType === "sport";
 
-  const playerMatch = shouldUseSportsDb
-    ? await matchPlayerFromOcr({
-        ocrText: asset.ocrText,
-        attributes,
-        classificationHints: ximilarClassification
-          ? {
-              bestMatch,
-              labels: ximilarClassification.labels.map((entry) => entry.label),
-              tags: ximilarClassification.tags,
-            }
-          : undefined,
-      })
-    : {
-        playerId: null,
-        confidence: classificationSnapshot?.bestMatchScore ?? 0,
-        resolvedName: attributes.playerName ?? classificationSummary.playerName ?? null,
-        resolvedTeam: attributes.teamName ?? classificationSummary.teamName ?? null,
-        snapshot: null,
-      };
+  const resolvedPlayerName = attributes.playerName ?? classificationSummary.playerName ?? null;
+  const resolvedTeamName = attributes.teamName ?? classificationSummary.teamName ?? null;
 
   attributes = {
     ...attributes,
-    playerName: playerMatch.resolvedName ?? attributes.playerName,
-    teamName: playerMatch.resolvedTeam ?? attributes.teamName,
+    playerName: resolvedPlayerName,
+    teamName: resolvedTeamName,
   };
 
   let grading = null;
@@ -334,11 +309,11 @@ async function handleClassifyJob(job: ProcessingJob) {
         updateDataAny.classificationSourcesJson = toInputJson(classificationSnapshot);
       }
 
-      updateDataAny.sportsDbPlayerId = playerMatch.playerId;
-      updateDataAny.sportsDbMatchConfidence = playerMatch.confidence;
-      updateDataAny.resolvedPlayerName = playerMatch.resolvedName;
-      updateDataAny.resolvedTeamName = playerMatch.resolvedTeam;
-      updateDataAny.playerStatsSnapshot = playerMatch.snapshot ?? JSON_NULL;
+      updateDataAny.sportsDbPlayerId = null;
+      updateDataAny.sportsDbMatchConfidence = null;
+      updateDataAny.resolvedPlayerName = resolvedPlayerName;
+      updateDataAny.resolvedTeamName = resolvedTeamName;
+      updateDataAny.playerStatsSnapshot = JSON_NULL;
 
       if (grading) {
         updateDataAny.aiGradingJson = toInputJson(grading.raw);

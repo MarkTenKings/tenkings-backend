@@ -1921,7 +1921,7 @@ export default function AdminCardDetail() {
 
             {sportsDbSummary && (
                 <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-                  <p className="text-[11px] uppercase tracking-[0.3em] text-emerald-300">SportsDB Match</p>
+                  <p className="text-[11px] uppercase tracking-[0.3em] text-emerald-300">Ximilar Match</p>
                   <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                     <div className="flex items-center gap-4">
                       {sportsDbSummary.teamLogoUrl ? (
