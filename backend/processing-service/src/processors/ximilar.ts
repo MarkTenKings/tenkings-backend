@@ -41,6 +41,24 @@ async function prepareImageForXimilar(base64: string): Promise<string | null> {
         .resize({ width: 1400, height: 1400, fit: "inside", withoutEnlargement: true })
         .jpeg({ quality: 75 })
         .toBuffer(),
+    () =>
+      sharp(buffer)
+        .rotate()
+        .resize({ width: 1200, height: 1200, fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 72 })
+        .toBuffer(),
+    () =>
+      sharp(buffer)
+        .rotate()
+        .resize({ width: 1000, height: 1000, fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 70 })
+        .toBuffer(),
+    () =>
+      sharp(buffer)
+        .rotate()
+        .resize({ width: 900, height: 900, fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality: 65 })
+        .toBuffer(),
   ];
 
   for (const attempt of attempts) {
