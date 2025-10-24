@@ -1,6 +1,7 @@
 import Head from "next/head";
 import Image from "next/image";
 import Link from "next/link";
+import type { GetServerSideProps } from "next";
 import {
   useCallback,
   useEffect,
@@ -102,6 +103,12 @@ const heroMediaConfig: HeroMedia = heroVideoUrl
       ? { type: "image", src: heroImageOverride }
       : { type: "stacked" };
 
+interface HomePageProps {
+  initialPulls: PullCard[];
+  initialCollectorNames: Record<string, string>;
+  initialLiveRipTiles: LiveRipTile[];
+}
+
 const categories = [
   {
     id: "sports",
@@ -123,12 +130,84 @@ const categories = [
   },
 ];
 
-export default function Home() {
+const mapPullsFromApi = (rawPulls: any[]): { pulls: PullCard[]; names: Record<string, string> } => {
+  const prefetchedNames: Record<string, string> = {};
+  const mapped: PullCard[] = [];
+
+  rawPulls
+    .slice(0, 10)
+    .forEach((pull: any, index: number) => {
+      const item = pull?.item ?? {};
+      const itemId = typeof item?.id === "string" && item.id.trim() ? item.id : `recent-${index}`;
+      const rawValue = Number(item?.estimatedValue ?? 0);
+      const marketValueMinor = Number.isFinite(rawValue) && rawValue > 0 ? rawValue : null;
+      const cardName = typeof item?.name === "string" && item.name.trim() ? item.name.trim() : "Card Title";
+      const thumbnail = typeof item?.thumbnailUrl === "string" && item.thumbnailUrl.trim() ? item.thumbnailUrl : null;
+      const fallbackImage = typeof item?.imageUrl === "string" && item.imageUrl.trim() ? item.imageUrl : null;
+      const detailsImage = parseDetailsImage(item?.detailsJson);
+
+      const owner = pull?.owner ?? {};
+      const ownerId = typeof owner?.id === "string" && owner.id.trim() ? owner.id : null;
+      const ownerDisplay = typeof owner?.displayName === "string" && owner.displayName.trim() ? owner.displayName : null;
+      const ownerPhone = typeof owner?.phone === "string" && owner.phone.trim() ? owner.phone : null;
+      const ownerLabelRaw = ownerDisplay ?? ownerPhone ?? UNKNOWN_OWNER_LABEL;
+      const ownerLabel = ownerLabelRaw.trim() ? ownerLabelRaw.trim() : UNKNOWN_OWNER_LABEL;
+      const ownerAvatar =
+        typeof owner?.avatarUrl === "string" && owner.avatarUrl.trim().length > 0 ? owner.avatarUrl : null;
+
+      if (ownerId && ownerLabel !== UNKNOWN_OWNER_LABEL) {
+        prefetchedNames[ownerId] = ownerLabel;
+      }
+
+      const pack = pull?.packDefinition ?? null;
+      const packLabel =
+        typeof pack?.name === "string" && pack.name.trim().length > 0
+          ? pack.name
+          : typeof pull?.packId === "string" && pull.packId.trim().length > 0
+            ? pull.packId
+            : null;
+
+      mapped.push({
+        type: "card",
+        itemId,
+        cardName,
+        marketValueMinor,
+        image: thumbnail ?? fallbackImage ?? detailsImage,
+        ownerId,
+        ownerLabel,
+        ownerAvatar,
+        packLabel,
+      });
+    });
+
+  return { pulls: mapped, names: prefetchedNames };
+};
+
+const mapLiveRipTilesFromApi = (rawLiveRips: any[], limit = 6): LiveRipTile[] =>
+  (rawLiveRips ?? [])
+    .filter((entry: any) => typeof entry?.videoUrl === "string" && entry.videoUrl.trim())
+    .slice(0, limit)
+    .map((entry: any) => ({
+      type: "live" as const,
+      id: entry.id ?? entry.slug ?? entry.title ?? `live-${Math.random().toString(36).slice(2)}`,
+      title: entry.title ?? "Live Rip",
+      videoUrl: entry.videoUrl,
+      locationLabel: entry.location?.name ?? null,
+      thumbnailUrl: entry.thumbnailUrl ?? null,
+      slug: entry.slug ?? null,
+    }));
+
+export default function Home({
+  initialPulls,
+  initialCollectorNames,
+  initialLiveRipTiles,
+}: HomePageProps) {
   const router = useRouter();
-  const [pulls, setPulls] = useState<PullCard[]>(fallbackPulls);
-  const [collectorNames, setCollectorNames] = useState<Record<string, string>>({});
+  const startingPulls = initialPulls.length ? initialPulls : fallbackPulls;
+  const [pulls, setPulls] = useState<PullCard[]>(startingPulls);
+  const [collectorNames, setCollectorNames] = useState<Record<string, string>>(initialCollectorNames ?? {});
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
-  const [liveRipTiles, setLiveRipTiles] = useState<LiveRipTile[]>([]);
+  const [liveRipTiles, setLiveRipTiles] = useState<LiveRipTile[]>(initialLiveRipTiles ?? []);
   const heroMedia = heroMediaConfig;
 
   const renderHeroMedia = useCallback(
@@ -204,59 +283,21 @@ export default function Home() {
 
   const closeModal = useCallback(() => setActiveItemId(null), []);
 
+  const marqueeAnimationDuration = Math.max(8, marqueeLoopCount * 0.9);
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        const { pulls } = await listRecentPulls({ limit: 16 });
-        if (cancelled || !pulls?.length) {
+        const { pulls: fetchedPulls } = await listRecentPulls({ limit: 16 });
+        if (cancelled || !fetchedPulls?.length) {
           return;
         }
-        const prefetchedNames: Record<string, string> = {};
-        const mapped: PullCard[] = pulls.slice(0, 10).map((pull: any, index: number): PullCard => {
-          const item = pull?.item ?? {};
-          const itemId = typeof item?.id === "string" && item.id.trim() ? item.id : `recent-${index}`;
-          const rawValue = Number(item?.estimatedValue ?? 0);
-          const marketValueMinor = Number.isFinite(rawValue) && rawValue > 0 ? rawValue : null;
-          const cardName = typeof item?.name === "string" && item.name.trim() ? item.name.trim() : "Card Title";
-          const thumbnail = typeof item?.thumbnailUrl === "string" && item.thumbnailUrl.trim() ? item.thumbnailUrl : null;
-          const fallbackImage = typeof item?.imageUrl === "string" && item.imageUrl.trim() ? item.imageUrl : null;
-          const detailsImage = parseDetailsImage(item?.detailsJson);
-          const owner = pull?.owner ?? {};
-          const ownerId = typeof owner?.id === "string" && owner.id.trim() ? owner.id : null;
-          const ownerLabelRaw =
-            typeof owner?.displayName === "string" && owner.displayName?.trim()
-              ? owner.displayName
-              : typeof owner?.phone === "string" && owner.phone?.trim()
-                ? owner.phone
-                : UNKNOWN_OWNER_LABEL;
-          const ownerLabel = ownerLabelRaw.trim() ? ownerLabelRaw.trim() : UNKNOWN_OWNER_LABEL;
-          const ownerAvatar =
-            typeof owner?.avatarUrl === "string" && owner.avatarUrl.trim().length > 0 ? owner.avatarUrl : null;
-          const pack = pull?.packDefinition ?? null;
-          if (ownerId && ownerLabel !== UNKNOWN_OWNER_LABEL) {
-            prefetchedNames[ownerId] = ownerLabel;
-          }
-
-          return {
-            type: "card",
-            itemId,
-            cardName,
-            marketValueMinor,
-            image: thumbnail ?? fallbackImage ?? detailsImage,
-            ownerId,
-            ownerLabel,
-            ownerAvatar,
-            packLabel:
-              typeof pack?.name === "string" && pack.name.trim().length > 0
-                ? pack.name
-                : pull?.packId ?? null,
-          };
-        });
-        if (mapped.length && !cancelled) {
-          setPulls(mapped);
-          if (Object.keys(prefetchedNames).length) {
-            setCollectorNames((prev) => ({ ...prefetchedNames, ...prev }));
+        const { pulls: mappedPulls, names } = mapPullsFromApi(fetchedPulls ?? []);
+        if (mappedPulls.length && !cancelled) {
+          setPulls(mappedPulls);
+          if (Object.keys(names).length) {
+            setCollectorNames((prev) => ({ ...names, ...prev }));
           }
         }
       } catch (error) {
@@ -278,18 +319,7 @@ export default function Home() {
           return;
         }
         const payload = (await response.json()) as { liveRips?: Array<any> };
-        const tiles = (payload.liveRips ?? [])
-          .filter((entry) => typeof entry?.videoUrl === "string" && entry.videoUrl.trim())
-          .slice(0, 6)
-          .map((entry): LiveRipTile => ({
-            type: "live",
-            id: entry.id ?? entry.slug ?? entry.title ?? `live-${Math.random().toString(36).slice(2)}`,
-            title: entry.title ?? "Live Rip",
-            videoUrl: entry.videoUrl,
-            locationLabel: entry.location?.name ?? null,
-            thumbnailUrl: entry.thumbnailUrl ?? null,
-            slug: entry.slug ?? null,
-          }));
+        const tiles = mapLiveRipTilesFromApi(payload.liveRips ?? []);
         if (!cancelled) {
           setLiveRipTiles(tiles);
         }
@@ -305,40 +335,44 @@ export default function Home() {
     };
   }, []);
 
-  const marqueeItems = useMemo(() => {
+  const { marqueeItems, marqueeLoopCount } = useMemo(() => {
     const maxItems = 10;
     const standard = pulls.slice(0, maxItems);
     const liveCandidates = liveRipTiles.slice(0, Math.min(5, Math.floor(maxItems / 2)));
-    const result: DisplayTile[] = [];
+    const combined: DisplayTile[] = [];
     let cardIndex = 0;
     let liveIndex = 0;
 
-    while (result.length < maxItems && (cardIndex < standard.length || liveIndex < liveCandidates.length)) {
-      const shouldUseLive = liveIndex < liveCandidates.length &&
-        ((result.length % 2 === 1 && cardIndex < standard.length) || cardIndex >= standard.length);
+    while (combined.length < maxItems && (cardIndex < standard.length || liveIndex < liveCandidates.length)) {
+      const shouldUseLive =
+        liveIndex < liveCandidates.length &&
+        ((combined.length % 2 === 1 && cardIndex < standard.length) || cardIndex >= standard.length);
 
       if (shouldUseLive) {
-        result.push(liveCandidates[liveIndex++]);
+        combined.push(liveCandidates[liveIndex++]);
       } else if (cardIndex < standard.length) {
-        result.push(standard[cardIndex++]);
+        combined.push(standard[cardIndex++]);
       } else if (liveIndex < liveCandidates.length) {
-        result.push(liveCandidates[liveIndex++]);
+        combined.push(liveCandidates[liveIndex++]);
       } else {
         break;
       }
     }
 
-    while (result.length < maxItems && cardIndex < standard.length) {
-      result.push(standard[cardIndex++]);
+    while (combined.length < maxItems && cardIndex < standard.length) {
+      combined.push(standard[cardIndex++]);
     }
-    while (result.length < maxItems && liveIndex < liveCandidates.length) {
-      result.push(liveCandidates[liveIndex++]);
+    while (combined.length < maxItems && liveIndex < liveCandidates.length) {
+      combined.push(liveCandidates[liveIndex++]);
     }
 
-    if (!result.length) {
-      return pulls;
-    }
-    return [...result, ...result, ...result];
+    const baseSequence = combined.length ? combined : pulls.length ? pulls : fallbackPulls;
+    const sequence = baseSequence.length ? [...baseSequence, ...baseSequence] : [...fallbackPulls, ...fallbackPulls];
+
+    return {
+      marqueeItems: sequence,
+      marqueeLoopCount: Math.max(baseSequence.length, 1),
+    };
   }, [pulls, liveRipTiles]);
 
   useEffect(() => {
@@ -502,7 +536,7 @@ export default function Home() {
             <div
               className="flex min-w-full gap-6 motion-reduce:animate-none motion-safe:animate-marquee"
               style={{
-                animationDuration: `${Math.max(12, ((marqueeItems.length / 3) || 1) * 1.5)}s`,
+                animationDuration: `${marqueeAnimationDuration}s`,
               }}
             >
               {marqueeItems.map((item, index) => {
@@ -764,3 +798,44 @@ function StackedHeroMachinesMobile() {
     </div>
   );
 }
+
+export const getServerSideProps: GetServerSideProps<HomePageProps> = async () => {
+  let initialPulls: PullCard[] = [];
+  let initialCollectorNames: Record<string, string> = {};
+  let initialLiveRipTiles: LiveRipTile[] = [];
+
+  try {
+    const { pulls: fetchedPulls } = await listRecentPulls({ limit: 16 });
+    const mapped = mapPullsFromApi(fetchedPulls ?? []);
+    initialPulls = mapped.pulls;
+    initialCollectorNames = mapped.names;
+  } catch (error) {
+    initialPulls = [];
+    initialCollectorNames = {};
+  }
+
+  try {
+    const { prisma } = await import("@tenkings/database");
+    const liveRips = await prisma.liveRip.findMany({
+      where: { featured: true },
+      include: { location: true },
+      orderBy: [{ featured: "desc" }, { createdAt: "desc" }],
+      take: 6,
+    });
+    initialLiveRipTiles = mapLiveRipTilesFromApi(liveRips);
+  } catch (error) {
+    initialLiveRipTiles = [];
+  }
+
+  if (!initialPulls.length) {
+    initialPulls = fallbackPulls;
+  }
+
+  return {
+    props: {
+      initialPulls,
+      initialCollectorNames,
+      initialLiveRipTiles,
+    },
+  };
+};

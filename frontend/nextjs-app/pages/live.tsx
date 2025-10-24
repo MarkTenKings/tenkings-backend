@@ -101,7 +101,7 @@ const renderMedia = (videoUrl: string) => {
 type EditMode = "create" | "edit" | null;
 
 export default function LivePage() {
-  const { session, ensureSession } = useSession();
+  const { session, ensureSession, logout } = useSession();
   const [liveRips, setLiveRips] = useState<LiveRipRecord[]>([]);
   const [locations, setLocations] = useState<LocationRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -370,11 +370,6 @@ export default function LivePage() {
       return;
     }
 
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${activeSession.token}`,
-    };
-
     const body = {
       title: formState.title.trim(),
       slug: (formState.slug || formState.title).trim(),
@@ -388,27 +383,59 @@ export default function LivePage() {
     try {
       const endpoint = editMode === "create" ? "/api/live-rips" : `/api/live-rips/${formState.id}`;
       const method = editMode === "create" ? "POST" : "PUT";
-      const response = await fetch(endpoint, {
-        method,
-        headers,
-        body: JSON.stringify(body),
-      });
+      let tokenToUse = activeSession.token;
+      let retried = false;
 
-      if (!response.ok) {
+      while (true) {
+        const response = await fetch(endpoint, {
+          method,
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${tokenToUse}`,
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (response.ok) {
+          await refreshLiveRips();
+          setFlash("Live rip saved");
+          closeEditor();
+          break;
+        }
+
         const payload = await response.json().catch(() => ({}));
+
+        if (response.status === 401 && !retried) {
+          retried = true;
+          logout();
+          try {
+            const renewedSession = await ensureSession();
+            if (!renewedSession) {
+              setFlash("Sign in to manage live rips.");
+              return;
+            }
+            activeSession = renewedSession;
+            tokenToUse = renewedSession.token;
+            continue;
+          } catch (authError) {
+            const message =
+              authError instanceof Error && authError.message === "Authentication cancelled"
+                ? "Sign in to manage live rips."
+                : payload?.message ?? "Sign in to manage live rips.";
+            setFlash(message);
+            return;
+          }
+        }
+
         throw new Error(payload?.message ?? "Unable to save live rip");
       }
-
-      await refreshLiveRips();
-      setFlash("Live rip saved");
-      closeEditor();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to save live rip";
       setFlash(message);
     } finally {
       setSaving(false);
     }
-  }, [editMode, formState, session?.token, refreshLiveRips, closeEditor, ensureSession, session]);
+  }, [editMode, formState, session, refreshLiveRips, closeEditor, ensureSession, logout]);
 
   const handleCopyLink = async (slug: string) => {
     if (typeof window === "undefined") {
