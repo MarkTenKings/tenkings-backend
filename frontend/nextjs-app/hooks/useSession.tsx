@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { requestLoginCode, verifyLoginCode, setAuthToken, fetchProfile } from "../lib/api";
+import { requestLoginCode, verifyLoginCode, setAuthToken, fetchProfile, fetchWallet } from "../lib/api";
 import AuthModal from "../components/AuthModal";
 
 export interface SessionPayload {
@@ -164,16 +164,39 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const tryHydrateWallet = useCallback(
     async (userId: string, token?: string | null) => {
-      if (!userId || !token) {
+      if (!userId) {
         return null;
       }
+
+      try {
+        const viaService = await fetchWallet(userId);
+        if (viaService?.wallet) {
+          return {
+            id: viaService.wallet.id,
+            balance: normalizeBalance(viaService.wallet.balance),
+          };
+        }
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("wallet hydrate via service failed", error);
+        }
+      }
+
+      if (!token) {
+        return null;
+      }
+
       try {
         const response = await fetch("/api/wallet/me", {
           headers: {
             Authorization: `Bearer ${token}`,
           },
+          credentials: "include",
         });
         if (!response.ok) {
+          if (process.env.NODE_ENV !== "production") {
+            console.warn("wallet hydrate fallback failed", response.status);
+          }
           return null;
         }
         const payload = (await response.json()) as { wallet?: { id: string; balance: unknown } | null };
@@ -185,6 +208,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           balance: normalizeBalance(payload.wallet.balance),
         };
       } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("wallet hydrate fallback threw", error);
+        }
         return null;
       }
     },

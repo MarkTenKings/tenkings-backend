@@ -6,6 +6,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent,
   type MouseEvent,
@@ -14,7 +15,7 @@ import {
 import { useRouter } from "next/router";
 import AppShell from "../components/AppShell";
 import LiveRipPreview from "../components/LiveRipPreview";
-import { fetchCollector } from "../lib/api";
+import { fetchCollector, listRecentPulls } from "../lib/api";
 import CardDetailModal from "../components/CardDetailModal";
 import { formatUsdMinor } from "../lib/formatters";
 import { loadRecentPulls } from "../lib/server/recentPulls";
@@ -289,27 +290,48 @@ export default function Home({
 
   useEffect(() => {
     let cancelled = false;
+
+    const applyPulls = (rawPulls: any[] | undefined) => {
+      if (cancelled || !rawPulls || rawPulls.length === 0) {
+        return false;
+      }
+      const { pulls: mappedPulls, names } = mapPullsFromApi(rawPulls);
+      if (!mappedPulls.length) {
+        return false;
+      }
+      setPulls(mappedPulls);
+      if (Object.keys(names).length) {
+        setCollectorNames((prev) => ({ ...names, ...prev }));
+      }
+      return true;
+    };
+
     const load = async () => {
+      try {
+        const recent = await listRecentPulls({ limit: 20 });
+        if (applyPulls(recent?.pulls ?? [])) {
+          return;
+        }
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("recent pulls service fetch failed", error);
+        }
+      }
+
       try {
         const response = await fetch("/api/recent-pulls?limit=20");
         if (!response.ok) {
           return;
         }
         const payload = (await response.json()) as { pulls?: Array<any> };
-        if (cancelled || !payload.pulls?.length) {
-          return;
-        }
-        const { pulls: mappedPulls, names } = mapPullsFromApi(payload.pulls ?? []);
-        if (mappedPulls.length && !cancelled) {
-          setPulls(mappedPulls);
-          if (Object.keys(names).length) {
-            setCollectorNames((prev) => ({ ...names, ...prev }));
-          }
-        }
+        applyPulls(payload.pulls ?? []);
       } catch (error) {
-        // Silent fallback to static pulls
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("recent pulls api fallback failed", error);
+        }
       }
     };
+
     load().catch(() => undefined);
     return () => {
       cancelled = true;
@@ -341,10 +363,10 @@ export default function Home({
     };
   }, []);
 
-  const { marqueeItems, marqueeLoopCount, marqueeDuration } = useMemo(() => {
+  const { marqueeItems, marqueeDuration } = useMemo(() => {
     const maxItems = 20;
     const standard = pulls.slice(0, maxItems);
-    const liveCandidates = liveRipTiles.slice(0, Math.min(5, Math.floor(maxItems / 2)));
+    const liveCandidates = liveRipTiles.slice(0, Math.min(6, Math.floor(maxItems / 2)));
     const combined: DisplayTile[] = [];
     let cardIndex = 0;
     let liveIndex = 0;
@@ -365,29 +387,39 @@ export default function Home({
       }
     }
 
-    while (combined.length < maxItems && cardIndex < standard.length) {
-      combined.push(standard[cardIndex++]);
-    }
-    while (combined.length < maxItems && liveIndex < liveCandidates.length) {
-      combined.push(liveCandidates[liveIndex++]);
+    let baseSequence = combined.length ? combined : pulls.length ? pulls : fallbackPulls;
+    if (!baseSequence.length) {
+      baseSequence = fallbackPulls;
     }
 
-    const baseSequence = combined.length ? combined : pulls.length ? pulls : fallbackPulls;
-    const marqueeBase = baseSequence.length ? baseSequence : fallbackPulls;
-    const repeats = marqueeBase.length ? 4 : 3;
-    const repeated = Array.from({ length: repeats }).flatMap(() => marqueeBase.length ? marqueeBase : fallbackPulls);
+    const marqueeBase: DisplayTile[] = [];
+    if (baseSequence.length >= maxItems) {
+      marqueeBase.push(...baseSequence.slice(0, maxItems));
+    } else if (baseSequence.length > 0) {
+      for (let i = 0; marqueeBase.length < maxItems; i += 1) {
+        marqueeBase.push(baseSequence[i % baseSequence.length]);
+      }
+    } else {
+      marqueeBase.push(...fallbackPulls);
+    }
 
+    const repeated = [...marqueeBase, ...marqueeBase];
     const loopCount = Math.max(marqueeBase.length, 1);
-    const duration = Math.max(16, loopCount * 0.8);
+    const duration = Math.max(18, loopCount * 1.1);
 
     return {
       marqueeItems: repeated,
-      marqueeLoopCount: loopCount,
       marqueeDuration: duration,
     };
   }, [pulls, liveRipTiles]);
 
   const [marqueeSpeedFactor, setMarqueeSpeedFactor] = useState(1);
+  const marqueeTrackRef = useRef<HTMLDivElement | null>(null);
+  const marqueeAnimationFrameRef = useRef<number | null>(null);
+  const marqueeOffsetRef = useRef(0);
+  const marqueeHalfWidthRef = useRef(0);
+  const marqueeLastTickRef = useRef<number | null>(null);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -404,6 +436,21 @@ export default function Home({
     updateFactor();
     window.addEventListener("resize", updateFactor);
     return () => window.removeEventListener("resize", updateFactor);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handleChange = () => setPrefersReducedMotion(query.matches);
+    handleChange();
+    if (typeof query.addEventListener === "function") {
+      query.addEventListener("change", handleChange);
+      return () => query.removeEventListener("change", handleChange);
+    }
+    query.addListener(handleChange);
+    return () => query.removeListener(handleChange);
   }, []);
 
   const marqueeAnimationDuration = marqueeDuration * marqueeSpeedFactor;
@@ -452,6 +499,100 @@ export default function Home({
     };
   }, [pulls, collectorNames]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const track = marqueeTrackRef.current;
+    if (!track) {
+      return;
+    }
+
+    const measure = () => {
+      const width = track.scrollWidth;
+      marqueeHalfWidthRef.current = width > 0 ? width / 2 : 0;
+      if (marqueeHalfWidthRef.current === 0) {
+        marqueeOffsetRef.current = 0;
+        track.style.transform = "translate3d(0, 0, 0)";
+        return;
+      }
+      if (-marqueeOffsetRef.current >= marqueeHalfWidthRef.current) {
+        marqueeOffsetRef.current %= marqueeHalfWidthRef.current;
+      }
+      track.style.transform = `translate3d(${marqueeOffsetRef.current}px, 0, 0)`;
+    };
+
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [marqueeItems]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const track = marqueeTrackRef.current;
+    if (!track) {
+      return;
+    }
+
+    if (prefersReducedMotion) {
+      if (marqueeAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(marqueeAnimationFrameRef.current);
+        marqueeAnimationFrameRef.current = null;
+      }
+      marqueeOffsetRef.current = 0;
+      marqueeLastTickRef.current = null;
+      track.style.transform = "translate3d(0, 0, 0)";
+      return;
+    }
+
+    marqueeHalfWidthRef.current = track.scrollWidth > 0 ? track.scrollWidth / 2 : 0;
+    marqueeOffsetRef.current = 0;
+    marqueeLastTickRef.current = null;
+    track.style.transform = "translate3d(0, 0, 0)";
+
+    const step = (timestamp: number) => {
+      const halfWidth = marqueeHalfWidthRef.current;
+      if (!halfWidth || halfWidth <= 0) {
+        track.style.transform = "translate3d(0, 0, 0)";
+        marqueeAnimationFrameRef.current = window.requestAnimationFrame(step);
+        return;
+      }
+
+      if (marqueeLastTickRef.current === null) {
+        marqueeLastTickRef.current = timestamp;
+        marqueeAnimationFrameRef.current = window.requestAnimationFrame(step);
+        return;
+      }
+
+      const elapsed = timestamp - marqueeLastTickRef.current;
+      marqueeLastTickRef.current = timestamp;
+
+      const durationMs = Math.max(marqueeAnimationDuration, 1) * 1000;
+      const distancePerMs = halfWidth / durationMs;
+      marqueeOffsetRef.current -= distancePerMs * elapsed;
+
+      while (-marqueeOffsetRef.current >= halfWidth) {
+        marqueeOffsetRef.current += halfWidth;
+      }
+
+      track.style.transform = `translate3d(${marqueeOffsetRef.current}px, 0, 0)`;
+      marqueeAnimationFrameRef.current = window.requestAnimationFrame(step);
+    };
+
+    marqueeAnimationFrameRef.current = window.requestAnimationFrame(step);
+
+    return () => {
+      if (marqueeAnimationFrameRef.current !== null) {
+        window.cancelAnimationFrame(marqueeAnimationFrameRef.current);
+        marqueeAnimationFrameRef.current = null;
+      }
+      marqueeLastTickRef.current = null;
+    };
+  }, [prefersReducedMotion, marqueeAnimationDuration, marqueeItems]);
+
   return (
     <AppShell background="hero">
       <Head>
@@ -460,6 +601,9 @@ export default function Home({
           name="description"
           content="Sports, Pokémon, and Comic mystery packs. Graded, authenticated, and ready to rip with Ten Kings."
         />
+        {heroMedia.type === "video" ? (
+          <link rel="preload" as="video" href={heroMedia.src} />
+        ) : null}
       </Head>
 
       <section className="relative overflow-hidden bg-night-900/70">
@@ -567,9 +711,11 @@ export default function Home({
             <div className="pointer-events-none absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-night-900 via-night-900/80 to-transparent" aria-hidden />
             <div className="pointer-events-none absolute inset-y-0 right-0 w-32 bg-gradient-to-l from-night-900 via-night-900/80 to-transparent" aria-hidden />
             <div
-              className="flex min-w-full flex-nowrap gap-6 motion-reduce:animate-none motion-safe:animate-marquee"
+              ref={marqueeTrackRef}
+              className="flex w-max flex-nowrap gap-6"
               style={{
-                animationDuration: `${marqueeAnimationDuration}s`,
+                transform: "translate3d(0, 0, 0)",
+                willChange: prefersReducedMotion ? undefined : "transform",
               }}
             >
               {marqueeItems.map((item, index) => {
@@ -647,6 +793,8 @@ export default function Home({
                             fill
                             className="object-cover"
                             sizes="(max-width: 768px) 280px, 320px"
+                            priority={index < 6}
+                            fetchPriority={index < 6 ? "high" : undefined}
                             unoptimized
                           />
                         ) : (

@@ -81,6 +81,7 @@ export default function LiveRipPreview({
     element.muted = muted;
     element.loop = true;
     element.playsInline = true;
+    element.preload = "auto";
     const playPromise = element.play();
     if (playPromise) {
       playPromise.catch(() => undefined);
@@ -134,10 +135,11 @@ export default function LiveRipPreview({
             className="absolute inset-0 h-full w-full object-cover"
             autoPlay
             loop
-            muted
+            muted={muted}
             playsInline
             preload="auto"
             poster={thumbnailUrl ?? undefined}
+            crossOrigin="anonymous"
             aria-label={title}
           />
         );
@@ -148,6 +150,7 @@ export default function LiveRipPreview({
             className="absolute inset-0 h-full w-full"
             src={media.embedUrl}
             allow="autoplay; encrypted-media; picture-in-picture"
+            loading="eager"
             allowFullScreen
             title={title}
           />
