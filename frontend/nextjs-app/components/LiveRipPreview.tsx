@@ -78,14 +78,29 @@ export default function LiveRipPreview({
       return;
     }
     const element = videoRef.current;
+    const handleCanPlay = () => {
+      if (!muted) {
+        element.play().catch(() => undefined);
+      }
+    };
+
     element.muted = muted;
     element.loop = true;
     element.playsInline = true;
     element.preload = "auto";
-    const playPromise = element.play();
-    if (playPromise) {
-      playPromise.catch(() => undefined);
+    element.load();
+
+    if (!muted) {
+      element.play().catch(() => undefined);
     }
+
+    element.addEventListener("canplay", handleCanPlay);
+    element.addEventListener("loadeddata", handleCanPlay);
+
+    return () => {
+      element.removeEventListener("canplay", handleCanPlay);
+      element.removeEventListener("loadeddata", handleCanPlay);
+    };
   }, [muted, media]);
 
   useEffect(() => {
@@ -100,11 +115,11 @@ export default function LiveRipPreview({
       );
     };
     const timer = window.setTimeout(() => {
+      send("playVideo");
       if (muted) {
         send("mute");
       } else {
         send("unMute");
-        send("playVideo");
       }
     }, 200);
     return () => window.clearTimeout(timer);

@@ -213,23 +213,134 @@ export default function Home({
   const [collectorNames, setCollectorNames] = useState<Record<string, string>>(initialCollectorNames ?? {});
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
   const [liveRipTiles, setLiveRipTiles] = useState<LiveRipTile[]>(initialLiveRipTiles ?? []);
+  const heroVideoDesktopRef = useRef<HTMLVideoElement | null>(null);
+  const heroVideoMobileRef = useRef<HTMLVideoElement | null>(null);
+  const [heroVideoMuted, setHeroVideoMuted] = useState(true);
   const heroMedia = heroMediaConfig;
+
+  useEffect(() => {
+    if (heroMedia.type !== "video") {
+      return;
+    }
+    setHeroVideoMuted(true);
+    const candidates = [heroVideoDesktopRef.current, heroVideoMobileRef.current];
+    candidates.forEach((element) => {
+      if (element) {
+        element.load();
+      }
+    });
+  }, [heroMedia.type, heroMedia.src]);
+
+  useEffect(() => {
+    if (heroMedia.type !== "video") {
+      return;
+    }
+    const candidates = [heroVideoDesktopRef.current, heroVideoMobileRef.current];
+    const handleCanPlay = (event: Event) => {
+      const target = event.currentTarget as HTMLVideoElement;
+      if (!heroVideoMuted) {
+        target.play().catch(() => undefined);
+      }
+    };
+
+    candidates.forEach((element) => {
+      if (!element) {
+        return;
+      }
+      element.muted = heroVideoMuted;
+      element.defaultMuted = heroVideoMuted;
+      if (!heroVideoMuted) {
+        element.play().catch(() => undefined);
+      }
+      element.addEventListener("canplay", handleCanPlay);
+      element.addEventListener("loadeddata", handleCanPlay);
+    });
+
+    return () => {
+      candidates.forEach((element) => {
+        if (!element) {
+          return;
+        }
+        element.removeEventListener("canplay", handleCanPlay);
+        element.removeEventListener("loadeddata", handleCanPlay);
+      });
+    };
+  }, [heroMedia.type, heroMedia.src, heroVideoMuted]);
+
+  const handleHeroMuteToggle = useCallback(() => {
+    setHeroVideoMuted((prev) => !prev);
+  }, []);
+
+  const handleHeroFullscreen = useCallback((viewport: "desktop" | "mobile") => {
+    const candidate =
+      viewport === "desktop"
+        ? heroVideoDesktopRef.current ?? heroVideoMobileRef.current
+        : heroVideoMobileRef.current ?? heroVideoDesktopRef.current;
+
+    if (!candidate) {
+      return;
+    }
+
+    const request =
+      candidate.requestFullscreen?.bind(candidate) ??
+      (candidate as any).webkitEnterFullscreen?.bind(candidate) ??
+      null;
+
+    if (request) {
+      try {
+        void request();
+      } catch (error) {
+        // ignore
+      }
+    }
+  }, []);
 
   const renderHeroMedia = useCallback(
     (viewport: "mobile" | "desktop") => {
       if (heroMedia.type === "video") {
+        const ref = viewport === "desktop" ? heroVideoDesktopRef : heroVideoMobileRef;
         return (
           <ResponsiveMediaFrame viewport={viewport}>
-            <video
-              key={`${heroMedia.src}-${viewport}`}
-              src={heroMedia.src}
-              className="absolute inset-0 h-full w-full object-cover"
-              autoPlay
-              loop
-              muted
-              playsInline
-              preload="auto"
-            />
+            <div className="absolute inset-0">
+              <video
+                ref={ref}
+                key={`${heroMedia.src}-${viewport}`}
+                src={heroMedia.src}
+                className="absolute inset-0 h-full w-full object-cover"
+                autoPlay
+                loop
+                muted={heroVideoMuted}
+                playsInline
+                preload="auto"
+              />
+              <div className="pointer-events-none absolute inset-0 flex items-end justify-end p-4">
+                <div className="flex flex-wrap gap-2 pointer-events-auto">
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleHeroMuteToggle();
+                    }}
+                    className="rounded-full border border-white/20 bg-black/55 px-3 py-1.5 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                    aria-pressed={!heroVideoMuted}
+                    aria-label={heroVideoMuted ? "Unmute hero video" : "Mute hero video"}
+                  >
+                    {heroVideoMuted ? "Unmute" : "Mute"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleHeroFullscreen(viewport);
+                    }}
+                    className="rounded-full border border-white/20 bg-black/55 px-3 py-1.5 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                    aria-label="Expand hero video"
+                  >
+                    Expand
+                  </button>
+                </div>
+              </div>
+            </div>
           </ResponsiveMediaFrame>
         );
       }
@@ -250,7 +361,7 @@ export default function Home({
 
       return viewport === "desktop" ? <StackedHeroMachinesDesktop /> : <StackedHeroMachinesMobile />;
     },
-    [heroMedia]
+    [handleHeroFullscreen, handleHeroMuteToggle, heroMedia, heroVideoMuted]
   );
 
   const handleScrollToMachines = useCallback(() => {
@@ -428,7 +539,7 @@ export default function Home({
     const updateFactor = () => {
       const width = window.innerWidth;
       if (width < 768) {
-        setMarqueeSpeedFactor(0.75);
+        setMarqueeSpeedFactor(0.975);
       } else {
         setMarqueeSpeedFactor(1.25);
       }
@@ -602,7 +713,7 @@ export default function Home({
           content="Sports, Pokémon, and Comic mystery packs. Graded, authenticated, and ready to rip with Ten Kings."
         />
         {heroMedia.type === "video" ? (
-          <link rel="preload" as="video" href={heroMedia.src} />
+          <link rel="preload" as="video" href={heroMedia.src} type="video/mp4" />
         ) : null}
       </Head>
 
