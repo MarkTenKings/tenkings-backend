@@ -113,7 +113,7 @@ export default function CollectionPage() {
   const [showShippingForm, setShowShippingForm] = useState(false);
   const [confirmBuybackItem, setConfirmBuybackItem] = useState<CollectionItem | null>(null);
   const [buybackBusyItems, setBuybackBusyItems] = useState<Record<string, boolean>>({});
-  const [flash, setFlash] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [flash, setFlash] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
 
   const processingFeeDisplay = useMemo(
     () => `${(PROCESSING_FEE_MINOR / 100).toFixed(2)} TKD`,

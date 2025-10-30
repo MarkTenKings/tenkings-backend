@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, FormEvent } from "react";
 import Head from "next/head";
+import Image from "next/image";
 import type { GetServerSideProps } from "next";
 import { prisma } from "@tenkings/database";
 import { kioskSessionInclude, serializeKioskSession, type SerializedKioskSession } from "../../lib/server/kioskSession";
@@ -97,7 +98,7 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
       console.error(error);
       autoLiveTriggered.current = false;
     });
-  }, [countdownRemaining, hasControl, session.status]);
+  }, [advanceStage, countdownRemaining, hasControl, session.status]);
 
   const advanceStage = useCallback(
     async (stage: SerializedKioskSession["status"]) => {
@@ -238,10 +239,14 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
             </p>
             {typeof session.reveal === "object" && session.reveal && !Array.isArray(session.reveal) &&
             (session.reveal as Record<string, unknown>).imageUrl ? (
-              <img
+              <Image
                 src={String((session.reveal as Record<string, unknown>).imageUrl)}
                 alt={String((session.reveal as Record<string, unknown>).name ?? "Live rip")}
+                width={720}
+                height={540}
                 className="max-h-[360px] w-auto rounded-3xl border border-white/10 bg-night-950/80 p-6 shadow-card"
+                sizes="(max-width: 768px) 80vw, 480px"
+                unoptimized
               />
             ) : null}
             {typeof session.reveal === "object" && session.reveal && !Array.isArray(session.reveal) &&
