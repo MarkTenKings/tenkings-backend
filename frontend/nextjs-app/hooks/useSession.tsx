@@ -147,6 +147,21 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const normalizeBalance = (balance: unknown): number => {
+    if (typeof balance === "number" && Number.isFinite(balance)) {
+      return balance;
+    }
+    if (typeof balance === "string") {
+      const parsed = Number(balance);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    if (balance && typeof balance === "object" && "toString" in (balance as Record<string, unknown>)) {
+      const parsed = Number((balance as { toString: () => string }).toString());
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    return 0;
+  };
+
   const persistSession = (payload: SessionPayload) => {
     const normalized: SessionPayload = {
       token: payload.token,
@@ -159,7 +174,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       },
       wallet: {
         id: payload.wallet.id,
-        balance: payload.wallet.balance ?? 0,
+        balance: normalizeBalance(payload.wallet.balance),
       },
     };
     setSession(normalized);
@@ -186,7 +201,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       }
       const updated = {
         ...prev,
-        wallet: { ...prev.wallet, balance },
+        wallet: { ...prev.wallet, balance: normalizeBalance(balance) },
       };
       if (typeof window !== "undefined") {
         window.localStorage.setItem(storageKey, JSON.stringify(updated));
@@ -233,7 +248,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           wallet: result.wallet
             ? {
                 id: result.wallet.id,
-                balance: result.wallet.balance ?? prev.wallet.balance,
+                balance: normalizeBalance(result.wallet.balance),
               }
             : prev.wallet,
         };
@@ -251,6 +266,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const ensureSession = () => {
     if (session) {
+      if (!profileRefreshRef.current) {
+        refreshProfile().catch(() => undefined);
+      }
       return Promise.resolve(session);
     }
     setAuthState((prev) => ({ ...prev, open: true, step: "phone", error: null, message: null }));

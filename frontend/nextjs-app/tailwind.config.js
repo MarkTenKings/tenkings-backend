@@ -42,7 +42,7 @@ module.exports = {
       keyframes: {
         marquee: {
           "0%": { transform: "translateX(0%)" },
-          "100%": { transform: "translateX(-50%)" },
+          "100%": { transform: "translateX(-100%)" },
         },
         shimmer: {
           "0%": { backgroundPosition: "-200% 0" },

@@ -527,7 +527,7 @@ export default function Home({
                 onClick={() => router.push("/locations")}
                 className="inline-flex items-center justify-center whitespace-nowrap rounded-full border border-white/20 px-10 py-4 text-sm font-semibold uppercase tracking-[0.2em] text-white transition hover:border-white/40 hover:text-gold-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
               >
-                Rip It Live Near You
+                Rip It Live Locations
               </button>
             </div>
             <p className="text-sm uppercase tracking-[0.22em] text-slate-400">

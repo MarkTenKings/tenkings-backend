@@ -76,6 +76,9 @@ export default function AppShell({ children, background = "default" }: AppShellP
               <Link className="transition hover:text-white" href="/locations" onClick={handleCloseMenu}>
                 Locations
               </Link>
+              <Link className="transition hover:text-white" href="/live" onClick={handleCloseMenu}>
+                Live Rips
+              </Link>
               <Link className="transition hover:text-white" href="/marketplace" onClick={handleCloseMenu}>
                 Marketplace
               </Link>
