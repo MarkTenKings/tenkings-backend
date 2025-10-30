@@ -79,27 +79,6 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
     return () => window.clearInterval(interval);
   }, [fetchSession]);
 
-  useEffect(() => {
-    if (!hasControl) {
-      return;
-    }
-    if (session.status !== "COUNTDOWN") {
-      return;
-    }
-    if (countdownRemaining > 1000) {
-      autoLiveTriggered.current = false;
-      return;
-    }
-    if (autoLiveTriggered.current) {
-      return;
-    }
-    autoLiveTriggered.current = true;
-    void advanceStage("LIVE").catch((error) => {
-      console.error(error);
-      autoLiveTriggered.current = false;
-    });
-  }, [advanceStage, countdownRemaining, hasControl, session.status]);
-
   const advanceStage = useCallback(
     async (stage: SerializedKioskSession["status"]) => {
       if (!hasControl) {
@@ -122,6 +101,27 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
     },
     [controlToken, hasControl, session.id]
   );
+
+  useEffect(() => {
+    if (!hasControl) {
+      return;
+    }
+    if (session.status !== "COUNTDOWN") {
+      return;
+    }
+    if (countdownRemaining > 1000) {
+      autoLiveTriggered.current = false;
+      return;
+    }
+    if (autoLiveTriggered.current) {
+      return;
+    }
+    autoLiveTriggered.current = true;
+    void advanceStage("LIVE").catch((error) => {
+      console.error(error);
+      autoLiveTriggered.current = false;
+    });
+  }, [advanceStage, countdownRemaining, hasControl, session.status]);
 
   const submitReveal = useCallback(
     async (event: FormEvent) => {
