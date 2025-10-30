@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { requestLoginCode, verifyLoginCode, setAuthToken, fetchProfile, fetchWallet } from "../lib/api";
+import { requestLoginCode, verifyLoginCode, setAuthToken, fetchProfile } from "../lib/api";
 import AuthModal from "../components/AuthModal";
 
 export interface SessionPayload {
@@ -163,18 +163,28 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   };
 
   const tryHydrateWallet = useCallback(
-    async (userId: string) => {
+    async (userId: string, token?: string | null) => {
+      if (!userId || !token) {
+        return null;
+      }
       try {
-        const response = await fetchWallet(userId);
-        if (!response?.wallet) {
+        const response = await fetch("/api/wallet/me", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        if (!response.ok) {
+          return null;
+        }
+        const payload = (await response.json()) as { wallet?: { id: string; balance: unknown } | null };
+        if (!payload.wallet) {
           return null;
         }
         return {
-          id: response.wallet.id,
-          balance: normalizeBalance(response.wallet.balance),
+          id: payload.wallet.id,
+          balance: normalizeBalance(payload.wallet.balance),
         };
       } catch (error) {
-        // Wallet hydration is best-effort; ignore failures so login flow continues.
         return null;
       }
     },
@@ -204,7 +214,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (normalized.user.id) {
-      void tryHydrateWallet(normalized.user.id).then((fresh) => {
+      void tryHydrateWallet(normalized.user.id, normalized.token).then((fresh) => {
         if (!fresh) {
           return;
         }
@@ -289,7 +299,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         : null;
 
       if (userIdForWallet) {
-        const fetched = await tryHydrateWallet(userIdForWallet);
+        const fetched = await tryHydrateWallet(userIdForWallet, session?.token ?? null);
         if (fetched) {
           hydratedWallet = fetched;
         }
