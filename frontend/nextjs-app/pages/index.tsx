@@ -229,7 +229,7 @@ export default function Home({
         element.load();
       }
     });
-  }, [heroMedia.type, heroMedia.src]);
+  }, [heroMedia.type, heroMedia.type === "video" ? heroMedia.src : null]);
 
   useEffect(() => {
     if (heroMedia.type !== "video") {
@@ -265,7 +265,7 @@ export default function Home({
         element.removeEventListener("loadeddata", handleCanPlay);
       });
     };
-  }, [heroMedia.type, heroMedia.src, heroVideoMuted]);
+  }, [heroMedia.type, heroMedia.type === "video" ? heroMedia.src : null, heroVideoMuted]);
 
   const handleHeroMuteToggle = useCallback(() => {
     setHeroVideoMuted((prev) => !prev);
