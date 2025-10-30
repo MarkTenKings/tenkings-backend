@@ -809,9 +809,13 @@ export default function Packs() {
     if (!showRevealModal) {
       return;
     }
+
+    const ripDelay = 1300;
+    const cardDelay = 2800;
+
     setRevealStage("intro");
-    const ripTimer = window.setTimeout(() => setRevealStage("rip"), 800);
-    const cardTimer = window.setTimeout(() => setRevealStage("card"), 1700);
+    const ripTimer = window.setTimeout(() => setRevealStage("rip"), ripDelay);
+    const cardTimer = window.setTimeout(() => setRevealStage("card"), cardDelay);
     return () => {
       window.clearTimeout(ripTimer);
       window.clearTimeout(cardTimer);

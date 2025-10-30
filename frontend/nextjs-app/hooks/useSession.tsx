@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { requestLoginCode, verifyLoginCode, setAuthToken, fetchProfile } from "../lib/api";
+import { requestLoginCode, verifyLoginCode, setAuthToken, fetchProfile, fetchWallet } from "../lib/api";
 import AuthModal from "../components/AuthModal";
 
 export interface SessionPayload {
@@ -233,6 +233,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const refreshProfile = useCallback(async () => {
     try {
       const result = await fetchProfile();
+      const userIdForWallet = result.user?.id ?? session?.user.id ?? null;
+      let walletBalanceCandidate = result.wallet?.balance;
+
+      if ((walletBalanceCandidate === null || walletBalanceCandidate === undefined) && userIdForWallet) {
+        try {
+          const walletResponse = await fetchWallet(userIdForWallet);
+          walletBalanceCandidate = walletResponse.wallet?.balance ?? walletBalanceCandidate;
+        } catch (error) {
+          // wallet hydration is best-effort
+        }
+      }
+
+      const normalizedWalletBalance = normalizeBalance(
+        walletBalanceCandidate ?? session?.wallet.balance ?? 0
+      );
+
       setSession((prev) => {
         if (!prev) {
           return prev;
@@ -248,9 +264,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           wallet: result.wallet
             ? {
                 id: result.wallet.id,
-                balance: normalizeBalance(result.wallet.balance),
+                balance: normalizedWalletBalance,
               }
-            : prev.wallet,
+            : {
+                id: prev.wallet.id,
+                balance: normalizedWalletBalance,
+              },
         };
         if (typeof window !== "undefined") {
           window.localStorage.setItem(storageKey, JSON.stringify(updated));
@@ -262,7 +281,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } finally {
       profileRefreshRef.current = true;
     }
-  }, []);
+  }, [session?.user.id, session?.wallet.balance]);
 
   const ensureSession = () => {
     if (session) {

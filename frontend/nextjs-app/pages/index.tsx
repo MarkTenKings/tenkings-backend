@@ -373,19 +373,41 @@ export default function Home({
     }
 
     const baseSequence = combined.length ? combined : pulls.length ? pulls : fallbackPulls;
-    const sequence = baseSequence.length ? [...baseSequence, ...baseSequence] : [...fallbackPulls, ...fallbackPulls];
+    const marqueeBase = baseSequence.length ? baseSequence : fallbackPulls;
+    const repeated = marqueeBase.length
+      ? Array.from({ length: 3 }).flatMap(() => marqueeBase)
+      : Array.from({ length: 3 }).flatMap(() => fallbackPulls);
 
-    const loopCount = Math.max(baseSequence.length, 1);
-    const duration = Math.max(7, loopCount * 0.35);
+    const loopCount = Math.max(marqueeBase.length, 1);
+    const duration = Math.max(9, loopCount * 0.45);
 
     return {
-      marqueeItems: sequence,
+      marqueeItems: repeated,
       marqueeLoopCount: loopCount,
       marqueeDuration: duration,
     };
   }, [pulls, liveRipTiles]);
 
-  const marqueeAnimationDuration = marqueeDuration;
+  const [marqueeSpeedFactor, setMarqueeSpeedFactor] = useState(1);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const updateFactor = () => {
+      const width = window.innerWidth;
+      if (width < 768) {
+        setMarqueeSpeedFactor(0.75);
+      } else {
+        setMarqueeSpeedFactor(1.25);
+      }
+    };
+    updateFactor();
+    window.addEventListener("resize", updateFactor);
+    return () => window.removeEventListener("resize", updateFactor);
+  }, []);
+
+  const marqueeAnimationDuration = marqueeDuration * marqueeSpeedFactor;
 
   useEffect(() => {
     const missingIds = pulls.reduce<string[]>((acc, pull) => {
