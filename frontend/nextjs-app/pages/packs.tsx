@@ -475,9 +475,12 @@ function RevealModal({
     stage === "card" && Boolean(reveal.description?.trim()) && reveal.description?.trim() !== PROSPECT_LINE;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6 sm:py-8">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-3xl rounded-3xl border border-white/10 bg-night-900/95 shadow-2xl max-h-[90vh] overflow-y-auto md:max-h-none md:overflow-hidden">
+      <div
+        className="relative z-10 w-full max-w-3xl overflow-y-auto rounded-3xl border border-white/10 bg-night-900/95 shadow-2xl md:max-h-none md:overflow-hidden"
+        style={{ maxHeight: "calc(100vh - 2rem)" }}
+      >
         <button
           type="button"
           onClick={onClose}
@@ -485,11 +488,11 @@ function RevealModal({
         >
           Close
         </button>
-        <div className="flex flex-col items-center gap-6 p-8">
-          <div className="relative flex h-80 w-full items-center justify-center" style={{ perspective: "1200px" }}>
+        <div className="flex flex-col items-center gap-6 p-6 sm:p-8">
+          <div className="relative flex h-[22rem] w-full items-center justify-center sm:h-80" style={{ perspective: "1200px" }}>
             {stage !== "card" && (
               <div
-                className="relative h-64 w-48"
+                className="relative h-56 w-40 sm:h-64 sm:w-48 md:h-72 md:w-52"
                 style={{
                   animation:
                     stage === "intro"
@@ -505,7 +508,7 @@ function RevealModal({
               </div>
             )}
             {stage === "card" && (
-              <div className="card-reveal relative h-80 w-56">
+              <div className="card-reveal relative h-[20rem] w-[14rem] sm:h-80 sm:w-56">
                 <div className="absolute inset-0 rounded-[2rem] border border-gold-400/50 bg-night-900/70 shadow-[0_0_55px_rgba(250,204,21,0.35)]" />
                 <Image
                   src={cardImage}
@@ -550,7 +553,7 @@ function RevealModal({
                   type="button"
                   onClick={onAcceptBuyback}
                   disabled={!canAcceptBuyback || buybackBusy || buybackAccepted}
-                  className="rounded-full border border-emerald-400/40 bg-emerald-500/20 px-6 py-3 text-xs uppercase tracking-[0.32em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="w-full rounded-full border border-emerald-400/40 bg-emerald-500/20 px-6 py-3 text-xs uppercase tracking-[0.32em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto"
                 >
                   {buybackAccepted ? "Buyback accepted" : buybackBusy ? "Processing…" : "Accept buyback"}
                 </button>
@@ -558,7 +561,7 @@ function RevealModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.32em] text-slate-200 transition hover:border-gold-300 hover:text-gold-200"
+                className="w-full rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.32em] text-slate-200 transition hover:border-gold-300 hover:text-gold-200 sm:w-auto"
               >
                 VIEW CARD DETAILS
               </button>
@@ -566,7 +569,7 @@ function RevealModal({
                 type="button"
                 onClick={onSaveToCollection}
                 disabled={collectionSaved}
-                className="rounded-full border border-gold-400/50 px-6 py-3 text-xs uppercase tracking-[0.32em] text-gold-200 transition hover:border-gold-300 hover:text-gold-100 disabled:cursor-not-allowed disabled:border-white/15 disabled:text-slate-500"
+                className="w-full rounded-full border border-gold-400/50 px-6 py-3 text-xs uppercase tracking-[0.32em] text-gold-200 transition hover:border-gold-300 hover:text-gold-100 disabled:cursor-not-allowed disabled:border-white/15 disabled:text-slate-500 sm:w-auto"
               >
                 {collectionSaved ? "SAVED TO YOUR COLLECTION" : "SAVE TO YOUR COLLECTION"}
               </button>
@@ -634,7 +637,7 @@ function RevealModal({
 
 export default function Packs() {
   const router = useRouter();
-  const { ensureSession, updateWalletBalance } = useSession();
+  const { ensureSession, updateWalletBalance, logout } = useSession();
 
   const [definitions, setDefinitions] = useState<any[]>([]);
   const [definitionsLoading, setDefinitionsLoading] = useState(false);
@@ -1069,6 +1072,22 @@ export default function Packs() {
     router.push("/collection").catch(() => undefined);
   }, [router]);
 
+  const requireFreshSession = useCallback(
+    async (fallbackMessage: string) => {
+      logout();
+      try {
+        await ensureSession();
+      } catch (error) {
+        const message =
+          error instanceof Error && error.message !== "Authentication cancelled"
+            ? error.message
+            : fallbackMessage;
+        setAlert({ type: "error", text: message });
+      }
+    },
+    [ensureSession, logout]
+  );
+
   const acceptBuyback = async () => {
     if (!reveal?.itemId) {
       setAlert({ type: "error", text: "Buyback unavailable for this pull." });
@@ -1098,8 +1117,12 @@ export default function Packs() {
         redirectToCollection();
       }, 250);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Buyback failed";
-      setAlert({ type: "error", text: message });
+      if (error instanceof Error && /session/i.test(error.message)) {
+        await requireFreshSession("Sign in again to continue with instant buyback.");
+      } else {
+        const message = error instanceof Error ? error.message : "Buyback failed";
+        setAlert({ type: "error", text: message });
+      }
     } finally {
       setBuybackBusy(false);
     }

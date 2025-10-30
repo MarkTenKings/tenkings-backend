@@ -332,6 +332,20 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     refreshProfile().catch(() => undefined);
   }, [session, loading, refreshProfile]);
 
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+    const handleFocus = () => {
+      refreshProfile().catch(() => undefined);
+    };
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [session, refreshProfile]);
+
   const contextValue = useMemo<SessionContextValue>(
     () => ({
       session,

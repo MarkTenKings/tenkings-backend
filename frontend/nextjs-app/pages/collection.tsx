@@ -5,6 +5,13 @@ import AppShell from "../components/AppShell";
 import { useSession } from "../hooks/useSession";
 import { buybackItem } from "../lib/api";
 
+class AuthFailure extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AuthFailure";
+  }
+}
+
 const PROCESSING_FEE_MINOR = Number(process.env.NEXT_PUBLIC_SHIPPING_PROCESSING_FEE_MINOR ?? "1200");
 const BUYBACK_RATE = 0.75;
 
@@ -93,7 +100,7 @@ const formatMinor = (value: number | null) => {
 const placeholderCardImage = "/images/card-pull-1.png";
 
 export default function CollectionPage() {
-  const { session, loading, ensureSession, updateWalletBalance } = useSession();
+  const { session, loading, ensureSession, updateWalletBalance, logout } = useSession();
   const [items, setItems] = useState<CollectionItem[]>([]);
   const [itemsLoading, setItemsLoading] = useState(false);
   const [itemsError, setItemsError] = useState<string | null>(null);
@@ -284,31 +291,59 @@ export default function CollectionPage() {
     </section>
   );
 
-  const loadItems = () => {
+  const loadItems = useCallback(async () => {
     if (!session) {
       return;
     }
+
+    const runFetch = async (token: string) => {
+      const res = await fetch("/api/collection", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (res.status === 401) {
+        const payload = await res.json().catch(() => ({}));
+        throw new AuthFailure(payload?.message ?? "Session expired");
+      }
+
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to load collection");
+      }
+
+      const payload = (await res.json()) as { items: CollectionItem[] };
+      setItems(payload.items);
+    };
+
     setItemsLoading(true);
     setItemsError(null);
-    fetch("/api/collection", {
-      headers: {
-        Authorization: `Bearer ${session.token}`,
-      },
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const payload = await res.json().catch(() => ({}));
-          throw new Error(payload?.message ?? "Failed to load collection");
+
+    try {
+      await runFetch(session.token);
+    } catch (error) {
+      if (error instanceof AuthFailure) {
+        logout();
+        try {
+          const refreshed = await ensureSession();
+          await runFetch(refreshed.token);
+          setItemsError(null);
+          return;
+        } catch (refreshError) {
+          const message =
+            refreshError instanceof Error && refreshError.message !== "Authentication cancelled"
+              ? refreshError.message
+              : "Sign in to view your collection";
+          setItemsError(message);
+          return;
         }
-        const payload = (await res.json()) as { items: CollectionItem[] };
-        setItems(payload.items);
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : "Failed to load collection";
-        setItemsError(message);
-      })
-      .finally(() => setItemsLoading(false));
-  };
+      }
+
+      const message = error instanceof Error ? error.message : "Failed to load collection";
+      setItemsError(message);
+    } finally {
+      setItemsLoading(false);
+    }
+  }, [ensureSession, logout, session]);
 
   const handleInstantBuyback = useCallback(
     async (item: CollectionItem): Promise<boolean> => {
@@ -363,6 +398,20 @@ export default function CollectionPage() {
         });
         return true;
       } catch (error) {
+        if (error instanceof Error && /session/i.test(error.message)) {
+          logout();
+          try {
+            await ensureSession();
+            setFlash({ type: "info", text: "Session refreshed. Try the instant buyback again." });
+          } catch (reauthError) {
+            const message =
+              reauthError instanceof Error && reauthError.message !== "Authentication cancelled"
+                ? reauthError.message
+                : "Sign in to accept instant buybacks.";
+            setFlash({ type: "error", text: message });
+          }
+          return false;
+        }
         const message = error instanceof Error ? error.message : "Instant buyback failed";
         setFlash({ type: "error", text: message });
         return false;
@@ -374,7 +423,7 @@ export default function CollectionPage() {
         });
       }
     },
-    [ensureSession, session, updateWalletBalance]
+    [ensureSession, logout, session, updateWalletBalance]
   );
 
   useEffect(() => {
@@ -385,9 +434,8 @@ export default function CollectionPage() {
       ensureSession().catch(() => undefined);
       return;
     }
-    loadItems();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, session?.token]);
+    loadItems().catch(() => undefined);
+  }, [ensureSession, loadItems, loading, session]);
 
   useEffect(() => {
     if (!flash) {

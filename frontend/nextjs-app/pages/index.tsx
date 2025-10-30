@@ -546,7 +546,7 @@ export default function Home({
             <div className="pointer-events-none absolute inset-y-0 left-0 w-32 bg-gradient-to-r from-night-900 via-night-900/80 to-transparent" aria-hidden />
             <div className="pointer-events-none absolute inset-y-0 right-0 w-32 bg-gradient-to-l from-night-900 via-night-900/80 to-transparent" aria-hidden />
             <div
-              className="flex min-w-full gap-6 motion-reduce:animate-none motion-safe:animate-marquee"
+              className="flex min-w-full flex-nowrap gap-6 motion-reduce:animate-none motion-safe:animate-marquee"
               style={{
                 animationDuration: `${marqueeAnimationDuration}s`,
               }}
@@ -556,7 +556,7 @@ export default function Home({
                   return (
                     <article
                       key={`live-${item.id}-${index}`}
-                      className="group flex min-w-[280px] max-w-[280px] flex-col gap-3 rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-sky-400/60 hover:shadow-glow"
+                      className="group flex min-w-[280px] max-w-[280px] flex-shrink-0 flex-col gap-3 rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-sky-400/60 hover:shadow-glow"
                     >
                       <header className="space-y-2">
                         <p className="text-xs uppercase tracking-[0.3em] text-sky-300">Live Rip</p>
@@ -603,7 +603,7 @@ export default function Home({
                 return (
                   <article
                     key={`${item.itemId}-${index}`}
-                    className="group flex min-w-[280px] max-w-[280px] flex-col gap-4 rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-gold-400/60 hover:shadow-glow"
+                    className="group flex min-w-[280px] max-w-[280px] flex-shrink-0 flex-col gap-4 rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-gold-400/60 hover:shadow-glow"
                     role="button"
                     tabIndex={canOpen ? 0 : -1}
                     onClick={() => canOpen && handleOpenCard(item)}
