@@ -405,7 +405,7 @@ export default function Home({
 
     const repeated = [...marqueeBase, ...marqueeBase];
     const loopCount = Math.max(marqueeBase.length, 1);
-    const duration = Math.max(18, loopCount * 1.1);
+    const duration = Math.max(36, loopCount * 2.2);
 
     return {
       marqueeItems: repeated,
