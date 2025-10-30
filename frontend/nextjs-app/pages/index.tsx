@@ -374,12 +374,11 @@ export default function Home({
 
     const baseSequence = combined.length ? combined : pulls.length ? pulls : fallbackPulls;
     const marqueeBase = baseSequence.length ? baseSequence : fallbackPulls;
-    const repeated = marqueeBase.length
-      ? Array.from({ length: 3 }).flatMap(() => marqueeBase)
-      : Array.from({ length: 3 }).flatMap(() => fallbackPulls);
+    const repeats = marqueeBase.length ? 4 : 3;
+    const repeated = Array.from({ length: repeats }).flatMap(() => marqueeBase.length ? marqueeBase : fallbackPulls);
 
     const loopCount = Math.max(marqueeBase.length, 1);
-    const duration = Math.max(9, loopCount * 0.45);
+    const duration = Math.max(16, loopCount * 0.8);
 
     return {
       marqueeItems: repeated,
@@ -578,7 +577,7 @@ export default function Home({
                   return (
                     <article
                       key={`live-${item.id}-${index}`}
-                      className="group flex min-w-[280px] max-w-[280px] flex-shrink-0 flex-col gap-3 rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-sky-400/60 hover:shadow-glow"
+                      className="group flex min-w-[280px] max-w-[280px] flex-none flex-col gap-3 rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-sky-400/60 hover:shadow-glow"
                     >
                       <header className="space-y-2">
                         <p className="text-xs uppercase tracking-[0.3em] text-sky-300">Live Rip</p>
@@ -625,7 +624,7 @@ export default function Home({
                 return (
                   <article
                     key={`${item.itemId}-${index}`}
-                    className="group flex min-w-[280px] max-w-[280px] flex-shrink-0 flex-col gap-4 rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-gold-400/60 hover:shadow-glow"
+                    className="group flex min-w-[280px] max-w-[280px] flex-none flex-col gap-4 rounded-3xl border border-white/10 bg-slate-900/60 p-5 shadow-card transition hover:border-gold-400/60 hover:shadow-glow"
                     role="button"
                     tabIndex={canOpen ? 0 : -1}
                     onClick={() => canOpen && handleOpenCard(item)}

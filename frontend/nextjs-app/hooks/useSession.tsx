@@ -162,6 +162,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return 0;
   };
 
+  const tryHydrateWallet = useCallback(
+    async (userId: string) => {
+      try {
+        const response = await fetchWallet(userId);
+        if (!response?.wallet) {
+          return null;
+        }
+        return {
+          id: response.wallet.id,
+          balance: normalizeBalance(response.wallet.balance),
+        };
+      } catch (error) {
+        // Wallet hydration is best-effort; ignore failures so login flow continues.
+        return null;
+      }
+    },
+    [normalizeBalance]
+  );
+
   const persistSession = (payload: SessionPayload) => {
     const normalized: SessionPayload = {
       token: payload.token,
@@ -182,6 +201,33 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     profileRefreshRef.current = false;
     if (typeof window !== "undefined") {
       window.localStorage.setItem(storageKey, JSON.stringify(normalized));
+    }
+
+    if (normalized.user.id) {
+      void tryHydrateWallet(normalized.user.id).then((fresh) => {
+        if (!fresh) {
+          return;
+        }
+        setSession((prev) => {
+          if (!prev) {
+            return prev;
+          }
+          if (prev.wallet.balance === fresh.balance && prev.wallet.id === fresh.id) {
+            return prev;
+          }
+          const updated = {
+            ...prev,
+            wallet: {
+              id: fresh.id,
+              balance: fresh.balance,
+            },
+          };
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(storageKey, JSON.stringify(updated));
+          }
+          return updated;
+        });
+      });
     }
   };
 
@@ -234,20 +280,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     try {
       const result = await fetchProfile();
       const userIdForWallet = result.user?.id ?? session?.user.id ?? null;
-      let walletBalanceCandidate = result.wallet?.balance;
 
-      if ((walletBalanceCandidate === null || walletBalanceCandidate === undefined) && userIdForWallet) {
-        try {
-          const walletResponse = await fetchWallet(userIdForWallet);
-          walletBalanceCandidate = walletResponse.wallet?.balance ?? walletBalanceCandidate;
-        } catch (error) {
-          // wallet hydration is best-effort
+      let hydratedWallet = result.wallet
+        ? {
+            id: result.wallet.id,
+            balance: normalizeBalance(result.wallet.balance),
+          }
+        : null;
+
+      if (userIdForWallet) {
+        const fetched = await tryHydrateWallet(userIdForWallet);
+        if (fetched) {
+          hydratedWallet = fetched;
         }
       }
 
-      const normalizedWalletBalance = normalizeBalance(
-        walletBalanceCandidate ?? session?.wallet.balance ?? 0
-      );
+      const normalizedWalletBalance = hydratedWallet
+        ? hydratedWallet.balance
+        : normalizeBalance(session?.wallet.balance ?? 0);
+      const walletId = hydratedWallet?.id ?? result.wallet?.id ?? session?.wallet.id;
 
       setSession((prev) => {
         if (!prev) {
@@ -261,15 +312,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
             displayName: result.user?.displayName ?? null,
             avatarUrl: result.user?.avatarUrl ?? null,
           },
-          wallet: result.wallet
-            ? {
-                id: result.wallet.id,
-                balance: normalizedWalletBalance,
-              }
-            : {
-                id: prev.wallet.id,
-                balance: normalizedWalletBalance,
-              },
+          wallet: {
+            id: walletId ?? prev.wallet.id,
+            balance: normalizedWalletBalance,
+          },
         };
         if (typeof window !== "undefined") {
           window.localStorage.setItem(storageKey, JSON.stringify(updated));
@@ -281,7 +327,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } finally {
       profileRefreshRef.current = true;
     }
-  }, [session?.user.id, session?.wallet.balance]);
+  }, [session?.user.id, session?.wallet.balance, tryHydrateWallet]);
 
   const ensureSession = () => {
     if (session) {
