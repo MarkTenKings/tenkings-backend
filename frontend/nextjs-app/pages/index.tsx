@@ -13,9 +13,10 @@ import {
 } from "react";
 import { useRouter } from "next/router";
 import AppShell from "../components/AppShell";
-import { fetchCollector, listRecentPulls } from "../lib/api";
+import { fetchCollector } from "../lib/api";
 import CardDetailModal from "../components/CardDetailModal";
 import { formatUsdMinor } from "../lib/formatters";
+import { loadRecentPulls } from "../lib/server/recentPulls";
 
 const BUYBACK_RATE = 0.75;
 
@@ -283,17 +284,19 @@ export default function Home({
 
   const closeModal = useCallback(() => setActiveItemId(null), []);
 
-  const marqueeAnimationDuration = Math.max(8, marqueeLoopCount * 0.9);
-
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        const { pulls: fetchedPulls } = await listRecentPulls({ limit: 16 });
-        if (cancelled || !fetchedPulls?.length) {
+        const response = await fetch("/api/recent-pulls?limit=16");
+        if (!response.ok) {
           return;
         }
-        const { pulls: mappedPulls, names } = mapPullsFromApi(fetchedPulls ?? []);
+        const payload = (await response.json()) as { pulls?: Array<any> };
+        if (cancelled || !payload.pulls?.length) {
+          return;
+        }
+        const { pulls: mappedPulls, names } = mapPullsFromApi(payload.pulls ?? []);
         if (mappedPulls.length && !cancelled) {
           setPulls(mappedPulls);
           if (Object.keys(names).length) {
@@ -335,7 +338,7 @@ export default function Home({
     };
   }, []);
 
-  const { marqueeItems, marqueeLoopCount } = useMemo(() => {
+  const { marqueeItems, marqueeLoopCount, marqueeDuration } = useMemo(() => {
     const maxItems = 10;
     const standard = pulls.slice(0, maxItems);
     const liveCandidates = liveRipTiles.slice(0, Math.min(5, Math.floor(maxItems / 2)));
@@ -369,11 +372,17 @@ export default function Home({
     const baseSequence = combined.length ? combined : pulls.length ? pulls : fallbackPulls;
     const sequence = baseSequence.length ? [...baseSequence, ...baseSequence] : [...fallbackPulls, ...fallbackPulls];
 
+    const loopCount = Math.max(baseSequence.length, 1);
+    const duration = Math.max(6, loopCount * 0.65);
+
     return {
       marqueeItems: sequence,
-      marqueeLoopCount: Math.max(baseSequence.length, 1),
+      marqueeLoopCount: loopCount,
+      marqueeDuration: duration,
     };
   }, [pulls, liveRipTiles]);
+
+  const marqueeAnimationDuration = marqueeDuration;
 
   useEffect(() => {
     const missingIds = pulls.reduce<string[]>((acc, pull) => {
@@ -560,6 +569,7 @@ export default function Home({
                             loop
                             muted
                             playsInline
+                            preload="auto"
                             poster={item.thumbnailUrl ?? undefined}
                           />
                         </div>
@@ -805,8 +815,8 @@ export const getServerSideProps: GetServerSideProps<HomePageProps> = async () =>
   let initialLiveRipTiles: LiveRipTile[] = [];
 
   try {
-    const { pulls: fetchedPulls } = await listRecentPulls({ limit: 16 });
-    const mapped = mapPullsFromApi(fetchedPulls ?? []);
+    const recentPulls = await loadRecentPulls(16);
+    const mapped = mapPullsFromApi(recentPulls ?? []);
     initialPulls = mapped.pulls;
     initialCollectorNames = mapped.names;
   } catch (error) {

@@ -2,7 +2,28 @@ import type { NextApiRequest } from "next";
 import { createHash } from "node:crypto";
 import { prisma } from "@tenkings/database";
 
-const AUTH_SERVICE_URL = (process.env.AUTH_SERVICE_URL ?? process.env.NEXT_PUBLIC_AUTH_SERVICE_URL ?? "").replace(/\/$/, "");
+const trimTrailingSlash = (value: string) => value.replace(/\/$/, "");
+
+const resolveAuthServiceUrl = (): string | null => {
+  const explicit = process.env.AUTH_SERVICE_URL ?? process.env.NEXT_PUBLIC_AUTH_SERVICE_URL;
+  if (explicit && explicit.trim()) {
+    return trimTrailingSlash(explicit.trim());
+  }
+
+  const apiBase = process.env.TENKINGS_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (apiBase && apiBase.trim()) {
+    return `${trimTrailingSlash(apiBase.trim())}/auth`;
+  }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL;
+  if (siteUrl && siteUrl.trim()) {
+    return `${trimTrailingSlash(siteUrl.trim())}/auth`;
+  }
+
+  return null;
+};
+
+const AUTH_SERVICE_URL = resolveAuthServiceUrl();
 
 const buildAuthUrl = (path: string) => {
   if (!AUTH_SERVICE_URL) {
