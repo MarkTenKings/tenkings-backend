@@ -13,6 +13,7 @@ import {
 } from "react";
 import { useRouter } from "next/router";
 import AppShell from "../components/AppShell";
+import LiveRipPreview from "../components/LiveRipPreview";
 import { fetchCollector } from "../lib/api";
 import CardDetailModal from "../components/CardDetailModal";
 import { formatUsdMinor } from "../lib/formatters";
@@ -42,6 +43,7 @@ type LiveRipTile = {
   locationLabel: string | null;
   thumbnailUrl: string | null;
   slug: string | null;
+  viewCount: number | null;
 };
 
 type DisplayTile = PullCard | LiveRipTile;
@@ -136,7 +138,7 @@ const mapPullsFromApi = (rawPulls: any[]): { pulls: PullCard[]; names: Record<st
   const mapped: PullCard[] = [];
 
   rawPulls
-    .slice(0, 10)
+    .slice(0, 20)
     .forEach((pull: any, index: number) => {
       const item = pull?.item ?? {};
       const itemId = typeof item?.id === "string" && item.id.trim() ? item.id : `recent-${index}`;
@@ -196,6 +198,7 @@ const mapLiveRipTilesFromApi = (rawLiveRips: any[], limit = 6): LiveRipTile[] =>
       locationLabel: entry.location?.name ?? null,
       thumbnailUrl: entry.thumbnailUrl ?? null,
       slug: entry.slug ?? null,
+      viewCount: typeof entry.viewCount === "number" ? entry.viewCount : null,
     }));
 
 export default function Home({
@@ -288,7 +291,7 @@ export default function Home({
     let cancelled = false;
     const load = async () => {
       try {
-        const response = await fetch("/api/recent-pulls?limit=16");
+        const response = await fetch("/api/recent-pulls?limit=20");
         if (!response.ok) {
           return;
         }
@@ -339,7 +342,7 @@ export default function Home({
   }, []);
 
   const { marqueeItems, marqueeLoopCount, marqueeDuration } = useMemo(() => {
-    const maxItems = 10;
+    const maxItems = 20;
     const standard = pulls.slice(0, maxItems);
     const liveCandidates = liveRipTiles.slice(0, Math.min(5, Math.floor(maxItems / 2)));
     const combined: DisplayTile[] = [];
@@ -373,7 +376,7 @@ export default function Home({
     const sequence = baseSequence.length ? [...baseSequence, ...baseSequence] : [...fallbackPulls, ...fallbackPulls];
 
     const loopCount = Math.max(baseSequence.length, 1);
-    const duration = Math.max(6, loopCount * 0.65);
+    const duration = Math.max(7, loopCount * 0.35);
 
     return {
       marqueeItems: sequence,
@@ -559,21 +562,18 @@ export default function Home({
                         <p className="text-xs uppercase tracking-[0.3em] text-sky-300">Live Rip</p>
                         <h3 className="font-heading text-xl uppercase tracking-[0.18em] text-white">{item.title}</h3>
                       </header>
-                      <div className="relative mt-2 flex-1 overflow-hidden rounded-2xl border border-white/10 bg-night-900/60">
-                        <div className="relative h-0 w-full pb-[133%]">
-                          <video
-                            key={`${item.videoUrl}-${index}`}
-                            src={item.videoUrl}
-                            className="absolute inset-0 h-full w-full object-cover"
-                            autoPlay
-                            loop
-                            muted
-                            playsInline
-                            preload="auto"
-                            poster={item.thumbnailUrl ?? undefined}
-                          />
-                        </div>
-                      </div>
+                      <LiveRipPreview
+                        id={item.id}
+                        title={item.title}
+                        videoUrl={item.videoUrl}
+                        thumbnailUrl={item.thumbnailUrl}
+                        muted
+                        onToggleMute={() => undefined}
+                        viewCount={item.viewCount}
+                        className="mt-2 flex-1"
+                        aspectClassName="pb-[133%]"
+                        showMuteToggle={false}
+                      />
                       <footer className="space-y-1">
                         {item.locationLabel && (
                           <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">@{item.locationLabel}</p>
@@ -815,7 +815,7 @@ export const getServerSideProps: GetServerSideProps<HomePageProps> = async () =>
   let initialLiveRipTiles: LiveRipTile[] = [];
 
   try {
-    const recentPulls = await loadRecentPulls(16);
+    const recentPulls = await loadRecentPulls(20);
     const mapped = mapPullsFromApi(recentPulls ?? []);
     initialPulls = mapped.pulls;
     initialCollectorNames = mapped.names;

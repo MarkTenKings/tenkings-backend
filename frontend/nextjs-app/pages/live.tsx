@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "rea
 import AppShell from "../components/AppShell";
 import { useSession } from "../hooks/useSession";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
+import LiveRipPreview from "../components/LiveRipPreview";
 
 interface LocationRecord {
   id: string;
@@ -21,6 +22,7 @@ interface LiveRipRecord {
   featured: boolean;
   location: LocationRecord | null;
   createdAt: string;
+  viewCount: number | null;
 }
 
 interface LiveRipFormState {
@@ -32,6 +34,7 @@ interface LiveRipFormState {
   thumbnailUrl: string;
   locationId: string;
   featured: boolean;
+  viewCount: string;
 }
 
 const emptyFormState: LiveRipFormState = {
@@ -42,60 +45,7 @@ const emptyFormState: LiveRipFormState = {
   thumbnailUrl: "",
   locationId: "",
   featured: true,
-};
-
-const embedForMedia = (videoUrl: string) => {
-  if (/youtu\.be|youtube\.com/.test(videoUrl)) {
-    try {
-      const url = new URL(videoUrl);
-      const videoId = url.searchParams.get("v") ?? videoUrl.split("/").pop();
-      if (videoId) {
-        return { type: "youtube" as const, id: videoId };
-      }
-    } catch (error) {
-      // fall through to link
-    }
-  }
-  if (videoUrl.endsWith(".mp4")) {
-    return { type: "video" as const, src: videoUrl };
-  }
-  return { type: "link" as const, href: videoUrl };
-};
-
-const renderMedia = (videoUrl: string) => {
-  const media = embedForMedia(videoUrl);
-  switch (media.type) {
-    case "youtube":
-      return (
-        <div className="relative w-full overflow-hidden rounded-3xl pt-[56.25%] shadow-card">
-          <iframe
-            className="absolute inset-0 h-full w-full"
-            src={`https://www.youtube.com/embed/${media.id}`}
-            title="Live rip video"
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-          />
-        </div>
-      );
-    case "video":
-      return (
-        <video controls className="w-full rounded-3xl border border-white/10 bg-night-900/70 shadow-card">
-          <source src={media.src} type="video/mp4" />
-          Your browser does not support embedded video.
-        </video>
-      );
-    default:
-      return (
-        <Link
-          href={media.href}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center justify-center rounded-full border border-white/20 px-5 py-2 text-xs uppercase tracking-[0.28em] text-slate-200 transition hover:border-gold-300 hover:text-gold-200"
-        >
-          Open video
-        </Link>
-      );
-  }
+  viewCount: "",
 };
 
 type EditMode = "create" | "edit" | null;
@@ -113,6 +63,7 @@ export default function LivePage() {
   const [filterLocation, setFilterLocation] = useState<string>("");
   const [uploadingVideo, setUploadingVideo] = useState(false);
   const [uploadingThumbnail, setUploadingThumbnail] = useState(false);
+  const [activePreviewId, setActivePreviewId] = useState<string | null>(null);
 
   const isAdmin = useMemo(() => {
     if (!session) {
@@ -167,7 +118,13 @@ export default function LivePage() {
 
         let liveError: string | null = null;
         if (liveResult.status === "fulfilled") {
-          setLiveRips(liveResult.value.liveRips ?? []);
+          const fetched = liveResult.value.liveRips ?? [];
+          setLiveRips(
+            fetched.map((rip) => ({
+              ...rip,
+              viewCount: typeof rip.viewCount === "number" ? rip.viewCount : null,
+            }))
+          );
         } else {
           liveError = liveResult.reason instanceof Error ? liveResult.reason.message : "Failed to load live rips";
         }
@@ -216,6 +173,12 @@ export default function LivePage() {
     return liveRips.filter((liveRip) => liveRip.location?.id === filterLocation);
   }, [liveRips, filterLocation]);
 
+  useEffect(() => {
+    if (activePreviewId && !filteredLiveRips.some((rip) => rip.id === activePreviewId)) {
+      setActivePreviewId(null);
+    }
+  }, [activePreviewId, filteredLiveRips]);
+
   const beginCreate = useCallback(() => {
     setEditMode("create");
     setFormState({ ...emptyFormState });
@@ -232,6 +195,7 @@ export default function LivePage() {
       thumbnailUrl: liveRip.thumbnailUrl ?? "",
       locationId: liveRip.location?.id ?? "",
       featured: liveRip.featured,
+      viewCount: liveRip.viewCount != null ? String(liveRip.viewCount) : "",
     });
   }, []);
 
@@ -335,7 +299,12 @@ export default function LivePage() {
         throw new Error(payload?.message ?? "Failed to refresh live rips");
       }
       const payload = (await res.json()) as { liveRips: LiveRipRecord[] };
-      setLiveRips(payload.liveRips ?? []);
+      setLiveRips(
+        (payload.liveRips ?? []).map((rip) => ({
+          ...rip,
+          viewCount: typeof rip.viewCount === "number" ? rip.viewCount : null,
+        }))
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unable to refresh live rips";
       setFlash(message);
@@ -370,6 +339,9 @@ export default function LivePage() {
       return;
     }
 
+    const rawViewCount = formState.viewCount.trim();
+    const parsedViewCount = rawViewCount.length ? Number.parseInt(rawViewCount, 10) : undefined;
+
     const body = {
       title: formState.title.trim(),
       slug: (formState.slug || formState.title).trim(),
@@ -378,6 +350,10 @@ export default function LivePage() {
       thumbnailUrl: formState.thumbnailUrl.trim(),
       locationId: formState.locationId,
       featured: formState.featured,
+      viewCount:
+        typeof parsedViewCount === "number" && Number.isFinite(parsedViewCount)
+          ? Math.max(0, parsedViewCount)
+          : undefined,
     };
 
     try {
@@ -532,7 +508,17 @@ export default function LivePage() {
                   <p className="text-xs text-slate-500">{new Date(liveRip.createdAt).toLocaleString()}</p>
                 </div>
 
-                {renderMedia(liveRip.videoUrl)}
+                <LiveRipPreview
+                  id={liveRip.id}
+                  title={liveRip.title}
+                  videoUrl={liveRip.videoUrl}
+                  thumbnailUrl={liveRip.thumbnailUrl}
+                  muted={activePreviewId !== liveRip.id}
+                  onToggleMute={() =>
+                    setActivePreviewId((prev) => (prev === liveRip.id ? null : liveRip.id))
+                  }
+                  viewCount={liveRip.viewCount}
+                />
 
                 {liveRip.description && (
                   <p className="text-sm text-slate-300">{liveRip.description}</p>
@@ -668,6 +654,18 @@ export default function LivePage() {
                     </option>
                   ))}
                 </select>
+              </label>
+              <label className="flex flex-col gap-2">
+                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">External views (optional)</span>
+                <input
+                  type="number"
+                  min={0}
+                  value={formState.viewCount}
+                  onChange={(event) => handleFormChange("viewCount", event.target.value)}
+                  className="rounded-xl border border-white/10 bg-night-900/70 px-4 py-3 text-white outline-none focus:border-gold-400"
+                  placeholder="913"
+                />
+                <span className="text-[11px] text-slate-500">Use this to display counts from platforms like YouTube.</span>
               </label>
               <label className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-slate-400">
                 <input

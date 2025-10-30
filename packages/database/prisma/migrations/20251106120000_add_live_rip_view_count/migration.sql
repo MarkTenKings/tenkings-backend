@@ -1,0 +1,2 @@
+ALTER TABLE "LiveRip"
+ADD COLUMN "viewCount" INTEGER;

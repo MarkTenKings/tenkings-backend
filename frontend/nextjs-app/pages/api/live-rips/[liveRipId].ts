@@ -13,6 +13,7 @@ const updateSchema = z.object({
   thumbnailUrl: z.string().url("Thumbnail must be a valid URL").optional().or(z.literal("")),
   locationId: z.string().uuid().optional().or(z.literal("")),
   featured: z.boolean().optional(),
+  viewCount: z.number().int().nonnegative().optional(),
 });
 
 const slugify = (value: string) =>
@@ -80,6 +81,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         thumbnailUrl: payload.thumbnailUrl?.trim() || null,
         locationId,
         featured: payload.featured ?? false,
+        viewCount: payload.viewCount ?? null,
       },
       include: {
         location: true,

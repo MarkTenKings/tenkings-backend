@@ -3,12 +3,23 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
+import LiveRipPreview from "../components/LiveRipPreview";
 import { useSession } from "../hooks/useSession";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
 
 interface RipEntry {
   title: string;
   videoUrl: string;
+}
+
+interface LiveRipClip {
+  id: string;
+  slug: string;
+  title: string;
+  videoUrl: string;
+  thumbnailUrl: string | null;
+  viewCount: number | null;
+  createdAt: string;
 }
 
 interface LocationRecord {
@@ -20,6 +31,7 @@ interface LocationRecord {
   mapsUrl: string | null;
   mediaUrl: string | null;
   recentRips: RipEntry[];
+  liveRips: LiveRipClip[];
   createdAt: string;
   updatedAt: string;
 }
@@ -79,6 +91,7 @@ function LocationsPage() {
   const [editMode, setEditMode] = useState<"create" | "edit" | null>(null);
   const [formState, setFormState] = useState<LocationFormState>(emptyFormState);
   const [saving, setSaving] = useState(false);
+  const [activePreviewId, setActivePreviewId] = useState<string | null>(null);
 
   const isAdmin = useMemo(() => {
     if (!session) {
@@ -113,6 +126,14 @@ function LocationsPage() {
                   }))
                   .filter((rip) => rip.title && rip.videoUrl)
               : [],
+            liveRips: Array.isArray((location as any).liveRips)
+              ? ((location as any).liveRips as LiveRipClip[]).map((rip) => ({
+                  ...rip,
+                  thumbnailUrl: rip.thumbnailUrl ?? null,
+                  viewCount: typeof rip.viewCount === "number" ? rip.viewCount : null,
+                  createdAt: rip.createdAt ?? new Date().toISOString(),
+                }))
+              : [],
           }));
           setLocations(sanitized);
         }
@@ -131,6 +152,12 @@ function LocationsPage() {
       mounted = false;
     };
   }, [session?.token]);
+
+  useEffect(() => {
+    if (activePreviewId && !locations.some((location) => location.liveRips?.some((rip) => rip.id === activePreviewId))) {
+      setActivePreviewId(null);
+    }
+  }, [activePreviewId, locations]);
 
   useEffect(() => {
     if (!flash) {
@@ -383,27 +410,67 @@ function LocationsPage() {
 
                 {renderMedia(location.mediaUrl)}
 
-                <div className="space-y-4">
-                  <h3 className="font-heading text-xl uppercase tracking-[0.24em] text-white">Recent live rips</h3>
-                  {location.recentRips && location.recentRips.length > 0 ? (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      {location.recentRips.map((rip, idx) => (
-                        <div key={`${location.id}-rip-${idx}`} className="space-y-2 rounded-2xl border border-white/10 bg-night-900/80 p-5">
-                          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">{rip.title}</p>
-                          <Link
-                            href={rip.videoUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-gold-300 underline"
-                          >
-                            Watch the rip
-                            <span aria-hidden>→</span>
-                          </Link>
-                        </div>
-                      ))}
+                <div className="space-y-6">
+                  <div className="space-y-4">
+                    <h3 className="font-heading text-xl uppercase tracking-[0.24em] text-white">Live rip highlights</h3>
+                    {location.liveRips && location.liveRips.length > 0 ? (
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {location.liveRips.map((rip) => (
+                          <div key={rip.id} className="space-y-3 rounded-2xl border border-white/10 bg-night-900/80 p-5">
+                            <div className="space-y-2">
+                              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+                                {new Date(rip.createdAt).toLocaleDateString()}
+                              </p>
+                              <h4 className="text-sm uppercase tracking-[0.24em] text-white">{rip.title}</h4>
+                            </div>
+                            <LiveRipPreview
+                              id={rip.id}
+                              title={rip.title}
+                              videoUrl={rip.videoUrl}
+                              thumbnailUrl={rip.thumbnailUrl}
+                              muted={activePreviewId !== rip.id}
+                              onToggleMute={() =>
+                                setActivePreviewId((prev) => (prev === rip.id ? null : rip.id))
+                              }
+                              viewCount={rip.viewCount}
+                              aspectClassName="pb-[56.25%]"
+                            />
+                            <div className="flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.3em] text-slate-400">
+                              <Link
+                                href={`/live/${rip.slug}`}
+                                className="rounded-full border border-white/20 px-3 py-1 text-xs text-sky-300 transition hover:border-sky-300 hover:text-sky-100"
+                              >
+                                View page
+                              </Link>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Live rip videos will appear here after the next session.</p>
+                    )}
+                  </div>
+
+                  {location.recentRips && location.recentRips.length > 0 && (
+                    <div className="space-y-4">
+                      <h4 className="font-heading text-sm uppercase tracking-[0.3em] text-white">Featured pulls</h4>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {location.recentRips.map((rip, idx) => (
+                          <div key={`${location.id}-rip-${idx}`} className="space-y-2 rounded-2xl border border-white/10 bg-night-900/80 p-5">
+                            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">{rip.title}</p>
+                            <Link
+                              href={rip.videoUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-gold-300 underline"
+                            >
+                              Watch the rip
+                              <span aria-hidden>→</span>
+                            </Link>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  ) : (
-                    <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Live rip videos will appear here after the next session.</p>
                   )}
                 </div>
               </section>

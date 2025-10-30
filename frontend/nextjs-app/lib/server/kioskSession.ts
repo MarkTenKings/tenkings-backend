@@ -80,6 +80,7 @@ export function serializeKioskSession(session: KioskSessionWithRelations) {
           videoUrl: session.liveRip.videoUrl,
           thumbnailUrl: session.liveRip.thumbnailUrl,
           createdAt: session.liveRip.createdAt.toISOString(),
+          viewCount: session.liveRip.viewCount ?? null,
         }
       : null,
   };

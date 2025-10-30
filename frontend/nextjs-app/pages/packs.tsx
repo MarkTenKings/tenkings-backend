@@ -477,7 +477,7 @@ function RevealModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-8">
       <div className="absolute inset-0 bg-black/70" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-3xl overflow-hidden rounded-3xl border border-white/10 bg-night-900/95 shadow-2xl">
+      <div className="relative z-10 w-full max-w-3xl rounded-3xl border border-white/10 bg-night-900/95 shadow-2xl max-h-[90vh] overflow-y-auto md:max-h-none md:overflow-hidden">
         <button
           type="button"
           onClick={onClose}
@@ -544,7 +544,7 @@ function RevealModal({
             )}
           </div>
           {stage === "card" && (
-            <div className="mt-4 flex flex-wrap justify-center gap-3">
+            <div className="mt-4 flex w-full flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:justify-center">
               {reveal.buybackAvailable && (
                 <button
                   type="button"

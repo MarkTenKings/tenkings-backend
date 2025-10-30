@@ -43,11 +43,30 @@ const slugify = (value: string) =>
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === "GET") {
     try {
-      const locations = await prisma.location.findMany({ orderBy: { name: "asc" } });
+      const locations = await prisma.location.findMany({
+        orderBy: { name: "asc" },
+        include: {
+          liveRips: {
+            orderBy: { createdAt: "desc" },
+            take: 6,
+          },
+        },
+      });
       res.status(200).json({
         locations: locations.map((location) => ({
           ...location,
           recentRips: Array.isArray(location.recentRips) ? (location.recentRips as Array<Record<string, unknown>>) : [],
+          liveRips: Array.isArray(location.liveRips)
+            ? location.liveRips.map((liveRip) => ({
+                id: liveRip.id,
+                slug: liveRip.slug,
+                title: liveRip.title,
+                videoUrl: liveRip.videoUrl,
+                thumbnailUrl: liveRip.thumbnailUrl,
+                viewCount: liveRip.viewCount,
+                createdAt: liveRip.createdAt.toISOString(),
+              }))
+            : [],
         })),
       });
     } catch (error) {
