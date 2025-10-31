@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma, PackFulfillmentStatus, QrCodeType } from "@tenkings/database";
+import type { Prisma } from "@prisma/client";
+import { prisma, PackFulfillmentStatus, QrCodeType, KioskSessionStatus } from "@tenkings/database";
 import { z } from "zod";
 import { generateControlToken, hashControlToken, ensureKioskSecret } from "../../../lib/server/kioskAuth";
 import { kioskSessionInclude, serializeKioskSession } from "../../../lib/server/kioskSession";
@@ -110,10 +111,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const sessionCode = payload.code?.trim() || packQr.code;
 
-    const conflictConditions = [
+    const conflictConditions: Prisma.KioskSessionWhereInput[] = [
       { code: sessionCode },
-      { packInstanceId: pack.id, status: { notIn: ["COMPLETE", "CANCELLED"] } },
-      { packQrCodeId: packQr.id, status: { notIn: ["COMPLETE", "CANCELLED"] } },
+      { packInstanceId: pack.id, status: { notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED] } },
+      { packQrCodeId: packQr.id, status: { notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED] } },
     ];
 
     const existing = await prisma.kioskSession.findFirst({
