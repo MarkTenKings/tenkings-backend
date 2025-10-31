@@ -433,6 +433,11 @@ type PackDefinitionSummary = {
   tier: PackTier;
 };
 
+type LocationSummary = {
+  id: string;
+  name: string;
+};
+
 type CollectibleCategory = "SPORTS" | "POKEMON" | "COMICS";
 type PackTier = "TIER_25" | "TIER_50" | "TIER_100" | "TIER_500";
 
@@ -481,7 +486,12 @@ export default function AdminBatchDetail() {
   const [assignCategory, setAssignCategory] = useState<CollectibleCategory>("SPORTS");
   const [assignTier, setAssignTier] = useState<PackTier>("TIER_50");
   const [assignPackId, setAssignPackId] = useState<string>("");
+  const [assignLocationId, setAssignLocationId] = useState<string>("ONLINE");
   const [assignError, setAssignError] = useState<string | null>(null);
+
+  const [locations, setLocations] = useState<LocationSummary[]>([]);
+  const [locationsLoading, setLocationsLoading] = useState(false);
+  const [locationsError, setLocationsError] = useState<string | null>(null);
 
   const matchingDefinitions = useMemo(
     () =>
@@ -640,6 +650,44 @@ export default function AdminBatchDetail() {
   }, [definitions, assignCategory, assignTier]);
 
   useEffect(() => {
+    let cancelled = false;
+    setLocationsLoading(true);
+    setLocationsError(null);
+
+    fetch('/api/locations')
+      .then(async (res) => {
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}));
+          throw new Error(payload?.message ?? 'Failed to load locations');
+        }
+        const payload = (await res.json()) as {
+          locations?: Array<{ id: string; name: string }>;
+        };
+        if (!Array.isArray(payload.locations)) {
+          throw new Error('Failed to load locations');
+        }
+        if (!cancelled) {
+          setLocations(payload.locations.map(({ id, name }) => ({ id, name })));
+        }
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : 'Failed to load locations';
+          setLocationsError(message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLocationsLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!bulkEdit || !batch) {
       return;
     }
@@ -763,10 +811,12 @@ const handleAssignToDefinition = async () => {
   setError(null);
 
   try {
+    const locationId = assignLocationId === 'ONLINE' ? null : assignLocationId;
+
     const res = await fetch('/api/admin/cards/assign', {
       method: 'POST',
       headers: buildAdminHeaders(session.token, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ cardIds: selectedCards, packDefinitionId: definitionId }),
+      body: JSON.stringify({ cardIds: selectedCards, packDefinitionId: definitionId, locationId }),
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => ({}));
@@ -793,7 +843,12 @@ const handleAssignToDefinition = async () => {
       return { ...current, assets: updatedAssets };
     });
 
-    const summary = `${formatCategory(assignCategory)} · ${formatTier(assignTier)}`;
+    const resolvedLocationLabel =
+      assignLocationId === 'ONLINE'
+        ? 'Online inventory'
+        : locations.find((entry) => entry.id === assignLocationId)?.name ?? 'Selected location';
+
+    const summary = `${formatCategory(assignCategory)} · ${formatTier(assignTier)} → ${resolvedLocationLabel}`;
     const mintedSummary = payload.mint
       ? ` Minted ${payload.mint.createdPacks} pack${payload.mint.createdPacks === 1 ? '' : 's'}${
           payload.mint.skippedCards ? ` (skipped ${payload.mint.skippedCards}).` : '.'
@@ -2617,6 +2672,34 @@ const handleBulkRegenerate = async (cardId: string) => {
                     ))}
                   </select>
                 </label>
+              )}
+
+              <label className="flex flex-col gap-1">
+                <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Location</span>
+                <select
+                  value={assignLocationId}
+                  onChange={(event) => setAssignLocationId(event.currentTarget.value)}
+                  className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-white outline-none transition focus:border-emerald-400/60"
+                >
+                  <option value="ONLINE">Online (collect.tenkings.co)</option>
+                  {locations.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {locationsLoading && (
+                <p className="rounded-2xl border border-white/10 bg-night-900/60 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300">
+                  Loading locations…
+                </p>
+              )}
+
+              {locationsError && (
+                <p className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-rose-200">
+                  {locationsError}
+                </p>
               )}
 
               {matchingDefinitions.length === 0 && (

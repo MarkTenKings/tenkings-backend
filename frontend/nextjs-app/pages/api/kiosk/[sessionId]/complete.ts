@@ -102,6 +102,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       include: kioskSessionInclude,
     });
 
+    if (session.packInstanceId) {
+      await prisma.packInstance.update({
+        where: { id: session.packInstanceId },
+        data: { status: "OPENED" },
+      });
+    }
+
     return res.status(200).json({ session: serializeKioskSession(updated) });
   } catch (error) {
     if (error instanceof z.ZodError) {

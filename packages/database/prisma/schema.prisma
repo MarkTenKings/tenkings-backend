@@ -41,6 +41,31 @@ enum PackStatus {
   REDEEMED
 }
 
+enum PackFulfillmentStatus {
+  ONLINE
+  READY_FOR_PACKING
+  PACKED
+  LOADED
+}
+
+enum QrCodeType {
+  CARD
+  PACK
+}
+
+enum QrCodeState {
+  AVAILABLE
+  RESERVED
+  BOUND
+  RETIRED
+}
+
+enum KioskClaimStatus {
+  UNCLAIMED
+  CLAIMED
+  SOLD_BACK
+}
+
 enum IngestionStatus {
   PENDING
   REVIEW
@@ -116,11 +141,16 @@ model User {
   listings        Listing[]       @relation("SellerListings")
   shippingRequests ShippingRequest[]
   packs           PackInstance[]
+  packedPacks     PackInstance[]  @relation("PackedByUser")
+  loadedPacks     PackInstance[]  @relation("LoadedByUser")
   ingestions      IngestionTask[]
   cardBatches     CardBatch[]
   cardNotes       CardNote[]
   reviewedCards   CardAsset[]     @relation("CardAssetHumanReviewer")
   sessions        Session[]
+  qrCodesCreated  QrCode[]        @relation("QrCodeCreatedBy")
+  qrCodesBound    QrCode[]        @relation("QrCodeBoundBy")
+  kioskClaims     KioskSession[]  @relation("KioskClaimedBy")
 }
 
 model Location {
@@ -134,8 +164,10 @@ model Location {
   recentRips  Json     @db.JsonB
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
-  liveRips    LiveRip[]
+  liveRips      LiveRip[]
   kioskSessions KioskSession[]
+  packInstances PackInstance[]
+  qrCodes      QrCode[]
 }
 
 model LiveRip {
@@ -202,6 +234,8 @@ model Item {
   ingestionTask  IngestionTask?
   shippingRequest ShippingRequest?
   kioskReveals   KioskSession[]  @relation("KioskReveal")
+  cardQrCodeId   String?         @unique
+  cardQrCode     QrCode?         @relation("CardQrCode", fields: [cardQrCodeId], references: [id])
 }
 
 model AuthVerification {
@@ -292,12 +326,23 @@ model PackInstance {
   packDefinitionId String
   ownerId          String?
   status           PackStatus     @default(UNOPENED)
+  fulfillmentStatus PackFulfillmentStatus @default(ONLINE)
+  locationId       String?
   createdAt        DateTime       @default(now())
   openedAt         DateTime?
+  packedAt         DateTime?
+  packedById       String?
+  loadedAt         DateTime?
+  loadedById       String?
+  packQrCodeId     String?        @unique
   packDefinition   PackDefinition @relation(fields: [packDefinitionId], references: [id], onDelete: Cascade)
   owner            User?          @relation(fields: [ownerId], references: [id])
   slots            PackSlot[]
   kioskSessions    KioskSession[]
+  location         Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  packedBy         User?          @relation("PackedByUser", fields: [packedById], references: [id])
+  loadedBy         User?          @relation("LoadedByUser", fields: [loadedById], references: [id])
+  packQrCode       QrCode?        @relation("PackQrCode", fields: [packQrCodeId], references: [id])
 }
 
 model KioskSession {
@@ -306,6 +351,9 @@ model KioskSession {
   controlTokenHash   String
   packInstanceId     String?
   locationId         String?
+  packQrCodeId       String?           @unique
+  claimedById        String?
+  claimStatus        KioskClaimStatus  @default(UNCLAIMED)
   status             KioskSessionStatus @default(COUNTDOWN)
   countdownSeconds   Int                @default(10)
   liveSeconds        Int                @default(30)
@@ -330,6 +378,8 @@ model KioskSession {
   location     Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
   revealItem   Item?         @relation("KioskReveal", fields: [revealItemId], references: [id], onDelete: SetNull)
   liveRip      LiveRip?        @relation("KioskSessionLiveRip")
+  packQrCode   QrCode?       @relation("SessionPackQr", fields: [packQrCodeId], references: [id])
+  claimedBy    User?         @relation("KioskClaimedBy", fields: [claimedById], references: [id])
 }
 
 model PackSlot {
@@ -512,4 +562,28 @@ model SportsDbPlayerSeason {
 
   @@unique([playerId, season, league])
   @@index([season])
+}
+
+model QrCode {
+  id          String      @id @default(uuid())
+  code        String      @unique
+  serial      String?     @unique
+  type        QrCodeType
+  state       QrCodeState @default(AVAILABLE)
+  payloadUrl  String?
+  metadata    Json?
+  locationId  String?
+  createdById String?
+  boundById   String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  boundAt     DateTime?
+  retiredAt   DateTime?
+
+  location    Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  createdBy   User?         @relation("QrCodeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  boundBy     User?         @relation("QrCodeBoundBy", fields: [boundById], references: [id], onDelete: SetNull)
+  item        Item?         @relation("CardQrCode")
+  packInstance PackInstance? @relation("PackQrCode")
+  kioskSession KioskSession? @relation("SessionPackQr")
 }

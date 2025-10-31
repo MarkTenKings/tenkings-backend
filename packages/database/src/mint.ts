@@ -1,5 +1,6 @@
 import { prisma as defaultPrisma } from "./client";
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { PackFulfillmentStatus } from "@prisma/client";
 import { parseClassificationPayload } from "@tenkings/shared";
 
 type Nullable<T> = T | null | undefined;
@@ -9,6 +10,8 @@ interface MintOptions {
   cardIds?: string[];
   sellerEmail?: string | null;
   prismaClient?: PrismaClient;
+  locationId?: string | null;
+  fulfillmentStatus?: PackFulfillmentStatus;
 }
 
 export interface MintResult {
@@ -132,6 +135,8 @@ export async function mintAssignedCardAssets({
   cardIds,
   sellerEmail = DEFAULT_SELLER_EMAIL,
   prismaClient,
+  locationId,
+  fulfillmentStatus,
 }: MintOptions): Promise<MintResult> {
   const db = prismaClient ?? defaultPrisma;
 
@@ -157,6 +162,9 @@ export async function mintAssignedCardAssets({
   let mintedItems = 0;
   let createdPacks = 0;
   let skippedCards = 0;
+
+  const resolvedStatus =
+    fulfillmentStatus ?? (locationId ? PackFulfillmentStatus.READY_FOR_PACKING : PackFulfillmentStatus.ONLINE);
 
   for (const card of cards) {
     const result = await db.$transaction(async (tx) => {
@@ -227,16 +235,34 @@ export async function mintAssignedCardAssets({
           itemId: item.id,
           packInstance: { packDefinitionId },
         },
-        select: { id: true },
+        select: { id: true, packInstanceId: true },
       });
 
       if (existingSlot) {
+        if (locationId !== undefined || fulfillmentStatus !== undefined) {
+          const data: Prisma.PackInstanceUpdateInput = {};
+          if (locationId !== undefined) {
+            data.location = locationId ? { connect: { id: locationId } } : { disconnect: true };
+          }
+          if (fulfillmentStatus !== undefined || locationId) {
+            data.fulfillmentStatus = resolvedStatus;
+          }
+          if (Object.keys(data).length > 0) {
+            await tx.packInstance.update({
+              where: { id: existingSlot.packInstanceId },
+              data,
+            });
+          }
+        }
+
         return { minted: itemCreated ? 1 : 0, packed: false };
       }
 
       await tx.packInstance.create({
         data: {
           packDefinitionId,
+          fulfillmentStatus: resolvedStatus,
+          ...(locationId ? { location: { connect: { id: locationId } } } : {}),
           slots: { create: [{ itemId: item.id }] },
         },
       });

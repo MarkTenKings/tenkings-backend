@@ -6,11 +6,20 @@ export const kioskSessionInclude = {
   packInstance: {
     include: {
       packDefinition: true,
+      packQrCode: true,
     },
   },
+  packQrCode: true,
   location: true,
   revealItem: true,
   liveRip: true,
+  claimedBy: {
+    select: {
+      id: true,
+      displayName: true,
+      phone: true,
+    },
+  },
 } satisfies Prisma.KioskSessionInclude;
 
 export type KioskSessionWithRelations = Prisma.KioskSessionGetPayload<{
@@ -38,6 +47,27 @@ export function serializeKioskSession(session: KioskSessionWithRelations) {
     muxPlaybackId: session.muxPlaybackId ?? null,
     qrLinkUrl: session.qrLinkUrl,
     buybackLinkUrl: session.buybackLinkUrl,
+    claimStatus: session.claimStatus,
+    claimedBy: session.claimedBy
+      ? {
+          id: session.claimedBy.id,
+          displayName: session.claimedBy.displayName,
+          phone: session.claimedBy.phone,
+        }
+      : null,
+    packQrCode: session.packQrCode
+      ? {
+          id: session.packQrCode.id,
+          code: session.packQrCode.code,
+          serial: session.packQrCode.serial,
+        }
+      : session.packInstance?.packQrCode
+        ? {
+            id: session.packInstance.packQrCode.id,
+            code: session.packInstance.packQrCode.code,
+            serial: session.packInstance.packQrCode.serial,
+          }
+        : null,
     completedAt: session.completedAt ? session.completedAt.toISOString() : null,
     updatedAt: session.updatedAt.toISOString(),
     reveal: session.revealPayload ?? (session.revealItem
@@ -55,6 +85,7 @@ export function serializeKioskSession(session: KioskSessionWithRelations) {
       ? {
           id: session.packInstance.id,
           status: session.packInstance.status,
+          fulfillmentStatus: session.packInstance.fulfillmentStatus,
           definition: session.packInstance.packDefinition
             ? {
                 id: session.packInstance.packDefinition.id,

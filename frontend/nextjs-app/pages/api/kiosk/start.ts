@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma } from "@tenkings/database";
+import { prisma, PackFulfillmentStatus, QrCodeType } from "@tenkings/database";
 import { z } from "zod";
 import { generateControlToken, hashControlToken, ensureKioskSecret } from "../../../lib/server/kioskAuth";
 import { kioskSessionInclude, serializeKioskSession } from "../../../lib/server/kioskSession";
@@ -12,13 +12,19 @@ import {
 const DEFAULT_COUNTDOWN = Number(process.env.KIOSK_COUNTDOWN_SECONDS ?? 10);
 const DEFAULT_LIVE = Number(process.env.KIOSK_LIVE_SECONDS ?? 30);
 
-const startSchema = z.object({
-  packId: z.string().uuid("packId must be a valid UUID"),
-  locationId: z.string().uuid().optional(),
-  code: z.string().min(1).optional(),
-  countdownSeconds: z.number().int().min(3).max(120).optional(),
-  liveSeconds: z.number().int().min(10).max(300).optional(),
-});
+const startSchema = z
+  .object({
+    packCode: z.string().min(4).optional(),
+    packId: z.string().uuid("packId must be a valid UUID").optional(),
+    locationId: z.string().uuid().optional(),
+    code: z.string().min(1).optional(),
+    countdownSeconds: z.number().int().min(3).max(120).optional(),
+    liveSeconds: z.number().int().min(10).max(300).optional(),
+  })
+  .refine((value) => Boolean(value.packCode || value.packId), {
+    message: "Provide a packCode or packId",
+    path: ["packCode"],
+  });
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
@@ -32,30 +38,87 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const payload = startSchema.parse(req.body ?? {});
+    const packCode = payload.packCode?.trim() ?? null;
 
-    const pack = await prisma.packInstance.findUnique({
-      where: { id: payload.packId },
-      include: {
-        packDefinition: true,
-      },
-    });
+    let packQr = null as { id: string; code: string; serial: string | null } | null;
+
+    const pack = packCode
+      ? await (async () => {
+          const qr = await prisma.qrCode.findUnique({
+            where: { code: packCode },
+            include: {
+              packInstance: {
+                include: {
+                  packDefinition: true,
+                  packQrCode: true,
+                },
+              },
+            },
+          });
+
+          if (!qr || qr.type !== QrCodeType.PACK) {
+            return null;
+          }
+
+          if (!qr.packInstance) {
+            return null;
+          }
+
+          packQr = { id: qr.id, code: qr.code, serial: qr.serial };
+          return qr.packInstance;
+        })()
+      : await prisma.packInstance.findUnique({
+          where: { id: payload.packId! },
+          include: {
+            packDefinition: true,
+            packQrCode: true,
+          },
+        });
 
     if (!pack) {
       return res.status(404).json({ message: "Pack not found" });
+    }
+
+    if (!packQr && pack.packQrCode) {
+      packQr = { id: pack.packQrCode.id, code: pack.packQrCode.code, serial: pack.packQrCode.serial };
+    }
+
+    if (!packQr) {
+      return res.status(400).json({ message: "Pack has not been labeled" });
     }
 
     if (pack.status !== "UNOPENED") {
       return res.status(400).json({ message: "Pack has already been opened" });
     }
 
-    const code = payload.code?.trim() || pack.id;
+    if (
+      pack.fulfillmentStatus !== PackFulfillmentStatus.PACKED &&
+      pack.fulfillmentStatus !== PackFulfillmentStatus.LOADED
+    ) {
+      return res.status(409).json({ message: "Pack is not ready for kiosk use" });
+    }
+
+    const effectiveLocationId = payload.locationId ?? pack.locationId ?? null;
+
+    if (!effectiveLocationId) {
+      return res.status(400).json({ message: "Pack is not assigned to a location" });
+    }
+
+    if (pack.locationId && payload.locationId && pack.locationId !== payload.locationId) {
+      return res.status(409).json({ message: "Pack is allocated to a different location" });
+    }
+
+    const sessionCode = payload.code?.trim() || packQr.code;
+
+    const conflictConditions = [
+      { code: sessionCode },
+      { packInstanceId: pack.id, status: { notIn: ["COMPLETE", "CANCELLED"] } },
+      { packQrCodeId: packQr.id, status: { notIn: ["COMPLETE", "CANCELLED"] } },
+    ];
 
     const existing = await prisma.kioskSession.findFirst({
       where: {
-        OR: [
-          { code },
-          { packInstanceId: pack.id, status: { notIn: ["COMPLETE", "CANCELLED"] } },
-        ],
+        OR: conflictConditions,
       },
     });
 
@@ -70,18 +133,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const controlToken = generateControlToken();
     const countdownSeconds = payload.countdownSeconds ?? DEFAULT_COUNTDOWN;
     const liveSeconds = payload.liveSeconds ?? DEFAULT_LIVE;
+    const timestamp = new Date();
 
-    const session = await prisma.kioskSession.create({
-      data: {
-        code,
-        controlTokenHash: hashControlToken(controlToken),
-        packInstanceId: pack.id,
-        locationId: payload.locationId ?? null,
-        countdownSeconds,
-        liveSeconds,
-        countdownStartedAt: new Date(),
-      },
-      include: kioskSessionInclude,
+    const session = await prisma.$transaction(async (tx) => {
+      if (pack.locationId !== effectiveLocationId) {
+        await tx.packInstance.update({ where: { id: pack.id }, data: { locationId: effectiveLocationId } });
+      }
+
+      if (pack.fulfillmentStatus !== PackFulfillmentStatus.LOADED || !pack.loadedAt) {
+        await tx.packInstance.update({
+          where: { id: pack.id },
+          data: {
+            fulfillmentStatus: PackFulfillmentStatus.LOADED,
+            loadedAt: pack.loadedAt ?? timestamp,
+          },
+        });
+      }
+
+      return tx.kioskSession.create({
+        data: {
+          code: sessionCode,
+          controlTokenHash: hashControlToken(controlToken),
+          packInstanceId: pack.id,
+          packQrCodeId: packQr?.id ?? null,
+          locationId: effectiveLocationId,
+          countdownSeconds,
+          liveSeconds,
+          countdownStartedAt: timestamp,
+        },
+        include: kioskSessionInclude,
+      });
     });
 
     try {

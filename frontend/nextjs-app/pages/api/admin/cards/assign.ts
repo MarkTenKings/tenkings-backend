@@ -19,6 +19,7 @@ const assignSchema = z.object({
     .array(z.string().min(1))
     .min(1, { message: "At least one card id is required" }),
   packDefinitionId: z.string().min(1),
+  locationId: z.string().min(1).optional().nullable(),
 });
 
 export default async function handler(
@@ -31,7 +32,15 @@ export default async function handler(
 
   try {
     const admin = await requireAdminSession(req);
-    const { cardIds, packDefinitionId } = assignSchema.parse(req.body ?? {});
+    const { cardIds, packDefinitionId, locationId } = assignSchema.parse(req.body ?? {});
+
+    let location: { id: string } | null = null;
+    if (locationId) {
+      location = await prisma.location.findUnique({ where: { id: locationId }, select: { id: true } });
+      if (!location) {
+        return res.status(404).json({ message: "Location not found" });
+      }
+    }
 
     const ownedCards = await prisma.cardAsset.findMany({
       where: {
@@ -89,6 +98,7 @@ export default async function handler(
       packDefinitionId,
       cardIds,
       prismaClient: prisma,
+      locationId: location?.id ?? null,
     });
 
     const updated = await prisma.cardAsset.findMany({

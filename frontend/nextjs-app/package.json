@@ -9,12 +9,13 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@tenkings/database": "workspace:*",
-    "@tenkings/shared": "workspace:*",
-    "@prisma/client": "^5.22.0",
     "@aws-sdk/client-s3": "^3.588.0",
+    "@prisma/client": "^5.22.0",
     "@stripe/react-stripe-js": "^2.3.4",
     "@stripe/stripe-js": "^3.4.1",
+    "@tenkings/database": "workspace:*",
+    "@tenkings/shared": "workspace:*",
+    "nanoid": "^5.1.6",
     "next": "14.2.5",
     "react": "18.3.1",
     "react-dom": "18.3.1",
