@@ -170,7 +170,7 @@ export default function LiveRipPreview({
           return;
         }
         if (!Hls.isSupported()) {
-          videoRef.current.src = media.src;
+          element.src = media.src;
           return;
         }
         const hls = new Hls({ autoStartLoad: true, enableWorker: true });
@@ -183,7 +183,11 @@ export default function LiveRipPreview({
         });
       } catch (error) {
         console.warn("Failed to initialize hls.js", error);
-        videoRef.current.src = media.src;
+        if (videoRef.current) {
+          videoRef.current.src = media.src;
+        } else {
+          element.src = media.src;
+        }
       }
     };
 

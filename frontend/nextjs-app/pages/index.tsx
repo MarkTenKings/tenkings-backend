@@ -217,9 +217,11 @@ export default function Home({
   const heroVideoMobileRef = useRef<HTMLVideoElement | null>(null);
   const [heroVideoMuted, setHeroVideoMuted] = useState(true);
   const heroMedia = heroMediaConfig;
+  const heroMediaType = heroMedia.type;
+  const heroVideoSource = heroMediaType === "video" ? heroMedia.src : null;
 
   useEffect(() => {
-    if (heroMedia.type !== "video") {
+    if (heroMediaType !== "video") {
       return;
     }
     setHeroVideoMuted(true);
@@ -229,10 +231,10 @@ export default function Home({
         element.load();
       }
     });
-  }, [heroMedia.type, heroMedia.type === "video" ? heroMedia.src : null]);
+  }, [heroMediaType, heroVideoSource]);
 
   useEffect(() => {
-    if (heroMedia.type !== "video") {
+    if (heroMediaType !== "video") {
       return;
     }
     const candidates = [heroVideoDesktopRef.current, heroVideoMobileRef.current];
@@ -265,7 +267,7 @@ export default function Home({
         element.removeEventListener("loadeddata", handleCanPlay);
       });
     };
-  }, [heroMedia.type, heroMedia.type === "video" ? heroMedia.src : null, heroVideoMuted]);
+  }, [heroMediaType, heroVideoSource, heroVideoMuted]);
 
   const handleHeroMuteToggle = useCallback(() => {
     setHeroVideoMuted((prev) => !prev);
