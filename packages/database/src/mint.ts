@@ -262,7 +262,7 @@ export async function mintAssignedCardAssets({
         data: {
           packDefinitionId,
           fulfillmentStatus: resolvedStatus,
-          ...(locationId ? { location: { connect: { id: locationId } } } : {}),
+          locationId: locationId ?? undefined,
           slots: { create: [{ itemId: item.id }] },
         },
       });
