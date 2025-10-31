@@ -15,6 +15,7 @@ export {
   QrCodeType,
   QrCodeState,
   KioskClaimStatus,
+  KioskSessionStatus,
 } from "@prisma/client";
 
 export * from "./processingJobs";
