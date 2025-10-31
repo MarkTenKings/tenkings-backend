@@ -1,6 +1,7 @@
 import "../styles/globals.css";
 
 import type { AppProps } from "next/app";
+import Head from "next/head";
 import { SessionProvider } from "../hooks/useSession";
 import { Elements } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
@@ -17,11 +18,23 @@ export default function App({ Component, pageProps }: AppProps) {
   );
 
   if (!stripePromise) {
-    return <div className={`${bodyFont.variable} ${displayFont.variable} ${lightningFont.variable}`}>{content}</div>;
+    return (
+      <div className={`${bodyFont.variable} ${displayFont.variable} ${lightningFont.variable}`}>
+        <Head>
+          <link rel="preconnect" href="https://stream.mux.com" />
+          <link rel="dns-prefetch" href="https://stream.mux.com" />
+        </Head>
+        {content}
+      </div>
+    );
   }
 
   return (
     <div className={`${bodyFont.variable} ${displayFont.variable} ${lightningFont.variable}`}>
+      <Head>
+        <link rel="preconnect" href="https://stream.mux.com" />
+        <link rel="dns-prefetch" href="https://stream.mux.com" />
+      </Head>
       <Elements stripe={stripePromise}>{content}</Elements>
     </div>
   );

@@ -29,7 +29,6 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
   const [finalizeForm, setFinalizeForm] = useState({
     title: "",
     description: "",
-    videoUrl: "",
     thumbnailUrl: "",
     featured: true,
   });
@@ -176,7 +175,6 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
           body: JSON.stringify({
             title: finalizeForm.title.trim() || undefined,
             description: finalizeForm.description.trim() || undefined,
-            videoUrl: finalizeForm.videoUrl.trim(),
             thumbnailUrl: finalizeForm.thumbnailUrl.trim() || undefined,
             featured: finalizeForm.featured,
             publish: true,
@@ -376,13 +374,6 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
               <form className="space-y-3 lg:col-span-2" onSubmit={submitFinalize}>
                 <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Finalize & Publish</p>
                 <div className="grid gap-3 lg:grid-cols-2">
-                  <input
-                    className="rounded-2xl border border-white/10 bg-night-900/80 px-4 py-3 text-sm text-white focus:border-gold-400 focus:outline-none"
-                    placeholder="Video URL"
-                    value={finalizeForm.videoUrl}
-                    onChange={(event) => setFinalizeForm((prev) => ({ ...prev, videoUrl: event.target.value }))}
-                    required
-                  />
                   <input
                     className="rounded-2xl border border-white/10 bg-night-900/80 px-4 py-3 text-sm text-white focus:border-gold-400 focus:outline-none"
                     placeholder="Thumbnail URL (optional)"

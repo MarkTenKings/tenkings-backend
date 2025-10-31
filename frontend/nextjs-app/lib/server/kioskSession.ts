@@ -35,6 +35,7 @@ export function serializeKioskSession(session: KioskSessionWithRelations) {
     liveEndsAt: liveEnds ? liveEnds.toISOString() : null,
     videoUrl: session.videoUrl,
     thumbnailUrl: session.thumbnailUrl,
+    muxPlaybackId: session.muxPlaybackId ?? null,
     qrLinkUrl: session.qrLinkUrl,
     buybackLinkUrl: session.buybackLinkUrl,
     completedAt: session.completedAt ? session.completedAt.toISOString() : null,

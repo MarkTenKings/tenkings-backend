@@ -4,9 +4,10 @@ import { z } from "zod";
 import { hasKioskControl } from "../../../../lib/server/kioskAuth";
 import { kioskSessionInclude, serializeKioskSession } from "../../../../lib/server/kioskSession";
 import { slugify } from "../../../../lib/slugify";
+import { buildMuxPlaybackUrl, disableMuxLiveStream } from "../../../../lib/server/mux";
 
 const completeSchema = z.object({
-  videoUrl: z.string().url("Video URL must be valid"),
+  videoUrl: z.string().url("Video URL must be valid").optional(),
   thumbnailUrl: z.string().url().optional(),
   title: z.string().min(1).optional(),
   description: z.string().optional(),
@@ -50,7 +51,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const payload = completeSchema.parse(req.body ?? {});
     const now = new Date();
 
-    if (payload.publish) {
+    const fallbackPlaybackUrl = session.muxPlaybackId ? buildMuxPlaybackUrl(session.muxPlaybackId) : null;
+    const finalVideoUrl = payload.videoUrl ?? fallbackPlaybackUrl ?? null;
+
+    if (session.muxStreamId) {
+      try {
+        await disableMuxLiveStream(session.muxStreamId);
+      } catch (error) {
+        console.warn("Failed to disable Mux live stream", error);
+      }
+    }
+
+    if (payload.publish && finalVideoUrl) {
       const revealName = extractRevealName(session.revealPayload) || session.revealItem?.name;
       const baseTitle = payload.title?.trim() || revealName || "Live Rip";
       const baseSlugInput = payload.title?.trim() || `${session.code}-${baseTitle}`;
@@ -70,7 +82,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           slug: candidateSlug,
           title: baseTitle,
           description: payload.description?.trim() || null,
-          videoUrl: payload.videoUrl,
+          videoUrl: finalVideoUrl,
           thumbnailUrl: payload.thumbnailUrl ?? session.thumbnailUrl ?? null,
           locationId: session.locationId,
           featured: payload.featured ?? true,
@@ -83,7 +95,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       where: { id: session.id },
       data: {
         status: payload.publish ? "COMPLETE" : session.status,
-        videoUrl: payload.videoUrl,
+        videoUrl: finalVideoUrl ?? session.videoUrl,
         thumbnailUrl: payload.thumbnailUrl ?? session.thumbnailUrl,
         completedAt: now,
       },

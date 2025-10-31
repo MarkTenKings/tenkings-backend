@@ -3,7 +3,44 @@ import { useEffect, useMemo, useRef } from "react";
 type ParsedMedia =
   | { type: "youtube"; id: string; embedUrl: string }
   | { type: "video"; src: string }
+  | { type: "hls"; src: string }
   | { type: "link"; href: string };
+
+declare global {
+  interface Window {
+    Hls?: any;
+  }
+}
+
+const HLS_CDN_SRC = "https://cdn.jsdelivr.net/npm/hls.js@1.5.11/dist/hls.min.js";
+
+async function loadHlsLibrary(): Promise<any | null> {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  if (window.Hls) {
+    return window.Hls;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(`script[src=\"${HLS_CDN_SRC}\"]`);
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Failed to load hls.js")), { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = HLS_CDN_SRC;
+    script.async = true;
+    script.addEventListener("load", () => resolve(), { once: true });
+    script.addEventListener("error", () => reject(new Error("Failed to load hls.js")), { once: true });
+    document.head.appendChild(script);
+  });
+
+  return window.Hls ?? null;
+}
 
 const parseMedia = (videoUrl: string): ParsedMedia => {
   if (/youtu\.be|youtube\.com/.test(videoUrl)) {
@@ -32,6 +69,10 @@ const parseMedia = (videoUrl: string): ParsedMedia => {
     } catch (error) {
       // fall through
     }
+  }
+
+  if (/\.m3u8($|\?)/.test(videoUrl) || videoUrl.includes("stream.mux.com")) {
+    return { type: "hls", src: videoUrl };
   }
 
   if (/\.mp4($|\?)/.test(videoUrl)) {
@@ -72,9 +113,10 @@ export default function LiveRipPreview({
   const media = useMemo(() => parseMedia(videoUrl), [videoUrl]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const hlsInstanceRef = useRef<any | null>(null);
 
   useEffect(() => {
-    if (media.type !== "video" || !videoRef.current) {
+    if ((media.type !== "video" && media.type !== "hls") || !videoRef.current) {
       return;
     }
     const element = videoRef.current;
@@ -102,6 +144,63 @@ export default function LiveRipPreview({
       element.removeEventListener("loadeddata", handleCanPlay);
     };
   }, [muted, media]);
+
+  useEffect(() => {
+    if (media.type !== "hls" || !videoRef.current) {
+      return;
+    }
+
+    const element = videoRef.current;
+    let destroyed = false;
+
+    const setup = async () => {
+      if (element.canPlayType("application/vnd.apple.mpegurl")) {
+        element.src = media.src;
+        try {
+          await element.play();
+        } catch (error) {
+          // ignore autoplay rejection
+        }
+        return;
+      }
+
+      try {
+        const Hls = await loadHlsLibrary();
+        if (!Hls || destroyed || !videoRef.current) {
+          return;
+        }
+        if (!Hls.isSupported()) {
+          videoRef.current.src = media.src;
+          return;
+        }
+        const hls = new Hls({ autoStartLoad: true, enableWorker: true });
+        hlsInstanceRef.current = hls;
+        hls.attachMedia(videoRef.current);
+        hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+          if (!destroyed) {
+            hls.loadSource(media.src);
+          }
+        });
+      } catch (error) {
+        console.warn("Failed to initialize hls.js", error);
+        videoRef.current.src = media.src;
+      }
+    };
+
+    setup().catch(() => undefined);
+
+    return () => {
+      destroyed = true;
+      if (hlsInstanceRef.current) {
+        try {
+          hlsInstanceRef.current.destroy();
+        } catch (error) {
+          // ignore
+        }
+        hlsInstanceRef.current = null;
+      }
+    };
+  }, [media]);
 
   useEffect(() => {
     if (media.type !== "youtube" || !iframeRef.current?.contentWindow) {
@@ -143,6 +242,7 @@ export default function LiveRipPreview({
   const renderMedia = () => {
     switch (media.type) {
       case "video":
+      case "hls":
         return (
           <video
             ref={videoRef}
