@@ -1,6 +1,7 @@
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
-import type { QrCodePair } from "./qrCodes";
+import { PackLabelStatus } from "@tenkings/database";
+import type { PackLabelSummary, QrCodeSummary } from "./qrCodes";
 
 type PdfDoc = InstanceType<typeof PDFDocument>;
 
@@ -20,15 +21,27 @@ const COLOR_ACCENT = "#1a2231";
 const COLOR_ACCENT_DARK = "#131a26";
 const COLOR_META = "#606b82";
 
+export interface PrintableLabelEntry {
+  pairId: string;
+  card: QrCodeSummary;
+  pack: QrCodeSummary;
+  label: PackLabelSummary;
+  item?: {
+    id: string;
+    name: string | null;
+    imageUrl: string | null;
+  } | null;
+}
+
 interface GenerateLabelSheetOptions {
-  pairs: QrCodePair[];
+  labels: PrintableLabelEntry[];
   generatedBy?: string | null;
 }
 
 export async function generateLabelSheetPdf(options: GenerateLabelSheetOptions): Promise<Buffer> {
-  const { pairs, generatedBy } = options;
+  const { labels, generatedBy } = options;
 
-  if (!pairs || pairs.length === 0) {
+  if (!labels || labels.length === 0) {
     throw new Error("At least one QR code pair is required to build a label sheet");
   }
 
@@ -46,20 +59,20 @@ export async function generateLabelSheetPdf(options: GenerateLabelSheetOptions):
   const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const labelX = doc.page.margins.left + (usableWidth - LABEL_WIDTH) / 2;
 
-  for (let index = 0; index < pairs.length; index += 1) {
-    const pair = pairs[index];
+  for (let index = 0; index < labels.length; index += 1) {
+    const entry = labels[index];
 
     if (index > 0) {
       doc.addPage();
     }
 
-    renderHeader(doc, pair, index, pairs.length, generatedAt, generatedBy ?? undefined);
+    renderHeader(doc, entry, index, labels.length, generatedAt, generatedBy ?? undefined);
 
     const frontY = doc.page.margins.top + HEADER_OFFSET;
     const backY = frontY + LABEL_HEIGHT + LABEL_GAP;
 
-    drawFrontLabel(doc, pair, labelX, frontY);
-    await drawBackLabel(doc, pair, labelX, backY);
+    drawFrontLabel(doc, entry, labelX, frontY);
+    await drawBackLabel(doc, entry, labelX, backY);
   }
 
   doc.end();
@@ -68,7 +81,7 @@ export async function generateLabelSheetPdf(options: GenerateLabelSheetOptions):
 
 const renderHeader = (
   doc: PdfDoc,
-  pair: QrCodePair,
+  entry: PrintableLabelEntry,
   index: number,
   total: number,
   generatedAt: Date,
@@ -87,7 +100,7 @@ const renderHeader = (
     });
 
   const metaParts = [
-    `Pair ${pair.pairId}`,
+    `Pair ${entry.pairId}`,
     `Page ${index + 1} of ${total}`,
     `Generated ${generatedAt.toISOString().replace("T", " · ").replace("Z", "UTC")}`,
   ];
@@ -105,7 +118,7 @@ const renderHeader = (
     });
 };
 
-const drawFrontLabel = (doc: PdfDoc, pair: QrCodePair, x: number, y: number) => {
+const drawFrontLabel = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number) => {
   const outerGradient = doc.linearGradient(x, y, x + LABEL_WIDTH, y + LABEL_HEIGHT);
   outerGradient.stop(0, "#111723").stop(1, "#1f2836");
 
@@ -135,11 +148,14 @@ const drawFrontLabel = (doc: PdfDoc, pair: QrCodePair, x: number, y: number) => 
       width: LABEL_WIDTH - 12,
     });
 
+  const cardTitle = entry.item?.name ?? "Pending metadata";
+  const cardSubtitle = entry.item ? `Item ${entry.item.id.slice(0, 8)}…` : "Assign card metadata";
+
   doc
     .font("Helvetica-Bold")
     .fontSize(12)
     .fillColor("#f0f4ff")
-    .text("Card Placeholder", x + 6, y + 12, {
+    .text(cardTitle, x + 6, y + 12, {
       width: LABEL_WIDTH - 52,
       lineGap: 2,
     });
@@ -148,13 +164,13 @@ const drawFrontLabel = (doc: PdfDoc, pair: QrCodePair, x: number, y: number) => 
     .font("Helvetica")
     .fontSize(9)
     .fillColor(COLOR_SLATE)
-    .text(`Pair ${pair.pairId}`, x + 6, y + 26);
+    .text(`Pair ${entry.pairId}`, x + 6, y + 26);
 
   doc
     .font("Helvetica")
     .fontSize(8)
     .fillColor(COLOR_MUTED)
-    .text(`Card QR ${pair.card.code}`, x + 6, y + 34, {
+    .text(cardSubtitle, x + 6, y + 31, {
       width: LABEL_WIDTH - 54,
     });
 
@@ -162,7 +178,15 @@ const drawFrontLabel = (doc: PdfDoc, pair: QrCodePair, x: number, y: number) => 
     .font("Helvetica")
     .fontSize(8)
     .fillColor(COLOR_MUTED)
-    .text(`Pack QR ${pair.pack.code}`, x + 6, y + 42, {
+    .text(`Card QR ${entry.card.code}`, x + 6, y + 39, {
+      width: LABEL_WIDTH - 54,
+    });
+
+  doc
+    .font("Helvetica")
+    .fontSize(8)
+    .fillColor(COLOR_MUTED)
+    .text(`Pack QR ${entry.pack.code}`, x + 6, y + 45, {
       width: LABEL_WIDTH - 54,
     });
 
@@ -201,14 +225,14 @@ const drawFrontLabel = (doc: PdfDoc, pair: QrCodePair, x: number, y: number) => 
     .font("Helvetica")
     .fontSize(6)
     .fillColor(COLOR_META)
-    .text("TEMP PREVIEW", gradeX, gradeY + gradeBoxHeight - 4.5, {
+    .text(entry.label.status === PackLabelStatus.BOUND ? "BOUND" : "RESERVED", gradeX, gradeY + gradeBoxHeight - 4.5, {
       width: gradeBoxWidth,
       align: "center",
       characterSpacing: 1.3,
     });
 };
 
-const drawBackLabel = async (doc: PdfDoc, pair: QrCodePair, x: number, y: number) => {
+const drawBackLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number) => {
   const outerGradient = doc.linearGradient(x, y, x + LABEL_WIDTH, y + LABEL_HEIGHT);
   outerGradient.stop(0, "#0b0f17").stop(1, "#161d2b");
 
@@ -225,7 +249,7 @@ const drawBackLabel = async (doc: PdfDoc, pair: QrCodePair, x: number, y: number
   const qrSize = LABEL_HEIGHT - 12;
   const qrX = x + 6;
   const qrY = y + (LABEL_HEIGHT - qrSize) / 2;
-  const qrTarget = pair.card.payloadUrl ?? pair.card.code;
+  const qrTarget = entry.card.payloadUrl ?? entry.card.code;
 
   const qrBuffer = await QRCode.toBuffer(qrTarget, {
     errorCorrectionLevel: "M",
@@ -259,7 +283,7 @@ const drawBackLabel = async (doc: PdfDoc, pair: QrCodePair, x: number, y: number
     .font("Helvetica")
     .fontSize(7)
     .fillColor(COLOR_MUTED)
-    .text(`Card Serial ${pair.card.serial ?? "pending"}`, textX, y + 34, {
+    .text(`Card Serial ${entry.card.serial ?? "pending"}`, textX, y + 34, {
       width: textWidth,
     });
 
@@ -267,7 +291,7 @@ const drawBackLabel = async (doc: PdfDoc, pair: QrCodePair, x: number, y: number
     .font("Helvetica")
     .fontSize(7)
     .fillColor(COLOR_MUTED)
-    .text(`Pack Serial ${pair.pack.serial ?? "pending"}`, textX, y + 42, {
+    .text(`Pack Serial ${entry.pack.serial ?? "pending"}`, textX, y + 42, {
       width: textWidth,
     });
 

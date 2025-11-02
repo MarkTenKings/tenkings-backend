@@ -46,7 +46,7 @@ ALTER TABLE "BatchStageEvent"
 -- Create location restock confirmations
 CREATE TABLE "LocationRestock" (
   "id" TEXT NOT NULL DEFAULT uuid_generate_v4(),
-  "locationId" TEXT NOT NULL,
+  "locationId" uuid NOT NULL,
   "operatorId" TEXT,
   "countsJson" JSONB,
   "photoUrl" TEXT,

@@ -466,7 +466,7 @@ model BatchStageEvent {
 
 model LocationRestock {
   id         String   @id @default(uuid())
-  locationId String
+  locationId String   @db.Uuid
   operatorId String?
   countsJson Json?
   photoUrl   String?
