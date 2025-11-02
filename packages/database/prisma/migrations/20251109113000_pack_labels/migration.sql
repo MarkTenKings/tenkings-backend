@@ -2,8 +2,8 @@
   CREATE TYPE "PackLabelStatus" AS ENUM ('RESERVED', 'PRINTED', 'BOUND');
 
   -- Extend pack instances with source batch reference
-  ALTER TABLE "PackInstance"
-    ADD COLUMN "sourceBatchId" uuid;
+ALTER TABLE "PackInstance"
+  ADD COLUMN "sourceBatchId" TEXT;
 
   ALTER TABLE "PackInstance"
     ADD CONSTRAINT "PackInstance_sourceBatchId_fkey"
@@ -11,15 +11,15 @@
     ON DELETE SET NULL ON UPDATE CASCADE;
 
   -- Create pack label table
-  CREATE TABLE "PackLabel" (
-    "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
-    "pairId" TEXT NOT NULL,
-    "cardQrCodeId" uuid NOT NULL,
-    "packQrCodeId" uuid NOT NULL,
-    "itemId" uuid,
-    "packInstanceId" uuid,
-    "locationId" uuid,
-    "batchId" uuid,
+CREATE TABLE "PackLabel" (
+  "id" TEXT NOT NULL DEFAULT uuid_generate_v4(),
+  "pairId" TEXT NOT NULL,
+  "cardQrCodeId" uuid NOT NULL,
+  "packQrCodeId" uuid NOT NULL,
+  "itemId" TEXT,
+  "packInstanceId" TEXT,
+  "locationId" uuid,
+  "batchId" TEXT,
     "status" "PackLabelStatus" NOT NULL DEFAULT 'RESERVED',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
