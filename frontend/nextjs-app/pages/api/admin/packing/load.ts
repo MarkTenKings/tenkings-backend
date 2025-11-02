@@ -33,12 +33,17 @@ const serializeQr = (qr: { id: string; code: string; serial: string | null }) =>
   serial: qr.serial,
 });
 
-const mergeMetadata = (current: unknown, updates: Record<string, unknown>): Prisma.JsonObject => {
+const mergeMetadata = (current: unknown, updates: Prisma.JsonObject): Prisma.JsonObject => {
   const base: Prisma.JsonObject =
     current && typeof current === "object" && !Array.isArray(current)
       ? (current as Prisma.JsonObject)
       : {};
-  return { ...base, ...updates };
+
+  const next: Prisma.JsonObject = { ...base };
+  for (const [key, value] of Object.entries(updates)) {
+    next[key] = value as Prisma.JsonValue;
+  }
+  return next;
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -114,14 +119,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         },
       });
 
+      const metadataUpdates: Prisma.JsonObject = {
+        loadedById: admin.user.id,
+        loadedAt: now.toISOString(),
+        locationId: resolvedLocationId ?? null,
+      };
+
       await tx.qrCode.update({
         where: { id: qr.id },
         data: {
-          metadata: mergeMetadata(qr.metadata, {
-            loadedById: admin.user.id,
-            loadedAt: now.toISOString(),
-            locationId: resolvedLocationId,
-          }),
+          metadata: mergeMetadata(qr.metadata, metadataUpdates),
         },
       });
 
