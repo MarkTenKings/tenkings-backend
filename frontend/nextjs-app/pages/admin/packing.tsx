@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Image from "next/image";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
@@ -99,6 +99,8 @@ export default function AdminPackingConsole() {
   const [pairError, setPairError] = useState<string | null>(null);
   const [pairResults, setPairResults] = useState<QrCodePair[]>([]);
   const [pairLocationId, setPairLocationId] = useState<string>(ONLINE_OPTION);
+  const [labelDownload, setLabelDownload] = useState<{ url: string; filename: string } | null>(null);
+  const labelDownloadUrlRef = useRef<string | null>(null);
 
   const [loadLocationId, setLoadLocationId] = useState<string>(ONLINE_OPTION);
   const [loadCode, setLoadCode] = useState("");
@@ -112,6 +114,45 @@ export default function AdminPackingConsole() {
 
   const statsTotals = stats?.totals ?? { ready: 0, packed: 0, loaded: 0 };
   const locationSummaries = stats?.locations ?? [];
+
+  const clearLabelDownload = useCallback(() => {
+    if (labelDownloadUrlRef.current) {
+      URL.revokeObjectURL(labelDownloadUrlRef.current);
+      labelDownloadUrlRef.current = null;
+    }
+    setLabelDownload(null);
+  }, []);
+
+  const registerLabelDownload = useCallback(
+    (base64: string, filename: string) => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      const byteCharacters = window.atob(base64);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let index = 0; index < byteCharacters.length; index += 1) {
+        byteNumbers[index] = byteCharacters.charCodeAt(index);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      if (labelDownloadUrlRef.current) {
+        URL.revokeObjectURL(labelDownloadUrlRef.current);
+      }
+      labelDownloadUrlRef.current = url;
+      setLabelDownload({ url, filename });
+    },
+    []
+  );
+
+  useEffect(() => {
+    return () => {
+      if (labelDownloadUrlRef.current) {
+        URL.revokeObjectURL(labelDownloadUrlRef.current);
+        labelDownloadUrlRef.current = null;
+      }
+    };
+  }, []);
 
   const loadLocations = useCallback(() => {
     setLocationsLoading(true);
@@ -414,6 +455,7 @@ export default function AdminPackingConsole() {
     }
     setPairSubmitting(true);
     setPairError(null);
+    clearLabelDownload();
     try {
       const res = await fetch("/api/admin/qr/pairs", {
         method: "POST",
@@ -427,8 +469,11 @@ export default function AdminPackingConsole() {
         const payload = await res.json().catch(() => ({}));
         throw new Error(payload?.message ?? "Failed to generate QR codes");
       }
-      const payload = (await res.json()) as { pairs: QrCodePair[] };
+      const payload = (await res.json()) as { pairs: QrCodePair[]; pdf?: string; filename?: string };
       setPairResults(payload.pairs);
+      if (payload.pdf && payload.filename) {
+        registerLabelDownload(payload.pdf, payload.filename);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to generate QR codes";
       setPairError(message);
@@ -915,6 +960,24 @@ export default function AdminPackingConsole() {
                       </li>
                     ))}
                   </ul>
+                  {labelDownload && (
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-night-900/70 px-4 py-3">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Label sheet</p>
+                        <p className="text-sm text-slate-100">{labelDownload.filename}</p>
+                        <p className="text-[10px] text-slate-500">
+                          Placeholder artwork with QR codes for {pairResults.length} pair{pairResults.length === 1 ? "" : "s"}.
+                        </p>
+                      </div>
+                      <a
+                        href={labelDownload.url}
+                        download={labelDownload.filename}
+                        className="inline-flex items-center justify-center rounded-full border border-gold-500/40 bg-gold-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.3em] text-gold-200 transition hover:border-gold-400 hover:text-gold-100"
+                      >
+                        Download PDF
+                      </a>
+                    </div>
+                  )}
                 </div>
               )}
             </section>

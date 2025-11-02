@@ -102,6 +102,7 @@ Location Packing Workflow & QR Label Plan
 Planned Improvements
 - Printable label sheets: generate a PDF per batch with paired QR stickers, serial, thumbnail, and Ten Kings slab label. Target: 2-up or 3-up layout matching Zebra/Z-Perform rolls.
 - Label export API should allow selecting quantity (e.g., 10, 50, 100) and automatically mark the corresponding `QrCode` rows as RESERVED to avoid duplicate printing.
+- The QR pair endpoint now streams a placeholder PDF (base64 in the response) so ops can download a printable sheet directly from `/admin/packing` while we wait on final artwork.
 - After sealing, add a “Mark as LOADED” screen for machine stocking so operators can inventory-check packs already placed in the field.
 - Monitoring: dashboard widget showing counts by fulfillment status (READY_FOR_PACKING / PACKED / LOADED) per location.
 
@@ -116,4 +117,5 @@ Implementation Notes
 - Label PDF generator will live alongside `lib/server/qrCodes.ts` and reuse pair metadata; template engine can be `pdfkit` or `@react-pdf/renderer` for precise layout.
 - Need a lightweight assets bucket (S3/R2) to cache generated PDFs for download (expires after ~24h). Add admin-only link on the console once the file is ready.
 - Ten Kings branded slab label artwork should be provided as SVG; we can composite it with dynamic text/serials on top. For true foil, consider outsourcing to a print house, then only print the QR sticker in-house.
+- Temporary artwork is checked in at `assets/branding/tenkings-label-front-placeholder.svg` and `assets/branding/tenkings-label-back-placeholder.svg` so we can wire the PDF flow and print tests before the final gold-foil design arrives.
 - Track label consumption: when PDF generated, mark QR pairs as RESERVED; when successfully scanned, transition to BOUND. Failed prints can be reset via admin API.

@@ -3,6 +3,7 @@ import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { createQrCodePairs } from "../../../../lib/server/qrCodes";
+import { generateLabelSheetPdf } from "../../../../lib/server/labels";
 
 const requestSchema = z.object({
   count: z.number().int().min(1).max(200).optional().default(1),
@@ -10,7 +11,7 @@ const requestSchema = z.object({
 });
 
 type ResponseBody =
-  | { pairs: Awaited<ReturnType<typeof createQrCodePairs>> }
+  | { pairs: Awaited<ReturnType<typeof createQrCodePairs>>; pdf: string; filename: string }
   | { message: string };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
@@ -31,7 +32,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const pairs = await createQrCodePairs({ count, createdById: admin.user.id, locationId });
-    return res.status(200).json({ pairs });
+    const operatorName = admin.user.displayName ?? admin.user.phone ?? admin.user.id;
+    const pdfBuffer = await generateLabelSheetPdf({ pairs, generatedBy: operatorName });
+    const pdf = pdfBuffer.toString("base64");
+    const filename = `tenkings-labels-${new Date().toISOString().replace(/[.:]/g, "-")}.pdf`;
+
+    return res.status(200).json({ pairs, pdf, filename });
   } catch (error) {
     const response = toErrorResponse(error);
     return res.status(response.status).json({ message: response.message });

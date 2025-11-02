@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="70mm" height="20mm" viewBox="0 0 70 20">
+  <defs>
+    <linearGradient id="bg" x1="0%" x2="100%" y1="0%" y2="0%">
+      <stop offset="0%" stop-color="#101014" />
+      <stop offset="55%" stop-color="#151920" />
+      <stop offset="100%" stop-color="#1f2530" />
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" x2="100%" y1="0%" y2="0%">
+      <stop offset="0%" stop-color="#d4af37" />
+      <stop offset="50%" stop-color="#f5d37a" />
+      <stop offset="100%" stop-color="#d4af37" />
+    </linearGradient>
+  </defs>
+  <rect width="70" height="20" rx="1.6" fill="url(#bg)" />
+  <rect x="1" y="1" width="68" height="18" rx="1.2" fill="#0d1016" stroke="#2a2f3a" stroke-width="0.2" />
+  <rect x="1" y="1" width="68" height="5" rx="1.2" fill="url(#accent)" opacity="0.9" />
+  <text x="3.2" y="4.3" font-family="'Montserrat', 'Arial', sans-serif" font-size="2.2" fill="#121213" letter-spacing="0.25">TEN KINGS COLLECTIBLES</text>
+  <text x="3" y="9.2" font-family="'Montserrat', 'Arial', sans-serif" font-size="2.6" fill="#f0f4ff" letter-spacing="0.3">{{year}} {{brand}}</text>
+  <text x="3" y="13" font-family="'Montserrat', 'Arial', sans-serif" font-size="2.4" fill="#c7cedd" letter-spacing="0.2">{{player}}</text>
+  <text x="3" y="16.4" font-family="'Montserrat', 'Arial', sans-serif" font-size="1.8" fill="#96a0b7">No. {{cardNumber}}</text>
+  <rect x="50" y="6.5" width="17" height="11" rx="1.1" fill="#131821" stroke="#2f3848" stroke-width="0.3" />
+  <text x="58.5" y="10.5" font-family="'Montserrat', 'Arial', sans-serif" font-size="3.6" fill="#f5d37a" text-anchor="middle">{{grade}}</text>
+  <text x="58.5" y="13.5" font-family="'Montserrat', 'Arial', sans-serif" font-size="1.5" fill="#9aa6c0" text-anchor="middle" letter-spacing="0.4">GRADE</text>
+  <text x="58.5" y="16" font-family="'Montserrat', 'Arial', sans-serif" font-size="1.4" fill="#6b7284" text-anchor="middle">SCALE 1-10</text>
+</svg>

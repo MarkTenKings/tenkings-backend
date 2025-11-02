@@ -15,14 +15,18 @@
     "@stripe/stripe-js": "^3.4.1",
     "@tenkings/database": "workspace:*",
     "@tenkings/shared": "workspace:*",
+    "@types/pdfkit": "^0.17.3",
     "nanoid": "^5.1.6",
     "next": "14.2.5",
+    "pdfkit": "^0.17.2",
+    "qrcode": "^1.5.4",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "zod": "^4.1.11"
   },
   "devDependencies": {
     "@types/node": "20.14.12",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
     "autoprefixer": "^10.4.21",
