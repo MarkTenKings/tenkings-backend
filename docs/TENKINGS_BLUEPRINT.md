@@ -76,3 +76,44 @@ Below is a step-by-step plan to guide ChatGPT-5 Codex in building the TenKings p
 Conclusion
 
 This blueprint outlines how TenKings can combine the proven concepts of Courtyard’s secure vaulting and cryptographic item identificationdocs.courtyard.io with a closed-loop digital currency modelkpmg.com and an automated card-scanning pipeline to create a collectible ecosystem with instant liquidity, on-platform trading and vending machine purchases.  By maintaining TKD on an internal ledger and restricting its use to TenKings services, the platform stays compliant with closed-loop asset regulations while offering customers a seamless experience.  The scanning and ingestion integration allows TenKings to process new cards efficiently while preserving control over metadata and valuations.  The proposed architecture and development plan provide a clear roadmap for ChatGPT-5 Codex (or other development resources) to implement TenKings and deliver a secure, transparent and engaging collectible marketplace.
+
+Live Rip / Kiosk Streaming Blueprint (2025-11)
+- Kiosk API now enforces pack QR usage. `/api/kiosk/start` accepts either `packCode` (tkp_*) or a legacy `packId`; it verifies fulfillment status (PACKED/LOADED), binds the QR, and refuses concurrent sessions.
+- Live countdown + streaming relies on Mux Live Streams. Start endpoint provisions a stream (`muxStreamId`, key) and stores playback ID. Kiosk console polls `/api/kiosk/[session]/ingest` to retrieve RTMPS endpoint.
+- Webhook `/api/mux/webhook` ingests `video.asset_ready` events and backfills the LiveRip record. Everything in `/live`, `/locations`, homepage carousel consumes the Mux playback URL.
+- Session completion (`/api/kiosk/[session]/complete`) marks the pack OPENED, persists reveal payload, and allows a claim target to be issued.
+- Open TODOs:
+  - Auto-start OBS/Larix profile with new stream key via kiosk console.
+  - Surface pack QR metadata on the kiosk dashboard so operators can confirm the serial in the field.
+  - Long-term migration: update legacy MP4 live rips to Mux HLS and backfill `muxPlaybackId`.
+
+Location Packing Workflow & QR Label Plan
+- Lifecycle
+  1. Admin assigns vetted cards to a `PackDefinition` and selects a `Location`. Mint pipeline sets `PackInstance.fulfillmentStatus = READY_FOR_PACKING`.
+  2. Packing console (`/admin/packing`) filters by location, surfaces the queue oldest-first, and renders card photo/title + item id.
+  3. Operator generates QR pairs (tkc_* & tkp_*) which include matching serial `TKxxxxx`. Backend stores both labels in `QrCode` table (type=CARD/PACK) and precomputes claim/kiosk URLs.
+  4. Operator binds card QR (scan `tkc_*`). API validates that the QR is CARD type, available, and links it to the `Item`.
+  5. Operator seals pack (scan `tkp_*`). API enforces that the card QR is already bound, associates the pack QR, and promotes fulfillment status to PACKED (later kiosk start sets LOADED).
+  6. Pack advances off the queue. Pack is now kiosk-ready and still tied to the originating location.
+- Scanner guardrails prevent mislabeling: the console refuses to proceed when a QR is already bound elsewhere or when card QR is missing prior to pack scan.
+- `PackInstance` status transitions: READY_FOR_PACKING → PACKED (when pack QR scanned) → LOADED (kiosk start) → OPENED (after session completes).
+- Pack QR remains tied to the card: kiosk start uses `packQrCodeId` so scanning the sticker always launches the correct session.
+
+Planned Improvements
+- Printable label sheets: generate a PDF per batch with paired QR stickers, serial, thumbnail, and Ten Kings slab label. Target: 2-up or 3-up layout matching Zebra/Z-Perform rolls.
+- Label export API should allow selecting quantity (e.g., 10, 50, 100) and automatically mark the corresponding `QrCode` rows as RESERVED to avoid duplicate printing.
+- After sealing, add a “Mark as LOADED” screen for machine stocking so operators can inventory-check packs already placed in the field.
+- Monitoring: dashboard widget showing counts by fulfillment status (READY_FOR_PACKING / PACKED / LOADED) per location.
+
+Hardware & Supplies Recommendations (initial draft)
+- QR sticker printer: Zebra ZD621 TT (203dpi) with 1.5" × 1" 2-up thermal transfer labels (e.g., Z-Perform 1000T). Use black resin ribbon for smudge-resistant barcodes.
+- Slab label printer (color): Primera LX910e (pigment ink) with pre-die-cut glossy or holographic label stock (1" × 3"). For a gold foil look, use metallic gold polyester stock (OnlineLabels OL2062) or work with a print vendor for hot-foil preprints, leaving a white window for QR contrast.
+- QR readability: keep the QR zone matte white with dark ink; place foil/holographic treatments around (not under) the QR modules.
+- Scanner: Zebra DS2208 (USB) configured for carriage-return suffix so each scan submits automatically inside the console’s inputs.
+- Operator station: 13"+ tablet or laptop, label printer, barcode scanner, stack of slabs/packs organized in ingest order.
+
+Implementation Notes
+- Label PDF generator will live alongside `lib/server/qrCodes.ts` and reuse pair metadata; template engine can be `pdfkit` or `@react-pdf/renderer` for precise layout.
+- Need a lightweight assets bucket (S3/R2) to cache generated PDFs for download (expires after ~24h). Add admin-only link on the console once the file is ready.
+- Ten Kings branded slab label artwork should be provided as SVG; we can composite it with dynamic text/serials on top. For true foil, consider outsourcing to a print house, then only print the QR sticker in-house.
+- Track label consumption: when PDF generated, mark QR pairs as RESERVED; when successfully scanned, transition to BOUND. Failed prints can be reset via admin API.

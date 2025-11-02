@@ -296,6 +296,21 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
           <h1 className="font-heading text-3xl uppercase tracking-[0.2em] text-white">
             {session.location?.name ?? "Ten Kings Live"}
           </h1>
+          <div className="flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.28em] text-slate-400">
+            {session.pack?.definition ? (
+              <span className="rounded-full border border-white/20 bg-white/5 px-3 py-1 text-slate-200">
+                {session.pack.definition.name}
+              </span>
+            ) : null}
+            {session.packQrCode ? (
+              <span className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-slate-100">
+                <span className="text-[10px] uppercase tracking-[0.3em] text-slate-400">Pack Serial</span>
+                <span className="font-mono text-sm uppercase tracking-[0.18em] text-white">
+                  {session.packQrCode.serial ?? session.packQrCode.code}
+                </span>
+              </span>
+            ) : null}
+          </div>
           {pollError ? <p className="text-sm text-rose-300">{pollError}</p> : null}
         </header>
 

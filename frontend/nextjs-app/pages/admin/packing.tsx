@@ -44,6 +44,23 @@ interface QrCodePair {
   pack: QrCodeSummary;
 }
 
+interface PackingStats {
+  totals: {
+    ready: number;
+    packed: number;
+    loaded: number;
+  };
+  locations: Array<{
+    id: string | null;
+    name: string;
+    counts: {
+      ready: number;
+      packed: number;
+      loaded: number;
+    };
+  }>;
+}
+
 const ONLINE_OPTION = "ONLINE";
 
 export default function AdminPackingConsole() {
@@ -83,6 +100,19 @@ export default function AdminPackingConsole() {
   const [pairResults, setPairResults] = useState<QrCodePair[]>([]);
   const [pairLocationId, setPairLocationId] = useState<string>(ONLINE_OPTION);
 
+  const [loadLocationId, setLoadLocationId] = useState<string>(ONLINE_OPTION);
+  const [loadCode, setLoadCode] = useState("");
+  const [loadSubmitting, setLoadSubmitting] = useState(false);
+  const [loadMessage, setLoadMessage] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [stats, setStats] = useState<PackingStats | null>(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
+
+  const statsTotals = stats?.totals ?? { ready: 0, packed: 0, loaded: 0 };
+  const locationSummaries = stats?.locations ?? [];
+
   const loadLocations = useCallback(() => {
     setLocationsLoading(true);
     setLocationsError(null);
@@ -105,6 +135,14 @@ export default function AdminPackingConsole() {
           if (pairLocationId === ONLINE_OPTION) {
             setPairLocationId(mapped[0].id);
           }
+          setLoadLocationId((current) => {
+            if (current !== ONLINE_OPTION && mapped.some((location) => location.id === current)) {
+              return current;
+            }
+            return mapped[0].id;
+          });
+        } else {
+          setLoadLocationId(ONLINE_OPTION);
         }
       })
       .catch((error) => {
@@ -119,6 +157,57 @@ export default function AdminPackingConsole() {
   useEffect(() => {
     loadLocations();
   }, [loadLocations]);
+
+  const fetchStats = useCallback(
+    async (signal?: AbortSignal) => {
+      if (!session?.token || !isAdmin) {
+        return;
+      }
+      setStatsLoading(true);
+      setStatsError(null);
+      try {
+        const res = await fetch("/api/admin/packing/stats", {
+          headers: buildAdminHeaders(session.token),
+          signal,
+        });
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}));
+          throw new Error(payload?.message ?? "Failed to load packing stats");
+        }
+        const data = (await res.json()) as PackingStats;
+        if (!signal?.aborted) {
+          setStats(data);
+        }
+      } catch (error) {
+        if (signal?.aborted) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : "Failed to load packing stats";
+        setStatsError(message);
+      } finally {
+        if (!signal?.aborted) {
+          setStatsLoading(false);
+        }
+      }
+    },
+    [isAdmin, session?.token]
+  );
+
+  const refreshStats = useCallback(() => {
+    void fetchStats();
+  }, [fetchStats]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchStats(controller.signal).catch(() => undefined);
+    return () => controller.abort();
+  }, [fetchStats]);
+
+  useEffect(() => {
+    if (selectedLocationId && selectedLocationId !== ONLINE_OPTION) {
+      setLoadLocationId(selectedLocationId);
+    }
+  }, [selectedLocationId]);
 
   const fetchQueue = useCallback(
     async (locationId: string, signal?: AbortSignal) => {
@@ -217,6 +306,7 @@ export default function AdminPackingConsole() {
       });
       setCardScanMessage(`Card QR bound (${payload.qrCode.serial ?? payload.qrCode.code})`);
       setCardCode("");
+      refreshStats();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to bind card QR code";
       setCardScanError(message);
@@ -269,11 +359,51 @@ export default function AdminPackingConsole() {
       );
       setPackCode("");
       setQueue((prev) => prev.slice(1));
+      refreshStats();
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to seal pack";
       setPackScanError(message);
     } finally {
       setPackSubmitting(false);
+    }
+  };
+
+
+  const handleLoadSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!session?.token || !isAdmin || loadLocationId === ONLINE_OPTION || !loadCode.trim()) {
+      return;
+    }
+    setLoadSubmitting(true);
+    setLoadMessage(null);
+    setLoadError(null);
+    try {
+      const res = await fetch("/api/admin/packing/load", {
+        method: "POST",
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ code: loadCode.trim(), locationId: loadLocationId }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to mark pack as loaded");
+      }
+      const payload = (await res.json()) as {
+        pack: { definition: { name: string } | null; fulfillmentStatus: string };
+        qrCode: { serial: string | null; code: string };
+      };
+      const locationName = locations.find((entry) => entry.id === loadLocationId)?.name ?? "Location";
+      setLoadMessage(
+        `Pack ${payload.qrCode.serial ?? payload.qrCode.code} marked LOADED for ${locationName}. ${
+          payload.pack.definition?.name ?? ""
+        }`
+      );
+      setLoadCode("");
+      refreshStats();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to mark pack as loaded";
+      setLoadError(message);
+    } finally {
+      setLoadSubmitting(false);
     }
   };
 
@@ -346,8 +476,176 @@ export default function AdminPackingConsole() {
         )}
 
         {hasAccess && (
-          <div className="grid gap-6 lg:grid-cols-[1.35fr_1fr]">
+          <>
+            <section className="flex flex-col gap-5 rounded-3xl border border-white/10 bg-night-900/70 p-6">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Ops Snapshot</p>
+                  <h2 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">Packing Status</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => refreshStats()}
+                  className="rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.28em] text-slate-200 transition hover:border-emerald-300 hover:text-emerald-100"
+                >
+                  Refresh Stats
+                </button>
+              </div>
+
+              {statsError ? (
+                <p className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+                  {statsError}
+                </p>
+              ) : null}
+
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Ready to Pack</p>
+                  <p className="mt-2 text-2xl font-semibold uppercase tracking-[0.18em] text-white">
+                    {statsTotals.ready.toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Packed</p>
+                  <p className="mt-2 text-2xl font-semibold uppercase tracking-[0.18em] text-white">
+                    {statsTotals.packed.toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4">
+                  <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Loaded</p>
+                  <p className="mt-2 text-2xl font-semibold uppercase tracking-[0.18em] text-white">
+                    {statsTotals.loaded.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">By Location</p>
+                {statsLoading && !stats ? (
+                  <p className="text-xs text-slate-400">Loading packing stats…</p>
+                ) : null}
+                {!statsLoading && locationSummaries.length === 0 ? (
+                  <p className="text-xs text-slate-400">No packs have been staged yet.</p>
+                ) : null}
+                <div className="flex flex-wrap gap-3">
+                  {locationSummaries.map((location) => {
+                    const total = location.counts.ready + location.counts.packed + location.counts.loaded;
+                    return (
+                      <div
+                        key={location.id ?? "unassigned"}
+                        className="min-w-[12rem] rounded-2xl border border-white/10 bg-night-900/60 px-4 py-3 text-xs text-slate-200"
+                      >
+                        <p className="text-[10px] uppercase tracking-[0.32em] text-slate-400">{location.name}</p>
+                        <p className="mt-1 text-[11px] uppercase tracking-[0.28em] text-white">{total.toLocaleString()} total</p>
+                        <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-400">
+                          <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-emerald-200">
+                            Ready {location.counts.ready.toLocaleString()}
+                          </span>
+                          <span className="rounded-full border border-gold-500/30 bg-gold-500/10 px-3 py-1 text-gold-200">
+                            Packed {location.counts.packed.toLocaleString()}
+                          </span>
+                          <span className="rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1 text-sky-200">
+                            Loaded {location.counts.loaded.toLocaleString()}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
+
             <section className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
+              <div className="flex flex-wrap items-end justify-between gap-3">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Loading Stations</p>
+                  <h2 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">Mark Packs as Loaded</h2>
+                </div>
+                {locations.length === 0 && !locationsLoading ? (
+                  <p className="text-xs text-slate-400">Assign a pack location to begin.</p>
+                ) : null}
+              </div>
+              <p className="text-xs text-slate-300">
+                Scan the pack QR after its in the machine. This bumps the fulfillment status to LOADED and stamps the
+                operator + timestamp. Use the location filter to guard against misloads.
+              </p>
+
+              <form onSubmit={handleLoadSubmit} className="grid gap-3 text-xs text-slate-200 sm:grid-cols-[1fr_auto]">
+                <label className="flex flex-col gap-1">
+                  <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Location</span>
+                  <select
+                    value={loadLocationId}
+                    onChange={(event) => setLoadLocationId(event.currentTarget.value)}
+                    disabled={locations.length === 0 || loadSubmitting}
+                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-white outline-none transition focus:border-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value={ONLINE_OPTION} disabled>
+                      Select a location
+                    </option>
+                    {locations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1 sm:col-span-2">
+                  <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Scan pack QR</span>
+                  <input
+                    type="text"
+                    inputMode="text"
+                    autoComplete="off"
+                    required
+                    disabled={loadLocationId === ONLINE_OPTION || loadSubmitting}
+                    value={loadCode}
+                    onChange={(event) => setLoadCode(event.currentTarget.value)}
+                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-50"
+                    placeholder="tkp_…"
+                  />
+                </label>
+
+                <div className="flex flex-wrap gap-3 sm:col-span-2">
+                  <button
+                    type="submit"
+                    disabled={
+                      loadSubmitting ||
+                      !loadCode.trim() ||
+                      loadLocationId === ONLINE_OPTION ||
+                      locations.length === 0
+                    }
+                    className="inline-flex items-center justify-center rounded-full border border-sky-400/40 bg-sky-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {loadSubmitting ? "Marking…" : "Mark as Loaded"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setLoadCode("");
+                      setLoadError(null);
+                      setLoadMessage(null);
+                    }}
+                    className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </form>
+
+              {loadMessage ? (
+                <p className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-emerald-200">
+                  {loadMessage}
+                </p>
+              ) : null}
+              {loadError ? (
+                <p className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-rose-200">
+                  {loadError}
+                </p>
+              ) : null}
+            </section>
+
+            <div className="grid gap-6 lg:grid-cols-[1.35fr_1fr]">
+              <section className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
               <div className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-end justify-between gap-4">
                   <div>
@@ -621,6 +919,7 @@ export default function AdminPackingConsole() {
               )}
             </section>
           </div>
+          </>
         )}
       </div>
     </AppShell>
