@@ -166,7 +166,7 @@ export async function mintAssignedCardAssets({
   });
 
   if (!cards.length) {
-    return { mintedItems: 0, createdPacks: 0, skippedCards: 0 };
+    return { mintedItems: 0, createdPacks: 0, skippedCards: 0, packAssignments: [] };
   }
 
   let mintedItems = 0;

@@ -93,7 +93,7 @@ export async function syncBatchStageFromPackStatuses({ tx, batchId, actorId, not
   const ready = counts[PackFulfillmentStatus.READY_FOR_PACKING];
   const online = counts[PackFulfillmentStatus.ONLINE];
 
-  let stage = BatchStage.INVENTORY_READY;
+  let stage: BatchStage = BatchStage.INVENTORY_READY;
 
   if (total === 0) {
     stage = BatchStage.INVENTORY_READY;
