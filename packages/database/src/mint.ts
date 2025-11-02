@@ -1,7 +1,8 @@
 import { prisma as defaultPrisma } from "./client";
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { PackFulfillmentStatus } from "@prisma/client";
+import { PackFulfillmentStatus, BatchStage } from "@prisma/client";
 import { parseClassificationPayload } from "@tenkings/shared";
+import { setBatchStage } from "./batches";
 
 type Nullable<T> = T | null | undefined;
 
@@ -12,12 +13,20 @@ interface MintOptions {
   prismaClient?: PrismaClient;
   locationId?: string | null;
   fulfillmentStatus?: PackFulfillmentStatus;
+  createdById?: string | null;
 }
 
 export interface MintResult {
   mintedItems: number;
   createdPacks: number;
   skippedCards: number;
+  packAssignments: Array<{
+    packInstanceId: string;
+    itemId: string;
+    cardAssetId: string;
+    batchId: string | null;
+    locationId: string | null;
+  }>;
 }
 
 const DEFAULT_SELLER_EMAIL =
@@ -137,6 +146,7 @@ export async function mintAssignedCardAssets({
   prismaClient,
   locationId,
   fulfillmentStatus,
+  createdById,
 }: MintOptions): Promise<MintResult> {
   const db = prismaClient ?? defaultPrisma;
 
@@ -162,6 +172,8 @@ export async function mintAssignedCardAssets({
   let mintedItems = 0;
   let createdPacks = 0;
   let skippedCards = 0;
+  const packAssignments: MintResult["packAssignments"] = [];
+  const touchedBatchIds = new Set<string>();
 
   const resolvedStatus =
     fulfillmentStatus ?? (locationId ? PackFulfillmentStatus.READY_FOR_PACKING : PackFulfillmentStatus.ONLINE);
@@ -230,6 +242,8 @@ export async function mintAssignedCardAssets({
         }
       }
 
+      touchedBatchIds.add(card.batchId);
+
       const existingSlot = await tx.packSlot.findFirst({
         where: {
           itemId: item.id,
@@ -255,14 +269,40 @@ export async function mintAssignedCardAssets({
           }
         }
 
+        const updateData: Prisma.PackInstanceUpdateInput = {};
+        if (locationId !== undefined) {
+          updateData.location = locationId ? { connect: { id: locationId } } : { disconnect: true };
+          updateData.fulfillmentStatus = resolvedStatus;
+        } else if (fulfillmentStatus !== undefined) {
+          updateData.fulfillmentStatus = resolvedStatus;
+        }
+        if (card.batchId) {
+          updateData.sourceBatch = { connect: { id: card.batchId } };
+        }
+        if (Object.keys(updateData).length > 0) {
+          await tx.packInstance.update({
+            where: { id: existingSlot.packInstanceId },
+            data: updateData,
+          });
+        }
+
+        packAssignments.push({
+          packInstanceId: existingSlot.packInstanceId,
+          itemId: item.id,
+          cardAssetId: card.id,
+          batchId: card.batchId ?? null,
+          locationId: locationId ?? null,
+        });
+
         return { minted: itemCreated ? 1 : 0, packed: false };
       }
 
-      await tx.packInstance.create({
+      const pack = await tx.packInstance.create({
         data: {
           packDefinitionId,
           fulfillmentStatus: resolvedStatus,
           locationId: locationId ?? undefined,
+          sourceBatchId: card.batchId ?? undefined,
           slots: { create: [{ itemId: item.id }] },
         },
       });
@@ -270,6 +310,14 @@ export async function mintAssignedCardAssets({
       await tx.packDefinition.update({
         where: { id: packDefinitionId },
         data: { inventoryCount: { increment: 1 } },
+      });
+
+      packAssignments.push({
+        packInstanceId: pack.id,
+        itemId: item.id,
+        cardAssetId: card.id,
+        batchId: card.batchId ?? null,
+        locationId: locationId ?? null,
       });
 
       return { minted: itemCreated ? 1 : 0, packed: true };
@@ -283,5 +331,19 @@ export async function mintAssignedCardAssets({
     }
   }
 
-  return { mintedItems, createdPacks, skippedCards };
+  if (touchedBatchIds.size > 0) {
+    await db.$transaction(async (tx) => {
+      for (const batchId of touchedBatchIds) {
+        await setBatchStage(tx, {
+          batchId,
+          stage: BatchStage.INVENTORY_READY,
+          actorId: createdById ?? null,
+          note: null,
+          force: false,
+        });
+      }
+    });
+  }
+
+  return { mintedItems, createdPacks, skippedCards, packAssignments };
 }

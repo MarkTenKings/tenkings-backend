@@ -1,6 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { z } from "zod";
-import { prisma, PackFulfillmentStatus, QrCodeType } from "@tenkings/database";
+import {
+  prisma,
+  PackFulfillmentStatus,
+  QrCodeType,
+  syncBatchStageFromPackStatuses,
+} from "@tenkings/database";
 import type { Prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
@@ -63,6 +68,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           packInstance: {
             include: {
               packDefinition: true,
+              sourceBatch: { select: { id: true } },
             },
           },
         },
@@ -77,6 +83,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
 
       const pack = qr.packInstance;
+      const batchId = pack.sourceBatch?.id ?? null;
 
       if (
         pack.fulfillmentStatus !== PackFulfillmentStatus.PACKED &&
@@ -131,6 +138,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           metadata: mergeMetadata(qr.metadata, metadataUpdates),
         },
       });
+
+      if (batchId) {
+        await syncBatchStageFromPackStatuses({
+          tx,
+          batchId,
+          actorId: admin.user.id,
+        });
+      }
 
       return {
         pack: updatedPack,

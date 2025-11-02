@@ -11,7 +11,11 @@ const requestSchema = z.object({
 });
 
 type ResponseBody =
-  | { pairs: Awaited<ReturnType<typeof createQrCodePairs>>; pdf: string; filename: string }
+  | {
+      pairs: Awaited<ReturnType<typeof createQrCodePairs>>;
+      pdf: string;
+      filename: string;
+    }
   | { message: string };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
@@ -33,7 +37,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const pairs = await createQrCodePairs({ count, createdById: admin.user.id, locationId });
     const operatorName = admin.user.displayName ?? admin.user.phone ?? admin.user.id;
-    const pdfBuffer = await generateLabelSheetPdf({ pairs, generatedBy: operatorName });
+    const printable = pairs.map((pair) => ({
+      pairId: pair.pairId,
+      card: pair.card,
+      pack: pair.pack,
+      label: pair.label,
+      item: null,
+    }));
+    const pdfBuffer = await generateLabelSheetPdf({ labels: printable, generatedBy: operatorName });
     const pdf = pdfBuffer.toString("base64");
     const filename = `tenkings-labels-${new Date().toISOString().replace(/[.:]/g, "-")}.pdf`;
 

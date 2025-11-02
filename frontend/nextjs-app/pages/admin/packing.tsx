@@ -1,70 +1,276 @@
 import Head from "next/head";
 import Image from "next/image";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import QRCode from "qrcode";
 import AppShell from "../../components/AppShell";
-import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
+import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
-
-interface LocationOption {
-  id: string;
-  name: string;
-}
-
-interface QueueEntry {
-  id: string;
-  createdAt: string;
-  packDefinition: {
-    id: string;
-    name: string;
-    price: number;
-    tier: string;
-  };
-  item: {
-    id: string;
-    name: string;
-    imageUrl: string | null;
-    cardQrCodeId: string | null;
-  } | null;
-}
-
-interface QrCodeSummary {
-  id: string;
-  code: string;
-  serial: string | null;
-  type: string;
-  state: string;
-  payloadUrl: string | null;
-  pairId: string | null;
-}
-
-interface QrCodePair {
-  pairId: string;
-  card: QrCodeSummary;
-  pack: QrCodeSummary;
-}
-
-interface PackingStats {
-  totals: {
-    ready: number;
-    packed: number;
-    loaded: number;
-  };
-  locations: Array<{
-    id: string | null;
-    name: string;
-    counts: {
-      ready: number;
-      packed: number;
-      loaded: number;
-    };
-  }>;
-}
+import { BatchStage, PackFulfillmentStatus } from "@tenkings/database";
 
 const ONLINE_OPTION = "ONLINE";
 
+type PackCounts = {
+  total: number;
+  ready: number;
+  packed: number;
+  loaded: number;
+};
+
+type StageBatchSummary = {
+  id: string;
+  label: string | null;
+  stage: BatchStage;
+  notes: string | null;
+  tags: string[];
+  stageChangedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  counts: PackCounts;
+  locations: Array<{
+    id: string | null;
+    name: string;
+    counts: PackCounts;
+  }>;
+  latestEvents: Array<{
+    id: string;
+    stage: BatchStage;
+    createdAt: string;
+    note: string | null;
+    actor: { id: string; label: string } | null;
+  }>;
+};
+
+type StageColumnSummary = {
+  id: BatchStage;
+  label: string;
+  description: string;
+  totals: {
+    batches: number;
+    packs: number;
+  };
+  batches: StageBatchSummary[];
+};
+
+type StageStatsResponse = {
+  stageOrder: BatchStage[];
+  stages: StageColumnSummary[];
+  timeline: TimelineEvent[];
+};
+
+type TimelineEvent = {
+  id: string;
+  batchId: string;
+  batchLabel: string | null;
+  stage: BatchStage;
+  createdAt: string;
+  note: string | null;
+  actor: { id: string; label: string } | null;
+};
+
+type PackRow = {
+  id: string;
+  createdAt: string;
+  fulfillmentStatus: PackFulfillmentStatus;
+  packDefinition: {
+    id: string;
+    name: string;
+    tier: string;
+  } | null;
+  item: {
+    id: string;
+    name: string | null;
+    imageUrl: string | null;
+    cardQrCodeId: string | null;
+  } | null;
+  label: {
+    id: string;
+    status: string;
+    pairId: string;
+    card: {
+      id: string;
+      code: string;
+      serial: string | null;
+      payloadUrl: string | null;
+    };
+    pack: {
+      id: string;
+      code: string;
+      serial: string | null;
+      payloadUrl: string | null;
+    };
+  } | null;
+};
+
+type BatchDetail = {
+  id: string;
+  label: string | null;
+  notes: string | null;
+  tags: string[];
+  stage: BatchStage;
+  stageChangedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  counts: PackCounts;
+  latestEvents: Array<{
+    id: string;
+    stage: BatchStage;
+    createdAt: string;
+    note: string | null;
+    actor: { id: string; label: string } | null;
+  }>;
+  packs: PackRow[];
+};
+
+type LocationResponse = {
+  batches: BatchDetail[];
+};
+
+type LabelDownload = {
+  url: string;
+  filename: string;
+};
+
+type ViewMode = "tracker" | "timeline";
+
+type StatusMessage = {
+  type: "success" | "error";
+  message: string;
+};
+
+const stageColorMap: Record<BatchStage, string> = {
+  [BatchStage.INVENTORY_READY]: "border-sky-400/50 text-sky-200",
+  [BatchStage.PACKING]: "border-emerald-400/50 text-emerald-200",
+  [BatchStage.PACKED]: "border-gold-500/50 text-gold-200",
+  [BatchStage.SHIPPING_READY]: "border-amber-400/50 text-amber-200",
+  [BatchStage.SHIPPING_SHIPPED]: "border-amber-500/50 text-amber-100",
+  [BatchStage.SHIPPING_RECEIVED]: "border-indigo-400/50 text-indigo-200",
+  [BatchStage.LOADED]: "border-purple-400/50 text-purple-200",
+};
+
+const stageLabel = (stage: BatchStage) => {
+  switch (stage) {
+    case BatchStage.INVENTORY_READY:
+      return "Inventory Ready";
+    case BatchStage.PACKING:
+      return "Packing";
+    case BatchStage.PACKED:
+      return "Packed";
+    case BatchStage.SHIPPING_READY:
+      return "Shipping Ready";
+    case BatchStage.SHIPPING_SHIPPED:
+      return "Shipped";
+    case BatchStage.SHIPPING_RECEIVED:
+      return "Received";
+    case BatchStage.LOADED:
+      return "Loaded";
+    default:
+      return stage;
+  }
+};
+
+const stageDescription = (stage: BatchStage) => {
+  switch (stage) {
+    case BatchStage.INVENTORY_READY:
+      return "Waiting on labels or packing.";
+    case BatchStage.PACKING:
+      return "Packing ops in progress.";
+    case BatchStage.PACKED:
+      return "Sealed and ready for shipping.";
+    case BatchStage.SHIPPING_READY:
+      return "Queued to ship to the field.";
+    case BatchStage.SHIPPING_SHIPPED:
+      return "In transit to the kiosk operator.";
+    case BatchStage.SHIPPING_RECEIVED:
+      return "Shipment received on site.";
+    case BatchStage.LOADED:
+      return "Inventory confirmed inside kiosk.";
+    default:
+      return "";
+  }
+};
+
+const formatDate = (iso: string | null) => {
+  if (!iso) return "";
+  const date = new Date(iso);
+  return date.toLocaleString();
+};
+
+const formatRelative = (iso: string | null) => {
+  if (!iso) return "";
+  const now = Date.now();
+  const target = new Date(iso).getTime();
+  const diff = now - target;
+  const minute = 60_000;
+  const hour = 60 * minute;
+  const day = 24 * hour;
+
+  if (diff < minute) return "Just now";
+  if (diff < hour) return `${Math.round(diff / minute)} min ago`;
+  if (diff < day) return `${Math.round(diff / hour)} hr ago`;
+  return `${Math.round(diff / day)} day${diff / day >= 2 ? "s" : ""} ago`;
+};
+
+const QrCanvas = ({ value }: { value: string }) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const draw = async () => {
+      if (!canvasRef.current) return;
+      try {
+        await QRCode.toCanvas(canvasRef.current, value, {
+          width: 120,
+          margin: 1,
+          errorCorrectionLevel: "M",
+        });
+      } catch (error) {
+        console.error("Failed to render QR code", error);
+      }
+    };
+    void draw();
+  }, [value]);
+
+  return <canvas ref={canvasRef} className="h-28 w-28 rounded-xl border border-white/10 bg-night-900" />;
+};
+
 export default function AdminPackingConsole() {
   const { session, loading, ensureSession, logout } = useSession();
+
+  const [stageOrder, setStageOrder] = useState<BatchStage[]>([]);
+  const [stageColumns, setStageColumns] = useState<StageColumnSummary[]>([]);
+  const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState<string | null>(null);
+
+  const [selectedStageId, setSelectedStageId] = useState<BatchStage | null>(null);
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  const [selectedLocationId, setSelectedLocationId] = useState<string>(ONLINE_OPTION);
+
+  const [batchDetail, setBatchDetail] = useState<BatchDetail | null>(null);
+  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+
+  const [viewMode, setViewMode] = useState<ViewMode>("tracker");
+
+  const [activePackId, setActivePackId] = useState<string | null>(null);
+  const [cardCode, setCardCode] = useState("");
+  const [packCode, setPackCode] = useState("");
+  const [cardStatus, setCardStatus] = useState<StatusMessage | null>(null);
+  const [packStatus, setPackStatus] = useState<StatusMessage | null>(null);
+
+  const [printSubmitting, setPrintSubmitting] = useState(false);
+  const [printDownload, setPrintDownload] = useState<LabelDownload | null>(null);
+  const downloadUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (downloadUrlRef.current) {
+      return () => {
+        URL.revokeObjectURL(downloadUrlRef.current!);
+        downloadUrlRef.current = null;
+      };
+    }
+    return undefined;
+  }, []);
 
   useEffect(() => {
     ensureSession().catch(() => undefined);
@@ -75,445 +281,332 @@ export default function AdminPackingConsole() {
     [session?.user.id, session?.user.phone]
   );
 
-  const [locations, setLocations] = useState<LocationOption[]>([]);
-  const [locationsLoading, setLocationsLoading] = useState(false);
-  const [locationsError, setLocationsError] = useState<string | null>(null);
-  const [selectedLocationId, setSelectedLocationId] = useState<string>(ONLINE_OPTION);
+  const adminHeaders = useCallback(
+    () => buildAdminHeaders(session?.token, { "Content-Type": "application/json" }),
+    [session?.token]
+  );
 
-  const [queue, setQueue] = useState<QueueEntry[]>([]);
-  const [queueLoading, setQueueLoading] = useState(false);
-  const [queueError, setQueueError] = useState<string | null>(null);
-
-  const [cardCode, setCardCode] = useState("");
-  const [cardScanMessage, setCardScanMessage] = useState<string | null>(null);
-  const [cardScanError, setCardScanError] = useState<string | null>(null);
-  const [cardSubmitting, setCardSubmitting] = useState(false);
-
-  const [packCode, setPackCode] = useState("");
-  const [packScanMessage, setPackScanMessage] = useState<string | null>(null);
-  const [packScanError, setPackScanError] = useState<string | null>(null);
-  const [packSubmitting, setPackSubmitting] = useState(false);
-
-  const [pairCount, setPairCount] = useState(10);
-  const [pairSubmitting, setPairSubmitting] = useState(false);
-  const [pairError, setPairError] = useState<string | null>(null);
-  const [pairResults, setPairResults] = useState<QrCodePair[]>([]);
-  const [pairLocationId, setPairLocationId] = useState<string>(ONLINE_OPTION);
-  const [labelDownload, setLabelDownload] = useState<{ url: string; filename: string } | null>(null);
-  const labelDownloadUrlRef = useRef<string | null>(null);
-
-  const [loadLocationId, setLoadLocationId] = useState<string>(ONLINE_OPTION);
-  const [loadCode, setLoadCode] = useState("");
-  const [loadSubmitting, setLoadSubmitting] = useState(false);
-  const [loadMessage, setLoadMessage] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  const [stats, setStats] = useState<PackingStats | null>(null);
-  const [statsLoading, setStatsLoading] = useState(false);
-  const [statsError, setStatsError] = useState<string | null>(null);
-
-  const statsTotals = stats?.totals ?? { ready: 0, packed: 0, loaded: 0 };
-  const locationSummaries = stats?.locations ?? [];
-
-  const clearLabelDownload = useCallback(() => {
-    if (labelDownloadUrlRef.current) {
-      URL.revokeObjectURL(labelDownloadUrlRef.current);
-      labelDownloadUrlRef.current = null;
+  const fetchStats = useCallback(async () => {
+    if (!session?.token || !isAdmin) {
+      return;
     }
-    setLabelDownload(null);
-  }, []);
-
-  const registerLabelDownload = useCallback(
-    (base64: string, filename: string) => {
-      if (typeof window === "undefined") {
-        return;
-      }
-      const byteCharacters = window.atob(base64);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let index = 0; index < byteCharacters.length; index += 1) {
-        byteNumbers[index] = byteCharacters.charCodeAt(index);
-      }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: "application/pdf" });
-      const url = URL.createObjectURL(blob);
-      if (labelDownloadUrlRef.current) {
-        URL.revokeObjectURL(labelDownloadUrlRef.current);
-      }
-      labelDownloadUrlRef.current = url;
-      setLabelDownload({ url, filename });
-    },
-    []
-  );
-
-  useEffect(() => {
-    return () => {
-      if (labelDownloadUrlRef.current) {
-        URL.revokeObjectURL(labelDownloadUrlRef.current);
-        labelDownloadUrlRef.current = null;
-      }
-    };
-  }, []);
-
-  const loadLocations = useCallback(() => {
-    setLocationsLoading(true);
-    setLocationsError(null);
-    fetch("/api/locations")
-      .then(async (res) => {
-        if (!res.ok) {
-          const payload = await res.json().catch(() => ({}));
-          throw new Error(payload?.message ?? "Failed to load locations");
-        }
-        const payload = (await res.json()) as { locations?: Array<{ id: string; name: string }> };
-        if (!Array.isArray(payload.locations)) {
-          throw new Error("Failed to load locations");
-        }
-        const mapped = payload.locations.map(({ id, name }) => ({ id, name }));
-        setLocations(mapped);
-        if (mapped.length > 0) {
-          if (selectedLocationId === ONLINE_OPTION) {
-            setSelectedLocationId(mapped[0].id);
-          }
-          if (pairLocationId === ONLINE_OPTION) {
-            setPairLocationId(mapped[0].id);
-          }
-          setLoadLocationId((current) => {
-            if (current !== ONLINE_OPTION && mapped.some((location) => location.id === current)) {
-              return current;
-            }
-            return mapped[0].id;
-          });
-        } else {
-          setLoadLocationId(ONLINE_OPTION);
-        }
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : "Failed to load locations";
-        setLocationsError(message);
-      })
-      .finally(() => {
-        setLocationsLoading(false);
+    setStatsLoading(true);
+    setStatsError(null);
+    try {
+      const res = await fetch("/api/admin/packing/stats", {
+        headers: buildAdminHeaders(session.token),
       });
-  }, [pairLocationId, selectedLocationId]);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.message ?? "Failed to load packing stats");
+      }
+      const data = (await res.json()) as StageStatsResponse;
+      setStageOrder(data.stageOrder);
+      setStageColumns(data.stages);
+      setTimeline(data.timeline);
+      const firstStageWithBatches = data.stageOrder.find((stage) => {
+        const column = data.stages.find((entry) => entry.id === stage);
+        return column && column.batches.length > 0;
+      });
+      setSelectedStageId((current) => current ?? firstStageWithBatches ?? data.stageOrder[0] ?? null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load packing stats";
+      setStatsError(message);
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [isAdmin, session?.token]);
 
   useEffect(() => {
-    loadLocations();
-  }, [loadLocations]);
-
-  const fetchStats = useCallback(
-    async (signal?: AbortSignal) => {
-      if (!session?.token || !isAdmin) {
-        return;
-      }
-      setStatsLoading(true);
-      setStatsError(null);
-      try {
-        const res = await fetch("/api/admin/packing/stats", {
-          headers: buildAdminHeaders(session.token),
-          signal,
-        });
-        if (!res.ok) {
-          const payload = await res.json().catch(() => ({}));
-          throw new Error(payload?.message ?? "Failed to load packing stats");
-        }
-        const data = (await res.json()) as PackingStats;
-        if (!signal?.aborted) {
-          setStats(data);
-        }
-      } catch (error) {
-        if (signal?.aborted) {
-          return;
-        }
-        const message = error instanceof Error ? error.message : "Failed to load packing stats";
-        setStatsError(message);
-      } finally {
-        if (!signal?.aborted) {
-          setStatsLoading(false);
-        }
-      }
-    },
-    [isAdmin, session?.token]
-  );
-
-  const refreshStats = useCallback(() => {
+    if (!session?.token || !isAdmin) {
+      return;
+    }
     void fetchStats();
-  }, [fetchStats]);
+  }, [fetchStats, isAdmin, session?.token]);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchStats(controller.signal).catch(() => undefined);
-    return () => controller.abort();
-  }, [fetchStats]);
-
-  useEffect(() => {
-    if (selectedLocationId && selectedLocationId !== ONLINE_OPTION) {
-      setLoadLocationId(selectedLocationId);
+  const selectedStageColumn = useMemo(() => {
+    if (!selectedStageId) {
+      return null;
     }
-  }, [selectedLocationId]);
+    return stageColumns.find((column) => column.id === selectedStageId) ?? null;
+  }, [selectedStageId, stageColumns]);
 
-  const fetchQueue = useCallback(
-    async (locationId: string, signal?: AbortSignal) => {
-      if (!session?.token || !isAdmin || !locationId || locationId === ONLINE_OPTION) {
-        setQueue([]);
-        setQueueError(null);
-        setQueueLoading(false);
+  useEffect(() => {
+    if (!selectedStageColumn) {
+      setSelectedBatchId(null);
+      return;
+    }
+    if (selectedStageColumn.batches.length === 0) {
+      setSelectedBatchId(null);
+      return;
+    }
+    setSelectedBatchId((current) => {
+      if (current && selectedStageColumn.batches.some((batch) => batch.id === current)) {
+        return current;
+      }
+      return selectedStageColumn.batches[0]?.id ?? null;
+    });
+  }, [selectedStageColumn]);
+
+  useEffect(() => {
+    if (!selectedBatchId || !selectedStageColumn) {
+      setSelectedLocationId(ONLINE_OPTION);
+      return;
+    }
+    const batch = selectedStageColumn.batches.find((entry) => entry.id === selectedBatchId);
+    if (!batch || batch.locations.length === 0) {
+      setSelectedLocationId(ONLINE_OPTION);
+      return;
+    }
+    const primary = batch.locations.find((loc) => loc.id !== null && loc.counts.total > 0) ?? batch.locations[0];
+    setSelectedLocationId(primary.id ?? ONLINE_OPTION);
+  }, [selectedBatchId, selectedStageColumn]);
+
+  const fetchBatchDetail = useCallback(async () => {
+    if (!session?.token || !isAdmin || !selectedBatchId) {
+      setBatchDetail(null);
+      return;
+    }
+    setLocationLoading(true);
+    setLocationError(null);
+    try {
+      const params = new URLSearchParams();
+      params.set("locationId", selectedLocationId);
+      params.set("batchId", selectedBatchId);
+      const res = await fetch(`/api/admin/packing/location?${params.toString()}`, {
+        headers: buildAdminHeaders(session.token),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to load batch detail");
+      }
+      const data = (await res.json()) as LocationResponse;
+      const detail = data.batches[0] ?? null;
+      setBatchDetail(detail);
+      const firstReadyPack = detail?.packs.find((pack) => pack.fulfillmentStatus === PackFulfillmentStatus.READY_FOR_PACKING);
+      const fallbackPack = detail?.packs[0] ?? null;
+      setActivePackId(firstReadyPack?.id ?? fallbackPack?.id ?? null);
+      setCardCode("");
+      setPackCode("");
+      setCardStatus(null);
+      setPackStatus(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to load batch detail";
+      setLocationError(message);
+      setBatchDetail(null);
+    } finally {
+      setLocationLoading(false);
+    }
+  }, [buildAdminHeaders, isAdmin, selectedBatchId, selectedLocationId, session?.token]);
+
+  useEffect(() => {
+    if (!session?.token || !isAdmin) {
+      return;
+    }
+    void fetchBatchDetail();
+  }, [fetchBatchDetail, isAdmin, session?.token]);
+
+  const activePack = useMemo(() => {
+    if (!batchDetail || !activePackId) {
+      return null;
+    }
+    return batchDetail.packs.find((pack) => pack.id === activePackId) ?? null;
+  }, [activePackId, batchDetail]);
+
+  const registerDownload = useCallback((base64: string, filename: string) => {
+    if (downloadUrlRef.current) {
+      URL.revokeObjectURL(downloadUrlRef.current);
+      downloadUrlRef.current = null;
+    }
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const blob = new Blob([bytes], { type: "application/pdf" });
+    const url = URL.createObjectURL(blob);
+    downloadUrlRef.current = url;
+    setPrintDownload({ url, filename });
+  }, []);
+
+  const handleDownloadLabels = useCallback(async () => {
+    if (!batchDetail || !session?.token || !isAdmin) {
+      return;
+    }
+    const labelIds = batchDetail.packs
+      .map((pack) => pack.label?.id)
+      .filter((value): value is string => Boolean(value));
+    if (labelIds.length === 0) {
+      setPackStatus({ type: "error", message: "No labels available to print yet." });
+      return;
+    }
+
+    setPrintSubmitting(true);
+    setPackStatus(null);
+    try {
+      const res = await fetch("/api/admin/packing/labels/print", {
+        method: "POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({ labelIds }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to generate label sheet");
+      }
+      const payload = await res.json();
+      registerDownload(payload.pdf, payload.filename);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to generate label sheet";
+      setPackStatus({ type: "error", message });
+    } finally {
+      setPrintSubmitting(false);
+    }
+  }, [adminHeaders, batchDetail, isAdmin, registerDownload, session?.token]);
+
+  const refreshAllData = useCallback(async () => {
+    await Promise.all([fetchStats(), fetchBatchDetail()]);
+  }, [fetchBatchDetail, fetchStats]);
+
+  const handleCardSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!activePack || !activePack.item || !cardCode.trim() || !session?.token || !isAdmin) {
         return;
       }
-
-      setQueueLoading(true);
-      setQueueError(null);
+      setCardStatus(null);
       try {
-        const params = new URLSearchParams({ locationId });
-        const res = await fetch(`/api/admin/packing/queue?${params.toString()}`, {
-          headers: buildAdminHeaders(session.token),
-          signal,
+        const res = await fetch("/api/admin/packing/scan-card", {
+          method: "POST",
+          headers: adminHeaders(),
+          body: JSON.stringify({ code: cardCode.trim(), itemId: activePack.item.id }),
         });
         if (!res.ok) {
           const payload = await res.json().catch(() => ({}));
-          throw new Error(payload?.message ?? "Unable to load packing queue");
+          throw new Error(payload?.message ?? "Failed to bind card QR");
         }
-        const data = (await res.json()) as { packs: QueueEntry[] };
-        setQueue(data.packs ?? []);
+        const payload = await res.json();
+        setCardStatus({
+          type: "success",
+          message: `Card QR ${payload.qrCode.serial ?? payload.qrCode.code} bound successfully`,
+        });
+        setCardCode("");
+        await fetchBatchDetail();
+        await fetchStats();
       } catch (error) {
-        if (signal?.aborted) {
-          return;
-        }
-        const message = error instanceof Error ? error.message : "Unable to load packing queue";
-        setQueueError(message);
-      } finally {
-        if (!signal?.aborted) {
-          setQueueLoading(false);
-        }
+        const message = error instanceof Error ? error.message : "Failed to bind card QR";
+        setCardStatus({ type: "error", message });
       }
     },
-    [isAdmin, session?.token]
+    [activePack, adminHeaders, cardCode, fetchBatchDetail, fetchStats, isAdmin, session?.token]
   );
 
-  useEffect(() => {
-    if (!selectedLocationId) {
-      return;
-    }
-    const controller = new AbortController();
-    fetchQueue(selectedLocationId, controller.signal).catch(() => undefined);
-    return () => controller.abort();
-  }, [selectedLocationId, fetchQueue]);
-
-  const currentPack = queue[0] ?? null;
-  const currentItem = currentPack?.item ?? null;
-  const cardBound = Boolean(currentItem?.cardQrCodeId);
-
-  const handleCardSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!session?.token || !isAdmin || !currentItem || !cardCode.trim()) {
-      return;
-    }
-    setCardSubmitting(true);
-    setCardScanMessage(null);
-    setCardScanError(null);
-    try {
-      const res = await fetch("/api/admin/packing/scan-card", {
-        method: "POST",
-        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
-        body: JSON.stringify({ code: cardCode.trim(), itemId: currentItem.id }),
-      });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.message ?? "Failed to bind card QR code");
+  const handlePackSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!activePack || !batchDetail || !packCode.trim() || !session?.token || !isAdmin) {
+        return;
       }
-      const payload = (await res.json()) as {
-        item: { id: string; name: string | null; imageUrl: string | null };
-        qrCode: QrCodeSummary;
-      };
-      setQueue((prev) => {
-        if (prev.length === 0) {
-          return prev;
+      if (!batchDetail || selectedLocationId === ONLINE_OPTION) {
+        setPackStatus({ type: "error", message: "Assign the batch to a physical location before sealing." });
+        return;
+      }
+      setPackStatus(null);
+      try {
+        const res = await fetch("/api/admin/packing/scan-pack", {
+          method: "POST",
+          headers: adminHeaders(),
+          body: JSON.stringify({
+            code: packCode.trim(),
+            packInstanceId: activePack.id,
+            locationId: selectedLocationId,
+          }),
+        });
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}));
+          throw new Error(payload?.message ?? "Failed to seal pack");
         }
-        const [first, ...rest] = prev;
-        if (!first.item) {
-          return prev;
-        }
-        if (first.item.id !== payload.item.id) {
-          return prev;
-        }
-        return [
-          {
-            ...first,
-            item: {
-              ...first.item,
-              cardQrCodeId: payload.qrCode.id,
-            },
-          },
-          ...rest,
-        ];
-      });
-      setCardScanMessage(`Card QR bound (${payload.qrCode.serial ?? payload.qrCode.code})`);
-      setCardCode("");
-      refreshStats();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to bind card QR code";
-      setCardScanError(message);
-    } finally {
-      setCardSubmitting(false);
-    }
-  };
-
-  const handlePackSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (
-      !session?.token ||
-      !isAdmin ||
-      !currentPack ||
-      !currentItem ||
-      !cardBound ||
-      !packCode.trim() ||
-      !selectedLocationId ||
-      selectedLocationId === ONLINE_OPTION
-    ) {
-      return;
-    }
-
-    setPackSubmitting(true);
-    setPackScanMessage(null);
-    setPackScanError(null);
-
-    try {
-      const res = await fetch("/api/admin/packing/scan-pack", {
-        method: "POST",
-        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          code: packCode.trim(),
-          packInstanceId: currentPack.id,
-          locationId: selectedLocationId,
-        }),
-      });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.message ?? "Failed to seal pack");
+        const payload = await res.json();
+        setPackStatus({
+          type: "success",
+          message: `Pack ${payload.qrCode.serial ?? payload.qrCode.code} sealed`,
+        });
+        setPackCode("");
+        await refreshAllData();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to seal pack";
+        setPackStatus({ type: "error", message });
       }
-
-      const payload = (await res.json()) as {
-        pack: { id: string; fulfillmentStatus: string; packedAt: string | null; definitionName: string };
-        qrCode: QrCodeSummary;
-      };
-
-      setPackScanMessage(
-        `Pack sealed (${payload.qrCode.serial ?? payload.qrCode.code}) · status ${payload.pack.fulfillmentStatus}`
-      );
-      setPackCode("");
-      setQueue((prev) => prev.slice(1));
-      refreshStats();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to seal pack";
-      setPackScanError(message);
-    } finally {
-      setPackSubmitting(false);
-    }
-  };
-
-
-  const handleLoadSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!session?.token || !isAdmin || loadLocationId === ONLINE_OPTION || !loadCode.trim()) {
-      return;
-    }
-    setLoadSubmitting(true);
-    setLoadMessage(null);
-    setLoadError(null);
-    try {
-      const res = await fetch("/api/admin/packing/load", {
-        method: "POST",
-        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
-        body: JSON.stringify({ code: loadCode.trim(), locationId: loadLocationId }),
-      });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.message ?? "Failed to mark pack as loaded");
-      }
-      const payload = (await res.json()) as {
-        pack: { definition: { name: string } | null; fulfillmentStatus: string };
-        qrCode: { serial: string | null; code: string };
-      };
-      const locationName = locations.find((entry) => entry.id === loadLocationId)?.name ?? "Location";
-      setLoadMessage(
-        `Pack ${payload.qrCode.serial ?? payload.qrCode.code} marked LOADED for ${locationName}. ${
-          payload.pack.definition?.name ?? ""
-        }`
-      );
-      setLoadCode("");
-      refreshStats();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to mark pack as loaded";
-      setLoadError(message);
-    } finally {
-      setLoadSubmitting(false);
-    }
-  };
-
-  const handleGeneratePairs = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!session?.token || !isAdmin || pairCount <= 0) {
-      return;
-    }
-    setPairSubmitting(true);
-    setPairError(null);
-    clearLabelDownload();
-    try {
-      const res = await fetch("/api/admin/qr/pairs", {
-        method: "POST",
-        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
-        body: JSON.stringify({
-          count: pairCount,
-          locationId: pairLocationId === ONLINE_OPTION ? undefined : pairLocationId,
-        }),
-      });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.message ?? "Failed to generate QR codes");
-      }
-      const payload = (await res.json()) as { pairs: QrCodePair[]; pdf?: string; filename?: string };
-      setPairResults(payload.pairs);
-      if (payload.pdf && payload.filename) {
-        registerLabelDownload(payload.pdf, payload.filename);
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to generate QR codes";
-      setPairError(message);
-    } finally {
-      setPairSubmitting(false);
-    }
-  };
-
-  const selectedLocationLabel = useMemo(() => {
-    if (selectedLocationId === ONLINE_OPTION) {
-      return "Online";
-    }
-    return locations.find((entry) => entry.id === selectedLocationId)?.name ?? "Selected location";
-  }, [selectedLocationId, locations]);
+    },
+    [activePack, adminHeaders, batchDetail, isAdmin, packCode, refreshAllData, selectedLocationId, session?.token]
+  );
 
   const hasAccess = !loading && isAdmin;
+
+  const timelineByStage = useMemo(() => {
+    const grouped = new Map<BatchStage, TimelineEvent[]>();
+    for (const entry of timeline) {
+      if (!grouped.has(entry.stage)) {
+        grouped.set(entry.stage, []);
+      }
+      grouped.get(entry.stage)!.push(entry);
+    }
+    return grouped;
+  }, [timeline]);
 
   return (
     <AppShell>
       <Head>
-        <title>Location Packing · Ten Kings Admin</title>
+        <title>Operations Console · Ten Kings</title>
       </Head>
 
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-10">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-10">
         <header className="flex flex-col gap-3">
           <p className="text-xs uppercase tracking-[0.32em] text-slate-400">Operations</p>
-          <h1 className="font-heading text-3xl uppercase tracking-[0.18em] text-white">Location Packing Console</h1>
-          <p className="max-w-2xl text-sm text-slate-300">
-            Generate QR label pairs, bind slabs to sealed packs, and stage inventory for the kiosk flow. Use a barcode
-            scanner in keyboard mode — each scan auto-submits when the input is focused.
+          <h1 className="font-heading text-3xl uppercase tracking-[0.18em] text-white">Packing & Inventory Console</h1>
+          <p className="max-w-3xl text-sm text-slate-300">
+            Monitor batches across the pipeline, generate slab labels, and seal packs for kiosk delivery. Toggle the timeline view to
+            visualize every batch moving from upload to loaded-on-site.
           </p>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setViewMode("tracker")}
+              className={`rounded-full border px-4 py-2 text-xs uppercase tracking-[0.32em] transition ${
+                viewMode === "tracker"
+                  ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200"
+                  : "border-white/20 text-slate-300 hover:border-white/40 hover:text-white"
+              }`}
+            >
+              Stage Tracker
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("timeline")}
+              className={`rounded-full border px-4 py-2 text-xs uppercase tracking-[0.32em] transition ${
+                viewMode === "timeline"
+                  ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
+                  : "border-white/20 text-slate-300 hover:border-white/40 hover:text-white"
+              }`}
+            >
+              Timeline
+            </button>
+            <button
+              type="button"
+              onClick={() => void fetchStats()}
+              className="rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.32em] text-slate-200 transition hover:border-white/40 hover:text-white"
+            >
+              Refresh Stats
+            </button>
+          </div>
         </header>
 
         {!hasAccess && (
           <div className="rounded-3xl border border-rose-400/40 bg-rose-500/10 p-6 text-sm text-rose-200">
-            <p>Admin access is required. Ask an administrator to grant permissions to your account.</p>
+            <p>Admin access is required. Ask a platform administrator to grant permissions to your account.</p>
             <button
               type="button"
               onClick={logout}
-              className="mt-4 inline-flex items-center justify-center rounded-full border border-rose-400/40 px-5 py-2 text-xs uppercase tracking-[0.28em] text-rose-200 transition hover:border-rose-300 hover:text-rose-100"
+              className="mt-4 inline-flex items-center justify-center rounded-full border border-rose-400/40 px-5 py-2 text-xs uppercase tracking-[0.32em] text-rose-200 transition hover:border-rose-300 hover:text-rose-100"
             >
               Sign Out
             </button>
@@ -522,466 +615,458 @@ export default function AdminPackingConsole() {
 
         {hasAccess && (
           <>
-            <section className="flex flex-col gap-5 rounded-3xl border border-white/10 bg-night-900/70 p-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Ops Snapshot</p>
-                  <h2 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">Packing Status</h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => refreshStats()}
-                  className="rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.28em] text-slate-200 transition hover:border-emerald-300 hover:text-emerald-100"
-                >
-                  Refresh Stats
-                </button>
+            {statsError && (
+              <div className="rounded-3xl border border-rose-400/40 bg-rose-500/10 p-4 text-sm text-rose-200">
+                {statsError}
               </div>
+            )}
 
-              {statsError ? (
-                <p className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
-                  {statsError}
-                </p>
-              ) : null}
-
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4">
-                  <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Ready to Pack</p>
-                  <p className="mt-2 text-2xl font-semibold uppercase tracking-[0.18em] text-white">
-                    {statsTotals.ready.toLocaleString()}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4">
-                  <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Packed</p>
-                  <p className="mt-2 text-2xl font-semibold uppercase tracking-[0.18em] text-white">
-                    {statsTotals.packed.toLocaleString()}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4">
-                  <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Loaded</p>
-                  <p className="mt-2 text-2xl font-semibold uppercase tracking-[0.18em] text-white">
-                    {statsTotals.loaded.toLocaleString()}
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">By Location</p>
-                {statsLoading && !stats ? (
-                  <p className="text-xs text-slate-400">Loading packing stats…</p>
-                ) : null}
-                {!statsLoading && locationSummaries.length === 0 ? (
-                  <p className="text-xs text-slate-400">No packs have been staged yet.</p>
-                ) : null}
-                <div className="flex flex-wrap gap-3">
-                  {locationSummaries.map((location) => {
-                    const total = location.counts.ready + location.counts.packed + location.counts.loaded;
-                    return (
-                      <div
-                        key={location.id ?? "unassigned"}
-                        className="min-w-[12rem] rounded-2xl border border-white/10 bg-night-900/60 px-4 py-3 text-xs text-slate-200"
-                      >
-                        <p className="text-[10px] uppercase tracking-[0.32em] text-slate-400">{location.name}</p>
-                        <p className="mt-1 text-[11px] uppercase tracking-[0.28em] text-white">{total.toLocaleString()} total</p>
-                        <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-400">
-                          <span className="rounded-full border border-emerald-400/30 bg-emerald-500/10 px-3 py-1 text-emerald-200">
-                            Ready {location.counts.ready.toLocaleString()}
-                          </span>
-                          <span className="rounded-full border border-gold-500/30 bg-gold-500/10 px-3 py-1 text-gold-200">
-                            Packed {location.counts.packed.toLocaleString()}
-                          </span>
-                          <span className="rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1 text-sky-200">
-                            Loaded {location.counts.loaded.toLocaleString()}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </section>
-
-            <section className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
-              <div className="flex flex-wrap items-end justify-between gap-3">
-                <div>
-                  <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Loading Stations</p>
-                  <h2 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">Mark Packs as Loaded</h2>
-                </div>
-                {locations.length === 0 && !locationsLoading ? (
-                  <p className="text-xs text-slate-400">Assign a pack location to begin.</p>
-                ) : null}
-              </div>
-              <p className="text-xs text-slate-300">
-                Scan the pack QR after its in the machine. This bumps the fulfillment status to LOADED and stamps the
-                operator + timestamp. Use the location filter to guard against misloads.
-              </p>
-
-              <form onSubmit={handleLoadSubmit} className="grid gap-3 text-xs text-slate-200 sm:grid-cols-[1fr_auto]">
-                <label className="flex flex-col gap-1">
-                  <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Location</span>
-                  <select
-                    value={loadLocationId}
-                    onChange={(event) => setLoadLocationId(event.currentTarget.value)}
-                    disabled={locations.length === 0 || loadSubmitting}
-                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-white outline-none transition focus:border-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <option value={ONLINE_OPTION} disabled>
-                      Select a location
-                    </option>
-                    {locations.map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <label className="flex flex-col gap-1 sm:col-span-2">
-                  <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Scan pack QR</span>
-                  <input
-                    type="text"
-                    inputMode="text"
-                    autoComplete="off"
-                    required
-                    disabled={loadLocationId === ONLINE_OPTION || loadSubmitting}
-                    value={loadCode}
-                    onChange={(event) => setLoadCode(event.currentTarget.value)}
-                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-50"
-                    placeholder="tkp_…"
-                  />
-                </label>
-
-                <div className="flex flex-wrap gap-3 sm:col-span-2">
-                  <button
-                    type="submit"
-                    disabled={
-                      loadSubmitting ||
-                      !loadCode.trim() ||
-                      loadLocationId === ONLINE_OPTION ||
-                      locations.length === 0
-                    }
-                    className="inline-flex items-center justify-center rounded-full border border-sky-400/40 bg-sky-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {loadSubmitting ? "Marking…" : "Mark as Loaded"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setLoadCode("");
-                      setLoadError(null);
-                      setLoadMessage(null);
-                    }}
-                    className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
-                  >
-                    Clear
-                  </button>
-                </div>
-              </form>
-
-              {loadMessage ? (
-                <p className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-emerald-200">
-                  {loadMessage}
-                </p>
-              ) : null}
-              {loadError ? (
-                <p className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-rose-200">
-                  {loadError}
-                </p>
-              ) : null}
-            </section>
-
-            <div className="grid gap-6 lg:grid-cols-[1.35fr_1fr]">
-              <section className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
-              <div className="flex flex-col gap-3">
-                <div className="flex flex-wrap items-end justify-between gap-4">
-                  <div>
-                    <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Packing Queue</p>
-                    <h2 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">{selectedLocationLabel}</h2>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <label className="text-xs text-slate-300">
-                      <span className="mr-2 text-[11px] uppercase tracking-[0.28em] text-slate-400">Location</span>
-                      <select
-                        value={selectedLocationId}
-                        onChange={(event) => setSelectedLocationId(event.currentTarget.value)}
-                        className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-white outline-none transition focus:border-emerald-400/60"
-                      >
-                        <option value={ONLINE_OPTION}>Online (no packing)</option>
-                        {locations.map((location) => (
-                          <option key={location.id} value={location.id}>
-                            {location.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+            {viewMode === "tracker" && (
+              <section className="grid gap-4 lg:grid-cols-3 xl:grid-cols-4">
+                {stageOrder.map((stage) => {
+                  const column = stageColumns.find((entry) => entry.id === stage);
+                  const isSelected = stage === selectedStageId;
+                  return (
                     <button
+                      key={stage}
                       type="button"
-                      onClick={() => fetchQueue(selectedLocationId).catch(() => undefined)}
-                      className="rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.28em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                      onClick={() => {
+                        setSelectedStageId(stage);
+                        setSelectedBatchId(null);
+                      }}
+                      className={`flex h-full flex-col rounded-3xl border p-5 text-left transition ${
+                        isSelected ? "border-white/60 bg-night-900/70" : "border-white/15 bg-night-900/40 hover:border-white/30"
+                      }`}
                     >
-                      Refresh
+                      <p className={`text-[11px] uppercase tracking-[0.32em] ${stageColorMap[stage]}`}>{stageLabel(stage)}</p>
+                      <h3 className="mt-2 text-2xl font-semibold text-white">{column?.totals.batches ?? 0} batch{(column?.totals.batches ?? 0) === 1 ? "" : "es"}</h3>
+                      <p className="text-sm text-slate-300">{column?.totals.packs ?? 0} packs</p>
+                      <p className="mt-3 text-xs text-slate-400">{stageDescription(stage)}</p>
                     </button>
+                  );
+                })}
+              </section>
+            )}
+
+            {viewMode === "timeline" && (
+              <section className="rounded-3xl border border-white/10 bg-night-900/60 p-6">
+                <h2 className="text-sm uppercase tracking-[0.3em] text-slate-400">Recent Stage Activity</h2>
+                {timeline.length === 0 ? (
+                  <p className="mt-3 text-sm text-slate-300">No stage changes recorded yet.</p>
+                ) : (
+                  <div className="mt-4 grid gap-4">
+                    {stageOrder.map((stage) => {
+                      const events = timelineByStage.get(stage) ?? [];
+                      if (events.length === 0) {
+                        return null;
+                      }
+                      return (
+                        <div key={`timeline-${stage}`} className="rounded-2xl border border-white/10 bg-night-900/70 p-4">
+                          <p className={`text-[11px] uppercase tracking-[0.32em] ${stageColorMap[stage]}`}>{stageLabel(stage)}</p>
+                          <ul className="mt-3 space-y-2">
+                            {events.slice(0, 10).map((event) => (
+                              <li key={event.id} className="rounded-xl border border-white/10 bg-night-900/60 px-3 py-2 text-xs text-slate-200">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
+                                  <div>
+                                    <p className="font-semibold uppercase tracking-[0.2em] text-white">
+                                      {event.batchLabel ?? event.batchId.slice(0, 8)}
+                                    </p>
+                                    <p className="text-[10px] text-slate-400">{formatRelative(event.createdAt)}</p>
+                                  </div>
+                                  <div className="text-right text-[10px] text-slate-400">
+                                    {event.actor ? <p>{event.actor.label}</p> : <p>Automated</p>}
+                                  </div>
+                                </div>
+                                {event.note && <p className="mt-2 text-[10px] text-slate-300">{event.note}</p>}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {viewMode === "tracker" && selectedStageColumn && (
+              <section className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+                <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/60 p-6">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.32em] text-slate-400">Batches in {stageLabel(selectedStageColumn.id)}</p>
+                      <h2 className="font-heading text-xl uppercase tracking-[0.2em] text-white">
+                        {selectedStageColumn.label}
+                      </h2>
+                    </div>
+                    {selectedStageColumn.batches.length > 0 && (
+                      <div className="text-right text-xs text-slate-400">
+                        <p>{selectedStageColumn.batches.length} active batch{selectedStageColumn.batches.length === 1 ? "" : "es"}</p>
+                        <p>{selectedStageColumn.totals.packs} packs total</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {statsLoading && <p className="text-sm text-slate-400">Loading batches…</p>}
+
+                  {!statsLoading && selectedStageColumn.batches.length === 0 && (
+                    <p className="text-sm text-slate-400">No batches in this stage yet.</p>
+                  )}
+
+                  {!statsLoading && selectedStageColumn.batches.length > 0 && (
+                    <div className="grid gap-3">
+                      {selectedStageColumn.batches.map((batch) => {
+                        const isActive = batch.id === selectedBatchId;
+                        return (
+                          <button
+                            key={batch.id}
+                            type="button"
+                            onClick={() => setSelectedBatchId(batch.id)}
+                            className={`w-full rounded-2xl border px-4 py-3 text-left transition ${
+                              isActive ? "border-white/50 bg-night-900/80" : "border-white/15 bg-night-900/50 hover:border-white/30"
+                            }`}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+                                  {batch.label ?? batch.id.slice(0, 8)}
+                                </p>
+                                <p className="text-sm text-slate-300">
+                                  {batch.counts.total} pack{batch.counts.total === 1 ? "" : "s"} · {batch.tags.join(", ") || "No tags"}
+                                </p>
+                              </div>
+                              <div className="text-right text-xs text-slate-400">
+                                <p>Updated {formatRelative(batch.stageChangedAt ?? batch.updatedAt)}</p>
+                                {batch.notes && <p className="text-[10px] text-slate-300">“{batch.notes}”</p>}
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/60 p-6">
+                  <p className="text-[11px] uppercase tracking-[0.32em] text-slate-400">Stage History</p>
+                  {selectedStageColumn.batches.length === 0 && <p className="text-sm text-slate-400">Select a stage to view history.</p>}
+                  {selectedStageColumn.batches.length > 0 && (
+                    <ul className="space-y-3 overflow-auto">
+                      {(selectedStageColumn.batches.find((batch) => batch.id === selectedBatchId)?.latestEvents ?? []).map((event) => (
+                        <li key={event.id} className="rounded-2xl border border-white/10 bg-night-900/70 p-3 text-xs text-slate-200">
+                          <div className="flex items-center justify-between gap-3">
+                            <span className={`text-[10px] uppercase tracking-[0.3em] ${stageColorMap[event.stage]}`}>
+                              {stageLabel(event.stage)}
+                            </span>
+                            <span className="text-[10px] text-slate-400">{formatRelative(event.createdAt)}</span>
+                          </div>
+                          {event.actor && <p className="mt-1 text-[10px] text-slate-400">{event.actor.label}</p>}
+                          {event.note && <p className="mt-2 text-[10px] text-slate-300">{event.note}</p>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </section>
+            )}
+
+            {viewMode === "tracker" && batchDetail && (
+              <section className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/60 p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.32em] text-slate-400">Batch Overview</p>
+                    <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">
+                      {batchDetail.label ?? batchDetail.id.slice(0, 8)}
+                    </h2>
+                    <p className="text-xs text-slate-400">{batchDetail.counts.total} pack{batchDetail.counts.total === 1 ? "" : "s"} queued in this location.</p>
+                  </div>
+                  <div className="text-right text-xs text-slate-400">
+                    <p>Created {formatDate(batchDetail.createdAt)}</p>
+                    <p>Updated {formatRelative(batchDetail.updatedAt)}</p>
+                    {batchDetail.notes && <p className="mt-1 text-slate-300">Note: {batchDetail.notes}</p>}
                   </div>
                 </div>
-                {locationsLoading && (
-                  <p className="text-xs text-slate-400">Loading locations…</p>
-                )}
-                {locationsError && (
-                  <p className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs uppercase tracking-[0.28em] text-rose-200">
-                    {locationsError}
-                  </p>
-                )}
-              </div>
 
-              {selectedLocationId === ONLINE_OPTION && (
-                <p className="rounded-2xl border border-white/10 bg-night-900/60 px-4 py-3 text-sm text-slate-300">
-                  Select a physical location to view the packing queue. Online inventory skips the packing workflow.
-                </p>
-              )}
+                <div className="flex flex-wrap items-center gap-2">
+                  {(batchDetail.tags.length > 0 ? batchDetail.tags : ["No tags assigned"]).map((tag, index) => (
+                    <span
+                      key={`${batchDetail.id}-tag-${index}`}
+                      className="rounded-full border border-white/15 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-200"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
 
-              {selectedLocationId !== ONLINE_OPTION && queueLoading && (
-                <p className="text-sm text-slate-400">Loading queue…</p>
-              )}
+                <div className="flex flex-wrap items-center gap-3">
+                  {batchDetail.counts.ready > 0 && (
+                    <span className="rounded-full border border-sky-400/40 bg-sky-500/20 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-sky-200">
+                      Ready {batchDetail.counts.ready}
+                    </span>
+                  )}
+                  {batchDetail.counts.packed > 0 && (
+                    <span className="rounded-full border border-gold-500/40 bg-gold-500/20 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-gold-200">
+                      Packed {batchDetail.counts.packed}
+                    </span>
+                  )}
+                  {batchDetail.counts.loaded > 0 && (
+                    <span className="rounded-full border border-purple-400/40 bg-purple-500/20 px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-purple-200">
+                      Loaded {batchDetail.counts.loaded}
+                    </span>
+                  )}
+                </div>
 
-              {selectedLocationId !== ONLINE_OPTION && queueError && (
-                <p className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{queueError}</p>
-              )}
-
-              {selectedLocationId !== ONLINE_OPTION && !queueLoading && !queueError && queue.length === 0 && (
-                <p className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
-                  No packs are waiting for this location. Assign cards to this location to queue them for packing.
-                </p>
-              )}
-
-              {selectedLocationId !== ONLINE_OPTION && !queueLoading && !queueError && queue.length > 0 && currentPack && (
-                <div className="grid gap-4">
-                  <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4">
-                    <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Next Pack</p>
-                    <h3 className="mt-2 font-heading text-xl uppercase tracking-[0.18em] text-white">
-                      {currentPack.packDefinition.name}
-                    </h3>
-                    <p className="text-xs text-slate-400">
-                      Created {new Date(currentPack.createdAt).toLocaleString()} · Tier {currentPack.packDefinition.tier}
-                    </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Packing Location</span>
+                  <div className="flex flex-wrap gap-2">
+                    {(selectedStageColumn?.batches.find((batch) => batch.id === batchDetail.id)?.locations ?? []).map((location) => {
+                      const value = location.id ?? ONLINE_OPTION;
+                      const isSelected = value === selectedLocationId;
+                      return (
+                        <button
+                          key={`${batchDetail.id}-${value}`}
+                          type="button"
+                          onClick={() => setSelectedLocationId(value)}
+                          className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.3em] transition ${
+                            isSelected
+                              ? "border-white/50 bg-night-900/80 text-white"
+                              : "border-white/15 text-slate-300 hover:border-white/30 hover:text-white"
+                          }`}
+                        >
+                          {location.name} · {location.counts.total}
+                        </button>
+                      );
+                    })}
                   </div>
+                </div>
 
-                  {currentItem ? (
-                    <div className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/60 p-4">
-                      <div className="flex items-start gap-3">
-                        {currentItem.imageUrl ? (
-                          <div className="relative h-32 w-24 overflow-hidden rounded-xl border border-white/10 bg-night-900">
-                            <Image
-                              src={currentItem.imageUrl}
-                              alt={currentItem.name ?? "Card image"}
-                              fill
-                              sizes="96px"
-                              className="object-cover"
-                            />
+                {locationError && (
+                  <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 p-3 text-sm text-rose-200">{locationError}</div>
+                )}
+
+                {locationLoading && <p className="text-sm text-slate-400">Loading packs for this location…</p>}
+
+                {!locationLoading && batchDetail.packs.length === 0 && (
+                  <p className="text-sm text-slate-400">No packs queued at this location yet.</p>
+                )}
+
+                {!locationLoading && batchDetail.packs.length > 0 && activePack && (
+                  <div className="flex flex-col gap-4">
+                    <div className="rounded-2xl border border-white/10 bg-night-900/70 p-4">
+                      <p className="text-[11px] uppercase tracking-[0.32em] text-slate-400">Active Pack</p>
+                      <h3 className="mt-2 text-lg font-semibold text-white">{activePack.packDefinition?.name ?? "Unassigned"}</h3>
+                      <p className="text-xs text-slate-400">Pack ID {activePack.id.slice(0, 8)} • Status {activePack.fulfillmentStatus}</p>
+                      <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+                        <div className="flex items-start gap-4">
+                          {activePack.item?.imageUrl ? (
+                            <div className="relative h-32 w-24 overflow-hidden rounded-xl border border-white/10 bg-night-900">
+                              <Image src={activePack.item.imageUrl} alt={activePack.item.name ?? "Card"} fill sizes="96px" className="object-cover" />
+                            </div>
+                          ) : (
+                            <div className="flex h-32 w-24 items-center justify-center rounded-xl border border-white/10 bg-night-900 text-xs text-slate-500">
+                              No image
+                            </div>
+                          )}
+                          <div>
+                            <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Card</p>
+                            <p className="text-sm text-slate-100">{activePack.item?.name ?? "Pending metadata"}</p>
+                            <p className="text-xs text-slate-500">Item {activePack.item?.id.slice(0, 8) ?? "—"}</p>
+                            <p className="mt-2 text-xs text-slate-300">
+                              {activePack.item?.cardQrCodeId ? "Card QR bound" : "Needs card QR"}
+                            </p>
                           </div>
-                        ) : (
-                          <div className="flex h-32 w-24 items-center justify-center rounded-xl border border-white/10 bg-night-900 text-xs text-slate-500">
-                            No image
-                          </div>
-                        )}
-                        <div className="flex-1">
-                          <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Card</p>
-                          <p className="text-sm text-slate-100">{currentItem.name ?? "Pending metadata"}</p>
-                          <p className="text-xs text-slate-500">
-                            Item ID {currentItem.id.slice(0, 8)}…
-                          </p>
-                          <p className="mt-2 text-xs text-slate-300">
-                            Status: {cardBound ? "QR bound" : "Needs card QR"}
-                          </p>
+                        </div>
+                        <div className="rounded-xl border border-white/10 bg-night-900/60 p-3 text-xs text-slate-200">
+                          <p className="text-[11px] uppercase tracking-[0.32em] text-slate-400">Label Pair</p>
+                          {activePack.label ? (
+                            <div className="mt-2 grid gap-2">
+                              <div>
+                                <p className="text-[10px] uppercase tracking-[0.3em] text-sky-300">Card QR</p>
+                                <p className="text-[11px] text-slate-100">{activePack.label.card.code}</p>
+                                <p className="text-[10px] text-slate-500">Serial {activePack.label.card.serial ?? "—"}</p>
+                              </div>
+                              <div>
+                                <p className="text-[10px] uppercase tracking-[0.3em] text-gold-300">Pack QR</p>
+                                <p className="text-[11px] text-slate-100">{activePack.label.pack.code}</p>
+                                <p className="text-[10px] text-slate-500">Serial {activePack.label.pack.serial ?? "—"}</p>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-amber-200">Label will auto-reserve once the card is assigned.</p>
+                          )}
                         </div>
                       </div>
 
-                      <form onSubmit={handleCardSubmit} className="flex flex-col gap-2 text-xs text-slate-200">
-                        <label className="flex flex-col gap-1">
-                          <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Scan card QR</span>
+                      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                        <form onSubmit={handleCardSubmit} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-night-900/70 p-4">
+                          <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">1. Scan card QR</span>
                           <input
                             type="text"
                             inputMode="text"
                             autoComplete="off"
-                            required
                             value={cardCode}
                             onChange={(event) => setCardCode(event.currentTarget.value)}
                             className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
                             placeholder="tkc_…"
+                            required
                           />
-                        </label>
-                        <button
-                          type="submit"
-                          disabled={cardSubmitting || !cardCode.trim()}
-                          className="inline-flex items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {cardSubmitting ? "Binding…" : cardBound ? "Rebind Card" : "Bind Card"}
-                        </button>
-                        {cardScanMessage && (
-                          <p className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-emerald-200">
-                            {cardScanMessage}
-                          </p>
-                        )}
-                        {cardScanError && (
-                          <p className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-rose-200">
-                            {cardScanError}
-                          </p>
-                        )}
-                      </form>
-                    </div>
-                  ) : (
-                    <p className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
-                      This pack is missing a slotted card. Check the admin assignment in case it was unassigned.
-                    </p>
-                  )}
+                          <button
+                            type="submit"
+                            className="inline-flex items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100"
+                          >
+                            Bind Card
+                          </button>
+                          {cardStatus && (
+                            <p
+                              className={`rounded-2xl border px-3 py-2 text-[11px] uppercase tracking-[0.28em] ${
+                                cardStatus.type === "success"
+                                  ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
+                                  : "border-rose-400/40 bg-rose-500/10 text-rose-200"
+                              }`}
+                            >
+                              {cardStatus.message}
+                            </p>
+                          )}
+                        </form>
 
-                  <form onSubmit={handlePackSubmit} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-night-900/60 p-4 text-xs text-slate-200">
-                    <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Scan pack QR</span>
-                    <input
-                      type="text"
-                      inputMode="text"
-                      autoComplete="off"
-                      required
-                      disabled={!cardBound}
-                      value={packCode}
-                      onChange={(event) => setPackCode(event.currentTarget.value)}
-                      className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60 disabled:cursor-not-allowed disabled:opacity-50"
-                      placeholder="tkp_…"
-                    />
-                    <div className="flex flex-wrap gap-3">
-                      <button
-                        type="submit"
-                        disabled={!cardBound || packSubmitting || !packCode.trim()}
-                        className="inline-flex items-center justify-center rounded-full border border-gold-500/40 bg-gold-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.3em] text-gold-200 transition hover:border-gold-400 hover:text-gold-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {packSubmitting ? "Sealing…" : "Seal Pack"}
-                      </button>
+                        <form onSubmit={handlePackSubmit} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-night-900/70 p-4">
+                          <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">2. Seal pack</span>
+                          <input
+                            type="text"
+                            inputMode="text"
+                            autoComplete="off"
+                            value={packCode}
+                            onChange={(event) => setPackCode(event.currentTarget.value)}
+                            className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-gold-400/60"
+                            placeholder="tkp_…"
+                            required
+                          />
+                          <button
+                            type="submit"
+                            className="inline-flex items-center justify-center rounded-full border border-gold-500/40 bg-gold-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-gold-200 transition hover:border-gold-400 hover:text-gold-100"
+                          >
+                            Seal Pack
+                          </button>
+                          {packStatus && (
+                            <p
+                              className={`rounded-2xl border px-3 py-2 text-[11px] uppercase tracking-[0.28em] ${
+                                packStatus.type === "success"
+                                  ? "border-gold-500/40 bg-gold-500/10 text-gold-100"
+                                  : "border-rose-400/40 bg-rose-500/10 text-rose-200"
+                              }`}
+                            >
+                              {packStatus.message}
+                            </p>
+                          )}
+                        </form>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3">
                       <button
                         type="button"
-                        onClick={() => {
-                          setQueue((prev) => prev.slice(1));
-                          setCardCode("");
-                          setCardScanMessage(null);
-                          setCardScanError(null);
-                          setPackCode("");
-                          setPackScanMessage(null);
-                          setPackScanError(null);
-                        }}
-                        className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                        disabled={printSubmitting}
+                        onClick={() => void handleDownloadLabels()}
+                        className="inline-flex items-center justify-center rounded-full border border-white/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-slate-200 transition hover:border-white/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        Skip Pack
+                        {printSubmitting ? "Generating…" : "Download label sheet"}
                       </button>
+                      {printDownload && (
+                        <a
+                          href={printDownload.url}
+                          download={printDownload.filename}
+                          className="inline-flex items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100"
+                        >
+                          Download PDF
+                        </a>
+                      )}
                     </div>
-                    {packScanMessage && (
-                      <p className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-emerald-200">
-                        {packScanMessage}
-                      </p>
-                    )}
-                    {packScanError && (
-                      <p className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-rose-200">
-                        {packScanError}
-                      </p>
-                    )}
-                  </form>
-                </div>
-              )}
-            </section>
 
-            <section className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
-              <div>
-                <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">QR Label Pairs</p>
-                <h2 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">Print Queue</h2>
-                <p className="mt-2 text-xs text-slate-300">
-                  Generate pre-matched card + pack stickers. Print, peel, and apply together during the packing flow.
-                </p>
-              </div>
+                    <div className="grid gap-4">
+                      {batchDetail.packs.map((pack) => {
+                        const isActive = pack.id === activePackId;
+                        return (
+                          <div
+                            key={pack.id}
+                            className={`rounded-2xl border px-4 py-4 transition ${
+                              isActive ? "border-white/50 bg-night-900/80" : "border-white/10 bg-night-900/50"
+                            }`}
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">
+                                  {pack.packDefinition?.name ?? "Unassigned definition"}
+                                </p>
+                                <p className="text-xs text-slate-500">Pack {pack.id.slice(0, 10)}</p>
+                                <p className="text-xs text-slate-300">Status {pack.fulfillmentStatus}</p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setActivePackId(pack.id)}
+                                className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.32em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                              >
+                                {isActive ? "Processing" : "Set active"}
+                              </button>
+                            </div>
+                            <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+                              <div className="flex items-start gap-3">
+                                {pack.item?.imageUrl ? (
+                                  <div className="relative h-28 w-20 overflow-hidden rounded-xl border border-white/10 bg-night-900">
+                                    <Image
+                                      src={pack.item.imageUrl}
+                                      alt={pack.item.name ?? "Card"}
+                                      fill
+                                      sizes="96px"
+                                      className="object-cover"
+                                    />
+                                  </div>
+                                ) : (
+                                  <div className="flex h-28 w-20 items-center justify-center rounded-xl border border-white/10 bg-night-900 text-[10px] text-slate-500">
+                                    No image
+                                  </div>
+                                )}
+                                <div>
+                                  <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">Card</p>
+                                  <p className="text-sm text-slate-100">{pack.item?.name ?? "Pending metadata"}</p>
+                                  <p className="text-[10px] text-slate-500">Item {pack.item?.id.slice(0, 10) ?? "—"}</p>
+                                  <p className="mt-2 text-[10px] text-slate-300">
+                                    {pack.item?.cardQrCodeId ? `Bound as ${pack.item.cardQrCodeId.slice(0, 10)}` : "Needs card QR"}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="rounded-xl border border-white/10 bg-night-900/70 p-3 text-xs text-slate-200">
+                                <div className="flex flex-wrap items-center gap-3">
+                                  <div>
+                                    <p className="text-[10px] uppercase tracking-[0.3em] text-sky-300">Card QR</p>
+                                    <p className="text-[11px] text-slate-100">{pack.label?.card.code ?? "Pending"}</p>
+                                    <p className="text-[10px] text-slate-500">Serial {pack.label?.card.serial ?? "—"}</p>
+                                  </div>
+                                  {pack.label && <QrCanvas value={pack.label.card.payloadUrl ?? pack.label.card.code} />}
+                                </div>
+                                <div className="mt-3 flex flex-wrap items-center gap-3">
+                                  <div>
+                                    <p className="text-[10px] uppercase tracking-[0.3em] text-gold-300">Pack QR</p>
+                                    <p className="text-[11px] text-slate-100">{pack.label?.pack.code ?? "Pending"}</p>
+                                    <p className="text-[10px] text-slate-500">Serial {pack.label?.pack.serial ?? "—"}</p>
+                                  </div>
+                                  {pack.label && <QrCanvas value={pack.label.pack.payloadUrl ?? pack.label.pack.code} />}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
-              <form onSubmit={handleGeneratePairs} className="flex flex-col gap-3 text-xs text-slate-200">
-                <label className="flex flex-col gap-1">
-                  <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Count</span>
-                  <input
-                    type="number"
-                    min={1}
-                    max={200}
-                    value={pairCount}
-                    onChange={(event) => setPairCount(Number(event.currentTarget.value))}
-                    className="w-32 rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-white outline-none transition focus:border-emerald-400/60"
-                  />
-                </label>
-
-                <label className="flex flex-col gap-1">
-                  <span className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Assign to location (optional)</span>
-                  <select
-                    value={pairLocationId}
-                    onChange={(event) => setPairLocationId(event.currentTarget.value)}
-                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-white outline-none transition focus:border-emerald-400/60"
-                  >
-                    <option value={ONLINE_OPTION}>Online / Unassigned</option>
-                    {locations.map((location) => (
-                      <option key={location.id} value={location.id}>
-                        {location.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
-                <button
-                  type="submit"
-                  disabled={pairSubmitting || pairCount <= 0}
-                  className="inline-flex items-center justify-center rounded-full border border-sky-400/40 bg-sky-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 hover:text-sky-100 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {pairSubmitting ? "Generating…" : "Generate Pairs"}
-                </button>
-
-                {pairError && (
-                  <p className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-rose-200">
-                    {pairError}
+                {viewMode === "tracker" && !batchDetail && !locationLoading && (
+                  <p className="rounded-3xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-400">
+                    Select a batch to view its cards and label pairs.
                   </p>
                 )}
-              </form>
-
-              {pairResults.length > 0 && (
-                <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4">
-                  <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Latest batch</p>
-                  <ul className="mt-3 grid max-h-72 gap-3 overflow-auto text-xs text-slate-200">
-                    {pairResults.map((pair) => (
-                      <li key={pair.pairId} className="rounded-xl border border-white/10 bg-night-900/70 p-3">
-                        <p className="font-semibold uppercase tracking-[0.2em] text-white">{pair.pairId}</p>
-                        <div className="mt-2 grid gap-2">
-                          <div>
-                            <p className="text-[10px] uppercase tracking-[0.28em] text-sky-300">Card QR</p>
-                            <p className="break-all text-slate-200">{pair.card.code}</p>
-                            <p className="text-[10px] text-slate-500">{pair.card.payloadUrl}</p>
-                          </div>
-                          <div>
-                            <p className="text-[10px] uppercase tracking-[0.28em] text-gold-300">Pack QR</p>
-                            <p className="break-all text-slate-200">{pair.pack.code}</p>
-                            <p className="text-[10px] text-slate-500">{pair.pack.payloadUrl}</p>
-                          </div>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                  {labelDownload && (
-                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-night-900/70 px-4 py-3">
-                      <div>
-                        <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400">Label sheet</p>
-                        <p className="text-sm text-slate-100">{labelDownload.filename}</p>
-                        <p className="text-[10px] text-slate-500">
-                          Placeholder artwork with QR codes for {pairResults.length} pair{pairResults.length === 1 ? "" : "s"}.
-                        </p>
-                      </div>
-                      <a
-                        href={labelDownload.url}
-                        download={labelDownload.filename}
-                        className="inline-flex items-center justify-center rounded-full border border-gold-500/40 bg-gold-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.3em] text-gold-200 transition hover:border-gold-400 hover:text-gold-100"
-                      >
-                        Download PDF
-                      </a>
-                    </div>
-                  )}
-                </div>
-              )}
-            </section>
-          </div>
+              </section>
+            )}
           </>
         )}
       </div>

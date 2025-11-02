@@ -5,6 +5,8 @@ import {
   QrCodeState,
   QrCodeType,
   PackFulfillmentStatus,
+  PackLabelStatus,
+  syncBatchStageFromPackStatuses,
 } from "@tenkings/database";
 import { buildSiteUrl } from "./urls";
 
@@ -13,6 +15,8 @@ const CODE_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz";
 
 const generatePairId = customAlphabet(PAIR_ALPHABET, 6);
 const generateCode = customAlphabet(CODE_ALPHABET, 12);
+
+type TransactionClient = Prisma.TransactionClient;
 
 const isJsonObject = (value: Prisma.JsonValue | null): value is Prisma.JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -32,16 +36,43 @@ export interface QrCodeSummary {
   pairId?: string;
 }
 
+export interface PackLabelSummary {
+  id: string;
+  pairId: string;
+  status: PackLabelStatus;
+  locationId: string | null;
+  batchId: string | null;
+  itemId: string | null;
+  packInstanceId: string | null;
+}
+
 export interface QrCodePair {
   pairId: string;
   card: QrCodeSummary;
   pack: QrCodeSummary;
+  label: PackLabelSummary;
+}
+
+export interface LabelReservationInput {
+  packInstanceId: string;
+  itemId: string;
+  cardAssetId: string;
+  batchId: string | null;
+  locationId: string | null;
 }
 
 const buildCardUrl = (code: string) => buildSiteUrl(`/claim/card/${code}`);
 const buildPackUrl = (code: string) => buildSiteUrl(`/kiosk/start/${code}`);
 
-const toSummary = (record: { id: string; code: string; serial: string | null; type: QrCodeType; state: QrCodeState; payloadUrl: string | null; metadata: Prisma.JsonValue | null }): QrCodeSummary => {
+const toSummary = (record: {
+  id: string;
+  code: string;
+  serial: string | null;
+  type: QrCodeType;
+  state: QrCodeState;
+  payloadUrl: string | null;
+  metadata: Prisma.JsonValue | null;
+}): QrCodeSummary => {
   const metadata = isJsonObject(record.metadata) ? record.metadata : null;
   const pairId = metadata && typeof metadata.pairId === "string" ? metadata.pairId : undefined;
   return {
@@ -53,6 +84,82 @@ const toSummary = (record: { id: string; code: string; serial: string | null; ty
     payloadUrl: record.payloadUrl,
     pairId,
   };
+};
+
+const toLabelSummary = (label: {
+  id: string;
+  pairId: string;
+  status: PackLabelStatus;
+  locationId: string | null;
+  batchId: string | null;
+  itemId: string | null;
+  packInstanceId: string | null;
+}): PackLabelSummary => ({
+  id: label.id,
+  pairId: label.pairId,
+  status: label.status,
+  locationId: label.locationId,
+  batchId: label.batchId,
+  itemId: label.itemId,
+  packInstanceId: label.packInstanceId,
+});
+
+const createPairWithLabelTx = async (
+  tx: TransactionClient,
+  {
+    createdById,
+    locationId,
+  }: {
+    createdById: string;
+    locationId?: string | null;
+  }
+) => {
+  const pairId = `TK${generatePairId()}`;
+  const cardCode = `tkc_${generateCode()}`;
+  const packCode = `tkp_${generateCode()}`;
+  const createdAt = new Date();
+
+  const card = await tx.qrCode.create({
+    data: {
+      code: cardCode,
+      serial: `${pairId}-CARD`,
+      type: QrCodeType.CARD,
+      state: QrCodeState.AVAILABLE,
+      payloadUrl: buildCardUrl(cardCode),
+      metadata: { pairId, role: "CARD" } as Prisma.InputJsonValue,
+      locationId: locationId ?? null,
+      createdById,
+      createdAt,
+      updatedAt: createdAt,
+    },
+  });
+
+  const pack = await tx.qrCode.create({
+    data: {
+      code: packCode,
+      serial: `${pairId}-PACK`,
+      type: QrCodeType.PACK,
+      state: QrCodeState.AVAILABLE,
+      payloadUrl: buildPackUrl(packCode),
+      metadata: { pairId, role: "PACK" } as Prisma.InputJsonValue,
+      locationId: locationId ?? null,
+      createdById,
+      createdAt,
+      updatedAt: createdAt,
+    },
+  });
+
+  const label = await tx.packLabel.create({
+    data: {
+      pairId,
+      cardQrCodeId: card.id,
+      packQrCodeId: pack.id,
+      locationId: locationId ?? null,
+      status: PackLabelStatus.RESERVED,
+    },
+  });
+
+  return { pairId, card, pack, label };
 };
 
 export async function createQrCodePairs({
@@ -76,51 +183,149 @@ export async function createQrCodePairs({
 
   await prisma.$transaction(async (tx) => {
     for (let index = 0; index < count; index += 1) {
-      const pairId = `TK${generatePairId()}`;
-      const cardCode = `tkc_${generateCode()}`;
-      const packCode = `tkp_${generateCode()}`;
-      const createdAt = new Date();
-
-      const card = await tx.qrCode.create({
-        data: {
-          code: cardCode,
-          serial: `${pairId}-CARD`,
-          type: QrCodeType.CARD,
-          state: QrCodeState.AVAILABLE,
-          payloadUrl: buildCardUrl(cardCode),
-          metadata: { pairId, role: "CARD" } as Prisma.InputJsonValue,
-          locationId: locationId ?? null,
-          createdById,
-          createdAt,
-          updatedAt: createdAt,
-        },
-      });
-
-      const pack = await tx.qrCode.create({
-        data: {
-          code: packCode,
-          serial: `${pairId}-PACK`,
-          type: QrCodeType.PACK,
-          state: QrCodeState.AVAILABLE,
-          payloadUrl: buildPackUrl(packCode),
-          metadata: { pairId, role: "PACK" } as Prisma.InputJsonValue,
-          locationId: locationId ?? null,
-          createdById,
-          createdAt,
-          updatedAt: createdAt,
-        },
+      const { card, pack, label } = await createPairWithLabelTx(tx, {
+        createdById,
+        locationId: locationId ?? null,
       });
 
       pairs.push({
-        pairId,
+        pairId: label.pairId,
         card: toSummary(card),
         pack: toSummary(pack),
+        label: toLabelSummary(label),
       });
     }
   });
 
   return pairs;
 }
+
+export async function reserveLabelsForPacks({
+  assignments,
+  createdById,
+}: {
+  assignments: LabelReservationInput[];
+  createdById: string;
+}): Promise<QrCodePair[]> {
+  if (!assignments.length) {
+    return [];
+  }
+
+  const results: QrCodePair[] = [];
+
+  await prisma.$transaction(async (tx) => {
+    for (const assignment of assignments) {
+      let label = await tx.packLabel.findUnique({
+        where: { packInstanceId: assignment.packInstanceId },
+        include: { cardQrCode: true, packQrCode: true },
+      });
+
+      if (!label) {
+        label = await tx.packLabel.findFirst({
+          where: {
+            packInstanceId: null,
+            itemId: null,
+            status: PackLabelStatus.RESERVED,
+            locationId: assignment.locationId ?? undefined,
+          },
+          orderBy: { createdAt: "asc" },
+          include: { cardQrCode: true, packQrCode: true },
+        });
+      }
+
+      if (!label) {
+        const created = await createPairWithLabelTx(tx, {
+          createdById,
+          locationId: assignment.locationId ?? null,
+        });
+        label = await tx.packLabel.findUnique({
+          where: { id: created.label.id },
+          include: { cardQrCode: true, packQrCode: true },
+        });
+        if (!label) {
+          throw new Error("Failed to create QR code label");
+        }
+      }
+
+      const updatedLabel = await tx.packLabel.update({
+        where: { id: label.id },
+        data: {
+          itemId: assignment.itemId,
+          packInstanceId: assignment.packInstanceId,
+          batchId: assignment.batchId ?? undefined,
+          locationId: assignment.locationId ?? label.locationId,
+        },
+        include: { cardQrCode: true, packQrCode: true },
+      });
+
+      const cardQr = await tx.qrCode.update({
+        where: { id: updatedLabel.cardQrCodeId },
+        data: {
+          state: updatedLabel.cardQrCode.state === QrCodeState.BOUND ? QrCodeState.BOUND : QrCodeState.RESERVED,
+          locationId: assignment.locationId ?? updatedLabel.locationId,
+          metadata: mergeMetadata(updatedLabel.cardQrCode.metadata, {
+            pairId: updatedLabel.pairId,
+            role: "CARD",
+            labelId: updatedLabel.id,
+            reservedItemId: assignment.itemId,
+            reservedPackInstanceId: assignment.packInstanceId,
+            batchId: assignment.batchId,
+          }),
+        },
+      });
+
+      const packQr = await tx.qrCode.update({
+        where: { id: updatedLabel.packQrCodeId },
+        data: {
+          state: updatedLabel.packQrCode.state === QrCodeState.BOUND ? QrCodeState.BOUND : QrCodeState.RESERVED,
+          locationId: assignment.locationId ?? updatedLabel.locationId,
+          metadata: mergeMetadata(updatedLabel.packQrCode.metadata, {
+            pairId: updatedLabel.pairId,
+            role: "PACK",
+            labelId: updatedLabel.id,
+            reservedPackInstanceId: assignment.packInstanceId,
+            reservedItemId: assignment.itemId,
+            batchId: assignment.batchId,
+          }),
+        },
+      });
+
+      results.push({
+        pairId: updatedLabel.pairId,
+        card: toSummary(cardQr),
+        pack: toSummary(packQr),
+        label: toLabelSummary(updatedLabel),
+      });
+    }
+  });
+
+  return results;
+}
+
+const updateLabelBindingStatus = async (tx: TransactionClient, labelId: string) => {
+  const label = await tx.packLabel.findUnique({
+    where: { id: labelId },
+    include: {
+      cardQrCode: { select: { state: true } },
+      packQrCode: { select: { state: true } },
+    },
+  });
+
+  if (!label) {
+    return;
+  }
+
+  const bothBound =
+    label.cardQrCode.state === QrCodeState.BOUND && label.packQrCode.state === QrCodeState.BOUND;
+  const desired = bothBound ? PackLabelStatus.BOUND : PackLabelStatus.RESERVED;
+
+  if (desired !== label.status) {
+    await tx.packLabel.update({
+      where: { id: label.id },
+      data: { status: desired },
+    });
+  }
+};
 
 export async function bindCardQrCode({
   code,
@@ -143,7 +348,7 @@ export async function bindCardQrCode({
 
     const qr = await tx.qrCode.findUnique({
       where: { code },
-      include: { item: { select: { id: true } } },
+      include: { item: { select: { id: true } }, packLabelCard: { select: { id: true } } },
     });
 
     if (!qr) {
@@ -183,6 +388,15 @@ export async function bindCardQrCode({
       },
     });
 
+    const labelId = qr.packLabelCard?.id ?? null;
+    if (labelId) {
+      await tx.packLabel.update({
+        where: { id: labelId },
+        data: { itemId: item.id },
+      });
+      await updateLabelBindingStatus(tx, labelId);
+    }
+
     return {
       item,
       qrCode: toSummary(updated),
@@ -212,6 +426,7 @@ export async function bindPackQrCode({
         locationId: true,
         packedAt: true,
         packQrCodeId: true,
+        sourceBatchId: true,
         slots: {
           take: 1,
           select: {
@@ -236,7 +451,7 @@ export async function bindPackQrCode({
 
     const qr = await tx.qrCode.findUnique({
       where: { code },
-      include: { packInstance: { select: { id: true } } },
+      include: { packInstance: { select: { id: true } }, packLabelPack: { select: { id: true } } },
     });
 
     if (!qr) {
@@ -293,6 +508,26 @@ export async function bindPackQrCode({
         metadata: mergeMetadata(qr.metadata, { boundPackId: pack.id, locationId: location.id }),
       },
     });
+
+    const labelId = qr.packLabelPack?.id ?? null;
+    if (labelId) {
+      await tx.packLabel.update({
+        where: { id: labelId },
+        data: {
+          packInstanceId,
+          locationId: location.id,
+        },
+      });
+      await updateLabelBindingStatus(tx, labelId);
+    }
+
+    if (pack.sourceBatchId) {
+      await syncBatchStageFromPackStatuses({
+        tx,
+        batchId: pack.sourceBatchId,
+        actorId: userId,
+      });
+    }
 
     return {
       pack: updatedPack,

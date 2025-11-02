@@ -112,11 +112,27 @@ enum PackTier {
   TIER_500
 }
 
+enum BatchStage {
+  INVENTORY_READY
+  PACKING
+  PACKED
+  SHIPPING_READY
+  SHIPPING_SHIPPED
+  SHIPPING_RECEIVED
+  LOADED
+}
+
 enum ShippingStatus {
   PENDING
   IN_PROGRESS
   SHIPPED
   CANCELLED
+}
+
+enum PackLabelStatus {
+  RESERVED
+  PRINTED
+  BOUND
 }
 
 enum KioskSessionStatus {
@@ -151,6 +167,8 @@ model User {
   qrCodesCreated  QrCode[]        @relation("QrCodeCreatedBy")
   qrCodesBound    QrCode[]        @relation("QrCodeBoundBy")
   kioskClaims     KioskSession[]  @relation("KioskClaimedBy")
+  batchStageEvents BatchStageEvent[]
+  locationRestocks LocationRestock[]
 }
 
 model Location {
@@ -168,6 +186,8 @@ model Location {
   kioskSessions KioskSession[]
   packInstances PackInstance[]
   qrCodes      QrCode[]
+  packLabels   PackLabel[]
+  restocks     LocationRestock[]
 }
 
 model LiveRip {
@@ -236,6 +256,7 @@ model Item {
   kioskReveals   KioskSession[]  @relation("KioskReveal")
   cardQrCodeId   String?         @unique
   cardQrCode     QrCode?         @relation("CardQrCode", fields: [cardQrCodeId], references: [id])
+  packLabels     PackLabel[]
 }
 
 model AuthVerification {
@@ -328,6 +349,7 @@ model PackInstance {
   status           PackStatus     @default(UNOPENED)
   fulfillmentStatus PackFulfillmentStatus @default(ONLINE)
   locationId       String?
+  sourceBatchId    String?
   createdAt        DateTime       @default(now())
   openedAt         DateTime?
   packedAt         DateTime?
@@ -343,6 +365,8 @@ model PackInstance {
   packedBy         User?          @relation("PackedByUser", fields: [packedById], references: [id])
   loadedBy         User?          @relation("LoadedByUser", fields: [loadedById], references: [id])
   packQrCode       QrCode?        @relation("PackQrCode", fields: [packQrCodeId], references: [id])
+  packLabels       PackLabel[]
+  sourceBatch      CardBatch?     @relation("PackInstanceSourceBatch", fields: [sourceBatchId], references: [id], onDelete: SetNull)
 }
 
 model KioskSession {
@@ -412,11 +436,48 @@ model CardBatch {
   totalCount     Int      @default(0)
   processedCount Int      @default(0)
   status         String   @default("UPLOADING")
+  stage          BatchStage @default(INVENTORY_READY)
+  tags           String[] @default([])
+  stageChangedAt DateTime? @default(now())
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  uploadedBy User        @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
-  cards      CardAsset[]
+  uploadedBy   User        @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  cards        CardAsset[]
+  packLabels   PackLabel[]
+  sourcePacks  PackInstance[] @relation("PackInstanceSourceBatch")
+  stageEvents  BatchStageEvent[]
+}
+
+model BatchStageEvent {
+  id        String      @id @default(uuid())
+  batchId   String
+  stage     BatchStage
+  note      String?
+  actorId   String?
+  createdAt DateTime    @default(now())
+
+  batch  CardBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  actor  User?      @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([batchId])
+  @@index([stage])
+}
+
+model LocationRestock {
+  id         String   @id @default(uuid())
+  locationId String
+  operatorId String?
+  countsJson Json?
+  photoUrl   String?
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  operator User?    @relation(fields: [operatorId], references: [id], onDelete: SetNull)
+
+  @@index([locationId])
+  @@index([createdAt])
 }
 
 model CardAsset {
@@ -586,4 +647,32 @@ model QrCode {
   item        Item?         @relation("CardQrCode")
   packInstance PackInstance? @relation("PackQrCode")
   kioskSession KioskSession? @relation("SessionPackQr")
+  packLabelCard PackLabel?   @relation("PackLabelCardQr")
+  packLabelPack PackLabel?   @relation("PackLabelPackQr")
+}
+
+model PackLabel {
+  id             String           @id @default(uuid())
+  pairId         String           @unique
+  cardQrCodeId   String           @unique
+  packQrCodeId   String           @unique
+  itemId         String?
+  packInstanceId String?          @unique
+  locationId     String?
+  batchId        String?
+  status         PackLabelStatus  @default(RESERVED)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  printedAt      DateTime?
+
+  cardQrCode   QrCode        @relation("PackLabelCardQr", fields: [cardQrCodeId], references: [id], onDelete: Cascade)
+  packQrCode   QrCode        @relation("PackLabelPackQr", fields: [packQrCodeId], references: [id], onDelete: Cascade)
+  item         Item?         @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  packInstance PackInstance? @relation(fields: [packInstanceId], references: [id], onDelete: SetNull)
+  location     Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  batch        CardBatch?    @relation(fields: [batchId], references: [id], onDelete: SetNull)
+
+  @@index([locationId])
+  @@index([batchId])
+  @@index([status])
 }

@@ -1,6 +1,7 @@
 
 import type { NextApiRequest, NextApiResponse } from "next";
 import { CardAssetStatus, mintAssignedCardAssets, prisma, type MintResult } from "@tenkings/database";
+import { reserveLabelsForPacks } from "../../../../lib/server/qrCodes";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
@@ -99,7 +100,21 @@ export default async function handler(
       cardIds,
       prismaClient: prisma,
       locationId: location?.id ?? null,
+      createdById: admin.user.id,
     });
+
+    if (mintResult.packAssignments.length > 0) {
+      await reserveLabelsForPacks({
+        assignments: mintResult.packAssignments.map((assignment) => ({
+          packInstanceId: assignment.packInstanceId,
+          itemId: assignment.itemId,
+          cardAssetId: assignment.cardAssetId,
+          batchId: assignment.batchId,
+          locationId: assignment.locationId,
+        })),
+        createdById: admin.user.id,
+      });
+    }
 
     const updated = await prisma.cardAsset.findMany({
       where: { id: { in: cardIds } },
