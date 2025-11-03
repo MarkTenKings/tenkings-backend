@@ -30,6 +30,8 @@ const LABEL_HEIGHT = mmToPoints(20);
 const LABEL_RADIUS = 6;
 const LABEL_GAP = 26;
 const HEADER_OFFSET = 24;
+const PREVIEW_HEIGHT = mmToPoints(48);
+const PREVIEW_GAP = 12;
 
 const COLOR_GOLD = "#f5d37a";
 const COLOR_DARK = "#0b0f15";
@@ -97,11 +99,16 @@ export async function generateLabelSheetPdf(options: GenerateLabelSheetOptions):
       }
     }
 
-    const frontY = doc.page.margins.top + HEADER_OFFSET;
-    const backY = frontY + LABEL_HEIGHT + LABEL_GAP;
+    let cursorY = doc.page.margins.top + HEADER_OFFSET;
 
-    drawFrontLabel(doc, entry, labelX, frontY, imageBuffer);
-    await drawBackLabel(doc, entry, labelX, backY);
+    if (imageBuffer) {
+      cursorY += drawCardPreview(doc, entry, labelX, cursorY, imageBuffer) + PREVIEW_GAP;
+    }
+
+    await drawCardLabel(doc, entry, labelX, cursorY);
+
+    const packLabelY = cursorY + LABEL_HEIGHT + LABEL_GAP;
+    await drawPackLabel(doc, entry, labelX, packLabelY);
   }
 
   doc.end();
@@ -147,7 +154,43 @@ const renderHeader = (
     });
 };
 
-const drawFrontLabel = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number, image?: Buffer | null) => {
+const drawCardPreview = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number, image: Buffer) => {
+  doc.save();
+  doc
+    .roundedRect(x, y, LABEL_WIDTH, PREVIEW_HEIGHT, LABEL_RADIUS)
+    .fill("#0f1729");
+  doc.restore();
+
+  doc.save();
+  doc
+    .roundedRect(x + 2, y + 2, LABEL_WIDTH - 4, PREVIEW_HEIGHT - 4, LABEL_RADIUS - 2)
+    .fill("#05080f");
+  doc.restore();
+
+  doc.image(image, x + 6, y + 6, {
+    fit: [LABEL_WIDTH - 12, PREVIEW_HEIGHT - 24],
+    align: "center",
+    valign: "center",
+  });
+
+  doc
+    .font("Helvetica")
+    .fontSize(8)
+    .fillColor("#9aa5c4")
+    .text(
+      entry.item?.name ?? "Card preview",
+      x + 6,
+      y + PREVIEW_HEIGHT - 14,
+      {
+        width: LABEL_WIDTH - 12,
+        align: "center",
+      }
+    );
+
+  return PREVIEW_HEIGHT;
+};
+
+const drawCardLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number) => {
   const outerGradient = doc.linearGradient(x, y, x + LABEL_WIDTH, y + LABEL_HEIGHT);
   outerGradient.stop(0, "#111723").stop(1, "#1f2836");
 
@@ -180,77 +223,70 @@ const drawFrontLabel = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: n
   const cardTitle = entry.item?.name ?? "Pending metadata";
   const cardSubtitle = entry.item ? `Item ${entry.item.id.slice(0, 8)}…` : "Assign card metadata";
 
-  const imageSize = LABEL_HEIGHT - 8;
-  const imageX = x + LABEL_WIDTH - imageSize - 6;
-  const textWidth = imageX - (x + 6);
+  const qrSize = LABEL_HEIGHT - 10;
+  const qrX = x + LABEL_WIDTH - qrSize - 6;
+  const qrY = y + (LABEL_HEIGHT - qrSize) / 2;
+  const textWidth = qrX - (x + 8);
+
+  const qrTarget = entry.card.payloadUrl ?? entry.card.code;
+  const qrBuffer = await QRCode.toBuffer(qrTarget, {
+    errorCorrectionLevel: "M",
+    margin: 1,
+    width: Math.max(256, Math.round(qrSize * 6)),
+  });
 
   doc
     .font("Helvetica-Bold")
-    .fontSize(12)
+    .fontSize(10)
     .fillColor("#f0f4ff")
-    .text(cardTitle, x + 6, y + 12, {
+    .text(cardTitle, x + 8, y + 10, {
       width: textWidth,
-      lineGap: 2,
+      lineGap: 1.5,
     });
 
   doc
     .font("Helvetica")
-    .fontSize(9)
+    .fontSize(8)
     .fillColor(COLOR_SLATE)
-    .text(`Pair ${entry.pairId}`, x + 6, y + 26, { width: textWidth });
-
-  doc
-    .font("Helvetica")
-    .fontSize(8)
-    .fillColor(COLOR_MUTED)
-    .text(cardSubtitle, x + 6, y + 31, {
-      width: textWidth,
-    });
-
-  doc
-    .font("Helvetica")
-    .fontSize(8)
-    .fillColor(COLOR_MUTED)
-    .text(`Card QR ${entry.card.code}`, x + 6, y + 39, {
-      width: textWidth,
-    });
-
-  doc
-    .font("Helvetica")
-    .fontSize(8)
-    .fillColor(COLOR_MUTED)
-    .text(`Pack QR ${entry.pack.code}`, x + 6, y + 45, {
-      width: textWidth,
-    });
-
-  if (image) {
-    doc.save();
-    doc
-      .roundedRect(imageX - 2, y + 4, imageSize + 4, imageSize + 4, 6)
-      .fill("#0f1729");
-    doc.restore();
-    doc.image(image, imageX, y + (LABEL_HEIGHT - imageSize) / 2, {
-      fit: [imageSize, imageSize],
-      align: "center",
-      valign: "center",
-    });
-  }
+    .text(`Pair ${entry.pairId}`, x + 8, y + 20, { width: textWidth });
 
   doc
     .font("Helvetica")
     .fontSize(7)
+    .fillColor(COLOR_MUTED)
+    .text(cardSubtitle, x + 8, y + 26, { width: textWidth });
+
+  doc
+    .font("Helvetica")
+    .fontSize(7)
+    .fillColor(COLOR_MUTED)
+    .text(`Card QR ${entry.card.code}`, x + 8, y + 33, { width: textWidth });
+
+  doc
+    .font("Helvetica")
+    .fontSize(7)
+    .fillColor(COLOR_MUTED)
+    .text(`Card Serial ${entry.card.serial ?? "pending"}`, x + 8, y + 39, {
+      width: textWidth,
+    });
+
+  doc
+    .font("Helvetica")
+    .fontSize(6.5)
     .fillColor(COLOR_META)
     .text(
       entry.label.status === PackLabelStatus.BOUND ? "Label status: Bound" : "Label status: Reserved",
-      x + 6,
-      y + LABEL_HEIGHT - 8,
+      x + 8,
+      y + LABEL_HEIGHT - 10,
       {
         width: textWidth,
       }
     );
+
+  doc.image(qrBuffer, qrX, qrY, { fit: [qrSize, qrSize] });
 };
 
-const drawBackLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number) => {
+const drawPackLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number) => {
   const outerGradient = doc.linearGradient(x, y, x + LABEL_WIDTH, y + LABEL_HEIGHT);
   outerGradient.stop(0, "#0b0f17").stop(1, "#161d2b");
 
@@ -264,79 +300,47 @@ const drawBackLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number,
     .fill(COLOR_DARK);
   doc.restore();
 
-  const qrSize = LABEL_HEIGHT - 18;
-  const cardQrX = x + 6;
-  const cardQrY = y + 6;
-  const packQrX = cardQrX + qrSize + 8;
-  const packQrY = cardQrY;
+  const qrSize = LABEL_HEIGHT - 12;
+  const qrX = x + LABEL_WIDTH - qrSize - 6;
+  const qrY = y + (LABEL_HEIGHT - qrSize) / 2;
 
-  const cardTarget = entry.card.payloadUrl ?? entry.card.code;
   const packTarget = entry.pack.payloadUrl ?? entry.pack.code;
-
-  const qrOptions = {
-    errorCorrectionLevel: "M" as const,
+  const packQrBuffer = await QRCode.toBuffer(packTarget, {
+    errorCorrectionLevel: "M",
     margin: 1,
     width: Math.max(256, Math.round(qrSize * 6)),
-  };
+  });
 
-  const [cardQrBuffer, packQrBuffer] = await Promise.all([
-    QRCode.toBuffer(cardTarget, qrOptions),
-    QRCode.toBuffer(packTarget, qrOptions),
-  ]);
-
-  doc.image(cardQrBuffer, cardQrX, cardQrY, { fit: [qrSize, qrSize] });
-  doc.image(packQrBuffer, packQrX, packQrY, { fit: [qrSize, qrSize] });
+  const textWidth = qrX - (x + 8);
 
   doc
     .font("Helvetica-Bold")
-    .fontSize(8)
+    .fontSize(9)
     .fillColor(COLOR_GOLD)
-    .text("SCAN TO CLAIM, SAVE, & SELL", x + 6, cardQrY + qrSize + 6, {
-      width: LABEL_WIDTH - 12,
-      align: "center",
+    .text("SCAN TO RIP IT LIVE", x + 8, y + 10, {
+      width: textWidth,
       characterSpacing: 0.6,
     });
 
-  const infoY = cardQrY + qrSize + 18;
-
   doc
     .font("Helvetica")
     .fontSize(7)
     .fillColor(COLOR_SLATE)
-    .text(`Card: ${cardTarget}`, x + 6, infoY, {
-      width: LABEL_WIDTH - 12,
-    });
-
-  doc
-    .font("Helvetica")
-    .fontSize(7)
-    .fillColor(COLOR_SLATE)
-    .text(`Pack: ${packTarget}`, x + 6, infoY + 8, {
-      width: LABEL_WIDTH - 12,
-    });
+    .text(`Pack QR ${entry.pack.code}`, x + 8, y + 22, { width: textWidth });
 
   doc
     .font("Helvetica")
     .fontSize(6.5)
     .fillColor(COLOR_MUTED)
-    .text(`Card Serial ${entry.card.serial ?? "pending"}`, x + 6, infoY + 18, {
-      width: LABEL_WIDTH - 12,
-    });
-
-  doc
-    .font("Helvetica")
-    .fontSize(6.5)
-    .fillColor(COLOR_MUTED)
-    .text(`Pack Serial ${entry.pack.serial ?? "pending"}`, x + 6, infoY + 26, {
-      width: LABEL_WIDTH - 12,
-    });
+    .text(`Pack Serial ${entry.pack.serial ?? "pending"}`, x + 8, y + 30, { width: textWidth });
 
   doc
     .font("Helvetica")
     .fontSize(6)
-    .fillColor(COLOR_META)
-    .text("Temporary label preview · Final artwork coming soon", x + 6, y + LABEL_HEIGHT - 8, {
-      width: LABEL_WIDTH - 12,
-      align: "center",
+    .fillColor(COLOR_SLATE)
+    .text("Apply to pack exterior · players scan to watch the rip", x + 8, y + LABEL_HEIGHT - 12, {
+      width: textWidth,
     });
+
+  doc.image(packQrBuffer, qrX, qrY, { fit: [qrSize, qrSize] });
 };
