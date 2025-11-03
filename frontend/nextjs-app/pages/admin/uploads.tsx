@@ -6,6 +6,22 @@ import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 
+type ZoomConstraintSet = MediaTrackConstraintSet & { zoom?: number };
+
+async function applyTrackZoom(track: MediaStreamTrack, value: number) {
+  if (typeof track.applyConstraints !== "function") {
+    return;
+  }
+  const constraints = {
+    advanced: [{ zoom: value } as ZoomConstraintSet],
+  } as MediaTrackConstraints;
+  try {
+    await track.applyConstraints(constraints);
+  } catch {
+    // Some browsers reject unsupported zoom values—ignore.
+  }
+}
+
 type UploadStatus =
   | "pending"
   | "compressing"
@@ -203,13 +219,7 @@ export default function AdminUploads() {
           setSupportsZoom(max - min > 0.01);
           setZoomBounds({ min, max, step });
           setZoom(initial);
-          if (typeof track.applyConstraints === "function") {
-            try {
-              await track.applyConstraints({ advanced: [{ zoom: initial }] });
-            } catch {
-              // ignore
-            }
-          }
+          await applyTrackZoom(track, initial);
         } else {
           setSupportsZoom(false);
           setZoomBounds({ min: 1, max: 1, step: 0.1 });
@@ -298,9 +308,7 @@ export default function AdminUploads() {
     if (!track || typeof track.applyConstraints !== "function") {
       return;
     }
-    track
-      .applyConstraints({ advanced: [{ zoom: value }] })
-      .catch(() => undefined);
+    void applyTrackZoom(track, value);
   }, []);
 
 
