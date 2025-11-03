@@ -339,7 +339,7 @@ export async function reserveLabelsForPacks({
       };
 
       if (autoBind) {
-        cardUpdateData.boundById = createdById;
+        cardUpdateData.boundBy = { connect: { id: createdById } };
         cardUpdateData.boundAt = now;
       }
 
@@ -366,7 +366,7 @@ export async function reserveLabelsForPacks({
       };
 
       if (autoBind) {
-        packUpdateData.boundById = createdById;
+        packUpdateData.boundBy = { connect: { id: createdById } };
         packUpdateData.boundAt = now;
       }
 
