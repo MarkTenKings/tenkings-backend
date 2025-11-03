@@ -1,6 +1,6 @@
 import { config } from "../config";
 
-const DEFAULT_ENDPOINT = "https://api.photoroom.com/v1/remove-background";
+const DEFAULT_ENDPOINT = "https://image-api.photoroom.com/v2/edit";
 
 export async function runPhotoroom(buffer: Buffer): Promise<Buffer> {
   if (!config.photoroomApiKey) {
@@ -11,16 +11,19 @@ export async function runPhotoroom(buffer: Buffer): Promise<Buffer> {
 
   const form = new FormData();
   const blob = new Blob([buffer], { type: "image/png" });
-  form.append("image_file", blob, "capture.png");
-  form.append("background", "transparent");
-  form.append("format", "png");
-  form.append("size", "1280");
+  form.append("imageFile", blob, "capture.png");
+  form.append("removeBackground", "true");
   form.append("padding", "0.05");
+  form.append("scaling", "fit");
+  form.append("outputSize", "croppedSubject");
+  form.append("export.format", "png");
+  form.append("background.color", "transparent");
 
   const response = await fetch(endpoint, {
     method: "POST",
     headers: {
       "x-api-key": config.photoroomApiKey,
+      Accept: "image/png, application/json",
     },
     body: form,
   });
