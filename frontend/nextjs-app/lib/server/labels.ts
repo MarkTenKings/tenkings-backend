@@ -105,9 +105,12 @@ export async function generateLabelSheetPdf(options: GenerateLabelSheetOptions):
       cursorY += drawCardPreview(doc, entry, labelX, cursorY, imageBuffer) + PREVIEW_GAP;
     }
 
-    await drawCardLabel(doc, entry, labelX, cursorY);
+    drawCardFrontLabel(doc, entry, labelX, cursorY);
 
-    const packLabelY = cursorY + LABEL_HEIGHT + LABEL_GAP;
+    const cardBackY = cursorY + LABEL_HEIGHT + LABEL_GAP;
+    await drawCardBackLabel(doc, entry, labelX, cardBackY);
+
+    const packLabelY = cardBackY + LABEL_HEIGHT + LABEL_GAP;
     await drawPackLabel(doc, entry, labelX, packLabelY);
   }
 
@@ -190,7 +193,7 @@ const drawCardPreview = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: 
   return PREVIEW_HEIGHT;
 };
 
-const drawCardLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number) => {
+const drawCardFrontLabel = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number) => {
   const outerGradient = doc.linearGradient(x, y, x + LABEL_WIDTH, y + LABEL_HEIGHT);
   outerGradient.stop(0, "#111723").stop(1, "#1f2836");
 
@@ -223,67 +226,65 @@ const drawCardLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number,
   const cardTitle = entry.item?.name ?? "Pending metadata";
   const cardSubtitle = entry.item ? `Item ${entry.item.id.slice(0, 8)}…` : "Assign card metadata";
 
-  const qrSize = LABEL_HEIGHT - 10;
-  const qrX = x + LABEL_WIDTH - qrSize - 6;
-  const qrY = y + (LABEL_HEIGHT - qrSize) / 2;
-  const textWidth = qrX - (x + 8);
-
-  const qrTarget = entry.card.payloadUrl ?? entry.card.code;
-  const qrBuffer = await QRCode.toBuffer(qrTarget, {
-    errorCorrectionLevel: "M",
-    margin: 1,
-    width: Math.max(256, Math.round(qrSize * 6)),
-  });
+  const badgeWidth = 46;
+  const badgeHeight = 24;
+  const badgeX = x + LABEL_WIDTH - badgeWidth - 8;
+  const badgeY = y + (LABEL_HEIGHT - badgeHeight) / 2;
+  const textWidth = badgeX - (x + 12);
 
   doc
     .font("Helvetica-Bold")
     .fontSize(10)
     .fillColor("#f0f4ff")
-    .text(cardTitle, x + 8, y + 10, {
+    .text(cardTitle, x + 12, y + 11, {
       width: textWidth,
-      lineGap: 1.5,
+      lineGap: 1,
     });
 
   doc
     .font("Helvetica")
     .fontSize(8)
     .fillColor(COLOR_SLATE)
-    .text(`Pair ${entry.pairId}`, x + 8, y + 20, { width: textWidth });
+    .text(cardSubtitle, x + 12, y + 24, { width: textWidth });
 
   doc
     .font("Helvetica")
     .fontSize(7)
-    .fillColor(COLOR_MUTED)
-    .text(cardSubtitle, x + 8, y + 26, { width: textWidth });
-
-  doc
-    .font("Helvetica")
-    .fontSize(7)
-    .fillColor(COLOR_MUTED)
-    .text(`Card QR ${entry.card.code}`, x + 8, y + 33, { width: textWidth });
-
-  doc
-    .font("Helvetica")
-    .fontSize(7)
-    .fillColor(COLOR_MUTED)
-    .text(`Card Serial ${entry.card.serial ?? "pending"}`, x + 8, y + 39, {
+    .fillColor(COLOR_SLATE)
+    .text(entry.label.pairId ? `Pair ${entry.label.pairId}` : "", x + 12, y + 32, {
       width: textWidth,
+    });
+
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(10)
+    .fillColor("#0b192d");
+
+  const gradeGradient = doc.linearGradient(badgeX, badgeY, badgeX, badgeY + badgeHeight);
+  gradeGradient.stop(0, "#ffe08a").stop(1, "#f5d37a");
+
+  doc.save();
+  doc.roundedRect(badgeX, badgeY, badgeWidth, badgeHeight, 6).fill(gradeGradient);
+  doc.restore();
+
+  doc
+    .fillColor("#1e1b12")
+    .font("Helvetica-Bold")
+    .fontSize(11)
+    .text("—", badgeX, badgeY + 6, {
+      width: badgeWidth,
+      align: "center",
     });
 
   doc
     .font("Helvetica")
     .fontSize(6.5)
-    .fillColor(COLOR_META)
-    .text(
-      entry.label.status === PackLabelStatus.BOUND ? "Label status: Bound" : "Label status: Reserved",
-      x + 8,
-      y + LABEL_HEIGHT - 10,
-      {
-        width: textWidth,
-      }
-    );
-
-  doc.image(qrBuffer, qrX, qrY, { fit: [qrSize, qrSize] });
+    .fillColor("#433f2d")
+    .text("GRADE", badgeX, badgeY + badgeHeight - 7, {
+      width: badgeWidth,
+      align: "center",
+      characterSpacing: 0.6,
+    });
 };
 
 const drawPackLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number) => {
@@ -338,9 +339,66 @@ const drawPackLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number,
     .font("Helvetica")
     .fontSize(6)
     .fillColor(COLOR_SLATE)
-    .text("Apply to pack exterior · players scan to watch the rip", x + 8, y + LABEL_HEIGHT - 12, {
+    .text("Ten Kings Collectibles", x + 8, y + LABEL_HEIGHT - 12, {
       width: textWidth,
     });
 
   doc.image(packQrBuffer, qrX, qrY, { fit: [qrSize, qrSize] });
+};
+
+const drawCardBackLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number) => {
+  const outerGradient = doc.linearGradient(x, y, x + LABEL_WIDTH, y + LABEL_HEIGHT);
+  outerGradient.stop(0, "#0b0f17").stop(1, "#161d2b");
+
+  doc.save();
+  doc.roundedRect(x, y, LABEL_WIDTH, LABEL_HEIGHT, LABEL_RADIUS).fill(outerGradient);
+  doc.restore();
+
+  doc.save();
+  doc
+    .roundedRect(x + 1.8, y + 1.8, LABEL_WIDTH - 3.6, LABEL_HEIGHT - 3.6, LABEL_RADIUS - 1.5)
+    .fill(COLOR_DARK);
+  doc.restore();
+
+  const qrSize = LABEL_HEIGHT - 12;
+  const qrX = x + LABEL_WIDTH - qrSize - 6;
+  const qrY = y + (LABEL_HEIGHT - qrSize) / 2;
+
+  const cardTarget = entry.card.payloadUrl ?? entry.card.code;
+  const cardQrBuffer = await QRCode.toBuffer(cardTarget, {
+    errorCorrectionLevel: "M",
+    margin: 1,
+    width: Math.max(256, Math.round(qrSize * 6)),
+  });
+
+  const textWidth = qrX - (x + 8);
+
+  doc
+    .font("Helvetica-Bold")
+    .fontSize(9)
+    .fillColor(COLOR_GOLD)
+    .text("SCAN TO CLAIM, SAVE, & SELL", x + 8, y + 10, {
+      width: textWidth,
+      characterSpacing: 0.5,
+    });
+
+  doc
+    .font("Helvetica")
+    .fontSize(7)
+    .fillColor(COLOR_SLATE)
+    .text(`Card QR ${entry.card.code}`, x + 8, y + 22, { width: textWidth });
+
+  doc
+    .font("Helvetica")
+    .fontSize(6.5)
+    .fillColor(COLOR_MUTED)
+    .text(`Card Serial ${entry.card.serial ?? "pending"}`, x + 8, y + 30, { width: textWidth });
+
+  doc
+    .font("Helvetica")
+    .fontSize(6)
+    .fillColor(COLOR_SLATE)
+    .text("Ten Kings Collectibles", x + 8, y + LABEL_HEIGHT - 12, { width: textWidth });
+
+  doc.image(cardQrBuffer, qrX, qrY, { fit: [qrSize, qrSize] });
 };
