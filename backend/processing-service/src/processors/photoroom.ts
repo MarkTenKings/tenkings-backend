@@ -1,6 +1,6 @@
 import { config } from "../config";
 
-const DEFAULT_ENDPOINT = "https://api.photoroom.com/v1/edit/remove-background";
+const DEFAULT_ENDPOINT = "https://api.photoroom.com/v1/remove-background";
 
 export async function runPhotoroom(buffer: Buffer): Promise<Buffer> {
   if (!config.photoroomApiKey) {
@@ -14,7 +14,7 @@ export async function runPhotoroom(buffer: Buffer): Promise<Buffer> {
   form.append("image_file", blob, "capture.png");
   form.append("background", "transparent");
   form.append("format", "png");
-  form.append("output_size", "1280");
+  form.append("size", "1280");
   form.append("padding", "0.05");
 
   const response = await fetch(endpoint, {
