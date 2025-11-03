@@ -391,6 +391,13 @@ export default function AdminPackingConsole() {
       }
       const data = (await res.json()) as LocationResponse;
       const detail = data.batches[0] ?? null;
+
+      if (downloadUrlRef.current) {
+        URL.revokeObjectURL(downloadUrlRef.current);
+        downloadUrlRef.current = null;
+      }
+      setPrintDownload(null);
+
       setBatchDetail(detail);
       const firstReadyPack = detail?.packs.find((pack) => pack.fulfillmentStatus === PackFulfillmentStatus.READY_FOR_PACKING);
       const fallbackPack = detail?.packs[0] ?? null;
