@@ -11,6 +11,11 @@ const querySchema = z.object({
   batchId: z.string().uuid().optional(),
 });
 
+const updateSchema = z.object({
+  batchId: z.string().uuid(),
+  locationId: z.union([z.string().uuid(), z.literal(ONLINE_OPTION)]).nullable().optional(),
+});
+
 type PackRow = {
   id: string;
   createdAt: string;
@@ -73,7 +78,7 @@ type BatchDetail = {
   packs: PackRow[];
 };
 
-type ResponseBody = { batches: BatchDetail[] } | { message: string };
+type ResponseBody = { batches: BatchDetail[] } | { message: string } | { updated: number };
 
 const toQrSummary = (
   record: Prisma.QrCodeGetPayload<{ select: { id: true; code: true; serial: true; payloadUrl: true; state: true } }>
@@ -92,8 +97,79 @@ const packStatusFilter = [
 ];
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
+  if (req.method === "POST") {
+    try {
+      const admin = await requireAdminSession(req);
+      const { batchId, locationId } = updateSchema.parse(req.body ?? {});
+
+      const targetLocationId = !locationId || locationId === ONLINE_OPTION ? null : locationId;
+
+      if (targetLocationId) {
+        const location = await prisma.location.findUnique({ where: { id: targetLocationId }, select: { id: true } });
+        if (!location) {
+          return res.status(404).json({ message: "Location not found" });
+        }
+      }
+
+      const packs = await prisma.packInstance.findMany({
+        where: {
+          sourceBatchId: batchId,
+          fulfillmentStatus: { in: packStatusFilter },
+        },
+        select: {
+          id: true,
+          sourceBatchId: true,
+          packLabels: {
+            include: {
+              cardQrCode: {
+                select: { id: true, code: true, serial: true, payloadUrl: true, state: true },
+              },
+              packQrCode: {
+                select: { id: true, code: true, serial: true, payloadUrl: true, state: true },
+              },
+            },
+          },
+          slots: {
+            take: 1,
+            select: {
+              item: {
+                select: { id: true },
+              },
+            },
+          },
+        },
+      });
+
+      const assignments = packs
+        .filter((pack) => pack.slots[0]?.item)
+        .map((pack) => ({
+          packInstanceId: pack.id,
+          itemId: pack.slots[0]!.item!.id,
+          cardAssetId: pack.slots[0]!.item!.id,
+          batchId,
+          locationId: targetLocationId,
+        }));
+
+      if (assignments.length === 0) {
+        return res.status(200).json({ updated: 0 });
+      }
+
+      await reserveLabelsForPacks({
+        assignments,
+        createdById: admin.user.id,
+        autoBind: targetLocationId !== null,
+        forceUnbind: targetLocationId === null,
+      });
+
+      return res.status(200).json({ updated: assignments.length });
+    } catch (error) {
+      const response = toErrorResponse(error);
+      return res.status(response.status).json({ message: response.message });
+    }
+  }
+
   if (req.method !== "GET") {
-    res.setHeader("Allow", "GET");
+    res.setHeader("Allow", "GET, POST");
     return res.status(405).json({ message: "Method not allowed" });
   }
 

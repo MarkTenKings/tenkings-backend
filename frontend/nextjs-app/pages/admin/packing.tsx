@@ -244,6 +244,7 @@ export default function AdminPackingConsole() {
   const [selectedStageId, setSelectedStageId] = useState<BatchStage | null>(null);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState<string>(ONLINE_OPTION);
+  const [pendingLocationId, setPendingLocationId] = useState<string>(ONLINE_OPTION);
 
   const [batchDetail, setBatchDetail] = useState<BatchDetail | null>(null);
   const [selectedPackIds, setSelectedPackIds] = useState<string[]>([]);
@@ -261,6 +262,8 @@ export default function AdminPackingConsole() {
   const [printSubmitting, setPrintSubmitting] = useState(false);
   const [printDownload, setPrintDownload] = useState<LabelDownload | null>(null);
   const downloadUrlRef = useRef<string | null>(null);
+  const skipAutoFetchRef = useRef(false);
+  const [reassignSubmitting, setReassignSubmitting] = useState(false);
 
   useEffect(() => {
     if (downloadUrlRef.current) {
@@ -362,20 +365,26 @@ export default function AdminPackingConsole() {
     setSelectedLocationId(primary.id ?? ONLINE_OPTION);
   }, [selectedBatchId, selectedStageColumn]);
 
-  const fetchBatchDetail = useCallback(async () => {
-    if (!session?.token || !isAdmin || !selectedBatchId) {
-      setBatchDetail(null);
-      return;
-    }
-    setLocationLoading(true);
-    setLocationError(null);
-    try {
-      const params = new URLSearchParams();
-      params.set("locationId", selectedLocationId);
-      params.set("batchId", selectedBatchId);
-      const res = await fetch(`/api/admin/packing/location?${params.toString()}`, {
-        headers: buildAdminHeaders(session.token),
-      });
+  useEffect(() => {
+    setPendingLocationId(selectedLocationId);
+  }, [selectedLocationId]);
+
+  const fetchBatchDetail = useCallback(
+    async (overrideLocationId?: string, options?: { preserveStatus?: boolean }) => {
+      if (!session?.token || !isAdmin || !selectedBatchId) {
+        setBatchDetail(null);
+        return;
+      }
+      const locationForRequest = overrideLocationId ?? selectedLocationId ?? ONLINE_OPTION;
+      setLocationLoading(true);
+      setLocationError(null);
+      try {
+        const params = new URLSearchParams();
+        params.set("locationId", locationForRequest);
+        params.set("batchId", selectedBatchId);
+        const res = await fetch(`/api/admin/packing/location?${params.toString()}`, {
+          headers: buildAdminHeaders(session.token),
+        });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
         throw new Error(payload?.message ?? "Failed to load batch detail");
@@ -388,8 +397,10 @@ export default function AdminPackingConsole() {
       setActivePackId(firstReadyPack?.id ?? fallbackPack?.id ?? null);
       setCardCode("");
       setPackCode("");
-      setCardStatus(null);
-      setPackStatus(null);
+      if (!options?.preserveStatus) {
+        setCardStatus(null);
+        setPackStatus(null);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to load batch detail";
       setLocationError(message);
@@ -397,10 +408,14 @@ export default function AdminPackingConsole() {
     } finally {
       setLocationLoading(false);
     }
-  }, [isAdmin, selectedBatchId, selectedLocationId, session?.token]);
+    }, [buildAdminHeaders, isAdmin, selectedBatchId, selectedLocationId, session?.token]);
 
   useEffect(() => {
     if (!session?.token || !isAdmin) {
+      return;
+    }
+    if (skipAutoFetchRef.current) {
+      skipAutoFetchRef.current = false;
       return;
     }
     void fetchBatchDetail();
@@ -444,6 +459,48 @@ export default function AdminPackingConsole() {
     return activePack.packQrCodeId === activePack.label.pack.id && activePack.label.pack.state === QrCodeState.BOUND;
   }, [activePack]);
 
+  const locationOptions = useMemo(() => {
+    const options: Array<{ value: string; label: string }> = [];
+    const seen = new Set<string>();
+
+    const addOption = (value: string, label: string) => {
+      if (seen.has(value)) {
+        return;
+      }
+      options.push({ value, label });
+      seen.add(value);
+    };
+
+    addOption(ONLINE_OPTION, "Online pool");
+
+    if (selectedStageColumn && batchDetail) {
+      const stageBatch = selectedStageColumn.batches.find((entry) => entry.id === batchDetail.id);
+      stageBatch?.locations.forEach((location) => {
+        const value = location.id ?? ONLINE_OPTION;
+        const label =
+          location.id === null
+            ? "Online pool"
+            : `${location.name}${location.counts.total > 0 ? ` · ${location.counts.total}` : ""}`;
+        addOption(value, label);
+      });
+    }
+
+    if (!seen.has(selectedLocationId)) {
+      addOption(
+        selectedLocationId,
+        selectedLocationId === ONLINE_OPTION ? "Online pool" : "Current location"
+      );
+    }
+
+    return options;
+  }, [batchDetail, selectedLocationId, selectedStageColumn]);
+
+  useEffect(() => {
+    if (locationOptions.length > 0 && !locationOptions.some((option) => option.value === pendingLocationId)) {
+      setPendingLocationId(locationOptions[0].value);
+    }
+  }, [locationOptions, pendingLocationId]);
+
   const registerDownload = useCallback((base64: string, filename: string) => {
     if (downloadUrlRef.current) {
       URL.revokeObjectURL(downloadUrlRef.current);
@@ -458,6 +515,15 @@ export default function AdminPackingConsole() {
     const url = URL.createObjectURL(blob);
     downloadUrlRef.current = url;
     setPrintDownload({ url, filename });
+    if (typeof window !== "undefined") {
+      const tempLink = document.createElement("a");
+      tempLink.href = url;
+      tempLink.download = filename;
+      tempLink.rel = "noopener";
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      document.body.removeChild(tempLink);
+    }
   }, []);
 
   const togglePackSelection = useCallback((packId: string) => {
@@ -509,6 +575,7 @@ export default function AdminPackingConsole() {
       }
       const payload = await res.json();
       registerDownload(payload.pdf, payload.filename);
+      setPackStatus({ type: "success", message: "Label sheet ready. Downloading now." });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to generate label sheet";
       setPackStatus({ type: "error", message });
@@ -516,6 +583,51 @@ export default function AdminPackingConsole() {
       setPrintSubmitting(false);
     }
   }, [adminHeaders, batchDetail, isAdmin, registerDownload, selectedPackIds, session?.token]);
+
+  const handleReassignLocation = useCallback(async () => {
+    if (!batchDetail || !session?.token || !isAdmin) {
+      return;
+    }
+    if (pendingLocationId === selectedLocationId) {
+      setPackStatus({ type: "success", message: "Batch already assigned to that location." });
+      return;
+    }
+
+    setReassignSubmitting(true);
+    setPackStatus(null);
+    try {
+      const res = await fetch("/api/admin/packing/location", {
+        method: "POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({
+          batchId: batchDetail.id,
+          locationId: pendingLocationId === ONLINE_OPTION ? null : pendingLocationId,
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to update location");
+      }
+
+      skipAutoFetchRef.current = true;
+      setSelectedLocationId(pendingLocationId);
+      await fetchBatchDetail(pendingLocationId, { preserveStatus: true });
+      await fetchStats();
+
+      setPackStatus({
+        type: "success",
+        message:
+          pendingLocationId === ONLINE_OPTION
+            ? "Batch returned to the online pool."
+            : "Batch moved to the selected location.",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to update location";
+      setPackStatus({ type: "error", message });
+    } finally {
+      setReassignSubmitting(false);
+    }
+  }, [adminHeaders, batchDetail, fetchBatchDetail, fetchStats, isAdmin, pendingLocationId, selectedLocationId, session?.token]);
 
   const refreshAllData = useCallback(async () => {
     await Promise.all([fetchStats(), fetchBatchDetail()]);
@@ -893,6 +1005,31 @@ export default function AdminPackingConsole() {
                     })}
                   </div>
                 </div>
+
+                {locationOptions.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Move batch</span>
+                    <select
+                      value={pendingLocationId}
+                      onChange={(event) => setPendingLocationId(event.currentTarget.value)}
+                      className="rounded-full border border-white/20 bg-night-900/80 px-4 py-2 text-xs uppercase tracking-[0.28em] text-slate-200 outline-none transition focus:border-emerald-400/60"
+                    >
+                      {locationOptions.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void handleReassignLocation()}
+                      disabled={reassignSubmitting || pendingLocationId === selectedLocationId}
+                      className="inline-flex items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {reassignSubmitting ? "Updating…" : "Update location"}
+                    </button>
+                  </div>
+                )}
 
                 {locationError && (
                   <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 p-3 text-sm text-rose-200">{locationError}</div>

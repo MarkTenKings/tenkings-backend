@@ -204,13 +204,19 @@ export async function reserveLabelsForPacks({
   assignments,
   createdById,
   autoBind = false,
+  forceUnbind = false,
 }: {
   assignments: LabelReservationInput[];
   createdById: string;
   autoBind?: boolean;
+  forceUnbind?: boolean;
 }): Promise<QrCodePair[]> {
   if (!assignments.length) {
     return [];
+  }
+
+  if (autoBind && forceUnbind) {
+    throw new Error("autoBind and forceUnbind cannot both be enabled");
   }
 
   const results: QrCodePair[] = [];
@@ -263,8 +269,9 @@ export async function reserveLabelsForPacks({
       });
 
       const now = new Date();
-      const targetLocationId = assignment.locationId ?? updatedLabel.locationId ?? null;
+      const targetLocationId = forceUnbind ? null : assignment.locationId ?? updatedLabel.locationId ?? null;
 
+      const needsPackRecord = autoBind || forceUnbind;
       let packRecord:
         | {
             id: string;
@@ -272,14 +279,16 @@ export async function reserveLabelsForPacks({
             fulfillmentStatus: PackFulfillmentStatus;
             locationId: string | null;
             packedAt: Date | null;
+            packedById: string | null;
             sourceBatchId: string | null;
             slots: Array<{
               item: { id: string; cardQrCodeId: string | null } | null;
             }>;
           }
         | null = null;
+      let slotItem: { id: string; cardQrCodeId: string | null } | null = null;
 
-      if (autoBind) {
+      if (needsPackRecord) {
         packRecord = await tx.packInstance.findUnique({
           where: { id: assignment.packInstanceId },
           select: {
@@ -288,6 +297,7 @@ export async function reserveLabelsForPacks({
             fulfillmentStatus: true,
             locationId: true,
             packedAt: true,
+            packedById: true,
             sourceBatchId: true,
             slots: {
               take: 1,
@@ -302,7 +312,7 @@ export async function reserveLabelsForPacks({
           throw new Error(`Pack instance ${assignment.packInstanceId} not found`);
         }
 
-        const slotItem = packRecord.slots[0]?.item ?? null;
+        slotItem = packRecord.slots[0]?.item ?? null;
         if (!slotItem) {
           throw new Error(`Pack ${assignment.packInstanceId} is missing a primary card slot`);
         }
@@ -311,7 +321,7 @@ export async function reserveLabelsForPacks({
           throw new Error(`Pack ${assignment.packInstanceId} is not linked to item ${assignment.itemId}`);
         }
 
-        if (slotItem.cardQrCodeId && slotItem.cardQrCodeId !== updatedLabel.cardQrCodeId) {
+        if (autoBind && slotItem.cardQrCodeId && slotItem.cardQrCodeId !== updatedLabel.cardQrCodeId) {
           throw new Error("Card already bound to a different QR code");
         }
 
@@ -321,21 +331,36 @@ export async function reserveLabelsForPacks({
         }
       }
 
+      const cardMetadataUpdates: Record<string, unknown> = {
+        pairId: updatedLabel.pairId,
+        role: "CARD",
+        labelId: updatedLabel.id,
+        reservedItemId: assignment.itemId,
+        reservedPackInstanceId: assignment.packInstanceId,
+        batchId: assignment.batchId,
+      };
+      if (autoBind) {
+        cardMetadataUpdates.autoBound = true;
+      }
+      if (forceUnbind) {
+        cardMetadataUpdates.autoBound = false;
+      }
+
+      const cardState = forceUnbind
+        ? QrCodeState.RESERVED
+        : autoBind
+          ? QrCodeState.BOUND
+          : updatedLabel.cardQrCode.state === QrCodeState.BOUND
+            ? QrCodeState.BOUND
+            : QrCodeState.RESERVED;
+
       const cardUpdateData: Prisma.QrCodeUpdateInput = {
-        state: autoBind ? QrCodeState.BOUND : updatedLabel.cardQrCode.state === QrCodeState.BOUND ? QrCodeState.BOUND : QrCodeState.RESERVED,
+        state: cardState,
         location:
           targetLocationId != null
             ? { connect: { id: targetLocationId } }
             : { disconnect: true },
-        metadata: mergeMetadata(updatedLabel.cardQrCode.metadata, {
-          pairId: updatedLabel.pairId,
-          role: "CARD",
-          labelId: updatedLabel.id,
-          reservedItemId: assignment.itemId,
-          reservedPackInstanceId: assignment.packInstanceId,
-          batchId: assignment.batchId,
-          ...(autoBind ? { autoBound: true } : {}),
-        }),
+        metadata: mergeMetadata(updatedLabel.cardQrCode.metadata, cardMetadataUpdates),
       };
 
       if (autoBind) {
@@ -343,26 +368,46 @@ export async function reserveLabelsForPacks({
         cardUpdateData.boundAt = now;
       }
 
+      if (forceUnbind) {
+        cardUpdateData.boundBy = { disconnect: true };
+        cardUpdateData.boundAt = null;
+      }
+
       const cardQr = await tx.qrCode.update({
         where: { id: updatedLabel.cardQrCodeId },
         data: cardUpdateData,
       });
 
+      const packMetadataUpdates: Record<string, unknown> = {
+        pairId: updatedLabel.pairId,
+        role: "PACK",
+        labelId: updatedLabel.id,
+        reservedPackInstanceId: assignment.packInstanceId,
+        reservedItemId: assignment.itemId,
+        batchId: assignment.batchId,
+      };
+      if (autoBind) {
+        packMetadataUpdates.autoBound = true;
+      }
+      if (forceUnbind) {
+        packMetadataUpdates.autoBound = false;
+      }
+
+      const packState = forceUnbind
+        ? QrCodeState.RESERVED
+        : autoBind
+          ? QrCodeState.BOUND
+          : updatedLabel.packQrCode.state === QrCodeState.BOUND
+            ? QrCodeState.BOUND
+            : QrCodeState.RESERVED;
+
       const packUpdateData: Prisma.QrCodeUpdateInput = {
-        state: autoBind ? QrCodeState.BOUND : updatedLabel.packQrCode.state === QrCodeState.BOUND ? QrCodeState.BOUND : QrCodeState.RESERVED,
+        state: packState,
         location:
           targetLocationId != null
             ? { connect: { id: targetLocationId } }
             : { disconnect: true },
-        metadata: mergeMetadata(updatedLabel.packQrCode.metadata, {
-          pairId: updatedLabel.pairId,
-          role: "PACK",
-          labelId: updatedLabel.id,
-          reservedPackInstanceId: assignment.packInstanceId,
-          reservedItemId: assignment.itemId,
-          batchId: assignment.batchId,
-          ...(autoBind ? { autoBound: true } : {}),
-        }),
+        metadata: mergeMetadata(updatedLabel.packQrCode.metadata, packMetadataUpdates),
       };
 
       if (autoBind) {
@@ -370,32 +415,57 @@ export async function reserveLabelsForPacks({
         packUpdateData.boundAt = now;
       }
 
+      if (forceUnbind) {
+        packUpdateData.boundBy = { disconnect: true };
+        packUpdateData.boundAt = null;
+      }
+
       const packQr = await tx.qrCode.update({
         where: { id: updatedLabel.packQrCodeId },
         data: packUpdateData,
       });
 
-      if (autoBind && packRecord) {
-        await tx.item.update({
-          where: { id: assignment.itemId },
-          data: { cardQrCodeId: updatedLabel.cardQrCodeId },
-        });
+      if (packRecord && slotItem) {
+        if (autoBind) {
+          await tx.item.update({
+            where: { id: assignment.itemId },
+            data: { cardQrCodeId: updatedLabel.cardQrCodeId },
+          });
 
-        const nextStatus =
-          packRecord.fulfillmentStatus === PackFulfillmentStatus.LOADED
-            ? PackFulfillmentStatus.LOADED
-            : PackFulfillmentStatus.PACKED;
+          const nextStatus =
+            packRecord.fulfillmentStatus === PackFulfillmentStatus.LOADED
+              ? PackFulfillmentStatus.LOADED
+              : PackFulfillmentStatus.PACKED;
 
-        await tx.packInstance.update({
-          where: { id: packRecord.id },
-          data: {
-            packQrCodeId: updatedLabel.packQrCodeId,
-            locationId: targetLocationId,
-            fulfillmentStatus: nextStatus,
-            packedAt: packRecord.packedAt ?? now,
-            packedById: createdById,
-          },
-        });
+          await tx.packInstance.update({
+            where: { id: packRecord.id },
+            data: {
+              packQrCodeId: updatedLabel.packQrCodeId,
+              locationId: targetLocationId,
+              fulfillmentStatus: nextStatus,
+              packedAt: packRecord.packedAt ?? now,
+              packedById: createdById,
+            },
+          });
+        }
+
+        if (forceUnbind) {
+          await tx.item.update({
+            where: { id: assignment.itemId },
+            data: { cardQrCodeId: null },
+          });
+
+          await tx.packInstance.update({
+            where: { id: packRecord.id },
+            data: {
+              packQrCodeId: null,
+              locationId: null,
+              fulfillmentStatus: PackFulfillmentStatus.READY_FOR_PACKING,
+              packedAt: null,
+              packedById: null,
+            },
+          });
+        }
       }
 
       await updateLabelBindingStatus(tx, updatedLabel.id);

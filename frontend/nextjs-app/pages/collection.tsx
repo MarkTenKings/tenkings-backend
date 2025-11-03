@@ -634,9 +634,9 @@ export default function CollectionPage() {
       </div>
 
       {modalItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-6 py-10">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto px-4 py-10 md:items-center md:px-6">
           <div className="absolute inset-0 bg-black/70" onClick={closeItemModal} />
-          <div className="relative z-10 w-full max-w-4xl rounded-3xl border border-white/10 bg-night-900/95 shadow-2xl">
+          <div className="relative z-10 w-full max-w-4xl rounded-3xl border border-white/10 bg-night-900/95 shadow-2xl md:max-h-[85vh] md:overflow-y-auto">
             <button
               type="button"
               onClick={closeItemModal}
