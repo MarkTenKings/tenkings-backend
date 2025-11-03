@@ -73,6 +73,8 @@ const TIER_LABELS: Record<string, string> = {
   TIER_500: "$500 Pack",
 };
 
+const CAMERA_STORAGE_KEY = "tenkings.adminUploads.cameraDeviceId";
+
 export default function AdminUploads() {
   const { session, loading, ensureSession, logout } = useSession();
   const [files, setFiles] = useState<File[]>([]);
@@ -97,6 +99,16 @@ export default function AdminUploads() {
   const [supportsZoom, setSupportsZoom] = useState(false);
   const [zoomBounds, setZoomBounds] = useState({ min: 1, max: 1, step: 0.1 });
   const [zoom, setZoom] = useState(1);
+  const [videoInputs, setVideoInputs] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    return window.localStorage.getItem(CAMERA_STORAGE_KEY);
+  });
+  const [devicesEnumerating, setDevicesEnumerating] = useState(false);
+  const [cameraLoading, setCameraLoading] = useState(false);
+  const [streamVersion, setStreamVersion] = useState(0);
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -151,6 +163,30 @@ export default function AdminUploads() {
     setBatchId(null);
   }, []);
 
+  const refreshVideoInputs = useCallback(async (): Promise<MediaDeviceInfo[]> => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
+      setVideoInputs([]);
+      return [];
+    }
+    setDevicesEnumerating(true);
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videos = devices.filter((device): device is MediaDeviceInfo => device.kind === "videoinput");
+      setVideoInputs(videos);
+      return videos;
+    } catch (error) {
+      console.warn("[admin/uploads] Failed to enumerate devices", error);
+      setVideoInputs([]);
+      return [];
+    } finally {
+      setDevicesEnumerating(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshVideoInputs();
+  }, [refreshVideoInputs]);
+
   const stopCameraStream = useCallback(() => {
     const stream = streamRef.current;
     if (stream) {
@@ -163,6 +199,121 @@ export default function AdminUploads() {
     setZoom(1);
     setCameraReady(false);
   }, []);
+
+  const startCameraStream = useCallback(
+    async (deviceId: string | null) => {
+      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+        setCameraError("Camera capture is not supported on this device.");
+        return false;
+      }
+
+      setCameraLoading(true);
+      setCameraReady(false);
+
+      stopCameraStream();
+
+      const highResConstraints: MediaTrackConstraints = deviceId
+        ? {
+            deviceId: { exact: deviceId },
+            width: { ideal: 3840 },
+            height: { ideal: 2160 },
+            frameRate: { ideal: 30 },
+          }
+        : {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1440 },
+          };
+
+      let activeDeviceId: string | null = deviceId;
+
+      try {
+        let stream: MediaStream | null = null;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: highResConstraints,
+            audio: false,
+          });
+        } catch (error) {
+          if (deviceId) {
+            console.warn("[admin/uploads] High resolution stream failed, falling back to default camera", error);
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: {
+                facingMode: { ideal: "environment" },
+                width: { ideal: 1920 },
+                height: { ideal: 1440 },
+              },
+              audio: false,
+            });
+            activeDeviceId = null;
+          } else {
+            throw error;
+          }
+        }
+
+        streamRef.current = stream;
+        const [track] = stream.getVideoTracks();
+        trackRef.current = track ?? null;
+
+        await refreshVideoInputs();
+
+        if (activeDeviceId) {
+          setSelectedDeviceId(activeDeviceId);
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(CAMERA_STORAGE_KEY, activeDeviceId);
+          }
+        } else if (typeof window !== "undefined") {
+          window.localStorage.removeItem(CAMERA_STORAGE_KEY);
+        }
+
+        if (track && typeof track.getCapabilities === "function") {
+          const capabilities = track.getCapabilities();
+          const zoomCap: any = (capabilities as any).zoom;
+          if (zoomCap && typeof zoomCap.min !== "undefined") {
+            const min = typeof zoomCap.min === "number" ? zoomCap.min : 1;
+            const max = typeof zoomCap.max === "number" ? zoomCap.max : min;
+            const step = typeof zoomCap.step === "number" && zoomCap.step > 0 ? zoomCap.step : 0.1;
+            const initial = (() => {
+              const settings = (track.getSettings?.() ?? {}) as MediaTrackSettings & { zoom?: number };
+              const settingZoom = typeof settings.zoom === "number" ? settings.zoom : null;
+              if (settingZoom !== null) {
+                return Math.min(max, Math.max(min, settingZoom));
+              }
+              if (typeof zoomCap.default === "number") {
+                return Math.min(max, Math.max(min, zoomCap.default));
+              }
+              return min;
+            })();
+            setSupportsZoom(max - min > 0.01);
+            setZoomBounds({ min, max, step });
+            setZoom(initial);
+            await applyTrackZoom(track, initial);
+          } else {
+            setSupportsZoom(false);
+            setZoomBounds({ min: 1, max: 1, step: 0.1 });
+            setZoom(1);
+          }
+        } else {
+          setSupportsZoom(false);
+          setZoomBounds({ min: 1, max: 1, step: 0.1 });
+          setZoom(1);
+        }
+
+        setCapturedBlob(null);
+        setCapturePreviewUrl(null);
+        setCameraError(null);
+        setStreamVersion((token) => token + 1);
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to access camera.";
+        setCameraError(message);
+        return false;
+      } finally {
+        setCameraLoading(false);
+      }
+    },
+    [refreshVideoInputs, stopCameraStream]
+  );
 
   const closeCamera = useCallback(() => {
     if (capturePreviewUrl) {
@@ -179,68 +330,55 @@ export default function AdminUploads() {
     if (cameraOpen) {
       return;
     }
-    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      setCameraError("Camera capture is not supported on this device.");
-      setCameraOpen(true);
-      return;
-    }
-    try {
-      setCameraReady(false);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1920 },
-          height: { ideal: 1440 },
-        },
-        audio: false,
-      });
-      streamRef.current = stream;
-      const [track] = stream.getVideoTracks();
-      trackRef.current = track ?? null;
+    const devices = await refreshVideoInputs();
 
-      if (track && typeof track.getCapabilities === "function") {
-        const capabilities = track.getCapabilities();
-        const zoomCap: any = (capabilities as any).zoom;
-        if (zoomCap && typeof zoomCap.min !== "undefined") {
-          const min = typeof zoomCap.min === "number" ? zoomCap.min : 1;
-          const max = typeof zoomCap.max === "number" ? zoomCap.max : min;
-          const step = typeof zoomCap.step === "number" && zoomCap.step > 0 ? zoomCap.step : 0.1;
-          const initial = (() => {
-            const settings = (track.getSettings?.() ?? {}) as MediaTrackSettings & { zoom?: number };
-            const settingZoom = typeof settings.zoom === "number" ? settings.zoom : null;
-            if (settingZoom !== null) {
-              return Math.min(max, Math.max(min, settingZoom));
-            }
-            if (typeof zoomCap.default === "number") {
-              return Math.min(max, Math.max(min, zoomCap.default));
-            }
-            return min;
-          })();
-          setSupportsZoom(max - min > 0.01);
-          setZoomBounds({ min, max, step });
-          setZoom(initial);
-          await applyTrackZoom(track, initial);
-        } else {
-          setSupportsZoom(false);
-          setZoomBounds({ min: 1, max: 1, step: 0.1 });
-          setZoom(1);
-        }
+    let initialDeviceId: string | null = null;
+    if (selectedDeviceId && devices.some((device) => device.deviceId === selectedDeviceId)) {
+      initialDeviceId = selectedDeviceId;
+    } else {
+      const stored = typeof window !== "undefined" ? window.localStorage.getItem(CAMERA_STORAGE_KEY) : null;
+      if (stored && devices.some((device) => device.deviceId === stored)) {
+        initialDeviceId = stored;
       } else {
-        setSupportsZoom(false);
-        setZoomBounds({ min: 1, max: 1, step: 0.1 });
-        setZoom(1);
+        const instaDevice = devices.find(
+          (device) => /insta360/i.test(device.label) && !/virtual/i.test(device.label)
+        );
+        if (instaDevice) {
+          initialDeviceId = instaDevice.deviceId;
+        } else if (devices.length > 0) {
+          initialDeviceId = devices[0].deviceId;
+        }
+      }
+    }
+
+    const success = await startCameraStream(initialDeviceId);
+    setCameraOpen(true);
+    if (!success) {
+      setCameraError((prev) => prev ?? "Unable to access camera.");
+    }
+  }, [cameraOpen, refreshVideoInputs, selectedDeviceId, startCameraStream]);
+
+  const handleCameraSelection = useCallback(
+    async (deviceId: string) => {
+      const nextId = deviceId || null;
+      setSelectedDeviceId(nextId);
+      if (typeof window !== "undefined") {
+        if (nextId) {
+          window.localStorage.setItem(CAMERA_STORAGE_KEY, nextId);
+        } else {
+          window.localStorage.removeItem(CAMERA_STORAGE_KEY);
+        }
       }
 
-      setCapturedBlob(null);
-      setCapturePreviewUrl(null);
-      setCameraError(null);
-      setCameraOpen(true);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to access camera.";
-      setCameraError(message);
-      setCameraOpen(true);
-    }
-  }, [cameraOpen]);
+      if (cameraOpen) {
+        const success = await startCameraStream(nextId);
+        if (!success) {
+          setCameraError("Failed to switch camera. Check the device connection.");
+        }
+      }
+    },
+    [cameraOpen, startCameraStream]
+  );
 
   const handleCapture = useCallback(async () => {
     const video = videoRef.current;
@@ -321,7 +459,7 @@ export default function AdminUploads() {
     if (video && stream) {
       video.srcObject = stream;
       const playResult = video.play();
-      if (playResult && typeof playResult.then === 'function') {
+      if (playResult && typeof playResult.then === "function") {
         playResult
           .then(() => setCameraReady(true))
           .catch(() => setCameraReady(true));
@@ -329,7 +467,7 @@ export default function AdminUploads() {
         setCameraReady(true);
       }
     }
-  }, [cameraOpen]);
+  }, [cameraOpen, streamVersion]);
 
   useEffect(() => {
     if (!cameraOpen) {
@@ -350,6 +488,24 @@ export default function AdminUploads() {
       stopCameraStream();
     };
   }, [capturePreviewUrl, stopCameraStream]);
+
+  useEffect(() => {
+    if (videoInputs.length === 0) {
+      return;
+    }
+    if (selectedDeviceId && videoInputs.some((device) => device.deviceId === selectedDeviceId)) {
+      return;
+    }
+    const stored = typeof window !== "undefined" ? window.localStorage.getItem(CAMERA_STORAGE_KEY) : null;
+    const preferredFromStorage = stored && videoInputs.some((device) => device.deviceId === stored) ? stored : null;
+    const instaDevice = videoInputs.find(
+      (device) => /insta360/i.test(device.label) && !/virtual/i.test(device.label)
+    );
+    const fallbackId = preferredFromStorage ?? instaDevice?.deviceId ?? videoInputs[0]?.deviceId ?? null;
+    if (fallbackId) {
+      setSelectedDeviceId(fallbackId);
+    }
+  }, [selectedDeviceId, videoInputs]);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -920,13 +1076,36 @@ export default function AdminUploads() {
                 )}
               </>
             )}
-            <button
-              type="button"
-              onClick={closeCamera}
-              className="pointer-events-auto absolute left-4 top-6 rounded-full border border-white/40 bg-black/60 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-100 backdrop-blur transition hover:border-white/60 hover:text-white"
-            >
-              Close
-            </button>
+            <div className="pointer-events-auto absolute left-4 top-6 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={closeCamera}
+                className="rounded-full border border-white/40 bg-black/60 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-100 backdrop-blur transition hover:border-white/60 hover:text-white"
+              >
+                Close
+              </button>
+            </div>
+            {videoInputs.length > 0 && (
+              <div className="pointer-events-auto absolute right-4 top-6 flex flex-col items-end gap-2 text-right text-[10px] uppercase tracking-[0.32em] text-slate-200">
+                <span>Camera</span>
+                <select
+                  value={selectedDeviceId ?? ""}
+                  onChange={(event) => handleCameraSelection(event.currentTarget.value)}
+                  disabled={devicesEnumerating || cameraLoading}
+                  className="min-w-[220px] rounded-full border border-white/30 bg-black/60 px-3 py-1 text-[10px] uppercase tracking-[0.28em] text-slate-100 outline-none transition hover:border-white/50"
+                >
+                  {videoInputs.map((device, index) => {
+                    const label = device.label || `Camera ${index + 1}`;
+                    return (
+                      <option key={device.deviceId} value={device.deviceId} className="text-black">
+                        {label}
+                      </option>
+                    );
+                  })}
+                </select>
+                {devicesEnumerating && <span className="text-[9px] text-slate-400">Refreshing…</span>}
+              </div>
+            )}
             {supportsZoom && !capturePreviewUrl && zoomBounds.max - zoomBounds.min > 0.01 && (
               <div className="pointer-events-auto absolute bottom-28 left-0 right-0 flex justify-center px-12">
                 <input
@@ -968,10 +1147,10 @@ export default function AdminUploads() {
               <button
                 type="button"
                 onClick={handleCapture}
-                disabled={!cameraReady}
+                disabled={!cameraReady || cameraLoading}
                 className="rounded-full border border-white/30 bg-white/10 px-10 py-3 text-xs uppercase tracking-[0.32em] text-slate-100 transition hover:border-white/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
-                Capture
+                {cameraLoading ? "Loading…" : "Capture"}
               </button>
             )}
           </div>
