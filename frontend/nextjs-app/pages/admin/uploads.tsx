@@ -75,6 +75,12 @@ export default function AdminUploads() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const trackRef = useRef<MediaStreamTrack | null>(null);
+
+  const [cameraReady, setCameraReady] = useState(false);
+  const [supportsZoom, setSupportsZoom] = useState(false);
+  const [zoomBounds, setZoomBounds] = useState({ min: 1, max: 1, step: 0.1 });
+  const [zoom, setZoom] = useState(1);
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -135,6 +141,11 @@ export default function AdminUploads() {
       stream.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
     }
+    trackRef.current = null;
+    setSupportsZoom(false);
+    setZoomBounds({ min: 1, max: 1, step: 0.1 });
+    setZoom(1);
+    setCameraReady(false);
   }, []);
 
   const closeCamera = useCallback(() => {
@@ -158,11 +169,58 @@ export default function AdminUploads() {
       return;
     }
     try {
+      setCameraReady(false);
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1440 },
+        },
         audio: false,
       });
       streamRef.current = stream;
+      const [track] = stream.getVideoTracks();
+      trackRef.current = track ?? null;
+
+      if (track && typeof track.getCapabilities === "function") {
+        const capabilities = track.getCapabilities();
+        const zoomCap: any = (capabilities as any).zoom;
+        if (zoomCap && typeof zoomCap.min !== "undefined") {
+          const min = typeof zoomCap.min === "number" ? zoomCap.min : 1;
+          const max = typeof zoomCap.max === "number" ? zoomCap.max : min;
+          const step = typeof zoomCap.step === "number" && zoomCap.step > 0 ? zoomCap.step : 0.1;
+          const initial = (() => {
+            const settings = (track.getSettings?.() ?? {}) as MediaTrackSettings & { zoom?: number };
+            const settingZoom = typeof settings.zoom === "number" ? settings.zoom : null;
+            if (settingZoom !== null) {
+              return Math.min(max, Math.max(min, settingZoom));
+            }
+            if (typeof zoomCap.default === "number") {
+              return Math.min(max, Math.max(min, zoomCap.default));
+            }
+            return min;
+          })();
+          setSupportsZoom(max - min > 0.01);
+          setZoomBounds({ min, max, step });
+          setZoom(initial);
+          if (typeof track.applyConstraints === "function") {
+            try {
+              await track.applyConstraints({ advanced: [{ zoom: initial }] });
+            } catch {
+              // ignore
+            }
+          }
+        } else {
+          setSupportsZoom(false);
+          setZoomBounds({ min: 1, max: 1, step: 0.1 });
+          setZoom(1);
+        }
+      } else {
+        setSupportsZoom(false);
+        setZoomBounds({ min: 1, max: 1, step: 0.1 });
+        setZoom(1);
+      }
+
       setCapturedBlob(null);
       setCapturePreviewUrl(null);
       setCameraError(null);
@@ -215,6 +273,7 @@ export default function AdminUploads() {
     setCapturePreviewUrl(null);
     setCapturedBlob(null);
     setCameraError(null);
+    setCameraReady(true);
   }, [capturePreviewUrl]);
 
   const handleConfirmCapture = useCallback(() => {
@@ -233,6 +292,17 @@ export default function AdminUploads() {
     appendFiles([file]);
     closeCamera();
   }, [appendFiles, capturedBlob, closeCamera]);
+  const handleZoomChange = useCallback((value: number) => {
+    setZoom(value);
+    const track = trackRef.current;
+    if (!track || typeof track.applyConstraints !== "function") {
+      return;
+    }
+    track
+      .applyConstraints({ advanced: [{ zoom: value }] })
+      .catch(() => undefined);
+  }, []);
+
 
   useEffect(() => {
     if (!cameraOpen) {
@@ -242,8 +312,26 @@ export default function AdminUploads() {
     const stream = streamRef.current;
     if (video && stream) {
       video.srcObject = stream;
-      video.play().catch(() => undefined);
+      const playResult = video.play();
+      if (playResult && typeof playResult.then === 'function') {
+        playResult
+          .then(() => setCameraReady(true))
+          .catch(() => setCameraReady(true));
+      } else {
+        setCameraReady(true);
+      }
     }
+  }, [cameraOpen]);
+
+  useEffect(() => {
+    if (!cameraOpen) {
+      return;
+    }
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
   }, [cameraOpen]);
 
   useEffect(() => {
@@ -796,68 +884,91 @@ export default function AdminUploads() {
       </div>
 
       {cameraOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-10">
-          <div className="absolute inset-0 bg-black/70" onClick={closeCamera} />
-          <div className="relative z-10 w-full max-w-3xl space-y-4 rounded-3xl border border-white/10 bg-night-900/95 p-6 shadow-2xl">
-            <div className="aspect-[4/3] w-full overflow-hidden rounded-2xl border border-white/10 bg-night-900/80">
-              {capturePreviewUrl && capturedBlob ? (
-                <img
-                  src={capturePreviewUrl}
-                  alt="Captured card preview"
-                  className="h-full w-full object-contain"
-                />
-              ) : (
+        <div className="fixed inset-0 z-50 flex flex-col bg-black">
+          <div className="absolute inset-0 bg-black" />
+          <div className="relative flex-1 overflow-hidden">
+            {capturePreviewUrl && capturedBlob ? (
+              <img
+                src={capturePreviewUrl}
+                alt="Captured card preview"
+                className="absolute inset-0 h-full w-full object-contain"
+              />
+            ) : (
+              <>
                 <video
                   ref={videoRef}
                   autoPlay
                   playsInline
                   muted
-                  className="h-full w-full object-cover"
+                  className="absolute inset-0 h-full w-full object-cover"
+                  onLoadedMetadata={() => setCameraReady(true)}
                 />
-              )}
-            </div>
-            {cameraError && (
-              <p className="text-sm text-rose-300">{cameraError}</p>
+                {!cameraReady && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="rounded-full border border-white/40 px-5 py-2 text-xs uppercase tracking-[0.28em] text-white/80">
+                      Initializing camera…
+                    </div>
+                  </div>
+                )}
+              </>
             )}
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <button
-                type="button"
-                onClick={closeCamera}
-                className="rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
-              >
-                Close
-              </button>
-              {capturedBlob ? (
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={handleRetake}
-                    className="rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
-                  >
-                    Retake
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmCapture}
-                    className="rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400"
-                  >
-                    Use photo
-                  </button>
-                </div>
-              ) : (
+            <button
+              type="button"
+              onClick={closeCamera}
+              className="pointer-events-auto absolute left-4 top-6 rounded-full border border-white/40 bg-black/60 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-100 backdrop-blur transition hover:border-white/60 hover:text-white"
+            >
+              Close
+            </button>
+            {supportsZoom && !capturePreviewUrl && zoomBounds.max - zoomBounds.min > 0.01 && (
+              <div className="pointer-events-auto absolute bottom-28 left-0 right-0 flex justify-center px-12">
+                <input
+                  type="range"
+                  min={zoomBounds.min}
+                  max={zoomBounds.max}
+                  step={zoomBounds.step}
+                  value={zoom}
+                  onChange={(event) => handleZoomChange(Number(event.currentTarget.value))}
+                  className="h-1 w-full max-w-md accent-emerald-400"
+                />
+              </div>
+            )}
+            {cameraError && (
+              <div className="pointer-events-none absolute top-24 left-1/2 w-[80%] max-w-sm -translate-x-1/2 rounded-2xl border border-rose-400/40 bg-rose-500/20 px-4 py-3 text-center text-xs uppercase tracking-[0.28em] text-rose-100">
+                {cameraError}
+              </div>
+            )}
+          </div>
+          <div className="relative flex items-center justify-center gap-10 bg-gradient-to-t from-black via-black/70 to-transparent px-6 pb-10 pt-8">
+            {capturedBlob ? (
+              <>
                 <button
                   type="button"
-                  onClick={handleCapture}
-                  className="rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                  onClick={handleRetake}
+                  className="rounded-full border border-white/30 bg-white/10 px-6 py-3 text-xs uppercase tracking-[0.32em] text-slate-100 transition hover:border-white/60 hover:text-white"
                 >
-                  Capture
+                  Retake
                 </button>
-              )}
-            </div>
+                <button
+                  type="button"
+                  onClick={handleConfirmCapture}
+                  className="rounded-full border border-gold-500/70 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400"
+                >
+                  Use photo
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={handleCapture}
+                disabled={!cameraReady}
+                className="rounded-full border border-white/30 bg-white/10 px-10 py-3 text-xs uppercase tracking-[0.32em] text-slate-100 transition hover:border-white/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Capture
+              </button>
+            )}
           </div>
         </div>
       )}
-
       <canvas ref={canvasRef} className="hidden" />
 
       {submitting && (

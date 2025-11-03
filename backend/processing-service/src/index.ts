@@ -111,30 +111,36 @@ async function saveAssetBuffer(
 }
 
 async function normalizeStandardImage(buffer: Buffer): Promise<Buffer> {
-  const metadata = await sharp(buffer).metadata();
-  const baseWidth = metadata.width ?? 0;
-  const baseHeight = metadata.height ?? 0;
-  const reference = Math.max(baseWidth, baseHeight, 1);
-  const padding = Math.max(8, Math.round(reference * 0.05));
-
-  return sharp(buffer)
+  const transparent = { r: 0, g: 0, b: 0, alpha: 0 } as const;
+  const pipeline = sharp(buffer)
     .rotate()
-    .extend({
-      top: padding,
-      bottom: padding,
-      left: padding,
-      right: padding,
-      background: { r: 255, g: 255, b: 255 },
-    })
+    .ensureAlpha()
     .resize({
       width: 1600,
       height: 1600,
       fit: "inside",
       withoutEnlargement: true,
+      background: transparent,
+    });
+
+  const meta = await pipeline.clone().metadata();
+  const width = meta.width ?? 1;
+  const height = meta.height ?? 1;
+  const longest = Math.max(width, height, 1);
+  const padding = Math.max(8, Math.round(longest * 0.05));
+
+  return pipeline
+    .extend({
+      top: padding,
+      bottom: padding,
+      left: padding,
+      right: padding,
+      background: transparent,
     })
-    .jpeg({ quality: 92, chromaSubsampling: "4:4:4" })
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
     .toBuffer();
 }
+
 
 async function handlePhotoroomJob(job: ProcessingJob) {
   const asset = await prisma.cardAsset.findUnique({ where: { id: job.cardAssetId } });
@@ -164,7 +170,7 @@ async function handlePhotoroomJob(job: ProcessingJob) {
     normalizedBuffer = processedBuffer;
   }
 
-  const mimeType = "image/jpeg";
+  const mimeType = "image/png";
   const imageUrl = await saveAssetBuffer(asset, normalizedBuffer, mimeType);
 
   await prisma.$transaction(
