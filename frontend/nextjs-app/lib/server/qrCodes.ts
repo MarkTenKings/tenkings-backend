@@ -323,7 +323,10 @@ export async function reserveLabelsForPacks({
 
       const cardUpdateData: Prisma.QrCodeUpdateInput = {
         state: autoBind ? QrCodeState.BOUND : updatedLabel.cardQrCode.state === QrCodeState.BOUND ? QrCodeState.BOUND : QrCodeState.RESERVED,
-        locationId: targetLocationId,
+        location:
+          targetLocationId != null
+            ? { connect: { id: targetLocationId } }
+            : { disconnect: true },
         metadata: mergeMetadata(updatedLabel.cardQrCode.metadata, {
           pairId: updatedLabel.pairId,
           role: "CARD",
@@ -347,7 +350,10 @@ export async function reserveLabelsForPacks({
 
       const packUpdateData: Prisma.QrCodeUpdateInput = {
         state: autoBind ? QrCodeState.BOUND : updatedLabel.packQrCode.state === QrCodeState.BOUND ? QrCodeState.BOUND : QrCodeState.RESERVED,
-        locationId: targetLocationId,
+        location:
+          targetLocationId != null
+            ? { connect: { id: targetLocationId } }
+            : { disconnect: true },
         metadata: mergeMetadata(updatedLabel.packQrCode.metadata, {
           pairId: updatedLabel.pairId,
           role: "PACK",
