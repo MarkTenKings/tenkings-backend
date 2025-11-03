@@ -67,4 +67,6 @@ export const config = {
   sportsDbApiKey: process.env.SPORTSDB_API_KEY ?? null,
   sportsDbBaseUrl: process.env.SPORTSDB_BASE_URL ?? "https://www.thesportsdb.com/api/v2/json",
   sportsDbSyncStats: (process.env.SPORTSDB_SYNC_STATS ?? "true").toLowerCase() !== "false",
+  photoroomApiKey: process.env.PHOTOROOM_API_KEY ?? null,
+  photoroomApiUrl: process.env.PHOTOROOM_API_URL ?? null,
 };

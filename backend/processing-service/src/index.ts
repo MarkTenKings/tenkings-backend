@@ -25,6 +25,7 @@ import { extractTextFromImage } from "./processors/vision";
 import { estimateValue } from "./processors/valuation";
 import { classifyAsset } from "./processors/ximilar";
 import { gradeCard } from "./processors/grading";
+import { runPhotoroom } from "./processors/photoroom";
 
 const JSON_NULL = null as unknown as Prisma.NullableJsonNullValueInput;
 const TRANSACTION_TIMEOUT_MS =
@@ -88,6 +89,112 @@ async function persistThumbnail(buffer: Buffer, storageKey: string): Promise<str
 
   console.warn(`[processing-service] storage mode ${config.storageMode} not supported for thumbnails; using data URI fallback`);
   return `data:image/webp;base64,${buffer.toString("base64")}`;
+}
+
+async function saveAssetBuffer(
+  asset: { storageKey: string; imageUrl: string | null },
+  buffer: Buffer,
+  mimeType: string
+): Promise<string | null> {
+  if (config.storageMode === "mock") {
+    return `data:${mimeType};base64,${buffer.toString("base64")}`;
+  }
+
+  if (config.storageMode === "local") {
+    const filePath = path.join(config.localStorageRoot, asset.storageKey);
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, buffer);
+    return asset.imageUrl;
+  }
+
+  throw new Error(`Storage mode ${config.storageMode} not yet supported for asset writes`);
+}
+
+async function normalizeStandardImage(buffer: Buffer): Promise<Buffer> {
+  const metadata = await sharp(buffer).metadata();
+  const baseWidth = metadata.width ?? 0;
+  const baseHeight = metadata.height ?? 0;
+  const reference = Math.max(baseWidth, baseHeight, 1);
+  const padding = Math.max(8, Math.round(reference * 0.05));
+
+  return sharp(buffer)
+    .rotate()
+    .extend({
+      top: padding,
+      bottom: padding,
+      left: padding,
+      right: padding,
+      background: { r: 255, g: 255, b: 255 },
+    })
+    .resize({
+      width: 1600,
+      height: 1600,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .jpeg({ quality: 92, chromaSubsampling: "4:4:4" })
+    .toBuffer();
+}
+
+async function handlePhotoroomJob(job: ProcessingJob) {
+  const asset = await prisma.cardAsset.findUnique({ where: { id: job.cardAssetId } });
+  if (!asset) {
+    throw new Error(`Card asset ${job.cardAssetId} missing`);
+  }
+
+  const originalBuffer = await loadAssetBuffer(asset);
+
+  let processedBuffer = originalBuffer;
+  if (config.photoroomApiKey) {
+    try {
+      processedBuffer = await runPhotoroom(originalBuffer);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`[processing-service] PHOTOROOM fallback asset=${asset.id}: ${message}`);
+      processedBuffer = originalBuffer;
+    }
+  }
+
+  let normalizedBuffer = processedBuffer;
+  try {
+    normalizedBuffer = await normalizeStandardImage(processedBuffer);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[processing-service] normalization failed for asset ${asset.id}: ${message}`);
+    normalizedBuffer = processedBuffer;
+  }
+
+  const mimeType = "image/jpeg";
+  const imageUrl = await saveAssetBuffer(asset, normalizedBuffer, mimeType);
+
+  await prisma.$transaction(
+    async (tx) => {
+      const updateData: Prisma.CardAssetUpdateInput = {
+        status: CardAssetStatus.OCR_PENDING,
+        processingStartedAt: new Date(),
+        processingCompletedAt: null,
+        errorMessage: null,
+        fileSize: normalizedBuffer.length,
+        mimeType,
+      };
+      if (imageUrl) {
+        (updateData as any).imageUrl = imageUrl;
+      }
+
+      await tx.cardAsset.update({
+        where: { id: asset.id },
+        data: updateData,
+      });
+
+      await enqueueProcessingJob({
+        client: tx,
+        cardAssetId: asset.id,
+        type: ProcessingJobType.OCR,
+        payload: { sourceJobId: job.id },
+      });
+    },
+    { timeout: TRANSACTION_TIMEOUT_MS }
+  );
 }
 
 
@@ -414,6 +521,9 @@ async function handleValuationJob(job: ProcessingJob) {
 
 async function processJob(job: ProcessingJob) {
   switch (job.type) {
+    case ProcessingJobType.PHOTOROOM:
+      await handlePhotoroomJob(job);
+      break;
     case ProcessingJobType.OCR:
       await handleOcrJob(job);
       break;

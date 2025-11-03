@@ -45,8 +45,10 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
       return res.status(403).json({ message: "You do not own this batch" });
     }
 
+    const photoroomEnabled = Boolean((process.env.PHOTOROOM_API_KEY ?? "").trim());
+
     const updates: Prisma.CardAssetUpdateInput = {
-      status: CardAssetStatus.OCR_PENDING,
+      status: photoroomEnabled ? CardAssetStatus.UPLOADED : CardAssetStatus.OCR_PENDING,
       processingStartedAt: null,
       processingCompletedAt: null,
       errorMessage: null,
@@ -73,7 +75,7 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
       await enqueueProcessingJob({
         client: tx,
         cardAssetId: asset.id,
-        type: ProcessingJobType.OCR,
+        type: photoroomEnabled ? ProcessingJobType.PHOTOROOM : ProcessingJobType.OCR,
       });
     });
 

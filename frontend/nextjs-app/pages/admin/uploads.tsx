@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
@@ -68,6 +68,14 @@ export default function AdminUploads() {
   const [batchesLoading, setBatchesLoading] = useState(false);
   const [batchesError, setBatchesError] = useState<string | null>(null);
 
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [capturedBlob, setCapturedBlob] = useState<Blob | null>(null);
+  const [capturePreviewUrl, setCapturePreviewUrl] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
     if (!raw) {
@@ -110,6 +118,142 @@ export default function AdminUploads() {
     const errors = results.filter((result) => result.status === "error").length;
     return { total, completed, errors };
   }, [results, files]);
+
+  const appendFiles = useCallback((newFiles: File[]) => {
+    if (!newFiles.length) {
+      return;
+    }
+    setFiles((prev) => [...prev, ...newFiles]);
+    setResults([]);
+    setFlash(null);
+    setBatchId(null);
+  }, []);
+
+  const stopCameraStream = useCallback(() => {
+    const stream = streamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+  }, []);
+
+  const closeCamera = useCallback(() => {
+    if (capturePreviewUrl) {
+      URL.revokeObjectURL(capturePreviewUrl);
+    }
+    setCapturePreviewUrl(null);
+    setCapturedBlob(null);
+    setCameraError(null);
+    setCameraOpen(false);
+    stopCameraStream();
+  }, [capturePreviewUrl, stopCameraStream]);
+
+  const openCamera = useCallback(async () => {
+    if (cameraOpen) {
+      return;
+    }
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setCameraError("Camera capture is not supported on this device.");
+      setCameraOpen(true);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      streamRef.current = stream;
+      setCapturedBlob(null);
+      setCapturePreviewUrl(null);
+      setCameraError(null);
+      setCameraOpen(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unable to access camera.";
+      setCameraError(message);
+      setCameraOpen(true);
+    }
+  }, [cameraOpen]);
+
+  const handleCapture = useCallback(async () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) {
+      setCameraError("Camera not ready yet.");
+      return;
+    }
+    const { videoWidth, videoHeight } = video;
+    if (!videoWidth || !videoHeight) {
+      setCameraError("Camera is warming up—try again.");
+      return;
+    }
+    canvas.width = videoWidth;
+    canvas.height = videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setCameraError("Canvas not supported in this browser.");
+      return;
+    }
+    context.drawImage(video, 0, 0, videoWidth, videoHeight);
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.92)
+    );
+    if (!blob) {
+      setCameraError("Failed to capture image.");
+      return;
+    }
+    if (capturePreviewUrl) {
+      URL.revokeObjectURL(capturePreviewUrl);
+    }
+    setCapturedBlob(blob);
+    setCapturePreviewUrl(URL.createObjectURL(blob));
+  }, [capturePreviewUrl]);
+
+  const handleRetake = useCallback(() => {
+    if (capturePreviewUrl) {
+      URL.revokeObjectURL(capturePreviewUrl);
+    }
+    setCapturePreviewUrl(null);
+    setCapturedBlob(null);
+    setCameraError(null);
+  }, [capturePreviewUrl]);
+
+  const handleConfirmCapture = useCallback(() => {
+    if (!capturedBlob) {
+      setCameraError("Capture an image first.");
+      return;
+    }
+    const mime = capturedBlob.type || "image/jpeg";
+    const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const fileName = `capture-${timestamp}.${extension}`;
+    const file = new File([capturedBlob], fileName, {
+      type: mime,
+      lastModified: Date.now(),
+    });
+    appendFiles([file]);
+    closeCamera();
+  }, [appendFiles, capturedBlob, closeCamera]);
+
+  useEffect(() => {
+    if (!cameraOpen) {
+      return;
+    }
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (video && stream) {
+      video.srcObject = stream;
+      video.play().catch(() => undefined);
+    }
+  }, [cameraOpen]);
+
+  useEffect(() => {
+    return () => {
+      if (capturePreviewUrl) {
+        URL.revokeObjectURL(capturePreviewUrl);
+      }
+      stopCameraStream();
+    };
+  }, [capturePreviewUrl, stopCameraStream]);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -174,14 +318,10 @@ export default function AdminUploads() {
   }, [fetchBatches]);
 
   const onFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (!event.target.files) {
-      setFiles([]);
-      return;
+    if (event.target.files) {
+      appendFiles(Array.from(event.target.files));
+      event.target.value = "";
     }
-    setFiles(Array.from(event.target.files));
-    setResults([]);
-    setFlash(null);
-    setBatchId(null);
   };
 
   const resolveApiUrl = useCallback(
@@ -488,6 +628,17 @@ export default function AdminUploads() {
 
         <section className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-night-900/70 p-6">
           <form className="flex flex-col gap-4" onSubmit={submitUploads}>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void openCamera()}
+                disabled={submitting}
+                className="rounded-full border border-white/15 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {cameraOpen ? "Camera active" : "Open camera"}
+              </button>
+              <span className="text-xs text-slate-500">Capture card photos directly from this device.</span>
+            </div>
             <label className="flex flex-col gap-2 text-sm uppercase tracking-[0.24em] text-slate-300">
               Select card images
               <input
@@ -500,7 +651,7 @@ export default function AdminUploads() {
             </label>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || files.length === 0}
               className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.3em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/20 disabled:bg-white/10 disabled:text-slate-500"
             >
               {submitting
@@ -521,8 +672,8 @@ export default function AdminUploads() {
             <div className="space-y-3">
               <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Selected files</p>
               <ul className="grid gap-2 text-sm text-slate-300">
-                {files.map((file) => (
-                  <li key={file.name} className="rounded-2xl border border-white/10 bg-night-800/70 px-4 py-3">
+                {files.map((file, index) => (
+                  <li key={`${file.name}-${index}`} className="rounded-2xl border border-white/10 bg-night-800/70 px-4 py-3">
                     {file.name} <span className="text-xs text-slate-500">· {Math.round(file.size / 1024)} KB</span>
                   </li>
                 ))}
@@ -643,6 +794,72 @@ export default function AdminUploads() {
           )}
         </section>
       </div>
+
+      {cameraOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-10">
+          <div className="absolute inset-0 bg-black/70" onClick={closeCamera} />
+          <div className="relative z-10 w-full max-w-3xl space-y-4 rounded-3xl border border-white/10 bg-night-900/95 p-6 shadow-2xl">
+            <div className="aspect-[4/3] w-full overflow-hidden rounded-2xl border border-white/10 bg-night-900/80">
+              {capturePreviewUrl && capturedBlob ? (
+                <img
+                  src={capturePreviewUrl}
+                  alt="Captured card preview"
+                  className="h-full w-full object-contain"
+                />
+              ) : (
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  muted
+                  className="h-full w-full object-cover"
+                />
+              )}
+            </div>
+            {cameraError && (
+              <p className="text-sm text-rose-300">{cameraError}</p>
+            )}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <button
+                type="button"
+                onClick={closeCamera}
+                className="rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
+              >
+                Close
+              </button>
+              {capturedBlob ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleRetake}
+                    className="rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                  >
+                    Retake
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmCapture}
+                    className="rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400"
+                  >
+                    Use photo
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleCapture}
+                  className="rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                >
+                  Capture
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <canvas ref={canvasRef} className="hidden" />
+
       {submitting && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-night-900/60 backdrop-blur-sm">
           <div className="rounded-3xl border border-white/10 bg-night-900/90 px-8 py-6 text-center text-slate-100">

@@ -87,6 +87,7 @@ enum CardAssetStatus {
 }
 
 enum ProcessingJobType {
+  PHOTOROOM
   OCR
   CLASSIFY
   VALUATION
