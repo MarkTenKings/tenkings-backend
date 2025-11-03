@@ -3,6 +3,24 @@ import QRCode from "qrcode";
 import { PackLabelStatus } from "@tenkings/database";
 import type { PackLabelSummary, QrCodeSummary } from "./qrCodes";
 
+const imageCache = new Map<string, Buffer>();
+
+async function fetchImageBuffer(url: string | null | undefined): Promise<Buffer | null> {
+  if (!url) {
+    return null;
+  }
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      return null;
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    return Buffer.from(arrayBuffer);
+  } catch {
+    return null;
+  }
+}
+
 type PdfDoc = InstanceType<typeof PDFDocument>;
 
 const mmToPoints = (mm: number) => (mm / 25.4) * 72;
@@ -68,10 +86,21 @@ export async function generateLabelSheetPdf(options: GenerateLabelSheetOptions):
 
     renderHeader(doc, entry, index, labels.length, generatedAt, generatedBy ?? undefined);
 
+    let imageBuffer: Buffer | null = null;
+    if (entry.item?.imageUrl) {
+      imageBuffer = imageCache.get(entry.item.imageUrl) ?? null;
+      if (!imageBuffer) {
+        imageBuffer = await fetchImageBuffer(entry.item.imageUrl);
+        if (imageBuffer) {
+          imageCache.set(entry.item.imageUrl, imageBuffer);
+        }
+      }
+    }
+
     const frontY = doc.page.margins.top + HEADER_OFFSET;
     const backY = frontY + LABEL_HEIGHT + LABEL_GAP;
 
-    drawFrontLabel(doc, entry, labelX, frontY);
+    drawFrontLabel(doc, entry, labelX, frontY, imageBuffer);
     await drawBackLabel(doc, entry, labelX, backY);
   }
 
@@ -118,7 +147,7 @@ const renderHeader = (
     });
 };
 
-const drawFrontLabel = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number) => {
+const drawFrontLabel = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number, image?: Buffer | null) => {
   const outerGradient = doc.linearGradient(x, y, x + LABEL_WIDTH, y + LABEL_HEIGHT);
   outerGradient.stop(0, "#111723").stop(1, "#1f2836");
 
@@ -151,12 +180,16 @@ const drawFrontLabel = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: n
   const cardTitle = entry.item?.name ?? "Pending metadata";
   const cardSubtitle = entry.item ? `Item ${entry.item.id.slice(0, 8)}…` : "Assign card metadata";
 
+  const imageSize = LABEL_HEIGHT - 8;
+  const imageX = x + LABEL_WIDTH - imageSize - 6;
+  const textWidth = imageX - (x + 6);
+
   doc
     .font("Helvetica-Bold")
     .fontSize(12)
     .fillColor("#f0f4ff")
     .text(cardTitle, x + 6, y + 12, {
-      width: LABEL_WIDTH - 52,
+      width: textWidth,
       lineGap: 2,
     });
 
@@ -164,14 +197,14 @@ const drawFrontLabel = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: n
     .font("Helvetica")
     .fontSize(9)
     .fillColor(COLOR_SLATE)
-    .text(`Pair ${entry.pairId}`, x + 6, y + 26);
+    .text(`Pair ${entry.pairId}`, x + 6, y + 26, { width: textWidth });
 
   doc
     .font("Helvetica")
     .fontSize(8)
     .fillColor(COLOR_MUTED)
     .text(cardSubtitle, x + 6, y + 31, {
-      width: LABEL_WIDTH - 54,
+      width: textWidth,
     });
 
   doc
@@ -179,7 +212,7 @@ const drawFrontLabel = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: n
     .fontSize(8)
     .fillColor(COLOR_MUTED)
     .text(`Card QR ${entry.card.code}`, x + 6, y + 39, {
-      width: LABEL_WIDTH - 54,
+      width: textWidth,
     });
 
   doc
@@ -187,49 +220,34 @@ const drawFrontLabel = (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: n
     .fontSize(8)
     .fillColor(COLOR_MUTED)
     .text(`Pack QR ${entry.pack.code}`, x + 6, y + 45, {
-      width: LABEL_WIDTH - 54,
+      width: textWidth,
     });
 
-  const gradeBoxWidth = 38;
-  const gradeBoxHeight = 24;
-  const gradeX = x + LABEL_WIDTH - gradeBoxWidth - 6;
-  const gradeY = y + 12;
-
-  const gradeGradient = doc.linearGradient(gradeX, gradeY, gradeX + gradeBoxWidth, gradeY + gradeBoxHeight);
-  gradeGradient.stop(0, COLOR_ACCENT_DARK).stop(1, COLOR_ACCENT);
-
-  doc.save();
-  doc.roundedRect(gradeX, gradeY, gradeBoxWidth, gradeBoxHeight, 4).fill(gradeGradient);
-  doc.restore();
-
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(16)
-    .fillColor(COLOR_GOLD)
-    .text("--", gradeX, gradeY + 2, {
-      width: gradeBoxWidth,
+  if (image) {
+    doc.save();
+    doc
+      .roundedRect(imageX - 2, y + 4, imageSize + 4, imageSize + 4, 6)
+      .fill("#0f1729");
+    doc.restore();
+    doc.image(image, imageX, y + (LABEL_HEIGHT - imageSize) / 2, {
+      fit: [imageSize, imageSize],
       align: "center",
+      valign: "center",
     });
+  }
 
   doc
     .font("Helvetica")
     .fontSize(7)
-    .fillColor(COLOR_SLATE)
-    .text("GRADE", gradeX, gradeY + gradeBoxHeight - 10, {
-      width: gradeBoxWidth,
-      align: "center",
-      characterSpacing: 1.1,
-    });
-
-  doc
-    .font("Helvetica")
-    .fontSize(6)
     .fillColor(COLOR_META)
-    .text(entry.label.status === PackLabelStatus.BOUND ? "BOUND" : "RESERVED", gradeX, gradeY + gradeBoxHeight - 4.5, {
-      width: gradeBoxWidth,
-      align: "center",
-      characterSpacing: 1.3,
-    });
+    .text(
+      entry.label.status === PackLabelStatus.BOUND ? "Label status: Bound" : "Label status: Reserved",
+      x + 6,
+      y + LABEL_HEIGHT - 8,
+      {
+        width: textWidth,
+      }
+    );
 };
 
 const drawBackLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number, y: number) => {
@@ -246,60 +264,79 @@ const drawBackLabel = async (doc: PdfDoc, entry: PrintableLabelEntry, x: number,
     .fill(COLOR_DARK);
   doc.restore();
 
-  const qrSize = LABEL_HEIGHT - 12;
-  const qrX = x + 6;
-  const qrY = y + (LABEL_HEIGHT - qrSize) / 2;
-  const qrTarget = entry.card.payloadUrl ?? entry.card.code;
+  const qrSize = LABEL_HEIGHT - 18;
+  const cardQrX = x + 6;
+  const cardQrY = y + 6;
+  const packQrX = cardQrX + qrSize + 8;
+  const packQrY = cardQrY;
 
-  const qrBuffer = await QRCode.toBuffer(qrTarget, {
-    errorCorrectionLevel: "M",
+  const cardTarget = entry.card.payloadUrl ?? entry.card.code;
+  const packTarget = entry.pack.payloadUrl ?? entry.pack.code;
+
+  const qrOptions = {
+    errorCorrectionLevel: "M" as const,
     margin: 1,
     width: Math.max(256, Math.round(qrSize * 6)),
-  });
+  };
 
-  doc.image(qrBuffer, qrX, qrY, { fit: [qrSize, qrSize] });
+  const [cardQrBuffer, packQrBuffer] = await Promise.all([
+    QRCode.toBuffer(cardTarget, qrOptions),
+    QRCode.toBuffer(packTarget, qrOptions),
+  ]);
 
-  const textX = qrX + qrSize + 10;
-  const textWidth = LABEL_WIDTH - (textX - x) - 6;
+  doc.image(cardQrBuffer, cardQrX, cardQrY, { fit: [qrSize, qrSize] });
+  doc.image(packQrBuffer, packQrX, packQrY, { fit: [qrSize, qrSize] });
 
   doc
     .font("Helvetica-Bold")
-    .fontSize(9)
+    .fontSize(8)
     .fillColor(COLOR_GOLD)
-    .text("SCAN FOR CARD PROFILE", textX, y + 10, {
-      width: textWidth,
+    .text("SCAN TO CLAIM, SAVE, & SELL", x + 6, cardQrY + qrSize + 6, {
+      width: LABEL_WIDTH - 12,
+      align: "center",
       characterSpacing: 0.6,
     });
 
+  const infoY = cardQrY + qrSize + 18;
+
   doc
     .font("Helvetica")
-    .fontSize(7.5)
+    .fontSize(7)
     .fillColor(COLOR_SLATE)
-    .text(qrTarget, textX, y + 22, {
-      width: textWidth,
+    .text(`Card: ${cardTarget}`, x + 6, infoY, {
+      width: LABEL_WIDTH - 12,
     });
 
   doc
     .font("Helvetica")
     .fontSize(7)
-    .fillColor(COLOR_MUTED)
-    .text(`Card Serial ${entry.card.serial ?? "pending"}`, textX, y + 34, {
-      width: textWidth,
+    .fillColor(COLOR_SLATE)
+    .text(`Pack: ${packTarget}`, x + 6, infoY + 8, {
+      width: LABEL_WIDTH - 12,
     });
 
   doc
     .font("Helvetica")
-    .fontSize(7)
+    .fontSize(6.5)
     .fillColor(COLOR_MUTED)
-    .text(`Pack Serial ${entry.pack.serial ?? "pending"}`, textX, y + 42, {
-      width: textWidth,
+    .text(`Card Serial ${entry.card.serial ?? "pending"}`, x + 6, infoY + 18, {
+      width: LABEL_WIDTH - 12,
+    });
+
+  doc
+    .font("Helvetica")
+    .fontSize(6.5)
+    .fillColor(COLOR_MUTED)
+    .text(`Pack Serial ${entry.pack.serial ?? "pending"}`, x + 6, infoY + 26, {
+      width: LABEL_WIDTH - 12,
     });
 
   doc
     .font("Helvetica")
     .fontSize(6)
     .fillColor(COLOR_META)
-    .text("Temporary label preview · Final artwork coming soon", textX, y + LABEL_HEIGHT - 8, {
-      width: textWidth,
+    .text("Temporary label preview · Final artwork coming soon", x + 6, y + LABEL_HEIGHT - 8, {
+      width: LABEL_WIDTH - 12,
+      align: "center",
     });
 };

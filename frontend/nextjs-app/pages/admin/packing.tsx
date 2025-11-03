@@ -6,7 +6,7 @@ import AppShell from "../../components/AppShell";
 import { useSession } from "../../hooks/useSession";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
-import { BatchStage, PackFulfillmentStatus } from "@tenkings/database";
+import { BatchStage, PackFulfillmentStatus, QrCodeState } from "@tenkings/database";
 
 const ONLINE_OPTION = "ONLINE";
 
@@ -68,10 +68,19 @@ type TimelineEvent = {
   actor: { id: string; label: string } | null;
 };
 
+type QrSummary = {
+  id: string;
+  code: string;
+  serial: string | null;
+  payloadUrl: string | null;
+  state: QrCodeState;
+};
+
 type PackRow = {
   id: string;
   createdAt: string;
   fulfillmentStatus: PackFulfillmentStatus;
+  packQrCodeId: string | null;
   packDefinition: {
     id: string;
     name: string;
@@ -87,18 +96,8 @@ type PackRow = {
     id: string;
     status: string;
     pairId: string;
-    card: {
-      id: string;
-      code: string;
-      serial: string | null;
-      payloadUrl: string | null;
-    };
-    pack: {
-      id: string;
-      code: string;
-      serial: string | null;
-      payloadUrl: string | null;
-    };
+    card: QrSummary;
+    pack: QrSummary;
   } | null;
 };
 
@@ -247,6 +246,7 @@ export default function AdminPackingConsole() {
   const [selectedLocationId, setSelectedLocationId] = useState<string>(ONLINE_OPTION);
 
   const [batchDetail, setBatchDetail] = useState<BatchDetail | null>(null);
+  const [selectedPackIds, setSelectedPackIds] = useState<string[]>([]);
   const [locationLoading, setLocationLoading] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
@@ -406,12 +406,43 @@ export default function AdminPackingConsole() {
     void fetchBatchDetail();
   }, [fetchBatchDetail, isAdmin, session?.token]);
 
+  useEffect(() => {
+    if (!batchDetail) {
+      setSelectedPackIds([]);
+      return;
+    }
+    setSelectedPackIds((previous) => {
+      if (!previous.length) {
+        return batchDetail.packs.map((pack) => pack.id);
+      }
+      const available = batchDetail.packs.map((pack) => pack.id);
+      const retained = available.filter((id) => previous.includes(id));
+      return retained.length > 0 ? retained : available;
+    });
+  }, [batchDetail]);
+
   const activePack = useMemo(() => {
     if (!batchDetail || !activePackId) {
       return null;
     }
     return batchDetail.packs.find((pack) => pack.id === activePackId) ?? null;
   }, [activePackId, batchDetail]);
+
+  const cardIsBound = useMemo(() => {
+    if (!activePack || !activePack.item || !activePack.label) {
+      return false;
+    }
+    return (
+      activePack.item.cardQrCodeId === activePack.label.card.id && activePack.label.card.state === QrCodeState.BOUND
+    );
+  }, [activePack]);
+
+  const packIsBound = useMemo(() => {
+    if (!activePack || !activePack.label) {
+      return false;
+    }
+    return activePack.packQrCodeId === activePack.label.pack.id && activePack.label.pack.state === QrCodeState.BOUND;
+  }, [activePack]);
 
   const registerDownload = useCallback((base64: string, filename: string) => {
     if (downloadUrlRef.current) {
@@ -429,11 +460,34 @@ export default function AdminPackingConsole() {
     setPrintDownload({ url, filename });
   }, []);
 
+  const togglePackSelection = useCallback((packId: string) => {
+    setSelectedPackIds((previous) =>
+      previous.includes(packId) ? previous.filter((id) => id !== packId) : [...previous, packId]
+    );
+  }, []);
+
+  const selectAllPacks = useCallback(() => {
+    if (!batchDetail) {
+      return;
+    }
+    setSelectedPackIds(batchDetail.packs.map((pack) => pack.id));
+  }, [batchDetail]);
+
+  const clearPackSelection = useCallback(() => {
+    setSelectedPackIds([]);
+  }, []);
+
   const handleDownloadLabels = useCallback(async () => {
     if (!batchDetail || !session?.token || !isAdmin) {
       return;
     }
+    if (selectedPackIds.length === 0) {
+      setPackStatus({ type: "error", message: "Select at least one pack before downloading labels." });
+      return;
+    }
+
     const labelIds = batchDetail.packs
+      .filter((pack) => selectedPackIds.includes(pack.id))
       .map((pack) => pack.label?.id)
       .filter((value): value is string => Boolean(value));
     if (labelIds.length === 0) {
@@ -461,7 +515,7 @@ export default function AdminPackingConsole() {
     } finally {
       setPrintSubmitting(false);
     }
-  }, [adminHeaders, batchDetail, isAdmin, registerDownload, session?.token]);
+  }, [adminHeaders, batchDetail, isAdmin, registerDownload, selectedPackIds, session?.token]);
 
   const refreshAllData = useCallback(async () => {
     await Promise.all([fetchStats(), fetchBatchDetail()]);
@@ -872,7 +926,9 @@ export default function AdminPackingConsole() {
                             <p className="text-sm text-slate-100">{activePack.item?.name ?? "Pending metadata"}</p>
                             <p className="text-xs text-slate-500">Item {activePack.item?.id.slice(0, 8) ?? "—"}</p>
                             <p className="mt-2 text-xs text-slate-300">
-                              {activePack.item?.cardQrCodeId ? "Card QR bound" : "Needs card QR"}
+                              {cardIsBound
+                                ? `Card QR ${activePack.label?.card.serial ?? activePack.label?.card.code} auto-bound`
+                                : "Needs card QR"}
                             </p>
                           </div>
                         </div>
@@ -898,67 +954,86 @@ export default function AdminPackingConsole() {
                       </div>
 
                       <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                        <form onSubmit={handleCardSubmit} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-night-900/70 p-4">
-                          <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">1. Scan card QR</span>
-                          <input
-                            type="text"
-                            inputMode="text"
-                            autoComplete="off"
-                            value={cardCode}
-                            onChange={(event) => setCardCode(event.currentTarget.value)}
-                            className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                            placeholder="tkc_…"
-                            required
-                          />
-                          <button
-                            type="submit"
-                            className="inline-flex items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100"
-                          >
-                            Bind Card
-                          </button>
-                          {cardStatus && (
-                            <p
-                              className={`rounded-2xl border px-3 py-2 text-[11px] uppercase tracking-[0.28em] ${
-                                cardStatus.type === "success"
-                                  ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
-                                  : "border-rose-400/40 bg-rose-500/10 text-rose-200"
-                              }`}
+                        {cardIsBound ? (
+                          <div className="flex flex-col gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-500/10 p-4 text-xs text-emerald-100">
+                            <span className="text-[11px] uppercase tracking-[0.3em] text-emerald-200">Card QR bound</span>
+                            <p>Card QR {activePack.label?.card.serial ?? activePack.label?.card.code} was automatically bound.</p>
+                          </div>
+                        ) : (
+                          <form onSubmit={handleCardSubmit} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-night-900/70 p-4">
+                            <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">1. Scan card QR</span>
+                            <input
+                              type="text"
+                              inputMode="text"
+                              autoComplete="off"
+                              value={cardCode}
+                              onChange={(event) => setCardCode(event.currentTarget.value)}
+                              className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                              placeholder="tkc_…"
+                              required
+                            />
+                            <button
+                              type="submit"
+                              className="inline-flex items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100"
                             >
-                              {cardStatus.message}
-                            </p>
-                          )}
-                        </form>
+                              Bind Card
+                            </button>
+                            {cardStatus && (
+                              <p
+                                className={`rounded-2xl border px-3 py-2 text-[11px] uppercase tracking-[0.28em] ${
+                                  cardStatus.type === "success"
+                                    ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200"
+                                    : "border-rose-400/40 bg-rose-500/10 text-rose-200"
+                                }`}
+                              >
+                                {cardStatus.message}
+                              </p>
+                            )}
+                          </form>
+                        )}
 
-                        <form onSubmit={handlePackSubmit} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-night-900/70 p-4">
-                          <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">2. Seal pack</span>
-                          <input
-                            type="text"
-                            inputMode="text"
-                            autoComplete="off"
-                            value={packCode}
-                            onChange={(event) => setPackCode(event.currentTarget.value)}
-                            className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-gold-400/60"
-                            placeholder="tkp_…"
-                            required
-                          />
-                          <button
-                            type="submit"
-                            className="inline-flex items-center justify-center rounded-full border border-gold-500/40 bg-gold-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-gold-200 transition hover:border-gold-400 hover:text-gold-100"
-                          >
-                            Seal Pack
-                          </button>
-                          {packStatus && (
-                            <p
-                              className={`rounded-2xl border px-3 py-2 text-[11px] uppercase tracking-[0.28em] ${
-                                packStatus.type === "success"
-                                  ? "border-gold-500/40 bg-gold-500/10 text-gold-100"
-                                  : "border-rose-400/40 bg-rose-500/10 text-rose-200"
-                              }`}
+                        {packIsBound ? (
+                          <div className="flex flex-col gap-2 rounded-2xl border border-gold-500/40 bg-gold-500/10 p-4 text-xs text-gold-100">
+                            <span className="text-[11px] uppercase tracking-[0.3em] text-gold-100">Pack sealed</span>
+                            <p>Pack QR {activePack.label?.pack.serial ?? activePack.label?.pack.code} is sealed and ready.</p>
+                          </div>
+                        ) : (
+                          <form onSubmit={handlePackSubmit} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-night-900/70 p-4">
+                            <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">2. Seal pack</span>
+                            {selectedLocationId === ONLINE_OPTION && (
+                              <p className="rounded-xl border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-amber-200">
+                                Assign a physical location to auto-seal packs.
+                              </p>
+                            )}
+                            <input
+                              type="text"
+                              inputMode="text"
+                              autoComplete="off"
+                              value={packCode}
+                              onChange={(event) => setPackCode(event.currentTarget.value)}
+                              className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-gold-400/60"
+                              placeholder="tkp_…"
+                              required
+                            />
+                            <button
+                              type="submit"
+                              className="inline-flex items-center justify-center rounded-full border border-gold-500/40 bg-gold-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-gold-200 transition hover:border-gold-400 hover:text-gold-100"
                             >
-                              {packStatus.message}
-                            </p>
-                          )}
-                        </form>
+                              Seal Pack
+                            </button>
+                            {packStatus && (
+                              <p
+                                className={`rounded-2xl border px-3 py-2 text-[11px] uppercase tracking-[0.28em] ${
+                                  packStatus.type === "success"
+                                    ? "border-gold-500/40 bg-gold-500/10 text-gold-100"
+                                    : "border-rose-400/40 bg-rose-500/10 text-rose-200"
+                                }`}
+                              >
+                                {packStatus.message}
+                              </p>
+                            )}
+                          </form>
+                        )}
                       </div>
                     </div>
 
@@ -969,7 +1044,7 @@ export default function AdminPackingConsole() {
                         onClick={() => void handleDownloadLabels()}
                         className="inline-flex items-center justify-center rounded-full border border-white/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-slate-200 transition hover:border-white/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {printSubmitting ? "Generating…" : "Download label sheet"}
+                        {printSubmitting ? "Generating…" : `Download label sheet (${selectedPackIds.length})`}
                       </button>
                       {printDownload && (
                         <a
@@ -980,48 +1055,92 @@ export default function AdminPackingConsole() {
                           Download PDF
                         </a>
                       )}
+                      <button
+                        type="button"
+                        onClick={selectAllPacks}
+                        className="inline-flex items-center justify-center rounded-full border border-white/15 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/30 hover:text-white"
+                      >
+                        Select all
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearPackSelection}
+                        disabled={selectedPackIds.length === 0}
+                        className="inline-flex items-center justify-center rounded-full border border-white/15 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/30 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Clear
+                      </button>
+                      <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">
+                        {selectedPackIds.length} / {batchDetail.packs.length} selected
+                      </span>
                     </div>
 
                     <div className="grid gap-4">
                       {batchDetail.packs.map((pack) => {
                         const isActive = pack.id === activePackId;
+                        const isSelected = selectedPackIds.includes(pack.id);
+                        const cardLabelBound =
+                          !!pack.item?.cardQrCodeId &&
+                          !!pack.label?.card &&
+                          pack.item.cardQrCodeId === pack.label.card.id &&
+                          pack.label.card.state === QrCodeState.BOUND;
+                        const packLabelBound =
+                          !!pack.packQrCodeId &&
+                          !!pack.label?.pack &&
+                          pack.packQrCodeId === pack.label.pack.id &&
+                          pack.label.pack.state === QrCodeState.BOUND;
+                        const rowClasses = isActive
+                          ? "border-white/60 bg-night-900/80"
+                          : isSelected
+                            ? "border-sky-400/40 bg-night-900/70"
+                            : "border-white/10 bg-night-900/50";
+
                         return (
-                          <div
-                            key={pack.id}
-                            className={`rounded-2xl border px-4 py-4 transition ${
-                              isActive ? "border-white/50 bg-night-900/80" : "border-white/10 bg-night-900/50"
-                            }`}
-                          >
+                          <div key={pack.id} className={`rounded-2xl border px-4 py-4 transition ${rowClasses}`}>
                             <div className="flex flex-wrap items-start justify-between gap-3">
-                              <div>
-                                <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">
-                                  {pack.packDefinition?.name ?? "Unassigned definition"}
-                                </p>
-                                <p className="text-xs text-slate-500">Pack {pack.id.slice(0, 10)}</p>
-                                <p className="text-xs text-slate-300">Status {pack.fulfillmentStatus}</p>
+                              <div className="flex items-start gap-3">
+                                <input
+                                  type="checkbox"
+                                  className="mt-1 h-4 w-4 accent-sky-400"
+                                  checked={isSelected}
+                                  onChange={() => togglePackSelection(pack.id)}
+                                  aria-label={`Select pack ${pack.id.slice(0, 8)}`}
+                                />
+                                <div>
+                                  <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">
+                                    {pack.packDefinition?.name ?? "Unassigned definition"}
+                                  </p>
+                                  <p className="text-xs text-slate-500">Pack {pack.id.slice(0, 10)}</p>
+                                  <p className="text-xs text-slate-300">Status {pack.fulfillmentStatus}</p>
+                                </div>
                               </div>
                               <button
                                 type="button"
                                 onClick={() => setActivePackId(pack.id)}
-                                className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.32em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                                disabled={isActive}
+                                className={`rounded-full border px-4 py-2 text-[11px] uppercase tracking-[0.32em] transition ${
+                                  isActive
+                                    ? "border-emerald-400/50 bg-emerald-500/10 text-emerald-200"
+                                    : "border-white/20 text-slate-200 hover:border-white/40 hover:text-white"
+                                }`}
                               >
-                                {isActive ? "Processing" : "Set active"}
+                                {isActive ? "Active" : "Set active"}
                               </button>
                             </div>
                             <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
                               <div className="flex items-start gap-3">
                                 {pack.item?.imageUrl ? (
-                                  <div className="relative h-28 w-20 overflow-hidden rounded-xl border border-white/10 bg-night-900">
+                                  <div className="relative h-32 w-24 overflow-hidden rounded-xl border border-white/10 bg-night-900">
                                     <Image
                                       src={pack.item.imageUrl}
                                       alt={pack.item.name ?? "Card"}
                                       fill
-                                      sizes="96px"
+                                      sizes="120px"
                                       className="object-cover"
                                     />
                                   </div>
                                 ) : (
-                                  <div className="flex h-28 w-20 items-center justify-center rounded-xl border border-white/10 bg-night-900 text-[10px] text-slate-500">
+                                  <div className="flex h-32 w-24 items-center justify-center rounded-xl border border-white/10 bg-night-900 text-[10px] text-slate-500">
                                     No image
                                   </div>
                                 )}
@@ -1029,8 +1148,10 @@ export default function AdminPackingConsole() {
                                   <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">Card</p>
                                   <p className="text-sm text-slate-100">{pack.item?.name ?? "Pending metadata"}</p>
                                   <p className="text-[10px] text-slate-500">Item {pack.item?.id.slice(0, 10) ?? "—"}</p>
-                                  <p className="mt-2 text-[10px] text-slate-300">
-                                    {pack.item?.cardQrCodeId ? `Bound as ${pack.item.cardQrCodeId.slice(0, 10)}` : "Needs card QR"}
+                                  <p className={`mt-2 text-[10px] ${cardLabelBound ? "text-emerald-300" : "text-slate-300"}`}>
+                                    {cardLabelBound
+                                      ? `Card QR ${pack.label?.card.serial ?? pack.label?.card.code} auto-bound`
+                                      : "Needs card QR"}
                                   </p>
                                 </div>
                               </div>
@@ -1040,6 +1161,9 @@ export default function AdminPackingConsole() {
                                     <p className="text-[10px] uppercase tracking-[0.3em] text-sky-300">Card QR</p>
                                     <p className="text-[11px] text-slate-100">{pack.label?.card.code ?? "Pending"}</p>
                                     <p className="text-[10px] text-slate-500">Serial {pack.label?.card.serial ?? "—"}</p>
+                                    <p className={`text-[10px] ${cardLabelBound ? "text-emerald-300" : "text-amber-200"}`}>
+                                      {cardLabelBound ? "Bound" : "Reserved"}
+                                    </p>
                                   </div>
                                   {pack.label && <QrCanvas value={pack.label.card.payloadUrl ?? pack.label.card.code} />}
                                 </div>
@@ -1048,6 +1172,9 @@ export default function AdminPackingConsole() {
                                     <p className="text-[10px] uppercase tracking-[0.3em] text-gold-300">Pack QR</p>
                                     <p className="text-[11px] text-slate-100">{pack.label?.pack.code ?? "Pending"}</p>
                                     <p className="text-[10px] text-slate-500">Serial {pack.label?.pack.serial ?? "—"}</p>
+                                    <p className={`text-[10px] ${packLabelBound ? "text-emerald-300" : "text-amber-200"}`}>
+                                      {packLabelBound ? "Bound" : "Reserved"}
+                                    </p>
                                   </div>
                                   {pack.label && <QrCanvas value={pack.label.pack.payloadUrl ?? pack.label.pack.code} />}
                                 </div>

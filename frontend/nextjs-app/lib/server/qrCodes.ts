@@ -203,9 +203,11 @@ export async function createQrCodePairs({
 export async function reserveLabelsForPacks({
   assignments,
   createdById,
+  autoBind = false,
 }: {
   assignments: LabelReservationInput[];
   createdById: string;
+  autoBind?: boolean;
 }): Promise<QrCodePair[]> {
   if (!assignments.length) {
     return [];
@@ -214,6 +216,8 @@ export async function reserveLabelsForPacks({
   const results: QrCodePair[] = [];
 
   await prisma.$transaction(async (tx) => {
+    const touchedBatchIds = new Set<string>();
+
     for (const assignment of assignments) {
       let label = await tx.packLabel.findUnique({
         where: { packInstanceId: assignment.packInstanceId },
@@ -258,37 +262,137 @@ export async function reserveLabelsForPacks({
         include: { cardQrCode: true, packQrCode: true },
       });
 
+      const now = new Date();
+      const targetLocationId = assignment.locationId ?? updatedLabel.locationId ?? null;
+
+      let packRecord:
+        | {
+            id: string;
+            packQrCodeId: string | null;
+            fulfillmentStatus: PackFulfillmentStatus;
+            locationId: string | null;
+            packedAt: Date | null;
+            sourceBatchId: string | null;
+            slots: Array<{
+              item: { id: string; cardQrCodeId: string | null } | null;
+            }>;
+          }
+        | null = null;
+
+      if (autoBind) {
+        packRecord = await tx.packInstance.findUnique({
+          where: { id: assignment.packInstanceId },
+          select: {
+            id: true,
+            packQrCodeId: true,
+            fulfillmentStatus: true,
+            locationId: true,
+            packedAt: true,
+            sourceBatchId: true,
+            slots: {
+              take: 1,
+              select: {
+                item: { select: { id: true, cardQrCodeId: true } },
+              },
+            },
+          },
+        });
+
+        if (!packRecord) {
+          throw new Error(`Pack instance ${assignment.packInstanceId} not found`);
+        }
+
+        const slotItem = packRecord.slots[0]?.item ?? null;
+        if (!slotItem) {
+          throw new Error(`Pack ${assignment.packInstanceId} is missing a primary card slot`);
+        }
+
+        if (slotItem.id !== assignment.itemId) {
+          throw new Error(`Pack ${assignment.packInstanceId} is not linked to item ${assignment.itemId}`);
+        }
+
+        if (slotItem.cardQrCodeId && slotItem.cardQrCodeId !== updatedLabel.cardQrCodeId) {
+          throw new Error("Card already bound to a different QR code");
+        }
+
+        const batchKey = assignment.batchId ?? packRecord.sourceBatchId;
+        if (batchKey) {
+          touchedBatchIds.add(batchKey);
+        }
+      }
+
+      const cardUpdateData: Prisma.QrCodeUpdateInput = {
+        state: autoBind ? QrCodeState.BOUND : updatedLabel.cardQrCode.state === QrCodeState.BOUND ? QrCodeState.BOUND : QrCodeState.RESERVED,
+        locationId: targetLocationId,
+        metadata: mergeMetadata(updatedLabel.cardQrCode.metadata, {
+          pairId: updatedLabel.pairId,
+          role: "CARD",
+          labelId: updatedLabel.id,
+          reservedItemId: assignment.itemId,
+          reservedPackInstanceId: assignment.packInstanceId,
+          batchId: assignment.batchId,
+          ...(autoBind ? { autoBound: true } : {}),
+        }),
+      };
+
+      if (autoBind) {
+        cardUpdateData.boundById = createdById;
+        cardUpdateData.boundAt = now;
+      }
+
       const cardQr = await tx.qrCode.update({
         where: { id: updatedLabel.cardQrCodeId },
-        data: {
-          state: updatedLabel.cardQrCode.state === QrCodeState.BOUND ? QrCodeState.BOUND : QrCodeState.RESERVED,
-          locationId: assignment.locationId ?? updatedLabel.locationId,
-          metadata: mergeMetadata(updatedLabel.cardQrCode.metadata, {
-            pairId: updatedLabel.pairId,
-            role: "CARD",
-            labelId: updatedLabel.id,
-            reservedItemId: assignment.itemId,
-            reservedPackInstanceId: assignment.packInstanceId,
-            batchId: assignment.batchId,
-          }),
-        },
+        data: cardUpdateData,
       });
+
+      const packUpdateData: Prisma.QrCodeUpdateInput = {
+        state: autoBind ? QrCodeState.BOUND : updatedLabel.packQrCode.state === QrCodeState.BOUND ? QrCodeState.BOUND : QrCodeState.RESERVED,
+        locationId: targetLocationId,
+        metadata: mergeMetadata(updatedLabel.packQrCode.metadata, {
+          pairId: updatedLabel.pairId,
+          role: "PACK",
+          labelId: updatedLabel.id,
+          reservedPackInstanceId: assignment.packInstanceId,
+          reservedItemId: assignment.itemId,
+          batchId: assignment.batchId,
+          ...(autoBind ? { autoBound: true } : {}),
+        }),
+      };
+
+      if (autoBind) {
+        packUpdateData.boundById = createdById;
+        packUpdateData.boundAt = now;
+      }
 
       const packQr = await tx.qrCode.update({
         where: { id: updatedLabel.packQrCodeId },
-        data: {
-          state: updatedLabel.packQrCode.state === QrCodeState.BOUND ? QrCodeState.BOUND : QrCodeState.RESERVED,
-          locationId: assignment.locationId ?? updatedLabel.locationId,
-          metadata: mergeMetadata(updatedLabel.packQrCode.metadata, {
-            pairId: updatedLabel.pairId,
-            role: "PACK",
-            labelId: updatedLabel.id,
-            reservedPackInstanceId: assignment.packInstanceId,
-            reservedItemId: assignment.itemId,
-            batchId: assignment.batchId,
-          }),
-        },
+        data: packUpdateData,
       });
+
+      if (autoBind && packRecord) {
+        await tx.item.update({
+          where: { id: assignment.itemId },
+          data: { cardQrCodeId: updatedLabel.cardQrCodeId },
+        });
+
+        const nextStatus =
+          packRecord.fulfillmentStatus === PackFulfillmentStatus.LOADED
+            ? PackFulfillmentStatus.LOADED
+            : PackFulfillmentStatus.PACKED;
+
+        await tx.packInstance.update({
+          where: { id: packRecord.id },
+          data: {
+            packQrCodeId: updatedLabel.packQrCodeId,
+            locationId: targetLocationId,
+            fulfillmentStatus: nextStatus,
+            packedAt: packRecord.packedAt ?? now,
+            packedById: createdById,
+          },
+        });
+      }
+
+      await updateLabelBindingStatus(tx, updatedLabel.id);
 
       results.push({
         pairId: updatedLabel.pairId,
@@ -296,6 +400,14 @@ export async function reserveLabelsForPacks({
         pack: toSummary(packQr),
         label: toLabelSummary(updatedLabel),
       });
+    }
+
+    if (touchedBatchIds.size > 0) {
+      await Promise.all(
+        Array.from(touchedBatchIds).map((batchId) =>
+          syncBatchStageFromPackStatuses({ tx, batchId, actorId: createdById })
+        )
+      );
     }
   });
 

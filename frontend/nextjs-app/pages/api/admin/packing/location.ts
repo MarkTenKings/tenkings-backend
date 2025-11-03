@@ -1,10 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import {
-  prisma,
-  PackFulfillmentStatus,
-  BatchStage,
-  type Prisma,
-} from "@tenkings/database";
+import { prisma, PackFulfillmentStatus, BatchStage, QrCodeState, type Prisma } from "@tenkings/database";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { reserveLabelsForPacks } from "../../../../lib/server/qrCodes";
@@ -20,6 +15,7 @@ type PackRow = {
   id: string;
   createdAt: string;
   fulfillmentStatus: PackFulfillmentStatus;
+  packQrCodeId: string | null;
   packDefinition: {
     id: string;
     name: string;
@@ -40,12 +36,14 @@ type PackRow = {
       code: string;
       serial: string | null;
       payloadUrl: string | null;
+      state: QrCodeState;
     };
     pack: {
       id: string;
       code: string;
       serial: string | null;
       payloadUrl: string | null;
+      state: QrCodeState;
     };
   } | null;
 };
@@ -77,11 +75,14 @@ type BatchDetail = {
 
 type ResponseBody = { batches: BatchDetail[] } | { message: string };
 
-const toQrSummary = (record: Prisma.QrCodeGetPayload<{ select: { id: true; code: true; serial: true; payloadUrl: true } }>) => ({
+const toQrSummary = (
+  record: Prisma.QrCodeGetPayload<{ select: { id: true; code: true; serial: true; payloadUrl: true; state: true } }>
+) => ({
   id: record.id,
   code: record.code,
   serial: record.serial,
   payloadUrl: record.payloadUrl,
+  state: record.state,
 });
 
 const packStatusFilter = [
@@ -126,13 +127,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             select: { id: true, name: true, tier: true },
           },
           sourceBatchId: true,
+          packQrCodeId: true,
           packLabels: {
             include: {
               cardQrCode: {
-                select: { id: true, code: true, serial: true, payloadUrl: true },
+                select: { id: true, code: true, serial: true, payloadUrl: true, state: true },
               },
               packQrCode: {
-                select: { id: true, code: true, serial: true, payloadUrl: true },
+                select: { id: true, code: true, serial: true, payloadUrl: true, state: true },
               },
             },
           },
@@ -154,25 +156,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     let packs = await packsForLocation();
 
-    const missingPackIds = packs
-      .filter((pack) => pack.packLabels.length === 0 && pack.slots[0]?.item)
-      .map((pack) => pack.id);
+    const assignments = packs
+      .filter((pack) => pack.slots[0]?.item)
+      .filter((pack) => {
+        const slotItem = pack.slots[0]?.item;
+        if (!slotItem) {
+          return false;
+        }
+        const labelRecord = pack.packLabels[0] ?? null;
+        if (!labelRecord) {
+          return true;
+        }
+        const cardBound =
+          !!slotItem.cardQrCodeId &&
+          slotItem.cardQrCodeId === labelRecord.cardQrCode.id &&
+          labelRecord.cardQrCode.state === QrCodeState.BOUND;
+        const packBound =
+          !!pack.packQrCodeId && pack.packQrCodeId === labelRecord.packQrCode.id && labelRecord.packQrCode.state === QrCodeState.BOUND;
+        return !cardBound || !packBound;
+      })
+      .map((pack) => ({
+        packInstanceId: pack.id,
+        itemId: pack.slots[0]!.item!.id,
+        cardAssetId: pack.slots[0]!.item!.id,
+        batchId: pack.sourceBatchId,
+        locationId: locationId === ONLINE_OPTION ? null : locationId,
+      }));
 
-    if (missingPackIds.length > 0) {
-      const assignments = packs
-        .filter((pack) => missingPackIds.includes(pack.id) && pack.slots[0]?.item)
-        .map((pack) => ({
-          packInstanceId: pack.id,
-          itemId: pack.slots[0]!.item!.id,
-          cardAssetId: pack.slots[0]!.item!.id,
-          batchId: pack.sourceBatchId,
-          locationId: locationId === ONLINE_OPTION ? null : locationId,
-        }));
-
-      if (assignments.length > 0) {
-        await reserveLabelsForPacks({ assignments, createdById: admin.user.id });
-        packs = await packsForLocation();
-      }
+    if (assignments.length > 0) {
+      await reserveLabelsForPacks({
+        assignments,
+        createdById: admin.user.id,
+        autoBind: locationId !== ONLINE_OPTION,
+      });
+      packs = await packsForLocation();
     }
 
     const batchIds = Array.from(
@@ -278,6 +295,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         id: pack.id,
         createdAt: pack.createdAt.toISOString(),
         fulfillmentStatus: pack.fulfillmentStatus,
+        packQrCodeId: pack.packQrCodeId,
         packDefinition: pack.packDefinition
           ? {
               id: pack.packDefinition.id,
