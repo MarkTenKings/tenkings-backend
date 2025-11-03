@@ -1,12 +1,13 @@
 import { PrismaClient } from "@prisma/client";
-import { URL } from "node:url";
+
+const UrlConstructor: typeof URL = globalThis.URL ?? URL;
 
 function buildDatasourceUrl(rawUrl: string | undefined) {
   if (!rawUrl) {
     return undefined;
   }
   try {
-    const url = new URL(rawUrl);
+    const url = new UrlConstructor(rawUrl);
     if (!url.searchParams.has("connection_limit")) {
       const fallback = Number.parseInt(process.env.PRISMA_CONNECTION_LIMIT ?? "3", 10);
       const limit = Number.isFinite(fallback) && fallback > 0 ? fallback : 3;

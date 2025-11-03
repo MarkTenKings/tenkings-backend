@@ -8,7 +8,7 @@ import { withAdminCors } from "../../../../lib/server/cors";
 export const config = {
   api: {
     bodyParser: false,
-    sizeLimit: `${Math.ceil(MAX_UPLOAD_BYTES / (1024 * 1024))}mb`,
+    sizeLimit: "25mb",
   },
 };
 

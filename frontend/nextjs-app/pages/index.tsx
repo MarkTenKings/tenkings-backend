@@ -541,9 +541,9 @@ export default function Home({
     const updateFactor = () => {
       const width = window.innerWidth;
       if (width < 768) {
-        setMarqueeSpeedFactor(0.975);
+        setMarqueeSpeedFactor(1.95);
       } else {
-        setMarqueeSpeedFactor(1.25);
+        setMarqueeSpeedFactor(2.5);
       }
     };
     updateFactor();

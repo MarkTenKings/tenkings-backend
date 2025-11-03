@@ -6,7 +6,7 @@ import { LIVE_MAX_UPLOAD_BYTES, getLiveStorageMode, storeLiveAsset } from "../..
 export const config = {
   api: {
     bodyParser: false,
-    sizeLimit: `${Math.ceil(LIVE_MAX_UPLOAD_BYTES / (1024 * 1024))}mb`,
+    sizeLimit: "150mb",
   },
 };
 

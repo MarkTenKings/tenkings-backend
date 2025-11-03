@@ -397,7 +397,7 @@ export default function AdminPackingConsole() {
     } finally {
       setLocationLoading(false);
     }
-  }, [buildAdminHeaders, isAdmin, selectedBatchId, selectedLocationId, session?.token]);
+  }, [isAdmin, selectedBatchId, selectedLocationId, session?.token]);
 
   useEffect(() => {
     if (!session?.token || !isAdmin) {
