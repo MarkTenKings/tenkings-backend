@@ -33,8 +33,11 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
     featured: true,
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [scanBuffer, setScanBuffer] = useState("");
+  const [scanStatus, setScanStatus] = useState<string | null>(null);
   const hasControl = Boolean(controlToken);
   const autoLiveTriggered = useRef(false);
+  const scanInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), TIMER_REFRESH_MS);
@@ -121,6 +124,80 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
       autoLiveTriggered.current = false;
     });
   }, [advanceStage, countdownRemaining, hasControl, session.status]);
+
+  useEffect(() => {
+    if (!hasControl) {
+      return;
+    }
+    scanInputRef.current?.focus();
+  }, [hasControl, session.status]);
+
+  const processScanCode = useCallback(
+    async (raw: string) => {
+      const code = raw.trim();
+      if (!hasControl || !code) {
+        return;
+      }
+      setScanStatus(`Scanning ${code}…`);
+      try {
+        const lookup = await fetch(`/api/claim/card/${encodeURIComponent(code)}`);
+        if (!lookup.ok) {
+          const payload = await lookup.json().catch(() => ({}));
+          throw new Error(payload?.message ?? "Card not found");
+        }
+        const payload = (await lookup.json()) as {
+          card: {
+            item: { id: string; name?: string | null } | null;
+          };
+        };
+        const itemId = payload.card?.item?.id ?? null;
+        if (!itemId) {
+          throw new Error("Card is not linked to inventory yet");
+        }
+
+        const qrLinkUrl = `${window.location.origin}/claim/card/${encodeURIComponent(code)}`;
+        setRevealForm((prev) => ({
+          ...prev,
+          itemId,
+          qrLinkUrl,
+          buybackLinkUrl: qrLinkUrl,
+        }));
+
+        const response = await fetch(`/api/kiosk/${session.id}/reveal`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(controlToken ? { "x-kiosk-token": controlToken } : {}),
+          },
+          body: JSON.stringify({
+            itemId,
+            qrLinkUrl,
+            buybackLinkUrl: qrLinkUrl,
+          }),
+        });
+
+        if (!response.ok) {
+          const payloadReveal = await response.json().catch(() => ({}));
+          throw new Error(payloadReveal?.message ?? "Failed to apply reveal");
+        }
+
+        const updated = (await response.json()) as { session: SerializedKioskSession };
+        setSession(updated.session);
+        setScanStatus(
+          payload.card?.item?.name
+            ? `Revealed ${payload.card.item.name}`
+            : "Card revealed"
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to decode card";
+        setScanStatus(message);
+      } finally {
+        setScanBuffer("");
+        scanInputRef.current?.focus();
+      }
+    },
+    [controlToken, hasControl, session.id]
+  );
 
   const submitReveal = useCallback(
     async (event: FormEvent) => {
@@ -321,6 +398,31 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
         {hasControl ? (
           <section className="mb-10 rounded-3xl border border-white/10 bg-night-900/60 p-6 shadow-card">
             <h2 className="mb-4 font-heading text-xl uppercase tracking-[0.24em] text-white">Operator Console</h2>
+
+            <div className="mb-6 rounded-2xl border border-white/10 bg-night-950/70 p-4">
+              <label className="flex flex-col text-xs uppercase tracking-[0.3em] text-slate-400">
+                Card Scan Input
+                <input
+                  ref={scanInputRef}
+                  value={scanBuffer}
+                  onChange={(event) => setScanBuffer(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void processScanCode(scanBuffer);
+                    }
+                  }}
+                  placeholder="Scan slab QR code to trigger reveal"
+                  className="mt-2 w-full rounded-xl border border-white/20 bg-night-900 px-3 py-3 text-base text-white focus:border-emerald-400 focus:outline-none"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </label>
+              {scanStatus ? (
+                <p className="mt-2 text-[11px] uppercase tracking-[0.28em] text-slate-300">{scanStatus}</p>
+              ) : null}
+            </div>
+
             <div className="grid gap-6 lg:grid-cols-2">
               <div className="space-y-4">
                 <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Stage Controls</p>

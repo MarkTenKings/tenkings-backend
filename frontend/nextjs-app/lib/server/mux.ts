@@ -5,6 +5,30 @@ const MUX_API_BASE = "https://api.mux.com/video/v1";
 const muxTokenId = process.env.MUX_TOKEN_ID ?? "";
 const muxTokenSecret = process.env.MUX_TOKEN_SECRET ?? "";
 const muxWebhookSecret = process.env.MUX_WEBHOOK_SECRET ?? "";
+const muxSimulcastTargets = (() => {
+  const raw = process.env.MUX_SIMULCAST_TARGETS;
+  if (!raw) {
+    return [] as Array<{ url: string; streamKey: string }>;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed
+      .filter((target): target is { url: string; streamKey: string } => {
+        return typeof target?.url === "string" && typeof target?.streamKey === "string";
+      })
+      .map((target) => ({
+        url: target.url.trim(),
+        streamKey: target.streamKey.trim(),
+      }))
+      .filter((target) => target.url.length > 0 && target.streamKey.length > 0);
+  } catch (error) {
+    console.warn("[mux] Failed to parse MUX_SIMULCAST_TARGETS", error);
+    return [];
+  }
+})();
 
 function ensureCredentials() {
   if (!muxTokenId || !muxTokenSecret) {
@@ -64,6 +88,10 @@ export interface MuxAsset {
   status: string;
   playback_ids?: MuxAssetPlayback[];
   duration?: number | null;
+}
+
+export function getMuxSimulcastTargets() {
+  return muxSimulcastTargets;
 }
 
 export async function createMuxLiveStream(params: {

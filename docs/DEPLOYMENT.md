@@ -46,6 +46,7 @@ Each service ships with a template `.env.docker` holding container-friendly defa
    - supply Stripe keys (`STRIPE_SECRET_KEY`) and `HOUSE_USER_EMAIL` for the pack service to process card payments and transfer instant buybacks into TenKings' house account
    - set `OPERATOR_API_KEY` for the wallet service and mirror the value as `NEXT_PUBLIC_OPERATOR_KEY` in the frontend so operator tooling can authenticate administrative ledger adjustments
    - provision Mux credentials (`MUX_TOKEN_ID`, `MUX_TOKEN_SECRET`) plus a signing secret (`MUX_WEBHOOK_SECRET`) so kiosk sessions can open live streams and consume webhooks
+   - optionally set `MUX_SIMULCAST_TARGETS` with a JSON array of `{ "url": "rtmp://…", "streamKey": "..." }` entries to push each live rip to YouTube, TikTok, etc.
    - add any cloud secrets (Stripe, Supabase) when those integrations are enabled
 3. On the host, store the env files somewhere safe (e.g., `/opt/tenkings/config/...`) and reference them when running compose:
    ```bash

@@ -7,6 +7,7 @@ import { kioskSessionInclude, serializeKioskSession } from "../../../lib/server/
 import {
   buildMuxPlaybackUrl,
   createMuxLiveStream,
+  getMuxSimulcastTargets,
   muxCredentialsConfigured,
 } from "../../../lib/server/mux";
 
@@ -170,6 +171,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const muxStream = await createMuxLiveStream({
         passthrough: session.id,
         livestreamName: pack.packDefinition?.name ?? `Pack ${pack.id}`,
+        simulcastTargets: getMuxSimulcastTargets(),
       });
 
       const playbackId = muxStream.playback_ids?.[0]?.id ?? null;
