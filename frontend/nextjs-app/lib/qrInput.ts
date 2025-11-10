@@ -10,7 +10,7 @@ export function normalizeQrInput(raw: string | null | undefined) {
 
   const codeMatch = trimmed.match(/(tk[a-z]+_[0-9a-z]+)/i);
   if (codeMatch) {
-    return codeMatch[1].toLowerCase();
+    return codeMatch[1];
   }
 
   try {
