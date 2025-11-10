@@ -10,6 +10,7 @@ import {
   getMuxSimulcastTargets,
   muxCredentialsConfigured,
 } from "../../../lib/server/mux";
+import { normalizeQrInput } from "../../../lib/qrInput";
 
 const DEFAULT_COUNTDOWN = Number(process.env.KIOSK_COUNTDOWN_SECONDS ?? 10);
 const DEFAULT_LIVE = Number(process.env.KIOSK_LIVE_SECONDS ?? 30);
@@ -40,7 +41,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const payload = startSchema.parse(req.body ?? {});
-    const packCode = payload.packCode?.trim() ?? null;
+    const packCode = normalizeQrInput(payload.packCode);
 
     let packQr = null as { id: string; code: string; serial: string | null } | null;
 

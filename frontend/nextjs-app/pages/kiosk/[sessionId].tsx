@@ -4,6 +4,7 @@ import Image from "next/image";
 import type { GetServerSideProps } from "next";
 import { prisma } from "@tenkings/database";
 import { kioskSessionInclude, serializeKioskSession, type SerializedKioskSession } from "../../lib/server/kioskSession";
+import { normalizeQrInput } from "../../lib/qrInput";
 
 interface KioskPageProps {
   initialSession: SerializedKioskSession;
@@ -134,7 +135,7 @@ export default function KioskSessionPage({ initialSession, controlToken }: Kiosk
 
   const processScanCode = useCallback(
     async (raw: string) => {
-      const code = raw.trim();
+      const code = normalizeQrInput(raw);
       if (!hasControl || !code) {
         return;
       }
