@@ -284,7 +284,8 @@ const PREMIER_LEFT = LABEL_WIDTH * 0.08;
 const PREMIER_QR_MARGIN = LABEL_WIDTH * 0.08;
 const PREMIER_QR_SIZE = LABEL_HEIGHT * 0.68;
 const PREMIER_PACK_QR_SCALE = 0.8; // reduce QR size 20%
-const PREMIER_CARD_FRONT_SPACING = mmToPoints(3.5); // tighter line spacing
+const PREMIER_CARD_FRONT_SPACING = mmToPoints(2); // 50% tighter line spacing
+const PREMIER_CARD_FRONT_BASE_Y = mmToPoints(3);
 
 const drawPremierPackSticker = async (doc: PdfDoc, entry: PrintableLabelEntry, background: Buffer) => {
   doc.image(background, 0, 0, { width: LABEL_WIDTH, height: LABEL_HEIGHT });
@@ -296,14 +297,15 @@ const drawPremierPackSticker = async (doc: PdfDoc, entry: PrintableLabelEntry, b
   doc.image(qr, qrX, qrY, { fit: [qrSize, qrSize] });
 
   const textWidth = LABEL_WIDTH / 2 - PREMIER_LEFT;
-  const textY = LABEL_HEIGHT / 2;
   const lineSpacing = 12 * 0.75;
+  const centerX = qrX + qrSize / 2;
+  const textTop = qrY + qrSize + mmToPoints(1);
 
   doc
     .font("Helvetica-Bold")
     .fontSize(12)
     .fillColor(PREMIER_TEXT_LIGHT)
-    .text("SCAN TO", LABEL_WIDTH / 2, textY - lineSpacing / 2 - 10, {
+    .text("SCAN TO", centerX, textTop, {
       width: textWidth,
       align: "center",
       lineBreak: false,
@@ -313,7 +315,7 @@ const drawPremierPackSticker = async (doc: PdfDoc, entry: PrintableLabelEntry, b
     .font("Helvetica-Bold")
     .fontSize(12)
     .fillColor(PREMIER_TEXT_LIGHT)
-    .text("RIP IT LIVE", LABEL_WIDTH / 2, textY + lineSpacing / 2 - 4, {
+    .text("RIP IT LIVE", centerX, textTop + lineSpacing, {
       width: textWidth,
       align: "center",
       lineBreak: false,
@@ -337,13 +339,12 @@ const drawPremierCardFrontSticker = async (
   const player = formatPlayer(entry);
   const brand = formatBrand(entry);
   const variant = formatVariant(entry);
-  const baseY = mmToPoints(4);
 
   doc
     .font("Helvetica-Bold")
     .fontSize(11)
     .fillColor(PREMIER_TEXT_LIGHT)
-    .text(player, PREMIER_LEFT, baseY, {
+    .text(player, PREMIER_LEFT, PREMIER_CARD_FRONT_BASE_Y, {
       width: textWidth,
       lineBreak: false,
     });
@@ -352,7 +353,7 @@ const drawPremierCardFrontSticker = async (
     .font("Helvetica-Bold")
     .fontSize(10)
     .fillColor(PREMIER_TEXT_LIGHT)
-    .text(brand, PREMIER_LEFT, baseY + PREMIER_CARD_FRONT_SPACING, {
+    .text(brand, PREMIER_LEFT, PREMIER_CARD_FRONT_BASE_Y + PREMIER_CARD_FRONT_SPACING, {
       width: textWidth,
       lineBreak: false,
     });
@@ -361,7 +362,7 @@ const drawPremierCardFrontSticker = async (
     .font("Helvetica")
     .fontSize(9)
     .fillColor(PREMIER_TEXT_LIGHT)
-    .text(variant, PREMIER_LEFT, baseY + PREMIER_CARD_FRONT_SPACING * 2, {
+    .text(variant, PREMIER_LEFT, PREMIER_CARD_FRONT_BASE_Y + PREMIER_CARD_FRONT_SPACING * 2, {
       width: textWidth,
       lineBreak: false,
     });
