@@ -283,25 +283,29 @@ const createPageIterator = (doc: PdfDoc) => {
 const PREMIER_LEFT = LABEL_WIDTH * 0.08;
 const PREMIER_QR_MARGIN = LABEL_WIDTH * 0.08;
 const PREMIER_QR_SIZE = LABEL_HEIGHT * 0.68;
+const PREMIER_PACK_QR_SCALE = 0.8; // reduce QR size 20%
+const PREMIER_CARD_FRONT_SPACING = mmToPoints(3.5); // tighter line spacing
 
 const drawPremierPackSticker = async (doc: PdfDoc, entry: PrintableLabelEntry, background: Buffer) => {
   doc.image(background, 0, 0, { width: LABEL_WIDTH, height: LABEL_HEIGHT });
   const packTarget = entry.pack.payloadUrl ?? entry.pack.code;
-  const qrSize = Math.min(PREMIER_QR_SIZE, LABEL_HEIGHT - PREMIER_QR_MARGIN);
+  const qrSize = Math.min(PREMIER_QR_SIZE * PREMIER_PACK_QR_SCALE, LABEL_HEIGHT - PREMIER_QR_MARGIN);
   const qrX = LABEL_WIDTH - PREMIER_QR_MARGIN - qrSize;
   const qrY = (LABEL_HEIGHT - qrSize) / 2;
   const qr = await createQrBuffer(packTarget, qrSize);
   doc.image(qr, qrX, qrY, { fit: [qrSize, qrSize] });
 
-  const textWidth = qrX - PREMIER_LEFT - mmToPoints(2);
-  const textY = qrY + qrSize / 2;
+  const textWidth = LABEL_WIDTH / 2 - PREMIER_LEFT;
+  const textY = LABEL_HEIGHT / 2;
+  const lineSpacing = 12 * 0.75;
 
   doc
     .font("Helvetica-Bold")
     .fontSize(12)
     .fillColor(PREMIER_TEXT_LIGHT)
-    .text("SCAN TO", PREMIER_LEFT, textY - 16, {
+    .text("SCAN TO", LABEL_WIDTH / 2, textY - lineSpacing / 2 - 10, {
       width: textWidth,
+      align: "center",
       lineBreak: false,
     });
 
@@ -309,8 +313,9 @@ const drawPremierPackSticker = async (doc: PdfDoc, entry: PrintableLabelEntry, b
     .font("Helvetica-Bold")
     .fontSize(12)
     .fillColor(PREMIER_TEXT_LIGHT)
-    .text("RIP IT LIVE", PREMIER_LEFT, textY + 4, {
+    .text("RIP IT LIVE", LABEL_WIDTH / 2, textY + lineSpacing / 2 - 4, {
       width: textWidth,
+      align: "center",
       lineBreak: false,
     });
 };
@@ -332,12 +337,13 @@ const drawPremierCardFrontSticker = async (
   const player = formatPlayer(entry);
   const brand = formatBrand(entry);
   const variant = formatVariant(entry);
+  const baseY = mmToPoints(4);
 
   doc
     .font("Helvetica-Bold")
     .fontSize(11)
     .fillColor(PREMIER_TEXT_LIGHT)
-    .text(player, PREMIER_LEFT, mmToPoints(5), {
+    .text(player, PREMIER_LEFT, baseY, {
       width: textWidth,
       lineBreak: false,
     });
@@ -346,7 +352,7 @@ const drawPremierCardFrontSticker = async (
     .font("Helvetica-Bold")
     .fontSize(10)
     .fillColor(PREMIER_TEXT_LIGHT)
-    .text(brand, PREMIER_LEFT, mmToPoints(12), {
+    .text(brand, PREMIER_LEFT, baseY + PREMIER_CARD_FRONT_SPACING, {
       width: textWidth,
       lineBreak: false,
     });
@@ -355,7 +361,7 @@ const drawPremierCardFrontSticker = async (
     .font("Helvetica")
     .fontSize(9)
     .fillColor(PREMIER_TEXT_LIGHT)
-    .text(variant, PREMIER_LEFT, mmToPoints(19), {
+    .text(variant, PREMIER_LEFT, baseY + PREMIER_CARD_FRONT_SPACING * 2, {
       width: textWidth,
       lineBreak: false,
     });
@@ -369,38 +375,8 @@ const drawPremierCardBackSticker = async (
   doc.image(background, 0, 0, { width: LABEL_WIDTH, height: LABEL_HEIGHT });
   const cardTarget = entry.card.payloadUrl ?? entry.card.code;
   const qrSize = Math.min(PREMIER_QR_SIZE, LABEL_HEIGHT - PREMIER_QR_MARGIN);
-  const qrX = LABEL_WIDTH - PREMIER_QR_MARGIN - qrSize;
+  const qrX = (LABEL_WIDTH / 2 - qrSize) / 2;
   const qrY = (LABEL_HEIGHT - qrSize) / 2;
   const qr = await createQrBuffer(cardTarget, qrSize);
   doc.image(qr, qrX, qrY, { fit: [qrSize, qrSize] });
-
-  const textWidth = qrX - PREMIER_LEFT - mmToPoints(2);
-  const subtitle = `Pair ${entry.label.pairId ?? "--"}`;
-
-  doc
-    .font("Helvetica-Bold")
-    .fontSize(10)
-    .fillColor(PREMIER_TEXT_LIGHT)
-    .text("SCAN TO CLAIM", PREMIER_LEFT, qrY - 10, {
-      width: textWidth,
-      lineBreak: false,
-    });
-
-  doc
-    .font("Helvetica")
-    .fontSize(9)
-    .fillColor(PREMIER_TEXT_LIGHT)
-    .text("SAVE & SELL", PREMIER_LEFT, qrY + 4, {
-      width: textWidth,
-      lineBreak: false,
-    });
-
-  doc
-    .font("Helvetica")
-    .fontSize(8)
-    .fillColor(PREMIER_TEXT_LIGHT)
-    .text(subtitle, PREMIER_LEFT, qrY + 28, {
-      width: textWidth,
-      lineBreak: false,
-    });
 };
