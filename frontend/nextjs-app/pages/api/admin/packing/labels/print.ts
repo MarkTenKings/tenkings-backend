@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
+import type { CardAttributes } from "@tenkings/shared/cardAttributes";
 import type { PrintableLabelEntry } from "../../../../../lib/server/labels";
 import { generateLabelSheetPdf } from "../../../../../lib/server/labels";
 import type { QrCodeSummary } from "../../../../../lib/server/qrCodes";
@@ -63,7 +64,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             slots: {
               take: 1,
               select: {
-                item: { select: { id: true, name: true, imageUrl: true } },
+            item: { select: { id: true, name: true, imageUrl: true, detailsJson: true } },
               },
             },
           },
@@ -97,6 +98,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
               id: record.packInstance.slots[0].item.id,
               name: record.packInstance.slots[0].item.name,
               imageUrl: record.packInstance.slots[0].item.imageUrl,
+              attributes: (record.packInstance.slots[0].item.detailsJson as CardAttributes | null) ?? null,
             }
           : null,
       };
