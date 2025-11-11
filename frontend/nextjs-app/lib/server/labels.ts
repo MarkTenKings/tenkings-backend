@@ -10,10 +10,13 @@ const mmToPoints = (mm: number) => (mm / 25.4) * 72;
 // DK-1201 roll dimensions (1.1" x 3.5")
 const LABEL_WIDTH = mmToPoints(89);
 const LABEL_HEIGHT = mmToPoints(28);
-const H_PADDING = LABEL_WIDTH * 0.1; // 10% horizontal padding
-const V_PADDING = LABEL_HEIGHT * 0.1; // 10% vertical padding
-const QR_SIZE = LABEL_HEIGHT - V_PADDING * 2;
-const CARD_TEXT_WIDTH = LABEL_WIDTH - H_PADDING * 2 - QR_SIZE - 4;
+const PACK_H_PADDING = LABEL_WIDTH * 0.1; // 10%
+const PACK_V_PADDING = LABEL_HEIGHT * 0.1;
+const CARD_H_PADDING = LABEL_WIDTH * 0.05; // 5%
+const CARD_V_PADDING = LABEL_HEIGHT * 0.05;
+const PACK_QR_SIZE = LABEL_HEIGHT - PACK_V_PADDING * 2;
+const CARD_QR_SIZE = LABEL_HEIGHT - CARD_V_PADDING * 2;
+const CARD_TEXT_WIDTH = LABEL_WIDTH - CARD_H_PADDING * 2 - CARD_QR_SIZE - 4;
 
 const COLOR_BG = "#ffffff";
 const COLOR_PANEL = "#f4f5f8";
@@ -85,88 +88,93 @@ export async function generateLabelSheetPdf(options: GenerateLabelSheetOptions):
   return completion;
 }
 
-const drawLabelBackground = (doc: PdfDoc) => {
+const drawLabelBackground = (doc: PdfDoc, paddingX: number, paddingY: number) => {
   doc.rect(0, 0, LABEL_WIDTH, LABEL_HEIGHT).fill(COLOR_BG);
   doc
-    .roundedRect(H_PADDING / 2, V_PADDING / 2, LABEL_WIDTH - H_PADDING, LABEL_HEIGHT - V_PADDING, 3)
+    .roundedRect(paddingX / 2, paddingY / 2, LABEL_WIDTH - paddingX, LABEL_HEIGHT - paddingY, 3)
     .fill(COLOR_PANEL);
 };
 
-const createQrBuffer = async (value: string) =>
+const createQrBuffer = async (value: string, size: number) =>
   QRCode.toBuffer(value, {
     errorCorrectionLevel: "M",
     margin: 0,
-    width: Math.max(256, Math.round(QR_SIZE * 5)),
+    width: Math.max(256, Math.round(size * 5)),
   });
 
 const drawPackSticker = async (doc: PdfDoc, entry: PrintableLabelEntry) => {
-  drawLabelBackground(doc);
+  drawLabelBackground(doc, PACK_H_PADDING, PACK_V_PADDING);
 
   const packTarget = entry.pack.payloadUrl ?? entry.pack.code;
-  const qr = await createQrBuffer(packTarget);
+  const qr = await createQrBuffer(packTarget, PACK_QR_SIZE);
 
-  const qrX = LABEL_WIDTH - H_PADDING - QR_SIZE;
-  doc.image(qr, qrX, V_PADDING, { fit: [QR_SIZE, QR_SIZE] });
+  const qrX = LABEL_WIDTH - PACK_H_PADDING - PACK_QR_SIZE;
+  doc.image(qr, qrX, PACK_V_PADDING, { fit: [PACK_QR_SIZE, PACK_QR_SIZE] });
 
-  const textWidth = qrX - H_PADDING * 0.8;
+  const textWidth = qrX - PACK_H_PADDING * 0.8;
   const textY = LABEL_HEIGHT / 2 - 8;
 
   doc
     .font("Helvetica-Bold")
-    .fontSize(12)
+    .fontSize(18)
     .fillColor(COLOR_TEXT)
-    .text("SCAN TO", H_PADDING, textY - 8, {
+    .text("SCAN TO", PACK_H_PADDING, textY - 8, {
       width: textWidth,
+      lineBreak: false,
     });
 
   doc
     .font("Helvetica-Bold")
-    .fontSize(12)
+    .fontSize(18)
     .fillColor(COLOR_TEXT)
-    .text("RIP IT LIVE", H_PADDING, textY + 8, {
+    .text("RIP IT LIVE", PACK_H_PADDING, textY + 8, {
       width: textWidth,
+      lineBreak: false,
     });
 };
 
 const drawCardSticker = async (doc: PdfDoc, entry: PrintableLabelEntry) => {
-  drawLabelBackground(doc);
+  drawLabelBackground(doc, CARD_H_PADDING, CARD_V_PADDING);
 
   const cardTarget = entry.card.payloadUrl ?? entry.card.code;
-  const qr = await createQrBuffer(cardTarget);
+  const qr = await createQrBuffer(cardTarget, CARD_QR_SIZE);
 
-  const qrX = LABEL_WIDTH - H_PADDING - QR_SIZE;
-  doc.image(qr, qrX, V_PADDING, { fit: [QR_SIZE, QR_SIZE] });
+  const qrX = LABEL_WIDTH - CARD_H_PADDING - CARD_QR_SIZE;
+  doc.image(qr, qrX, CARD_V_PADDING, { fit: [CARD_QR_SIZE, CARD_QR_SIZE] });
 
-  const textX = H_PADDING;
+  const textX = CARD_H_PADDING;
   const player = formatPlayer(entry);
   const brand = formatBrand(entry);
   const variant = formatVariant(entry);
 
   doc
     .font("Helvetica-Bold")
-    .fontSize(11)
+    .fontSize(9)
     .fillColor(COLOR_TEXT)
-    .text(player, textX, V_PADDING, {
+    .text(player, textX, CARD_V_PADDING, {
       width: CARD_TEXT_WIDTH,
       ellipsis: true,
+      lineBreak: false,
     });
 
   doc
-    .font("Helvetica-Bold")
-    .fontSize(11)
+    .font("Helvetica")
+    .fontSize(9)
     .fillColor(COLOR_TEXT)
-    .text(brand, textX, V_PADDING + 12, {
+    .text(brand, textX, CARD_V_PADDING + 12, {
       width: CARD_TEXT_WIDTH,
       ellipsis: true,
+      lineBreak: false,
     });
 
   doc
-    .font("Helvetica-Bold")
-    .fontSize(11)
+    .font("Helvetica")
+    .fontSize(9)
     .fillColor(COLOR_TEXT)
-    .text(variant, textX, V_PADDING + 24, {
+    .text(variant, textX, CARD_V_PADDING + 22, {
       width: CARD_TEXT_WIDTH,
       ellipsis: true,
+      lineBreak: false,
     });
 };
 
