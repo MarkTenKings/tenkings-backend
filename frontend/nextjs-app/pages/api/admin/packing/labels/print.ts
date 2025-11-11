@@ -3,12 +3,13 @@ import { prisma } from "@tenkings/database";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import type { CardAttributes } from "@tenkings/shared/cardAttributes";
-import type { PrintableLabelEntry } from "../../../../../lib/server/labels";
+import type { LabelStyle, PrintableLabelEntry } from "../../../../../lib/server/labels";
 import { generateLabelSheetPdf } from "../../../../../lib/server/labels";
 import type { QrCodeSummary } from "../../../../../lib/server/qrCodes";
 
 const requestSchema = z.object({
   labelIds: z.array(z.string().min(1)).min(1),
+  style: z.enum(["generic", "premier"]).optional().default("generic"),
 });
 
 type ResponseBody =
@@ -52,7 +53,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   try {
     const admin = await requireAdminSession(req);
-    const { labelIds } = requestSchema.parse(req.body ?? {});
+    const { labelIds, style } = requestSchema.parse(req.body ?? {});
 
     const labelRecords = await prisma.packLabel.findMany({
       where: { id: { in: labelIds } },
@@ -107,10 +108,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const pdfBuffer = await generateLabelSheetPdf({
       labels: printable,
       generatedBy: admin.user.displayName ?? admin.user.phone ?? admin.user.id,
+      style,
     });
 
     const pdf = pdfBuffer.toString("base64");
-    const filename = `tenkings-labels-${new Date().toISOString().replace(/[.:]/g, "-")}.pdf`;
+    const filename = `tenkings-labels-${style}-${new Date().toISOString().replace(/[.:]/g, "-")}.pdf`;
 
     return res.status(200).json({ pdf, filename, labels: printable });
   } catch (error) {

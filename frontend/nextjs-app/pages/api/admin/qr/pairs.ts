@@ -4,10 +4,12 @@ import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { createQrCodePairs } from "../../../../lib/server/qrCodes";
 import { generateLabelSheetPdf } from "../../../../lib/server/labels";
+import type { LabelStyle } from "../../../../lib/server/labels";
 
 const requestSchema = z.object({
   count: z.number().int().min(1).max(200).optional().default(1),
   locationId: z.string().min(1).optional(),
+  style: z.enum(["generic", "premier"]).optional().default("generic"),
 });
 
 type ResponseBody =
@@ -26,7 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
   try {
     const admin = await requireAdminSession(req);
-    const { count, locationId } = requestSchema.parse(req.body ?? {});
+    const { count, locationId, style } = requestSchema.parse(req.body ?? {});
 
     if (locationId) {
       const exists = await prisma.location.findUnique({ where: { id: locationId }, select: { id: true } });
@@ -44,9 +46,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       label: pair.label,
       item: null,
     }));
-    const pdfBuffer = await generateLabelSheetPdf({ labels: printable, generatedBy: operatorName });
+    const pdfBuffer = await generateLabelSheetPdf({ labels: printable, generatedBy: operatorName, style });
     const pdf = pdfBuffer.toString("base64");
-    const filename = `tenkings-labels-${new Date().toISOString().replace(/[.:]/g, "-")}.pdf`;
+    const filename = `tenkings-labels-${style}-${new Date().toISOString().replace(/[.:]/g, "-")}.pdf`;
 
     return res.status(200).json({ pairs, pdf, filename });
   } catch (error) {

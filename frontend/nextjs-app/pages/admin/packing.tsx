@@ -130,6 +130,8 @@ type LabelDownload = {
   filename: string;
 };
 
+type LabelStyle = "generic" | "premier";
+
 type ViewMode = "tracker" | "timeline";
 
 type StatusMessage = {
@@ -260,6 +262,7 @@ export default function AdminPackingConsole() {
   const [packStatus, setPackStatus] = useState<StatusMessage | null>(null);
 
   const [printSubmitting, setPrintSubmitting] = useState(false);
+  const [printSubmittingStyle, setPrintSubmittingStyle] = useState<LabelStyle | null>(null);
   const [printDownload, setPrintDownload] = useState<LabelDownload | null>(null);
   const downloadUrlRef = useRef<string | null>(null);
   const skipAutoFetchRef = useRef(false);
@@ -550,7 +553,7 @@ export default function AdminPackingConsole() {
     setSelectedPackIds([]);
   }, []);
 
-  const handleDownloadLabels = useCallback(async () => {
+  const handleDownloadLabels = useCallback(async (style: LabelStyle) => {
     if (!batchDetail || !session?.token || !isAdmin) {
       return;
     }
@@ -569,12 +572,13 @@ export default function AdminPackingConsole() {
     }
 
     setPrintSubmitting(true);
+    setPrintSubmittingStyle(style);
     setPackStatus(null);
     try {
       const res = await fetch("/api/admin/packing/labels/print", {
         method: "POST",
         headers: adminHeaders(),
-        body: JSON.stringify({ labelIds }),
+        body: JSON.stringify({ labelIds, style }),
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
@@ -582,12 +586,16 @@ export default function AdminPackingConsole() {
       }
       const payload = await res.json();
       registerDownload(payload.pdf, payload.filename);
-      setPackStatus({ type: "success", message: "Label sheet ready. Downloading now." });
+      setPackStatus({
+        type: "success",
+        message: `${style === "premier" ? "Premier" : "Generic"} label sheet ready. Downloading now.`,
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to generate label sheet";
       setPackStatus({ type: "error", message });
     } finally {
       setPrintSubmitting(false);
+      setPrintSubmittingStyle(null);
     }
   }, [adminHeaders, batchDetail, isAdmin, registerDownload, selectedPackIds, session?.token]);
 
@@ -1185,10 +1193,22 @@ export default function AdminPackingConsole() {
                       <button
                         type="button"
                         disabled={printSubmitting}
-                        onClick={() => void handleDownloadLabels()}
+                        onClick={() => void handleDownloadLabels("generic")}
                         className="inline-flex items-center justify-center rounded-full border border-white/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-slate-200 transition hover:border-white/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        {printSubmitting ? "Generating…" : `Download label sheet (${selectedPackIds.length})`}
+                        {printSubmitting && printSubmittingStyle === "generic"
+                          ? "Generating…"
+                          : `Download generic (${selectedPackIds.length})`}
+                      </button>
+                      <button
+                        type="button"
+                        disabled={printSubmitting}
+                        onClick={() => void handleDownloadLabels("premier")}
+                        className="inline-flex items-center justify-center rounded-full border border-white/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-slate-200 transition hover:border-white/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {printSubmitting && printSubmittingStyle === "premier"
+                          ? "Generating…"
+                          : `Download premier (${selectedPackIds.length})`}
                       </button>
                       {printDownload && (
                         <a
