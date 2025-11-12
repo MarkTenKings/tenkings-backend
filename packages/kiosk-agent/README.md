@@ -24,7 +24,7 @@ copy packages\kiosk-agent\.env.example packages\kiosk-agent\.env.local
 
 Edit `.env.local` and set at least `KIOSK_AGENT_LOCATION_SLUG`, `OBS_ADDRESS`, `OBS_PASSWORD`, and the correct scene names.
 
-3. (Optional) toggle the scanner automation by editing `.env.local` and setting `KIOSK_AGENT_SCANNER_ENABLED=true`. Adjust countdown/live seconds, minimum scan length, and cooldown in the same file.
+3. (Optional) toggle the scanner automation by editing `.env.local` and setting `KIOSK_AGENT_SCANNER_ENABLED=true`. Adjust countdown/live seconds, minimum scan length, and cooldown in the same file. (If you’re on a platform without `iohook` prebuilds—macOS/Linux dev boxes—leave this `false` so the agent skips scanner setup.)
 
 4. Build the agent (optional in dev, required for `pnpm start`):
 
