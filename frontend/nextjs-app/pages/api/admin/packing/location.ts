@@ -163,15 +163,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       await prisma.$transaction(async (tx) => {
         for (const pack of packs) {
-          const label = pack.packLabels[0] ?? null;
-          await syncPackAssetsLocation(tx, {
-            packInstanceId: pack.id,
-            packLabelId: label?.id ?? null,
-            cardQrCodeId: label?.cardQrCode.id ?? null,
-            packQrCodeId: pack.packQrCodeId,
-            locationId: targetLocationId,
-          });
-        }
+        const label = pack.packLabels[0] ?? null;
+        await syncPackAssetsLocation(tx, {
+          packInstanceId: pack.id,
+          packLabelId: label?.id ?? null,
+          cardQrCodeId: label?.cardQrCode.id ?? null,
+          packQrCodeId: label?.packQrCode.id ?? null,
+          locationId: targetLocationId,
+        });
+      }
       });
 
       return res.status(200).json({ updated: assignments.length });
@@ -384,7 +384,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         id: pack.id,
         createdAt: pack.createdAt.toISOString(),
         fulfillmentStatus: pack.fulfillmentStatus,
-        packQrCodeId: pack.packQrCodeId,
+        packQrCodeId: label?.packQrCode.id ?? null,
         packDefinition: pack.packDefinition
           ? {
               id: pack.packDefinition.id,
