@@ -163,11 +163,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       await prisma.$transaction(async (tx) => {
         for (const pack of packs) {
-        const label = pack.packLabels[0] ?? null;
+        const labelRecord = pack.packLabels[0] ?? null;
         await syncPackAssetsLocation(tx, {
           packInstanceId: pack.id,
-          packLabelId: label?.id ?? null,
-          cardQrCodeId: label?.cardQrCode.id ?? null,
+          packLabelId: labelRecord?.id ?? null,
+          cardQrCodeId: labelRecord?.cardQrCode.id ?? null,
           packQrCodeId: labelRecord?.packQrCode.id ?? null,
           locationId: targetLocationId,
         });
@@ -384,7 +384,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         id: pack.id,
         createdAt: pack.createdAt.toISOString(),
         fulfillmentStatus: pack.fulfillmentStatus,
-        packQrCodeId: label?.packQrCode.id ?? null,
+        packQrCodeId: labelRecord?.packQrCode.id ?? null,
         packDefinition: pack.packDefinition
           ? {
               id: pack.packDefinition.id,
