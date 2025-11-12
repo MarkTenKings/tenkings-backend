@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, PackFulfillmentStatus, BatchStage, QrCodeState, type Prisma } from "@tenkings/database";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
-import { reserveLabelsForPacks } from "../../../../lib/server/qrCodes";
+import { reserveLabelsForPacks, syncPackAssetsLocation } from "../../../../lib/server/qrCodes";
 
 const ONLINE_OPTION = "ONLINE";
 
@@ -159,6 +159,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         createdById: admin.user.id,
         autoBind: targetLocationId !== null,
         forceUnbind: targetLocationId === null,
+      });
+
+      await prisma.$transaction(async (tx) => {
+        for (const pack of packs) {
+          const label = pack.packLabels[0] ?? null;
+          await syncPackAssetsLocation(tx, {
+            packInstanceId: pack.id,
+            packLabelId: label?.id ?? null,
+            cardQrCodeId: label?.cardQrCode.id ?? null,
+            packQrCodeId: pack.packQrCodeId,
+            locationId: targetLocationId,
+          });
+        }
       });
 
       return res.status(200).json({ updated: assignments.length });

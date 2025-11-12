@@ -466,6 +466,14 @@ export async function reserveLabelsForPacks({
             },
           });
         }
+
+        await syncPackAssetsLocation(tx, {
+          packInstanceId: packRecord.id,
+          packLabelId: updatedLabel.id,
+          cardQrCodeId: updatedLabel.cardQrCodeId,
+          packQrCodeId: updatedLabel.packQrCodeId,
+          locationId: targetLocationId,
+        });
       }
 
       await updateLabelBindingStatus(tx, updatedLabel.id);
@@ -590,6 +598,40 @@ export async function bindCardQrCode({
       qrCode: toSummary(updated),
     };
   });
+}
+
+export async function syncPackAssetsLocation(
+  tx: TransactionClient,
+  params: {
+    packInstanceId: string;
+    packLabelId: string | null;
+    cardQrCodeId: string | null;
+    packQrCodeId: string | null;
+    locationId: string | null;
+  }
+) {
+  const { packInstanceId, packLabelId, cardQrCodeId, packQrCodeId, locationId } = params;
+
+  await tx.packInstance.update({
+    where: { id: packInstanceId },
+    data: { locationId },
+  });
+
+  if (packLabelId) {
+    await tx.packLabel.update({ where: { id: packLabelId }, data: { locationId } });
+  }
+
+  const updates: Array<{ id: string; data: Prisma.QrCodeUpdateInput }> = [];
+  if (cardQrCodeId) {
+    updates.push({ id: cardQrCodeId, data: { locationId } });
+  }
+  if (packQrCodeId) {
+    updates.push({ id: packQrCodeId, data: { locationId } });
+  }
+
+  for (const update of updates) {
+    await tx.qrCode.update({ where: { id: update.id }, data: update.data });
+  }
 }
 
 export async function bindPackQrCode({

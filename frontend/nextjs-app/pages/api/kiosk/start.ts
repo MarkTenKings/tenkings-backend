@@ -11,6 +11,7 @@ import {
   muxCredentialsConfigured,
 } from "../../../lib/server/mux";
 import { normalizeQrInput } from "../../../lib/qrInput";
+import { syncPackAssetsLocation } from "../../../lib/server/qrCodes";
 
 const DEFAULT_COUNTDOWN = Number(process.env.KIOSK_COUNTDOWN_SECONDS ?? 10);
 const DEFAULT_LIVE = Number(process.env.KIOSK_LIVE_SECONDS ?? 30);
@@ -139,10 +140,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const timestamp = new Date();
 
     const session = await prisma.$transaction(async (tx) => {
-      if (pack.locationId !== effectiveLocationId) {
-        await tx.packInstance.update({ where: { id: pack.id }, data: { locationId: effectiveLocationId } });
-      }
-
       if (pack.fulfillmentStatus !== PackFulfillmentStatus.LOADED || !pack.loadedAt) {
         await tx.packInstance.update({
           where: { id: pack.id },
@@ -152,6 +149,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           },
         });
       }
+
+      const labelRecord = packQr
+        ? await tx.packLabel.findFirst({
+            where: { packQrCodeId: packQr.id },
+            select: { id: true, cardQrCodeId: true, packQrCodeId: true },
+          })
+        : null;
+
+      await syncPackAssetsLocation(tx, {
+        packInstanceId: pack.id,
+        packLabelId: labelRecord?.id ?? null,
+        cardQrCodeId: labelRecord?.cardQrCodeId ?? null,
+        packQrCodeId: packQr?.id ?? pack.packQrCode?.id ?? null,
+        locationId: effectiveLocationId,
+      });
 
       return tx.kioskSession.create({
         data: {
