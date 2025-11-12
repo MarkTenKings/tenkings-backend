@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "dotenv": "^16.4.5",
+    "iohook": "^0.9.4",
     "obs-websocket-js": "^5.0.5"
   },
   "devDependencies": {

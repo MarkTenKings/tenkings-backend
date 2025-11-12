@@ -24,13 +24,15 @@ copy packages\kiosk-agent\.env.example packages\kiosk-agent\.env.local
 
 Edit `.env.local` and set at least `KIOSK_AGENT_LOCATION_SLUG`, `OBS_ADDRESS`, `OBS_PASSWORD`, and the correct scene names.
 
-3. Build the agent (optional in dev, required for `pnpm start`):
+3. (Optional) toggle the scanner automation by editing `.env.local` and setting `KIOSK_AGENT_SCANNER_ENABLED=true`. Adjust countdown/live seconds, minimum scan length, and cooldown in the same file.
+
+4. Build the agent (optional in dev, required for `pnpm start`):
 
 ```bash
 pnpm --filter @tenkings/kiosk-agent build
 ```
 
-4. Run the agent (during development you can use `dev` to auto-restart):
+5. Run the agent (during development you can use `dev` to auto-restart):
 
 ```bash
 pnpm --filter @tenkings/kiosk-agent dev   # ts-node-dev with hot reload
@@ -47,6 +49,14 @@ pnpm --filter @tenkings/kiosk-agent start # runs compiled JS from dist
 | Live       | `Live Rip`           |
 | Reveal     | `Highlight`          |
 
+## Scanner behaviour
+
+- Works with USB scanners in keyboard (wedge) mode. The agent listens globally, so scans are captured even when Chrome isn’t focused.
+- A scan finishes when the device sends Enter (typical default). Keystrokes spaced farther apart than `KIOSK_AGENT_SCANNER_IDLE_RESET_MS` reset the buffer so manual typing won’t accidentally trigger a session.
+- Duplicate scans are ignored for `KIOSK_AGENT_SCANNER_COOLDOWN_MS` (1.5 s default).
+- Auto-started sessions use the duration settings from `KIOSK_AGENT_COUNTDOWN_SECONDS` and `KIOSK_AGENT_LIVE_SECONDS`.
+- Provide `KIOSK_AGENT_SECRET` if your `/api/kiosk/start` endpoint requires the kiosk secret header.
+
 You can rename scenes in OBS, just make sure the `.env.local` matches the actual scene names exactly.
 
 ## Windows Auto-Start
@@ -58,4 +68,3 @@ pnpm --filter @tenkings/kiosk-agent start
 ```
 
 with `Start in` set to `C:\Users\Mark Thomas\tenkings-backend`. Configure the task to run at logon and restart on failure so the agent stays alive after reboots.
-

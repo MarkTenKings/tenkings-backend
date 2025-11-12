@@ -50,6 +50,12 @@ interface AgentConfig {
   autoStartStream: boolean;
   autoStopStream: boolean;
   autoRecord: boolean;
+  scannerEnabled: boolean;
+  scannerMinLength: number;
+  scannerCooldownMs: number;
+  scannerIdleResetMs: number;
+  countdownSeconds: number;
+  liveSeconds: number;
 }
 
 const config: AgentConfig = {
@@ -67,6 +73,12 @@ const config: AgentConfig = {
   autoStartStream: /^true$/i.test(process.env.OBS_AUTO_START_STREAM ?? "true"),
   autoStopStream: !/^false$/i.test(process.env.OBS_AUTO_STOP_STREAM ?? "true"),
   autoRecord: /^true$/i.test(process.env.OBS_AUTO_RECORD ?? "false"),
+  scannerEnabled: /^true$/i.test(process.env.KIOSK_AGENT_SCANNER_ENABLED ?? "false"),
+  scannerMinLength: Number(process.env.KIOSK_AGENT_SCANNER_MIN_LENGTH ?? "4"),
+  scannerCooldownMs: Number(process.env.KIOSK_AGENT_SCANNER_COOLDOWN_MS ?? "1500"),
+  scannerIdleResetMs: Number(process.env.KIOSK_AGENT_SCANNER_IDLE_RESET_MS ?? "250"),
+  countdownSeconds: Number(process.env.KIOSK_AGENT_COUNTDOWN_SECONDS ?? "10"),
+  liveSeconds: Number(process.env.KIOSK_AGENT_LIVE_SECONDS ?? "60"),
 };
 
 if (!config.locationId && !config.locationSlug) {
@@ -189,6 +201,10 @@ const obsController = new ObsController(config.obsAddress, config.obsPassword);
 
 let lastStage: Stage | "INIT" = "INIT";
 let lastSessionId: string | null = null;
+let lastPackCode: string | null = null;
+let lastPackStartedAt = 0;
+let scannerStopper: (() => void) | null = null;
+let startingSession = false;
 
 function deriveStage(session: SerializedKioskSession | null): Stage {
   if (!session) {
@@ -267,6 +283,11 @@ async function fetchDisplay(): Promise<DisplayResponse | null> {
 
 async function runAgent() {
   console.info("[agent] Starting kiosk agent for", config.locationId ?? config.locationSlug);
+
+  scannerStopper = await initScanner(async (code) => {
+    await triggerKioskSession(code);
+  });
+
   while (true) {
     try {
       const payload = await fetchDisplay();
@@ -290,5 +311,163 @@ runAgent().catch((error) => {
 
 process.on("SIGINT", () => {
   console.info("[agent] Received SIGINT, exiting");
+  scannerStopper?.();
   process.exit(0);
 });
+
+async function initScanner(onScan: (code: string) => Promise<void>) {
+  if (!config.scannerEnabled) {
+    return null;
+  }
+
+  try {
+    const module = await import("iohook");
+    const iohook = module.default;
+    const buffer: string[] = [];
+    let lastKeyTime = 0;
+
+    const resetBuffer = () => {
+      if (buffer.length) {
+        buffer.length = 0;
+      }
+    };
+
+    const finalizeBuffer = async () => {
+      if (!buffer.length) {
+        return;
+      }
+      const code = buffer.join("");
+      buffer.length = 0;
+      if (code.length < config.scannerMinLength) {
+        console.warn("[agent] Ignoring short scan", code);
+        return;
+      }
+      await onScan(code);
+    };
+
+    iohook.on("keydown", (event) => {
+      const now = Date.now();
+      if (now - lastKeyTime > config.scannerIdleResetMs) {
+        resetBuffer();
+      }
+      lastKeyTime = now;
+
+      const decoded = decodeKey(event);
+      if (decoded === null) {
+        return;
+      }
+      if (decoded === "ENTER") {
+        void finalizeBuffer();
+        return;
+      }
+      if (decoded === "BACKSPACE") {
+        buffer.pop();
+        return;
+      }
+      buffer.push(decoded);
+    });
+
+    iohook.start();
+    console.info("[agent] Scanner listener enabled");
+
+    return () => {
+      iohook.stop();
+    };
+  } catch (error) {
+    console.error("[agent] Failed to initialise scanner listener", error);
+    return null;
+  }
+}
+
+function decodeKey(event: { rawcode: number; shiftKey: boolean }): string | "ENTER" | "BACKSPACE" | null {
+  const raw = event.rawcode;
+  if (raw === 13) {
+    return "ENTER";
+  }
+  if (raw === 8) {
+    return "BACKSPACE";
+  }
+  if (raw >= 48 && raw <= 57) {
+    return String.fromCharCode(raw);
+  }
+  if (raw >= 65 && raw <= 90) {
+    const ch = String.fromCharCode(raw);
+    return event.shiftKey ? ch : ch.toLowerCase();
+  }
+  // Numpad digits
+  if (raw >= 96 && raw <= 105) {
+    return String.fromCharCode(raw - 48);
+  }
+  const punctuation: Record<number, string> = {
+    189: "-",
+    109: "-",
+    190: ".",
+    191: "/",
+    32: " ",
+  };
+  if (raw in punctuation) {
+    return punctuation[raw];
+  }
+  return null;
+}
+
+interface StartSessionResponse {
+  session?: {
+    id: string;
+    code: string;
+  };
+}
+
+async function triggerKioskSession(packCode: string) {
+  const trimmed = packCode.trim();
+  const now = Date.now();
+  if (!trimmed) {
+    return;
+  }
+  if (startingSession) {
+    console.warn("[agent] Scan ignored, session launch already in progress");
+    return;
+  }
+  if (lastPackCode === trimmed && now - lastPackStartedAt < config.scannerCooldownMs) {
+    console.warn("[agent] Duplicate scan ignored", trimmed);
+    return;
+  }
+
+  startingSession = true;
+  try {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (config.secretHeader) {
+      headers["x-kiosk-secret"] = config.secretHeader;
+    }
+    const payload = {
+      packCode: trimmed,
+      locationId: config.locationId,
+      countdownSeconds: config.countdownSeconds,
+      liveSeconds: config.liveSeconds,
+    };
+    const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/api/kiosk/start`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+    const data = (await response.json().catch(() => ({}))) as StartSessionResponse & {
+      message?: string;
+    };
+    if (!response.ok) {
+      throw new Error(data?.message ?? "Failed to start kiosk session");
+    }
+    lastPackCode = trimmed;
+    lastPackStartedAt = Date.now();
+    console.info(
+      "[agent] Session started",
+      data.session?.code ?? trimmed,
+      data.session?.id ?? ""
+    );
+  } catch (error) {
+    console.error("[agent] Unable to start session from scanner", error);
+  } finally {
+    startingSession = false;
+  }
+}
