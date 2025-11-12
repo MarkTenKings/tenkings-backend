@@ -63,8 +63,8 @@ const buildFallbackLocation = (
   }
   return {
     id: locationId ?? slug ?? "unknown",
-    name: current?.name ?? slug ?? "Ten Kings Live",
-    slug: current?.slug ?? slug ?? "live",
+    name: slug ?? "Ten Kings Live",
+    slug: slug ?? "live",
   };
 };
 
