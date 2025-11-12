@@ -621,16 +621,20 @@ export async function syncPackAssetsLocation(
     await tx.packLabel.update({ where: { id: packLabelId }, data: { locationId } });
   }
 
-  const updates: Array<{ id: string; data: Prisma.QrCodeUpdateInput }> = [];
+  const qrLocationUpdate: Prisma.QrCodeUpdateInput = locationId
+    ? { location: { connect: { id: locationId } } }
+    : { location: { disconnect: true } };
+
+  const qrIds: string[] = [];
   if (cardQrCodeId) {
-    updates.push({ id: cardQrCodeId, data: { locationId } });
+    qrIds.push(cardQrCodeId);
   }
   if (packQrCodeId) {
-    updates.push({ id: packQrCodeId, data: { locationId } });
+    qrIds.push(packQrCodeId);
   }
 
-  for (const update of updates) {
-    await tx.qrCode.update({ where: { id: update.id }, data: update.data });
+  for (const qrId of qrIds) {
+    await tx.qrCode.update({ where: { id: qrId }, data: qrLocationUpdate });
   }
 }
 
