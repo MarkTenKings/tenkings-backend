@@ -168,7 +168,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           packInstanceId: pack.id,
           packLabelId: label?.id ?? null,
           cardQrCodeId: label?.cardQrCode.id ?? null,
-          packQrCodeId: label?.packQrCode.id ?? null,
+          packQrCodeId: labelRecord?.packQrCode.id ?? null,
           locationId: targetLocationId,
         });
       }
