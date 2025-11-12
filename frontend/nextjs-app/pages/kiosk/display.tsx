@@ -53,6 +53,21 @@ const getPackLabel = (session: SerializedKioskSession | null, fallback?: string 
   return session.packQrCode?.serial ?? session.packQrCode?.code ?? session.code ?? fallback ?? null;
 };
 
+const buildFallbackLocation = (
+  current: DisplayResponse["location"] | null | undefined,
+  slug?: string,
+  locationId?: string
+): DisplayResponse["location"] => {
+  if (current) {
+    return current;
+  }
+  return {
+    id: locationId ?? slug ?? "unknown",
+    name: current?.name ?? slug ?? "Ten Kings Live",
+    slug: current?.slug ?? slug ?? "live",
+  };
+};
+
 export default function KioskDisplayPage() {
   const router = useRouter();
   const locationIdParam = router.query.locationId;
@@ -248,7 +263,7 @@ export default function KioskDisplayPage() {
           }
           const payload = (await response.json()) as { session: SerializedKioskSession };
           setDisplay((prev) =>
-            prev ? { ...prev, session: payload.session } : { location: payload.session.pack?.location ?? display?.location ?? { id: locationId ?? "", name: slug ?? "", slug: slug ?? "" }, session: payload.session }
+            prev ? { ...prev, session: payload.session } : { location: buildFallbackLocation(display?.location, slug, locationId), session: payload.session }
           );
           setActivePackCode(getPackLabel(payload.session, cached.packCode ?? null));
           setHelperState("Restored active session after restart.", "info");
