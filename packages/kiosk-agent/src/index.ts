@@ -3,6 +3,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
 import OBSWebSocket from "obs-websocket-js";
+import type { OBSResponseTypes } from "obs-websocket-js";
 import dotenv from "dotenv";
 
 const envCandidates = [
@@ -166,7 +167,7 @@ class ObsController {
     if (!this.connected) {
       return;
     }
-    const status = await this.obs.call("GetStreamStatus");
+    const status = (await this.obs.call("GetStreamStatus")) as StreamStatus;
     if (!status.outputActive) {
       await this.obs.call("StartStream");
       console.info("[agent] OBS stream started");
@@ -185,7 +186,7 @@ class ObsController {
     if (!this.connected) {
       return;
     }
-    const status = await this.obs.call("GetStreamStatus");
+    const status = (await this.obs.call("GetStreamStatus")) as StreamStatus;
     if (status.outputActive) {
       await this.obs.call("StopStream");
       console.info("[agent] OBS stream stopped");
@@ -196,6 +197,10 @@ class ObsController {
     }
   }
 }
+
+type StreamStatus = OBSResponseTypes["GetStreamStatus"] & {
+  outputRecordingActive?: boolean;
+};
 
 const obsController = new ObsController(config.obsAddress, config.obsPassword);
 
