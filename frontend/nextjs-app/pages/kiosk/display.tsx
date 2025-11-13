@@ -112,6 +112,13 @@ export default function KioskDisplayPage() {
     return new Date(session.liveEndsAt).getTime() - now;
   }, [session?.liveEndsAt, now]);
 
+  const revealRemaining = useMemo(() => {
+    if (!session?.revealEndsAt) {
+      return 0;
+    }
+    return new Date(session.revealEndsAt).getTime() - now;
+  }, [session?.revealEndsAt, now]);
+
   useEffect(() => {
     const interval = window.setInterval(() => setNow(Date.now()), TIMER_TICK_MS);
     return () => window.clearInterval(interval);
@@ -600,13 +607,18 @@ export default function KioskDisplayPage() {
           throw new Error(payload?.message ?? "Unable to advance stage");
         }
         const nextSession = payload.session ?? null;
-        setDisplay((prev) => (prev ? { ...prev, session: nextSession } : prev));
+        const normalizedSession =
+          nextSession && (nextSession.status === "COMPLETE" || nextSession.status === "CANCELLED") ? null : nextSession;
+        setDisplay((prev) => (prev ? { ...prev, session: normalizedSession } : prev));
+        if (!normalizedSession) {
+          clearPersistedSession();
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to advance stage";
         setHelperState(message, "error");
       }
     },
-    [display?.session, controlToken, setHelperState]
+    [display?.session, controlToken, setHelperState, clearPersistedSession]
   );
 
   const autoLiveTriggered = useRef(false);
@@ -631,7 +643,64 @@ export default function KioskDisplayPage() {
     });
   }, [display?.session, controlToken, countdownRemaining, advanceStage]);
 
-  const sessionStage: Stage = sessionInactive ? "STANDBY" : ((display?.session?.status as Stage) ?? "STANDBY");
+  const autoLiveWrapRef = useRef(false);
+  useEffect(() => {
+    if (!display?.session || !controlToken) {
+      autoLiveWrapRef.current = false;
+      return;
+    }
+    if (display.session.status !== "LIVE") {
+      autoLiveWrapRef.current = false;
+      return;
+    }
+    if (liveRemaining > 0) {
+      return;
+    }
+    if (autoLiveWrapRef.current) {
+      return;
+    }
+    autoLiveWrapRef.current = true;
+    const nextStage: SerializedKioskSession["status"] = display.session.reveal ? "REVEAL" : "CANCELLED";
+    void advanceStage(nextStage).catch(() => {
+      autoLiveWrapRef.current = false;
+    });
+  }, [display?.session, controlToken, liveRemaining, advanceStage]);
+
+  const autoRevealWrapRef = useRef(false);
+  useEffect(() => {
+    if (!display?.session || !controlToken) {
+      autoRevealWrapRef.current = false;
+      return;
+    }
+    if (display.session.status !== "REVEAL") {
+      autoRevealWrapRef.current = false;
+      return;
+    }
+    if (revealRemaining > 0) {
+      return;
+    }
+    if (autoRevealWrapRef.current) {
+      return;
+    }
+    autoRevealWrapRef.current = true;
+    void advanceStage("COMPLETE").catch(() => {
+      autoRevealWrapRef.current = false;
+    });
+  }, [display?.session, controlToken, revealRemaining, advanceStage]);
+
+  const sessionStage: Stage = useMemo(() => {
+    if (!display?.session) {
+      return "STANDBY";
+    }
+    switch (display.session.status) {
+      case "COUNTDOWN":
+      case "LIVE":
+      case "REVEAL":
+        return display.session.status;
+      default:
+        return "STANDBY";
+    }
+  }, [display?.session]);
 
   useEffect(() => {
     if (!obsAutomationEnabled || typeof window === "undefined") {
@@ -686,7 +755,7 @@ export default function KioskDisplayPage() {
       : display?.session?.status === "LIVE"
         ? "Stream is live – scan the card to reveal"
         : display?.session?.status === "REVEAL"
-          ? "Session complete – scan the next pack"
+          ? "Hit revealed – resetting soon"
           : "Countdown armed – keep the pack on camera";
   const helperSubline = sessionInactive
     ? "Scanner input is captured on this display—no need for a second screen."
@@ -737,6 +806,9 @@ export default function KioskDisplayPage() {
   const renderReveal = () => (
     <div className="flex flex-col items-center gap-6 text-center">
       <p className="text-sm uppercase tracking-[0.45em] text-emerald-300">Highlighted Hit</p>
+      <p className="font-heading text-[clamp(3rem,8vw,8rem)] tracking-[0.1em] text-emerald-100">
+        {formatDuration(revealRemaining)}
+      </p>
       <h2 className="font-heading text-[clamp(2.5rem,6vw,5rem)] uppercase tracking-[0.12em] text-white">
         {reveal?.name ?? "Vault Hit"}
       </h2>

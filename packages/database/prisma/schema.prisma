@@ -385,8 +385,10 @@ model KioskSession {
   status             KioskSessionStatus @default(COUNTDOWN)
   countdownSeconds   Int                @default(10)
   liveSeconds        Int                @default(30)
+  revealSeconds      Int                @default(10)
   countdownStartedAt DateTime           @default(now())
   liveStartedAt      DateTime?
+  revealStartedAt    DateTime?
   revealItemId       String?
   videoUrl           String?
   thumbnailUrl       String?

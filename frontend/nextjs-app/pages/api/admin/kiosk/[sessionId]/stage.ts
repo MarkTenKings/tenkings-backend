@@ -8,6 +8,7 @@ import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/
 const stageSchema = z.object({
   stage: z.enum(["COUNTDOWN", "LIVE", "REVEAL", "COMPLETE", "CANCELLED"]),
 });
+const DEFAULT_REVEAL_SECONDS = Number(process.env.KIOSK_REVEAL_SECONDS ?? 10);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
@@ -49,6 +50,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         updateData.completedAt = null;
         break;
       case "REVEAL":
+        updateData.revealStartedAt = now;
+        updateData.revealSeconds = existing.revealSeconds ?? DEFAULT_REVEAL_SECONDS;
         if (!existing.liveStartedAt) {
           updateData.liveStartedAt = now;
         }

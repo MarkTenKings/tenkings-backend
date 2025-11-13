@@ -15,6 +15,7 @@ import { syncPackAssetsLocation } from "../../../lib/server/qrCodes";
 
 const DEFAULT_COUNTDOWN = Number(process.env.KIOSK_COUNTDOWN_SECONDS ?? 10);
 const DEFAULT_LIVE = Number(process.env.KIOSK_LIVE_SECONDS ?? 30);
+const DEFAULT_REVEAL = Number(process.env.KIOSK_REVEAL_SECONDS ?? 10);
 
 const startSchema = z
   .object({
@@ -115,7 +116,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const sessionCode = payload.code?.trim() || packQr.code;
 
     const conflictConditions: Prisma.KioskSessionWhereInput[] = [
-      { code: sessionCode },
+      { code: sessionCode, status: { notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED] } },
       { packInstanceId: pack.id, status: { notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED] } },
       { packQrCodeId: packQr.id, status: { notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED] } },
     ];
@@ -178,6 +179,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const controlToken = generateControlToken();
     const countdownSeconds = payload.countdownSeconds ?? DEFAULT_COUNTDOWN;
     const liveSeconds = payload.liveSeconds ?? DEFAULT_LIVE;
+    const revealSeconds = DEFAULT_REVEAL;
     const timestamp = new Date();
     const playbackUrl = locationMuxPlaybackId ? buildMuxPlaybackUrl(locationMuxPlaybackId) : null;
 
@@ -228,6 +230,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           countdownSeconds,
           liveSeconds,
           countdownStartedAt: timestamp,
+          revealSeconds,
           muxStreamId: locationMuxStreamId,
           muxStreamKey: locationMuxStreamKey,
           muxPlaybackId: locationMuxPlaybackId,

@@ -31,6 +31,9 @@ export function serializeKioskSession(session: KioskSessionWithRelations) {
   const liveEnds = session.liveStartedAt
     ? new Date(session.liveStartedAt.getTime() + secondsToMs(session.liveSeconds))
     : null;
+  const revealEnds = session.revealStartedAt
+    ? new Date(session.revealStartedAt.getTime() + secondsToMs(session.revealSeconds))
+    : null;
 
   return {
     id: session.id,
@@ -38,10 +41,13 @@ export function serializeKioskSession(session: KioskSessionWithRelations) {
     status: session.status,
     countdownSeconds: session.countdownSeconds,
     liveSeconds: session.liveSeconds,
+    revealSeconds: session.revealSeconds,
     countdownStartedAt: session.countdownStartedAt.toISOString(),
     countdownEndsAt: countdownEnds.toISOString(),
     liveStartedAt: session.liveStartedAt ? session.liveStartedAt.toISOString() : null,
     liveEndsAt: liveEnds ? liveEnds.toISOString() : null,
+    revealStartedAt: session.revealStartedAt ? session.revealStartedAt.toISOString() : null,
+    revealEndsAt: revealEnds ? revealEnds.toISOString() : null,
     videoUrl: session.videoUrl,
     thumbnailUrl: session.thumbnailUrl,
     muxPlaybackId: session.muxPlaybackId ?? null,

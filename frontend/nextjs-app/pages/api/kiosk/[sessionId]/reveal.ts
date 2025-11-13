@@ -6,6 +6,7 @@ import { hasKioskControl } from "../../../../lib/server/kioskAuth";
 import { kioskSessionInclude, serializeKioskSession } from "../../../../lib/server/kioskSession";
 
 const BUYBACK_RATE = Number(process.env.KIOSK_BUYBACK_RATE ?? 0.75);
+const DEFAULT_REVEAL_SECONDS = Number(process.env.KIOSK_REVEAL_SECONDS ?? 10);
 
 const revealSchema = z.object({
   itemId: z.string().uuid("itemId must be a valid UUID"),
@@ -102,10 +103,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const revealPayload = formatRevealPayload(item as ItemWithPack);
 
+    const now = new Date();
     const updated = await prisma.kioskSession.update({
       where: { id: sessionId },
       data: {
         status: "REVEAL",
+        revealStartedAt: now,
+        revealSeconds: session.revealSeconds ?? DEFAULT_REVEAL_SECONDS,
         revealItemId: item.id,
         revealPayload,
         qrLinkUrl: payload.qrLinkUrl ?? session.qrLinkUrl,
