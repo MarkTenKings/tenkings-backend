@@ -379,7 +379,9 @@ model KioskSession {
   controlTokenHash   String
   packInstanceId     String?
   locationId         String?
-  packQrCodeId       String?           @unique
+  packQrCodeId       String?
+  packResetVersion   Int           @default(0)
+  packQrCodeSerial   String?
   claimedById        String?
   claimStatus        KioskClaimStatus  @default(UNCLAIMED)
   status             KioskSessionStatus @default(COUNTDOWN)
@@ -646,13 +648,14 @@ model QrCode {
   updatedAt   DateTime    @updatedAt
   boundAt     DateTime?
   retiredAt   DateTime?
+  resetVersion Int        @default(0)
 
   location    Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
   createdBy   User?         @relation("QrCodeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   boundBy     User?         @relation("QrCodeBoundBy", fields: [boundById], references: [id], onDelete: SetNull)
   item        Item?         @relation("CardQrCode")
   packInstance PackInstance? @relation("PackQrCode")
-  kioskSession KioskSession? @relation("SessionPackQr")
+  kioskSessions KioskSession[] @relation("SessionPackQr")
   packLabelCard PackLabel?   @relation("PackLabelCardQr")
   packLabelPack PackLabel?   @relation("PackLabelPackQr")
 }

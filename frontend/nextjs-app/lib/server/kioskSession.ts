@@ -74,6 +74,8 @@ export function serializeKioskSession(session: KioskSessionWithRelations) {
             serial: session.packInstance.packQrCode.serial,
           }
         : null,
+    packResetVersion: session.packResetVersion ?? 0,
+    packQrCodeSerial: session.packQrCodeSerial,
     completedAt: session.completedAt ? session.completedAt.toISOString() : null,
     updatedAt: session.updatedAt.toISOString(),
     reveal: session.revealPayload ?? (session.revealItem

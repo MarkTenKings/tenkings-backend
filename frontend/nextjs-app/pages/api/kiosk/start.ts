@@ -45,7 +45,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const payload = startSchema.parse(req.body ?? {});
     const packCode = normalizeQrInput(payload.packCode);
 
-    let packQr = null as { id: string; code: string; serial: string | null } | null;
+    let packQr = null as { id: string; code: string; serial: string | null; resetVersion: number } | null;
 
     const pack = packCode
       ? await (async () => {
@@ -69,7 +69,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             return null;
           }
 
-          packQr = { id: qr.id, code: qr.code, serial: qr.serial };
+          packQr = { id: qr.id, code: qr.code, serial: qr.serial, resetVersion: qr.resetVersion ?? 0 };
           return qr.packInstance;
         })()
       : await prisma.packInstance.findUnique({
@@ -85,7 +85,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     if (!packQr && pack.packQrCode) {
-      packQr = { id: pack.packQrCode.id, code: pack.packQrCode.code, serial: pack.packQrCode.serial };
+      packQr = {
+        id: pack.packQrCode.id,
+        code: pack.packQrCode.code,
+        serial: pack.packQrCode.serial,
+        resetVersion: pack.packQrCode.resetVersion ?? 0,
+      };
     }
 
     if (!packQr) {
@@ -114,11 +119,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const sessionCode = payload.code?.trim() || packQr.code;
+    const packResetVersion = packQr.resetVersion ?? 0;
 
     const conflictConditions: Prisma.KioskSessionWhereInput[] = [
       { code: sessionCode, status: { notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED] } },
       { packInstanceId: pack.id, status: { notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED] } },
-      { packQrCodeId: packQr.id, status: { notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED] } },
+      { packQrCodeId: packQr.id, packResetVersion },
     ];
 
     const existing = await prisma.kioskSession.findFirst({
@@ -226,6 +232,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           controlTokenHash: hashControlToken(controlToken),
           packInstanceId: pack.id,
           packQrCodeId: packQr?.id ?? null,
+          packResetVersion,
+          packQrCodeSerial: packQr?.serial ?? packQr?.code ?? null,
           locationId: effectiveLocationId,
           countdownSeconds,
           liveSeconds,
