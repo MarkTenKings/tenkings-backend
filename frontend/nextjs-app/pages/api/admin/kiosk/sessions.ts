@@ -27,7 +27,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ? {}
         : {
             status: {
-              in: ACTIVE_STATUSES,
+              in: [...ACTIVE_STATUSES],
             },
           },
       orderBy: { updatedAt: "desc" },
