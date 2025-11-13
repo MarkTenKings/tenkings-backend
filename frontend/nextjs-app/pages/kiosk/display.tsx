@@ -599,7 +599,8 @@ export default function KioskDisplayPage() {
         if (!response.ok || !payload?.session) {
           throw new Error(payload?.message ?? "Unable to advance stage");
         }
-        setDisplay((prev) => (prev ? { ...prev, session: payload.session } : prev));
+        const nextSession = payload.session ?? null;
+        setDisplay((prev) => (prev ? { ...prev, session: nextSession } : prev));
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to advance stage";
         setHelperState(message, "error");
