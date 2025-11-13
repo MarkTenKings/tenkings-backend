@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
-import { kioskSessionInclude, serializeKioskSession } from "../../../lib/server/kioskSession";
-import { requireAdminSession, toErrorResponse } from "../../../lib/server/admin";
+import { kioskSessionInclude, serializeKioskSession } from "../../../../lib/server/kioskSession";
+import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 const ACTIVE_STATUSES = ["COUNTDOWN", "LIVE", "REVEAL"] as const;
 
