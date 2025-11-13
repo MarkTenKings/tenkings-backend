@@ -177,10 +177,10 @@ export default function AdminKioskPage() {
         alert("Pack label identifier is missing.");
         return;
       }
-      let token = session?.token;
+      let token: string | undefined = session?.token ?? undefined;
       if (!token) {
         await ensureSession().catch(() => undefined);
-        token = session?.token ?? null;
+        token = session?.token ?? undefined;
         if (!token) {
           return;
         }
