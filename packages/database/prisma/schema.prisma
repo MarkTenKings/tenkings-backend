@@ -181,6 +181,9 @@ model Location {
   mapsUrl     String?
   mediaUrl    String?
   recentRips  Json     @db.JsonB
+  muxStreamId   String?
+  muxStreamKey  String?
+  muxPlaybackId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   liveRips      LiveRip[]

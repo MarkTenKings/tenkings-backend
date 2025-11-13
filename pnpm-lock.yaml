@@ -343,6 +343,9 @@ importers:
       next:
         specifier: 14.2.5
         version: 14.2.5(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      obs-websocket-js:
+        specifier: ^5.0.5
+        version: 5.0.7
       pdfkit:
         specifier: ^0.17.2
         version: 0.17.2

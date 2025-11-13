@@ -134,10 +134,52 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(500).json({ message: "Mux credentials are not configured" });
     }
 
+    const locationRecord = await prisma.location.findUnique({
+      where: { id: effectiveLocationId },
+      select: {
+        id: true,
+        name: true,
+        muxStreamId: true,
+        muxStreamKey: true,
+        muxPlaybackId: true,
+      },
+    });
+
+    if (!locationRecord) {
+      return res.status(404).json({ message: "Location not found" });
+    }
+
+    let locationMuxStreamId = locationRecord.muxStreamId ?? null;
+    let locationMuxStreamKey = locationRecord.muxStreamKey ?? null;
+    let locationMuxPlaybackId = locationRecord.muxPlaybackId ?? null;
+    let locationMuxDirty = false;
+
+    if (!locationMuxStreamId || !locationMuxStreamKey) {
+      try {
+        const muxStream = await createMuxLiveStream({
+          passthrough: `location:${effectiveLocationId}`,
+          livestreamName: locationRecord.name,
+          simulcastTargets: getMuxSimulcastTargets(),
+        });
+        locationMuxStreamId = muxStream.id;
+        locationMuxStreamKey = muxStream.stream_key;
+        locationMuxPlaybackId = muxStream.playback_ids?.[0]?.id ?? null;
+        locationMuxDirty = true;
+      } catch (error) {
+        console.error("Kiosk start mux provisioning error", error);
+        return res.status(500).json({ message: "Failed to provision Mux live stream" });
+      }
+    }
+
+    if (!locationMuxStreamId || !locationMuxStreamKey) {
+      return res.status(500).json({ message: "Mux stream is unavailable for this location" });
+    }
+
     const controlToken = generateControlToken();
     const countdownSeconds = payload.countdownSeconds ?? DEFAULT_COUNTDOWN;
     const liveSeconds = payload.liveSeconds ?? DEFAULT_LIVE;
     const timestamp = new Date();
+    const playbackUrl = locationMuxPlaybackId ? buildMuxPlaybackUrl(locationMuxPlaybackId) : null;
 
     const session = await prisma.$transaction(async (tx) => {
       if (pack.fulfillmentStatus !== PackFulfillmentStatus.LOADED || !pack.loadedAt) {
@@ -165,6 +207,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         locationId: effectiveLocationId,
       });
 
+      if (locationMuxDirty) {
+        await tx.location.update({
+          where: { id: effectiveLocationId },
+          data: {
+            muxStreamId: locationMuxStreamId,
+            muxStreamKey: locationMuxStreamKey,
+            muxPlaybackId: locationMuxPlaybackId,
+          },
+        });
+      }
+
       return tx.kioskSession.create({
         data: {
           code: sessionCode,
@@ -175,47 +228,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           countdownSeconds,
           liveSeconds,
           countdownStartedAt: timestamp,
+          muxStreamId: locationMuxStreamId,
+          muxStreamKey: locationMuxStreamKey,
+          muxPlaybackId: locationMuxPlaybackId,
+          videoUrl: playbackUrl,
         },
         include: kioskSessionInclude,
       });
     });
 
-    try {
-      const muxStream = await createMuxLiveStream({
-        passthrough: session.id,
-        livestreamName: pack.packDefinition?.name ?? `Pack ${pack.id}`,
-        simulcastTargets: getMuxSimulcastTargets(),
-      });
+    const updatedSession = await prisma.kioskSession.findUnique({
+      where: { id: session.id },
+      include: kioskSessionInclude,
+    });
 
-      const playbackId = muxStream.playback_ids?.[0]?.id ?? null;
-      await prisma.kioskSession.update({
-        where: { id: session.id },
-        data: {
-          muxStreamId: muxStream.id,
-          muxStreamKey: muxStream.stream_key,
-          muxPlaybackId: playbackId,
-          videoUrl: playbackId ? buildMuxPlaybackUrl(playbackId) : session.videoUrl,
-        },
-      });
-
-      const updatedSession = await prisma.kioskSession.findUnique({
-        where: { id: session.id },
-        include: kioskSessionInclude,
-      });
-
-      if (!updatedSession) {
-        throw new Error("Failed to load kiosk session after Mux initialization");
-      }
-
-      return res.status(201).json({
-        session: serializeKioskSession(updatedSession),
-        controlToken,
-      });
-    } catch (error) {
-      console.error("Kiosk start mux error", error);
-      await prisma.kioskSession.delete({ where: { id: session.id } });
-      return res.status(500).json({ message: "Failed to configure Mux live stream" });
+    if (!updatedSession) {
+      return res.status(500).json({ message: "Failed to prepare kiosk session" });
     }
+
+    return res.status(201).json({
+      session: serializeKioskSession(updatedSession),
+      controlToken,
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: error.issues[0]?.message ?? "Invalid payload" });

@@ -4,7 +4,7 @@ import { z } from "zod";
 import { hasKioskControl } from "../../../../lib/server/kioskAuth";
 import { kioskSessionInclude, serializeKioskSession } from "../../../../lib/server/kioskSession";
 import { slugify } from "../../../../lib/slugify";
-import { buildMuxPlaybackUrl, disableMuxLiveStream } from "../../../../lib/server/mux";
+import { buildMuxPlaybackUrl } from "../../../../lib/server/mux";
 
 const completeSchema = z.object({
   videoUrl: z.string().url("Video URL must be valid").optional(),
@@ -53,14 +53,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const fallbackPlaybackUrl = session.muxPlaybackId ? buildMuxPlaybackUrl(session.muxPlaybackId) : null;
     const finalVideoUrl = payload.videoUrl ?? fallbackPlaybackUrl ?? null;
-
-    if (session.muxStreamId) {
-      try {
-        await disableMuxLiveStream(session.muxStreamId);
-      } catch (error) {
-        console.warn("Failed to disable Mux live stream", error);
-      }
-    }
 
     if (payload.publish && finalVideoUrl) {
       const revealName = extractRevealName(session.revealPayload) || session.revealItem?.name;

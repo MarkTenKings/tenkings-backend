@@ -1,4 +1,5 @@
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import OBSWebSocket from "obs-websocket-js";
 import Head from "next/head";
 import Image from "next/image";
 import { useRouter } from "next/router";
@@ -22,6 +23,13 @@ const ATTRACT_VIDEO_URL = process.env.NEXT_PUBLIC_KIOSK_ATTRACT_VIDEO_URL ?? "";
 const KIOSK_SECRET_HEADER = "x-kiosk-secret";
 const CONTROL_TOKEN_HEADER = "x-kiosk-token";
 const kioskSecret = process.env.NEXT_PUBLIC_KIOSK_API_SECRET ?? "";
+const OBS_WS_URL = process.env.NEXT_PUBLIC_OBS_WS_URL ?? "";
+const OBS_WS_PASSWORD = process.env.NEXT_PUBLIC_OBS_WS_PASSWORD ?? "";
+const OBS_SCENE_ATTRACT = process.env.NEXT_PUBLIC_OBS_SCENE_ATTRACT ?? "Attract Loop";
+const OBS_SCENE_COUNTDOWN = process.env.NEXT_PUBLIC_OBS_SCENE_COUNTDOWN ?? OBS_SCENE_ATTRACT;
+const OBS_SCENE_LIVE = process.env.NEXT_PUBLIC_OBS_SCENE_LIVE ?? "Live Rip";
+const OBS_SCENE_REVEAL = process.env.NEXT_PUBLIC_OBS_SCENE_REVEAL ?? OBS_SCENE_LIVE;
+type Stage = "STANDBY" | "COUNTDOWN" | "LIVE" | "REVEAL";
 
 const formatDuration = (ms: number) => {
   const safeMs = Math.max(0, ms);
@@ -169,6 +177,138 @@ export default function KioskDisplayPage() {
     }, 4000);
   }, []);
 
+  const obsAutomationEnabled = Boolean(OBS_WS_URL);
+  const obsClientRef = useRef<OBSWebSocket | null>(null);
+  const obsConnectedRef = useRef(false);
+  const obsConnectPromiseRef = useRef<Promise<void> | null>(null);
+  const obsCurrentSceneRef = useRef<string | null>(null);
+  const obsStreamSettingsRef = useRef<{ server: string; key: string } | null>(null);
+
+  const ensureObsConnection = useCallback(async () => {
+    if (!obsAutomationEnabled || typeof window === "undefined") {
+      return null;
+    }
+    if (!obsClientRef.current) {
+      obsClientRef.current = new OBSWebSocket();
+      obsClientRef.current.on("ConnectionClosed", () => {
+        obsConnectedRef.current = false;
+        obsConnectPromiseRef.current = null;
+        obsCurrentSceneRef.current = null;
+        setHelperState("OBS connection closed.", "error");
+      });
+      obsClientRef.current.on("ConnectionError", (error) => {
+        obsConnectedRef.current = false;
+        obsConnectPromiseRef.current = null;
+        obsCurrentSceneRef.current = null;
+        console.error("[kiosk-display] OBS connection error", error);
+        setHelperState("OBS connection error.", "error");
+      });
+    }
+    if (obsConnectedRef.current) {
+      return obsClientRef.current;
+    }
+    if (!obsConnectPromiseRef.current) {
+      setHelperState("Connecting to OBS…", "info");
+      obsConnectPromiseRef.current = obsClientRef.current
+        ?.connect(OBS_WS_URL, OBS_WS_PASSWORD || undefined)
+        .then(async () => {
+          obsConnectedRef.current = true;
+          try {
+            const { currentProgramSceneName } = await obsClientRef.current!.call("GetCurrentProgramScene");
+            obsCurrentSceneRef.current = currentProgramSceneName;
+          } catch (error) {
+            console.warn("[kiosk-display] Unable to fetch OBS scene", error);
+            obsCurrentSceneRef.current = null;
+          }
+          setHelperState("Connected to OBS.", "success");
+        })
+        .catch((error) => {
+          obsConnectedRef.current = false;
+          console.error("[kiosk-display] OBS connect failed", error);
+          setHelperState(
+            error instanceof Error ? `OBS connect failed: ${error.message}` : "OBS connect failed.",
+            "error"
+          );
+          throw error;
+        })
+        .finally(() => {
+          obsConnectPromiseRef.current = null;
+        });
+    }
+    await obsConnectPromiseRef.current;
+    return obsClientRef.current;
+  }, [obsAutomationEnabled, setHelperState]);
+
+  const setObsScene = useCallback(
+    async (sceneName: string) => {
+      if (!obsAutomationEnabled || !sceneName) {
+        return;
+      }
+      const obs = await ensureObsConnection();
+      if (!obs) {
+        return;
+      }
+      if (obsCurrentSceneRef.current === sceneName) {
+        return;
+      }
+      await obs.call("SetCurrentProgramScene", { sceneName });
+      obsCurrentSceneRef.current = sceneName;
+    },
+    [ensureObsConnection, obsAutomationEnabled]
+  );
+
+  const configureObsStream = useCallback(
+    async ({ server, key }: { server: string; key: string }) => {
+      if (!obsAutomationEnabled) {
+        return;
+      }
+      const obs = await ensureObsConnection();
+      if (!obs) {
+        return;
+      }
+      await obs.call("SetStreamServiceSettings", {
+        streamServiceType: "rtmp_custom",
+        streamServiceSettings: {
+          server,
+          key,
+          use_auth: false,
+        },
+      });
+      obsStreamSettingsRef.current = { server, key };
+    },
+    [ensureObsConnection, obsAutomationEnabled]
+  );
+
+  const startObsStream = useCallback(async () => {
+    if (!obsAutomationEnabled) {
+      return;
+    }
+    const obs = await ensureObsConnection();
+    if (!obs) {
+      return;
+    }
+    const status = (await obs.call("GetStreamStatus")) as { outputActive?: boolean };
+    if (!status.outputActive) {
+      await obs.call("StartStream");
+      setHelperState("OBS stream started.", "success");
+    }
+  }, [ensureObsConnection, obsAutomationEnabled, setHelperState]);
+
+  const stopObsStream = useCallback(async () => {
+    if (!obsAutomationEnabled) {
+      return;
+    }
+    const obs = await ensureObsConnection();
+    if (!obs) {
+      return;
+    }
+    const status = (await obs.call("GetStreamStatus")) as { outputActive?: boolean };
+    if (status.outputActive) {
+      await obs.call("StopStream");
+      setHelperState("OBS stream stopped.", "info");
+    }
+  }, [ensureObsConnection, obsAutomationEnabled, setHelperState]);
+
   useEffect(() => {
     if (!router.isReady) {
       return;
@@ -276,6 +416,42 @@ export default function KioskDisplayPage() {
     }
   }, [router.isReady, storageKey, display?.location, clearPersistedSession, locationId, slug, setHelperState]);
 
+  const prepareObsForSession = useCallback(
+    async (sessionId: string, tokenOverride?: string) => {
+      if (!obsAutomationEnabled) {
+        return;
+      }
+      const token = tokenOverride ?? controlToken;
+      if (!token) {
+        return;
+      }
+      try {
+        const response = await fetch(`/api/kiosk/${sessionId}/ingest`, {
+          headers: {
+            [CONTROL_TOKEN_HEADER]: token,
+          },
+        });
+        const payload = (await response.json().catch(() => null)) as {
+          ingestUrl?: string;
+          streamKey?: string;
+          message?: string;
+        } | null;
+        if (!response.ok || !payload?.ingestUrl || !payload?.streamKey) {
+          throw new Error(payload?.message ?? "OBS ingest unavailable");
+        }
+        await configureObsStream({ server: payload.ingestUrl, key: payload.streamKey });
+        await setObsScene(OBS_SCENE_COUNTDOWN);
+        await startObsStream();
+        setHelperState("OBS ingest ready.", "success");
+      } catch (error) {
+        console.error("[kiosk-display] OBS ingest error", error);
+        const message = error instanceof Error ? error.message : "Unable to configure OBS";
+        setHelperState(message, "error");
+      }
+    },
+    [obsAutomationEnabled, controlToken, configureObsStream, setHelperState, setObsScene, startObsStream]
+  );
+
   const handlePackScan = useCallback(
     async (code: string) => {
       if (!display?.location) {
@@ -305,13 +481,14 @@ export default function KioskDisplayPage() {
         const packLabel = getPackLabel(payload.session, code) ?? code;
         setActivePackCode(packLabel);
         persistSession(payload.session.id, payload.controlToken, packLabel);
+        void prepareObsForSession(payload.session.id, payload.controlToken);
         setHelperState(`Session ${payload.session.code} ready.`, "success");
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to start session";
         setHelperState(message, "error");
       }
     },
-    [display?.location, persistSession, setHelperState]
+    [display?.location, persistSession, prepareObsForSession, setHelperState]
   );
 
   const handleCardScan = useCallback(
@@ -403,6 +580,46 @@ export default function KioskDisplayPage() {
   }, []);
 
   const sessionInactive = !display?.session;
+  const sessionStage: Stage = sessionInactive ? "STANDBY" : ((display?.session?.status as Stage) ?? "STANDBY");
+
+  useEffect(() => {
+    if (!obsAutomationEnabled || typeof window === "undefined") {
+      return;
+    }
+    let cancelled = false;
+    const applyStage = async () => {
+      try {
+        switch (sessionStage) {
+          case "STANDBY":
+            await stopObsStream();
+            await setObsScene(OBS_SCENE_ATTRACT);
+            break;
+          case "COUNTDOWN":
+            await setObsScene(OBS_SCENE_COUNTDOWN);
+            await startObsStream();
+            break;
+          case "LIVE":
+            await setObsScene(OBS_SCENE_LIVE);
+            await startObsStream();
+            break;
+          case "REVEAL":
+            await setObsScene(OBS_SCENE_REVEAL);
+            break;
+          default:
+            break;
+        }
+      } catch (error) {
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : "OBS stage error";
+          setHelperState(message, "error");
+        }
+      }
+    };
+    void applyStage();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionStage, obsAutomationEnabled, setObsScene, startObsStream, stopObsStream, setHelperState]);
 
   const helperThemes: Record<HelperIntent, string> = {
     info: "border-white/15 bg-white/5 text-white",
@@ -426,6 +643,18 @@ export default function KioskDisplayPage() {
       ? "This display holds the control token; card scans here reveal instantly."
       : "Start the next pack from this display to control reveals locally.";
   const helperPackLabel = activePackCode ?? session?.packQrCode?.serial ?? session?.packQrCode?.code ?? null;
+
+  useEffect(() => {
+    return () => {
+      if (obsAutomationEnabled && obsClientRef.current) {
+        try {
+          obsClientRef.current.disconnect();
+        } catch (error) {
+          // ignore
+        }
+      }
+    };
+  }, [obsAutomationEnabled]);
 
   const renderCountdown = () => (
     <div className="flex flex-col items-center gap-6 text-center">
