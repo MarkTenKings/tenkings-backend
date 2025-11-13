@@ -2,8 +2,8 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import type { KioskSessionStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
-import { kioskSessionInclude, serializeKioskSession } from "../../../../lib/server/kioskSession";
-import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { kioskSessionInclude, serializeKioskSession } from "../../../../../lib/server/kioskSession";
+import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 
 const stageSchema = z.object({
   stage: z.enum(["COUNTDOWN", "LIVE", "REVEAL", "COMPLETE", "CANCELLED"]),
