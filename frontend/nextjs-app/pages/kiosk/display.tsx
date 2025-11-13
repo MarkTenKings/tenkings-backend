@@ -325,6 +325,19 @@ export default function KioskDisplayPage() {
         return;
       }
       try {
+        setHelperState("Checking card…", "info");
+        const lookupResponse = await fetch(`/api/claim/card/${encodeURIComponent(code)}`);
+        const lookupPayload = (await lookupResponse.json().catch(() => null)) as {
+          card?: { item?: { id: string; name?: string | null } | null };
+          message?: string;
+        } | null;
+        if (!lookupResponse.ok || !lookupPayload?.card?.item?.id) {
+          throw new Error(lookupPayload?.message ?? "Card is not linked to inventory yet");
+        }
+
+        const itemId = lookupPayload.card.item.id;
+        const qrLinkUrl = `${window.location.origin}/claim/card/${encodeURIComponent(code)}`;
+
         setHelperState("Revealing card…", "info");
         const response = await fetch(`/api/kiosk/${display.session.id}/reveal`, {
           method: "POST",
@@ -333,9 +346,9 @@ export default function KioskDisplayPage() {
             [CONTROL_TOKEN_HEADER]: controlToken,
           },
           body: JSON.stringify({
-            itemId: code,
-            qrLinkUrl: `${window.location.origin}/claim/card/${encodeURIComponent(code)}`,
-            buybackLinkUrl: `${window.location.origin}/claim/card/${encodeURIComponent(code)}`,
+            itemId,
+            qrLinkUrl,
+            buybackLinkUrl: qrLinkUrl,
           }),
         });
         const payload = (await response.json().catch(() => null)) as { session: SerializedKioskSession; message?: string } | null;
@@ -344,7 +357,8 @@ export default function KioskDisplayPage() {
         }
         setDisplay((prev) => (prev ? { ...prev, session: payload.session } : prev));
         setActivePackCode(getPackLabel(payload.session, activePackCode));
-        setHelperState("Card revealed.", "success");
+        const friendlyName = lookupPayload.card?.item?.name;
+        setHelperState(friendlyName ? `Revealed ${friendlyName}.` : "Card revealed.", "success");
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to reveal card";
         setHelperState(message, "error");
