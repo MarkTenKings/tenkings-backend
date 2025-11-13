@@ -1,6 +1,5 @@
 import Head from "next/head";
-import { useCallback, useMemo, useState } from "react";
-import useSWR from "swr";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
@@ -11,44 +10,72 @@ interface SessionsResponse {
   sessions: SerializedKioskSession[];
 }
 
-const fetchSessions = async (url: string, token: string) => {
-  const response = await fetch(url, {
-    headers: buildAdminHeaders(token),
-  });
-
-  const body = (await response.json().catch(() => ({}))) as Partial<SessionsResponse> & { message?: string };
-
-  if (!response.ok) {
-    throw new Error(body.message ?? "Failed to load sessions");
-  }
-
-  return body.sessions ?? [];
-};
+type Stage = "COUNTDOWN" | "LIVE" | "REVEAL" | "COMPLETE" | "CANCELLED";
 
 export default function AdminKioskPage() {
   const { session, loading, ensureSession, logout } = useSession();
   const [includeCompleted, setIncludeCompleted] = useState(false);
-  const [actionStates, setActionStates] = useState<Record<string, string | null>>({});
+  const [actionStates, setActionStates] = useState<Record<string, Stage | null>>({});
+  const [sessions, setSessions] = useState<SerializedKioskSession[]>([]);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
     [session?.user.id, session?.user.phone]
   );
 
-  const swrKey = useMemo(() => {
+  const loadSessions = useCallback(async () => {
     if (!session?.token || !isAdmin) {
-      return null;
+      setSessions([]);
+      setFetchError(null);
+      return;
     }
+
     const query = includeCompleted ? "?includeCompleted=true" : "";
-    return [`/api/admin/kiosk/sessions${query}`, session.token] as const;
+    setRefreshing(true);
+    try {
+      const response = await fetch(`/api/admin/kiosk/sessions${query}`,
+        {
+          headers: buildAdminHeaders(session.token),
+        }
+      );
+      const body = (await response.json().catch(() => ({}))) as Partial<SessionsResponse> & { message?: string };
+      if (!response.ok) {
+        throw new Error(body.message ?? "Failed to load sessions");
+      }
+      setSessions(body.sessions ?? []);
+      setFetchError(null);
+    } catch (err) {
+      setFetchError(err instanceof Error ? err.message : "Failed to load sessions");
+    } finally {
+      setRefreshing(false);
+    }
   }, [includeCompleted, isAdmin, session?.token]);
 
-  const { data: sessions, error, isValidating, mutate } = useSWR(swrKey, ([url, token]) => fetchSessions(url, token), {
-    refreshInterval: 5000,
-  });
+  useEffect(() => {
+    if (!session?.token || !isAdmin) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      if (cancelled) return;
+      await loadSessions();
+    };
+
+    run();
+    const interval = setInterval(run, 5000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isAdmin, loadSessions, session?.token]);
 
   const action = useCallback(
-    async (sessionId: string, stage: "COUNTDOWN" | "LIVE" | "REVEAL" | "COMPLETE" | "CANCELLED") => {
+    async (sessionId: string, stage: Stage) => {
       if (!session?.token) {
         await ensureSession().catch(() => undefined);
         return;
@@ -67,7 +94,7 @@ export default function AdminKioskPage() {
           throw new Error(payload.message ?? "Failed to update session");
         }
 
-        await mutate();
+        await loadSessions();
       } catch (err) {
         console.error("admin kiosk action error", err);
         alert(err instanceof Error ? err.message : "Failed to update session");
@@ -75,7 +102,7 @@ export default function AdminKioskPage() {
         setActionStates((prev) => ({ ...prev, [sessionId]: null }));
       }
     },
-    [ensureSession, mutate, session?.token]
+    [ensureSession, loadSessions, session?.token]
   );
 
   const renderGate = () => {
@@ -141,8 +168,6 @@ export default function AdminKioskPage() {
     );
   }
 
-  const orderedSessions = sessions ?? [];
-
   const renderStatusBadge = (status: string) => {
     const colors: Record<string, string> = {
       COUNTDOWN: "bg-slate-800 text-slate-200",
@@ -193,14 +218,14 @@ export default function AdminKioskPage() {
 
         <section className="rounded-3xl border border-white/10 bg-night-900/60 p-6 shadow-xl">
           <div className="mb-4 flex items-center justify-between text-xs uppercase tracking-[0.3em] text-slate-400">
-            <span>{isValidating ? "Refreshing…" : `Sessions · ${orderedSessions.length}`}</span>
-            {error && <span className="text-rose-300">{error.message}</span>}
+            <span>{refreshing ? "Refreshing…" : `Sessions · ${sessions.length}`}</span>
+            {fetchError && <span className="text-rose-300">{fetchError}</span>}
           </div>
           <div className="grid gap-4">
-            {orderedSessions.length === 0 && (
+            {sessions.length === 0 && (
               <p className="text-sm text-slate-400">No sessions match this filter.</p>
             )}
-            {orderedSessions.map((item) => {
+            {sessions.map((item) => {
               const busyStage = actionStates[item.id];
               const buttons = [
                 { label: "Force Countdown", stage: "COUNTDOWN" as const },
