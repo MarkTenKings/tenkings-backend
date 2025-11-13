@@ -580,6 +580,56 @@ export default function KioskDisplayPage() {
   }, []);
 
   const sessionInactive = !display?.session;
+
+  const advanceStage = useCallback(
+    async (nextStage: SerializedKioskSession["status"]) => {
+      if (!display?.session || !controlToken) {
+        return;
+      }
+      try {
+        const response = await fetch(`/api/kiosk/${display.session.id}/stage`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            [CONTROL_TOKEN_HEADER]: controlToken,
+          },
+          body: JSON.stringify({ stage: nextStage }),
+        });
+        const payload = (await response.json().catch(() => null)) as { session?: SerializedKioskSession; message?: string } | null;
+        if (!response.ok || !payload?.session) {
+          throw new Error(payload?.message ?? "Unable to advance stage");
+        }
+        setDisplay((prev) => (prev ? { ...prev, session: payload.session } : prev));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to advance stage";
+        setHelperState(message, "error");
+      }
+    },
+    [display?.session, controlToken, setHelperState]
+  );
+
+  const autoLiveTriggered = useRef(false);
+  useEffect(() => {
+    if (!display?.session || !controlToken) {
+      autoLiveTriggered.current = false;
+      return;
+    }
+    if (display.session.status !== "COUNTDOWN") {
+      autoLiveTriggered.current = false;
+      return;
+    }
+    if (countdownRemaining > 1000) {
+      return;
+    }
+    if (autoLiveTriggered.current) {
+      return;
+    }
+    autoLiveTriggered.current = true;
+    void advanceStage("LIVE").catch(() => {
+      autoLiveTriggered.current = false;
+    });
+  }, [display?.session, controlToken, countdownRemaining, advanceStage]);
+
   const sessionStage: Stage = sessionInactive ? "STANDBY" : ((display?.session?.status as Stage) ?? "STANDBY");
 
   useEffect(() => {
