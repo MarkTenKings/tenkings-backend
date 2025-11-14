@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma } from "@tenkings/database";
+import { prisma, KioskSessionStatus } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 
 const identifierSchema = (value: unknown) => {
@@ -33,12 +33,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(404).json({ message: "Pack label not found" });
     }
 
-    const updated = await prisma.qrCode.update({
-      where: { id: qr.id },
-      data: { resetVersion: { increment: 1 } },
+    const result = await prisma.$transaction(async (tx) => {
+      const updatedQr = await tx.qrCode.update({
+        where: { id: qr.id },
+        data: { resetVersion: { increment: 1 } },
+      });
+
+      await tx.kioskSession.updateMany({
+        where: {
+          packQrCodeId: qr.id,
+          status: {
+            in: [KioskSessionStatus.COUNTDOWN, KioskSessionStatus.LIVE, KioskSessionStatus.REVEAL],
+          },
+        },
+        data: {
+          status: KioskSessionStatus.CANCELLED,
+          completedAt: new Date(),
+        },
+      });
+
+      return updatedQr.resetVersion;
     });
 
-    return res.status(200).json({ resetVersion: updated.resetVersion });
+    return res.status(200).json({ resetVersion: result });
   } catch (error) {
     const response = toErrorResponse(error);
     return res.status(response.status).json({ message: response.message });
