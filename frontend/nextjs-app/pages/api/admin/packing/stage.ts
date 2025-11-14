@@ -7,7 +7,7 @@ import {
   type Prisma,
 } from "@tenkings/database";
 import { setBatchStage } from "@tenkings/database";
-import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
+import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 const requestSchema = z.object({
   stage: z.nativeEnum(BatchStage),
