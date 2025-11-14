@@ -611,50 +611,6 @@ export default function AdminPackingConsole() {
     }
   }, [adminHeaders, batchDetail, isAdmin, registerDownload, selectedPackIds, session?.token]);
 
-  const handleMoveStage = useCallback(async () => {
-    if (!batchDetail || !session?.token || !isAdmin) {
-      return;
-    }
-    if (!stageMoveValue) {
-      setPackStatus({ type: "error", message: "Select a stage before moving packs." });
-      return;
-    }
-    if (selectedPackIds.length === 0) {
-      setPackStatus({ type: "error", message: "Select at least one pack to move." });
-      return;
-    }
-
-    setStageMoveSubmitting(true);
-    setPackStatus(null);
-    try {
-      const res = await fetch("/api/admin/packing/stage", {
-        method: "POST",
-        headers: adminHeaders(),
-        body: JSON.stringify({
-          stage: stageMoveValue,
-          packIds: selectedPackIds,
-          batchId: batchDetail.id,
-        }),
-      });
-      const payload = (await res.json().catch(() => ({}))) as { message?: string };
-      if (!res.ok) {
-        throw new Error(payload?.message ?? "Failed to move packs");
-      }
-      setPackStatus({
-        type: "success",
-        message: payload?.message ?? "Stage updated successfully.",
-      });
-      setStageMoveValue("");
-      clearPackSelection();
-      await refreshAllData();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to move packs";
-      setPackStatus({ type: "error", message });
-    } finally {
-      setStageMoveSubmitting(false);
-    }
-  }, [adminHeaders, batchDetail, clearPackSelection, isAdmin, refreshAllData, selectedPackIds, session?.token, stageMoveValue]);
-
   const handleReassignLocation = useCallback(async () => {
     if (!batchDetail || !session?.token || !isAdmin) {
       return;
@@ -703,6 +659,50 @@ export default function AdminPackingConsole() {
   const refreshAllData = useCallback(async () => {
     await Promise.all([fetchStats(), fetchBatchDetail()]);
   }, [fetchBatchDetail, fetchStats]);
+
+  const handleMoveStage = useCallback(async () => {
+    if (!batchDetail || !session?.token || !isAdmin) {
+      return;
+    }
+    if (!stageMoveValue) {
+      setPackStatus({ type: "error", message: "Select a stage before moving packs." });
+      return;
+    }
+    if (selectedPackIds.length === 0) {
+      setPackStatus({ type: "error", message: "Select at least one pack to move." });
+      return;
+    }
+
+    setStageMoveSubmitting(true);
+    setPackStatus(null);
+    try {
+      const res = await fetch("/api/admin/packing/stage", {
+        method: "POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({
+          stage: stageMoveValue,
+          packIds: selectedPackIds,
+          batchId: batchDetail.id,
+        }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as { message?: string };
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Failed to move packs");
+      }
+      setPackStatus({
+        type: "success",
+        message: payload?.message ?? "Stage updated successfully.",
+      });
+      setStageMoveValue("");
+      clearPackSelection();
+      await refreshAllData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to move packs";
+      setPackStatus({ type: "error", message });
+    } finally {
+      setStageMoveSubmitting(false);
+    }
+  }, [adminHeaders, batchDetail, clearPackSelection, isAdmin, refreshAllData, selectedPackIds, session?.token, stageMoveValue]);
 
   const handleCardSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
