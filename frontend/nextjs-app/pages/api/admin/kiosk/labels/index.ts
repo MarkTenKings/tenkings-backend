@@ -39,7 +39,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const labels: LabelResponse[] = [];
 
-    const addFromSession = (session: Awaited<ReturnType<typeof prisma.kioskSession.findMany>>[number]) => {
+    const addFromSession = (session: KioskSessionWithRelations) => {
       if (!session.packQrCode) {
         return;
       }
