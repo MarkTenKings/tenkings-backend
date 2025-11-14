@@ -882,6 +882,8 @@ export default function KioskDisplayPage() {
             value={scanBuffer}
             onChange={handleScanChange}
             onBlur={() => scanInputRef.current?.focus()}
+            id="kiosk-hidden-input"
+            name="kioskHiddenInput"
             autoComplete="off"
             autoCapitalize="off"
             autoCorrect="off"
