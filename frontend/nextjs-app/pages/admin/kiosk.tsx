@@ -199,6 +199,15 @@ export default function AdminKioskPage() {
           throw new Error(body.message ?? "Failed to reset pack label");
         }
         setLabelNotice(`Label reset. New version ${body.resetVersion}.`);
+        if (body.resetVersion !== undefined) {
+          setLabels((prev) =>
+            prev.map((label) =>
+              label.serial === identifier || label.code === identifier
+                ? { ...label, resetVersion: body.resetVersion!, latestSession: null }
+                : label
+            )
+          );
+        }
         await loadLabels(labelQuery);
       } catch (err) {
         alert(err instanceof Error ? err.message : "Failed to reset pack label");

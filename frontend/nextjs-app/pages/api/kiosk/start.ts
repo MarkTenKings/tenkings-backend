@@ -124,7 +124,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const conflictConditions: Prisma.KioskSessionWhereInput[] = [
       { code: sessionCode, status: { notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED] } },
       { packInstanceId: pack.id, status: { notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED] } },
-      { packQrCodeId: packQr.id, packResetVersion },
+      {
+        packQrCodeId: packQr.id,
+        packResetVersion,
+        status: {
+          notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED],
+        },
+      },
     ];
 
     const existing = await prisma.kioskSession.findFirst({
