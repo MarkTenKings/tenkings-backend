@@ -84,30 +84,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
         }
 
-        const updateData: Prisma.PackInstanceUpdateManyMutationInput = {
+        const data: Prisma.PackInstanceUpdateManyMutationInput = {
           fulfillmentStatus: stageFulfillment,
+          ...(stageFulfillment === PackFulfillmentStatus.LOADED
+            ? {
+                loadedAt: now,
+                loadedById: admin.user.id,
+              }
+            : {
+                loadedAt: { set: null },
+                loadedById: { set: null },
+              }),
+          ...(stageFulfillment === PackFulfillmentStatus.PACKED
+            ? {
+                packedAt: now,
+                packedById: admin.user.id,
+              }
+            : stageFulfillment === PackFulfillmentStatus.READY_FOR_PACKING
+              ? {
+                  packedAt: { set: null },
+                  packedById: { set: null },
+                }
+              : {}),
         };
-
-        if (stageFulfillment === PackFulfillmentStatus.LOADED) {
-          updateData.loadedAt = now;
-          updateData.loadedById = admin.user.id;
-        } else {
-          updateData.loadedById = null;
-        }
-
-        if (stageFulfillment === PackFulfillmentStatus.PACKED) {
-          updateData.packedAt = now;
-          updateData.packedById = admin.user.id;
-        } else if (stageFulfillment === PackFulfillmentStatus.READY_FOR_PACKING) {
-          updateData.packedAt = null;
-          updateData.packedById = null;
-          updateData.loadedAt = null;
-          updateData.loadedById = null;
-        }
 
         await tx.packInstance.updateMany({
           where: { id: { in: packs.map((pack) => pack.id) } },
-          data: updateData,
+          data,
         });
       }
 
