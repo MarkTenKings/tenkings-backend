@@ -149,6 +149,16 @@ const stageColorMap: Record<BatchStage, string> = {
   [BatchStage.LOADED]: "border-purple-400/50 text-purple-200",
 };
 
+const stageOptions: BatchStage[] = [
+  BatchStage.INVENTORY_READY,
+  BatchStage.PACKING,
+  BatchStage.PACKED,
+  BatchStage.SHIPPING_READY,
+  BatchStage.SHIPPING_SHIPPED,
+  BatchStage.SHIPPING_RECEIVED,
+  BatchStage.LOADED,
+];
+
 const stageLabel = (stage: BatchStage) => {
   switch (stage) {
     case BatchStage.INVENTORY_READY:
@@ -250,6 +260,8 @@ export default function AdminPackingConsole() {
 
   const [batchDetail, setBatchDetail] = useState<BatchDetail | null>(null);
   const [selectedPackIds, setSelectedPackIds] = useState<string[]>([]);
+  const [stageMoveValue, setStageMoveValue] = useState<BatchStage | "">("");
+  const [stageMoveSubmitting, setStageMoveSubmitting] = useState(false);
   const [locationLoading, setLocationLoading] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
@@ -598,6 +610,50 @@ export default function AdminPackingConsole() {
       setPrintSubmittingStyle(null);
     }
   }, [adminHeaders, batchDetail, isAdmin, registerDownload, selectedPackIds, session?.token]);
+
+  const handleMoveStage = useCallback(async () => {
+    if (!batchDetail || !session?.token || !isAdmin) {
+      return;
+    }
+    if (!stageMoveValue) {
+      setPackStatus({ type: "error", message: "Select a stage before moving packs." });
+      return;
+    }
+    if (selectedPackIds.length === 0) {
+      setPackStatus({ type: "error", message: "Select at least one pack to move." });
+      return;
+    }
+
+    setStageMoveSubmitting(true);
+    setPackStatus(null);
+    try {
+      const res = await fetch("/api/admin/packing/stage", {
+        method: "POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({
+          stage: stageMoveValue,
+          packIds: selectedPackIds,
+          batchId: batchDetail.id,
+        }),
+      });
+      const payload = (await res.json().catch(() => ({}))) as { message?: string };
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Failed to move packs");
+      }
+      setPackStatus({
+        type: "success",
+        message: payload?.message ?? "Stage updated successfully.",
+      });
+      setStageMoveValue("");
+      clearPackSelection();
+      await refreshAllData();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to move packs";
+      setPackStatus({ type: "error", message });
+    } finally {
+      setStageMoveSubmitting(false);
+    }
+  }, [adminHeaders, batchDetail, clearPackSelection, isAdmin, refreshAllData, selectedPackIds, session?.token, stageMoveValue]);
 
   const handleReassignLocation = useCallback(async () => {
     if (!batchDetail || !session?.token || !isAdmin) {
@@ -1219,6 +1275,28 @@ export default function AdminPackingConsole() {
                           Download PDF
                         </a>
                       )}
+                      <div className="flex flex-wrap items-center gap-2 rounded-full border border-white/10 px-3 py-1">
+                        <select
+                          value={stageMoveValue}
+                          onChange={(event) => setStageMoveValue(event.target.value as BatchStage | "")}
+                          className="rounded-full bg-transparent px-3 py-1 text-[11px] uppercase tracking-[0.3em] text-slate-200 outline-none"
+                        >
+                          <option value="">Move to stage…</option>
+                          {stageOptions.map((option) => (
+                            <option key={option} value={option} className="bg-night-900 text-white">
+                              {stageLabel(option)}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => void handleMoveStage()}
+                          disabled={stageMoveSubmitting || !stageMoveValue || selectedPackIds.length === 0}
+                          className="rounded-full border border-white/20 px-4 py-1 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {stageMoveSubmitting ? "Moving…" : "Apply"}
+                        </button>
+                      </div>
                       <button
                         type="button"
                         onClick={selectAllPacks}
