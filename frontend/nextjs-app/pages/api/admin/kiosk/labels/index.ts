@@ -1,6 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
-import { kioskSessionInclude, serializeKioskSession } from "../../../../../lib/server/kioskSession";
+import {
+  kioskSessionInclude,
+  serializeKioskSession,
+  type KioskSessionWithRelations,
+} from "../../../../../lib/server/kioskSession";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 
 interface LabelResponse {
@@ -66,7 +70,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     };
 
-    const sessions = await prisma.kioskSession.findMany({
+    const sessions = (await prisma.kioskSession.findMany({
       where: query
         ? {
             packQrCode: {
@@ -80,7 +84,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       orderBy: { updatedAt: "desc" },
       take: query ? 20 : 50,
       include: kioskSessionInclude,
-    });
+    })) as KioskSessionWithRelations[];
 
     sessions.forEach(addFromSession);
 
