@@ -19,6 +19,8 @@ type HelperIntent = "info" | "success" | "error";
 
 const POLL_INTERVAL_MS = 4000;
 const TIMER_TICK_MS = 1000;
+const MANUAL_REVEAL_DURATION_MS = (Number(process.env.NEXT_PUBLIC_MANUAL_REVEAL_MS ?? 10000));
+const MANUAL_REVEAL_COOLDOWN_MS = (Number(process.env.NEXT_PUBLIC_MANUAL_REVEAL_COOLDOWN_MS ?? 5000));
 const ATTRACT_VIDEO_URL = process.env.NEXT_PUBLIC_KIOSK_ATTRACT_VIDEO_URL ?? "";
 const KIOSK_SECRET_HEADER = "x-kiosk-secret";
 const CONTROL_TOKEN_HEADER = "x-kiosk-token";
@@ -94,6 +96,8 @@ export default function KioskDisplayPage() {
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const [scanBuffer, setScanBuffer] = useState("");
   const [activePackCode, setActivePackCode] = useState<string | null>(null);
+  const [manualReveal, setManualReveal] = useState<{ data: ReturnType<typeof extractRevealDetails>; expiresAt: number } | null>(null);
+  const manualRevealCooldownRef = useRef(0);
 
   const session = display?.session ?? null;
   const reveal = useMemo(() => extractRevealDetails(session), [session]);
@@ -123,6 +127,20 @@ export default function KioskDisplayPage() {
     const interval = window.setInterval(() => setNow(Date.now()), TIMER_TICK_MS);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    if (!manualReveal) {
+      return;
+    }
+    if (manualReveal.expiresAt <= Date.now()) {
+      setManualReveal(null);
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      setManualReveal(null);
+    }, manualReveal.expiresAt - Date.now());
+    return () => window.clearTimeout(timeout);
+  }, [manualReveal]);
 
   useEffect(() => {
     const focusInterval = window.setInterval(() => {
@@ -498,10 +516,42 @@ export default function KioskDisplayPage() {
     [display?.location, persistSession, prepareObsForSession, setHelperState]
   );
 
+  const handleManualCardReveal = useCallback(
+    async (code: string) => {
+      if (Date.now() < manualRevealCooldownRef.current) {
+        setHelperState("Please wait before scanning another card.", "error");
+        return;
+      }
+      try {
+        setHelperState("Revealing card…", "info");
+        const response = await fetch("/api/kiosk/reveal-card", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code }),
+        });
+        const payload = (await response.json().catch(() => null)) as { reveal?: { name?: string | null; set?: string | null; number?: string | null; imageUrl?: string | null; thumbnailUrl?: string | null } ; message?: string } | null;
+        if (!response.ok || !payload?.reveal) {
+          throw new Error(payload?.message ?? "Unable to reveal card");
+        }
+        const revealData: ReturnType<typeof extractRevealDetails> = {
+          name: payload.reveal.name ?? null,
+          set: payload.reveal.set ?? null,
+          number: payload.reveal.number ?? null,
+          imageUrl: payload.reveal.imageUrl ?? payload.reveal.thumbnailUrl ?? null,
+        };
+        setManualReveal({ data: revealData, expiresAt: Date.now() + MANUAL_REVEAL_DURATION_MS });
+        manualRevealCooldownRef.current = Date.now() + MANUAL_REVEAL_COOLDOWN_MS;
+      } catch (error) {
+        setHelperState(error instanceof Error ? error.message : "Unable to reveal card", "error");
+      }
+    },
+    [setHelperState]
+  );
+
   const handleCardScan = useCallback(
     async (code: string) => {
       if (!display?.session) {
-        setHelperState("Scan a pack before revealing a card.", "error");
+        await handleManualCardReveal(code);
         return;
       }
       if (!controlToken) {
@@ -548,7 +598,7 @@ export default function KioskDisplayPage() {
         setHelperState(message, "error");
       }
     },
-    [display?.session, controlToken, setHelperState, activePackCode]
+    [display?.session, controlToken, setHelperState, activePackCode, handleManualCardReveal]
   );
 
   const processScan = useCallback(
@@ -747,21 +797,25 @@ export default function KioskDisplayPage() {
     error: "border-rose-500/30 bg-rose-500/10 text-rose-50",
   };
 
-  const helperStatus = sessionInactive ? "IDLE" : display?.session?.status ?? "ACTIVE";
+  const helperStatus = manualReveal ? "REVEAL" : sessionInactive ? "IDLE" : display?.session?.status ?? "ACTIVE";
   const helperHeadline = helperMessage
     ? helperMessage
+    : manualReveal
+      ? "Card reveal in progress"
+      : sessionInactive
+        ? "Scan a pack QR to start the countdown"
+        : display?.session?.status === "LIVE"
+          ? "Stream is live – scan the card to reveal"
+          : display?.session?.status === "REVEAL"
+            ? "Hit revealed – resetting soon"
+            : "Countdown armed – keep the pack on camera";
+  const helperSubline = manualReveal
+    ? "Card reveals run for 10 seconds even without a pack."
     : sessionInactive
-      ? "Scan a pack QR to start the countdown"
-      : display?.session?.status === "LIVE"
-        ? "Stream is live – scan the card to reveal"
-        : display?.session?.status === "REVEAL"
-          ? "Hit revealed – resetting soon"
-          : "Countdown armed – keep the pack on camera";
-  const helperSubline = sessionInactive
-    ? "Scanner input is captured on this display—no need for a second screen."
-    : controlToken
-      ? "This display holds the control token; card scans here reveal instantly."
-      : "Start the next pack from this display to control reveals locally.";
+      ? "Scanner input is captured on this display—no need for a second screen."
+      : controlToken
+        ? "This display holds the control token; card scans here reveal instantly."
+        : "Start the next pack from this display to control reveals locally.";
   const helperPackLabel = activePackCode ?? session?.packQrCode?.serial ?? session?.packQrCode?.code ?? null;
 
   useEffect(() => {
@@ -803,20 +857,20 @@ export default function KioskDisplayPage() {
     </div>
   );
 
-  const renderReveal = () => (
+  const renderReveal = (payload: ReturnType<typeof extractRevealDetails> | null, remainingMs: number) => (
     <div className="flex flex-col items-center gap-6 text-center">
       <p className="text-sm uppercase tracking-[0.45em] text-emerald-300">Highlighted Hit</p>
       <p className="font-heading text-[clamp(3rem,8vw,8rem)] tracking-[0.1em] text-emerald-100">
-        {formatDuration(revealRemaining)}
+        {formatDuration(Math.max(0, remainingMs))}
       </p>
       <h2 className="font-heading text-[clamp(2.5rem,6vw,5rem)] uppercase tracking-[0.12em] text-white">
-        {reveal?.name ?? "Vault Hit"}
+        {payload?.name ?? "Vault Hit"}
       </h2>
-      {reveal?.set ? <p className="text-lg text-slate-200">{reveal.set}</p> : null}
-      {reveal?.imageUrl ? (
+      {payload?.set ? <p className="text-lg text-slate-200">{payload.set}</p> : null}
+      {payload?.imageUrl ? (
         <Image
-          src={reveal.imageUrl}
-          alt={reveal.name ?? "Reveal"}
+          src={payload.imageUrl}
+          alt={payload.name ?? "Reveal"}
           width={840}
           height={600}
           className="max-h-[420px] w-auto rounded-[3rem] border border-white/10 bg-night-900/80 p-6 shadow-card"
@@ -852,6 +906,9 @@ export default function KioskDisplayPage() {
   );
 
   const renderStage = () => {
+    if (manualReveal) {
+      return renderReveal(manualReveal.data, manualReveal.expiresAt - now);
+    }
     if (!session) {
       return renderStandby();
     }
@@ -861,7 +918,7 @@ export default function KioskDisplayPage() {
       case "LIVE":
         return renderLive();
       case "REVEAL":
-        return renderReveal();
+        return renderReveal(reveal, revealRemaining);
       default:
         return renderStandby();
     }
