@@ -17,6 +17,13 @@ interface DisplayResponse {
 
 type HelperIntent = "info" | "success" | "error";
 
+type RevealDetails = {
+  name: string | null;
+  set: string | null;
+  number: string | null;
+  imageUrl: string | null;
+};
+
 const POLL_INTERVAL_MS = 4000;
 const TIMER_TICK_MS = 1000;
 const MANUAL_REVEAL_DURATION_MS = (Number(process.env.NEXT_PUBLIC_MANUAL_REVEAL_MS ?? 10000));
@@ -43,16 +50,20 @@ const formatDuration = (ms: number) => {
   return `${minutes}:${seconds}`;
 };
 
-const extractRevealDetails = (session: SerializedKioskSession | null) => {
+const coerceString = (value: unknown): string | null => (typeof value === "string" ? value : null);
+
+const extractRevealDetails = (session: SerializedKioskSession | null): RevealDetails | null => {
   if (!session?.reveal || typeof session.reveal !== "object" || Array.isArray(session.reveal)) {
     return null;
   }
   const payload = session.reveal as Record<string, unknown>;
+  const imageUrl = coerceString(payload.imageUrl);
+  const thumbnailUrl = coerceString(payload.thumbnailUrl);
   return {
-    name: (payload.name as string) ?? null,
-    set: (payload.set as string) ?? null,
-    number: (payload.number as string) ?? null,
-    imageUrl: (payload.imageUrl as string) ?? (payload.thumbnailUrl as string) ?? null,
+    name: coerceString(payload.name),
+    set: coerceString(payload.set),
+    number: coerceString(payload.number),
+    imageUrl: imageUrl ?? thumbnailUrl,
   };
 };
 
@@ -534,10 +545,10 @@ export default function KioskDisplayPage() {
           throw new Error(payload?.message ?? "Unable to reveal card");
         }
         const revealData: ReturnType<typeof extractRevealDetails> = {
-          name: (payload.reveal.name as string | undefined) ?? null,
-          set: (payload.reveal.set as string | undefined) ?? null,
-          number: (payload.reveal.number as string | undefined) ?? null,
-          imageUrl: payload.reveal.imageUrl ?? payload.reveal.thumbnailUrl ?? null,
+          name: coerceString(payload.reveal.name),
+          set: coerceString(payload.reveal.set),
+          number: coerceString(payload.reveal.number),
+          imageUrl: coerceString(payload.reveal.imageUrl) ?? coerceString(payload.reveal.thumbnailUrl),
         };
         setManualReveal({ data: revealData, expiresAt: Date.now() + MANUAL_REVEAL_DURATION_MS });
         manualRevealCooldownRef.current = Date.now() + MANUAL_REVEAL_COOLDOWN_MS;
