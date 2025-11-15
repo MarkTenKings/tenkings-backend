@@ -534,9 +534,9 @@ export default function KioskDisplayPage() {
           throw new Error(payload?.message ?? "Unable to reveal card");
         }
         const revealData: ReturnType<typeof extractRevealDetails> = {
-          name: payload.reveal.name ?? null,
-          set: payload.reveal.set ?? null,
-          number: payload.reveal.number ?? null,
+          name: (payload.reveal.name as string | undefined) ?? null,
+          set: (payload.reveal.set as string | undefined) ?? null,
+          number: (payload.reveal.number as string | undefined) ?? null,
           imageUrl: payload.reveal.imageUrl ?? payload.reveal.thumbnailUrl ?? null,
         };
         setManualReveal({ data: revealData, expiresAt: Date.now() + MANUAL_REVEAL_DURATION_MS });
