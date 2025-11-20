@@ -16,6 +16,7 @@ import { syncPackAssetsLocation } from "../../../lib/server/qrCodes";
 const DEFAULT_COUNTDOWN = Number(process.env.KIOSK_COUNTDOWN_SECONDS ?? 10);
 const DEFAULT_LIVE = Number(process.env.KIOSK_LIVE_SECONDS ?? 30);
 const DEFAULT_REVEAL = Number(process.env.KIOSK_REVEAL_SECONDS ?? 10);
+const SESSION_RECOVERY_TIMEOUT_MS = Number(process.env.KIOSK_SESSION_RECOVERY_TIMEOUT_MS ?? 3 * 60 * 1000);
 
 const startSchema = z
   .object({
@@ -126,16 +127,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       { packInstanceId: pack.id, status: { notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED] } },
       {
         packQrCodeId: packQr.id,
-        packResetVersion,
         status: {
           notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED],
         },
       },
     ];
 
+    await autoCancelStaleSessions(conflictConditions);
+
     const existing = await prisma.kioskSession.findFirst({
       where: {
         OR: conflictConditions,
+        status: {
+          notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED],
+        },
       },
     });
 
@@ -274,4 +279,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     console.error("Kiosk start error", error);
     return res.status(500).json({ message: "Failed to start kiosk session" });
   }
+}
+
+async function autoCancelStaleSessions(conflictConditions: Prisma.KioskSessionWhereInput[]) {
+  if (!SESSION_RECOVERY_TIMEOUT_MS || conflictConditions.length === 0) {
+    return;
+  }
+
+  const candidates = await prisma.kioskSession.findMany({
+    where: {
+      OR: conflictConditions,
+      status: {
+        notIn: [KioskSessionStatus.COMPLETE, KioskSessionStatus.CANCELLED],
+      },
+    },
+    select: {
+      id: true,
+      countdownStartedAt: true,
+    },
+  });
+
+  if (candidates.length === 0) {
+    return;
+  }
+
+  const now = Date.now();
+  const staleSessions = candidates.filter((session) => now - session.countdownStartedAt.getTime() > SESSION_RECOVERY_TIMEOUT_MS);
+
+  await Promise.all(
+    staleSessions.map((session) =>
+      prisma.kioskSession
+        .update({
+          where: { id: session.id },
+          data: {
+            status: KioskSessionStatus.CANCELLED,
+            completedAt: new Date(),
+          },
+        })
+        .then(() => console.warn(`[kiosk-start] Auto-cancelled stale session ${session.id}`))
+    )
+  );
 }
