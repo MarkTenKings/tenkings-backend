@@ -34,6 +34,38 @@ function buildSlug(base: string) {
   return slug;
 }
 
+function parsePassthrough(raw: unknown): { sessionId?: string; locationId?: string } {
+  if (typeof raw !== "string" || !raw.trim()) {
+    return {};
+  }
+  const value = raw.trim();
+  if (value.startsWith("session:")) {
+    return { sessionId: value.slice("session:".length) };
+  }
+  if (value.startsWith("location:")) {
+    return { locationId: value.slice("location:".length) };
+  }
+  const uuidRegex = /^[0-9a-fA-F-]{32,}$/;
+  if (uuidRegex.test(value)) {
+    return { sessionId: value };
+  }
+  return { locationId: value };
+}
+
+function buildSessionFilters(options: { sessionId?: string; locationId?: string; liveStreamId?: string }) {
+  const filters: any[] = [];
+  if (options.sessionId) {
+    filters.push({ id: options.sessionId });
+  }
+  if (options.locationId) {
+    filters.push({ locationId: options.locationId });
+  }
+  if (options.liveStreamId) {
+    filters.push({ muxStreamId: options.liveStreamId });
+  }
+  return filters;
+}
+
 function extractRevealName(payload: unknown, fallback?: string | null) {
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
     const rawName = (payload as Record<string, unknown>).name;
@@ -73,18 +105,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     switch (eventType) {
       case "video.live_stream.active": {
-        const sessionId = data?.passthrough as string | undefined;
+        const { sessionId, locationId } = parsePassthrough(data?.passthrough);
         const liveStreamId = data?.id as string | undefined;
-        if (!sessionId && !liveStreamId) {
+        const filters = buildSessionFilters({ sessionId, locationId, liveStreamId });
+        if (!filters.length) {
           break;
         }
         await prisma.kioskSession.updateMany({
-          where: {
-            OR: [
-              sessionId ? { id: sessionId } : undefined,
-              liveStreamId ? { muxStreamId: liveStreamId } : undefined,
-            ].filter(Boolean) as any,
-          },
+          where: { OR: filters },
           data: {
             status: "LIVE",
             liveStartedAt: new Date(),
@@ -93,18 +121,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         break;
       }
       case "video.live_stream.idle": {
-        const sessionId = data?.passthrough as string | undefined;
+        const { sessionId, locationId } = parsePassthrough(data?.passthrough);
         const liveStreamId = data?.id as string | undefined;
-        if (!sessionId && !liveStreamId) {
+        const filters = buildSessionFilters({ sessionId, locationId, liveStreamId });
+        if (!filters.length) {
           break;
         }
         await prisma.kioskSession.updateMany({
-          where: {
-            OR: [
-              sessionId ? { id: sessionId } : undefined,
-              liveStreamId ? { muxStreamId: liveStreamId } : undefined,
-            ].filter(Boolean) as any,
-          },
+          where: { OR: filters },
           data: {
             status: "REVEAL",
           },
@@ -113,7 +137,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
       case "video.asset.ready": {
         const assetId = data?.id as string | undefined;
-        const sessionId = data?.passthrough as string | undefined;
+        const { sessionId, locationId } = parsePassthrough(data?.passthrough);
         const liveStreamId = data?.live_stream_id as string | undefined;
         if (!assetId) {
           break;
@@ -122,13 +146,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const asset = await getMuxAsset(assetId);
         const playbackId = asset.playback_ids?.[0]?.id ?? null;
 
+        const sessionFilters = buildSessionFilters({ sessionId, locationId, liveStreamId });
+        sessionFilters.push({ muxAssetId: assetId });
+
         const session = await prisma.kioskSession.findFirst({
           where: {
-            OR: [
-              sessionId ? { id: sessionId } : undefined,
-              liveStreamId ? { muxStreamId: liveStreamId } : undefined,
-              { muxAssetId: assetId },
-            ].filter(Boolean) as any,
+            OR: sessionFilters,
           },
           include: {
             location: true,

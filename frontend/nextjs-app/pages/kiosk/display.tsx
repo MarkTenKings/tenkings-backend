@@ -44,11 +44,62 @@ const kioskSecret = process.env.NEXT_PUBLIC_KIOSK_API_SECRET ?? "";
 const OBS_WS_URL = process.env.NEXT_PUBLIC_OBS_WS_URL ?? "";
 const OBS_WS_PASSWORD = process.env.NEXT_PUBLIC_OBS_WS_PASSWORD ?? "";
 const OBS_SCENE_LIVE = process.env.NEXT_PUBLIC_OBS_SCENE_LIVE ?? "Live Rip";
+const OBS_MAX_ATTEMPTS = Number(process.env.NEXT_PUBLIC_OBS_MAX_ATTEMPTS ?? "5");
+const OBS_RETRY_DELAY_MS = Number(process.env.NEXT_PUBLIC_OBS_RETRY_MS ?? "2000");
+const SCANNER_TEST_URL = process.env.NEXT_PUBLIC_KIOSK_SCANNER_URL ?? "";
 
 const helperThemes: Record<HelperIntent, string> = {
   info: "border-white/10 bg-white/5 text-white",
   success: "border-emerald-400/40 bg-emerald-400/10 text-emerald-50",
   error: "border-rose-500/30 bg-rose-500/10 text-rose-50",
+};
+
+const HLS_CDN_URL = "https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js";
+
+type HlsConstructor = {
+  new (config?: Record<string, unknown>): {
+    loadSource(source: string): void;
+    attachMedia(media: HTMLMediaElement): void;
+    destroy(): void;
+  };
+  isSupported: () => boolean;
+};
+
+declare global {
+  interface Window {
+    Hls?: any;
+  }
+}
+
+const buildMuxPlaybackUrl = (playbackId: string) => `https://stream.mux.com/${playbackId}.m3u8`;
+
+let hlsLoaderPromise: Promise<HlsConstructor | null> | null = null;
+
+const ensureHls = async (): Promise<HlsConstructor | null> => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const existing = window.Hls as HlsConstructor | undefined;
+  if (existing) {
+    return existing;
+  }
+  if (!hlsLoaderPromise) {
+    hlsLoaderPromise = new Promise((resolve) => {
+      const existing = document.querySelector<HTMLScriptElement>("script[data-hls-js]");
+      if (existing && window.Hls) {
+        resolve(window.Hls as HlsConstructor | null);
+        return;
+      }
+      const script = document.createElement("script");
+      script.src = HLS_CDN_URL;
+      script.async = true;
+      script.dataset.hlsJs = "true";
+      script.onload = () => resolve((window.Hls as HlsConstructor | undefined) ?? null);
+      script.onerror = () => resolve(null);
+      document.head.appendChild(script);
+    });
+  }
+  return hlsLoaderPromise;
 };
 
 const formatDuration = (ms: number) => {
@@ -122,6 +173,7 @@ export default function KioskDisplayPage() {
   const [scanBuffer, setScanBuffer] = useState("");
   const [activePackCode, setActivePackCode] = useState<string | null>(null);
   const [manualReveal, setManualReveal] = useState<ManualRevealState>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const session = display?.session ?? null;
   const reveal = useMemo(() => extractRevealDetails(session), [session]);
@@ -138,6 +190,8 @@ export default function KioskDisplayPage() {
     url: OBS_WS_URL,
     password: OBS_WS_PASSWORD,
     sceneName: OBS_SCENE_LIVE,
+    maxAttempts: OBS_MAX_ATTEMPTS,
+    retryDelayMs: OBS_RETRY_DELAY_MS,
   });
 
   const countdownRemaining = useMemo(() => {
@@ -160,6 +214,10 @@ export default function KioskDisplayPage() {
     }
     return new Date(session.revealEndsAt).getTime() - now;
   }, [session?.revealEndsAt, now]);
+
+  const showLiveVideo = Boolean(
+    session?.muxPlaybackId && session?.status && ["COUNTDOWN", "LIVE"].includes(session.status)
+  );
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), TIMER_TICK_MS);
@@ -186,8 +244,56 @@ export default function KioskDisplayPage() {
   }, []);
 
   useEffect(() => {
-    if (router.isReady) {
-      scanInputRef.current?.focus();
+    const video = videoRef.current;
+    if (!video || !showLiveVideo || !session?.muxPlaybackId) {
+      if (video) {
+        video.removeAttribute("src");
+        video.load();
+      }
+      return;
+    }
+
+    const playbackUrl = buildMuxPlaybackUrl(session.muxPlaybackId);
+    let destroyed = false;
+    let hls: { destroy: () => void } | null = null;
+
+    if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = playbackUrl;
+      video.play().catch(() => undefined);
+      return () => {
+        video.removeAttribute("src");
+        video.load();
+      };
+    }
+
+    void (async () => {
+      const Hls = await ensureHls();
+      if (!Hls || destroyed || !Hls.isSupported()) {
+        return;
+      }
+      hls = new Hls({ lowLatencyMode: true, liveSyncDurationCount: 2 });
+      hls.loadSource(playbackUrl);
+      hls.attachMedia(video);
+      video.play().catch(() => undefined);
+    })();
+
+    return () => {
+      destroyed = true;
+      hls?.destroy();
+      hls = null;
+    };
+  }, [session?.muxPlaybackId, showLiveVideo]);
+
+  useEffect(() => {
+    if (!router.isReady) {
+      return;
+    }
+    scanInputRef.current?.focus();
+    if (SCANNER_TEST_URL) {
+      const handle = window.open(SCANNER_TEST_URL, "_blank", "noopener,noreferrer,width=400,height=600");
+      if (handle) {
+        handle.focus();
+      }
     }
   }, [router.isReady]);
 
@@ -690,6 +796,47 @@ export default function KioskDisplayPage() {
     </div>
   );
 
+  const renderLiveVideoPanel = () => (
+    <div className="relative mx-auto w-full max-w-5xl">
+      <video
+        ref={videoRef}
+        className="aspect-[9/16] w-full rounded-[3rem] border border-white/10 bg-black object-cover shadow-card"
+        muted
+        playsInline
+        autoPlay
+      />
+      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-between bg-gradient-to-t from-black/70 via-black/30 to-transparent p-6 text-center">
+        <div className="flex flex-col items-center gap-3">
+          {session?.status === "COUNTDOWN" ? (
+            <>
+              <p className="text-sm uppercase tracking-[0.4em] text-slate-200">Countdown</p>
+              <p className="font-heading text-[clamp(3rem,10vw,10rem)] tracking-[0.08em] text-white">
+                {formatDuration(countdownRemaining)}
+              </p>
+              <p className="max-w-2xl text-base text-white/80">
+                Keep the pack centered on camera and get ready to rip. Stream goes live when the timer hits zero.
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-3 text-rose-200">
+                <span className="h-3 w-3 animate-pulse rounded-full bg-rose-500" />
+                <p className="text-xs uppercase tracking-[0.5em]">Live</p>
+              </div>
+              <p className="font-heading text-[clamp(3rem,8vw,8rem)] tracking-[0.08em] text-white">
+                {formatDuration(liveRemaining)}
+              </p>
+              <p className="max-w-2xl text-base text-white/80">
+                Show the cards, call the hits, and celebrate with the crowd.
+              </p>
+            </>
+          )}
+        </div>
+        <p className="text-xs uppercase tracking-[0.4em] text-white/70">Ten Kings Live</p>
+      </div>
+    </div>
+  );
+
   const renderReveal = (payload: RevealDetails | null, remainingMs: number) => (
     <div className="flex flex-col items-center gap-6 text-center">
       <p className="text-sm uppercase tracking-[0.45em] text-emerald-300">Highlighted Hit</p>
@@ -735,6 +882,9 @@ export default function KioskDisplayPage() {
     }
     if (!session) {
       return renderStandby();
+    }
+    if (showLiveVideo && (session.status === "COUNTDOWN" || session.status === "LIVE")) {
+      return renderLiveVideoPanel();
     }
     switch (session.status) {
       case "COUNTDOWN":

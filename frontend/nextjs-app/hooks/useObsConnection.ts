@@ -20,6 +20,8 @@ export function useObsConnection(options: {
   url?: string | null;
   password?: string | null;
   sceneName?: string | null;
+  maxAttempts?: number;
+  retryDelayMs?: number;
 }): {
   enabled: boolean;
   status: ObsStatus;
@@ -31,6 +33,8 @@ export function useObsConnection(options: {
   const trimmedUrl = options.url?.trim() ?? "";
   const trimmedPassword = options.password?.trim() ?? "";
   const desiredScene = options.sceneName?.trim() || null;
+  const maxAttempts = options.maxAttempts ?? 3;
+  const retryDelayMs = options.retryDelayMs ?? 2000;
   const enabled = Boolean(trimmedUrl);
   const [status, setStatus] = useState<ObsStatus>(() => (enabled ? "disconnected" : "disabled"));
   const [isStreaming, setIsStreaming] = useState(false);
@@ -108,9 +112,10 @@ export function useObsConnection(options: {
     bindEvents();
     setStatus((prev) => (prev === "streaming" ? prev : "connecting"));
     setLastError(null);
-    const connectionPromise = clientRef.current
-      .connect(trimmedUrl, trimmedPassword || undefined)
-      .then(async () => {
+
+    const attemptConnection = async (attempt: number): Promise<OBSWebSocket | null> => {
+      try {
+        await clientRef.current!.connect(trimmedUrl, trimmedPassword || undefined);
         try {
           const { outputActive } = await clientRef.current!.call("GetStreamStatus");
           setIsStreaming(outputActive);
@@ -128,20 +133,25 @@ export function useObsConnection(options: {
           }
         }
         return clientRef.current;
-      })
-      .catch((error) => {
+      } catch (error) {
         const message = normalizeMessage(error);
         setStatus("error");
         setLastError(message);
         updateWindowDebug({ status: "error", error: message });
-        throw error;
-      })
-      .finally(() => {
-        connectPromiseRef.current = null;
-      });
+        if (attempt >= maxAttempts) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        return attemptConnection(attempt + 1);
+      }
+    };
+
+    const connectionPromise = attemptConnection(1).finally(() => {
+      connectPromiseRef.current = null;
+    });
     connectPromiseRef.current = connectionPromise;
     return connectionPromise;
-  }, [bindEvents, desiredScene, enabled, trimmedPassword, trimmedUrl, updateWindowDebug]);
+  }, [bindEvents, desiredScene, enabled, maxAttempts, retryDelayMs, trimmedPassword, trimmedUrl, updateWindowDebug]);
 
   const startStreaming = useCallback(async () => {
     if (!enabled) {
