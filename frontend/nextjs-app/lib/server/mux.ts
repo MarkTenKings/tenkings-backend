@@ -145,6 +145,32 @@ export async function deleteMuxLiveStream(liveStreamId: string) {
   });
 }
 
+export async function updateMuxLiveStream(
+  liveStreamId: string,
+  options: {
+    passthrough?: string | null;
+    assetPassthrough?: string | null;
+  }
+) {
+  const body: Record<string, unknown> = {};
+  if (typeof options.passthrough === "string") {
+    body.passthrough = options.passthrough;
+  }
+  if (typeof options.assetPassthrough === "string") {
+    body.new_asset_settings = {
+      passthrough: options.assetPassthrough,
+      playback_policy: ["public"],
+    };
+  }
+  if (!Object.keys(body).length) {
+    return;
+  }
+  await muxRequest<MuxLiveStream>(`/live-streams/${liveStreamId}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function getMuxAsset(assetId: string) {
   return muxRequest<MuxAsset>(`/assets/${assetId}`);
 }

@@ -153,6 +153,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           where: {
             OR: sessionFilters,
           },
+          orderBy: {
+            countdownStartedAt: "desc",
+          },
           include: {
             location: true,
             revealItem: true,

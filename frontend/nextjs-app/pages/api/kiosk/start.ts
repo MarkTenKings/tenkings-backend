@@ -9,6 +9,7 @@ import {
   createMuxLiveStream,
   getMuxSimulcastTargets,
   muxCredentialsConfigured,
+  updateMuxLiveStream,
 } from "../../../lib/server/mux";
 import { normalizeQrInput } from "../../../lib/qrInput";
 import { syncPackAssetsLocation } from "../../../lib/server/qrCodes";
@@ -266,6 +267,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     if (!updatedSession) {
       return res.status(500).json({ message: "Failed to prepare kiosk session" });
+    }
+
+    if (updatedSession.muxStreamId) {
+      const passthrough = `session:${updatedSession.id}`;
+      updateMuxLiveStream(updatedSession.muxStreamId, {
+        passthrough,
+        assetPassthrough: passthrough,
+      }).catch((error) => {
+        console.warn("Kiosk start mux passthrough update failed", error);
+      });
     }
 
     return res.status(201).json({
