@@ -2,6 +2,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useSta
 import Head from "next/head";
 import Image from "next/image";
 import { useRouter } from "next/router";
+import QRCode from "qrcode";
 import type { SerializedKioskSession } from "../../lib/server/kioskSession";
 import { normalizeQrInput } from "../../lib/qrInput";
 import { useObsConnection } from "../../hooks/useObsConnection";
@@ -22,9 +23,18 @@ type RevealDetails = {
   set: string | null;
   number: string | null;
   imageUrl: string | null;
+  estimatedValue: number | null;
+  buybackOffer: number | null;
 };
 
-type ManualRevealState = { data: RevealDetails | null; expiresAt: number } | null;
+type ManualRevealState =
+  | {
+      data: RevealDetails | null;
+      expiresAt: number;
+      qrLinkUrl?: string | null;
+      buybackLinkUrl?: string | null;
+    }
+  | null;
 
 type CachedSession = {
   sessionId: string;
@@ -116,6 +126,28 @@ const formatDuration = (ms: number) => {
 
 const coerceString = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
+const coerceNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const formatCurrency = (value: number | null | undefined) => {
+  if (value === null || typeof value === "undefined") {
+    return null;
+  }
+  return value.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+};
+
 const extractRevealDetails = (session: SerializedKioskSession | null): RevealDetails | null => {
   if (!session?.reveal || typeof session.reveal !== "object" || Array.isArray(session.reveal)) {
     return null;
@@ -127,6 +159,8 @@ const extractRevealDetails = (session: SerializedKioskSession | null): RevealDet
     set: coerceString(payload.set),
     number: coerceString(payload.number),
     imageUrl,
+    estimatedValue: coerceNumber(payload.estimatedValue),
+    buybackOffer: coerceNumber(payload.buybackOffer),
   };
 };
 
@@ -176,6 +210,9 @@ export default function KioskDisplayPage() {
   const [activePackCode, setActivePackCode] = useState<string | null>(null);
   const [manualReveal, setManualReveal] = useState<ManualRevealState>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const configuringObsRef = useRef<string | null>(null);
+  const [obsConfiguredSessionId, setObsConfiguredSessionId] = useState<string | null>(null);
 
   const session = display?.session ?? null;
   const reveal = useMemo(() => extractRevealDetails(session), [session]);
@@ -188,6 +225,7 @@ export default function KioskDisplayPage() {
     lastError: obsLastError,
     startStreaming,
     stopStreaming,
+    applyStreamSettings,
   } = useObsConnection({
     url: OBS_WS_URL,
     password: OBS_WS_PASSWORD,
@@ -317,6 +355,67 @@ export default function KioskDisplayPage() {
     }, 4000);
   }, []);
 
+  const configureObsForSession = useCallback(
+    async (sessionId: string, token?: string | null) => {
+      if (!obsEnabled) {
+        return false;
+      }
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers[CONTROL_TOKEN_HEADER] = token;
+      } else if (kioskSecret) {
+        headers[KIOSK_SECRET_HEADER] = kioskSecret;
+      } else {
+        return false;
+      }
+      try {
+        const response = await fetch(`/api/kiosk/${sessionId}/ingest`, { headers });
+        const payload = (await response.json().catch(() => null)) as {
+          ingestUrl?: string;
+          streamKey?: string;
+          message?: string;
+        } | null;
+        if (!response.ok || !payload?.ingestUrl || !payload.streamKey) {
+          throw new Error(payload?.message ?? "Unable to load ingest info");
+        }
+        await applyStreamSettings({ server: payload.ingestUrl, key: payload.streamKey });
+        return true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to configure OBS";
+        setHelperState(message, "error");
+        return false;
+      }
+    },
+    [applyStreamSettings, obsEnabled, setHelperState]
+  );
+
+  useEffect(() => {
+    if (!obsEnabled) {
+      return;
+    }
+    if (!session?.id) {
+      setObsConfiguredSessionId(null);
+      configuringObsRef.current = null;
+      return;
+    }
+    if (obsConfiguredSessionId === session.id || configuringObsRef.current === session.id) {
+      return;
+    }
+    configuringObsRef.current = session.id;
+    void configureObsForSession(session.id, controlToken)
+      .then((configured) => {
+        if (configured) {
+          setObsConfiguredSessionId(session.id);
+          setHelperState(`Mux ingest synced for ${session.code}.`, "success");
+        }
+      })
+      .finally(() => {
+        if (configuringObsRef.current === session.id) {
+          configuringObsRef.current = null;
+        }
+      });
+  }, [configureObsForSession, controlToken, obsConfiguredSessionId, obsEnabled, session?.code, session?.id, setHelperState]);
+
   const persistSession = useCallback(
     (sessionId: string, token: string, packCode: string | null) => {
       if (!storageKey) {
@@ -344,6 +443,7 @@ export default function KioskDisplayPage() {
     }
     setControlToken(null);
     setActivePackCode(null);
+    setObsConfiguredSessionId(null);
   }, [storageKey]);
 
   useEffect(() => {
@@ -481,20 +581,13 @@ export default function KioskDisplayPage() {
         const packLabel = getPackLabel(payload.session, code) ?? code;
         setActivePackCode(packLabel);
         persistSession(payload.session.id, payload.controlToken, packLabel);
-        if (obsEnabled) {
-          void startStreaming().catch((error) => {
-            const message = error instanceof Error ? error.message : "Unable to start OBS stream";
-            console.error("[kiosk-display] OBS start failed", error);
-            setHelperState(message, "error");
-          });
-        }
         setHelperState(`Session ${payload.session.code} ready.`, "success");
       } catch (err) {
         const message = err instanceof Error ? err.message : "Unable to start session";
         setHelperState(message, "error");
       }
     },
-    [display?.location, obsEnabled, persistSession, setHelperState, startStreaming]
+    [display?.location, persistSession, setHelperState]
   );
 
   const handleManualCardReveal = useCallback(
@@ -522,8 +615,16 @@ export default function KioskDisplayPage() {
           set: coerceString(payload.reveal.set),
           number: coerceString(payload.reveal.number),
           imageUrl: coerceString(payload.reveal.imageUrl) ?? coerceString(payload.reveal.thumbnailUrl),
+          estimatedValue: coerceNumber((payload.reveal as Record<string, unknown>).estimatedValue),
+          buybackOffer: coerceNumber((payload.reveal as Record<string, unknown>).buybackOffer),
         };
-        setManualReveal({ data: revealData, expiresAt: Date.now() + MANUAL_REVEAL_DURATION_MS });
+        const qrLinkUrl = `${window.location.origin}/claim/card/${encodeURIComponent(code)}`;
+        setManualReveal({
+          data: revealData,
+          expiresAt: Date.now() + MANUAL_REVEAL_DURATION_MS,
+          qrLinkUrl,
+          buybackLinkUrl: qrLinkUrl,
+        });
         manualRevealCooldownRef.current = Date.now() + MANUAL_REVEAL_COOLDOWN_MS;
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unable to reveal card";
@@ -725,6 +826,9 @@ export default function KioskDisplayPage() {
     }
     const activeStages: SerializedKioskSession["status"][] = ["COUNTDOWN", "LIVE", "REVEAL"];
     if (session && activeStages.includes(session.status)) {
+      if (session.id !== obsConfiguredSessionId) {
+        return;
+      }
       void startStreaming().catch((error) => {
         const message = error instanceof Error ? error.message : "OBS start error";
         console.error("[kiosk-display] OBS start error", error);
@@ -737,7 +841,7 @@ export default function KioskDisplayPage() {
       console.warn("[kiosk-display] OBS stop error", error);
       setHelperState(message, "error");
     });
-  }, [session, obsEnabled, startStreaming, stopStreaming, setHelperState]);
+  }, [session, obsConfiguredSessionId, obsEnabled, startStreaming, stopStreaming, setHelperState]);
 
   const helperStatus = manualReveal ? "REVEAL" : !session ? "IDLE" : session.status;
   const helperHeadline = helperMessage
@@ -761,6 +865,7 @@ export default function KioskDisplayPage() {
           ? "Once the timer ends this session completes automatically."
           : "Keep the pack on camera until the countdown ends.";
   const helperPackLabel = session ? getPackLabel(session, activePackCode) : activePackCode;
+  const revealQrUrl = manualReveal?.qrLinkUrl ?? manualReveal?.buybackLinkUrl ?? session?.qrLinkUrl ?? session?.buybackLinkUrl ?? null;
   const obsStatusLabel = !obsEnabled
     ? null
     : obsStatus === "error"
@@ -773,7 +878,32 @@ export default function KioskDisplayPage() {
             ? "OBS CONNECTING"
             : obsStatus === "disconnected"
               ? "OBS DISCONNECTED"
-              : "OBS DISABLED";
+          : "OBS DISABLED";
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const canvas = qrCanvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    if (!revealQrUrl) {
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+      return;
+    }
+    QRCode.toCanvas(canvas, revealQrUrl, {
+      width: 320,
+      margin: 1,
+      color: {
+        dark: "#0f172a",
+        light: "#ffffff",
+      },
+    }).catch((error) => console.warn("[kiosk-display] failed to draw QR", error));
+  }, [revealQrUrl]);
 
   const renderCountdown = () => (
     <div className="flex flex-col items-center gap-6 text-center">
@@ -839,28 +969,67 @@ export default function KioskDisplayPage() {
     </div>
   );
 
-  const renderReveal = (payload: RevealDetails | null, remainingMs: number) => (
-    <div className="flex flex-col items-center gap-6 text-center">
-      <p className="text-sm uppercase tracking-[0.45em] text-emerald-300">Highlighted Hit</p>
-      <p className="font-heading text-[clamp(3rem,8vw,8rem)] tracking-[0.1em] text-emerald-100">
-        {formatDuration(Math.max(0, remainingMs))}
-      </p>
-      <h2 className="font-heading text-[clamp(2.5rem,6vw,5rem)] uppercase tracking-[0.12em] text-white">{payload?.name ?? "Vault Hit"}</h2>
-      {payload?.set ? <p className="text-lg text-slate-200">{payload.set}</p> : null}
-      {payload?.imageUrl ? (
-        <Image
-          src={payload.imageUrl}
-          alt={payload.name ?? "Reveal"}
-          width={840}
-          height={600}
-          className="max-h-[420px] w-auto rounded-[3rem] border border-white/10 bg-night-900/80 p-6 shadow-card"
-          sizes="(max-width: 768px) 80vw, 720px"
-          priority
-          unoptimized
-        />
-      ) : null}
-    </div>
-  );
+  const renderReveal = (payload: RevealDetails | null, remainingMs: number, qrUrl: string | null) => {
+    const valueLabel = formatCurrency(payload?.estimatedValue);
+    const buybackLabel = formatCurrency(payload?.buybackOffer);
+    return (
+      <div className="flex flex-col items-center gap-8 text-center lg:items-start lg:text-left">
+        <p className="text-sm uppercase tracking-[0.45em] text-emerald-300">Highlighted Hit</p>
+        <p className="font-heading text-[clamp(3rem,8vw,8rem)] tracking-[0.1em] text-emerald-100">
+          {formatDuration(Math.max(0, remainingMs))}
+        </p>
+        <div className="flex flex-col gap-4">
+          <h2 className="font-heading text-[clamp(2.5rem,6vw,5rem)] uppercase tracking-[0.12em] text-white">
+            {payload?.name ?? "Vault Hit"}
+          </h2>
+          {payload?.set ? <p className="text-lg text-slate-200">{payload.set}</p> : null}
+        </div>
+        <div className="flex w-full flex-col items-center gap-10 lg:flex-row lg:items-start lg:justify-center">
+          {payload?.imageUrl ? (
+            <Image
+              src={payload.imageUrl}
+              alt={payload.name ?? "Reveal"}
+              width={1400}
+              height={900}
+              className="max-h-[70vh] w-auto max-w-full rounded-[4rem] border border-white/10 bg-night-900/80 p-10 shadow-card"
+              sizes="(max-width: 768px) 90vw, 1200px"
+              priority
+              unoptimized
+            />
+          ) : null}
+          <div className="flex w-full max-w-xl flex-col gap-6 text-left">
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-5 text-white">
+              <p className="text-xs uppercase tracking-[0.4em] text-slate-300">Card Value</p>
+              <p className="font-heading text-4xl tracking-wide">
+                {valueLabel ?? "Ask host"}
+              </p>
+            </div>
+            <div className="rounded-3xl border border-amber-400/40 bg-amber-400/10 p-5 text-amber-50">
+              <p className="text-xs uppercase tracking-[0.4em]">Instant Buyback Offer</p>
+              <p className="font-heading text-4xl tracking-wide">
+                {buybackLabel ?? "Request offer"}
+              </p>
+            </div>
+            <div className="flex flex-col items-center gap-4 rounded-3xl border border-emerald-300/40 bg-emerald-500/5 p-6 text-center text-white">
+              <canvas
+                ref={qrCanvasRef}
+                className={`h-48 w-48 rounded-2xl bg-white p-2 ${qrUrl ? "block" : "hidden"}`}
+                aria-label="Scan to save your rip"
+              />
+              {!qrUrl ? (
+                <div className="flex h-48 w-48 items-center justify-center rounded-2xl border border-dashed border-emerald-200/60 text-xs uppercase tracking-[0.3em] text-emerald-100/70">
+                  Link Pending
+                </div>
+              ) : null}
+              <p className="text-sm text-white/80">
+                Scan to download the clip and accept the buyback offer directly on your phone.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderStandby = () => (
     <div className="flex flex-col items-center gap-8 text-center">
@@ -880,7 +1049,11 @@ export default function KioskDisplayPage() {
 
   const renderStage = () => {
     if (manualReveal) {
-      return renderReveal(manualReveal.data, manualReveal.expiresAt - now);
+      return renderReveal(
+        manualReveal.data,
+        manualReveal.expiresAt - now,
+        manualReveal.qrLinkUrl ?? manualReveal.buybackLinkUrl ?? null
+      );
     }
     if (!session) {
       return renderStandby();
@@ -894,7 +1067,7 @@ export default function KioskDisplayPage() {
       case "LIVE":
         return renderLive();
       case "REVEAL":
-        return renderReveal(reveal, revealRemaining);
+        return renderReveal(reveal, revealRemaining, revealQrUrl);
       default:
         return renderStandby();
     }

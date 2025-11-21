@@ -29,6 +29,7 @@ export function useObsConnection(options: {
   lastError: string | null;
   startStreaming: () => Promise<void>;
   stopStreaming: () => Promise<void>;
+  applyStreamSettings: (settings: { server: string; key: string; streamServiceType?: string }) => Promise<void>;
 } {
   const trimmedUrl = options.url?.trim() ?? "";
   const trimmedPassword = options.password?.trim() ?? "";
@@ -212,6 +213,40 @@ export function useObsConnection(options: {
     }
   }, [connect, enabled, updateWindowDebug]);
 
+  const applyStreamSettings = useCallback(
+    async (settings: { server: string; key: string; streamServiceType?: string }) => {
+      if (!enabled) {
+        return;
+      }
+      const obs = await connect();
+      if (!obs) {
+        throw new Error("OBS connection unavailable");
+      }
+      const server = settings.server?.trim();
+      const key = settings.key?.trim();
+      if (!server || !key) {
+        throw new Error("Missing OBS stream settings");
+      }
+      try {
+        await obs.call("SetStreamServiceSettings", {
+          streamServiceType: settings.streamServiceType ?? "rtmp_custom",
+          streamServiceSettings: {
+            server,
+            key,
+            use_auth: false,
+          },
+        });
+      } catch (error) {
+        const message = normalizeMessage(error);
+        setStatus("error");
+        setLastError(message);
+        updateWindowDebug({ status: "error", error: message });
+        throw error;
+      }
+    },
+    [connect, enabled, updateWindowDebug]
+  );
+
   useEffect(() => {
     if (!enabled) {
       teardown();
@@ -241,7 +276,8 @@ export function useObsConnection(options: {
       lastError,
       startStreaming,
       stopStreaming,
+      applyStreamSettings,
     }),
-    [enabled, isStreaming, lastError, startStreaming, status, stopStreaming]
+    [applyStreamSettings, enabled, isStreaming, lastError, startStreaming, status, stopStreaming]
   );
 }
