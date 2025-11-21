@@ -65,6 +65,8 @@ type HlsConstructor = {
   isSupported: () => boolean;
 };
 
+type HlsInstance = InstanceType<HlsConstructor>;
+
 declare global {
   interface Window {
     Hls?: any;
@@ -255,7 +257,7 @@ export default function KioskDisplayPage() {
 
     const playbackUrl = buildMuxPlaybackUrl(session.muxPlaybackId);
     let destroyed = false;
-    let hls: { destroy: () => void } | null = null;
+    let hls: HlsInstance | null = null;
 
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = playbackUrl;
