@@ -15,6 +15,8 @@ const normalizeMessage = (error: unknown): string => {
 
 const isOutputActiveMessage = (message: string) => message.toLowerCase().includes("output is currently active");
 const isOutputInactiveMessage = (message: string) => message.toLowerCase().includes("output is not currently active");
+const isIdentifyMessage = (message: string) =>
+  message.toLowerCase().includes("authentication failed") || message.toLowerCase().includes("socket not identified");
 
 export function useObsConnection(options: {
   url?: string | null;
@@ -43,14 +45,17 @@ export function useObsConnection(options: {
   const clientRef = useRef<OBSWebSocket | null>(null);
   const connectPromiseRef = useRef<Promise<OBSWebSocket | null> | null>(null);
   const hasEventsRef = useRef(false);
+  const attemptRef = useRef(0);
 
   const updateWindowDebug = useCallback(
     (override?: Partial<{ status: ObsStatus; isStreaming: boolean; error: string | null }>) => {
       if (typeof window === "undefined") {
         return;
       }
+      const rawStatus = override?.status ?? status;
+      const debugStatus = rawStatus === "connected" ? "ready" : rawStatus;
       (window as typeof window & { kioskObsDebug?: Record<string, unknown> }).kioskObsDebug = {
-        status: override?.status ?? status,
+        status: debugStatus,
         isStreaming: override?.isStreaming ?? isStreaming,
         url: trimmedUrl,
         error: override?.error ?? lastError,
@@ -70,9 +75,11 @@ export function useObsConnection(options: {
     clientRef.current = null;
     connectPromiseRef.current = null;
     hasEventsRef.current = false;
+    attemptRef.current = 0;
     setIsStreaming(false);
     setStatus(enabled ? "disconnected" : "disabled");
-  }, [enabled]);
+    updateWindowDebug({ status: enabled ? "disconnected" : "disabled", isStreaming: false, error: null });
+  }, [enabled, updateWindowDebug]);
 
   const bindEvents = useCallback(() => {
     if (!clientRef.current || hasEventsRef.current) {
@@ -107,16 +114,22 @@ export function useObsConnection(options: {
     if (connectPromiseRef.current) {
       return connectPromiseRef.current;
     }
+
     if (!clientRef.current) {
       clientRef.current = new OBSWebSocket();
     }
     bindEvents();
     setStatus((prev) => (prev === "streaming" ? prev : "connecting"));
     setLastError(null);
+    updateWindowDebug({ status: "connecting", error: null });
 
-    const attemptConnection = async (attempt: number): Promise<OBSWebSocket | null> => {
+    const attemptConnection = async (): Promise<OBSWebSocket | null> => {
+      attemptRef.current += 1;
+      const attemptNumber = attemptRef.current;
+      console.info(`[useObsConnection] Connecting to OBS (${attemptNumber}/${maxAttempts})`, trimmedUrl);
       try {
         await clientRef.current!.connect(trimmedUrl, trimmedPassword || undefined);
+        console.info("[useObsConnection] OBS connected");
         try {
           const { outputActive } = await clientRef.current!.call("GetStreamStatus");
           setIsStreaming(outputActive);
@@ -127,42 +140,60 @@ export function useObsConnection(options: {
           updateWindowDebug({ status: "connected" });
         }
         if (desiredScene) {
+          console.info("[useObsConnection] Setting scene", desiredScene);
           try {
             await clientRef.current!.call("SetCurrentProgramScene", { sceneName: desiredScene });
           } catch (error) {
             console.warn("[useObsConnection] Failed to set OBS scene", error);
           }
         }
+        attemptRef.current = 0;
         return clientRef.current;
       } catch (error) {
         const message = normalizeMessage(error);
+        console.warn("[useObsConnection] OBS connect failed", message);
         setStatus("error");
         setLastError(message);
         updateWindowDebug({ status: "error", error: message });
-        if (attempt >= maxAttempts) {
-          throw error;
+        if (attemptNumber >= maxAttempts || !isIdentifyMessage(message)) {
+          return null;
         }
         await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-        return attemptConnection(attempt + 1);
+        setStatus("connecting");
+        updateWindowDebug({ status: "connecting" });
+        return attemptConnection();
       }
     };
 
-    const connectionPromise = attemptConnection(1).finally(() => {
+    const connectionPromise = attemptConnection().finally(() => {
       connectPromiseRef.current = null;
     });
     connectPromiseRef.current = connectionPromise;
     return connectionPromise;
   }, [bindEvents, desiredScene, enabled, maxAttempts, retryDelayMs, trimmedPassword, trimmedUrl, updateWindowDebug]);
 
+  const ensureReadyClient = useCallback(async (): Promise<OBSWebSocket | null> => {
+    const obs = await connect();
+    if (!obs) {
+      return null;
+    }
+    if (status === "error" || status === "disconnected" || status === "disabled") {
+      return null;
+    }
+    return obs;
+  }, [connect, status]);
+
   const startStreaming = useCallback(async () => {
     if (!enabled) {
       return;
     }
-    const obs = await connect();
+    const obs = await ensureReadyClient();
     if (!obs) {
+      console.warn("[useObsConnection] StartStream skipped; OBS not ready");
       return;
     }
     try {
+      console.info("[useObsConnection] Starting stream");
       await obs.call("StartStream");
       setStatus("streaming");
       setIsStreaming(true);
@@ -178,22 +209,24 @@ export function useObsConnection(options: {
       setStatus("error");
       setLastError(message);
       updateWindowDebug({ status: "error", error: message });
-      throw error;
+      console.warn("[useObsConnection] StartStream failed", message);
     }
-  }, [connect, enabled, updateWindowDebug]);
+  }, [enabled, ensureReadyClient, updateWindowDebug]);
 
   const stopStreaming = useCallback(async () => {
     if (!enabled) {
       return;
     }
-    const obs = await connect().catch(() => null);
+    const obs = await ensureReadyClient();
     if (!obs) {
-      setStatus("disconnected");
+      setStatus(enabled ? "disconnected" : "disabled");
       setIsStreaming(false);
-      updateWindowDebug({ status: "disconnected", isStreaming: false });
+      updateWindowDebug({ status: enabled ? "disconnected" : "disabled", isStreaming: false });
+      console.warn("[useObsConnection] StopStream skipped; OBS not ready");
       return;
     }
     try {
+      console.info("[useObsConnection] Stopping stream");
       await obs.call("StopStream");
       setStatus("connected");
       setIsStreaming(false);
@@ -209,16 +242,16 @@ export function useObsConnection(options: {
       setStatus("error");
       setLastError(message);
       updateWindowDebug({ status: "error", error: message });
-      throw error;
+      console.warn("[useObsConnection] StopStream failed", message);
     }
-  }, [connect, enabled, updateWindowDebug]);
+  }, [enabled, ensureReadyClient, updateWindowDebug]);
 
   const applyStreamSettings = useCallback(
     async (settings: { server: string; key: string; streamServiceType?: string }) => {
       if (!enabled) {
         return;
       }
-      const obs = await connect();
+      const obs = await ensureReadyClient();
       if (!obs) {
         throw new Error("OBS connection unavailable");
       }
@@ -228,6 +261,7 @@ export function useObsConnection(options: {
         throw new Error("Missing OBS stream settings");
       }
       try {
+        console.info("[useObsConnection] Applying stream settings");
         await obs.call("SetStreamServiceSettings", {
           streamServiceType: settings.streamServiceType ?? "rtmp_custom",
           streamServiceSettings: {
@@ -241,10 +275,11 @@ export function useObsConnection(options: {
         setStatus("error");
         setLastError(message);
         updateWindowDebug({ status: "error", error: message });
+        console.warn("[useObsConnection] Failed to apply stream settings", message);
         throw error;
       }
     },
-    [connect, enabled, updateWindowDebug]
+    [enabled, ensureReadyClient, updateWindowDebug]
   );
 
   useEffect(() => {
@@ -255,9 +290,8 @@ export function useObsConnection(options: {
     void connect();
     return () => {
       teardown();
-      updateWindowDebug({ status: "disconnected", isStreaming: false });
     };
-  }, [connect, enabled, teardown, updateWindowDebug]);
+  }, [connect, enabled, teardown]);
 
   useEffect(() => {
     updateWindowDebug();
