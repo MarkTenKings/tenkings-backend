@@ -43,6 +43,18 @@ type CachedSession = {
   savedAt: number;
 };
 
+type RuntimeObsConfig = {
+  enabled: boolean;
+  wsUrl?: string | null;
+  password?: string | null;
+  sceneAttract?: string | null;
+  sceneCountdown?: string | null;
+  sceneLive?: string | null;
+  sceneReveal?: string | null;
+  maxAttempts?: number | null;
+  retryDelayMs?: number | null;
+};
+
 const POLL_INTERVAL_MS = 4000;
 const TIMER_TICK_MS = 1000;
 const MANUAL_REVEAL_DURATION_MS = Number(process.env.NEXT_PUBLIC_MANUAL_REVEAL_MS ?? 10000);
@@ -51,12 +63,10 @@ const ATTRACT_VIDEO_URL = process.env.NEXT_PUBLIC_KIOSK_ATTRACT_VIDEO_URL ?? "";
 const KIOSK_SECRET_HEADER = "x-kiosk-secret";
 const CONTROL_TOKEN_HEADER = "x-kiosk-token";
 const kioskSecret = process.env.NEXT_PUBLIC_KIOSK_API_SECRET ?? "";
-const OBS_WS_URL = process.env.NEXT_PUBLIC_OBS_WS_URL ?? "";
-const OBS_WS_PASSWORD = process.env.NEXT_PUBLIC_OBS_WS_PASSWORD ?? "";
-const OBS_SCENE_LIVE = process.env.NEXT_PUBLIC_OBS_SCENE_LIVE ?? "Live Rip";
-const OBS_MAX_ATTEMPTS = Number(process.env.NEXT_PUBLIC_OBS_MAX_ATTEMPTS ?? "5");
-const OBS_RETRY_DELAY_MS = Number(process.env.NEXT_PUBLIC_OBS_RETRY_MS ?? "2000");
+const DEFAULT_OBS_MAX_ATTEMPTS = Number(process.env.NEXT_PUBLIC_OBS_MAX_ATTEMPTS ?? "5");
+const DEFAULT_OBS_RETRY_DELAY_MS = Number(process.env.NEXT_PUBLIC_OBS_RETRY_MS ?? "2000");
 const SCANNER_TEST_URL = process.env.NEXT_PUBLIC_KIOSK_SCANNER_URL ?? "";
+const OBS_CONFIG_CACHE_KEY = "kiosk:obs-config";
 
 const helperThemes: Record<HelperIntent, string> = {
   info: "border-white/10 bg-white/5 text-white",
@@ -209,6 +219,9 @@ export default function KioskDisplayPage() {
   const [scanBuffer, setScanBuffer] = useState("");
   const [activePackCode, setActivePackCode] = useState<string | null>(null);
   const [manualReveal, setManualReveal] = useState<ManualRevealState>(null);
+  const [obsConfig, setObsConfig] = useState<RuntimeObsConfig | null>(null);
+  const [obsConfigLoading, setObsConfigLoading] = useState(true);
+  const [obsConfigError, setObsConfigError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const qrCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const configuringObsRef = useRef<string | null>(null);
@@ -219,6 +232,69 @@ export default function KioskDisplayPage() {
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const manualRevealCooldownRef = useRef(0);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const cachedConfig = () => {
+      if (typeof window === "undefined") {
+        return null;
+      }
+      const raw = window.sessionStorage.getItem(OBS_CONFIG_CACHE_KEY);
+      if (!raw) {
+        return null;
+      }
+      try {
+        return JSON.parse(raw) as RuntimeObsConfig;
+      } catch {
+        return null;
+      }
+    };
+
+    const cached = cachedConfig();
+    if (cached && cached.enabled && cached.wsUrl) {
+      setObsConfig(cached);
+      setObsConfigLoading(false);
+    }
+
+    const fetchConfig = async () => {
+      try {
+        const response = await fetch("/api/kiosk/obs-config", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Failed to load OBS config (${response.status})`);
+        }
+        const payload = (await response.json()) as RuntimeObsConfig;
+        if (cancelled) {
+          return;
+        }
+        if (payload?.enabled && payload.wsUrl) {
+          setObsConfig(payload);
+          if (typeof window !== "undefined") {
+            window.sessionStorage.setItem(OBS_CONFIG_CACHE_KEY, JSON.stringify(payload));
+          }
+        } else {
+          setObsConfig(null);
+        }
+        setObsConfigError(null);
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : "Failed to load OBS config";
+        setObsConfigError(message);
+      } finally {
+        if (!cancelled) {
+          setObsConfigLoading(false);
+        }
+      }
+    };
+
+    fetchConfig();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const {
     enabled: obsEnabled,
     status: obsStatus,
@@ -227,11 +303,11 @@ export default function KioskDisplayPage() {
     stopStreaming,
     applyStreamSettings,
   } = useObsConnection({
-    url: OBS_WS_URL,
-    password: OBS_WS_PASSWORD,
-    sceneName: OBS_SCENE_LIVE,
-    maxAttempts: OBS_MAX_ATTEMPTS,
-    retryDelayMs: OBS_RETRY_DELAY_MS,
+    url: obsConfig?.wsUrl,
+    password: obsConfig?.password,
+    sceneName: obsConfig?.sceneLive ?? undefined,
+    maxAttempts: obsConfig?.maxAttempts ?? DEFAULT_OBS_MAX_ATTEMPTS,
+    retryDelayMs: obsConfig?.retryDelayMs ?? DEFAULT_OBS_RETRY_DELAY_MS,
   });
 
   const countdownRemaining = useMemo(() => {
@@ -866,19 +942,23 @@ export default function KioskDisplayPage() {
           : "Keep the pack on camera until the countdown ends.";
   const helperPackLabel = session ? getPackLabel(session, activePackCode) : activePackCode;
   const revealQrUrl = manualReveal?.qrLinkUrl ?? manualReveal?.buybackLinkUrl ?? session?.qrLinkUrl ?? session?.buybackLinkUrl ?? null;
-  const obsStatusLabel = !obsEnabled
-    ? null
-    : obsStatus === "error"
-      ? "OBS ERROR"
-      : obsStatus === "streaming"
-        ? "OBS STREAMING"
-        : obsStatus === "connected"
-          ? "OBS READY"
-          : obsStatus === "connecting"
-            ? "OBS CONNECTING"
-            : obsStatus === "disconnected"
-              ? "OBS DISCONNECTED"
-          : "OBS DISABLED";
+  const obsStatusLabel = obsConfigLoading
+    ? "OBS LOADING"
+    : !obsEnabled
+      ? "OBS DISABLED"
+      : obsStatus === "error"
+        ? "OBS ERROR"
+        : obsStatus === "streaming"
+          ? "OBS STREAMING"
+          : obsStatus === "connected"
+            ? "OBS READY"
+            : obsStatus === "connecting"
+              ? "OBS CONNECTING"
+              : obsStatus === "disconnected"
+                ? "OBS DISCONNECTED"
+                : "OBS DISABLED";
+
+  const obsErrorMessage = obsConfigError ?? obsLastError ?? null;
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1112,7 +1192,7 @@ export default function KioskDisplayPage() {
               {obsStatusLabel ? <span className="rounded-full border border-white/20 px-3 py-1">{obsStatusLabel}</span> : null}
               <span className="rounded-full border border-white/20 px-3 py-1">Scanner Ready</span>
             </div>
-            {obsStatus === "error" && obsLastError ? <p className="mt-2 text-xs text-rose-200">OBS error: {obsLastError}</p> : null}
+            {obsErrorMessage ? <p className="mt-2 text-xs text-rose-200">OBS error: {obsErrorMessage}</p> : null}
           </div>
         </div>
 
