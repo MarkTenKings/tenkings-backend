@@ -17,6 +17,7 @@ const isOutputActiveMessage = (message: string) => message.toLowerCase().include
 const isOutputInactiveMessage = (message: string) => message.toLowerCase().includes("output is not currently active");
 const isIdentifyMessage = (message: string) =>
   message.toLowerCase().includes("authentication failed") || message.toLowerCase().includes("socket not identified");
+const stripTrailingSlashes = (value: string) => value.replace(/\/+$/, "");
 
 export function useObsConnection(options: {
   url?: string | null;
@@ -34,11 +35,12 @@ export function useObsConnection(options: {
   applyStreamSettings: (settings: { server: string; key: string; streamServiceType?: string }) => Promise<void>;
 } {
   const trimmedUrl = options.url?.trim() ?? "";
+  const normalizedUrl = trimmedUrl ? stripTrailingSlashes(trimmedUrl) : "";
   const trimmedPassword = options.password?.trim() ?? "";
   const desiredScene = options.sceneName?.trim() || null;
   const maxAttempts = options.maxAttempts ?? 3;
   const retryDelayMs = options.retryDelayMs ?? 2000;
-  const enabled = Boolean(trimmedUrl);
+  const enabled = Boolean(normalizedUrl);
   const [status, setStatus] = useState<ObsStatus>(() => (enabled ? "disconnected" : "disabled"));
   const [isStreaming, setIsStreaming] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -57,11 +59,11 @@ export function useObsConnection(options: {
       (window as typeof window & { kioskObsDebug?: Record<string, unknown> }).kioskObsDebug = {
         status: debugStatus,
         isStreaming: override?.isStreaming ?? isStreaming,
-        url: trimmedUrl,
+        url: normalizedUrl,
         error: override?.error ?? lastError,
       };
     },
-    [isStreaming, lastError, status, trimmedUrl]
+    [isStreaming, lastError, status, normalizedUrl]
   );
 
   const teardown = useCallback(() => {
@@ -108,7 +110,7 @@ export function useObsConnection(options: {
   }, [enabled, updateWindowDebug]);
 
   const connect = useCallback(async () => {
-    if (!enabled || !trimmedUrl) {
+    if (!enabled || !normalizedUrl) {
       return null;
     }
     if (connectPromiseRef.current) {
@@ -126,9 +128,9 @@ export function useObsConnection(options: {
     const attemptConnection = async (): Promise<OBSWebSocket | null> => {
       attemptRef.current += 1;
       const attemptNumber = attemptRef.current;
-      console.info(`[useObsConnection] Connecting to OBS (${attemptNumber}/${maxAttempts})`, trimmedUrl);
+      console.info(`[useObsConnection] Connecting to OBS (${attemptNumber}/${maxAttempts})`, normalizedUrl);
       try {
-        await clientRef.current!.connect(trimmedUrl, trimmedPassword || undefined);
+        await clientRef.current!.connect(normalizedUrl, trimmedPassword || undefined);
         console.info("[useObsConnection] OBS connected");
         try {
           const { outputActive } = await clientRef.current!.call("GetStreamStatus");
