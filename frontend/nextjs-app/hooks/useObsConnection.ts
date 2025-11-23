@@ -154,7 +154,7 @@ export function useObsConnection(options: {
         return clientRef.current;
       } catch (error) {
         const message = normalizeMessage(error);
-        console.warn("[useObsConnection] OBS connect failed", message);
+        console.error("[useObsConnection] OBS connect error", error);
         setStatus("error");
         setLastError(message);
         updateWindowDebug({ status: "error", error: message });
