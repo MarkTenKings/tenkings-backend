@@ -128,9 +128,10 @@ export function useObsConnection(options: {
     const attemptConnection = async (): Promise<OBSWebSocket | null> => {
       attemptRef.current += 1;
       const attemptNumber = attemptRef.current;
-      console.info(`[useObsConnection] Connecting to OBS (${attemptNumber}/${maxAttempts})`, normalizedUrl);
+      const safeUrl = normalizedUrl.endsWith("/") ? normalizedUrl.slice(0, -1) : normalizedUrl;
+      console.info(`[useObsConnection] Connecting to OBS (${attemptNumber}/${maxAttempts})`, safeUrl);
       try {
-        await clientRef.current!.connect(normalizedUrl, trimmedPassword || undefined);
+        await clientRef.current!.connect(safeUrl, trimmedPassword || undefined);
         console.info("[useObsConnection] OBS connected");
         try {
           const { outputActive } = await clientRef.current!.call("GetStreamStatus");
