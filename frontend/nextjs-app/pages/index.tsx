@@ -126,12 +126,6 @@ const categories = [
     image: "/images/tenkings-vendingmachine-pokemon.png",
     description: "Vintage sets through Scarlet & Violet. Guaranteed holos in every grid.",
   },
-  {
-    id: "comics",
-    label: "Comics",
-    image: "/images/tenkings-vendingmachine-comics.png",
-    description: "Slabbed keys, variants, and mystery grails. Choose the panel you reveal.",
-  },
 ];
 
 const mapPullsFromApi = (rawPulls: any[]): { pulls: PullCard[]; names: Record<string, string> } => {
@@ -1056,16 +1050,6 @@ function StackedHeroMachinesDesktop() {
         <Image
           src="/images/tenkings-vendingmachine-sports.png"
           alt="Sports vending machine"
-          width={2813}
-          height={5000}
-          priority
-          className="h-auto w-full"
-        />
-      </div>
-      <div className="absolute right-[calc(1.5rem-25px)] top-[calc(8rem-50px)] z-0 w-[200px] rotate-10 drop-shadow-[0_28px_45px_rgba(248,113,113,0.45)] md:right-[calc(2.5rem-25px)] md:w-[230px] lg:right-[calc(3rem-25px)] lg:w-[250px]">
-        <Image
-          src="/images/tenkings-vendingmachine-comics.png"
-          alt="Comics vending machine"
           width={2813}
           height={5000}
           priority

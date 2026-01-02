@@ -19,7 +19,7 @@ import type { NormalizedClassification } from "@tenkings/shared";
 
 const BUYBACK_RATE = 0.75;
 
-type CategoryId = "sports" | "pokemon" | "comics";
+type CategoryId = "sports" | "pokemon";
 type PaymentMethod = "card" | "tkd";
 
 type OddsRow = { range: string; probability: string };
@@ -220,24 +220,6 @@ const catalog: PackCategory[] = [
       },
     ],
   },
-  {
-    id: "comics",
-    label: "Comics",
-    hero: "/images/tenkings-vendingmachine-comics.png",
-    blurb: "Slabbed keys, virgin variants, and silver-age surprises.",
-    tiers: [
-      {
-        id: "comics-coming-soon",
-        label: "Mystery tiers",
-        price: 0,
-        image: "/images/pack-tier-50.png",
-        details: "Comic machines are loading now. Slabbed grails, foil variants, and CGC 9.8 hits land here soon.",
-        expectedValue: 0,
-        odds: [],
-        disclaimer: "Join the waitlist to get early access.",
-      },
-    ],
-  },
 ];
 
 const tierImageOverrides: Record<string, string> = {
@@ -247,7 +229,6 @@ const tierImageOverrides: Record<string, string> = {
   "pokemon-100": "/images/100-pokemon-pack-tier.png",
   "pokemon-50": "/images/50-pokemon-pack-tier.png",
   "pokemon-25": "/images/25-pokemon-pack-tier.png",
-  "comics-coming-soon": "/images/60-comics-pack-tier.png",
 };
 
 const canonical = (value: string | null | undefined) =>
@@ -256,7 +237,6 @@ const canonical = (value: string | null | undefined) =>
 const categoryEnumById: Record<CategoryId, string> = {
   sports: "SPORTS",
   pokemon: "POKEMON",
-  comics: "COMICS",
 };
 
 const tierEnumByPrice: Record<number, string> = {
@@ -272,7 +252,6 @@ type NormalizedFacts = {
   core: Fact[];
   sport: Fact[];
   tcg: Fact[];
-  comics: Fact[];
   links: LinkFact[];
 };
 
@@ -352,7 +331,6 @@ const buildNormalizedFacts = (normalized: NormalizedClassification | null): Norm
     core: [],
     sport: [],
     tcg: [],
-    comics: [],
     links: [],
   };
 
@@ -398,19 +376,6 @@ const buildNormalizedFacts = (normalized: NormalizedClassification | null): Norm
     pushFact(facts.tcg, "Rarity", tcg.rarity);
     pushFact(facts.tcg, "Out Of", tcg.outOf);
     pushFact(facts.tcg, "Subcategory", tcg.subcategory);
-  }
-
-  const comics = normalized.comics ?? null;
-  if (comics) {
-    pushFact(facts.comics, "Title", comics.title);
-    pushFact(facts.comics, "Issue", comics.issueNumber);
-    pushFact(facts.comics, "Release Date", comics.date);
-    pushFact(facts.comics, "Origin Date", comics.originDate);
-    pushFact(facts.comics, "Story Arc", comics.storyArc);
-    const graded = boolToLabel(comics.graded ?? null);
-    if (graded) pushFact(facts.comics, "Graded", graded);
-    pushFact(facts.comics, "Grade Company", comics.gradeCompany);
-    pushFact(facts.comics, "Grade", comics.grade);
   }
 
   const links = normalized.links ?? {};
@@ -882,7 +847,6 @@ export default function Packs() {
           { key: "core", title: "Card Facts", facts: normalizedFacts.core },
           { key: "sport", title: "Sport Details", facts: normalizedFacts.sport },
           { key: "tcg", title: "TCG Details", facts: normalizedFacts.tcg },
-          { key: "comics", title: "Comics Details", facts: normalizedFacts.comics },
         ] as Array<{ key: string; title: string; facts: Fact[] }>
       ).filter((section) => section.facts.length > 0),
     [normalizedFacts]
@@ -1267,7 +1231,7 @@ export default function Packs() {
               {category.tiers.map((currentTier) => {
                 const overrideImage = tierImageOverrides[currentTier.id] ?? currentTier.image;
                 const tierComingSoon = Boolean(currentTier.comingSoon);
-                const showChaseCarousel = ["pokemon", "sports", "comics"].includes(category.id);
+                const showChaseCarousel = ["pokemon", "sports"].includes(category.id);
                 const placeholderChases = Array.from({ length: 5 }, (_, index) => `Chase Card ${index + 1}`);
 
                 return (
