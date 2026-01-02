@@ -234,7 +234,9 @@ export default function Home({
     const candidates = [heroVideoDesktopRef.current, heroVideoMobileRef.current];
     const handleCanPlay = (event: Event) => {
       const target = event.currentTarget as HTMLVideoElement;
-      target.play().catch(() => undefined);
+      if (!heroVideoMuted) {
+        target.play().catch(() => undefined);
+      }
     };
 
     candidates.forEach((element) => {

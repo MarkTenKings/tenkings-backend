@@ -36,7 +36,7 @@ export default function AppShell({ children, background = "default" }: AppShellP
       <div className="relative z-0 flex min-h-screen flex-col">
         <div className="pointer-events-none absolute inset-0 bg-radial-night opacity-80" aria-hidden />
         <header className="sticky top-0 z-20 border-b border-white/5 bg-night-900/70 backdrop-blur">
-          <nav className="flex w-full items-center justify-between px-6 py-5">
+          <nav className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
             <Link href="/" className="font-heading text-3xl tracking-[0.18em] text-gold-500" onClick={handleCloseMenu}>
               TEN KINGS
             </Link>
@@ -118,7 +118,7 @@ export default function AppShell({ children, background = "default" }: AppShellP
           </div>
           {session && (
             <div className="border-t border-white/5 bg-night-900/60 text-xs uppercase tracking-[0.3em] text-slate-400">
-              <div className="flex w-full items-center justify-between px-6 py-2">
+              <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-2">
                 <span>Signed in as {session.user.displayName ?? session.user.phone ?? session.user.id}</span>
                 <span>Wallet · {formatTkd(session.wallet.balance)}</span>
               </div>
@@ -129,7 +129,7 @@ export default function AppShell({ children, background = "default" }: AppShellP
         <main className="relative z-10 flex flex-1 flex-col">{children}</main>
 
         <footer className="border-t border-white/5 bg-night-900/80 py-10 text-xs text-slate-400">
-          <div className="flex w-full flex-col gap-2 px-6">
+          <div className="mx-auto flex max-w-6xl flex-col gap-2 px-6">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <span className="tracking-[0.24em] uppercase">© {new Date().getFullYear()} Ten Kings</span>
               <div className="flex gap-4">
