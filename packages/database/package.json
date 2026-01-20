@@ -18,7 +18,8 @@
     "db:push": "prisma db push --schema prisma/schema.prisma"
   },
   "dependencies": {
-    "@prisma/client": "^5.22.0"
+    "@prisma/client": "^5.22.0",
+    "@tenkings/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
