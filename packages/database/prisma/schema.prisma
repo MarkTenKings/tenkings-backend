@@ -546,6 +546,7 @@ model CardAsset {
   assignedDefinition PackDefinition? @relation(fields: [assignedDefinitionId], references: [id], onDelete: SetNull)
   notes              CardNote[]
   jobs               ProcessingJob[]
+  bytebotLiteJobs    BytebotLiteJob[]
   humanReviewer      User?           @relation("CardAssetHumanReviewer", fields: [humanReviewedById], references: [id])
   sportsDbPlayer     SportsDbPlayer? @relation(fields: [sportsDbPlayerId], references: [id], onDelete: SetNull)
 
