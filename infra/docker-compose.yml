@@ -161,6 +161,15 @@ services:
     depends_on:
       - postgres
 
+  bytebot-lite-service:
+    build:
+      context: ..
+      dockerfile: backend/bytebot-lite-service/Dockerfile
+    restart: unless-stopped
+    env_file: ../env/bytebot-lite-service.env
+    depends_on:
+      - postgres
+
   vending-gw:
     build:
       context: ..
