@@ -94,7 +94,7 @@ export async function resetBytebotLiteJob(
       errorMessage: null,
       lockedAt: null,
       completedAt: null,
-      result: null,
+      result: Prisma.DbNull,
     },
   });
 }
