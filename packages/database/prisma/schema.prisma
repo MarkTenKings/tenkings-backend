@@ -100,6 +100,13 @@ enum ProcessingJobStatus {
   FAILED
 }
 
+enum BytebotLiteJobStatus {
+  QUEUED
+  IN_PROGRESS
+  COMPLETE
+  FAILED
+}
+
 enum CollectibleCategory {
   SPORTS
   POKEMON
@@ -570,6 +577,29 @@ model ProcessingJob {
   updatedAt    DateTime            @updatedAt
 
   cardAsset CardAsset @relation(fields: [cardAssetId], references: [id], onDelete: Cascade)
+}
+
+model BytebotLiteJob {
+  id          String              @id @default(uuid())
+  cardAssetId String?
+  status      BytebotLiteJobStatus @default(QUEUED)
+  searchQuery String
+  sources     String[]
+  maxComps    Int                 @default(5)
+  maxAgeDays  Int                 @default(730)
+  payload     Json?
+  result      Json?
+  errorMessage String?
+  attempts    Int                 @default(0)
+  lockedAt    DateTime?
+  completedAt DateTime?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  cardAsset CardAsset? @relation(fields: [cardAssetId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([cardAssetId])
 }
 
 model SportsDbTeam {

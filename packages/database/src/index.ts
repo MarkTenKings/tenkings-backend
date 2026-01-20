@@ -11,6 +11,7 @@ export {
   CardAssetStatus,
   ProcessingJobType,
   ProcessingJobStatus,
+  BytebotLiteJobStatus,
   ShippingStatus,
   PackLabelStatus,
   QrCodeType,
@@ -21,5 +22,6 @@ export {
 } from "@prisma/client";
 
 export * from "./processingJobs";
+export * from "./bytebotLiteJobs";
 export * from "./mint";
 export * from "./batches";
