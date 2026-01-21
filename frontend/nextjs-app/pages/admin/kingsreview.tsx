@@ -7,6 +7,7 @@ import { buildAdminHeaders } from "../../lib/adminHeaders";
 import { useSession } from "../../hooks/useSession";
 
 const STAGES = [
+  { id: "ADD_ITEMS", label: "Add Cards/Items", href: "/admin/uploads" },
   { id: "READY_FOR_HUMAN_REVIEW", label: "Ready" },
   { id: "ESCALATED_REVIEW", label: "Escalated" },
   { id: "REVIEW_COMPLETE", label: "Complete" },
@@ -107,7 +108,7 @@ export default function KingsReview() {
   const activeComp = activeCompIndex !== null ? comps[activeCompIndex] : comps[0] ?? null;
 
   useEffect(() => {
-    if (!session || !isAdmin) {
+    if (!session || !isAdmin || stage === "ADD_ITEMS") {
       return;
     }
 
@@ -460,6 +461,32 @@ export default function KingsReview() {
           </div>
         )}
 
+        {stage === "ADD_ITEMS" ? (
+          <section className="flex flex-1 items-center justify-center rounded-3xl border border-white/10 bg-night-900/70 p-10 text-center">
+            <div className="max-w-xl space-y-4">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">KingsReview · Add Cards/Items</p>
+              <h2 className="font-heading text-3xl uppercase tracking-[0.2em] text-white">Upload New Batches</h2>
+              <p className="text-sm text-slate-400">
+                This stage is the intake doorway for KingsReview. Use the existing upload flow while we rework v2
+                intake and batch tooling.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <Link
+                  href="/admin/uploads"
+                  className="inline-flex items-center justify-center rounded-full border border-gold-400/60 bg-gold-500/20 px-6 py-3 text-xs uppercase tracking-[0.3em] text-gold-200"
+                >
+                  Open Uploads
+                </Link>
+                <Link
+                  href="/admin/batches"
+                  className="inline-flex items-center justify-center rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.3em] text-slate-300"
+                >
+                  View Batches
+                </Link>
+              </div>
+            </div>
+          </section>
+        ) : (
         <div className="grid flex-1 gap-6 lg:grid-cols-[1.1fr_1.4fr_1.1fr]">
           <section className="flex h-full flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
             <div className="flex items-center justify-between">
@@ -783,6 +810,7 @@ export default function KingsReview() {
             )}
           </section>
         </div>
+        )}
       </div>
     );
   };
