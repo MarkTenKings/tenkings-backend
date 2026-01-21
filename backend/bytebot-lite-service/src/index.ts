@@ -108,8 +108,12 @@ async function processJob(
     console.log(`[bytebot-lite] worker ${workerId} completed job ${job.id}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
+    const details =
+      error instanceof Error
+        ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ""}`
+        : JSON.stringify(error, null, 2);
     await markBytebotLiteJobStatus(job.id, BytebotLiteJobStatus.FAILED, message);
-    console.error(`[bytebot-lite] worker ${workerId} job ${job.id} failed: ${message}`);
+    console.error(`[bytebot-lite] worker ${workerId} job ${job.id} failed: ${details}`);
   } finally {
     await browser.close();
   }
