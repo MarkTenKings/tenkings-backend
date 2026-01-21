@@ -87,9 +87,11 @@ enum CardAssetStatus {
 }
 
 enum CardReviewStage {
+  BYTEBOT_RUNNING
   READY_FOR_HUMAN_REVIEW
   ESCALATED_REVIEW
   REVIEW_COMPLETE
+  INVENTORY_READY_FOR_SALE
 }
 
 enum CardEvidenceKind {

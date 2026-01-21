@@ -3,6 +3,7 @@ import {
   fetchNextQueuedBytebotLiteJob,
   markBytebotLiteJobStatus,
   BytebotLiteJobStatus,
+  prisma,
 } from "@tenkings/database";
 import { createSpacesUploader } from "./storage/spaces";
 import { fetchEbaySoldComps } from "./sources/ebay";
@@ -105,6 +106,15 @@ async function processJob(
     };
 
     await markBytebotLiteJobStatus(job.id, BytebotLiteJobStatus.COMPLETE, undefined, payload);
+    if (job.cardAssetId) {
+      await prisma.cardAsset.update({
+        where: { id: job.cardAssetId },
+        data: {
+          reviewStage: "READY_FOR_HUMAN_REVIEW",
+          reviewStageUpdatedAt: new Date(),
+        },
+      });
+    }
     console.log(`[bytebot-lite] worker ${workerId} completed job ${job.id}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

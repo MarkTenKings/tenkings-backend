@@ -8,9 +8,11 @@ import { useSession } from "../../hooks/useSession";
 
 const STAGES = [
   { id: "ADD_ITEMS", label: "Add Cards/Items", href: "/admin/uploads" },
+  { id: "BYTEBOT_RUNNING", label: "AI Running" },
   { id: "READY_FOR_HUMAN_REVIEW", label: "Ready" },
   { id: "ESCALATED_REVIEW", label: "Escalated" },
   { id: "REVIEW_COMPLETE", label: "Complete" },
+  { id: "INVENTORY_READY_FOR_SALE", label: "Inventory Ready" },
 ] as const;
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -596,11 +598,11 @@ export default function KingsReview() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleStageUpdate("REVIEW_COMPLETE")}
+                    onClick={() => handleStageUpdate("INVENTORY_READY_FOR_SALE")}
                     disabled={saving}
                     className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-300 disabled:opacity-60"
                   >
-                    Mark Complete
+                    Move to Inventory Ready
                   </button>
                   <button
                     type="button"

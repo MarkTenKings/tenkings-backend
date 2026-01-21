@@ -480,6 +480,7 @@ export default function AdminBatchDetail() {
   const [forms, setForms] = useState<Record<string, CardEditForm>>({});
   const [savingCards, setSavingCards] = useState<Record<string, boolean>>({});
   const [regeneratingCards, setRegeneratingCards] = useState<Record<string, boolean>>({});
+  const [sendingCards, setSendingCards] = useState<Record<string, boolean>>({});
   const [cardErrors, setCardErrors] = useState<Record<string, string | null>>({});
   const [cardMessages, setCardMessages] = useState<Record<string, string | null>>({});
   const [assignModalOpen, setAssignModalOpen] = useState(false);
@@ -1216,14 +1217,56 @@ const applyCardUpdate = (cardId: string, updated: CardApiResponse, message: stri
   setCardMessages((prev) => ({ ...prev, [cardId]: message }));
 };
 
+const buildKingsReviewQuery = (formState: CardEditForm, asset: BatchAsset) => {
+  const brand = formState.attributes.brand.trim() || formState.attributes.setName.trim() || formState.normalized.company.trim();
+  const player = formState.attributes.playerName.trim();
+  const year = formState.attributes.year.trim() || formState.normalized.year.trim();
+  const cardNumber = formState.normalized.cardNumber.trim();
+  const keywords = formState.attributes.variantKeywords.trim();
+
+  const parts = [year, brand, player, cardNumber, keywords].filter((part) => part.length > 0);
+  if (parts.length > 0) {
+    return parts.join(" ").replace(/\s+/g, " ").trim();
+  }
+  return asset.customTitle?.trim() || asset.fileName;
+};
+
+const getIntakeMissingFields = (formState: CardEditForm) => {
+  const missing: string[] = [];
+  if (!formState.attributes.playerName.trim()) {
+    missing.push("player_name");
+  }
+  if (!formState.attributes.year.trim() && !formState.normalized.year.trim()) {
+    missing.push("year");
+  }
+  if (
+    !formState.attributes.brand.trim() &&
+    !formState.attributes.setName.trim() &&
+    !formState.normalized.company.trim()
+  ) {
+    missing.push("manufacturer");
+  }
+
+  const category = formState.normalized.categoryType.trim();
+  if (!category) {
+    missing.push("category");
+  } else if (category === "SPORTS" && !formState.normalized.sport.sport.trim()) {
+    missing.push("sport");
+  } else if (category === "TCG" && !formState.normalized.tcg.game.trim()) {
+    missing.push("game");
+  }
+
+  return missing;
+};
+
 const handleBulkSave = async (cardId: string) => {
   if (!session?.token || !batch) {
-    return;
+    return false;
   }
 
   const formState = forms[cardId];
   if (!formState) {
-    return;
+    return false;
   }
 
   const valuationInput = formState.valuation.trim();
@@ -1232,7 +1275,7 @@ const handleBulkSave = async (cardId: string) => {
     const parsed = Number.parseFloat(valuationInput);
     if (!Number.isFinite(parsed)) {
       setCardErrors((prev) => ({ ...prev, [cardId]: "Valuation must be a number (e.g. 125.00)" }));
-      return;
+      return false;
     }
     valuationMinor = Math.round(parsed * 100);
   }
@@ -1258,19 +1301,19 @@ const handleBulkSave = async (cardId: string) => {
 
     const aiGradeFinalValue = parseOptionalNumber(formState.aiGradeFinal, "AI grade final");
     if (aiGradeFinalValue === undefined) {
-      return;
+      return false;
     }
     const aiGradePsaValue = parseOptionalNumber(formState.aiGradePsaEquivalent, "PSA equivalent", {
       integer: true,
     });
     if (aiGradePsaValue === undefined) {
-      return;
+      return false;
     }
     const aiGradeRangeLowValue = parseOptionalNumber(formState.aiGradeRangeLow, "AI grade range (low)", {
       integer: true,
     });
     if (aiGradeRangeLowValue === undefined) {
-      return;
+      return false;
     }
     const aiGradeRangeHighValue = parseOptionalNumber(
       formState.aiGradeRangeHigh,
@@ -1278,7 +1321,7 @@ const handleBulkSave = async (cardId: string) => {
       { integer: true }
     );
     if (aiGradeRangeHighValue === undefined) {
-      return;
+      return false;
     }
 
     const originalAsset = batch.assets.find((asset) => asset.id === cardId) ?? null;
@@ -1417,9 +1460,11 @@ const handleBulkSave = async (cardId: string) => {
     const updated = (await res.json()) as CardApiResponse;
 
     applyCardUpdate(cardId, updated, "Saved");
+    return true;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to update card";
     setCardErrors((prev) => ({ ...prev, [cardId]: message }));
+    return false;
   } finally {
     setSavingCards((prev) => ({ ...prev, [cardId]: false }));
   }
@@ -1461,6 +1506,72 @@ const handleBulkRegenerate = async (cardId: string) => {
     setCardErrors((prev) => ({ ...prev, [cardId]: message }));
   } finally {
     setRegeneratingCards((prev) => ({ ...prev, [cardId]: false }));
+  }
+};
+
+const handleSendToKingsReview = async (cardId: string) => {
+  if (!session?.token) {
+    return;
+  }
+
+  const formState = forms[cardId];
+  const asset = batch?.assets.find((item) => item.id === cardId) ?? null;
+  if (!formState || !asset) {
+    return;
+  }
+
+  const missingFields = getIntakeMissingFields(formState);
+  if (missingFields.length > 0) {
+    setCardErrors((prev) => ({
+      ...prev,
+      [cardId]: `Missing required fields: ${missingFields.join(", ")}`,
+    }));
+    return;
+  }
+
+  setSendingCards((prev) => ({ ...prev, [cardId]: true }));
+  setCardErrors((prev) => ({ ...prev, [cardId]: null }));
+  setCardMessages((prev) => ({ ...prev, [cardId]: null }));
+
+  try {
+    const saved = await handleBulkSave(cardId);
+    if (!saved) {
+      throw new Error("Save failed; fix errors before sending.");
+    }
+
+    const reviewRes = await fetch(`/api/admin/cards/${cardId}`, {
+      method: "PATCH",
+      headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+      body: JSON.stringify({ reviewStage: "BYTEBOT_RUNNING" }),
+    });
+
+    if (!reviewRes.ok) {
+      const payload = await reviewRes.json().catch(() => ({}));
+      throw new Error(payload?.message ?? "Failed to update review stage");
+    }
+
+    const query = buildKingsReviewQuery(formState, asset);
+    const enqueueRes = await fetch("/api/admin/kingsreview/enqueue", {
+      method: "POST",
+      headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        query,
+        cardAssetId: cardId,
+        sources: ["ebay_sold", "tcgplayer"],
+      }),
+    });
+
+    if (!enqueueRes.ok) {
+      const payload = await enqueueRes.json().catch(() => ({}));
+      throw new Error(payload?.message ?? "Failed to enqueue KingsReview AI");
+    }
+
+    setCardMessages((prev) => ({ ...prev, [cardId]: "Sent to KingsReview AI" }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to send to KingsReview AI";
+    setCardErrors((prev) => ({ ...prev, [cardId]: message }));
+  } finally {
+    setSendingCards((prev) => ({ ...prev, [cardId]: false }));
   }
 };
 
@@ -2382,6 +2493,14 @@ const handleBulkRegenerate = async (cardId: string) => {
                               )}
 
                               <div className="flex justify-end gap-2 pt-2">
+                                <button
+                                  type="button"
+                                  onClick={() => handleSendToKingsReview(asset.id)}
+                                  disabled={isSaving || isRegenerating || sendingCards[asset.id]}
+                                  className="rounded-full border border-gold-400/50 bg-gold-500/15 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-gold-200 transition hover:border-gold-300 hover:text-gold-100 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {sendingCards[asset.id] ? "Sending…" : "Send to KingsReview AI"}
+                                </button>
                                 <button
                                   type="button"
                                   onClick={() => handleBulkRegenerate(asset.id)}
