@@ -100,6 +100,19 @@ enum CardEvidenceKind {
   MARKET_COMP
 }
 
+enum CardPhotoKind {
+  FRONT
+  BACK
+  TILT
+  CLOSEUP_SERIAL
+  CLOSEUP_CARD_NUMBER
+  CLOSEUP_LOGO_TEXT
+  CLOSEUP_FOIL_STAMP
+  AUTOGRAPH
+  PATCH
+  OTHER
+}
+
 enum ProcessingJobType {
   PHOTOROOM
   OCR
@@ -186,6 +199,7 @@ model User {
   cardNotes       CardNote[]
   reviewedCards   CardAsset[]     @relation("CardAssetHumanReviewer")
   createdEvidenceItems CardEvidenceItem[] @relation("CardEvidenceCreatedBy")
+  createdPhotos        CardPhoto[]        @relation("CardPhotoCreatedBy")
   sessions        Session[]
   qrCodesCreated  QrCode[]        @relation("QrCodeCreatedBy")
   qrCodesBound    QrCode[]        @relation("QrCodeBoundBy")
@@ -565,6 +579,7 @@ model CardAsset {
   jobs               ProcessingJob[]
   bytebotLiteJobs    BytebotLiteJob[]
   evidenceItems      CardEvidenceItem[]
+  photos             CardPhoto[]
   humanReviewer      User?           @relation("CardAssetHumanReviewer", fields: [humanReviewedById], references: [id])
   sportsDbPlayer     SportsDbPlayer? @relation(fields: [sportsDbPlayerId], references: [id], onDelete: SetNull)
 
@@ -587,6 +602,25 @@ model CardEvidenceItem {
 
   cardAsset CardAsset @relation(fields: [cardAssetId], references: [id], onDelete: Cascade)
   createdBy User?     @relation("CardEvidenceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([cardAssetId, kind])
+  @@index([createdById])
+}
+
+model CardPhoto {
+  id           String        @id @default(uuid())
+  cardAssetId  String
+  kind         CardPhotoKind @default(FRONT)
+  storageKey   String
+  fileName     String
+  fileSize     Int
+  mimeType     String
+  imageUrl     String
+  createdById  String?
+  createdAt    DateTime      @default(now())
+
+  cardAsset CardAsset @relation(fields: [cardAssetId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation("CardPhotoCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([cardAssetId, kind])
   @@index([createdById])

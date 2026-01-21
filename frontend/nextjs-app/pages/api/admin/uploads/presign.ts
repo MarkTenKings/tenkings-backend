@@ -31,11 +31,12 @@ const handler: NextApiHandler<PresignResponse | { message: string }> = async fun
   try {
     const admin = await requireAdminSession(req);
 
-    const { fileName, size, mimeType, batchId } = (req.body ?? {}) as {
+    const { fileName, size, mimeType, batchId, reviewStage } = (req.body ?? {}) as {
       fileName?: unknown;
       size?: unknown;
       mimeType?: unknown;
       batchId?: unknown;
+      reviewStage?: unknown;
     };
 
     if (typeof fileName !== "string" || !fileName.trim()) {
@@ -56,6 +57,9 @@ const handler: NextApiHandler<PresignResponse | { message: string }> = async fun
 
     if (typeof batchId !== "string" && typeof batchId !== "undefined") {
       return res.status(400).json({ message: "batchId must be a string when provided" });
+    }
+    if (typeof reviewStage !== "string" && typeof reviewStage !== "undefined") {
+      return res.status(400).json({ message: "reviewStage must be a string when provided" });
     }
 
     const assetId = randomUUID().replace(/-/g, "");
@@ -100,6 +104,8 @@ const handler: NextApiHandler<PresignResponse | { message: string }> = async fun
           mimeType,
           imageUrl: publicUrlFor(storageKey),
           status: CardAssetStatus.UPLOADING,
+          reviewStage: typeof reviewStage === "string" ? reviewStage : undefined,
+          reviewStageUpdatedAt: typeof reviewStage === "string" ? new Date() : undefined,
         },
       });
 

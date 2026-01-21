@@ -11,6 +11,7 @@ export {
   CardAssetStatus,
   CardReviewStage,
   CardEvidenceKind,
+  CardPhotoKind,
   ProcessingJobType,
   ProcessingJobStatus,
   BytebotLiteJobStatus,

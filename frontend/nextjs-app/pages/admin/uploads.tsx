@@ -39,6 +39,36 @@ interface UploadResult {
   publicUrl?: string;
 }
 
+type IntakeStep = "front" | "back" | "tilt" | "required" | "optional" | "done";
+type IntakeCategory = "sport" | "tcg";
+
+type IntakeRequiredFields = {
+  category: IntakeCategory;
+  playerName: string;
+  sport: string;
+  manufacturer: string;
+  year: string;
+  cardName: string;
+  game: string;
+};
+
+type IntakeOptionalFields = {
+  teamName: string;
+  productLine: string;
+  cardNumber: string;
+  serialNumber: string;
+  autograph: boolean;
+  memorabilia: boolean;
+  graded: boolean;
+  gradeCompany: string;
+  gradeValue: string;
+  tcgSeries: string;
+  tcgRarity: string;
+  tcgFoil: boolean;
+  tcgLanguage: string;
+  tcgOutOf: string;
+};
+
 interface BatchAssignmentSummary {
   packDefinitionId: string;
   name: string;
@@ -85,6 +115,43 @@ export default function AdminUploads() {
   const [batches, setBatches] = useState<BatchSummary[]>([]);
   const [batchesLoading, setBatchesLoading] = useState(false);
   const [batchesError, setBatchesError] = useState<string | null>(null);
+
+  const [intakeStep, setIntakeStep] = useState<IntakeStep>("front");
+  const [intakeRequired, setIntakeRequired] = useState<IntakeRequiredFields>({
+    category: "sport",
+    playerName: "",
+    sport: "",
+    manufacturer: "",
+    year: "",
+    cardName: "",
+    game: "",
+  });
+  const [intakeOptional, setIntakeOptional] = useState<IntakeOptionalFields>({
+    teamName: "",
+    productLine: "",
+    cardNumber: "",
+    serialNumber: "",
+    autograph: false,
+    memorabilia: false,
+    graded: false,
+    gradeCompany: "",
+    gradeValue: "",
+    tcgSeries: "",
+    tcgRarity: "",
+    tcgFoil: false,
+    tcgLanguage: "",
+    tcgOutOf: "",
+  });
+  const [intakeCardId, setIntakeCardId] = useState<string | null>(null);
+  const [intakeBatchId, setIntakeBatchId] = useState<string | null>(null);
+  const [intakeBackPhotoId, setIntakeBackPhotoId] = useState<string | null>(null);
+  const [intakeTiltPhotoId, setIntakeTiltPhotoId] = useState<string | null>(null);
+  const [intakeFrontPreview, setIntakeFrontPreview] = useState<string | null>(null);
+  const [intakeBackPreview, setIntakeBackPreview] = useState<string | null>(null);
+  const [intakeTiltPreview, setIntakeTiltPreview] = useState<string | null>(null);
+  const [intakeBusy, setIntakeBusy] = useState(false);
+  const [intakeError, setIntakeError] = useState<string | null>(null);
+  const [intakeCaptureTarget, setIntakeCaptureTarget] = useState<null | \"front\" | \"back\" | \"tilt\">(null);
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -424,9 +491,53 @@ export default function AdminUploads() {
     setCameraReady(true);
   }, [capturePreviewUrl]);
 
+  const confirmIntakeCapture = useCallback(
+    async (target: "front" | "back" | "tilt", blob: Blob) => {
+      try {
+        setIntakeBusy(true);
+        setIntakeError(null);
+        const mime = blob.type || "image/jpeg";
+        const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const fileName = `intake-${target}-${timestamp}.${extension}`;
+        const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
+
+        if (target === "front") {
+          const presign = await uploadCardAsset(file);
+          setIntakeCardId(presign.assetId);
+          setIntakeBatchId(presign.batchId);
+          setIntakeFrontPreview(URL.createObjectURL(blob));
+          setIntakeStep("back");
+        } else if (target === "back") {
+          const presign = await uploadCardPhoto(file, "BACK");
+          setIntakeBackPhotoId(presign.photoId);
+          setIntakeBackPreview(URL.createObjectURL(blob));
+          setIntakeStep("tilt");
+        } else {
+          const presign = await uploadCardPhoto(file, "TILT");
+          setIntakeTiltPhotoId(presign.photoId);
+          setIntakeTiltPreview(URL.createObjectURL(blob));
+          setIntakeStep("required");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to capture photo.";
+        setIntakeError(message);
+      } finally {
+        setIntakeBusy(false);
+        setIntakeCaptureTarget(null);
+        closeCamera();
+      }
+    },
+    [closeCamera, uploadCardAsset, uploadCardPhoto]
+  );
+
   const handleConfirmCapture = useCallback(() => {
     if (!capturedBlob) {
       setCameraError("Capture an image first.");
+      return;
+    }
+    if (intakeCaptureTarget) {
+      void confirmIntakeCapture(intakeCaptureTarget, capturedBlob);
       return;
     }
     const mime = capturedBlob.type || "image/jpeg";
@@ -439,7 +550,7 @@ export default function AdminUploads() {
     });
     appendFiles([file]);
     closeCamera();
-  }, [appendFiles, capturedBlob, closeCamera]);
+  }, [appendFiles, capturedBlob, closeCamera, confirmIntakeCapture, intakeCaptureTarget]);
   const handleZoomChange = useCallback((value: number) => {
     setZoom(value);
     const track = trackRef.current;
@@ -589,6 +700,428 @@ export default function AdminUploads() {
     [apiBase]
   );
 
+  const isRemoteApi = useMemo(
+    () =>
+      typeof window !== "undefined" &&
+      apiBase.length > 0 &&
+      !apiBase.startsWith(window.location.origin),
+    [apiBase]
+  );
+
+  const resetIntake = useCallback(() => {
+    setIntakeStep("front");
+    setIntakeRequired({
+      category: "sport",
+      playerName: "",
+      sport: "",
+      manufacturer: "",
+      year: "",
+      cardName: "",
+      game: "",
+    });
+    setIntakeOptional({
+      teamName: "",
+      productLine: "",
+      cardNumber: "",
+      serialNumber: "",
+      autograph: false,
+      memorabilia: false,
+      graded: false,
+      gradeCompany: "",
+      gradeValue: "",
+      tcgSeries: "",
+      tcgRarity: "",
+      tcgFoil: false,
+      tcgLanguage: "",
+      tcgOutOf: "",
+    });
+    setIntakeCardId(null);
+    setIntakeBatchId(null);
+    setIntakeBackPhotoId(null);
+    setIntakeTiltPhotoId(null);
+    setIntakeFrontPreview(null);
+    setIntakeBackPreview(null);
+    setIntakeTiltPreview(null);
+    setIntakeError(null);
+    setIntakeCaptureTarget(null);
+  }, []);
+
+  const openIntakeCapture = useCallback(
+    async (target: "front" | "back" | "tilt") => {
+      setIntakeCaptureTarget(target);
+      setIntakeError(null);
+      await openCamera();
+    },
+    [openCamera]
+  );
+
+  const buildIntakeQuery = useCallback(() => {
+    const year = intakeRequired.year.trim();
+    const manufacturer = intakeRequired.manufacturer.trim();
+    const primary =
+      intakeRequired.category === "sport"
+        ? intakeRequired.playerName.trim()
+        : intakeRequired.cardName.trim();
+    const productLine = intakeOptional.productLine.trim();
+    const cardNumber = intakeOptional.cardNumber.trim();
+    const parts = [year, manufacturer, primary, productLine, cardNumber].filter((part) => part.length > 0);
+    return parts.join(" ").replace(/\s+/g, " ").trim();
+  }, [intakeOptional.cardNumber, intakeOptional.productLine, intakeRequired.category, intakeRequired.cardName, intakeRequired.manufacturer, intakeRequired.playerName, intakeRequired.year]);
+
+  const uploadCardAsset = useCallback(
+    async (file: File) => {
+      const token = session?.token;
+      if (!token) {
+        throw new Error("Your session expired. Sign in again and retry.");
+      }
+
+      const optimizedFile = await compressImage(file);
+      const presignRes = await fetch(resolveApiUrl("/api/admin/uploads/presign"), {
+        method: "POST",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAdminHeaders(token),
+        },
+        body: JSON.stringify({
+          fileName: optimizedFile.name,
+          size: optimizedFile.size,
+          mimeType: optimizedFile.type || file.type,
+          reviewStage: "ADD_ITEMS",
+        }),
+      });
+
+      if (!presignRes.ok) {
+        const payload = await presignRes.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to generate upload URL");
+      }
+
+      const presignPayload = (await presignRes.json()) as {
+        assetId: string;
+        batchId: string;
+        uploadUrl: string;
+        fields: Record<string, string>;
+        publicUrl: string;
+        storageMode: string;
+      };
+
+      if (presignPayload.storageMode !== "local" && presignPayload.storageMode !== "mock") {
+        throw new Error("Unsupported storage mode returned by server");
+      }
+
+      const uploadRes = await fetch(resolveApiUrl(presignPayload.uploadUrl), {
+        method: "PUT",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: {
+          ...buildAdminHeaders(token),
+          "Content-Type": optimizedFile.type || file.type,
+        },
+        body: optimizedFile,
+      });
+
+      if (!uploadRes.ok) {
+        const text = await uploadRes.text().catch(() => "");
+        throw new Error(text || "Failed to store file");
+      }
+
+      const completeRes = await fetch(resolveApiUrl("/api/admin/uploads/complete"), {
+        method: "POST",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAdminHeaders(token),
+        },
+        body: JSON.stringify({
+          assetId: presignPayload.assetId,
+          fileName: optimizedFile.name,
+          mimeType: optimizedFile.type || file.type,
+          size: optimizedFile.size,
+        }),
+      });
+
+      if (!completeRes.ok) {
+        const payload = await completeRes.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to record upload");
+      }
+
+      return presignPayload;
+    },
+    [isRemoteApi, resolveApiUrl, session?.token]
+  );
+
+  const uploadCardPhoto = useCallback(
+    async (file: File, kind: "BACK" | "TILT") => {
+      const token = session?.token;
+      if (!token) {
+        throw new Error("Your session expired. Sign in again and retry.");
+      }
+      if (!intakeCardId) {
+        throw new Error("Card asset not found. Capture the front image first.");
+      }
+
+      const optimizedFile = await compressImage(file);
+      const presignRes = await fetch(resolveApiUrl("/api/admin/kingsreview/photos/presign"), {
+        method: "POST",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAdminHeaders(token),
+        },
+        body: JSON.stringify({
+          cardAssetId: intakeCardId,
+          kind,
+          fileName: optimizedFile.name,
+          size: optimizedFile.size,
+          mimeType: optimizedFile.type || file.type,
+        }),
+      });
+
+      if (!presignRes.ok) {
+        const payload = await presignRes.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to generate upload URL");
+      }
+
+      const presignPayload = (await presignRes.json()) as {
+        photoId: string;
+        uploadUrl: string;
+        publicUrl: string;
+        storageMode: string;
+      };
+
+      if (presignPayload.storageMode !== "local" && presignPayload.storageMode !== "mock") {
+        throw new Error("Unsupported storage mode returned by server");
+      }
+
+      const uploadRes = await fetch(resolveApiUrl(presignPayload.uploadUrl), {
+        method: "PUT",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: {
+          ...buildAdminHeaders(token),
+          "Content-Type": optimizedFile.type || file.type,
+        },
+        body: optimizedFile,
+      });
+
+      if (!uploadRes.ok) {
+        const text = await uploadRes.text().catch(() => "");
+        throw new Error(text || "Failed to store file");
+      }
+
+      return presignPayload;
+    },
+    [intakeCardId, isRemoteApi, resolveApiUrl, session?.token]
+  );
+
+  const saveIntakeMetadata = useCallback(
+    async (includeOptional: boolean) => {
+      const token = session?.token;
+      if (!token) {
+        throw new Error("Your session expired. Sign in again and retry.");
+      }
+      if (!intakeCardId) {
+        throw new Error("Card asset not found.");
+      }
+
+      const attributes = {
+        playerName: intakeRequired.category === "sport" ? intakeRequired.playerName.trim() : null,
+        teamName: intakeOptional.teamName.trim() || null,
+        year: intakeRequired.year.trim() || null,
+        brand: intakeRequired.manufacturer.trim() || null,
+        setName: intakeOptional.productLine.trim() || null,
+        variantKeywords: [] as string[],
+        serialNumber: intakeOptional.serialNumber.trim() || null,
+        rookie: false,
+        autograph: includeOptional ? intakeOptional.autograph : false,
+        memorabilia: includeOptional ? intakeOptional.memorabilia : false,
+        gradeCompany: includeOptional ? intakeOptional.gradeCompany.trim() || null : null,
+        gradeValue: includeOptional ? intakeOptional.gradeValue.trim() || null : null,
+      };
+
+      const normalized = {
+        categoryType: intakeRequired.category,
+        displayName:
+          intakeRequired.category === "sport"
+            ? intakeRequired.playerName.trim()
+            : intakeRequired.cardName.trim(),
+        cardNumber: intakeOptional.cardNumber.trim() || null,
+        setName: intakeOptional.productLine.trim() || null,
+        setCode: null,
+        year: intakeRequired.year.trim() || null,
+        company: intakeRequired.manufacturer.trim() || null,
+        rarity: includeOptional ? intakeOptional.tcgRarity.trim() || null : null,
+        links: {},
+        sport:
+          intakeRequired.category === "sport"
+            ? {
+                playerName: intakeRequired.playerName.trim() || null,
+                teamName: intakeOptional.teamName.trim() || null,
+                league: null,
+                sport: intakeRequired.sport.trim() || null,
+                cardType: null,
+                subcategory: null,
+                autograph: includeOptional ? intakeOptional.autograph : null,
+                foil: null,
+                graded: includeOptional ? (intakeOptional.graded ? true : false) : null,
+                gradeCompany: includeOptional ? intakeOptional.gradeCompany.trim() || null : null,
+                grade: includeOptional ? intakeOptional.gradeValue.trim() || null : null,
+              }
+            : undefined,
+        tcg:
+          intakeRequired.category === "tcg"
+            ? {
+                cardName: intakeRequired.cardName.trim() || null,
+                game: intakeRequired.game.trim() || null,
+                series: includeOptional ? intakeOptional.tcgSeries.trim() || null : null,
+                color: null,
+                type: null,
+                language: includeOptional ? intakeOptional.tcgLanguage.trim() || null : null,
+                foil: includeOptional ? (intakeOptional.tcgFoil ? true : false) : null,
+                rarity: includeOptional ? intakeOptional.tcgRarity.trim() || null : null,
+                outOf: includeOptional ? intakeOptional.tcgOutOf.trim() || null : null,
+                subcategory: null,
+              }
+            : undefined,
+        comics: undefined,
+      };
+
+      const payload = {
+        classificationUpdates: {
+          attributes,
+          normalized,
+        },
+      };
+
+      const updateRes = await fetch(resolveApiUrl("/api/admin/cards/" + intakeCardId), {
+        method: "PATCH",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAdminHeaders(token),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!updateRes.ok) {
+        const payload = await updateRes.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to save card metadata");
+      }
+    },
+    [
+      intakeCardId,
+      intakeOptional,
+      intakeRequired,
+      isRemoteApi,
+      resolveApiUrl,
+      session?.token,
+    ]
+  );
+
+  const validateRequiredIntake = useCallback(() => {
+    if (!intakeCardId) {
+      return "Capture the front of the card first.";
+    }
+    if (!intakeBackPhotoId) {
+      return "Capture the back of the card before continuing.";
+    }
+    if (intakeRequired.category === "sport") {
+      if (!intakeRequired.playerName.trim()) {
+        return "Player name is required.";
+      }
+      if (!intakeRequired.sport.trim()) {
+        return "Sport is required.";
+      }
+    } else {
+      if (!intakeRequired.cardName.trim()) {
+        return "Card name is required.";
+      }
+      if (!intakeRequired.game.trim()) {
+        return "Game is required.";
+      }
+    }
+    if (!intakeRequired.manufacturer.trim()) {
+      return "Manufacturer is required.";
+    }
+    if (!intakeRequired.year.trim()) {
+      return "Year is required.";
+    }
+    return null;
+  }, [intakeBackPhotoId, intakeCardId, intakeRequired]);
+
+  const handleIntakeRequiredContinue = useCallback(async () => {
+    const error = validateRequiredIntake();
+    if (error) {
+      setIntakeError(error);
+      return;
+    }
+    try {
+      setIntakeBusy(true);
+      await saveIntakeMetadata(false);
+      setIntakeStep("optional");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save required fields.";
+      setIntakeError(message);
+    } finally {
+      setIntakeBusy(false);
+    }
+  }, [saveIntakeMetadata, validateRequiredIntake]);
+
+  const handleIntakeOptionalSave = useCallback(async () => {
+    try {
+      setIntakeBusy(true);
+      await saveIntakeMetadata(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to save optional fields.";
+      setIntakeError(message);
+    } finally {
+      setIntakeBusy(false);
+    }
+  }, [saveIntakeMetadata]);
+
+  const handleSendToKingsReview = useCallback(async () => {
+    const error = validateRequiredIntake();
+    if (error) {
+      setIntakeError(error);
+      return;
+    }
+    if (!intakeCardId) {
+      setIntakeError("Card asset not found.");
+      return;
+    }
+    const token = session?.token;
+    if (!token) {
+      setIntakeError("Your session expired. Sign in again and retry.");
+      return;
+    }
+    try {
+      setIntakeBusy(true);
+      await saveIntakeMetadata(true);
+      const query = buildIntakeQuery();
+      const res = await fetch(resolveApiUrl("/api/admin/kingsreview/enqueue"), {
+        method: "POST",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAdminHeaders(token),
+        },
+        body: JSON.stringify({
+          cardAssetId: intakeCardId,
+          query,
+          sources: ["ebay_sold", "tcgplayer"],
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to enqueue KingsReview job.");
+      }
+      setIntakeStep("done");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to send to KingsReview.";
+      setIntakeError(message);
+    } finally {
+      setIntakeBusy(false);
+    }
+  }, [buildIntakeQuery, intakeCardId, isRemoteApi, resolveApiUrl, saveIntakeMetadata, session?.token, validateRequiredIntake]);
+
   const submitUploads = async (event: FormEvent) => {
     event.preventDefault();
     if (!files.length) {
@@ -629,9 +1162,6 @@ export default function AdminUploads() {
 
     let sharedBatchId: string | null = null;
     let latestBatchId: string | null = null;
-
-    const isRemoteApi =
-      typeof window !== "undefined" && apiBase.length > 0 && !apiBase.startsWith(window.location.origin);
 
     const processEntry = async (entry: { file: File; index: number }) => {
       const { file, index } = entry;
@@ -877,6 +1407,367 @@ export default function AdminUploads() {
             ← Back to console
           </Link>
         </header>
+
+        <section className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-night-900/70 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <p className="text-xs uppercase tracking-[0.32em] text-sky-300">KingsReview Intake</p>
+              <h2 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">Add Cards/Items</h2>
+              <p className="mt-2 max-w-2xl text-sm text-slate-300">
+                Guided workflow for staff: front photo → back photo → optional tilt → required fields → optional fields → send to KingsReview AI.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Step</span>
+              <span className="rounded-full border border-white/10 bg-night-800 px-3 py-1 text-xs uppercase tracking-[0.28em] text-white">
+                {intakeStep.replace("_", " ")}
+              </span>
+              <button
+                type="button"
+                onClick={resetIntake}
+                className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/30 hover:text-white"
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+
+          {intakeError && (
+            <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+              {intakeError}
+            </div>
+          )}
+
+          {intakeStep === "front" && (
+            <div className="grid gap-4 md:grid-cols-[240px,1fr]">
+              <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-300">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Step 1</p>
+                <p className="mt-2">Capture the front of the card.</p>
+                <button
+                  type="button"
+                  onClick={() => void openIntakeCapture("front")}
+                  disabled={intakeBusy}
+                  className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Capture front
+                </button>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
+                {intakeFrontPreview ? (
+                  <img src={intakeFrontPreview} alt="Front preview" className="h-full max-h-[320px] w-full rounded-xl object-contain" />
+                ) : (
+                  <p>No front photo yet.</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {intakeStep === "back" && (
+            <div className="grid gap-4 md:grid-cols-[240px,1fr]">
+              <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-300">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Step 2</p>
+                <p className="mt-2">Capture the back of the card (required).</p>
+                <button
+                  type="button"
+                  onClick={() => void openIntakeCapture("back")}
+                  disabled={intakeBusy}
+                  className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Capture back
+                </button>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
+                {intakeBackPreview ? (
+                  <img src={intakeBackPreview} alt="Back preview" className="h-full max-h-[320px] w-full rounded-xl object-contain" />
+                ) : (
+                  <p>No back photo yet.</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {intakeStep === "tilt" && (
+            <div className="grid gap-4 md:grid-cols-[240px,1fr]">
+              <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-300">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Step 3</p>
+                <p className="mt-2">Optional: capture a tilt photo to reveal refractor patterns.</p>
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void openIntakeCapture("tilt")}
+                    disabled={intakeBusy}
+                    className="inline-flex items-center justify-center rounded-full border border-sky-400/60 bg-sky-400/20 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-sky-200 transition hover:bg-sky-400/30 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Capture tilt
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIntakeStep("required")}
+                    className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
+                  >
+                    Skip tilt
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
+                {intakeTiltPreview ? (
+                  <img src={intakeTiltPreview} alt="Tilt preview" className="h-full max-h-[320px] w-full rounded-xl object-contain" />
+                ) : (
+                  <p>No tilt photo yet.</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {intakeStep === "required" && (
+            <div className="grid gap-6 md:grid-cols-[1fr,1fr]">
+              <div className="space-y-4 rounded-2xl border border-white/10 bg-night-900/60 p-4">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Required fields</p>
+                <label className="flex flex-col gap-2 text-xs uppercase tracking-[0.24em] text-slate-400">
+                  Category
+                  <select
+                    value={intakeRequired.category}
+                    onChange={(event) =>
+                      setIntakeRequired((prev) => ({ ...prev, category: event.target.value as IntakeCategory }))
+                    }
+                    className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  >
+                    <option value="sport">Sports</option>
+                    <option value="tcg">TCG</option>
+                  </select>
+                </label>
+                {intakeRequired.category === "sport" ? (
+                  <>
+                    <input
+                      placeholder="Player name"
+                      value={intakeRequired.playerName}
+                      onChange={(event) => setIntakeRequired((prev) => ({ ...prev, playerName: event.target.value }))}
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <input
+                      placeholder="Sport (NFL, NBA, MLB, etc.)"
+                      value={intakeRequired.sport}
+                      onChange={(event) => setIntakeRequired((prev) => ({ ...prev, sport: event.target.value }))}
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                  </>
+                ) : (
+                  <>
+                    <input
+                      placeholder="Card name"
+                      value={intakeRequired.cardName}
+                      onChange={(event) => setIntakeRequired((prev) => ({ ...prev, cardName: event.target.value }))}
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <input
+                      placeholder="Game (Pokémon, MTG, etc.)"
+                      value={intakeRequired.game}
+                      onChange={(event) => setIntakeRequired((prev) => ({ ...prev, game: event.target.value }))}
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                  </>
+                )}
+                <input
+                  placeholder="Manufacturer (Topps, Panini, etc.)"
+                  value={intakeRequired.manufacturer}
+                  onChange={(event) => setIntakeRequired((prev) => ({ ...prev, manufacturer: event.target.value }))}
+                  className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                />
+                <input
+                  placeholder="Year (e.g. 2017)"
+                  value={intakeRequired.year}
+                  onChange={(event) => setIntakeRequired((prev) => ({ ...prev, year: event.target.value }))}
+                  className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleIntakeRequiredContinue()}
+                  disabled={intakeBusy}
+                  className="mt-2 inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-6 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Continue to optional fields
+                </button>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Captured photos</p>
+                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                  <div className="rounded-xl border border-white/10 bg-night-900/60 p-2 text-xs">
+                    <p className="uppercase tracking-[0.2em] text-slate-500">Front</p>
+                    {intakeFrontPreview ? <img src={intakeFrontPreview} alt="Front" className="mt-2 rounded-lg" /> : <p className="mt-2 text-slate-600">Missing</p>}
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-night-900/60 p-2 text-xs">
+                    <p className="uppercase tracking-[0.2em] text-slate-500">Back</p>
+                    {intakeBackPreview ? <img src={intakeBackPreview} alt="Back" className="mt-2 rounded-lg" /> : <p className="mt-2 text-slate-600">Missing</p>}
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-night-900/60 p-2 text-xs">
+                    <p className="uppercase tracking-[0.2em] text-slate-500">Tilt</p>
+                    {intakeTiltPreview ? <img src={intakeTiltPreview} alt="Tilt" className="mt-2 rounded-lg" /> : <p className="mt-2 text-slate-600">Optional</p>}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {intakeStep === "optional" && (
+            <div className="grid gap-6 md:grid-cols-[1fr,1fr]">
+              <div className="space-y-4 rounded-2xl border border-white/10 bg-night-900/60 p-4">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Optional fields</p>
+                <input
+                  placeholder="Team name"
+                  value={intakeOptional.teamName}
+                  onChange={(event) => setIntakeOptional((prev) => ({ ...prev, teamName: event.target.value }))}
+                  className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                />
+                <input
+                  placeholder="Product line / set (Prizm, Optic, etc.)"
+                  value={intakeOptional.productLine}
+                  onChange={(event) => setIntakeOptional((prev) => ({ ...prev, productLine: event.target.value }))}
+                  className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                />
+                <div className="grid gap-2 md:grid-cols-2">
+                  <input
+                    placeholder="Card number"
+                    value={intakeOptional.cardNumber}
+                    onChange={(event) => setIntakeOptional((prev) => ({ ...prev, cardNumber: event.target.value }))}
+                    className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                  <input
+                    placeholder="Serial number (e.g. 17/199)"
+                    value={intakeOptional.serialNumber}
+                    onChange={(event) => setIntakeOptional((prev) => ({ ...prev, serialNumber: event.target.value }))}
+                    className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-4 text-xs uppercase tracking-[0.24em] text-slate-400">
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={intakeOptional.autograph}
+                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, autograph: event.target.checked }))}
+                      className="h-4 w-4 accent-sky-400"
+                    />
+                    Autograph
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={intakeOptional.memorabilia}
+                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, memorabilia: event.target.checked }))}
+                      className="h-4 w-4 accent-sky-400"
+                    />
+                    Memorabilia
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={intakeOptional.graded}
+                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, graded: event.target.checked }))}
+                      className="h-4 w-4 accent-sky-400"
+                    />
+                    Graded
+                  </label>
+                </div>
+                {intakeOptional.graded && (
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <input
+                      placeholder="Grade company (PSA, BGS)"
+                      value={intakeOptional.gradeCompany}
+                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, gradeCompany: event.target.value }))}
+                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <input
+                      placeholder="Grade value"
+                      value={intakeOptional.gradeValue}
+                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, gradeValue: event.target.value }))}
+                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+                )}
+                {intakeRequired.category === "tcg" && (
+                  <div className="space-y-2">
+                    <input
+                      placeholder="Series / Set"
+                      value={intakeOptional.tcgSeries}
+                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, tcgSeries: event.target.value }))}
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <input
+                      placeholder="Rarity"
+                      value={intakeOptional.tcgRarity}
+                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, tcgRarity: event.target.value }))}
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <input
+                        placeholder="Language"
+                        value={intakeOptional.tcgLanguage}
+                        onChange={(event) => setIntakeOptional((prev) => ({ ...prev, tcgLanguage: event.target.value }))}
+                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                      />
+                      <input
+                        placeholder="Out of"
+                        value={intakeOptional.tcgOutOf}
+                        onChange={(event) => setIntakeOptional((prev) => ({ ...prev, tcgOutOf: event.target.value }))}
+                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                      />
+                    </div>
+                    <label className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-slate-400">
+                      <input
+                        type="checkbox"
+                        checked={intakeOptional.tcgFoil}
+                        onChange={(event) => setIntakeOptional((prev) => ({ ...prev, tcgFoil: event.target.checked }))}
+                        className="h-4 w-4 accent-sky-400"
+                      />
+                      Foil
+                    </label>
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleIntakeOptionalSave()}
+                    disabled={intakeBusy}
+                    className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Save optional fields
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleSendToKingsReview()}
+                    disabled={intakeBusy}
+                    className="inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Send to KingsReview AI
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Intake summary</p>
+                <ul className="mt-3 space-y-2 text-sm text-slate-300">
+                  <li>Front: {intakeFrontPreview ? "Captured" : "Missing"}</li>
+                  <li>Back: {intakeBackPreview ? "Captured" : "Missing"}</li>
+                  <li>Tilt: {intakeTiltPreview ? "Captured" : "Optional"}</li>
+                  <li>Category: {intakeRequired.category === "sport" ? "Sports" : "TCG"}</li>
+                  <li>Manufacturer: {intakeRequired.manufacturer || "—"}</li>
+                  <li>Year: {intakeRequired.year || "—"}</li>
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {intakeStep === "done" && (
+            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
+              <p>Card sent to KingsReview AI. You can start the next card.</p>
+              <button
+                type="button"
+                onClick={resetIntake}
+                className="mt-4 inline-flex items-center justify-center rounded-full border border-emerald-400/60 bg-emerald-400/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-emerald-100 transition hover:bg-emerald-400/30"
+              >
+                Add another card
+              </button>
+            </div>
+          )}
+        </section>
 
         <section className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-night-900/70 p-6">
           <form className="flex flex-col gap-4" onSubmit={submitUploads}>
