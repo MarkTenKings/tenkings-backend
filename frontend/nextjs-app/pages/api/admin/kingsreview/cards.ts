@@ -13,11 +13,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const stage = typeof req.query.stage === "string" ? req.query.stage : "READY_FOR_HUMAN_REVIEW";
+    const includeUnstaged = req.query.includeUnstaged === "1";
     const limit = Math.min(Number(req.query.limit ?? DEFAULT_LIMIT) || DEFAULT_LIMIT, 200);
     const offset = Number(req.query.offset ?? 0) || 0;
 
     const cards = await prisma.cardAsset.findMany({
-      where: { reviewStage: stage as any },
+      where:
+        includeUnstaged && stage === "READY_FOR_HUMAN_REVIEW"
+          ? { OR: [{ reviewStage: stage as any }, { reviewStage: null }] }
+          : { reviewStage: stage as any },
       orderBy: { updatedAt: "desc" },
       take: limit,
       skip: offset,

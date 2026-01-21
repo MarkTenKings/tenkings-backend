@@ -89,6 +89,7 @@ export default function KingsReview() {
   const [saving, setSaving] = useState(false);
   const [enqueueing, setEnqueueing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [includeUnstaged, setIncludeUnstaged] = useState<boolean>(true);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -113,7 +114,9 @@ export default function KingsReview() {
     const loadCards = async () => {
       setError(null);
       try {
-        const res = await fetch(`/api/admin/kingsreview/cards?stage=${stage}`, {
+        const queryString =
+          stage === "READY_FOR_HUMAN_REVIEW" && includeUnstaged ? `?stage=${stage}&includeUnstaged=1` : `?stage=${stage}`;
+        const res = await fetch(`/api/admin/kingsreview/cards${queryString}`, {
           headers: adminHeaders(),
         });
         if (!res.ok) {
@@ -129,7 +132,7 @@ export default function KingsReview() {
     };
 
     loadCards();
-  }, [adminHeaders, isAdmin, session, stage]);
+  }, [adminHeaders, includeUnstaged, isAdmin, session, stage]);
 
   useEffect(() => {
     if (!activeCardId || !session || !isAdmin) {
@@ -330,6 +333,38 @@ export default function KingsReview() {
     }
   };
 
+  const handleAttachSearch = async () => {
+    if (!activeCardId || !activeSourceData) {
+      return;
+    }
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/kingsreview/evidence", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...adminHeaders(),
+        },
+        body: JSON.stringify({
+          cardAssetId: activeCardId,
+          kind: "SEARCH_PAGE",
+          source: activeSourceData.source,
+          title: `${SOURCE_LABELS[activeSourceData.source] ?? activeSourceData.source} Search`,
+          url: activeSourceData.searchUrl,
+          screenshotUrl: activeSourceData.searchScreenshotUrl,
+          note: "Search results overview",
+        }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to attach search evidence");
+      }
+      const data = await res.json();
+      setEvidenceItems((prev) => [data.item, ...prev]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to attach search evidence");
+    }
+  };
+
   const renderContent = () => {
     if (loading) {
       return (
@@ -397,6 +432,19 @@ export default function KingsReview() {
                 {item.label}
               </button>
             ))}
+            {stage === "READY_FOR_HUMAN_REVIEW" && (
+              <button
+                type="button"
+                onClick={() => setIncludeUnstaged((prev) => !prev)}
+                className={`rounded-full border px-4 py-2 text-[11px] uppercase tracking-[0.3em] transition ${
+                  includeUnstaged
+                    ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200"
+                    : "border-white/20 text-slate-300 hover:border-white/40 hover:text-white"
+                }`}
+              >
+                {includeUnstaged ? "Including Unstaged" : "Hide Unstaged"}
+              </button>
+            )}
             <Link
               href="/admin"
               className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
@@ -588,11 +636,11 @@ export default function KingsReview() {
           <section className="flex h-full flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.1))}
-                  className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.1))}
+                className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
                 >
                   -
                 </button>
@@ -625,6 +673,25 @@ export default function KingsReview() {
                 </button>
               ))}
             </div>
+            {activeSourceData && (
+              <div className="flex flex-wrap items-center gap-2">
+                <a
+                  href={activeSourceData.searchScreenshotUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-300"
+                >
+                  Open Image
+                </a>
+                <button
+                  type="button"
+                  onClick={handleAttachSearch}
+                  className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
+                >
+                  Attach Search
+                </button>
+              </div>
+            )}
             <div className="flex-1 overflow-auto rounded-2xl border border-white/10 bg-night-950/60 p-3">
               {activeSourceData ? (
                 <div style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }}>
