@@ -183,6 +183,7 @@ model User {
   cardBatches     CardBatch[]
   cardNotes       CardNote[]
   reviewedCards   CardAsset[]     @relation("CardAssetHumanReviewer")
+  createdEvidenceItems CardEvidenceItem[] @relation("CardEvidenceCreatedBy")
   sessions        Session[]
   qrCodesCreated  QrCode[]        @relation("QrCodeCreatedBy")
   qrCodesBound    QrCode[]        @relation("QrCodeBoundBy")
@@ -583,7 +584,7 @@ model CardEvidenceItem {
   createdAt     DateTime         @default(now())
 
   cardAsset CardAsset @relation(fields: [cardAssetId], references: [id], onDelete: Cascade)
-  createdBy User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy User?     @relation("CardEvidenceCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
 
   @@index([cardAssetId, kind])
   @@index([createdById])
