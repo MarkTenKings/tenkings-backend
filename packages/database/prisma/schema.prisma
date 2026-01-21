@@ -86,6 +86,18 @@ enum CardAssetStatus {
   ERROR
 }
 
+enum CardReviewStage {
+  READY_FOR_HUMAN_REVIEW
+  ESCALATED_REVIEW
+  REVIEW_COMPLETE
+}
+
+enum CardEvidenceKind {
+  SEARCH_PAGE
+  SOLD_COMP
+  MARKET_COMP
+}
+
 enum ProcessingJobType {
   PHOTOROOM
   OCR
@@ -541,16 +553,40 @@ model CardAsset {
   aiGradeRangeLow         Int?
   aiGradeRangeHigh        Int?
   aiGradeGeneratedAt      DateTime?
+  reviewStage             CardReviewStage?
+  reviewStageUpdatedAt    DateTime?
 
   batch              CardBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
   assignedDefinition PackDefinition? @relation(fields: [assignedDefinitionId], references: [id], onDelete: SetNull)
   notes              CardNote[]
   jobs               ProcessingJob[]
   bytebotLiteJobs    BytebotLiteJob[]
+  evidenceItems      CardEvidenceItem[]
   humanReviewer      User?           @relation("CardAssetHumanReviewer", fields: [humanReviewedById], references: [id])
   sportsDbPlayer     SportsDbPlayer? @relation(fields: [sportsDbPlayerId], references: [id], onDelete: SetNull)
 
   @@index([sportsDbPlayerId])
+}
+
+model CardEvidenceItem {
+  id            String           @id @default(uuid())
+  cardAssetId   String
+  kind          CardEvidenceKind @default(SOLD_COMP)
+  source        String
+  title         String?
+  url           String
+  screenshotUrl String?
+  price         String?
+  soldDate      String?
+  note          String?
+  createdById   String?
+  createdAt     DateTime         @default(now())
+
+  cardAsset CardAsset @relation(fields: [cardAssetId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([cardAssetId, kind])
+  @@index([createdById])
 }
 
 model CardNote {

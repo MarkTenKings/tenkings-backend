@@ -37,6 +37,7 @@ export async function fetchTcgplayerComps(options: {
   page.setDefaultTimeout(20000);
 
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
+  await page.waitForSelector("a[href*='/product/']", { timeout: 15000 }).catch(() => undefined);
   await page.waitForTimeout(1500);
 
   const searchShot = await page.screenshot({ fullPage: true });

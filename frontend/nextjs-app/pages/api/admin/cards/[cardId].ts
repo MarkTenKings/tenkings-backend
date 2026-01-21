@@ -413,6 +413,8 @@ interface CardResponse {
   ebaySoldUrlAiGrade: string | null;
   assignedDefinitionId: string | null;
   assignedAt: string | null;
+  reviewStage: string | null;
+  reviewStageUpdatedAt: string | null;
   notes: CardNotePayload[];
   createdAt: string;
   updatedAt: string;
@@ -437,6 +439,7 @@ type CardUpdatePayload = {
   ocrText?: string | null;
   customTitle?: string | null;
   customDetails?: string | null;
+  reviewStage?: string | null;
   valuationMinor?: number | null;
   valuationCurrency?: string | null;
   valuationSource?: string | null;
@@ -542,6 +545,8 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     ebaySoldUrlAiGrade: card.ebaySoldUrlAiGrade ?? null,
     assignedDefinitionId: card.assignedDefinitionId,
     assignedAt: card.assignedAt ? card.assignedAt.toISOString() : null,
+    reviewStage: card.reviewStage ?? null,
+    reviewStageUpdatedAt: card.reviewStageUpdatedAt ? card.reviewStageUpdatedAt.toISOString() : null,
     notes: card.notes.map((note) => ({
       id: note.id,
       authorId: note.authorId,
@@ -657,6 +662,12 @@ export default async function handler(
 
       if (Object.prototype.hasOwnProperty.call(body, "customDetails")) {
         updateData.customDetails = body.customDetails ? body.customDetails.trim() : null;
+        touched = true;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(body, "reviewStage")) {
+        updateDataAny.reviewStage = body.reviewStage ?? null;
+        updateDataAny.reviewStageUpdatedAt = body.reviewStage ? new Date() : null;
         touched = true;
       }
 

@@ -43,7 +43,8 @@ export async function fetchEbaySoldComps(options: {
   page.setDefaultTimeout(20000);
 
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(1200);
+  await page.waitForSelector("li.s-item", { timeout: 15000 }).catch(() => undefined);
+  await page.waitForTimeout(1500);
 
   const searchShot = await page.screenshot({ fullPage: true });
   const searchShotKey = `${jobId}/ebay-search-${toSafeKeyPart(query)}.png`;
