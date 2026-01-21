@@ -20,6 +20,13 @@ const SOURCE_LABELS: Record<string, string> = {
   tcgplayer: "TCGplayer",
 };
 
+const AI_STATUS_MESSAGES = [
+  "Searching sold listings",
+  "Capturing evidence screenshots",
+  "Checking TCGplayer comps",
+  "Organizing results",
+] as const;
+
 type CardSummary = {
   id: string;
   fileName: string;
@@ -91,6 +98,7 @@ export default function KingsReview() {
   const [query, setQuery] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [enqueueing, setEnqueueing] = useState(false);
+  const [aiMessageIndex, setAiMessageIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [includeUnstaged, setIncludeUnstaged] = useState<boolean>(true);
 
@@ -108,6 +116,17 @@ export default function KingsReview() {
   const activeSourceData = sources.find((source) => source.source === activeSource) ?? sources[0] ?? null;
   const comps = activeSourceData?.comps ?? [];
   const activeComp = activeCompIndex !== null ? comps[activeCompIndex] : comps[0] ?? null;
+  const aiStatus =
+    job?.status === "IN_PROGRESS"
+      ? "AI running"
+      : job?.status === "QUEUED"
+        ? "Queued"
+        : job?.status === "COMPLETE"
+          ? "AI complete"
+          : job?.status === "FAILED"
+            ? "AI failed"
+            : null;
+  const aiMessage = job?.status === "IN_PROGRESS" ? AI_STATUS_MESSAGES[aiMessageIndex] : null;
 
   useEffect(() => {
     if (!session || !isAdmin || stage === "ADD_ITEMS") {
@@ -213,6 +232,46 @@ export default function KingsReview() {
     loadJob();
     loadEvidence();
   }, [activeCardId, adminHeaders, isAdmin, session]);
+
+  useEffect(() => {
+    if (!activeCardId || !session || !isAdmin) {
+      return;
+    }
+
+    if (job?.status !== "IN_PROGRESS" && job?.status !== "QUEUED") {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/admin/kingsreview/jobs?cardAssetId=${activeCardId}`, {
+          headers: adminHeaders(),
+        });
+        if (!res.ok) {
+          return;
+        }
+        const data = await res.json();
+        setJob(data.job ?? null);
+      } catch (err) {
+        // ignore polling errors
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [activeCardId, adminHeaders, isAdmin, job?.status, session]);
+
+  useEffect(() => {
+    if (job?.status !== "IN_PROGRESS") {
+      setAiMessageIndex(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      setAiMessageIndex((prev) => (prev + 1) % AI_STATUS_MESSAGES.length);
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [job?.status]);
 
   const handleSave = async () => {
     if (!activeCard) {
@@ -489,180 +548,192 @@ export default function KingsReview() {
             </div>
           </section>
         ) : (
-        <div className="grid flex-1 gap-6 lg:grid-cols-[1.1fr_1.4fr_1.1fr]">
-          <section className="flex h-full flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
+        <div className="grid flex-1 min-h-0 gap-6 lg:grid-cols-[1.1fr_1.4fr_1.1fr]">
+          <section className="flex h-full min-h-0 flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
             <div className="flex items-center justify-between">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
               <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
             </div>
-            <div className="max-h-40 overflow-auto rounded-2xl border border-white/10 bg-night-950/50 p-2">
-              {cards.map((card) => (
-                <button
-                  key={card.id}
-                  type="button"
-                  onClick={() => setActiveCardId(card.id)}
-                  className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs transition ${
-                    activeCardId === card.id
-                      ? "bg-gold-500/15 text-gold-200"
-                      : "text-slate-300 hover:bg-white/5"
-                  }`}
-                >
-                  <span className="line-clamp-1 flex-1">
-                    {card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
+            <div className="flex-1 min-h-0 overflow-y-auto pr-2">
+              <div className="max-h-40 overflow-auto rounded-2xl border border-white/10 bg-night-950/50 p-2">
+                {cards.map((card) => (
+                  <button
+                    key={card.id}
+                    type="button"
+                    onClick={() => setActiveCardId(card.id)}
+                    className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs transition ${
+                      activeCardId === card.id
+                        ? "bg-gold-500/15 text-gold-200"
+                        : "text-slate-300 hover:bg-white/5"
+                    }`}
+                  >
+                    <span className="line-clamp-1 flex-1">
+                      {card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{card.status}</span>
+                  </button>
+                ))}
+                {cards.length === 0 && (
+                  <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
+                    No cards in this stage
+                  </p>
+                )}
+              </div>
+
+              {aiStatus && (
+                <div className="mt-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2">
+                  <span className="inline-flex h-4 w-4 items-center justify-center">
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />
                   </span>
-                  <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{card.status}</span>
-                </button>
-              ))}
-              {cards.length === 0 && (
-                <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
-                  No cards in this stage
-                </p>
+                  <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">{aiStatus}</div>
+                  {aiMessage && <div className="text-xs text-slate-500">{aiMessage}</div>}
+                </div>
               )}
-            </div>
 
-            {activeCard ? (
-              <div className="flex flex-1 flex-col gap-4">
-                <div className="grid gap-4">
-                  <div className="aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-800">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={activeCard.thumbnailUrl ?? activeCard.imageUrl}
-                      alt={activeCard.fileName}
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                  <div className="space-y-3 text-xs text-slate-300">
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Custom Title</span>
-                      <input
-                        value={activeCard.customTitle ?? ""}
-                        onChange={(event) =>
-                          setActiveCard((prev) => (prev ? { ...prev, customTitle: event.target.value } : prev))
-                        }
-                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
+              {activeCard ? (
+                <div className="mt-4 flex flex-col gap-4">
+                  <div className="grid gap-4">
+                    <div className="aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-800">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={activeCard.thumbnailUrl ?? activeCard.imageUrl}
+                        alt={activeCard.fileName}
+                        className="h-full w-full object-cover"
                       />
-                    </label>
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Notes</span>
-                      <textarea
-                        value={activeCard.customDetails ?? ""}
-                        onChange={(event) =>
-                          setActiveCard((prev) => (prev ? { ...prev, customDetails: event.target.value } : prev))
-                        }
-                        rows={4}
-                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
-                      />
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
+                    </div>
+                    <div className="space-y-3 text-xs text-slate-300">
                       <label className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Valuation</span>
+                        <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Custom Title</span>
                         <input
-                          value={activeCard.valuationMinor ?? ""}
+                          value={activeCard.customTitle ?? ""}
                           onChange={(event) =>
-                            setActiveCard((prev) =>
-                              prev ? { ...prev, valuationMinor: Number(event.target.value) || null } : prev
-                            )
+                            setActiveCard((prev) => (prev ? { ...prev, customTitle: event.target.value } : prev))
                           }
                           className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
                         />
                       </label>
                       <label className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Currency</span>
-                        <input
-                          value={activeCard.valuationCurrency ?? "USD"}
+                        <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Notes</span>
+                        <textarea
+                          value={activeCard.customDetails ?? ""}
                           onChange={(event) =>
-                            setActiveCard((prev) =>
-                              prev ? { ...prev, valuationCurrency: event.target.value } : prev
-                            )
+                            setActiveCard((prev) => (prev ? { ...prev, customDetails: event.target.value } : prev))
                           }
+                          rows={4}
                           className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
                         />
                       </label>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-slate-500">
-                      <span>{activeCard.resolvedPlayerName ?? "Unknown player"}</span>
-                      <span>•</span>
-                      <span>{activeCard.resolvedTeamName ?? "Unknown team"}</span>
+                      <div className="grid grid-cols-2 gap-3">
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Valuation</span>
+                          <input
+                            value={activeCard.valuationMinor ?? ""}
+                            onChange={(event) =>
+                              setActiveCard((prev) =>
+                                prev ? { ...prev, valuationMinor: Number(event.target.value) || null } : prev
+                              )
+                            }
+                            className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Currency</span>
+                          <input
+                            value={activeCard.valuationCurrency ?? "USD"}
+                            onChange={(event) =>
+                              setActiveCard((prev) =>
+                                prev ? { ...prev, valuationCurrency: event.target.value } : prev
+                              )
+                            }
+                            className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
+                          />
+                        </label>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-slate-500">
+                        <span>{activeCard.resolvedPlayerName ?? "Unknown player"}</span>
+                        <span>•</span>
+                        <span>{activeCard.resolvedTeamName ?? "Unknown team"}</span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="grid gap-2">
-                  <button
-                    type="button"
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="rounded-full border border-gold-400/60 bg-gold-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-gold-200 transition hover:border-gold-300 disabled:opacity-60"
-                  >
-                    {saving ? "Saving…" : "Save Card"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleStageUpdate("INVENTORY_READY_FOR_SALE")}
-                    disabled={saving}
-                    className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-300 disabled:opacity-60"
-                  >
-                    Move to Inventory Ready
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleStageUpdate("ESCALATED_REVIEW")}
-                    disabled={saving}
-                    className="rounded-full border border-rose-400/60 bg-rose-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
-                  >
-                    Escalate Review
-                  </button>
-                </div>
-
-                <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Research Query</p>
-                  <div className="mt-2 flex gap-2">
-                    <input
-                      value={query}
-                      onChange={(event) => setQuery(event.target.value)}
-                      className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
-                    />
+                  <div className="grid gap-2">
                     <button
                       type="button"
-                      onClick={handleEnqueue}
-                      disabled={enqueueing}
-                      className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 disabled:opacity-60"
+                      onClick={handleSave}
+                      disabled={saving}
+                      className="rounded-full border border-gold-400/60 bg-gold-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-gold-200 transition hover:border-gold-300 disabled:opacity-60"
                     >
-                      {enqueueing ? "Running…" : "Run"}
+                      {saving ? "Saving…" : "Save Card"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStageUpdate("INVENTORY_READY_FOR_SALE")}
+                      disabled={saving}
+                      className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-300 disabled:opacity-60"
+                    >
+                      Move to Inventory Ready
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleStageUpdate("ESCALATED_REVIEW")}
+                      disabled={saving}
+                      className="rounded-full border border-rose-400/60 bg-rose-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
+                    >
+                      Escalate Review
                     </button>
                   </div>
-                </div>
 
-                <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Attached Evidence</p>
-                  <div className="mt-2 space-y-2">
-                    {evidenceItems.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between gap-2 text-xs text-slate-300">
-                        <span className="line-clamp-1">{item.title ?? item.url}</span>
-                        <a
-                          href={item.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[10px] uppercase tracking-[0.3em] text-sky-300"
-                        >
-                          Open
-                        </a>
-                      </div>
-                    ))}
-                    {evidenceItems.length === 0 && (
-                      <p className="text-xs text-slate-500">No evidence attached yet.</p>
-                    )}
+                  <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Research Query</p>
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleEnqueue}
+                        disabled={enqueueing}
+                        className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 disabled:opacity-60"
+                      >
+                        {enqueueing ? "Running…" : "Run"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Attached Evidence</p>
+                    <div className="mt-2 space-y-2">
+                      {evidenceItems.map((item) => (
+                        <div key={item.id} className="flex items-center justify-between gap-2 text-xs text-slate-300">
+                          <span className="line-clamp-1">{item.title ?? item.url}</span>
+                          <a
+                            href={item.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] uppercase tracking-[0.3em] text-sky-300"
+                          >
+                            Open
+                          </a>
+                        </div>
+                      ))}
+                      {evidenceItems.length === 0 && (
+                        <p className="text-xs text-slate-500">No evidence attached yet.</p>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : (
-              <div className="flex flex-1 items-center justify-center text-xs uppercase tracking-[0.3em] text-slate-500">
-                Select a card to review
-              </div>
-            )}
+              ) : (
+                <div className="flex flex-1 items-center justify-center text-xs uppercase tracking-[0.3em] text-slate-500">
+                  Select a card to review
+                </div>
+              )}
+            </div>
           </section>
 
-          <section className="flex h-full flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
+          <section className="flex h-full min-h-0 flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
             <div className="flex items-center gap-2">
@@ -721,7 +792,7 @@ export default function KingsReview() {
                 </button>
               </div>
             )}
-            <div className="flex-1 overflow-auto rounded-2xl border border-white/10 bg-night-950/60 p-3">
+            <div className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-night-950/60 p-3">
               {activeSourceData ? (
                 <div style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -739,7 +810,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
+          <section className="flex h-full min-h-0 flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
             <div className="flex items-center justify-between">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
               {activeSourceData?.searchUrl && (
@@ -753,7 +824,7 @@ export default function KingsReview() {
                 </a>
               )}
             </div>
-            <div className="flex-1 overflow-auto rounded-2xl border border-white/10 bg-night-950/60 p-3">
+            <div className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-night-950/60 p-3">
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
               )}
