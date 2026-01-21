@@ -491,66 +491,6 @@ export default function AdminUploads() {
     setCameraReady(true);
   }, [capturePreviewUrl]);
 
-  const confirmIntakeCapture = useCallback(
-    async (target: "front" | "back" | "tilt", blob: Blob) => {
-      try {
-        setIntakeBusy(true);
-        setIntakeError(null);
-        const mime = blob.type || "image/jpeg";
-        const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
-        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const fileName = `intake-${target}-${timestamp}.${extension}`;
-        const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
-
-        if (target === "front") {
-          const presign = await uploadCardAsset(file);
-          setIntakeCardId(presign.assetId);
-          setIntakeBatchId(presign.batchId);
-          setIntakeFrontPreview(URL.createObjectURL(blob));
-          setIntakeStep("back");
-        } else if (target === "back") {
-          const presign = await uploadCardPhoto(file, "BACK");
-          setIntakeBackPhotoId(presign.photoId);
-          setIntakeBackPreview(URL.createObjectURL(blob));
-          setIntakeStep("tilt");
-        } else {
-          const presign = await uploadCardPhoto(file, "TILT");
-          setIntakeTiltPhotoId(presign.photoId);
-          setIntakeTiltPreview(URL.createObjectURL(blob));
-          setIntakeStep("required");
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to capture photo.";
-        setIntakeError(message);
-      } finally {
-        setIntakeBusy(false);
-        setIntakeCaptureTarget(null);
-        closeCamera();
-      }
-    },
-    [closeCamera, uploadCardAsset, uploadCardPhoto]
-  );
-
-  const handleConfirmCapture = useCallback(() => {
-    if (!capturedBlob) {
-      setCameraError("Capture an image first.");
-      return;
-    }
-    if (intakeCaptureTarget) {
-      void confirmIntakeCapture(intakeCaptureTarget, capturedBlob);
-      return;
-    }
-    const mime = capturedBlob.type || "image/jpeg";
-    const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const fileName = `capture-${timestamp}.${extension}`;
-    const file = new File([capturedBlob], fileName, {
-      type: mime,
-      lastModified: Date.now(),
-    });
-    appendFiles([file]);
-    closeCamera();
-  }, [appendFiles, capturedBlob, closeCamera, confirmIntakeCapture, intakeCaptureTarget]);
   const handleZoomChange = useCallback((value: number) => {
     setZoom(value);
     const track = trackRef.current;
@@ -911,6 +851,67 @@ export default function AdminUploads() {
     },
     [intakeCardId, isRemoteApi, resolveApiUrl, session?.token]
   );
+
+  const confirmIntakeCapture = useCallback(
+    async (target: "front" | "back" | "tilt", blob: Blob) => {
+      try {
+        setIntakeBusy(true);
+        setIntakeError(null);
+        const mime = blob.type || "image/jpeg";
+        const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const fileName = `intake-${target}-${timestamp}.${extension}`;
+        const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
+
+        if (target === "front") {
+          const presign = await uploadCardAsset(file);
+          setIntakeCardId(presign.assetId);
+          setIntakeBatchId(presign.batchId);
+          setIntakeFrontPreview(URL.createObjectURL(blob));
+          setIntakeStep("back");
+        } else if (target === "back") {
+          const presign = await uploadCardPhoto(file, "BACK");
+          setIntakeBackPhotoId(presign.photoId);
+          setIntakeBackPreview(URL.createObjectURL(blob));
+          setIntakeStep("tilt");
+        } else {
+          const presign = await uploadCardPhoto(file, "TILT");
+          setIntakeTiltPhotoId(presign.photoId);
+          setIntakeTiltPreview(URL.createObjectURL(blob));
+          setIntakeStep("required");
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to capture photo.";
+        setIntakeError(message);
+      } finally {
+        setIntakeBusy(false);
+        setIntakeCaptureTarget(null);
+        closeCamera();
+      }
+    },
+    [closeCamera, uploadCardAsset, uploadCardPhoto]
+  );
+
+  const handleConfirmCapture = useCallback(() => {
+    if (!capturedBlob) {
+      setCameraError("Capture an image first.");
+      return;
+    }
+    if (intakeCaptureTarget) {
+      void confirmIntakeCapture(intakeCaptureTarget, capturedBlob);
+      return;
+    }
+    const mime = capturedBlob.type || "image/jpeg";
+    const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const fileName = `capture-${timestamp}.${extension}`;
+    const file = new File([capturedBlob], fileName, {
+      type: mime,
+      lastModified: Date.now(),
+    });
+    appendFiles([file]);
+    closeCamera();
+  }, [appendFiles, capturedBlob, closeCamera, confirmIntakeCapture, intakeCaptureTarget]);
 
   const saveIntakeMetadata = useCallback(
     async (includeOptional: boolean) => {
