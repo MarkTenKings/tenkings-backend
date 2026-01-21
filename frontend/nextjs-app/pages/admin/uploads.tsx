@@ -151,7 +151,7 @@ export default function AdminUploads() {
   const [intakeTiltPreview, setIntakeTiltPreview] = useState<string | null>(null);
   const [intakeBusy, setIntakeBusy] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
-  const [intakeCaptureTarget, setIntakeCaptureTarget] = useState<null | \"front\" | \"back\" | \"tilt\">(null);
+  const [intakeCaptureTarget, setIntakeCaptureTarget] = useState<null | "front" | "back" | "tilt">(null);
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
