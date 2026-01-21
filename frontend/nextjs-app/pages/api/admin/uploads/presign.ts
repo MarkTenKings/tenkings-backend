@@ -1,6 +1,6 @@
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from "next";
 import { randomUUID } from "node:crypto";
-import { CardAssetStatus, prisma } from "@tenkings/database";
+import { CardAssetStatus, CardReviewStage, prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import {
   buildStorageKey,
@@ -93,6 +93,12 @@ const handler: NextApiHandler<PresignResponse | { message: string }> = async fun
       });
     });
 
+    const reviewStageValue =
+      typeof reviewStage === "string" &&
+      Object.values(CardReviewStage).includes(reviewStage as CardReviewStage)
+        ? (reviewStage as CardReviewStage)
+        : undefined;
+
     await prisma.$transaction(async (tx) => {
       await tx.cardAsset.create({
         data: {
@@ -104,8 +110,8 @@ const handler: NextApiHandler<PresignResponse | { message: string }> = async fun
           mimeType,
           imageUrl: publicUrlFor(storageKey),
           status: CardAssetStatus.UPLOADING,
-          reviewStage: typeof reviewStage === "string" ? reviewStage : undefined,
-          reviewStageUpdatedAt: typeof reviewStage === "string" ? new Date() : undefined,
+          reviewStage: reviewStageValue,
+          reviewStageUpdatedAt: reviewStageValue ? new Date() : undefined,
         },
       });
 
