@@ -72,11 +72,10 @@ export default function AdminHome() {
     return (
       <div className="flex flex-1 flex-col gap-10 px-6 py-12">
         <header className="space-y-3">
-          <p className="text-sm uppercase tracking-[0.32em] text-violet-300">Ten Kings · Operations</p>
+          <p className="text-xs uppercase tracking-[0.3em] text-violet-300">Ten Kings · Ops</p>
           <h1 className="font-heading text-5xl uppercase tracking-[0.18em] text-white">Processing Console</h1>
-          <p className="max-w-3xl text-sm text-slate-300">
-            Manage card intake, review data, and push inventory to live pack tiers. Modules for upload, review, valuation, and assignment
-            will appear here as they come online.
+          <p className="max-w-2xl text-sm text-slate-300">
+            Intake → Review → Inventory → Locations.
           </p>
         </header>
 
@@ -84,7 +83,7 @@ export default function AdminHome() {
           <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
             <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Getting Started</h2>
             <p className="mt-3 text-sm text-slate-400">
-              Upload batches of raw card images, ingest metadata, and monitor automation progress. Card ingestion tools are coming soon.
+              Upload cards and enter intake details.
             </p>
             <Link
               href="/admin/uploads"
@@ -96,7 +95,7 @@ export default function AdminHome() {
           <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
             <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Location Packing</h2>
             <p className="mt-3 text-sm text-slate-400">
-              Generate QR label pairs, bind slabs to sealed packs, and sync inventory directly to kiosk live-rip flows.
+              Build packs and sync to kiosks.
             </p>
             <Link
               href="/admin/packing"
@@ -108,7 +107,7 @@ export default function AdminHome() {
           <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
             <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">KingsReview</h2>
             <p className="mt-3 text-sm text-slate-400">
-              Review AI research, compare sold comps, and finalize card details in the evidence-driven workspace.
+              Review comps and lock value.
             </p>
             <Link
               href="/admin/kingsreview"
@@ -120,7 +119,7 @@ export default function AdminHome() {
           <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
             <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Inventory Ready</h2>
             <p className="mt-3 text-sm text-slate-400">
-              Filter the ready-for-sale pool, select cards in bulk, and assign batches to locations.
+              Select cards and assign to locations.
             </p>
             <Link
               href="/admin/inventory-ready"
@@ -128,18 +127,6 @@ export default function AdminHome() {
             >
               Open Inventory
             </Link>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Next Steps</h2>
-            <p className="mt-3 text-sm text-slate-400">
-              We are scaffolding upload, OCR, AI classification, valuation, and bulk assignment workflows. Stay tuned as each module unlocks.
-            </p>
-          </div>
-          <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Need Access?</h2>
-            <p className="mt-3 text-sm text-slate-400">
-              Administrators can add user IDs to the <code className="font-mono">NEXT_PUBLIC_ADMIN_USER_IDS</code> list to authorize operators.
-            </p>
           </div>
         </section>
       </div>
