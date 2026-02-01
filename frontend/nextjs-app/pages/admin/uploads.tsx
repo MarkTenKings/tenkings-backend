@@ -1,6 +1,5 @@
 import Head from "next/head";
 import Link from "next/link";
-import { useRouter } from "next/router";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
@@ -108,7 +107,6 @@ const CAMERA_STORAGE_KEY = "tenkings.adminUploads.cameraDeviceId";
 
 export default function AdminUploads() {
   const { session, loading, ensureSession, logout } = useSession();
-  const router = useRouter();
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<UploadResult[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -476,12 +474,16 @@ export default function AdminUploads() {
       setCameraError("Failed to capture image.");
       return;
     }
+    if (intakeCaptureTarget) {
+      void confirmIntakeCapture(intakeCaptureTarget, blob);
+      return;
+    }
     if (capturePreviewUrl) {
       URL.revokeObjectURL(capturePreviewUrl);
     }
     setCapturedBlob(blob);
     setCapturePreviewUrl(URL.createObjectURL(blob));
-  }, [capturePreviewUrl]);
+  }, [capturePreviewUrl, confirmIntakeCapture, intakeCaptureTarget]);
 
   const handleRetake = useCallback(() => {
     if (capturePreviewUrl) {
@@ -1116,15 +1118,25 @@ export default function AdminUploads() {
         const payload = await res.json().catch(() => ({}));
         throw new Error(payload?.message ?? "Failed to enqueue KingsReview job.");
       }
-      setIntakeStep("done");
-      void router.push(`/admin/kingsreview?stage=BYTEBOT_RUNNING&cardId=${intakeCardId}`);
+      resetIntake();
+      void openIntakeCapture("front");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to send to KingsReview.";
       setIntakeError(message);
     } finally {
       setIntakeBusy(false);
     }
-  }, [buildIntakeQuery, intakeCardId, isRemoteApi, resolveApiUrl, saveIntakeMetadata, session?.token, validateRequiredIntake]);
+  }, [
+    buildIntakeQuery,
+    intakeCardId,
+    isRemoteApi,
+    openIntakeCapture,
+    resetIntake,
+    resolveApiUrl,
+    saveIntakeMetadata,
+    session?.token,
+    validateRequiredIntake,
+  ]);
 
   const submitUploads = async (event: FormEvent) => {
     event.preventDefault();
@@ -1758,18 +1770,6 @@ export default function AdminUploads() {
             </div>
           )}
 
-          {intakeStep === "done" && (
-            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-sm text-emerald-100">
-              <p>Card sent to KingsReview AI. You can start the next card.</p>
-              <button
-                type="button"
-                onClick={resetIntake}
-                className="mt-4 inline-flex items-center justify-center rounded-full border border-emerald-400/60 bg-emerald-400/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-emerald-100 transition hover:bg-emerald-400/30"
-              >
-                Add another card
-              </button>
-            </div>
-          )}
         </section>
 
         <section className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-night-900/70 p-6">
