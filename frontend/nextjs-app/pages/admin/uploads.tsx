@@ -447,44 +447,6 @@ export default function AdminUploads() {
     [cameraOpen, startCameraStream]
   );
 
-  const handleCapture = useCallback(async () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) {
-      setCameraError("Camera not ready yet.");
-      return;
-    }
-    const { videoWidth, videoHeight } = video;
-    if (!videoWidth || !videoHeight) {
-      setCameraError("Camera is warming up—try again.");
-      return;
-    }
-    canvas.width = videoWidth;
-    canvas.height = videoHeight;
-    const context = canvas.getContext("2d");
-    if (!context) {
-      setCameraError("Canvas not supported in this browser.");
-      return;
-    }
-    context.drawImage(video, 0, 0, videoWidth, videoHeight);
-    const blob: Blob | null = await new Promise((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", 0.92)
-    );
-    if (!blob) {
-      setCameraError("Failed to capture image.");
-      return;
-    }
-    if (intakeCaptureTarget) {
-      void confirmIntakeCapture(intakeCaptureTarget, blob);
-      return;
-    }
-    if (capturePreviewUrl) {
-      URL.revokeObjectURL(capturePreviewUrl);
-    }
-    setCapturedBlob(blob);
-    setCapturePreviewUrl(URL.createObjectURL(blob));
-  }, [capturePreviewUrl, confirmIntakeCapture, intakeCaptureTarget]);
-
   const handleRetake = useCallback(() => {
     if (capturePreviewUrl) {
       URL.revokeObjectURL(capturePreviewUrl);
@@ -895,6 +857,44 @@ export default function AdminUploads() {
     },
     [closeCamera, uploadCardAsset, uploadCardPhoto]
   );
+
+  const handleCapture = useCallback(async () => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) {
+      setCameraError("Camera not ready yet.");
+      return;
+    }
+    const { videoWidth, videoHeight } = video;
+    if (!videoWidth || !videoHeight) {
+      setCameraError("Camera is warming up—try again.");
+      return;
+    }
+    canvas.width = videoWidth;
+    canvas.height = videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setCameraError("Canvas not supported in this browser.");
+      return;
+    }
+    context.drawImage(video, 0, 0, videoWidth, videoHeight);
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.92)
+    );
+    if (!blob) {
+      setCameraError("Failed to capture image.");
+      return;
+    }
+    if (intakeCaptureTarget) {
+      void confirmIntakeCapture(intakeCaptureTarget, blob);
+      return;
+    }
+    if (capturePreviewUrl) {
+      URL.revokeObjectURL(capturePreviewUrl);
+    }
+    setCapturedBlob(blob);
+    setCapturePreviewUrl(URL.createObjectURL(blob));
+  }, [capturePreviewUrl, confirmIntakeCapture, intakeCaptureTarget]);
 
   const handleConfirmCapture = useCallback(() => {
     if (!capturedBlob) {
