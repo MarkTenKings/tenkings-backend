@@ -34,6 +34,10 @@ type CardDetail = {
   thumbnailUrl: string | null;
   mimeType: string;
   ocrText: string | null;
+  ocrSuggestions: {
+    updatedAt: string | null;
+    data: Record<string, unknown> | null;
+  };
   classification: CardAttributes | null;
   classificationNormalized: NormalizedClassification | null;
   customTitle: string | null;
@@ -1130,6 +1134,63 @@ export default function AdminCardDetail() {
                   />
                 </label>
               </div>
+
+              <details className="rounded-3xl border border-white/10 bg-night-900/60 p-4">
+                <summary className="cursor-pointer text-[11px] uppercase tracking-[0.3em] text-slate-300">
+                  OCR Suggestions (LLM)
+                </summary>
+                <div className="mt-4 space-y-3 text-xs text-slate-300">
+                  {card.ocrSuggestions?.data ? (
+                    (() => {
+                      const payload = card.ocrSuggestions.data as Record<string, any>;
+                      const fields = (payload.fields ?? {}) as Record<string, string | null>;
+                      const confidence = (payload.confidence ?? {}) as Record<string, number | null>;
+                      const createdAt = payload.createdAt || card.ocrSuggestions.updatedAt;
+                      const model = payload.model || "unknown";
+                      const threshold = payload.threshold ?? null;
+                      const entries = [
+                        "playerName",
+                        "year",
+                        "manufacturer",
+                        "sport",
+                        "game",
+                        "cardName",
+                        "setName",
+                        "cardNumber",
+                        "serialNumber",
+                      ];
+
+                      return (
+                        <>
+                          <div className="flex flex-wrap gap-4 text-[11px] uppercase tracking-[0.28em] text-slate-400">
+                            <span>Model: {model}</span>
+                            {threshold != null && <span>Threshold: {threshold}</span>}
+                            {createdAt && <span>Run: {new Date(createdAt).toLocaleString()}</span>}
+                          </div>
+                          <div className="grid gap-2 md:grid-cols-2">
+                            {entries.map((key) => (
+                              <div
+                                key={key}
+                                className="rounded-2xl border border-white/10 bg-night-800/60 px-3 py-2"
+                              >
+                                <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.28em] text-slate-400">
+                                  <span>{key}</span>
+                                  {typeof confidence[key] === "number" && (
+                                    <span>{Math.round((confidence[key] as number) * 100)}%</span>
+                                  )}
+                                </div>
+                                <div className="mt-1 text-sm text-white">{fields[key] || "—"}</div>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      );
+                    })()
+                  ) : (
+                    <p className="text-slate-400">No OCR suggestions have been generated yet.</p>
+                  )}
+                </div>
+              </details>
 
               <details className="rounded-3xl border border-white/10 bg-night-900/60 p-4">
                 <summary className="cursor-pointer text-[11px] uppercase tracking-[0.3em] text-slate-300">

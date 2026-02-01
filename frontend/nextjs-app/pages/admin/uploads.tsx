@@ -1163,13 +1163,8 @@ export default function AdminUploads() {
   }, [intakeBackPhotoId, intakeCardId, intakeRequired]);
 
   const applySuggestions = useCallback(
-    (suggestions: { playerName?: string | null; year?: string | null; manufacturer?: string | null }) => {
-      setIntakeSuggested((prev) => ({
-        ...prev,
-        ...(suggestions.playerName ? { playerName: suggestions.playerName } : {}),
-        ...(suggestions.year ? { year: suggestions.year } : {}),
-        ...(suggestions.manufacturer ? { manufacturer: suggestions.manufacturer } : {}),
-      }));
+    (suggestions: Record<string, string>) => {
+      setIntakeSuggested((prev) => ({ ...prev, ...suggestions }));
       setIntakeRequired((prev) => {
         const next = { ...prev };
         if (prev.category === "sport" && suggestions.playerName && !intakeTouched.playerName && !prev.playerName.trim()) {
@@ -1181,10 +1176,26 @@ export default function AdminUploads() {
         if (suggestions.manufacturer && !intakeTouched.manufacturer && !prev.manufacturer.trim()) {
           next.manufacturer = suggestions.manufacturer;
         }
+        if (prev.category === "sport" && suggestions.sport && !intakeTouched.sport && !prev.sport.trim()) {
+          next.sport = suggestions.sport;
+        }
+        if (prev.category === "tcg" && suggestions.game && !intakeTouched.game && !prev.game.trim()) {
+          next.game = suggestions.game;
+        }
+        if (prev.category === "tcg" && suggestions.cardName && !intakeTouched.cardName && !prev.cardName.trim()) {
+          next.cardName = suggestions.cardName;
+        }
         return next;
       });
     },
-    [intakeTouched.manufacturer, intakeTouched.playerName, intakeTouched.year]
+    [
+      intakeTouched.cardName,
+      intakeTouched.game,
+      intakeTouched.manufacturer,
+      intakeTouched.playerName,
+      intakeTouched.sport,
+      intakeTouched.year,
+    ]
   );
 
   const fetchOcrSuggestions = useCallback(async () => {

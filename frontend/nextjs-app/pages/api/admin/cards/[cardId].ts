@@ -491,6 +491,10 @@ interface CardResponse {
   thumbnailUrl: string | null;
   mimeType: string;
   ocrText: string | null;
+  ocrSuggestions: {
+    updatedAt: string | null;
+    data: Record<string, unknown> | null;
+  };
   classification: CardAttributes | null;
   classificationNormalized: NormalizedClassification | null;
   customTitle: string | null;
@@ -650,6 +654,10 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     thumbnailUrl: card.thumbnailUrl,
     mimeType: card.mimeType,
     ocrText: card.ocrText,
+    ocrSuggestions: {
+      updatedAt: card.ocrSuggestionUpdatedAt ? card.ocrSuggestionUpdatedAt.toISOString() : null,
+      data: (card.ocrSuggestionJson as Record<string, unknown> | null) ?? null,
+    },
     classification: classificationAttributes,
     classificationNormalized: normalizedClassification,
     customTitle: card.customTitle ?? null,

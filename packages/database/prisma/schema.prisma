@@ -538,6 +538,8 @@ model CardAsset {
   status                  CardAssetStatus @default(UPLOADING)
   ocrText                 String?
   ocrJson                 Json?
+  ocrSuggestionJson       Json?
+  ocrSuggestionUpdatedAt  DateTime?
   classificationJson      Json?
   classificationSourcesJson Json?
   valuationMinor          Int?
