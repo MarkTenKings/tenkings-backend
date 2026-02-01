@@ -13,6 +13,7 @@ import {
   type NormalizedClassificationTcg,
   type NormalizedClassificationComics,
 } from "@tenkings/shared";
+import { ensureLabelPairForItem } from "../../../../lib/server/qrCodes";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 const defaultCardAttributes: CardAttributes = {
@@ -68,6 +69,11 @@ type ClassificationUpdatePayload = {
   attributes?: AttributeUpdatePayload;
   normalized?: NormalizedUpdatePayload | null;
 };
+
+const DEFAULT_SELLER_EMAIL =
+  process.env.PACK_INVENTORY_SELLER_EMAIL ??
+  process.env.HOUSE_USER_EMAIL ??
+  "pack-seller@example.com";
 
 const sanitizeStringInput = (value: unknown): string | null => {
   if (value === undefined) {
@@ -160,6 +166,97 @@ const readIntegerInput = (value: unknown): number | null => {
     return null;
   }
   return Math.round(numeric);
+};
+
+const resolveItemName = (card: {
+  id: string;
+  customTitle: string | null;
+  resolvedPlayerName: string | null;
+  fileName: string;
+  classificationJson: unknown;
+}) => {
+  if (card.customTitle?.trim()) {
+    return card.customTitle.trim();
+  }
+  const classification = parseClassificationPayload(card.classificationJson);
+  if (classification?.normalized?.displayName?.trim()) {
+    return classification.normalized.displayName.trim();
+  }
+  if (card.resolvedPlayerName?.trim()) {
+    return card.resolvedPlayerName.trim();
+  }
+  return card.fileName || `Card ${card.id}`;
+};
+
+const resolveItemSet = (card: { classificationJson: unknown }) => {
+  const classification = parseClassificationPayload(card.classificationJson);
+  return (
+    classification?.normalized?.setName?.trim() ??
+    classification?.attributes?.setName?.trim() ??
+    "Unknown Set"
+  );
+};
+
+const ensureInventoryReadyArtifacts = async (cardId: string, userId: string) => {
+  const card = await prisma.cardAsset.findUnique({
+    where: { id: cardId },
+    select: {
+      id: true,
+      fileName: true,
+      imageUrl: true,
+      thumbnailUrl: true,
+      customTitle: true,
+      resolvedPlayerName: true,
+      classificationJson: true,
+      ocrJson: true,
+      valuationMinor: true,
+    },
+  });
+
+  if (!card) {
+    throw new Error("Card not found");
+  }
+
+  const seller = await prisma.user.findUnique({ where: { email: DEFAULT_SELLER_EMAIL } });
+  if (!seller) {
+    throw new Error(`Seller account with email ${DEFAULT_SELLER_EMAIL} not found`);
+  }
+
+  let item = await prisma.item.findFirst({ where: { number: card.id } });
+  if (!item) {
+    const name = resolveItemName(card);
+    const set = resolveItemSet(card);
+    const detailsJson = (card.classificationJson as Prisma.InputJsonValue | null) ?? (card.ocrJson as Prisma.InputJsonValue | null) ?? undefined;
+
+    item = await prisma.item.create({
+      data: {
+        name,
+        set,
+        number: card.id,
+        language: null,
+        foil: false,
+        estimatedValue: card.valuationMinor ?? null,
+        ownerId: seller.id,
+        imageUrl: card.imageUrl,
+        thumbnailUrl: card.thumbnailUrl ?? null,
+        detailsJson,
+      },
+    });
+
+    await prisma.itemOwnership.create({
+      data: {
+        itemId: item.id,
+        ownerId: seller.id,
+        note: `Minted from card asset ${card.id} (Inventory Ready)`,
+      },
+    });
+  }
+
+  await ensureLabelPairForItem({
+    itemId: item.id,
+    createdById: userId,
+    locationId: null,
+  });
 };
 
 const applyAttributeUpdates = (
@@ -604,18 +701,19 @@ export default async function handler(
           id: true,
           ocrText: true,
           humanReviewedAt: true,
-        humanReviewedById: true,
-        classificationJson: true,
-        classificationSourcesJson: true,
-        aiGradePsaEquivalent: true,
-        aiGradingJson: true,
-        aiGradeFinal: true,
-        aiGradeLabel: true,
-        aiGradeRangeLow: true,
-        aiGradeRangeHigh: true,
-        aiGradeGeneratedAt: true,
-      },
-    });
+          humanReviewedById: true,
+          classificationJson: true,
+          classificationSourcesJson: true,
+          aiGradePsaEquivalent: true,
+          aiGradingJson: true,
+          aiGradeFinal: true,
+          aiGradeLabel: true,
+          aiGradeRangeLow: true,
+          aiGradeRangeHigh: true,
+          aiGradeGeneratedAt: true,
+          reviewStage: true,
+        },
+      });
 
       if (!card) {
         return res.status(404).json({ message: "Card not found" });
@@ -815,6 +913,14 @@ export default async function handler(
         where: { id: card.id },
         data: updateData,
       });
+
+      if (
+        Object.prototype.hasOwnProperty.call(body, "reviewStage") &&
+        body.reviewStage === "INVENTORY_READY_FOR_SALE" &&
+        card.reviewStage !== "INVENTORY_READY_FOR_SALE"
+      ) {
+        await ensureInventoryReadyArtifacts(card.id, admin.user.id);
+      }
 
       const updated = await fetchCard(cardId, admin.user.id);
       if (!updated) {

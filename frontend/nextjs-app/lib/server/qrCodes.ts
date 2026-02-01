@@ -600,6 +600,110 @@ export async function bindCardQrCode({
   });
 }
 
+export async function ensureLabelPairForItem({
+  itemId,
+  createdById,
+  locationId,
+}: {
+  itemId: string;
+  createdById: string;
+  locationId?: string | null;
+}): Promise<QrCodePair> {
+  return prisma.$transaction(async (tx) => {
+    const item = await tx.item.findUnique({
+      where: { id: itemId },
+      select: { id: true, cardQrCodeId: true },
+    });
+
+    if (!item) {
+      throw new Error("Item not found");
+    }
+
+    if (item.cardQrCodeId) {
+      const label = await tx.packLabel.findFirst({
+        where: { cardQrCodeId: item.cardQrCodeId },
+        include: { cardQrCode: true, packQrCode: true },
+      });
+
+      if (label) {
+        if (!label.itemId) {
+          await tx.packLabel.update({
+            where: { id: label.id },
+            data: { itemId: item.id },
+          });
+        }
+
+        return {
+          pairId: label.pairId,
+          card: toSummary(label.cardQrCode),
+          pack: toSummary(label.packQrCode),
+          label: toLabelSummary(label),
+        };
+      }
+    }
+
+    const created = await createPairWithLabelTx(tx, {
+      createdById,
+      locationId: locationId ?? null,
+    });
+
+    const now = new Date();
+
+    await tx.item.update({
+      where: { id: item.id },
+      data: { cardQrCodeId: created.card.id },
+    });
+
+    await tx.qrCode.update({
+      where: { id: created.card.id },
+      data: {
+        state: QrCodeState.BOUND,
+        boundById: createdById,
+        boundAt: now,
+        metadata: mergeMetadata(created.card.metadata, {
+          boundItemId: item.id,
+          labelId: created.label.id,
+          pairId: created.label.pairId,
+        }),
+      },
+    });
+
+    await tx.qrCode.update({
+      where: { id: created.pack.id },
+      data: {
+        metadata: mergeMetadata(created.pack.metadata, {
+          reservedItemId: item.id,
+          labelId: created.label.id,
+          pairId: created.label.pairId,
+        }),
+      },
+    });
+
+    await tx.packLabel.update({
+      where: { id: created.label.id },
+      data: { itemId: item.id },
+    });
+
+    await updateLabelBindingStatus(tx, created.label.id);
+
+    const refreshedLabel = await tx.packLabel.findUnique({
+      where: { id: created.label.id },
+      include: { cardQrCode: true, packQrCode: true },
+    });
+
+    if (!refreshedLabel) {
+      throw new Error("Failed to load label after creation");
+    }
+
+    return {
+      pairId: refreshedLabel.pairId,
+      card: toSummary(refreshedLabel.cardQrCode),
+      pack: toSummary(refreshedLabel.packQrCode),
+      label: toLabelSummary(refreshedLabel),
+    };
+  });
+}
+
 export async function syncPackAssetsLocation(
   tx: TransactionClient,
   params: {
