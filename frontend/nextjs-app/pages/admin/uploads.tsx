@@ -1399,10 +1399,9 @@ export default function AdminUploads() {
       <div className="flex flex-1 flex-col gap-10 px-6 py-12">
         <header className="space-y-3">
           <p className="text-sm uppercase tracking-[0.32em] text-violet-300">Processing Console</p>
-          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Upload Batches</h1>
+          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Add Cards</h1>
           <p className="max-w-3xl text-sm text-slate-300">
-            Upload raw card imagery, create batches, and review intake history. OCR, AI classification, and valuation will plug into
-            these batches next.
+            Capture card photos and enter the required intake details.
           </p>
           <Link className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white" href="/admin">
             ← Back to console

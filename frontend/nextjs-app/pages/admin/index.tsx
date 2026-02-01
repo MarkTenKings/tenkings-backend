@@ -81,7 +81,7 @@ export default function AdminHome() {
 
         <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
           <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Getting Started</h2>
+            <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Add Cards</h2>
             <p className="mt-3 text-sm text-slate-400">
               Upload cards and enter intake details.
             </p>
@@ -90,18 +90,6 @@ export default function AdminHome() {
               className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
             >
               Open Uploads
-            </Link>
-          </div>
-          <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Location Packing</h2>
-            <p className="mt-3 text-sm text-slate-400">
-              Build packs and sync to kiosks.
-            </p>
-            <Link
-              href="/admin/packing"
-              className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
-            >
-              Packing Console
             </Link>
           </div>
           <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
@@ -126,6 +114,18 @@ export default function AdminHome() {
               className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
             >
               Open Inventory
+            </Link>
+          </div>
+          <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
+            <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Assigned Batches</h2>
+            <p className="mt-3 text-sm text-slate-400">
+              Review location batches, totals, and print labels.
+            </p>
+            <Link
+              href="/admin/location-batches"
+              className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
+            >
+              Open Batches
             </Link>
           </div>
         </section>
