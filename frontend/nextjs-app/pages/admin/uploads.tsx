@@ -1,5 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
@@ -107,6 +108,7 @@ const CAMERA_STORAGE_KEY = "tenkings.adminUploads.cameraDeviceId";
 
 export default function AdminUploads() {
   const { session, loading, ensureSession, logout } = useSession();
+  const router = useRouter();
   const [files, setFiles] = useState<File[]>([]);
   const [results, setResults] = useState<UploadResult[]>([]);
   const [submitting, setSubmitting] = useState(false);
@@ -1115,6 +1117,7 @@ export default function AdminUploads() {
         throw new Error(payload?.message ?? "Failed to enqueue KingsReview job.");
       }
       setIntakeStep("done");
+      void router.push(`/admin/kingsreview?stage=BYTEBOT_RUNNING&cardId=${intakeCardId}`);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to send to KingsReview.";
       setIntakeError(message);

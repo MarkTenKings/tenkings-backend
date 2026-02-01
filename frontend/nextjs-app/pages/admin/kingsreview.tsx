@@ -1,5 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
@@ -7,7 +8,6 @@ import { buildAdminHeaders } from "../../lib/adminHeaders";
 import { useSession } from "../../hooks/useSession";
 
 const STAGES = [
-  { id: "ADD_ITEMS", label: "Add Cards/Items", href: "/admin/uploads" },
   { id: "BYTEBOT_RUNNING", label: "AI Running" },
   { id: "READY_FOR_HUMAN_REVIEW", label: "Ready" },
   { id: "ESCALATED_REVIEW", label: "Escalated" },
@@ -85,8 +85,9 @@ type BytebotJob = {
 };
 
 export default function KingsReview() {
+  const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
-  const [stage, setStage] = useState<string>(STAGES[0].id);
+  const [stage, setStage] = useState<string>("READY_FOR_HUMAN_REVIEW");
   const [cards, setCards] = useState<CardSummary[]>([]);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [activeCard, setActiveCard] = useState<CardDetail | null>(null);
@@ -129,7 +130,7 @@ export default function KingsReview() {
   const aiMessage = job?.status === "IN_PROGRESS" ? AI_STATUS_MESSAGES[aiMessageIndex] : null;
 
   useEffect(() => {
-    if (!session || !isAdmin || stage === "ADD_ITEMS") {
+    if (!session || !isAdmin) {
       return;
     }
 
@@ -155,6 +156,20 @@ export default function KingsReview() {
 
     loadCards();
   }, [adminHeaders, includeUnstaged, isAdmin, session, stage]);
+
+  useEffect(() => {
+    if (!router.isReady) {
+      return;
+    }
+    const requestedStage = typeof router.query.stage === "string" ? router.query.stage : null;
+    if (requestedStage && STAGES.some((entry) => entry.id === requestedStage)) {
+      setStage(requestedStage);
+    }
+    const requestedCardId = typeof router.query.cardId === "string" ? router.query.cardId : null;
+    if (requestedCardId) {
+      setActiveCardId(requestedCardId);
+    }
+  }, [router.isReady, router.query.cardId, router.query.stage]);
 
   useEffect(() => {
     if (!activeCardId || !session || !isAdmin) {
@@ -508,6 +523,12 @@ export default function KingsReview() {
               </button>
             )}
             <Link
+              href="/admin/uploads"
+              className="rounded-full border border-gold-400/40 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-gold-200 transition hover:border-gold-300 hover:text-gold-100"
+            >
+              Add Cards
+            </Link>
+            <Link
               href="/admin"
               className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
             >
@@ -522,32 +543,6 @@ export default function KingsReview() {
           </div>
         )}
 
-        {stage === "ADD_ITEMS" ? (
-          <section className="flex flex-1 items-center justify-center rounded-3xl border border-white/10 bg-night-900/70 p-10 text-center">
-            <div className="max-w-xl space-y-4">
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">KingsReview · Add Cards/Items</p>
-              <h2 className="font-heading text-3xl uppercase tracking-[0.2em] text-white">Upload New Batches</h2>
-              <p className="text-sm text-slate-400">
-                This stage is the intake doorway for KingsReview. Use the existing upload flow while we rework v2
-                intake and batch tooling.
-              </p>
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                <Link
-                  href="/admin/uploads"
-                  className="inline-flex items-center justify-center rounded-full border border-gold-400/60 bg-gold-500/20 px-6 py-3 text-xs uppercase tracking-[0.3em] text-gold-200"
-                >
-                  Open Uploads
-                </Link>
-                <Link
-                  href="/admin/batches"
-                  className="inline-flex items-center justify-center rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.3em] text-slate-300"
-                >
-                  View Batches
-                </Link>
-              </div>
-            </div>
-          </section>
-        ) : (
         <div className="grid flex-1 min-h-0 gap-6 lg:grid-cols-[1.1fr_1.4fr_1.1fr]">
           <section className="flex h-full min-h-0 flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
             <div className="flex items-center justify-between">
@@ -883,7 +878,7 @@ export default function KingsReview() {
             )}
           </section>
         </div>
-        )}
+        )
       </div>
     );
   };
