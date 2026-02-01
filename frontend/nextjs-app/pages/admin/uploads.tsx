@@ -163,6 +163,7 @@ export default function AdminUploads() {
   const trackRef = useRef<MediaStreamTrack | null>(null);
 
   const [cameraReady, setCameraReady] = useState(false);
+  const [captureLocked, setCaptureLocked] = useState(false);
   const [supportsZoom, setSupportsZoom] = useState(false);
   const [zoomBounds, setZoomBounds] = useState({ min: 1, max: 1, step: 0.1 });
   const [zoom, setZoom] = useState(1);
@@ -835,30 +836,40 @@ export default function AdminUploads() {
           setIntakeBatchId(presign.batchId);
           setIntakeFrontPreview(URL.createObjectURL(blob));
           setIntakeStep("back");
+          setIntakeCaptureTarget("back");
         } else if (target === "back") {
           const presign = await uploadCardPhoto(file, "BACK");
           setIntakeBackPhotoId(presign.photoId);
           setIntakeBackPreview(URL.createObjectURL(blob));
           setIntakeStep("tilt");
+          setIntakeCaptureTarget("tilt");
         } else {
           const presign = await uploadCardPhoto(file, "TILT");
           setIntakeTiltPhotoId(presign.photoId);
           setIntakeTiltPreview(URL.createObjectURL(blob));
           setIntakeStep("required");
+          setIntakeCaptureTarget(null);
+          closeCamera();
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to capture photo.";
         setIntakeError(message);
       } finally {
         setIntakeBusy(false);
-        setIntakeCaptureTarget(null);
-        closeCamera();
+        if (target === "front" || target === "back") {
+          setIntakeCaptureTarget((prev) => prev ?? null);
+        }
       }
     },
     [closeCamera, uploadCardAsset, uploadCardPhoto]
   );
 
   const handleCapture = useCallback(async () => {
+    if (captureLocked) {
+      return;
+    }
+    setCaptureLocked(true);
+    setTimeout(() => setCaptureLocked(false), 250);
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) {
@@ -885,6 +896,9 @@ export default function AdminUploads() {
       setCameraError("Failed to capture image.");
       return;
     }
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+      navigator.vibrate(30);
+    }
     if (intakeCaptureTarget) {
       void confirmIntakeCapture(intakeCaptureTarget, blob);
       return;
@@ -894,7 +908,7 @@ export default function AdminUploads() {
     }
     setCapturedBlob(blob);
     setCapturePreviewUrl(URL.createObjectURL(blob));
-  }, [capturePreviewUrl, confirmIntakeCapture, intakeCaptureTarget]);
+  }, [captureLocked, capturePreviewUrl, confirmIntakeCapture, intakeCaptureTarget]);
 
   const handleConfirmCapture = useCallback(() => {
     if (!capturedBlob) {
@@ -2020,6 +2034,33 @@ export default function AdminUploads() {
             )}
           </div>
           <div className="relative flex items-center justify-center gap-10 bg-gradient-to-t from-black via-black/70 to-transparent px-6 pb-10 pt-8">
+            <div className="mr-auto flex items-center gap-3">
+              {[
+                { key: "front", label: "Front", preview: intakeFrontPreview, done: Boolean(intakeFrontPreview) },
+                { key: "back", label: "Back", preview: intakeBackPreview, done: Boolean(intakeBackPreview) },
+                { key: "tilt", label: "Tilt", preview: intakeTiltPreview, done: Boolean(intakeTiltPreview) },
+              ].map((entry) => (
+                <div
+                  key={entry.key}
+                  className={`relative h-12 w-12 overflow-hidden rounded-xl border text-[9px] uppercase tracking-[0.2em] ${
+                    entry.done ? "border-emerald-400/70" : "border-white/20"
+                  }`}
+                >
+                  {entry.preview ? (
+                    <img src={entry.preview} alt={`${entry.label} preview`} className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-black/40 text-slate-400">
+                      {entry.label}
+                    </div>
+                  )}
+                  {entry.done && (
+                    <span className="absolute right-1 top-1 rounded-full bg-emerald-400 px-1 py-[1px] text-[8px] font-semibold text-night-900">
+                      ✓
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
             {capturedBlob ? (
               <>
                 <button
