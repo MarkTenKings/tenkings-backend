@@ -70,10 +70,6 @@ type ClassificationUpdatePayload = {
   normalized?: NormalizedUpdatePayload | null;
 };
 
-const DEFAULT_SELLER_EMAIL =
-  process.env.PACK_INVENTORY_SELLER_EMAIL ??
-  process.env.HOUSE_USER_EMAIL ??
-  "pack-seller@example.com";
 
 const sanitizeStringInput = (value: unknown): string | null => {
   if (value === undefined) {
@@ -217,9 +213,9 @@ const ensureInventoryReadyArtifacts = async (cardId: string, userId: string) => 
     throw new Error("Card not found");
   }
 
-  const seller = await prisma.user.findUnique({ where: { email: DEFAULT_SELLER_EMAIL } });
-  if (!seller) {
-    throw new Error(`Seller account with email ${DEFAULT_SELLER_EMAIL} not found`);
+  const owner = await prisma.user.findUnique({ where: { id: userId } });
+  if (!owner) {
+    throw new Error("Owner account not found");
   }
 
   let item = await prisma.item.findFirst({ where: { number: card.id } });
@@ -236,7 +232,7 @@ const ensureInventoryReadyArtifacts = async (cardId: string, userId: string) => 
         language: null,
         foil: false,
         estimatedValue: card.valuationMinor ?? null,
-        ownerId: seller.id,
+        ownerId: owner.id,
         imageUrl: card.imageUrl,
         thumbnailUrl: card.thumbnailUrl ?? null,
         detailsJson,
@@ -246,7 +242,7 @@ const ensureInventoryReadyArtifacts = async (cardId: string, userId: string) => 
     await prisma.itemOwnership.create({
       data: {
         itemId: item.id,
-        ownerId: seller.id,
+        ownerId: owner.id,
         note: `Minted from card asset ${card.id} (Inventory Ready)`,
       },
     });
