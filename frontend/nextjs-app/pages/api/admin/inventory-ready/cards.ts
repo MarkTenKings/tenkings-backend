@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma } from "@tenkings/database";
+import { prisma, Prisma } from "@tenkings/database";
 import { getNormalizedClassification } from "@tenkings/shared";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
@@ -65,10 +65,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       searchFilter.length > 0
         ? {
             OR: [
-              { customTitle: { contains: searchFilter, mode: "insensitive" } },
-              { resolvedPlayerName: { contains: searchFilter, mode: "insensitive" } },
-              { resolvedTeamName: { contains: searchFilter, mode: "insensitive" } },
-              { fileName: { contains: searchFilter, mode: "insensitive" } },
+              { customTitle: { contains: searchFilter, mode: Prisma.QueryMode.insensitive } },
+              { resolvedPlayerName: { contains: searchFilter, mode: Prisma.QueryMode.insensitive } },
+              { resolvedTeamName: { contains: searchFilter, mode: Prisma.QueryMode.insensitive } },
+              { fileName: { contains: searchFilter, mode: Prisma.QueryMode.insensitive } },
             ],
           }
         : {};
