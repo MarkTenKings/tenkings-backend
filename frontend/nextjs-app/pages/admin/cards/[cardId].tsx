@@ -1,7 +1,7 @@
 import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   buildEbaySoldUrlFromText,
   type CardAttributes,
@@ -75,6 +75,13 @@ type CardDetail = {
     exactVisualizationUrl: string | null;
   } | null;
   classificationSources: Record<string, unknown> | null;
+  label: {
+    id: string;
+    pairId: string;
+    status: string;
+    card: { id: string; code: string; serial: string | null; payloadUrl: string | null };
+    pack: { id: string; code: string; serial: string | null; payloadUrl: string | null };
+  } | null;
 };
 
 type CardFormState = {
@@ -314,6 +321,8 @@ export default function AdminCardDetail() {
   const [fetching, setFetching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [regeneratingComps, setRegeneratingComps] = useState(false);
+  const [printing, setPrinting] = useState(false);
+  const [printStatus, setPrintStatus] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attributeForm, setAttributeForm] = useState<AttributeFormState | null>(null);
@@ -775,6 +784,53 @@ export default function AdminCardDetail() {
     }
   };
 
+  const registerDownload = useCallback((pdfBase64: string, filename: string) => {
+    const binary = typeof window !== "undefined" ? atob(pdfBase64) : "";
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+    if (typeof window !== "undefined") {
+      const tempLink = document.createElement("a");
+      tempLink.href = url;
+      tempLink.download = filename;
+      tempLink.rel = "noopener";
+      document.body.appendChild(tempLink);
+      tempLink.click();
+      document.body.removeChild(tempLink);
+    }
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const handlePrintLabels = useCallback(async () => {
+    if (!card?.label?.id || !session?.token || !isAdmin) {
+      return;
+    }
+
+    setPrinting(true);
+    setPrintStatus(null);
+    try {
+      const res = await fetch("/api/admin/packing/labels/print", {
+        method: "POST",
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ labelIds: [card.label.id], style: "generic" }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to generate label sheet");
+      }
+      const payload = await res.json();
+      registerDownload(payload.pdf, payload.filename);
+      setPrintStatus("Label ready. Downloading now.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to print label";
+      setPrintStatus(message);
+    } finally {
+      setPrinting(false);
+    }
+  }, [card?.label?.id, isAdmin, registerDownload, session?.token]);
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     if (!form || !card || !session?.token) {
@@ -1055,16 +1111,6 @@ export default function AdminCardDetail() {
                 />
               </label>
 
-              <label className="flex flex-col gap-2 text-xs text-slate-300">
-                <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">OCR Text</span>
-                <textarea
-                  value={form.ocrText}
-                  onChange={handleChange("ocrText")}
-                  rows={4}
-                  className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                />
-              </label>
-
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="flex flex-col gap-2 text-xs text-slate-300">
                   <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Appraised Value</span>
@@ -1085,86 +1131,101 @@ export default function AdminCardDetail() {
                 </label>
               </div>
 
-              <label className="flex flex-col gap-2 text-xs text-slate-300">
-                <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Valuation Source</span>
-                <input
-                  value={form.valuationSource}
-                  onChange={handleChange("valuationSource")}
-                  placeholder="e.g. Manual review"
-                  className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                />
-              </label>
+              <details className="rounded-3xl border border-white/10 bg-night-900/60 p-4">
+                <summary className="cursor-pointer text-[11px] uppercase tracking-[0.3em] text-slate-300">
+                  Advanced / Legacy Fields
+                </summary>
+                <div className="mt-4 flex flex-col gap-4">
+                  <label className="flex flex-col gap-2 text-xs text-slate-300">
+                    <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">OCR Text</span>
+                    <textarea
+                      value={form.ocrText}
+                      onChange={handleChange("ocrText")}
+                      rows={4}
+                      className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                    />
+                  </label>
 
-              <label className="flex flex-col gap-2 text-xs text-slate-300">
-                <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Marketplace URL</span>
-                <input
-                  value={form.marketplaceUrl}
-                  onChange={handleChange("marketplaceUrl")}
-                  placeholder="Link to comp or marketplace listing"
-                  className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                />
-              </label>
+                  <label className="flex flex-col gap-2 text-xs text-slate-300">
+                    <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Valuation Source</span>
+                    <input
+                      value={form.valuationSource}
+                      onChange={handleChange("valuationSource")}
+                      placeholder="e.g. Manual review"
+                      className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                    />
+                  </label>
 
-              <div className="flex flex-col gap-2 text-xs text-slate-300">
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">eBay Sold URL</span>
-                  <button
-                    type="button"
-                    onClick={handleGenerateEbayUrl}
-                    className="rounded-full border border-sky-400/40 px-4 py-1 text-[11px] uppercase tracking-[0.28em] text-sky-300 transition hover:border-sky-400 hover:text-sky-200"
-                  >
-                    Generate from OCR
-                  </button>
-                </div>
-                <input
-                  value={form.ebaySoldUrl}
-                  onChange={handleChange("ebaySoldUrl")}
-                  placeholder="https://www.ebay.com/sch/..."
-                  className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                />
-              </div>
+                  <label className="flex flex-col gap-2 text-xs text-slate-300">
+                    <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Marketplace URL</span>
+                    <input
+                      value={form.marketplaceUrl}
+                      onChange={handleChange("marketplaceUrl")}
+                      placeholder="Link to comp or marketplace listing"
+                      className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                    />
+                  </label>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="flex flex-col gap-2 text-xs text-slate-300">
-                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Variant URL</span>
-                  <input
-                    value={form.ebaySoldUrlVariant}
-                    onChange={handleChange("ebaySoldUrlVariant")}
-                    placeholder="Variant comps search"
-                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                  />
-                </label>
-                <label className="flex flex-col gap-2 text-xs text-slate-300">
-                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">High Grade URL</span>
-                  <input
-                    value={form.ebaySoldUrlHighGrade}
-                    onChange={handleChange("ebaySoldUrlHighGrade")}
-                    placeholder="High grade comps"
-                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                  />
-                </label>
-              </div>
+                  <div className="flex flex-col gap-2 text-xs text-slate-300">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">eBay Sold URL</span>
+                      <button
+                        type="button"
+                        onClick={handleGenerateEbayUrl}
+                        className="rounded-full border border-sky-400/40 px-4 py-1 text-[11px] uppercase tracking-[0.28em] text-sky-300 transition hover:border-sky-400 hover:text-sky-200"
+                      >
+                        Generate from OCR
+                      </button>
+                    </div>
+                    <input
+                      value={form.ebaySoldUrl}
+                      onChange={handleChange("ebaySoldUrl")}
+                      placeholder="https://www.ebay.com/sch/..."
+                      className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                    />
+                  </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <label className="flex flex-col gap-2 text-xs text-slate-300">
-                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Player Comp URL</span>
-                  <input
-                    value={form.ebaySoldUrlPlayerComp}
-                    onChange={handleChange("ebaySoldUrlPlayerComp")}
-                    placeholder="Player comp search"
-                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                  />
-                </label>
-                <label className="flex flex-col gap-2 text-xs text-slate-300">
-                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">AI Grade URL</span>
-                  <input
-                    value={form.ebaySoldUrlAiGrade}
-                    onChange={handleChange("ebaySoldUrlAiGrade")}
-                    placeholder="AI grade comps"
-                    className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                  />
-                </label>
-              </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="flex flex-col gap-2 text-xs text-slate-300">
+                      <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Variant URL</span>
+                      <input
+                        value={form.ebaySoldUrlVariant}
+                        onChange={handleChange("ebaySoldUrlVariant")}
+                        placeholder="Variant comps search"
+                        className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-2 text-xs text-slate-300">
+                      <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">High Grade URL</span>
+                      <input
+                        value={form.ebaySoldUrlHighGrade}
+                        onChange={handleChange("ebaySoldUrlHighGrade")}
+                        placeholder="High grade comps"
+                        className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="flex flex-col gap-2 text-xs text-slate-300">
+                      <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Player Comp URL</span>
+                      <input
+                        value={form.ebaySoldUrlPlayerComp}
+                        onChange={handleChange("ebaySoldUrlPlayerComp")}
+                        placeholder="Player comp search"
+                        className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-2 text-xs text-slate-300">
+                      <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">AI Grade URL</span>
+                      <input
+                        value={form.ebaySoldUrlAiGrade}
+                        onChange={handleChange("ebaySoldUrlAiGrade")}
+                        placeholder="AI grade comps"
+                        className="rounded-2xl border border-white/10 bg-night-800 px-4 py-3 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                      />
+                    </label>
+                  </div>
 
               {attributeForm && (
                 <div className="rounded-3xl border border-white/10 bg-night-900/60 p-4">
@@ -1806,6 +1867,9 @@ export default function AdminCardDetail() {
                 </p>
               )}
 
+                </div>
+              </details>
+
               <div className="flex justify-end gap-3 pt-2">
                 <button
                   type="submit"
@@ -1846,6 +1910,32 @@ export default function AdminCardDetail() {
                   </p>
                 )}
 
+                {card.label && (
+                  <div className="mt-4 rounded-2xl border border-white/10 bg-night-900/60 p-4">
+                    <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">Label Pair</p>
+                    <p className="mt-2 text-xs text-slate-200">Pair {card.label.pairId}</p>
+                    <div className="mt-2 grid gap-2 text-[11px] text-slate-300">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">Card QR</p>
+                        <p>{card.label.card.serial ?? card.label.card.code}</p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">Pack QR</p>
+                        <p>{card.label.pack.serial ?? card.label.pack.code}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handlePrintLabels}
+                      disabled={printing}
+                      className="mt-3 w-full rounded-full border border-gold-500/60 bg-gold-500 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {printing ? "Printing…" : "Print Labels"}
+                    </button>
+                    {printStatus && <p className="mt-2 text-[10px] uppercase tracking-[0.26em] text-slate-400">{printStatus}</p>}
+                  </div>
+                )}
+
               {comparables.length > 0 && (
                 <div className="mt-4 rounded-2xl border border-white/5 bg-night-900/60 p-4">
                   <p className="text-[11px] uppercase tracking-[0.3em] text-sky-300">Quick eBay Links</p>
@@ -1866,141 +1956,148 @@ export default function AdminCardDetail() {
               )}
             </div>
 
-            {card.aiGrade && (
-              <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-                <p className="text-[11px] uppercase tracking-[0.3em] text-indigo-300">AI Grading Estimate</p>
-                <div className="mt-4 flex flex-col gap-2 text-sm text-slate-200">
-                  <p className="text-lg font-semibold uppercase tracking-[0.25em] text-white">
-                    {card.aiGrade.final !== null ? `Grade ${card.aiGrade.final.toFixed(1)}` : "Pending"}
-                  </p>
-                  {card.aiGrade.psaEquivalent !== null && (
-                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
-                      PSA Estimate · {card.aiGrade.psaEquivalent}
-                    </p>
-                  )}
-                  {card.aiGrade.rangeLow !== null && card.aiGrade.rangeHigh !== null && (
-                    <p className="text-xs text-slate-400">
-                      Likely range: PSA {card.aiGrade.rangeLow} – PSA {card.aiGrade.rangeHigh}
-                    </p>
-                  )}
-                  {card.aiGrade.label && (
-                    <p className="text-xs uppercase tracking-[0.28em] text-emerald-300">Condition {card.aiGrade.label}</p>
-                  )}
-                  {card.aiGrade.generatedAt && (
-                    <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                      Generated {new Date(card.aiGrade.generatedAt).toLocaleString()}
-                    </p>
-                  )}
-                </div>
-                {(card.aiGrade.visualizationUrl || card.aiGrade.exactVisualizationUrl) && (
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    {card.aiGrade.visualizationUrl && (
-                      <a
-                        href={card.aiGrade.visualizationUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center rounded-full border border-indigo-400/40 px-4 py-1 text-[11px] uppercase tracking-[0.28em] text-indigo-200 transition hover:border-indigo-300 hover:text-indigo-100"
-                      >
-                        View overlays
-                      </a>
-                    )}
-                    {card.aiGrade.exactVisualizationUrl && (
-                      <a
-                        href={card.aiGrade.exactVisualizationUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center justify-center rounded-full border border-indigo-400/40 px-4 py-1 text-[11px] uppercase tracking-[0.28em] text-indigo-200 transition hover:border-indigo-300 hover:text-indigo-100"
-                      >
-                        Centering view
-                      </a>
+            <details className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+              <summary className="cursor-pointer text-[11px] uppercase tracking-[0.3em] text-slate-300">
+                Legacy Insights
+              </summary>
+              <div className="mt-4 flex flex-col gap-4">
+                {card.aiGrade && (
+                  <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+                    <p className="text-[11px] uppercase tracking-[0.3em] text-indigo-300">AI Grading Estimate</p>
+                    <div className="mt-4 flex flex-col gap-2 text-sm text-slate-200">
+                      <p className="text-lg font-semibold uppercase tracking-[0.25em] text-white">
+                        {card.aiGrade.final !== null ? `Grade ${card.aiGrade.final.toFixed(1)}` : "Pending"}
+                      </p>
+                      {card.aiGrade.psaEquivalent !== null && (
+                        <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+                          PSA Estimate · {card.aiGrade.psaEquivalent}
+                        </p>
+                      )}
+                      {card.aiGrade.rangeLow !== null && card.aiGrade.rangeHigh !== null && (
+                        <p className="text-xs text-slate-400">
+                          Likely range: PSA {card.aiGrade.rangeLow} – PSA {card.aiGrade.rangeHigh}
+                        </p>
+                      )}
+                      {card.aiGrade.label && (
+                        <p className="text-xs uppercase tracking-[0.28em] text-emerald-300">Condition {card.aiGrade.label}</p>
+                      )}
+                      {card.aiGrade.generatedAt && (
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                          Generated {new Date(card.aiGrade.generatedAt).toLocaleString()}
+                        </p>
+                      )}
+                    </div>
+                    {(card.aiGrade.visualizationUrl || card.aiGrade.exactVisualizationUrl) && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {card.aiGrade.visualizationUrl && (
+                          <a
+                            href={card.aiGrade.visualizationUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center justify-center rounded-full border border-indigo-400/40 px-4 py-1 text-[11px] uppercase tracking-[0.28em] text-indigo-200 transition hover:border-indigo-300 hover:text-indigo-100"
+                          >
+                            View overlays
+                          </a>
+                        )}
+                        {card.aiGrade.exactVisualizationUrl && (
+                          <a
+                            href={card.aiGrade.exactVisualizationUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center justify-center rounded-full border border-indigo-400/40 px-4 py-1 text-[11px] uppercase tracking-[0.28em] text-indigo-200 transition hover:border-indigo-300 hover:text-indigo-100"
+                          >
+                            Centering view
+                          </a>
+                        )}
+                      </div>
                     )}
                   </div>
                 )}
-              </div>
-            )}
 
-            {sportsDbSummary && (
-                <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-                  <p className="text-[11px] uppercase tracking-[0.3em] text-emerald-300">Ximilar Match</p>
-                  <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-                    <div className="flex items-center gap-4">
-                      {sportsDbSummary.teamLogoUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          src={sportsDbSummary.teamLogoUrl}
-                          alt={sportsDbSummary.teamName ?? "Team"}
-                          className="h-14 w-14 rounded-full border border-white/10 bg-night-800 object-contain p-2"
-                        />
-                      ) : (
-                        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                          No Logo
-                        </div>
-                      )}
-                      <div>
-                        <p className="text-sm uppercase tracking-[0.25em] text-slate-200">
-                          {sportsDbSummary.playerName ?? "No player matched"}
-                        </p>
-                        <p className="text-xs text-slate-400">
-                          {sportsDbSummary.teamName ?? "Unknown team"}
-                        </p>
-                        <p className="text-[11px] uppercase tracking-[0.3em] text-emerald-300">
-                          Confidence {(sportsDbSummary.matchConfidence * 100).toFixed(0)}%
-                        </p>
-                        {(sportsDbSummary.sport || sportsDbSummary.league) && (
-                          <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                            {[sportsDbSummary.sport, sportsDbSummary.league].filter(Boolean).join(" · ")}
-                          </p>
-                        )}
-                        {sportsDbSummary.seasonLabel && (
-                          <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                            Latest season {sportsDbSummary.seasonLabel}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                    {sportsDbSummary.statEntries.length > 0 && (
-                      <dl className="grid w-full grid-cols-2 gap-3 md:w-auto md:grid-cols-3">
-                        {sportsDbSummary.statEntries.map((entry) => (
-                          <div key={entry.label} className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-center">
-                            <dt className="text-[10px] uppercase tracking-[0.25em] text-emerald-200">{entry.label}</dt>
-                            <dd className="text-sm font-semibold text-emerald-100">{entry.value}</dd>
+                {sportsDbSummary && (
+                  <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+                    <p className="text-[11px] uppercase tracking-[0.3em] text-emerald-300">Ximilar Match</p>
+                    <div className="mt-4 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                      <div className="flex items-center gap-4">
+                        {sportsDbSummary.teamLogoUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={sportsDbSummary.teamLogoUrl}
+                            alt={sportsDbSummary.teamName ?? "Team"}
+                            className="h-14 w-14 rounded-full border border-white/10 bg-night-800 object-contain p-2"
+                          />
+                        ) : (
+                          <div className="flex h-14 w-14 items-center justify-center rounded-full border border-white/10 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                            No Logo
                           </div>
-                        ))}
-                      </dl>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {attributeEntries.length > 0 && (
-                <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-                  <p className="text-[11px] uppercase tracking-[0.3em] text-amber-300">Detected Attributes</p>
-                  <dl className="mt-3 grid grid-cols-1 gap-2 text-xs text-slate-200">
-                    {attributeEntries.map((entry) => (
-                      <div key={entry.label} className="flex justify-between gap-4">
-                        <dt className="uppercase tracking-[0.25em] text-slate-500">{entry.label}</dt>
-                        <dd className="text-right text-slate-200">{entry.value}</dd>
+                        )}
+                        <div>
+                          <p className="text-sm uppercase tracking-[0.25em] text-slate-200">
+                            {sportsDbSummary.playerName ?? "No player matched"}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {sportsDbSummary.teamName ?? "Unknown team"}
+                          </p>
+                          <p className="text-[11px] uppercase tracking-[0.3em] text-emerald-300">
+                            Confidence {(sportsDbSummary.matchConfidence * 100).toFixed(0)}%
+                          </p>
+                          {(sportsDbSummary.sport || sportsDbSummary.league) && (
+                            <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                              {[sportsDbSummary.sport, sportsDbSummary.league].filter(Boolean).join(" · ")}
+                            </p>
+                          )}
+                          {sportsDbSummary.seasonLabel && (
+                            <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                              Latest season {sportsDbSummary.seasonLabel}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    ))}
-                  </dl>
-                </div>
-              )}
+                      {sportsDbSummary.statEntries.length > 0 && (
+                        <dl className="grid w-full grid-cols-2 gap-3 md:w-auto md:grid-cols-3">
+                          {sportsDbSummary.statEntries.map((entry) => (
+                            <div key={entry.label} className="rounded-2xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-center">
+                              <dt className="text-[10px] uppercase tracking-[0.25em] text-emerald-200">{entry.label}</dt>
+                              <dd className="text-sm font-semibold text-emerald-100">{entry.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      )}
+                    </div>
+                  </div>
+                )}
 
-              {card.notes.length > 0 && (
-                <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
-                  <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Notes</p>
-                  <ul className="mt-3 flex flex-col gap-3 text-xs text-slate-200">
-                    {card.notes.map((note) => (
-                      <li key={note.id} className="rounded-2xl border border-white/5 bg-night-900/60 p-3">
-                        <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
-                          {note.authorName ?? note.authorId} · {new Date(note.createdAt).toLocaleString()}
-                        </p>
-                        <p className="mt-1 whitespace-pre-wrap text-slate-200">{note.body}</p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
+                {attributeEntries.length > 0 && (
+                  <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+                    <p className="text-[11px] uppercase tracking-[0.3em] text-amber-300">Detected Attributes</p>
+                    <dl className="mt-3 grid grid-cols-1 gap-2 text-xs text-slate-200">
+                      {attributeEntries.map((entry) => (
+                        <div key={entry.label} className="flex justify-between gap-4">
+                          <dt className="uppercase tracking-[0.25em] text-slate-500">{entry.label}</dt>
+                          <dd className="text-right text-slate-200">{entry.value}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </div>
+                )}
+
+                {card.notes.length > 0 && (
+                  <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
+                    <p className="text-[11px] uppercase tracking-[0.3em] text-slate-400">Notes</p>
+                    <ul className="mt-3 flex flex-col gap-3 text-xs text-slate-200">
+                      {card.notes.map((note) => (
+                        <li key={note.id} className="rounded-2xl border border-white/5 bg-night-900/60 p-3">
+                          <p className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+                            {note.authorName ?? note.authorId} · {new Date(note.createdAt).toLocaleString()}
+                          </p>
+                          <p className="mt-1 whitespace-pre-wrap text-slate-200">{note.body}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </details>
             </div>
           </div>
         )}

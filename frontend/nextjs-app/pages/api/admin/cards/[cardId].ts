@@ -525,6 +525,15 @@ interface CardResponse {
     exactVisualizationUrl: string | null;
   } | null;
   classificationSources: Record<string, unknown> | null;
+  label:
+    | {
+        id: string;
+        pairId: string;
+        status: string;
+        card: { id: string; code: string; serial: string | null; payloadUrl: string | null };
+        pack: { id: string; code: string; serial: string | null; payloadUrl: string | null };
+      }
+    | null;
 }
 
 
@@ -613,6 +622,24 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
       typeof gradingRecord?._exact_url_card === "string" ? gradingRecord._exact_url_card : null,
   };
 
+  const item = await prisma.item.findFirst({
+    where: { number: card.id },
+    select: {
+      id: true,
+      cardQrCodeId: true,
+      packLabels: {
+        take: 1,
+        orderBy: { createdAt: "desc" },
+        include: {
+          cardQrCode: { select: { id: true, code: true, serial: true, payloadUrl: true } },
+          packQrCode: { select: { id: true, code: true, serial: true, payloadUrl: true } },
+        },
+      },
+    },
+  });
+
+  const labelRecord = item?.packLabels?.[0] ?? null;
+
   return {
     id: card.id,
     batchId: card.batchId,
@@ -666,6 +693,25 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
         ? null
         : aiGrade,
     classificationSources: (card.classificationSourcesJson as Record<string, unknown> | null) ?? null,
+    label: labelRecord
+      ? {
+          id: labelRecord.id,
+          pairId: labelRecord.pairId,
+          status: labelRecord.status,
+          card: {
+            id: labelRecord.cardQrCode.id,
+            code: labelRecord.cardQrCode.code,
+            serial: labelRecord.cardQrCode.serial,
+            payloadUrl: labelRecord.cardQrCode.payloadUrl,
+          },
+          pack: {
+            id: labelRecord.packQrCode.id,
+            code: labelRecord.packQrCode.code,
+            serial: labelRecord.packQrCode.serial,
+            payloadUrl: labelRecord.packQrCode.payloadUrl,
+          },
+        }
+      : null,
   };
 }
 
