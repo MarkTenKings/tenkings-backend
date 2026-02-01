@@ -115,7 +115,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const categoryType = normalized?.categoryType ?? "unknown";
         const sportSubcategory = normalized?.sport?.sport ?? normalized?.sport?.subcategory ?? null;
         const tcgSubcategory = normalized?.tcg?.game ?? normalized?.tcg?.subcategory ?? null;
-        const comicsSubcategory = normalized?.comics?.series ?? normalized?.comics?.publisher ?? null;
+        const comicsSubcategory = normalized?.comics?.title ?? normalized?.comics?.storyArc ?? null;
         const subcategory =
           categoryType === "sport"
             ? sportSubcategory
