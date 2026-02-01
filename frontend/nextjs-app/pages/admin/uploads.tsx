@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
@@ -150,8 +150,15 @@ export default function AdminUploads() {
   const [intakeBackPreview, setIntakeBackPreview] = useState<string | null>(null);
   const [intakeTiltPreview, setIntakeTiltPreview] = useState<string | null>(null);
   const [intakeBusy, setIntakeBusy] = useState(false);
+  const [intakePhotoBusy, setIntakePhotoBusy] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
   const [intakeCaptureTarget, setIntakeCaptureTarget] = useState<null | "front" | "back" | "tilt">(null);
+  const [intakeTiltSkipped, setIntakeTiltSkipped] = useState(false);
+  const [pendingBackBlob, setPendingBackBlob] = useState<Blob | null>(null);
+  const [pendingTiltBlob, setPendingTiltBlob] = useState<Blob | null>(null);
+  const [flashActive, setFlashActive] = useState(false);
+  const [intakeSuggested, setIntakeSuggested] = useState<Record<string, string>>({});
+  const [intakeTouched, setIntakeTouched] = useState<Record<string, boolean>>({});
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -177,6 +184,7 @@ export default function AdminUploads() {
   const [devicesEnumerating, setDevicesEnumerating] = useState(false);
   const [cameraLoading, setCameraLoading] = useState(false);
   const [streamVersion, setStreamVersion] = useState(0);
+  const ocrSuggestRef = useRef(false);
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -651,6 +659,13 @@ export default function AdminUploads() {
     setIntakeTiltPreview(null);
     setIntakeError(null);
     setIntakeCaptureTarget(null);
+    setIntakeTiltSkipped(false);
+    setPendingBackBlob(null);
+    setPendingTiltBlob(null);
+    setIntakePhotoBusy(false);
+    setIntakeSuggested({});
+    setIntakeTouched({});
+    ocrSuggestRef.current = false;
   }, []);
 
   const openIntakeCapture = useCallback(
@@ -674,6 +689,29 @@ export default function AdminUploads() {
     const parts = [year, manufacturer, primary, productLine, cardNumber].filter((part) => part.length > 0);
     return parts.join(" ").replace(/\s+/g, " ").trim();
   }, [intakeOptional.cardNumber, intakeOptional.productLine, intakeRequired.category, intakeRequired.cardName, intakeRequired.manufacturer, intakeRequired.playerName, intakeRequired.year]);
+
+  const markTouched = useCallback((field: string) => {
+    setIntakeTouched((prev) => ({ ...prev, [field]: true }));
+  }, []);
+
+  const handleRequiredChange = useCallback(
+    (field: keyof typeof intakeRequired) => (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+      markTouched(field as string);
+      setIntakeRequired((prev) => ({ ...prev, [field]: event.target.value }));
+    },
+    [markTouched]
+  );
+
+  const suggestedClass = (field: string, value: string) => {
+    const suggestion = intakeSuggested[field];
+    if (!suggestion) {
+      return "";
+    }
+    if (intakeTouched[field]) {
+      return "";
+    }
+    return value.trim() === suggestion.trim() ? "border-amber-400/70 bg-amber-500/10" : "";
+  };
 
   const uploadCardAsset = useCallback(
     async (file: File) => {
@@ -819,10 +857,50 @@ export default function AdminUploads() {
     [intakeCardId, isRemoteApi, resolveApiUrl, session?.token]
   );
 
+  const uploadQueuedPhoto = useCallback(
+    async (blob: Blob, kind: "BACK" | "TILT") => {
+      const mime = blob.type || "image/jpeg";
+      const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const fileName = `intake-${kind.toLowerCase()}-${timestamp}.${extension}`;
+      const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
+      setIntakePhotoBusy(true);
+      try {
+        const presign = await uploadCardPhoto(file, kind);
+        if (kind === "BACK") {
+          setIntakeBackPhotoId(presign.photoId);
+        } else {
+          setIntakeTiltPhotoId(presign.photoId);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to upload photo.";
+        setIntakeError(message);
+      } finally {
+        setIntakePhotoBusy(false);
+      }
+    },
+    [uploadCardPhoto]
+  );
+
+  useEffect(() => {
+    if (!intakeCardId) {
+      return;
+    }
+    if (pendingBackBlob) {
+      const blob = pendingBackBlob;
+      setPendingBackBlob(null);
+      void uploadQueuedPhoto(blob, "BACK");
+    }
+    if (pendingTiltBlob) {
+      const blob = pendingTiltBlob;
+      setPendingTiltBlob(null);
+      void uploadQueuedPhoto(blob, "TILT");
+    }
+  }, [intakeCardId, pendingBackBlob, pendingTiltBlob, uploadQueuedPhoto]);
+
   const confirmIntakeCapture = useCallback(
     async (target: "front" | "back" | "tilt", blob: Blob) => {
       try {
-        setIntakeBusy(true);
         setIntakeError(null);
         const mime = blob.type || "image/jpeg";
         const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
@@ -831,37 +909,53 @@ export default function AdminUploads() {
         const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
 
         if (target === "front") {
-          const presign = await uploadCardAsset(file);
-          setIntakeCardId(presign.assetId);
-          setIntakeBatchId(presign.batchId);
+          setIntakePhotoBusy(true);
           setIntakeFrontPreview(URL.createObjectURL(blob));
           setIntakeStep("back");
           setIntakeCaptureTarget("back");
+          setIntakeTiltSkipped(false);
+          void (async () => {
+            try {
+              const presign = await uploadCardAsset(file);
+              setIntakeCardId(presign.assetId);
+              setIntakeBatchId(presign.batchId);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Failed to capture photo.";
+              setIntakeError(message);
+            } finally {
+              setIntakePhotoBusy(false);
+            }
+          })();
         } else if (target === "back") {
-          const presign = await uploadCardPhoto(file, "BACK");
-          setIntakeBackPhotoId(presign.photoId);
           setIntakeBackPreview(URL.createObjectURL(blob));
           setIntakeStep("tilt");
           setIntakeCaptureTarget("tilt");
+          if (intakeCardId) {
+            void uploadQueuedPhoto(blob, "BACK");
+          } else {
+            setPendingBackBlob(blob);
+          }
         } else {
-          const presign = await uploadCardPhoto(file, "TILT");
-          setIntakeTiltPhotoId(presign.photoId);
           setIntakeTiltPreview(URL.createObjectURL(blob));
           setIntakeStep("required");
           setIntakeCaptureTarget(null);
+          if (intakeCardId) {
+            void uploadQueuedPhoto(blob, "TILT");
+          } else {
+            setPendingTiltBlob(blob);
+          }
           closeCamera();
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to capture photo.";
         setIntakeError(message);
       } finally {
-        setIntakeBusy(false);
         if (target === "front" || target === "back") {
           setIntakeCaptureTarget((prev) => prev ?? null);
         }
       }
     },
-    [closeCamera, uploadCardAsset, uploadCardPhoto]
+    [closeCamera, intakeCardId, uploadCardAsset, uploadQueuedPhoto]
   );
 
   const handleCapture = useCallback(async () => {
@@ -899,6 +993,8 @@ export default function AdminUploads() {
     if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
       navigator.vibrate(30);
     }
+    setFlashActive(true);
+    setTimeout(() => setFlashActive(false), 120);
     if (intakeCaptureTarget) {
       void confirmIntakeCapture(intakeCaptureTarget, blob);
       return;
@@ -1065,6 +1161,61 @@ export default function AdminUploads() {
     }
     return null;
   }, [intakeBackPhotoId, intakeCardId, intakeRequired]);
+
+  const applySuggestions = useCallback(
+    (suggestions: { playerName?: string | null; year?: string | null; manufacturer?: string | null }) => {
+      setIntakeSuggested((prev) => ({
+        ...prev,
+        ...(suggestions.playerName ? { playerName: suggestions.playerName } : {}),
+        ...(suggestions.year ? { year: suggestions.year } : {}),
+        ...(suggestions.manufacturer ? { manufacturer: suggestions.manufacturer } : {}),
+      }));
+      setIntakeRequired((prev) => {
+        const next = { ...prev };
+        if (prev.category === "sport" && suggestions.playerName && !intakeTouched.playerName && !prev.playerName.trim()) {
+          next.playerName = suggestions.playerName;
+        }
+        if (suggestions.year && !intakeTouched.year && !prev.year.trim()) {
+          next.year = suggestions.year;
+        }
+        if (suggestions.manufacturer && !intakeTouched.manufacturer && !prev.manufacturer.trim()) {
+          next.manufacturer = suggestions.manufacturer;
+        }
+        return next;
+      });
+    },
+    [intakeTouched.manufacturer, intakeTouched.playerName, intakeTouched.year]
+  );
+
+  const fetchOcrSuggestions = useCallback(async () => {
+    if (!intakeCardId || !session?.token) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/cards/${intakeCardId}/ocr-suggest`, {
+        headers: buildAdminHeaders(session.token),
+      });
+      if (!res.ok) {
+        return;
+      }
+      const payload = await res.json();
+      const suggestions = payload?.suggestions ?? {};
+      applySuggestions(suggestions);
+    } catch {
+      // ignore suggestion failures
+    }
+  }, [applySuggestions, intakeCardId, session?.token]);
+
+  useEffect(() => {
+    if (intakeStep !== "required" || !intakeCardId) {
+      return;
+    }
+    if (ocrSuggestRef.current) {
+      return;
+    }
+    ocrSuggestRef.current = true;
+    void fetchOcrSuggestions();
+  }, [fetchOcrSuggestions, intakeCardId, intakeStep]);
 
   const handleIntakeRequiredContinue = useCallback(async () => {
     const error = validateRequiredIntake();
@@ -1531,7 +1682,12 @@ export default function AdminUploads() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setIntakeStep("required")}
+                    onClick={() => {
+                      setIntakeTiltSkipped(true);
+                      setIntakeCaptureTarget(null);
+                      setIntakeStep("required");
+                      closeCamera();
+                    }}
                     className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
                   >
                     Skip tilt
@@ -1556,9 +1712,10 @@ export default function AdminUploads() {
                   Category
                   <select
                     value={intakeRequired.category}
-                    onChange={(event) =>
-                      setIntakeRequired((prev) => ({ ...prev, category: event.target.value as IntakeCategory }))
-                    }
+                    onChange={(event) => {
+                      handleRequiredChange("category")(event);
+                      ocrSuggestRef.current = false;
+                    }}
                     className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
                   >
                     <option value="sport">Sports</option>
@@ -1570,14 +1727,20 @@ export default function AdminUploads() {
                     <input
                       placeholder="Player name"
                       value={intakeRequired.playerName}
-                      onChange={(event) => setIntakeRequired((prev) => ({ ...prev, playerName: event.target.value }))}
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                      onChange={handleRequiredChange("playerName")}
+                      className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                        "playerName",
+                        intakeRequired.playerName
+                      )}`}
                     />
                     <input
                       placeholder="Sport (NFL, NBA, MLB, etc.)"
                       value={intakeRequired.sport}
-                      onChange={(event) => setIntakeRequired((prev) => ({ ...prev, sport: event.target.value }))}
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                      onChange={handleRequiredChange("sport")}
+                      className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                        "sport",
+                        intakeRequired.sport
+                      )}`}
                     />
                   </>
                 ) : (
@@ -1585,29 +1748,51 @@ export default function AdminUploads() {
                     <input
                       placeholder="Card name"
                       value={intakeRequired.cardName}
-                      onChange={(event) => setIntakeRequired((prev) => ({ ...prev, cardName: event.target.value }))}
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                      onChange={handleRequiredChange("cardName")}
+                      className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                        "cardName",
+                        intakeRequired.cardName
+                      )}`}
                     />
                     <input
                       placeholder="Game (Pokémon, MTG, etc.)"
                       value={intakeRequired.game}
-                      onChange={(event) => setIntakeRequired((prev) => ({ ...prev, game: event.target.value }))}
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                      onChange={handleRequiredChange("game")}
+                      className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                        "game",
+                        intakeRequired.game
+                      )}`}
                     />
                   </>
                 )}
                 <input
                   placeholder="Manufacturer (Topps, Panini, etc.)"
                   value={intakeRequired.manufacturer}
-                  onChange={(event) => setIntakeRequired((prev) => ({ ...prev, manufacturer: event.target.value }))}
-                  className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  onChange={handleRequiredChange("manufacturer")}
+                  className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                    "manufacturer",
+                    intakeRequired.manufacturer
+                  )}`}
                 />
                 <input
                   placeholder="Year (e.g. 2017)"
                   value={intakeRequired.year}
-                  onChange={(event) => setIntakeRequired((prev) => ({ ...prev, year: event.target.value }))}
-                  className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  onChange={handleRequiredChange("year")}
+                  className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                    "year",
+                    intakeRequired.year
+                  )}`}
                 />
+                <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-amber-200/80">
+                  <button
+                    type="button"
+                    onClick={() => void fetchOcrSuggestions()}
+                    className="rounded-full border border-amber-300/40 px-4 py-2 text-[10px] uppercase tracking-[0.28em] text-amber-200 transition hover:border-amber-200 hover:text-amber-100"
+                  >
+                    Auto-fill OCR
+                  </button>
+                  <span>Suggested fields highlight in amber</span>
+                </div>
                 <button
                   type="button"
                   onClick={() => void handleIntakeRequiredContinue()}
@@ -1984,6 +2169,9 @@ export default function AdminUploads() {
                 )}
               </>
             )}
+            {flashActive && (
+              <div className="pointer-events-none absolute inset-0 bg-white/50" />
+            )}
             <div className="pointer-events-auto absolute left-4 top-6 flex flex-col gap-2">
               <button
                 type="button"
@@ -2038,7 +2226,9 @@ export default function AdminUploads() {
               {[
                 { key: "front", label: "Front", preview: intakeFrontPreview, done: Boolean(intakeFrontPreview) },
                 { key: "back", label: "Back", preview: intakeBackPreview, done: Boolean(intakeBackPreview) },
-                { key: "tilt", label: "Tilt", preview: intakeTiltPreview, done: Boolean(intakeTiltPreview) },
+                ...(intakeTiltSkipped && !intakeTiltPreview
+                  ? []
+                  : [{ key: "tilt", label: "Tilt", preview: intakeTiltPreview, done: Boolean(intakeTiltPreview) }]),
               ].map((entry) => (
                 <div
                   key={entry.key}
