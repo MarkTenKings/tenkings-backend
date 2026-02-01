@@ -117,6 +117,18 @@ export default function AdminHome() {
               Open KingsReview
             </Link>
           </div>
+          <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
+            <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Inventory Ready</h2>
+            <p className="mt-3 text-sm text-slate-400">
+              Filter the ready-for-sale pool, select cards in bulk, and assign batches to locations.
+            </p>
+            <Link
+              href="/admin/inventory-ready"
+              className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
+            >
+              Open Inventory
+            </Link>
+          </div>
           <div className="rounded-3xl border border-white/10 bg-night-900/70 p-6">
             <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Next Steps</h2>
             <p className="mt-3 text-sm text-slate-400">

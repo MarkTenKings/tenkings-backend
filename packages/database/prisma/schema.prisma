@@ -200,6 +200,7 @@ model User {
   reviewedCards   CardAsset[]     @relation("CardAssetHumanReviewer")
   createdEvidenceItems CardEvidenceItem[] @relation("CardEvidenceCreatedBy")
   createdPhotos        CardPhoto[]        @relation("CardPhotoCreatedBy")
+  inventoryBatchesCreated InventoryBatch[] @relation("InventoryBatchCreatedBy")
   sessions        Session[]
   qrCodesCreated  QrCode[]        @relation("QrCodeCreatedBy")
   qrCodesBound    QrCode[]        @relation("QrCodeBoundBy")
@@ -228,6 +229,7 @@ model Location {
   qrCodes      QrCode[]
   packLabels   PackLabel[]
   restocks     LocationRestock[]
+  inventoryBatches InventoryBatch[]
 }
 
 model LiveRip {
@@ -572,6 +574,8 @@ model CardAsset {
   aiGradeGeneratedAt      DateTime?
   reviewStage             CardReviewStage?
   reviewStageUpdatedAt    DateTime?
+  inventoryBatchId        String?
+  inventoryAssignedAt     DateTime?
 
   batch              CardBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
   assignedDefinition PackDefinition? @relation(fields: [assignedDefinitionId], references: [id], onDelete: SetNull)
@@ -580,10 +584,29 @@ model CardAsset {
   bytebotLiteJobs    BytebotLiteJob[]
   evidenceItems      CardEvidenceItem[]
   photos             CardPhoto[]
+  inventoryBatch     InventoryBatch? @relation(fields: [inventoryBatchId], references: [id], onDelete: SetNull)
   humanReviewer      User?           @relation("CardAssetHumanReviewer", fields: [humanReviewedById], references: [id])
   sportsDbPlayer     SportsDbPlayer? @relation(fields: [sportsDbPlayerId], references: [id], onDelete: SetNull)
 
   @@index([sportsDbPlayerId])
+  @@index([inventoryBatchId])
+}
+
+model InventoryBatch {
+  id          String   @id @default(uuid())
+  locationId  String   @db.Uuid
+  label       String?
+  notes       String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  location  Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  createdBy User?     @relation("InventoryBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  cards      CardAsset[]
+
+  @@index([locationId])
+  @@index([createdById])
 }
 
 model CardEvidenceItem {
