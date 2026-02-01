@@ -515,74 +515,6 @@ export default function AdminCardDetail() {
     };
   }, [router.isReady, router.query.cardId, session?.token, isAdmin]);
 
-  const renderGate = () => {
-    if (loading) {
-      return (
-        <div className="flex flex-1 flex-col items-center justify-center gap-4">
-          <p className="text-sm uppercase tracking-[0.35em] text-slate-400">Checking access…</p>
-        </div>
-      );
-    }
-
-    if (!session) {
-      return (
-        <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center">
-          <p className="text-sm uppercase tracking-[0.32em] text-slate-400">Admin Access Only</p>
-          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Sign in to continue</h1>
-          <p className="max-w-md text-sm text-slate-400">
-            Use your Ten Kings phone number. Only approved operators can enter the processing console.
-          </p>
-          <button
-            type="button"
-            onClick={() => ensureSession().catch(() => undefined)}
-            className="rounded-full border border-gold-500/60 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.3em] text-night-900 shadow-glow transition hover:bg-gold-400"
-          >
-            Sign In
-          </button>
-          {missingConfig && (
-            <p className="mt-6 max-w-md text-xs text-rose-300/80">
-              Set <code className="font-mono">NEXT_PUBLIC_ADMIN_USER_IDS</code> or <code className="font-mono">NEXT_PUBLIC_ADMIN_PHONES</code> to authorize operators.
-            </p>
-          )}
-        </div>
-      );
-    }
-
-    if (!isAdmin) {
-      return (
-        <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center">
-          <p className="text-sm uppercase tracking-[0.32em] text-rose-300">Access Denied</p>
-          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">You do not have admin rights</h1>
-          <p className="max-w-md text-sm text-slate-400">
-            This console is restricted to Ten Kings operators. Contact an administrator if you need elevated permissions.
-          </p>
-          <button
-            type="button"
-            onClick={logout}
-            className="rounded-full border border-white/20 px-8 py-3 text-xs uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
-          >
-            Sign Out
-          </button>
-        </div>
-      );
-    }
-
-    return null;
-  };
-
-  const gate = renderGate();
-  if (gate) {
-    return (
-      <AppShell>
-        <Head>
-          <title>Ten Kings · Card Detail</title>
-          <meta name="robots" content="noindex" />
-        </Head>
-        {gate}
-      </AppShell>
-    );
-  }
-
   const handleChange = (field: keyof CardFormState) => (event: FormEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     if (!form) return;
     setForm({ ...form, [field]: event.currentTarget.value });
@@ -782,6 +714,61 @@ export default function AdminCardDetail() {
     } finally {
       setRegeneratingComps(false);
     }
+  };
+
+  const renderGate = () => {
+    if (loading) {
+      return (
+        <div className="flex flex-1 flex-col items-center justify-center gap-4">
+          <p className="text-sm uppercase tracking-[0.35em] text-slate-400">Checking access…</p>
+        </div>
+      );
+    }
+
+    if (!session) {
+      return (
+        <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center">
+          <p className="text-sm uppercase tracking-[0.32em] text-slate-400">Admin Access Only</p>
+          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Sign in to continue</h1>
+          <p className="max-w-md text-sm text-slate-400">
+            Use your Ten Kings phone number. Only approved operators can enter the processing console.
+          </p>
+          <button
+            type="button"
+            onClick={() => ensureSession().catch(() => undefined)}
+            className="rounded-full border border-gold-500/60 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.3em] text-night-900 shadow-glow transition hover:bg-gold-400"
+          >
+            Sign In
+          </button>
+          {missingConfig && (
+            <p className="mt-6 max-w-md text-xs text-rose-300/80">
+              Set <code className="font-mono">NEXT_PUBLIC_ADMIN_USER_IDS</code> or <code className="font-mono">NEXT_PUBLIC_ADMIN_PHONES</code> to authorize operators.
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    if (!isAdmin) {
+      return (
+        <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center">
+          <p className="text-sm uppercase tracking-[0.32em] text-rose-300">Access Denied</p>
+          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">You do not have admin rights</h1>
+          <p className="max-w-md text-sm text-slate-400">
+            This console is restricted to Ten Kings operators. Contact an administrator if you need elevated permissions.
+          </p>
+          <button
+            type="button"
+            onClick={logout}
+            className="rounded-full border border-white/20 px-8 py-3 text-xs uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
+          >
+            Sign Out
+          </button>
+        </div>
+      );
+    }
+
+    return null;
   };
 
   const registerDownload = useCallback((pdfBase64: string, filename: string) => {
@@ -1057,6 +1044,19 @@ export default function AdminCardDetail() {
       setSaving(false);
     }
   };
+
+  const gate = renderGate();
+  if (gate) {
+    return (
+      <AppShell>
+        <Head>
+          <title>Ten Kings · Card Detail</title>
+          <meta name="robots" content="noindex" />
+        </Head>
+        {gate}
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
