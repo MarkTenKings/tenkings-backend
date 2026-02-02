@@ -159,7 +159,8 @@ export default function AdminUploads() {
   const [flashActive, setFlashActive] = useState(false);
   const [intakeSuggested, setIntakeSuggested] = useState<Record<string, string>>({});
   const [intakeTouched, setIntakeTouched] = useState<Record<string, boolean>>({});
-  const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready">(null);
+  const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty">(null);
+  const [ocrAudit, setOcrAudit] = useState<Record<string, unknown> | null>(null);
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -668,6 +669,7 @@ export default function AdminUploads() {
     setIntakeSuggested({});
     setIntakeTouched({});
     setOcrStatus(null);
+    setOcrAudit(null);
     ocrSuggestRef.current = false;
     ocrRetryRef.current = 0;
   }, []);
@@ -1216,6 +1218,7 @@ export default function AdminUploads() {
         return;
       }
       const payload = await res.json();
+      setOcrAudit(payload?.audit ?? null);
       if (payload?.status === "pending") {
         setOcrStatus("pending");
         if (ocrRetryRef.current < 6) {
@@ -1229,7 +1232,7 @@ export default function AdminUploads() {
       }
       const suggestions = payload?.suggestions ?? {};
       applySuggestions(suggestions);
-      setOcrStatus("ready");
+      setOcrStatus(Object.keys(suggestions).length > 0 ? "ready" : "empty");
     } catch {
       setOcrStatus(null);
       // ignore suggestion failures
@@ -1826,7 +1829,11 @@ export default function AdminUploads() {
                       ? "OCR running…"
                       : ocrStatus === "pending"
                       ? "OCR pending (retrying)…"
-                      : "Suggested fields highlight in amber"}
+                      : ocrStatus === "empty"
+                      ? "No confident OCR suggestions yet"
+                      : ocrStatus === "ready"
+                      ? "Suggested fields highlight in amber"
+                      : "Tap to try OCR autofill"}
                   </span>
                 </div>
                 <button
