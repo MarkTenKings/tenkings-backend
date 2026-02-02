@@ -161,6 +161,7 @@ export default function AdminUploads() {
   const [intakeTouched, setIntakeTouched] = useState<Record<string, boolean>>({});
   const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty">(null);
   const [ocrAudit, setOcrAudit] = useState<Record<string, unknown> | null>(null);
+  const [ocrApplied, setOcrApplied] = useState(false);
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -188,6 +189,8 @@ export default function AdminUploads() {
   const [streamVersion, setStreamVersion] = useState(0);
   const ocrSuggestRef = useRef(false);
   const ocrRetryRef = useRef(0);
+  const ocrBackupRef = useRef<IntakeRequiredFields | null>(null);
+  const ocrAppliedFieldsRef = useRef<(keyof IntakeRequiredFields)[]>([]);
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -670,8 +673,11 @@ export default function AdminUploads() {
     setIntakeTouched({});
     setOcrStatus(null);
     setOcrAudit(null);
+    setOcrApplied(false);
     ocrSuggestRef.current = false;
     ocrRetryRef.current = 0;
+    ocrBackupRef.current = null;
+    ocrAppliedFieldsRef.current = [];
   }, []);
 
   const openIntakeCapture = useCallback(
@@ -1170,29 +1176,40 @@ export default function AdminUploads() {
 
   const applySuggestions = useCallback(
     (suggestions: Record<string, string>) => {
+      if (!ocrApplied) {
+        ocrBackupRef.current = intakeRequired;
+        ocrAppliedFieldsRef.current = [];
+      }
       setIntakeSuggested((prev) => ({ ...prev, ...suggestions }));
       setIntakeRequired((prev) => {
         const next = { ...prev };
         if (prev.category === "sport" && suggestions.playerName && !intakeTouched.playerName && !prev.playerName.trim()) {
           next.playerName = suggestions.playerName;
+          ocrAppliedFieldsRef.current.push("playerName");
         }
         if (suggestions.year && !intakeTouched.year && !prev.year.trim()) {
           next.year = suggestions.year;
+          ocrAppliedFieldsRef.current.push("year");
         }
         if (suggestions.manufacturer && !intakeTouched.manufacturer && !prev.manufacturer.trim()) {
           next.manufacturer = suggestions.manufacturer;
+          ocrAppliedFieldsRef.current.push("manufacturer");
         }
         if (prev.category === "sport" && suggestions.sport && !intakeTouched.sport && !prev.sport.trim()) {
           next.sport = suggestions.sport;
+          ocrAppliedFieldsRef.current.push("sport");
         }
         if (prev.category === "tcg" && suggestions.game && !intakeTouched.game && !prev.game.trim()) {
           next.game = suggestions.game;
+          ocrAppliedFieldsRef.current.push("game");
         }
         if (prev.category === "tcg" && suggestions.cardName && !intakeTouched.cardName && !prev.cardName.trim()) {
           next.cardName = suggestions.cardName;
+          ocrAppliedFieldsRef.current.push("cardName");
         }
         return next;
       });
+      setOcrApplied(true);
     },
     [
       intakeTouched.cardName,
@@ -1201,8 +1218,11 @@ export default function AdminUploads() {
       intakeTouched.playerName,
       intakeTouched.sport,
       intakeTouched.year,
+      intakeRequired,
+      ocrApplied,
     ]
   );
+
 
   const fetchOcrSuggestions = useCallback(async () => {
     if (!intakeCardId || !session?.token) {
@@ -1231,13 +1251,45 @@ export default function AdminUploads() {
         return;
       }
       const suggestions = payload?.suggestions ?? {};
-      applySuggestions(suggestions);
-      setOcrStatus(Object.keys(suggestions).length > 0 ? "ready" : "empty");
+      if (Object.keys(suggestions).length > 0) {
+        applySuggestions(suggestions);
+        setOcrStatus("ready");
+      } else {
+        setOcrApplied(false);
+        setOcrStatus("empty");
+      }
     } catch {
       setOcrStatus(null);
       // ignore suggestion failures
     }
   }, [applySuggestions, intakeCardId, session?.token]);
+
+  const toggleOcrSuggestions = useCallback(() => {
+    if (!ocrApplied) {
+      if (Object.keys(intakeSuggested).length === 0) {
+        void fetchOcrSuggestions();
+        return;
+      }
+      applySuggestions(intakeSuggested);
+      return;
+    }
+
+    const backup = ocrBackupRef.current;
+    const appliedFields = ocrAppliedFieldsRef.current;
+    if (backup) {
+      setIntakeRequired((prev) => {
+        const next = { ...prev };
+        appliedFields.forEach((field) => {
+          const suggestedValue = intakeSuggested[field as string];
+          if (suggestedValue && next[field] === suggestedValue) {
+            next[field] = backup[field] ?? "";
+          }
+        });
+        return next;
+      });
+    }
+    setOcrApplied(false);
+  }, [applySuggestions, fetchOcrSuggestions, intakeSuggested, ocrApplied]);
 
   useEffect(() => {
     if (intakeStep !== "required" || !intakeCardId) {
@@ -1819,10 +1871,10 @@ export default function AdminUploads() {
                 <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-amber-200/80">
                   <button
                     type="button"
-                    onClick={() => void fetchOcrSuggestions()}
+                    onClick={toggleOcrSuggestions}
                     className="rounded-full border border-amber-300/40 px-4 py-2 text-[10px] uppercase tracking-[0.28em] text-amber-200 transition hover:border-amber-200 hover:text-amber-100"
                   >
-                    Auto-fill OCR
+                    {ocrApplied ? "Clear OCR" : "Auto-fill OCR"}
                   </button>
                   <span>
                     {ocrStatus === "running"
