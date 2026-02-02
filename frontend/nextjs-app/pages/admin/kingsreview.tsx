@@ -401,6 +401,7 @@ export default function KingsReview() {
           query,
           cardAssetId: activeCardId,
           sources: sourceList,
+          categoryType,
         }),
       });
       if (!res.ok) {

@@ -48,6 +48,7 @@ async function processJob(
     searchQuery: string;
     sources: string[];
     maxComps: number;
+    payload?: { categoryType?: string | null };
   },
   browserType = chromium
 ) {
@@ -70,6 +71,18 @@ async function processJob(
       userAgent:
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     });
+
+    const cardLadderCookies = process.env.CARDLADDER_COOKIES_JSON;
+    if (cardLadderCookies) {
+      try {
+        const parsed = JSON.parse(cardLadderCookies);
+        if (Array.isArray(parsed)) {
+          await context.addCookies(parsed);
+        }
+      } catch {
+        console.warn("[bytebot-lite] Failed to parse CARDLADDER_COOKIES_JSON");
+      }
+    }
 
     const sources = job.sources ?? [];
     if (sources.length === 0) {
@@ -113,6 +126,7 @@ async function processJob(
               maxComps: job.maxComps,
               jobId: job.id,
               upload,
+              categoryType: job.payload?.categoryType ?? null,
             })
           );
           continue;
@@ -126,6 +140,7 @@ async function processJob(
               maxComps: job.maxComps,
               jobId: job.id,
               upload,
+              categoryType: job.payload?.categoryType ?? null,
             })
           );
           continue;

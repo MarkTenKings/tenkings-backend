@@ -16,6 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const sources = Array.isArray(body.sources)
       ? body.sources
       : ["ebay_sold", "tcgplayer", "pricecharting", "cardladder"];
+    const categoryType = typeof body.categoryType === "string" ? body.categoryType : null;
 
     if (!query) {
       return res.status(400).json({ message: "query is required" });
@@ -49,6 +50,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       payload: {
         query,
         sources,
+        categoryType,
       },
     });
 

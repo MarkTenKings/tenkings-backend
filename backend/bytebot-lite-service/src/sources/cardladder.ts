@@ -16,6 +16,7 @@ export async function fetchCardLadderComps(options: {
   maxComps: number;
   jobId: string;
   upload: UploadFn;
+  categoryType?: string | null;
 }) {
   const { context, query, maxComps, jobId, upload } = options;
   const searchUrl = buildCardLadderSearchUrl(query);
@@ -24,6 +25,18 @@ export async function fetchCardLadderComps(options: {
 
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
+
+  const currentUrl = page.url();
+  if (currentUrl.includes("login") || currentUrl.includes("signin")) {
+    await page.close();
+    return {
+      source: "cardladder",
+      searchUrl,
+      searchScreenshotUrl: "",
+      comps: [],
+      error: "Card Ladder login required. Set CARDLADDER_COOKIES_JSON.",
+    } as SourceResult;
+  }
 
   const searchShot = await safeScreenshot(page, { fullPage: false, type: "jpeg", quality: 70 });
   let searchShotUrl = "";

@@ -1530,6 +1530,7 @@ export default function AdminUploads() {
           cardAssetId: intakeCardId,
           query,
           sources: sourceList,
+          categoryType: intakeRequired.category,
         }),
       });
       if (!res.ok) {

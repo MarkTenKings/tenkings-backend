@@ -16,14 +16,38 @@ export async function fetchPriceChartingComps(options: {
   maxComps: number;
   jobId: string;
   upload: UploadFn;
+  categoryType?: string | null;
 }) {
-  const { context, query, maxComps, jobId, upload } = options;
+  const { context, query, maxComps, jobId, upload, categoryType } = options;
   const searchUrl = buildPriceChartingSearchUrl(query);
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
 
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
+
+  if (categoryType === "sport") {
+    const sportsSelectors = ["text=Sports Cards", "text=Sports", "text=Baseball", "text=Basketball", "text=Football"];
+    for (const selector of sportsSelectors) {
+      const locator = page.locator(selector);
+      if (await locator.count()) {
+        await locator.first().click().catch(() => undefined);
+        await page.waitForTimeout(500);
+        break;
+      }
+    }
+  }
+  if (categoryType === "tcg") {
+    const tcgSelectors = ["text=Pokemon", "text=Pokémon", "text=TCG", "text=Trading Card Game"];
+    for (const selector of tcgSelectors) {
+      const locator = page.locator(selector);
+      if (await locator.count()) {
+        await locator.first().click().catch(() => undefined);
+        await page.waitForTimeout(500);
+        break;
+      }
+    }
+  }
 
   const searchShot = await safeScreenshot(page, { fullPage: false, type: "jpeg", quality: 70 });
   let searchShotUrl = "";
