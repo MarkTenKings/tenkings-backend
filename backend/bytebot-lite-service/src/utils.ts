@@ -13,3 +13,22 @@ export function toSafeKeyPart(value: string) {
 export function joinUrl(base: string, path: string) {
   return `${base.replace(/\/+$/g, "")}/${path.replace(/^\/+/g, "")}`;
 }
+
+export async function safeScreenshot(
+  page: { screenshot: (options: any) => Promise<Buffer> },
+  options: { fullPage?: boolean; quality?: number; type?: "jpeg" | "png" }
+) {
+  try {
+    return await page.screenshot({
+      fullPage: options.fullPage ?? false,
+      type: options.type ?? "jpeg",
+      quality: options.type === "jpeg" ? options.quality ?? 70 : undefined,
+    });
+  } catch {
+    return await page.screenshot({
+      fullPage: false,
+      type: "jpeg",
+      quality: 60,
+    });
+  }
+}

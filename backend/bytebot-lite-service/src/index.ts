@@ -8,6 +8,8 @@ import {
 import { createSpacesUploader } from "./storage/spaces";
 import { fetchEbaySoldComps } from "./sources/ebay";
 import { fetchTcgplayerComps } from "./sources/tcgplayer";
+import { fetchPriceChartingComps } from "./sources/pricecharting";
+import { fetchCardLadderComps } from "./sources/cardladder";
 import { sleep } from "./utils";
 
 type JobResult = {
@@ -28,6 +30,7 @@ type JobResult = {
       screenshotUrl: string;
       notes?: string | null;
     }>;
+    error?: string | null;
   }>;
 };
 
@@ -51,7 +54,14 @@ async function processJob(
   const upload = createSpacesUploader();
   const browser = await browserType.launch({
     headless: HEADLESS,
-    args: ["--no-sandbox", "--disable-setuid-sandbox"],
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-gpu",
+      "--disable-dev-shm-usage",
+      "--single-process",
+      "--no-zygote",
+    ],
   });
 
   try {
@@ -68,30 +78,67 @@ async function processJob(
 
     const results = [];
     for (const source of sources) {
-      if (source === "ebay_sold") {
-        results.push(
-          await fetchEbaySoldComps({
-            context,
-            query: job.searchQuery,
-            maxComps: job.maxComps,
-            jobId: job.id,
-            upload,
-          })
-        );
-        continue;
-      }
+      try {
+        if (source === "ebay_sold") {
+          results.push(
+            await fetchEbaySoldComps({
+              context,
+              query: job.searchQuery,
+              maxComps: job.maxComps,
+              jobId: job.id,
+              upload,
+            })
+          );
+          continue;
+        }
 
-      if (source === "tcgplayer") {
-        results.push(
-          await fetchTcgplayerComps({
-            context,
-            query: job.searchQuery,
-            maxComps: job.maxComps,
-            jobId: job.id,
-            upload,
-          })
-        );
-        continue;
+        if (source === "tcgplayer") {
+          results.push(
+            await fetchTcgplayerComps({
+              context,
+              query: job.searchQuery,
+              maxComps: job.maxComps,
+              jobId: job.id,
+              upload,
+            })
+          );
+          continue;
+        }
+
+        if (source === "pricecharting") {
+          results.push(
+            await fetchPriceChartingComps({
+              context,
+              query: job.searchQuery,
+              maxComps: job.maxComps,
+              jobId: job.id,
+              upload,
+            })
+          );
+          continue;
+        }
+
+        if (source === "cardladder") {
+          results.push(
+            await fetchCardLadderComps({
+              context,
+              query: job.searchQuery,
+              maxComps: job.maxComps,
+              jobId: job.id,
+              upload,
+            })
+          );
+          continue;
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Source failed";
+        results.push({
+          source,
+          searchUrl: "",
+          searchScreenshotUrl: "",
+          comps: [],
+          error: message,
+        } as any);
       }
     }
 

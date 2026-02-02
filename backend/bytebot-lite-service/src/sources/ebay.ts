@@ -1,5 +1,5 @@
 import { BrowserContext } from "playwright";
-import { toSafeKeyPart } from "../utils";
+import { safeScreenshot, toSafeKeyPart } from "../utils";
 
 export type Comp = {
   source: string;
@@ -46,9 +46,9 @@ export async function fetchEbaySoldComps(options: {
   await page.waitForSelector("li.s-item", { timeout: 15000 }).catch(() => undefined);
   await page.waitForTimeout(1500);
 
-  const searchShot = await page.screenshot({ fullPage: true });
-  const searchShotKey = `${jobId}/ebay-search-${toSafeKeyPart(query)}.png`;
-  const searchShotUrl = (await upload(searchShot, searchShotKey, "image/png")).url;
+  const searchShot = await safeScreenshot(page, { fullPage: false, type: "jpeg", quality: 70 });
+  const searchShotKey = `${jobId}/ebay-search-${toSafeKeyPart(query)}.jpg`;
+  const searchShotUrl = (await upload(searchShot, searchShotKey, "image/jpeg")).url;
 
   const rawItems = await page.$$eval("li.s-item", (nodes) =>
     nodes.map((node) => {
@@ -73,9 +73,9 @@ export async function fetchEbaySoldComps(options: {
     await detail.goto(item.link, { waitUntil: "domcontentloaded" });
     await detail.waitForTimeout(1200);
 
-    const detailShot = await detail.screenshot({ fullPage: false });
-    const detailKey = `${jobId}/ebay-comp-${index + 1}-${toSafeKeyPart(item.title)}.png`;
-    const detailUrl = (await upload(detailShot, detailKey, "image/png")).url;
+    const detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
+    const detailKey = `${jobId}/ebay-comp-${index + 1}-${toSafeKeyPart(item.title)}.jpg`;
+    const detailUrl = (await upload(detailShot, detailKey, "image/jpeg")).url;
 
     const detailPrice = await detail
       .$eval("span.ux-textspans", (node) => node.textContent?.trim() ?? "")

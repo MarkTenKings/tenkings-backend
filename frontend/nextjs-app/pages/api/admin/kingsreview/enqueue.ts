@@ -13,7 +13,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const body = req.body ?? {};
     const query = typeof body.query === "string" ? body.query.trim() : "";
     const cardAssetId = typeof body.cardAssetId === "string" ? body.cardAssetId : undefined;
-    const sources = Array.isArray(body.sources) ? body.sources : ["ebay_sold", "tcgplayer"];
+    const sources = Array.isArray(body.sources)
+      ? body.sources
+      : ["ebay_sold", "tcgplayer", "pricecharting", "cardladder"];
 
     if (!query) {
       return res.status(400).json({ message: "query is required" });
