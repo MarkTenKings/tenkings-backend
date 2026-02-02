@@ -159,6 +159,7 @@ export default function AdminUploads() {
   const [flashActive, setFlashActive] = useState(false);
   const [intakeSuggested, setIntakeSuggested] = useState<Record<string, string>>({});
   const [intakeTouched, setIntakeTouched] = useState<Record<string, boolean>>({});
+  type OcrApplyField = Exclude<keyof IntakeRequiredFields, "category">;
   const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty">(null);
   const [ocrAudit, setOcrAudit] = useState<Record<string, unknown> | null>(null);
   const [ocrApplied, setOcrApplied] = useState(false);
@@ -190,7 +191,7 @@ export default function AdminUploads() {
   const ocrSuggestRef = useRef(false);
   const ocrRetryRef = useRef(0);
   const ocrBackupRef = useRef<IntakeRequiredFields | null>(null);
-  const ocrAppliedFieldsRef = useRef<(keyof IntakeRequiredFields)[]>([]);
+  const ocrAppliedFieldsRef = useRef<OcrApplyField[]>([]);
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -1282,7 +1283,7 @@ export default function AdminUploads() {
         appliedFields.forEach((field) => {
           const suggestedValue = intakeSuggested[field as string];
           if (suggestedValue && next[field] === suggestedValue) {
-            next[field] = backup[field] ?? "";
+            next[field] = (backup[field] ?? "") as typeof next[field];
           }
         });
         return next;
