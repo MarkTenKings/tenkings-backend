@@ -1279,11 +1279,11 @@ export default function AdminUploads() {
     const appliedFields = ocrAppliedFieldsRef.current;
     if (backup) {
       setIntakeRequired((prev) => {
-        const next = { ...prev };
+        const next: IntakeRequiredFields = { ...prev };
         appliedFields.forEach((field) => {
-          const suggestedValue = intakeSuggested[field as string];
+          const suggestedValue = intakeSuggested[field];
           if (suggestedValue && next[field] === suggestedValue) {
-            next[field] = (backup[field] ?? "") as typeof next[field];
+            next[field] = backup[field] ?? "";
           }
         });
         return next;
