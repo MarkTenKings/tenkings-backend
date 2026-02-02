@@ -159,6 +159,7 @@ export default function AdminUploads() {
   const [flashActive, setFlashActive] = useState(false);
   const [intakeSuggested, setIntakeSuggested] = useState<Record<string, string>>({});
   const [intakeTouched, setIntakeTouched] = useState<Record<string, boolean>>({});
+  const [intakeOptionalTouched, setIntakeOptionalTouched] = useState<Record<string, boolean>>({});
   type OcrApplyField = Exclude<keyof IntakeRequiredFields, "category">;
   const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty" | "error">(
     null
@@ -676,6 +677,7 @@ export default function AdminUploads() {
     setIntakePhotoBusy(false);
     setIntakeSuggested({});
     setIntakeTouched({});
+    setIntakeOptionalTouched({});
     setOcrStatus(null);
     setOcrAudit(null);
     setOcrApplied(false);
@@ -719,6 +721,14 @@ export default function AdminUploads() {
       setIntakeRequired((prev) => ({ ...prev, [field]: event.target.value }));
     },
     [markTouched]
+  );
+
+  const handleOptionalChange = useCallback(
+    (field: keyof typeof intakeOptional) => (event: ChangeEvent<HTMLInputElement>) => {
+      setIntakeOptionalTouched((prev) => ({ ...prev, [field]: true }));
+      setIntakeOptional((prev) => ({ ...prev, [field]: event.target.value }));
+    },
+    []
   );
 
   const suggestedClass = (field: string, value: string) => {
@@ -1216,6 +1226,19 @@ export default function AdminUploads() {
         }
         return next;
       });
+      setIntakeOptional((prev) => {
+        const next = { ...prev };
+        if (suggestions.setName && !intakeOptionalTouched.productLine && !prev.productLine.trim()) {
+          next.productLine = suggestions.setName;
+        }
+        if (suggestions.cardNumber && !intakeOptionalTouched.cardNumber && !prev.cardNumber.trim()) {
+          next.cardNumber = suggestions.cardNumber;
+        }
+        if (suggestions.serialNumber && !intakeOptionalTouched.serialNumber && !prev.serialNumber.trim()) {
+          next.serialNumber = suggestions.serialNumber;
+        }
+        return next;
+      });
       setOcrApplied(true);
     },
     [
@@ -1227,6 +1250,9 @@ export default function AdminUploads() {
       intakeTouched.year,
       intakeRequired,
       ocrApplied,
+      intakeOptionalTouched.cardNumber,
+      intakeOptionalTouched.productLine,
+      intakeOptionalTouched.serialNumber,
     ]
   );
 
@@ -1980,27 +2006,39 @@ export default function AdminUploads() {
                 <input
                   placeholder="Team name"
                   value={intakeOptional.teamName}
-                  onChange={(event) => setIntakeOptional((prev) => ({ ...prev, teamName: event.target.value }))}
-                  className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  onChange={handleOptionalChange("teamName")}
+                  className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                    "teamName",
+                    intakeOptional.teamName
+                  )}`}
                 />
                 <input
                   placeholder="Product line / set (Prizm, Optic, etc.)"
                   value={intakeOptional.productLine}
-                  onChange={(event) => setIntakeOptional((prev) => ({ ...prev, productLine: event.target.value }))}
-                  className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  onChange={handleOptionalChange("productLine")}
+                  className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                    "setName",
+                    intakeOptional.productLine
+                  )}`}
                 />
                 <div className="grid gap-2 md:grid-cols-2">
                   <input
                     placeholder="Card number"
                     value={intakeOptional.cardNumber}
-                    onChange={(event) => setIntakeOptional((prev) => ({ ...prev, cardNumber: event.target.value }))}
-                    className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    onChange={handleOptionalChange("cardNumber")}
+                    className={`rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                      "cardNumber",
+                      intakeOptional.cardNumber
+                    )}`}
                   />
                   <input
                     placeholder="Serial number (e.g. 17/199)"
                     value={intakeOptional.serialNumber}
-                    onChange={(event) => setIntakeOptional((prev) => ({ ...prev, serialNumber: event.target.value }))}
-                    className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    onChange={handleOptionalChange("serialNumber")}
+                    className={`rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                      "serialNumber",
+                      intakeOptional.serialNumber
+                    )}`}
                   />
                 </div>
                 <div className="flex flex-wrap gap-4 text-xs uppercase tracking-[0.24em] text-slate-400">
