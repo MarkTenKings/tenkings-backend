@@ -197,6 +197,8 @@ export default function AdminUploads() {
   const ocrRetryRef = useRef(0);
   const ocrBackupRef = useRef<IntakeRequiredFields | null>(null);
   const ocrAppliedFieldsRef = useRef<OcrApplyField[]>([]);
+  const ocrOptionalBackupRef = useRef<IntakeOptionalFields | null>(null);
+  const ocrAppliedOptionalFieldsRef = useRef<(keyof IntakeOptionalFields)[]>([]);
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -687,6 +689,8 @@ export default function AdminUploads() {
     ocrRetryRef.current = 0;
     ocrBackupRef.current = null;
     ocrAppliedFieldsRef.current = [];
+    ocrOptionalBackupRef.current = null;
+    ocrAppliedOptionalFieldsRef.current = [];
   }, []);
 
   const openIntakeCapture = useCallback(
@@ -1196,6 +1200,8 @@ export default function AdminUploads() {
       if (!ocrApplied) {
         ocrBackupRef.current = intakeRequired;
         ocrAppliedFieldsRef.current = [];
+        ocrOptionalBackupRef.current = intakeOptional;
+        ocrAppliedOptionalFieldsRef.current = [];
       }
       setIntakeSuggested((prev) => ({ ...prev, ...suggestions }));
       setIntakeRequired((prev) => {
@@ -1230,12 +1236,32 @@ export default function AdminUploads() {
         const next = { ...prev };
         if (suggestions.setName && !intakeOptionalTouched.productLine && !prev.productLine.trim()) {
           next.productLine = suggestions.setName;
+          ocrAppliedOptionalFieldsRef.current.push("productLine");
         }
         if (suggestions.cardNumber && !intakeOptionalTouched.cardNumber && !prev.cardNumber.trim()) {
           next.cardNumber = suggestions.cardNumber;
+          ocrAppliedOptionalFieldsRef.current.push("cardNumber");
         }
         if (suggestions.serialNumber && !intakeOptionalTouched.serialNumber && !prev.serialNumber.trim()) {
           next.serialNumber = suggestions.serialNumber;
+          ocrAppliedOptionalFieldsRef.current.push("serialNumber");
+        }
+        if (
+          suggestions.graded &&
+          !intakeOptionalTouched.graded &&
+          !prev.graded &&
+          ["true", "yes", "1"].includes(suggestions.graded.toLowerCase())
+        ) {
+          next.graded = true;
+          ocrAppliedOptionalFieldsRef.current.push("graded");
+        }
+        if (suggestions.gradeCompany && !intakeOptionalTouched.gradeCompany && !prev.gradeCompany.trim()) {
+          next.gradeCompany = suggestions.gradeCompany;
+          ocrAppliedOptionalFieldsRef.current.push("gradeCompany");
+        }
+        if (suggestions.gradeValue && !intakeOptionalTouched.gradeValue && !prev.gradeValue.trim()) {
+          next.gradeValue = suggestions.gradeValue;
+          ocrAppliedOptionalFieldsRef.current.push("gradeValue");
         }
         return next;
       });
@@ -1348,6 +1374,24 @@ export default function AdminUploads() {
           const suggestedValue = intakeSuggested[field];
           if (suggestedValue && next[field] === suggestedValue) {
             next[field] = backup[field] ?? "";
+          }
+        });
+        return next;
+      });
+    }
+    const optionalBackup = ocrOptionalBackupRef.current;
+    const optionalFields = ocrAppliedOptionalFieldsRef.current;
+    if (optionalBackup) {
+      setIntakeOptional((prev) => {
+        const next: IntakeOptionalFields = { ...prev };
+        optionalFields.forEach((field) => {
+          const suggestedValue = intakeSuggested[field as string];
+          if (typeof suggestedValue !== "undefined") {
+            if (typeof next[field] === "boolean") {
+              next[field] = optionalBackup[field] as typeof next[field];
+            } else if (typeof next[field] === "string" && next[field] === suggestedValue) {
+              next[field] = optionalBackup[field] as typeof next[field];
+            }
           }
         });
         return next;
@@ -2064,7 +2108,10 @@ export default function AdminUploads() {
                     <input
                       type="checkbox"
                       checked={intakeOptional.graded}
-                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, graded: event.target.checked }))}
+                      onChange={(event) => {
+                        setIntakeOptionalTouched((prev) => ({ ...prev, graded: true }));
+                        setIntakeOptional((prev) => ({ ...prev, graded: event.target.checked }));
+                      }}
                       className="h-4 w-4 accent-sky-400"
                     />
                     Graded
@@ -2075,14 +2122,20 @@ export default function AdminUploads() {
                     <input
                       placeholder="Grade company (PSA, BGS)"
                       value={intakeOptional.gradeCompany}
-                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, gradeCompany: event.target.value }))}
-                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                      onChange={handleOptionalChange("gradeCompany")}
+                      className={`rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                        "gradeCompany",
+                        intakeOptional.gradeCompany
+                      )}`}
                     />
                     <input
                       placeholder="Grade value"
                       value={intakeOptional.gradeValue}
-                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, gradeValue: event.target.value }))}
-                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                      onChange={handleOptionalChange("gradeValue")}
+                      className={`rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                        "gradeValue",
+                        intakeOptional.gradeValue
+                      )}`}
                     />
                   </div>
                 )}

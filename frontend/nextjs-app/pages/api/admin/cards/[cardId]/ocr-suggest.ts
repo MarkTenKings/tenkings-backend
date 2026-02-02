@@ -21,6 +21,9 @@ type SuggestionFields = {
   setName: string | null;
   cardNumber: string | null;
   serialNumber: string | null;
+  graded: string | null;
+  gradeCompany: string | null;
+  gradeValue: string | null;
 };
 
 type SuggestionConfidence = Record<keyof SuggestionFields, number | null>;
@@ -38,6 +41,9 @@ const FIELD_KEYS: (keyof SuggestionFields)[] = [
   "setName",
   "cardNumber",
   "serialNumber",
+  "graded",
+  "gradeCompany",
+  "gradeValue",
 ];
 
 const SYSTEM_PROMPT = `You are extracting structured trading card fields from OCR text.
@@ -146,7 +152,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       required: ["fields", "confidence"],
     };
 
-    const prompt = `OCR TEXT:\n${card.ocrText}\n\nRules:\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.\n- Always attempt sport if OCR includes Baseball/MLB, Basketball/NBA, Football/NFL, Hockey/NHL, Soccer/FIFA.`;
+    const prompt = `OCR TEXT:\n${card.ocrText}\n\nRules:\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.\n- Always attempt sport if OCR includes Baseball/MLB, Basketball/NBA, Football/NFL, Hockey/NHL, Soccer/FIFA.\n- If slab label shows grading (PSA, BGS, SGC, CGC), set graded=true and extract gradeCompany + gradeValue. Accept formats like \"PSA 9\" or \"9 PSA\".`;
 
     const openaiRes = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -219,6 +225,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       if (inferredSport) {
         fields.sport = inferredSport;
         confidence.sport = Math.max(confidence.sport ?? 0, DEFAULT_THRESHOLD);
+      }
+    }
+
+    if (!fields.gradeCompany || !fields.gradeValue || !fields.graded) {
+      const directMatch = card.ocrText.match(/\b(PSA|BGS|SGC|CGC)\b[\s:]*([0-9]{1,2}(?:\.[0-9])?)/i);
+      const reversedMatch = card.ocrText.match(/([0-9]{1,2}(?:\.[0-9])?)\s*(PSA|BGS|SGC|CGC)\b/i);
+      const company = directMatch?.[1] ?? reversedMatch?.[2] ?? null;
+      const value = directMatch?.[2] ?? reversedMatch?.[1] ?? null;
+      if (company && value) {
+        const normalizedCompany = company.toUpperCase();
+        if (!fields.gradeCompany) {
+          fields.gradeCompany = normalizedCompany;
+          confidence.gradeCompany = Math.max(confidence.gradeCompany ?? 0, DEFAULT_THRESHOLD);
+        }
+        if (!fields.gradeValue) {
+          fields.gradeValue = value;
+          confidence.gradeValue = Math.max(confidence.gradeValue ?? 0, DEFAULT_THRESHOLD);
+        }
+        if (!fields.graded) {
+          fields.graded = "true";
+          confidence.graded = Math.max(confidence.graded ?? 0, DEFAULT_THRESHOLD);
+        }
       }
     }
 
