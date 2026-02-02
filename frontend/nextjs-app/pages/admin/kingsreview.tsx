@@ -18,6 +18,8 @@ const STAGES = [
 const SOURCE_LABELS: Record<string, string> = {
   ebay_sold: "eBay Sold",
   tcgplayer: "TCGplayer",
+  pricecharting: "PriceCharting",
+  cardladder: "Card Ladder",
 };
 
 const AI_STATUS_MESSAGES = [
@@ -40,10 +42,13 @@ type CardSummary = {
   status: string;
   reviewStage: string | null;
   reviewStageUpdatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type CardDetail = CardSummary & {
   customDetails: string | null;
+  classificationNormalized?: { categoryType?: string | null } | null;
 };
 
 type EvidenceItem = {
@@ -73,6 +78,7 @@ type JobResultSource = {
   searchUrl: string;
   searchScreenshotUrl: string;
   comps: JobResultComp[];
+  error?: string | null;
 };
 
 type BytebotJob = {
@@ -158,6 +164,29 @@ export default function KingsReview() {
   }, [adminHeaders, includeUnstaged, isAdmin, session, stage]);
 
   useEffect(() => {
+    if (!session || !isAdmin) {
+      return;
+    }
+    const interval = setInterval(() => {
+      const queryString =
+        stage === "READY_FOR_HUMAN_REVIEW" && includeUnstaged ? `?stage=${stage}&includeUnstaged=1` : `?stage=${stage}`;
+      fetch(`/api/admin/kingsreview/cards${queryString}`, {
+        headers: adminHeaders(),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data?.cards) {
+            return;
+          }
+          setCards(data.cards);
+          setActiveCardId((prev) => prev ?? data.cards?.[0]?.id ?? null);
+        })
+        .catch(() => undefined);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [adminHeaders, includeUnstaged, isAdmin, session, stage]);
+
+  useEffect(() => {
     if (!router.isReady) {
       return;
     }
@@ -201,6 +230,9 @@ export default function KingsReview() {
           status: card.status,
           reviewStage: card.reviewStage ?? null,
           reviewStageUpdatedAt: card.reviewStageUpdatedAt ?? null,
+          createdAt: card.createdAt,
+          updatedAt: card.updatedAt,
+          classificationNormalized: card.classificationNormalized ?? null,
         });
         setQuery(card.customTitle ?? card.fileName ?? "");
       } catch (err) {
@@ -352,6 +384,11 @@ export default function KingsReview() {
     setEnqueueing(true);
     setError(null);
     try {
+      const categoryType = activeCard?.classificationNormalized?.categoryType ?? null;
+      const sourceList =
+        categoryType === "tcg"
+          ? ["ebay_sold", "tcgplayer", "pricecharting", "cardladder"]
+          : ["ebay_sold", "pricecharting", "cardladder"];
       const res = await fetch("/api/admin/kingsreview/enqueue", {
         method: "POST",
         headers: {
@@ -361,7 +398,7 @@ export default function KingsReview() {
         body: JSON.stringify({
           query,
           cardAssetId: activeCardId,
-          sources: ["ebay_sold", "tcgplayer"],
+          sources: sourceList,
         }),
       });
       if (!res.ok) {
@@ -564,6 +601,9 @@ export default function KingsReview() {
                   >
                     <span className="line-clamp-1 flex-1">
                       {card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                      {new Date(card.updatedAt).toLocaleTimeString()}
                     </span>
                     <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{card.status}</span>
                   </button>

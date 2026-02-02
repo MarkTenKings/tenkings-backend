@@ -711,9 +711,23 @@ export default function AdminUploads() {
         : intakeRequired.cardName.trim();
     const productLine = intakeOptional.productLine.trim();
     const cardNumber = intakeOptional.cardNumber.trim();
-    const parts = [year, manufacturer, primary, productLine, cardNumber].filter((part) => part.length > 0);
+    const gradeCompany = intakeOptional.graded ? intakeOptional.gradeCompany.trim() : "";
+    const gradeValue = intakeOptional.graded ? intakeOptional.gradeValue.trim() : "";
+    const grade = [gradeCompany, gradeValue].filter((part) => part.length > 0).join(" ");
+    const parts = [year, manufacturer, productLine, primary, cardNumber, grade].filter((part) => part.length > 0);
     return parts.join(" ").replace(/\s+/g, " ").trim();
-  }, [intakeOptional.cardNumber, intakeOptional.productLine, intakeRequired.category, intakeRequired.cardName, intakeRequired.manufacturer, intakeRequired.playerName, intakeRequired.year]);
+  }, [
+    intakeOptional.cardNumber,
+    intakeOptional.gradeCompany,
+    intakeOptional.gradeValue,
+    intakeOptional.graded,
+    intakeOptional.productLine,
+    intakeRequired.category,
+    intakeRequired.cardName,
+    intakeRequired.manufacturer,
+    intakeRequired.playerName,
+    intakeRequired.year,
+  ]);
 
   const markTouched = useCallback((field: string) => {
     setIntakeTouched((prev) => ({ ...prev, [field]: true }));
@@ -1501,6 +1515,10 @@ export default function AdminUploads() {
       setIntakeBusy(true);
       await saveIntakeMetadata(true);
       const query = buildIntakeQuery();
+      const sourceList =
+        intakeRequired.category === "tcg"
+          ? ["ebay_sold", "tcgplayer", "pricecharting", "cardladder"]
+          : ["ebay_sold", "pricecharting", "cardladder"];
       const res = await fetch(resolveApiUrl("/api/admin/kingsreview/enqueue"), {
         method: "POST",
         mode: isRemoteApi ? "cors" : "same-origin",
@@ -1511,7 +1529,7 @@ export default function AdminUploads() {
         body: JSON.stringify({
           cardAssetId: intakeCardId,
           query,
-          sources: ["ebay_sold", "tcgplayer"],
+          sources: sourceList,
         }),
       });
       if (!res.ok) {
