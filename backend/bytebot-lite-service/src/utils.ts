@@ -25,10 +25,14 @@ export async function safeScreenshot(
       quality: options.type === "jpeg" ? options.quality ?? 70 : undefined,
     });
   } catch {
-    return await page.screenshot({
-      fullPage: false,
-      type: "jpeg",
-      quality: 60,
-    });
+    try {
+      return await page.screenshot({
+        fullPage: false,
+        type: "jpeg",
+        quality: 60,
+      });
+    } catch {
+      return null;
+    }
   }
 }

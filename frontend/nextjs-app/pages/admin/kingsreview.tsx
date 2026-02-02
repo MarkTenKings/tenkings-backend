@@ -8,6 +8,7 @@ import { buildAdminHeaders } from "../../lib/adminHeaders";
 import { useSession } from "../../hooks/useSession";
 
 const STAGES = [
+  { id: "IN_REVIEW", label: "In Review" },
   { id: "BYTEBOT_RUNNING", label: "AI Running" },
   { id: "READY_FOR_HUMAN_REVIEW", label: "Ready" },
   { id: "ESCALATED_REVIEW", label: "Escalated" },
@@ -92,7 +93,7 @@ type BytebotJob = {
 export default function KingsReview() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
-  const [stage, setStage] = useState<string>("BYTEBOT_RUNNING");
+  const [stage, setStage] = useState<string>("IN_REVIEW");
   const [cards, setCards] = useState<CardSummary[]>([]);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [activeCard, setActiveCard] = useState<CardDetail | null>(null);
@@ -183,7 +184,7 @@ export default function KingsReview() {
           setActiveCardId((prev) => prev ?? data.cards?.[0]?.id ?? null);
         })
         .catch(() => undefined);
-    }, 5000);
+    }, 2000);
     return () => clearInterval(interval);
   }, [adminHeaders, includeUnstaged, isAdmin, session, stage]);
 
@@ -524,35 +525,23 @@ export default function KingsReview() {
     return (
       <div className="flex h-full flex-col gap-6 px-6 py-8">
         <header className="flex flex-col gap-4">
-          <div>
+          <div className="flex items-start justify-between gap-4">
             <p className="text-xs uppercase tracking-[0.3em] text-gold-300">Ten Kings · KingsReview</p>
             <h1 className="font-heading text-4xl uppercase tracking-[0.2em] text-white">KingsReview</h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Link
-              href="/admin/uploads"
-              className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
-            >
-              Add Cards
-            </Link>
-            <Link
-              href="/admin/inventory-ready"
-              className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
-            >
-              Inventory Ready
-            </Link>
-            <Link
-              href="/admin/location-batches"
-              className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
-            >
-              Location Batches
-            </Link>
-            <Link
-              href="/admin"
-              className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
-            >
-              Back to Admin
-            </Link>
+            <div className="flex items-center gap-3">
+              <Link
+                href="/admin/uploads"
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-400 transition hover:border-white/40 hover:text-white"
+              >
+                ← Add Cards
+              </Link>
+              <Link
+                href="/admin/inventory-ready"
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-400 transition hover:border-white/40 hover:text-white"
+              >
+                Inventory Ready →
+              </Link>
+            </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {STAGES.map((item) => (
@@ -573,7 +562,7 @@ export default function KingsReview() {
                 {item.label}
               </button>
             ))}
-            {stage === "READY_FOR_HUMAN_REVIEW" && (
+            {(stage === "READY_FOR_HUMAN_REVIEW" || stage === "IN_REVIEW") && (
               <button
                 type="button"
                 onClick={() => setIncludeUnstaged((prev) => !prev)}

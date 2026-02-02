@@ -26,8 +26,11 @@ export async function fetchPriceChartingComps(options: {
   await page.waitForTimeout(1500);
 
   const searchShot = await safeScreenshot(page, { fullPage: false, type: "jpeg", quality: 70 });
-  const searchShotKey = `${jobId}/pricecharting-search-${toSafeKeyPart(query)}.jpg`;
-  const searchShotUrl = (await upload(searchShot, searchShotKey, "image/jpeg")).url;
+  let searchShotUrl = "";
+  if (searchShot) {
+    const searchShotKey = `${jobId}/pricecharting-search-${toSafeKeyPart(query)}.jpg`;
+    searchShotUrl = (await upload(searchShot, searchShotKey, "image/jpeg")).url;
+  }
 
   const rawItems = await page.$$eval("a", (nodes) =>
     nodes
@@ -49,8 +52,11 @@ export async function fetchPriceChartingComps(options: {
     await detail.waitForTimeout(1200);
 
     const detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
-    const detailKey = `${jobId}/pricecharting-comp-${index + 1}-${toSafeKeyPart(item.title)}.jpg`;
-    const detailUrl = (await upload(detailShot, detailKey, "image/jpeg")).url;
+    let detailUrl = "";
+    if (detailShot) {
+      const detailKey = `${jobId}/pricecharting-comp-${index + 1}-${toSafeKeyPart(item.title)}.jpg`;
+      detailUrl = (await upload(detailShot, detailKey, "image/jpeg")).url;
+    }
 
     comps.push({
       source: "pricecharting",
@@ -58,7 +64,7 @@ export async function fetchPriceChartingComps(options: {
       url: item.url,
       price: null,
       soldDate: null,
-      screenshotUrl: detailUrl,
+      screenshotUrl: detailUrl || "",
       notes: "PriceCharting comp screenshot.",
     });
 

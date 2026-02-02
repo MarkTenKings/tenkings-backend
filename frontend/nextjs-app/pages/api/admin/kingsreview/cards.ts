@@ -19,9 +19,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const cards = await prisma.cardAsset.findMany({
       where:
-        includeUnstaged && stage === "READY_FOR_HUMAN_REVIEW"
-          ? { OR: [{ reviewStage: stage as any }, { reviewStage: null }] }
-          : { reviewStage: stage as any },
+        stage === "IN_REVIEW"
+          ? {
+              OR: [
+                { reviewStage: "BYTEBOT_RUNNING" as any },
+                { reviewStage: "READY_FOR_HUMAN_REVIEW" as any },
+                ...(includeUnstaged ? [{ reviewStage: null }] : []),
+              ],
+            }
+          : includeUnstaged && stage === "READY_FOR_HUMAN_REVIEW"
+            ? { OR: [{ reviewStage: stage as any }, { reviewStage: null }] }
+            : { reviewStage: stage as any },
       orderBy: { updatedAt: "desc" },
       take: limit,
       skip: offset,

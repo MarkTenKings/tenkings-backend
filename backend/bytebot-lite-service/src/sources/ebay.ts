@@ -47,8 +47,11 @@ export async function fetchEbaySoldComps(options: {
   await page.waitForTimeout(1500);
 
   const searchShot = await safeScreenshot(page, { fullPage: false, type: "jpeg", quality: 70 });
-  const searchShotKey = `${jobId}/ebay-search-${toSafeKeyPart(query)}.jpg`;
-  const searchShotUrl = (await upload(searchShot, searchShotKey, "image/jpeg")).url;
+  let searchShotUrl = "";
+  if (searchShot) {
+    const searchShotKey = `${jobId}/ebay-search-${toSafeKeyPart(query)}.jpg`;
+    searchShotUrl = (await upload(searchShot, searchShotKey, "image/jpeg")).url;
+  }
 
   const rawItems = await page.$$eval("li.s-item", (nodes) =>
     nodes.map((node) => {
@@ -74,8 +77,11 @@ export async function fetchEbaySoldComps(options: {
     await detail.waitForTimeout(1200);
 
     const detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
-    const detailKey = `${jobId}/ebay-comp-${index + 1}-${toSafeKeyPart(item.title)}.jpg`;
-    const detailUrl = (await upload(detailShot, detailKey, "image/jpeg")).url;
+    let detailUrl = "";
+    if (detailShot) {
+      const detailKey = `${jobId}/ebay-comp-${index + 1}-${toSafeKeyPart(item.title)}.jpg`;
+      detailUrl = (await upload(detailShot, detailKey, "image/jpeg")).url;
+    }
 
     const detailPrice = await detail
       .$eval("span.ux-textspans", (node) => node.textContent?.trim() ?? "")
@@ -87,7 +93,7 @@ export async function fetchEbaySoldComps(options: {
       url: item.link,
       price: detailPrice || item.price || null,
       soldDate: item.soldDate ? item.soldDate.replace(/^Sold\s*/i, "").trim() : null,
-      screenshotUrl: detailUrl,
+      screenshotUrl: detailUrl || "",
     });
 
     await detail.close();
