@@ -146,7 +146,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       required: ["fields", "confidence"],
     };
 
-    const prompt = `OCR TEXT:\n${card.ocrText}\n\nRules:\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.`;
+    const prompt = `OCR TEXT:\n${card.ocrText}\n\nRules:\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.\n- Always attempt sport if OCR includes Baseball/MLB, Basketball/NBA, Football/NFL, Hockey/NHL, Soccer/FIFA.`;
 
     const openaiRes = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -201,6 +201,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       acc[key] = sanitizeConfidence(rawConfidence[key]);
       return acc;
     }, {} as SuggestionConfidence);
+
+    if (!fields.sport) {
+      const text = card.ocrText.toLowerCase();
+      const inferredSport =
+        text.includes("baseball") || text.includes("mlb")
+          ? "Baseball"
+          : text.includes("basketball") || text.includes("nba")
+          ? "Basketball"
+          : text.includes("football") || text.includes("nfl")
+          ? "Football"
+          : text.includes("hockey") || text.includes("nhl")
+          ? "Hockey"
+          : text.includes("soccer") || text.includes("fifa")
+          ? "Soccer"
+          : null;
+      if (inferredSport) {
+        fields.sport = inferredSport;
+        confidence.sport = Math.max(confidence.sport ?? 0, DEFAULT_THRESHOLD);
+      }
+    }
 
     const suggestions: Record<string, string> = {};
     FIELD_KEYS.forEach((key) => {
