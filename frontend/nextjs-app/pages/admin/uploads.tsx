@@ -159,6 +159,7 @@ export default function AdminUploads() {
   const [flashActive, setFlashActive] = useState(false);
   const [intakeSuggested, setIntakeSuggested] = useState<Record<string, string>>({});
   const [intakeTouched, setIntakeTouched] = useState<Record<string, boolean>>({});
+  const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready">(null);
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -185,6 +186,7 @@ export default function AdminUploads() {
   const [cameraLoading, setCameraLoading] = useState(false);
   const [streamVersion, setStreamVersion] = useState(0);
   const ocrSuggestRef = useRef(false);
+  const ocrRetryRef = useRef(0);
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -665,7 +667,9 @@ export default function AdminUploads() {
     setIntakePhotoBusy(false);
     setIntakeSuggested({});
     setIntakeTouched({});
+    setOcrStatus(null);
     ocrSuggestRef.current = false;
+    ocrRetryRef.current = 0;
   }, []);
 
   const openIntakeCapture = useCallback(
@@ -1203,16 +1207,31 @@ export default function AdminUploads() {
       return;
     }
     try {
+      setOcrStatus("running");
       const res = await fetch(`/api/admin/cards/${intakeCardId}/ocr-suggest`, {
         headers: buildAdminHeaders(session.token),
       });
       if (!res.ok) {
+        setOcrStatus(null);
         return;
       }
       const payload = await res.json();
+      if (payload?.status === "pending") {
+        setOcrStatus("pending");
+        if (ocrRetryRef.current < 6) {
+          ocrRetryRef.current += 1;
+          setTimeout(() => {
+            ocrSuggestRef.current = false;
+            void fetchOcrSuggestions();
+          }, 1500);
+        }
+        return;
+      }
       const suggestions = payload?.suggestions ?? {};
       applySuggestions(suggestions);
+      setOcrStatus("ready");
     } catch {
+      setOcrStatus(null);
       // ignore suggestion failures
     }
   }, [applySuggestions, intakeCardId, session?.token]);
@@ -1802,7 +1821,13 @@ export default function AdminUploads() {
                   >
                     Auto-fill OCR
                   </button>
-                  <span>Suggested fields highlight in amber</span>
+                  <span>
+                    {ocrStatus === "running"
+                      ? "OCR running…"
+                      : ocrStatus === "pending"
+                      ? "OCR pending (retrying)…"
+                      : "Suggested fields highlight in amber"}
+                  </span>
                 </div>
                 <button
                   type="button"

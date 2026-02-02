@@ -7,6 +7,7 @@ type SuggestResponse =
       suggestions: Record<string, string>;
       threshold: number;
       audit: Record<string, unknown>;
+      status?: "pending" | "ok";
     }
   | { message: string };
 
@@ -112,6 +113,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         suggestions: {},
         threshold: DEFAULT_THRESHOLD,
         audit: { source: "openai", model: MODEL_NAME, createdAt: new Date().toISOString(), fields: {}, confidence: {} },
+        status: "pending",
       });
     }
 
@@ -232,6 +234,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       suggestions,
       threshold: DEFAULT_THRESHOLD,
       audit,
+      status: "ok",
     });
   } catch (error) {
     const response = toErrorResponse(error);
