@@ -1385,12 +1385,39 @@ export default function AdminUploads() {
       setIntakeOptional((prev) => {
         const next: IntakeOptionalFields = { ...prev };
         optionalFields.forEach((field) => {
-          const suggestedValue = intakeSuggested[field as string];
-          if (typeof suggestedValue !== "undefined") {
-            if (typeof next[field] === "boolean") {
-              next[field] = optionalBackup[field] as typeof next[field];
-            } else if (typeof next[field] === "string" && next[field] === suggestedValue) {
-              next[field] = optionalBackup[field] as typeof next[field];
+          if (field === "graded") {
+            if (typeof intakeSuggested.graded !== "undefined") {
+              next.graded = optionalBackup.graded;
+            }
+            return;
+          }
+          if (field === "productLine") {
+            if (next.productLine === intakeSuggested.setName) {
+              next.productLine = optionalBackup.productLine;
+            }
+            return;
+          }
+          if (field === "cardNumber") {
+            if (next.cardNumber === intakeSuggested.cardNumber) {
+              next.cardNumber = optionalBackup.cardNumber;
+            }
+            return;
+          }
+          if (field === "serialNumber") {
+            if (next.serialNumber === intakeSuggested.serialNumber) {
+              next.serialNumber = optionalBackup.serialNumber;
+            }
+            return;
+          }
+          if (field === "gradeCompany") {
+            if (next.gradeCompany === intakeSuggested.gradeCompany) {
+              next.gradeCompany = optionalBackup.gradeCompany;
+            }
+            return;
+          }
+          if (field === "gradeValue") {
+            if (next.gradeValue === intakeSuggested.gradeValue) {
+              next.gradeValue = optionalBackup.gradeValue;
             }
           }
         });
