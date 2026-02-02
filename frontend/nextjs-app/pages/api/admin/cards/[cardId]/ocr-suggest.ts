@@ -132,7 +132,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           properties: Object.fromEntries(
             FIELD_KEYS.map((key) => [key, { type: ["string", "null"] }])
           ),
-          required: [],
+          required: FIELD_KEYS,
         },
         confidence: {
           type: "object",
@@ -140,7 +140,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           properties: Object.fromEntries(
             FIELD_KEYS.map((key) => [key, { type: ["number", "null"] }])
           ),
-          required: [],
+          required: FIELD_KEYS,
         },
       },
       required: ["fields", "confidence"],
