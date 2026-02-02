@@ -2283,7 +2283,8 @@ export default function AdminUploads() {
               <button
                 type="button"
                 onClick={handleCapture}
-                disabled={!cameraReady || cameraLoading}
+                onTouchStart={handleCapture}
+                disabled={cameraLoading}
                 className="rounded-full border border-white/30 bg-white/10 px-10 py-3 text-xs uppercase tracking-[0.32em] text-slate-100 transition hover:border-white/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {cameraLoading ? "Loading…" : "Capture"}
