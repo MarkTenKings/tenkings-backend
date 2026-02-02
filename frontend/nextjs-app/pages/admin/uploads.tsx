@@ -160,10 +160,13 @@ export default function AdminUploads() {
   const [intakeSuggested, setIntakeSuggested] = useState<Record<string, string>>({});
   const [intakeTouched, setIntakeTouched] = useState<Record<string, boolean>>({});
   type OcrApplyField = Exclude<keyof IntakeRequiredFields, "category">;
-  const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty">(null);
+  const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty" | "error">(
+    null
+  );
   const [ocrAudit, setOcrAudit] = useState<Record<string, unknown> | null>(null);
   const [ocrApplied, setOcrApplied] = useState(false);
   const [ocrMode, setOcrMode] = useState<null | "high" | "low">(null);
+  const [ocrError, setOcrError] = useState<string | null>(null);
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -677,6 +680,7 @@ export default function AdminUploads() {
     setOcrAudit(null);
     setOcrApplied(false);
     setOcrMode(null);
+    setOcrError(null);
     ocrSuggestRef.current = false;
     ocrRetryRef.current = 0;
     ocrBackupRef.current = null;
@@ -1233,11 +1237,14 @@ export default function AdminUploads() {
     }
     try {
       setOcrStatus("running");
+      setOcrError(null);
       const res = await fetch(`/api/admin/cards/${intakeCardId}/ocr-suggest`, {
         headers: buildAdminHeaders(session.token),
       });
       if (!res.ok) {
-        setOcrStatus(null);
+        const payload = await res.json().catch(() => ({}));
+        setOcrStatus("error");
+        setOcrError(payload?.message ?? "OCR request failed");
         return;
       }
       const payload = await res.json();
@@ -1264,7 +1271,8 @@ export default function AdminUploads() {
         setOcrStatus("empty");
       }
     } catch {
-      setOcrStatus(null);
+      setOcrStatus("error");
+      setOcrError("OCR request failed");
       // ignore suggestion failures
     }
   }, [applySuggestions, intakeCardId, session?.token]);
@@ -1930,6 +1938,8 @@ export default function AdminUploads() {
                       ? "No confident OCR suggestions yet"
                       : ocrStatus === "ready"
                       ? `Suggested fields highlight in amber${ocrMode === "low" ? " (low-confidence applied)" : ""}`
+                      : ocrStatus === "error"
+                      ? ocrError ?? "OCR failed"
                       : "Tap to try OCR autofill"}
                     {ocrSummary ? ` · ${ocrSummary}` : ""}
                   </span>
