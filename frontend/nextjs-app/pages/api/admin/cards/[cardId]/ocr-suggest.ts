@@ -229,10 +229,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     if (!fields.gradeCompany || !fields.gradeValue || !fields.graded) {
-      const directMatch = card.ocrText.match(/\b(PSA|BGS|SGC|CGC)\b[\s:]*([0-9]{1,2}(?:\.[0-9])?)/i);
-      const reversedMatch = card.ocrText.match(/([0-9]{1,2}(?:\.[0-9])?)\s*(PSA|BGS|SGC|CGC)\b/i);
+      const rawOcr = card.ocrText;
+      const normalizedOcr = rawOcr
+        .replace(/\bP\s*5\s*A\b/gi, "PSA")
+        .replace(/\bP\s*S\s*A\b/gi, "PSA")
+        .replace(/\bS\s*G\s*C\b/gi, "SGC")
+        .replace(/\bC\s*G\s*C\b/gi, "CGC")
+        .replace(/\bB\s*G\s*S\b/gi, "BGS");
+      const directMatch = normalizedOcr.match(/\b(PSA|BGS|SGC|CGC)\b[\s:\-]*([0-9]{1,2}(?:\.[0-9])?)/i);
+      const reversedMatch = normalizedOcr.match(/([0-9]{1,2}(?:\.[0-9])?)\s*(PSA|BGS|SGC|CGC)\b/i);
+      const inlineMatch = normalizedOcr.match(/\b(PSA|BGS|SGC|CGC)\s*([0-9]{1,2}(?:\.[0-9])?)\b/i);
       const company = directMatch?.[1] ?? reversedMatch?.[2] ?? null;
-      const value = directMatch?.[2] ?? reversedMatch?.[1] ?? null;
+      const value = directMatch?.[2] ?? reversedMatch?.[1] ?? inlineMatch?.[2] ?? null;
       if (company && value) {
         const normalizedCompany = company.toUpperCase();
         if (!fields.gradeCompany) {
