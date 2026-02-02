@@ -169,11 +169,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         text: {
           format: {
             type: "json_schema",
-            json_schema: {
-              name: "card_ocr",
-              strict: true,
-              schema,
-            },
+            name: "card_ocr",
+            strict: true,
+            schema,
           },
         },
       }),
