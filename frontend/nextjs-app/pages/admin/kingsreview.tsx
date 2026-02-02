@@ -12,7 +12,6 @@ const STAGES = [
   { id: "READY_FOR_HUMAN_REVIEW", label: "Ready" },
   { id: "ESCALATED_REVIEW", label: "Escalated" },
   { id: "REVIEW_COMPLETE", label: "Complete" },
-  { id: "INVENTORY_READY_FOR_SALE", label: "Inventory Ready" },
 ] as const;
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -93,7 +92,7 @@ type BytebotJob = {
 export default function KingsReview() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
-  const [stage, setStage] = useState<string>("READY_FOR_HUMAN_REVIEW");
+  const [stage, setStage] = useState<string>("BYTEBOT_RUNNING");
   const [cards, setCards] = useState<CardSummary[]>([]);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [activeCard, setActiveCard] = useState<CardDetail | null>(null);
@@ -147,6 +146,7 @@ export default function KingsReview() {
           stage === "READY_FOR_HUMAN_REVIEW" && includeUnstaged ? `?stage=${stage}&includeUnstaged=1` : `?stage=${stage}`;
         const res = await fetch(`/api/admin/kingsreview/cards${queryString}`, {
           headers: adminHeaders(),
+          cache: "no-store",
         });
         if (!res.ok) {
           throw new Error("Failed to load cards");
@@ -172,6 +172,7 @@ export default function KingsReview() {
         stage === "READY_FOR_HUMAN_REVIEW" && includeUnstaged ? `?stage=${stage}&includeUnstaged=1` : `?stage=${stage}`;
       fetch(`/api/admin/kingsreview/cards${queryString}`, {
         headers: adminHeaders(),
+        cache: "no-store",
       })
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
@@ -522,10 +523,36 @@ export default function KingsReview() {
 
     return (
       <div className="flex h-full flex-col gap-6 px-6 py-8">
-        <header className="flex flex-wrap items-center justify-between gap-4">
+        <header className="flex flex-col gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-gold-300">Ten Kings · KingsReview</p>
             <h1 className="font-heading text-4xl uppercase tracking-[0.2em] text-white">KingsReview</h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              href="/admin/uploads"
+              className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
+            >
+              Add Cards
+            </Link>
+            <Link
+              href="/admin/inventory-ready"
+              className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
+            >
+              Inventory Ready
+            </Link>
+            <Link
+              href="/admin/location-batches"
+              className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
+            >
+              Location Batches
+            </Link>
+            <Link
+              href="/admin"
+              className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
+            >
+              Back to Admin
+            </Link>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {STAGES.map((item) => (
@@ -559,18 +586,6 @@ export default function KingsReview() {
                 {includeUnstaged ? "Including Unstaged" : "Hide Unstaged"}
               </button>
             )}
-            <Link
-              href="/admin/uploads"
-              className="rounded-full border border-gold-400/40 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-gold-200 transition hover:border-gold-300 hover:text-gold-100"
-            >
-              Add Cards
-            </Link>
-            <Link
-              href="/admin"
-              className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
-            >
-              Back to Admin
-            </Link>
           </div>
         </header>
 
@@ -810,14 +825,16 @@ export default function KingsReview() {
             </div>
             {activeSourceData && (
               <div className="flex flex-wrap items-center gap-2">
-                <a
-                  href={activeSourceData.searchScreenshotUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-300"
-                >
-                  Open Image
-                </a>
+                {activeSourceData.searchScreenshotUrl && (
+                  <a
+                    href={activeSourceData.searchScreenshotUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-300"
+                  >
+                    Open Image
+                  </a>
+                )}
                 <button
                   type="button"
                   onClick={handleAttachSearch}
@@ -830,12 +847,25 @@ export default function KingsReview() {
             <div className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-night-950/60 p-3">
               {activeSourceData ? (
                 <div style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={activeSourceData.searchScreenshotUrl}
-                    alt={`${activeSourceData.source} search screenshot`}
-                    className="w-full"
-                  />
+                  {activeSourceData.error && (
+                    <div className="mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                      {activeSourceData.error}
+                    </div>
+                  )}
+                  {activeSourceData.searchScreenshotUrl ? (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={activeSourceData.searchScreenshotUrl}
+                        alt={`${activeSourceData.source} search screenshot`}
+                        className="w-full"
+                      />
+                    </>
+                  ) : (
+                    <div className="text-xs text-slate-500">
+                      No search screenshot captured yet. Use “Open Search” to verify results.
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="flex h-full items-center justify-center text-xs uppercase tracking-[0.3em] text-slate-500">
