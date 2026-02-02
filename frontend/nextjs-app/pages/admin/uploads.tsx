@@ -163,6 +163,7 @@ export default function AdminUploads() {
   const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty">(null);
   const [ocrAudit, setOcrAudit] = useState<Record<string, unknown> | null>(null);
   const [ocrApplied, setOcrApplied] = useState(false);
+  const [ocrMode, setOcrMode] = useState<null | "high" | "low">(null);
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -675,6 +676,7 @@ export default function AdminUploads() {
     setOcrStatus(null);
     setOcrAudit(null);
     setOcrApplied(false);
+    setOcrMode(null);
     ocrSuggestRef.current = false;
     ocrRetryRef.current = 0;
     ocrBackupRef.current = null;
@@ -1254,9 +1256,11 @@ export default function AdminUploads() {
       const suggestions = payload?.suggestions ?? {};
       if (Object.keys(suggestions).length > 0) {
         applySuggestions(suggestions);
+        setOcrMode("high");
         setOcrStatus("ready");
       } else {
         setOcrApplied(false);
+        setOcrMode(null);
         setOcrStatus("empty");
       }
     } catch {
@@ -1265,13 +1269,39 @@ export default function AdminUploads() {
     }
   }, [applySuggestions, intakeCardId, session?.token]);
 
+  const buildSuggestionsFromAudit = useCallback(
+    (threshold: number) => {
+      const fields = (ocrAudit as { fields?: Record<string, string | null> } | null)?.fields ?? {};
+      const confidence = (ocrAudit as { confidence?: Record<string, number | null> } | null)?.confidence ?? {};
+      return Object.keys(fields).reduce<Record<string, string>>((acc, key) => {
+        const value = fields[key];
+        const score = confidence[key];
+        if (typeof value === "string" && value.trim() && typeof score === "number" && score >= threshold) {
+          acc[key] = value;
+        }
+        return acc;
+      }, {});
+    },
+    [ocrAudit]
+  );
+
   const toggleOcrSuggestions = useCallback(() => {
     if (!ocrApplied) {
       if (Object.keys(intakeSuggested).length === 0) {
+        if (ocrStatus === "empty" && ocrAudit) {
+          const lowSuggestions = buildSuggestionsFromAudit(0.5);
+          if (Object.keys(lowSuggestions).length > 0) {
+            applySuggestions(lowSuggestions);
+            setOcrMode("low");
+            setOcrStatus("ready");
+            return;
+          }
+        }
         void fetchOcrSuggestions();
         return;
       }
       applySuggestions(intakeSuggested);
+      setOcrMode("high");
       return;
     }
 
@@ -1290,7 +1320,8 @@ export default function AdminUploads() {
       });
     }
     setOcrApplied(false);
-  }, [applySuggestions, fetchOcrSuggestions, intakeSuggested, ocrApplied]);
+    setOcrMode(null);
+  }, [applySuggestions, buildSuggestionsFromAudit, fetchOcrSuggestions, intakeSuggested, ocrApplied, ocrAudit, ocrStatus]);
 
   useEffect(() => {
     if (intakeStep !== "required" || !intakeCardId) {
@@ -1302,6 +1333,19 @@ export default function AdminUploads() {
     ocrSuggestRef.current = true;
     void fetchOcrSuggestions();
   }, [fetchOcrSuggestions, intakeCardId, intakeStep]);
+
+  const ocrSummary = useMemo(() => {
+    const confidence = (ocrAudit as { confidence?: Record<string, number | null> } | null)?.confidence ?? null;
+    if (!confidence) {
+      return null;
+    }
+    const entries = Object.entries(confidence)
+      .filter(([, value]) => typeof value === "number")
+      .sort((a, b) => (b[1] as number) - (a[1] as number))
+      .slice(0, 2)
+      .map(([key, value]) => `${key} ${Math.round((value as number) * 100)}%`);
+    return entries.length ? `Top OCR: ${entries.join(", ")}` : null;
+  }, [ocrAudit]);
 
   const handleIntakeRequiredContinue = useCallback(async () => {
     const error = validateRequiredIntake();
@@ -1875,7 +1919,7 @@ export default function AdminUploads() {
                     onClick={toggleOcrSuggestions}
                     className="rounded-full border border-amber-300/40 px-4 py-2 text-[10px] uppercase tracking-[0.28em] text-amber-200 transition hover:border-amber-200 hover:text-amber-100"
                   >
-                    {ocrApplied ? "Clear OCR" : "Auto-fill OCR"}
+                    {ocrApplied ? "Clear OCR" : ocrStatus === "empty" ? "Try Low-Conf OCR" : "Auto-fill OCR"}
                   </button>
                   <span>
                     {ocrStatus === "running"
@@ -1885,8 +1929,9 @@ export default function AdminUploads() {
                       : ocrStatus === "empty"
                       ? "No confident OCR suggestions yet"
                       : ocrStatus === "ready"
-                      ? "Suggested fields highlight in amber"
+                      ? `Suggested fields highlight in amber${ocrMode === "low" ? " (low-confidence applied)" : ""}`
                       : "Tap to try OCR autofill"}
+                    {ocrSummary ? ` · ${ocrSummary}` : ""}
                   </span>
                 </div>
                 <button
