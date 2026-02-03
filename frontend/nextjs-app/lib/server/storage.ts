@@ -137,7 +137,7 @@ export async function presignUploadUrl(storageKey: string, contentType: string) 
     ContentType: contentType,
     ACL: s3ObjectAcl,
   });
-  return getSignedUrl(client, command, { expiresIn: 60 * 10 });
+  return getSignedUrl(client as any, command as any, { expiresIn: 60 * 10 });
 }
 
 function sanitizeFileName(input: string) {
