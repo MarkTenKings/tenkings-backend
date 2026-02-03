@@ -117,6 +117,7 @@ type AttributeFormState = {
   setName: string;
   variantKeywords: string;
   serialNumber: string;
+  numbered: string;
   rookie: boolean;
   autograph: boolean;
   memorabilia: boolean;
@@ -208,6 +209,7 @@ const buildAttributeFormState = (attributes: CardAttributes | null): AttributeFo
   setName: attributes?.setName ?? "",
   variantKeywords: (attributes?.variantKeywords ?? []).join(", "),
   serialNumber: attributes?.serialNumber ?? "",
+  numbered: attributes?.numbered ?? "",
   rookie: attributes?.rookie ?? false,
   autograph: attributes?.autograph ?? false,
   memorabilia: attributes?.memorabilia ?? false,
@@ -388,6 +390,9 @@ export default function AdminCardDetail() {
     }
     if (attributes.serialNumber) {
       entries.push({ label: "Serial", value: attributes.serialNumber });
+    }
+    if (attributes.numbered) {
+      entries.push({ label: "Numbered", value: attributes.numbered });
     }
     if (attributes.gradeValue) {
       const gradeLabel = attributes.gradeCompany
@@ -893,6 +898,7 @@ export default function AdminCardDetail() {
         setName: emptyToNull(attributeForm.setName),
         variantKeywords: parseVariantKeywords(attributeForm.variantKeywords),
         serialNumber: emptyToNull(attributeForm.serialNumber),
+        numbered: emptyToNull(attributeForm.numbered),
         rookie: attributeForm.rookie,
         autograph: attributeForm.autograph,
         memorabilia: attributeForm.memorabilia,
@@ -1349,6 +1355,15 @@ export default function AdminCardDetail() {
                       <input
                         value={attributeForm.serialNumber}
                         onChange={handleAttributeInputChange("serialNumber")}
+                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 text-xs text-slate-300">
+                      <span className="text-[10px] uppercase tracking-[0.28em] text-slate-400">Numbered</span>
+                      <input
+                        value={attributeForm.numbered}
+                        onChange={handleAttributeInputChange("numbered")}
+                        placeholder="e.g. 3/10"
                         className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
                       />
                     </label>

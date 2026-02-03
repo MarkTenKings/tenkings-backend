@@ -21,6 +21,9 @@ type SuggestionFields = {
   setName: string | null;
   cardNumber: string | null;
   serialNumber: string | null;
+  numbered: string | null;
+  autograph: string | null;
+  memorabilia: string | null;
   graded: string | null;
   gradeCompany: string | null;
   gradeValue: string | null;
@@ -41,6 +44,9 @@ const FIELD_KEYS: (keyof SuggestionFields)[] = [
   "setName",
   "cardNumber",
   "serialNumber",
+  "numbered",
+  "autograph",
+  "memorabilia",
   "graded",
   "gradeCompany",
   "gradeValue",
@@ -107,14 +113,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const card = await prisma.cardAsset.findFirst({
       where: { id: cardId, batch: { uploadedById: admin.user.id } },
-      select: { ocrText: true },
+      select: {
+        ocrText: true,
+        photos: {
+          where: { kind: "BACK" },
+          select: { imageUrl: true },
+          take: 1,
+        },
+      },
     });
 
     if (!card) {
       return res.status(404).json({ message: "Card not found" });
     }
 
-    if (!card.ocrText || !card.ocrText.trim()) {
+    const backImageUrl = card.photos?.[0]?.imageUrl ?? null;
+    if ((!card.ocrText || !card.ocrText.trim()) && !backImageUrl) {
       return res.status(200).json({
         suggestions: {},
         threshold: DEFAULT_THRESHOLD,
@@ -152,7 +166,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       required: ["fields", "confidence"],
     };
 
-    const prompt = `OCR TEXT:\n${card.ocrText}\n\nRules:\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.\n- Always attempt sport if OCR includes Baseball/MLB, Basketball/NBA, Football/NFL, Hockey/NHL, Soccer/FIFA.\n- If slab label shows grading (PSA, BGS, SGC, CGC), set graded=true and extract gradeCompany + gradeValue. Accept formats like \"PSA 9\" or \"9 PSA\".`;
+    const frontText = card.ocrText ?? "";
+    const prompt = `OCR TEXT (FRONT):\n${frontText}\n\nRules:\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.\n- Always attempt sport if OCR includes Baseball/MLB, Basketball/NBA, Football/NFL, Hockey/NHL, Soccer/FIFA.\n- Autograph=true if OCR shows AUTO/AUTOGRAPH/SIGNATURE.\n- Memorabilia=true if OCR shows PATCH/JERSEY/RELIC/MEM.\n- Numbered should be like "3/10" when present.\n- If slab label shows grading (PSA, BGS, SGC, CGC), set graded=true and extract gradeCompany + gradeValue. Accept formats like "PSA 9" or "9 PSA".\n- A back image may be provided; use it for year/numbered/grade if needed.`;
 
     const openaiRes = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -169,7 +184,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           },
           {
             role: "user",
-            content: [{ type: "input_text", text: prompt }],
+            content: [
+              { type: "input_text", text: prompt },
+              ...(backImageUrl ? [{ type: "input_image", image_url: { url: backImageUrl } }] : []),
+            ],
           },
         ],
         text: {
@@ -208,8 +226,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return acc;
     }, {} as SuggestionConfidence);
 
+    const combinedText = frontText.toLowerCase();
     if (!fields.sport) {
-      const text = card.ocrText.toLowerCase();
+      const text = combinedText;
       const inferredSport =
         text.includes("baseball") || text.includes("mlb")
           ? "Baseball"
@@ -221,10 +240,52 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           ? "Hockey"
           : text.includes("soccer") || text.includes("fifa")
           ? "Soccer"
+          : text.includes("qb") || text.includes("wr") || text.includes("rb") || text.includes("te")
+          ? "Football"
+          : text.includes("pg") || text.includes("sg") || text.includes("sf") || text.includes("pf")
+          ? "Basketball"
+          : text.includes("2b") || text.includes("3b") || text.includes("ss") || text.includes("of")
+          ? "Baseball"
           : null;
       if (inferredSport) {
         fields.sport = inferredSport;
         confidence.sport = Math.max(confidence.sport ?? 0, DEFAULT_THRESHOLD);
+      }
+    }
+
+    if (!fields.year) {
+      const yearMatch = combinedText.match(/\b(19|20)\d{2}\b/);
+      if (yearMatch) {
+        fields.year = yearMatch[0];
+        confidence.year = Math.max(confidence.year ?? 0, DEFAULT_THRESHOLD);
+      }
+    }
+
+    if (!fields.numbered) {
+      const numberedMatch = combinedText.match(/\b\d{1,3}\s*\/\s*\d{1,3}\b/);
+      if (numberedMatch) {
+        fields.numbered = numberedMatch[0].replace(/\s+/g, "");
+        confidence.numbered = Math.max(confidence.numbered ?? 0, DEFAULT_THRESHOLD);
+      }
+    }
+
+    if (!fields.autograph) {
+      if (combinedText.includes("autograph") || combinedText.includes("auto") || combinedText.includes("signature")) {
+        fields.autograph = "true";
+        confidence.autograph = Math.max(confidence.autograph ?? 0, DEFAULT_THRESHOLD);
+      }
+    }
+
+    if (!fields.memorabilia) {
+      if (
+        combinedText.includes("patch") ||
+        combinedText.includes("jersey") ||
+        combinedText.includes("relic") ||
+        combinedText.includes("memorabilia") ||
+        combinedText.includes("mem")
+      ) {
+        fields.memorabilia = "true";
+        confidence.memorabilia = Math.max(confidence.memorabilia ?? 0, DEFAULT_THRESHOLD);
       }
     }
 

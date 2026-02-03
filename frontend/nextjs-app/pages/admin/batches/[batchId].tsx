@@ -155,6 +155,7 @@ const buildAttributeTags = (attributes: CardAttributes | null): string[] => {
     attributes.teamName,
     ...attributes.variantKeywords.slice(0, 2),
     attributes.serialNumber,
+    attributes.numbered,
     attributes.autograph ? "Autograph" : null,
     attributes.memorabilia ? "Patch" : null,
     attributes.rookie ? "Rookie" : null,
@@ -192,6 +193,7 @@ type AttributeFormState = {
   setName: string;
   variantKeywords: string;
   serialNumber: string;
+  numbered: string;
   rookie: boolean;
   autograph: boolean;
   memorabilia: boolean;
@@ -306,6 +308,7 @@ const buildAttributeFormState = (attributes: CardAttributes | null): AttributeFo
   setName: attributes?.setName ?? "",
   variantKeywords: (attributes?.variantKeywords ?? []).join(", "),
   serialNumber: attributes?.serialNumber ?? "",
+  numbered: attributes?.numbered ?? "",
   rookie: attributes?.rookie ?? false,
   autograph: attributes?.autograph ?? false,
   memorabilia: attributes?.memorabilia ?? false,
@@ -1336,6 +1339,7 @@ const handleBulkSave = async (cardId: string) => {
       setName: emptyToNull(formState.attributes.setName),
       variantKeywords: parseVariantKeywords(formState.attributes.variantKeywords),
       serialNumber: emptyToNull(formState.attributes.serialNumber),
+      numbered: emptyToNull(formState.attributes.numbered),
       rookie: formState.attributes.rookie,
       autograph: formState.attributes.autograph,
       memorabilia: formState.attributes.memorabilia,
@@ -1928,6 +1932,14 @@ const handleSendToKingsReview = async (cardId: string) => {
                                         value={formState.attributes.serialNumber}
                                         onChange={handleAttributeFieldChange(asset.id, "serialNumber")}
                                         placeholder="Serial"
+                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                      />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                      <input
+                                        value={formState.attributes.numbered}
+                                        onChange={handleAttributeFieldChange(asset.id, "numbered")}
+                                        placeholder="Numbered (e.g. 3/10)"
                                         className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
                                       />
                                     </div>

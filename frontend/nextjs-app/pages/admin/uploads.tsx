@@ -57,6 +57,7 @@ type IntakeOptionalFields = {
   productLine: string;
   cardNumber: string;
   serialNumber: string;
+  numbered: string;
   autograph: boolean;
   memorabilia: boolean;
   graded: boolean;
@@ -131,6 +132,7 @@ export default function AdminUploads() {
     productLine: "",
     cardNumber: "",
     serialNumber: "",
+    numbered: "",
     autograph: false,
     memorabilia: false,
     graded: false,
@@ -653,6 +655,7 @@ export default function AdminUploads() {
       productLine: "",
       cardNumber: "",
       serialNumber: "",
+      numbered: "",
       autograph: false,
       memorabilia: false,
       graded: false,
@@ -714,6 +717,7 @@ export default function AdminUploads() {
     const gradeCompany = intakeOptional.graded ? intakeOptional.gradeCompany.trim() : "";
     const gradeValue = intakeOptional.graded ? intakeOptional.gradeValue.trim() : "";
     const grade = [gradeCompany, gradeValue].filter((part) => part.length > 0).join(" ");
+    const numbered = intakeOptional.numbered.trim();
     const normalizeProductLine = () => {
       if (!productLineRaw) {
         return "";
@@ -734,7 +738,9 @@ export default function AdminUploads() {
       return filteredTokens.join(" ").trim() || productLineRaw;
     };
     const productLine = normalizeProductLine();
-    const parts = [year, manufacturer, productLine, primary, cardNumber, grade]
+    const autograph = intakeOptional.autograph ? "Auto" : "";
+    const memorabilia = intakeOptional.memorabilia ? "Patch" : "";
+    const parts = [year, manufacturer, productLine, primary, cardNumber, numbered, autograph, memorabilia, grade]
       .filter((part) => part.length > 0)
       .map((part) => part.trim());
     const seen = new Set<string>();
@@ -749,10 +755,13 @@ export default function AdminUploads() {
     return normalizedParts.join(" ").replace(/\s+/g, " ").trim();
   }, [
     intakeOptional.cardNumber,
+    intakeOptional.numbered,
     intakeOptional.gradeCompany,
     intakeOptional.gradeValue,
     intakeOptional.graded,
     intakeOptional.productLine,
+    intakeOptional.autograph,
+    intakeOptional.memorabilia,
     intakeRequired.category,
     intakeRequired.cardName,
     intakeRequired.manufacturer,
@@ -1123,6 +1132,7 @@ export default function AdminUploads() {
         setName: intakeOptional.productLine.trim() || null,
         variantKeywords: [] as string[],
         serialNumber: intakeOptional.serialNumber.trim() || null,
+        numbered: intakeOptional.numbered.trim() || null,
         rookie: false,
         autograph: includeOptional ? intakeOptional.autograph : false,
         memorabilia: includeOptional ? intakeOptional.memorabilia : false,
@@ -1292,6 +1302,10 @@ export default function AdminUploads() {
           next.serialNumber = suggestions.serialNumber;
           ocrAppliedOptionalFieldsRef.current.push("serialNumber");
         }
+        if (suggestions.numbered && !intakeOptionalTouched.numbered && !prev.numbered.trim()) {
+          next.numbered = suggestions.numbered;
+          ocrAppliedOptionalFieldsRef.current.push("numbered");
+        }
         if (
           suggestions.graded &&
           !intakeOptionalTouched.graded &&
@@ -1300,6 +1314,24 @@ export default function AdminUploads() {
         ) {
           next.graded = true;
           ocrAppliedOptionalFieldsRef.current.push("graded");
+        }
+        if (
+          suggestions.autograph &&
+          !intakeOptionalTouched.autograph &&
+          !prev.autograph &&
+          ["true", "yes", "1"].includes(suggestions.autograph.toLowerCase())
+        ) {
+          next.autograph = true;
+          ocrAppliedOptionalFieldsRef.current.push("autograph");
+        }
+        if (
+          suggestions.memorabilia &&
+          !intakeOptionalTouched.memorabilia &&
+          !prev.memorabilia &&
+          ["true", "yes", "1"].includes(suggestions.memorabilia.toLowerCase())
+        ) {
+          next.memorabilia = true;
+          ocrAppliedOptionalFieldsRef.current.push("memorabilia");
         }
         if (suggestions.gradeCompany && !intakeOptionalTouched.gradeCompany && !prev.gradeCompany.trim()) {
           next.gradeCompany = suggestions.gradeCompany;
@@ -1325,6 +1357,12 @@ export default function AdminUploads() {
       intakeOptionalTouched.cardNumber,
       intakeOptionalTouched.productLine,
       intakeOptionalTouched.serialNumber,
+      intakeOptionalTouched.numbered,
+      intakeOptionalTouched.autograph,
+      intakeOptionalTouched.memorabilia,
+      intakeOptionalTouched.graded,
+      intakeOptionalTouched.gradeCompany,
+      intakeOptionalTouched.gradeValue,
     ]
   );
 
@@ -1437,6 +1475,18 @@ export default function AdminUploads() {
             }
             return;
           }
+          if (field === "autograph") {
+            if (typeof intakeSuggested.autograph !== "undefined") {
+              next.autograph = optionalBackup.autograph;
+            }
+            return;
+          }
+          if (field === "memorabilia") {
+            if (typeof intakeSuggested.memorabilia !== "undefined") {
+              next.memorabilia = optionalBackup.memorabilia;
+            }
+            return;
+          }
           if (field === "productLine") {
             if (next.productLine === intakeSuggested.setName) {
               next.productLine = optionalBackup.productLine;
@@ -1452,6 +1502,12 @@ export default function AdminUploads() {
           if (field === "serialNumber") {
             if (next.serialNumber === intakeSuggested.serialNumber) {
               next.serialNumber = optionalBackup.serialNumber;
+            }
+            return;
+          }
+          if (field === "numbered") {
+            if (next.numbered === intakeSuggested.numbered) {
+              next.numbered = optionalBackup.numbered;
             }
             return;
           }
@@ -2163,12 +2219,26 @@ export default function AdminUploads() {
                     )}`}
                   />
                 </div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  <input
+                    placeholder="Numbered (e.g. 3/10)"
+                    value={intakeOptional.numbered}
+                    onChange={handleOptionalChange("numbered")}
+                    className={`rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                      "numbered",
+                      intakeOptional.numbered
+                    )}`}
+                  />
+                </div>
                 <div className="flex flex-wrap gap-4 text-xs uppercase tracking-[0.24em] text-slate-400">
                   <label className="inline-flex items-center gap-2">
                     <input
                       type="checkbox"
                       checked={intakeOptional.autograph}
-                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, autograph: event.target.checked }))}
+                      onChange={(event) => {
+                        setIntakeOptionalTouched((prev) => ({ ...prev, autograph: true }));
+                        setIntakeOptional((prev) => ({ ...prev, autograph: event.target.checked }));
+                      }}
                       className="h-4 w-4 accent-sky-400"
                     />
                     Autograph
@@ -2177,7 +2247,10 @@ export default function AdminUploads() {
                     <input
                       type="checkbox"
                       checked={intakeOptional.memorabilia}
-                      onChange={(event) => setIntakeOptional((prev) => ({ ...prev, memorabilia: event.target.checked }))}
+                      onChange={(event) => {
+                        setIntakeOptionalTouched((prev) => ({ ...prev, memorabilia: true }));
+                        setIntakeOptional((prev) => ({ ...prev, memorabilia: event.target.checked }));
+                      }}
                       className="h-4 w-4 accent-sky-400"
                     />
                     Memorabilia

@@ -238,7 +238,9 @@ export default function KingsReview() {
           headers: adminHeaders(),
         });
         if (!res.ok) {
-          throw new Error("Failed to load card");
+          const payload = await res.json().catch(() => ({}));
+          const message = payload?.message ?? "Failed to load card";
+          throw new Error(message);
         }
         const data = await res.json();
         const card = data.card ?? data;
@@ -394,7 +396,9 @@ export default function KingsReview() {
       if (!res.ok) {
         throw new Error("Failed to update stage");
       }
-      setStage(nextStage);
+      if (STAGES.some((entry) => entry.id === nextStage)) {
+        setStage(nextStage);
+      }
       setActiveCardId(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to update stage");
@@ -658,6 +662,19 @@ export default function KingsReview() {
                   {aiMessage && <div className="text-xs text-slate-500">{aiMessage}</div>}
                 </div>
               )}
+              {sources.some((source) => source.error) && (
+                <div className="mt-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+                  {sources
+                    .filter((source) => source.error)
+                    .map((source) => (
+                      <div key={source.source}>
+                        <span className="uppercase tracking-[0.3em]">{SOURCE_LABELS[source.source] ?? source.source}</span>
+                        {": "}
+                        {source.error}
+                      </div>
+                    ))}
+                </div>
+              )}
 
               {activeCard ? (
                 <div className="mt-4 flex flex-col gap-4">
@@ -727,6 +744,20 @@ export default function KingsReview() {
                   </div>
 
                   <div className="grid gap-2">
+                    <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                      Stage override
+                      <select
+                        value={activeCard.reviewStage ?? "READY_FOR_HUMAN_REVIEW"}
+                        onChange={(event) => handleStageUpdate(event.target.value)}
+                        className="rounded-full border border-white/10 bg-night-800 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200 outline-none transition focus:border-gold-400/60"
+                      >
+                        <option value="BYTEBOT_RUNNING">AI Running</option>
+                        <option value="READY_FOR_HUMAN_REVIEW">Ready for Review</option>
+                        <option value="ESCALATED_REVIEW">Escalated Review</option>
+                        <option value="REVIEW_COMPLETE">Review Complete</option>
+                        <option value="INVENTORY_READY_FOR_SALE">Inventory Ready</option>
+                      </select>
+                    </label>
                     <button
                       type="button"
                       onClick={handleSave}

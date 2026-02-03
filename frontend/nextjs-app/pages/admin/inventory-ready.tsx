@@ -51,6 +51,7 @@ export default function InventoryReady() {
   const [batchLabel, setBatchLabel] = useState("");
   const [assigning, setAssigning] = useState(false);
   const [assignStatus, setAssignStatus] = useState<string | null>(null);
+  const [returning, setReturning] = useState(false);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -229,6 +230,36 @@ export default function InventoryReady() {
     }
   };
 
+  const handleReturn = async () => {
+    if (selectedIds.size === 0) {
+      return;
+    }
+    setReturning(true);
+    setAssignStatus(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/inventory-ready/return", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...adminHeaders(),
+        },
+        body: JSON.stringify({ cardIds: Array.from(selectedIds) }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to return cards");
+      }
+      setCards((prev) => prev.filter((card) => !selectedIds.has(card.id)));
+      setSelectedIds(new Set());
+      setAssignStatus("Returned selected cards to KingsReview.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to return cards");
+    } finally {
+      setReturning(false);
+    }
+  };
+
   const content = () => {
     if (loading) {
       return (
@@ -393,6 +424,14 @@ export default function InventoryReady() {
               className="w-full rounded-2xl border border-gold-500/60 bg-gold-500 px-4 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {assigning ? "Assigning..." : "Assign to Location"}
+            </button>
+            <button
+              type="button"
+              onClick={handleReturn}
+              disabled={returning || selectedIds.size === 0}
+              className="w-full rounded-2xl border border-white/20 bg-night-800/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-slate-200 transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {returning ? "Returning..." : "Return to KingsReview"}
             </button>
           </div>
         </section>
