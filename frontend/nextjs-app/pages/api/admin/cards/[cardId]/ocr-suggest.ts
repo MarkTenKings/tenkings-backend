@@ -186,7 +186,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             role: "user",
             content: [
               { type: "input_text", text: prompt },
-              ...(backImageUrl ? [{ type: "input_image", image_url: { url: backImageUrl } }] : []),
+              ...(backImageUrl ? [{ type: "input_image", image_url: backImageUrl }] : []),
             ],
           },
         ],
