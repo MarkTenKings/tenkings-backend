@@ -120,7 +120,7 @@ async function selectorFromPoint(page: Page, x: number, y: number) {
             .map((cls) => cssEscape(cls))
             .join(".")}`;
         }
-        const parent = node.parentElement;
+        const parent: Element | null = node.parentElement;
         if (parent) {
           const siblings = Array.from(parent.children).filter(
             (child) => child.tagName === node!.tagName

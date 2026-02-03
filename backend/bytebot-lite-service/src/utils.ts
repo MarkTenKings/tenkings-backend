@@ -59,7 +59,14 @@ export type PlaybookRule = {
 };
 
 export async function applyPlaybookRules(
-  page: { locator: (selector: string) => any; url: () => string; waitForLoadState: (state: string) => Promise<void> },
+  page: {
+    locator: (selector: string) => any;
+    url: () => string;
+    waitForLoadState: (
+      state?: "networkidle" | "load" | "domcontentloaded",
+      options?: { timeout?: number }
+    ) => Promise<void>;
+  },
   rules: PlaybookRule[]
 ) {
   let applied = 0;
