@@ -1,5 +1,5 @@
 import { BrowserContext } from "playwright";
-import { safeScreenshot, safeWaitForTimeout, toSafeKeyPart } from "../utils";
+import { applyPlaybookRules, safeScreenshot, safeWaitForTimeout, toSafeKeyPart } from "../utils";
 
 import type { Comp, SourceResult } from "./ebay";
 
@@ -30,8 +30,9 @@ export async function fetchTcgplayerComps(options: {
   maxComps: number;
   jobId: string;
   upload: UploadFn;
+  rules?: { action: string; selector: string; urlContains?: string | null }[];
 }) {
-  const { context, query, maxComps, jobId, upload } = options;
+  const { context, query, maxComps, jobId, upload, rules = [] } = options;
   const searchUrl = buildTcgplayerSearchUrl(query);
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
@@ -54,6 +55,9 @@ export async function fetchTcgplayerComps(options: {
   };
 
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
+  if (rules.length) {
+    await applyPlaybookRules(page, rules);
+  }
   await page.waitForSelector("a[href*='/product/']", { timeout: 15000 }).catch(() => undefined);
   await safeWaitForTimeout(page, 1500);
 

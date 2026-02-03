@@ -31,6 +31,10 @@
     reverse_proxy ingestion-service:8080
   }
 
+  bytebot.api.tenkings.co {
+    reverse_proxy bytebot-lite-service:8088
+  }
+
   vending.api.tenkings.co {
     reverse_proxy vending-gw:8080
   }

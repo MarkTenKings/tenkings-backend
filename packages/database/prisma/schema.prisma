@@ -701,6 +701,25 @@ model BytebotLiteJob {
   @@index([cardAssetId])
 }
 
+model BytebotPlaybookRule {
+  id          String   @id @default(uuid())
+  source      String
+  action      String
+  selector    String
+  urlContains String?
+  label       String?
+  priority    Int      @default(0)
+  enabled     Boolean  @default(true)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([source, enabled, priority])
+  @@index([createdById])
+}
+
 model SportsDbTeam {
   id             String    @id
   name           String

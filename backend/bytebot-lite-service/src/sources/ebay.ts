@@ -1,5 +1,5 @@
 import { BrowserContext } from "playwright";
-import { safeScreenshot, safeWaitForTimeout, toSafeKeyPart } from "../utils";
+import { applyPlaybookRules, safeScreenshot, safeWaitForTimeout, toSafeKeyPart } from "../utils";
 
 export type Comp = {
   source: string;
@@ -36,8 +36,9 @@ export async function fetchEbaySoldComps(options: {
   maxComps: number;
   jobId: string;
   upload: UploadFn;
+  rules?: { action: string; selector: string; urlContains?: string | null }[];
 }) {
-  const { context, query, maxComps, jobId, upload } = options;
+  const { context, query, maxComps, jobId, upload, rules = [] } = options;
   const searchUrl = buildEbaySoldUrl(query);
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -63,6 +64,9 @@ export async function fetchEbaySoldComps(options: {
 
     try {
       await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
+      if (rules.length) {
+        await applyPlaybookRules(page, rules);
+      }
       await page.waitForSelector("li.s-item", { timeout: 15000 }).catch(() => undefined);
       await safeWaitForTimeout(page, 1500);
 

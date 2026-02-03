@@ -10,6 +10,18 @@ import { fetchEbaySoldComps } from "./sources/ebay";
 import { fetchTcgplayerComps } from "./sources/tcgplayer";
 import { fetchPriceChartingComps } from "./sources/pricecharting";
 import { sleep } from "./utils";
+import { startTeachServer } from "./teachServer";
+
+type PlaybookRule = {
+  id: string;
+  source: string;
+  action: string;
+  selector: string;
+  urlContains: string | null;
+  label: string | null;
+  priority: number;
+  enabled: boolean;
+};
 
 type JobResult = {
   jobId: string;
@@ -59,7 +71,20 @@ async function processJob(
     }
 
     const results = [];
-    for (const source of sources) {
+    const playbookRules = await prisma.bytebotPlaybookRule.findMany({
+      where: {
+        source: { in: sources },
+        enabled: true,
+      },
+      orderBy: [{ priority: "desc" }, { createdAt: "desc" }],
+    });
+    const rulesBySource = playbookRules.reduce<Record<string, PlaybookRule[]>>((acc, rule) => {
+      const list = acc[rule.source] ?? [];
+      list.push(rule as PlaybookRule);
+      acc[rule.source] = list;
+      return acc;
+    }, {});
+    const runSource = async (source: string) => {
       let browser: any = null;
       let context: any = null;
       try {
@@ -81,53 +106,40 @@ async function processJob(
         });
 
         if (source === "ebay_sold") {
-          results.push(
-            await fetchEbaySoldComps({
-              context,
-              query: job.searchQuery,
-              maxComps: job.maxComps,
-              jobId: job.id,
-              upload,
-            })
-          );
-          continue;
+          return await fetchEbaySoldComps({
+            context,
+            query: job.searchQuery,
+            maxComps: job.maxComps,
+            jobId: job.id,
+            upload,
+            rules: rulesBySource[source] ?? [],
+          });
         }
 
         if (source === "tcgplayer") {
-          results.push(
-            await fetchTcgplayerComps({
-              context,
-              query: job.searchQuery,
-              maxComps: job.maxComps,
-              jobId: job.id,
-              upload,
-            })
-          );
-          continue;
+          return await fetchTcgplayerComps({
+            context,
+            query: job.searchQuery,
+            maxComps: job.maxComps,
+            jobId: job.id,
+            upload,
+            rules: rulesBySource[source] ?? [],
+          });
         }
 
         if (source === "pricecharting") {
-          results.push(
-            await fetchPriceChartingComps({
-              context,
-              query: job.searchQuery,
-              maxComps: job.maxComps,
-              jobId: job.id,
-              upload,
-              categoryType: job.payload?.categoryType ?? null,
-            })
-          );
-          continue;
+          return await fetchPriceChartingComps({
+            context,
+            query: job.searchQuery,
+            maxComps: job.maxComps,
+            jobId: job.id,
+            upload,
+            categoryType: job.payload?.categoryType ?? null,
+            rules: rulesBySource[source] ?? [],
+          });
         }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Source failed";
-        results.push({
-          source,
-          searchUrl: "",
-          searchScreenshotUrl: "",
-          comps: [],
-          error: message,
-        } as any);
+
+        throw new Error("Unknown source");
       } finally {
         try {
           if (context) {
@@ -143,6 +155,38 @@ async function processJob(
         } catch {
           // ignore
         }
+      }
+    };
+
+    for (const source of sources) {
+      let lastError: string | null = null;
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          const result = await runSource(source);
+          results.push(result);
+          lastError = null;
+          break;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Source failed";
+          lastError = message;
+          const isRetryable =
+            message.includes("Target page") ||
+            message.includes("browser has been closed") ||
+            message.includes("Target crashed") ||
+            message.includes("Execution context was destroyed");
+          if (!isRetryable || attempt === 2) {
+            results.push({
+              source,
+              searchUrl: "",
+              searchScreenshotUrl: "",
+              comps: [],
+              error: message,
+            } as any);
+          }
+        }
+      }
+      if (lastError) {
+        // nothing else to do
       }
     }
 
@@ -204,6 +248,7 @@ async function runWorkers() {
   await Promise.all(workers);
 }
 
+startTeachServer();
 runWorkers().catch((error) => {
   const message = error instanceof Error ? error.message : "Unknown error";
   console.error(`[bytebot-lite] worker boot failed: ${message}`);

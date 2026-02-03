@@ -86,6 +86,17 @@ type BytebotJob = {
   } | null;
 };
 
+type PlaybookRule = {
+  id: string;
+  source: string;
+  action: string;
+  selector: string;
+  urlContains: string | null;
+  label: string | null;
+  priority: number;
+  enabled: boolean;
+};
+
 export default function KingsReview() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
@@ -105,6 +116,18 @@ export default function KingsReview() {
   const [aiMessageIndex, setAiMessageIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [purging, setPurging] = useState(false);
+  const [pausePolling, setPausePolling] = useState(false);
+  const [showTeach, setShowTeach] = useState(false);
+  const [playbookRules, setPlaybookRules] = useState<PlaybookRule[]>([]);
+  const [teachForm, setTeachForm] = useState({
+    source: "pricecharting",
+    action: "click",
+    selector: "",
+    urlContains: "",
+    label: "",
+    priority: 0,
+    enabled: true,
+  });
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -120,6 +143,9 @@ export default function KingsReview() {
   const activeSourceData = sources.find((source) => source.source === activeSource) ?? sources[0] ?? null;
   const comps = activeSourceData?.comps ?? [];
   const activeComp = activeCompIndex !== null ? comps[activeCompIndex] : comps[0] ?? null;
+  const rulesForActiveSource = playbookRules.filter(
+    (rule) => rule.source === (activeSourceData?.source ?? teachForm.source)
+  );
   const aiStatus =
     job?.status === "IN_PROGRESS"
       ? "AI running"
@@ -176,6 +202,9 @@ export default function KingsReview() {
       return;
     }
     const interval = setInterval(() => {
+      if (pausePolling) {
+        return;
+      }
       const queryString = `?stage=${stage}`;
       fetch(`/api/admin/kingsreview/cards${queryString}`, {
         headers: adminHeaders(),
@@ -201,7 +230,7 @@ export default function KingsReview() {
         .catch(() => undefined);
     }, 2000);
     return () => clearInterval(interval);
-  }, [adminHeaders, isAdmin, session, stage]);
+  }, [adminHeaders, isAdmin, pausePolling, session, stage]);
 
   useEffect(() => {
     if (!router.isReady) {
@@ -216,6 +245,40 @@ export default function KingsReview() {
       setActiveCardId(requestedCardId);
     }
   }, [router.isReady, router.query.cardId, router.query.stage]);
+
+  useEffect(() => {
+    if (!session || !isAdmin) {
+      return;
+    }
+    const loadRules = async () => {
+      try {
+        const res = await fetch(`/api/admin/bytebot/playbooks`, {
+          headers: adminHeaders(),
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        setPlaybookRules(data.rules ?? []);
+      } catch {
+        // ignore
+      }
+    };
+    loadRules();
+  }, [adminHeaders, isAdmin, session]);
+
+  useEffect(() => {
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() === "t") {
+        setShowTeach((prev) => !prev);
+      }
+      if (event.key === " ") {
+        event.preventDefault();
+        setPausePolling((prev) => !prev);
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
 
   useEffect(() => {
     if (!activeCardId || !session || !isAdmin) {
@@ -395,6 +458,55 @@ export default function KingsReview() {
       setError(err instanceof Error ? err.message : "Failed to update stage");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCreateRule = async () => {
+    if (!teachForm.selector.trim()) {
+      setError("Selector is required.");
+      return;
+    }
+    try {
+      setError(null);
+      const res = await fetch(`/api/admin/bytebot/playbooks`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...adminHeaders(),
+        },
+        body: JSON.stringify({
+          source: teachForm.source,
+          action: teachForm.action,
+          selector: teachForm.selector.trim(),
+          urlContains: teachForm.urlContains.trim() || null,
+          label: teachForm.label.trim() || null,
+          priority: Number(teachForm.priority) || 0,
+          enabled: teachForm.enabled,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to save playbook rule.");
+      }
+      const data = await res.json();
+      setPlaybookRules((prev) => [data.rule, ...prev]);
+      setTeachForm((prev) => ({ ...prev, selector: "" }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save playbook rule.");
+    }
+  };
+
+  const handleDeleteRule = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin/bytebot/playbooks?id=${id}`, {
+        method: "DELETE",
+        headers: adminHeaders(),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to delete rule.");
+      }
+      setPlaybookRules((prev) => prev.filter((rule) => rule.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete rule.");
     }
   };
 
@@ -614,6 +726,20 @@ export default function KingsReview() {
             >
               {purging ? "Purging…" : "Delete All Test Cards"}
             </button>
+            <button
+              type="button"
+              onClick={() => setPausePolling((prev) => !prev)}
+              className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
+            >
+              {pausePolling ? "Resume Polling" : "Pause Polling"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowTeach((prev) => !prev)}
+              className="rounded-full border border-sky-400/60 bg-sky-500/10 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300"
+            >
+              {showTeach ? "Hide Teach Mode" : "Teach Mode"}
+            </button>
           </div>
         </header>
 
@@ -832,6 +958,121 @@ export default function KingsReview() {
                       )}
                     </div>
                   </div>
+
+                  {showTeach && (
+                    <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-sky-300">Teach Bytebot</p>
+                        <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                          Space = Pause · T = Toggle
+                        </span>
+                      </div>
+                      <div className="mt-2">
+                        <Link
+                          href="/admin/bytebot/teach"
+                          className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-400 transition hover:border-white/40 hover:text-white"
+                        >
+                          Open Live Teach Session →
+                        </Link>
+                      </div>
+                      <div className="mt-3 grid gap-2">
+                        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                          Source
+                          <select
+                            value={teachForm.source}
+                            onChange={(event) =>
+                              setTeachForm((prev) => ({ ...prev, source: event.target.value }))
+                            }
+                            className="rounded-full border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200"
+                          >
+                            <option value="ebay_sold">eBay Sold</option>
+                            <option value="pricecharting">PriceCharting</option>
+                            <option value="tcgplayer">TCGplayer</option>
+                          </select>
+                        </label>
+                        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                          Selector (Playwright)
+                          <input
+                            value={teachForm.selector}
+                            onChange={(event) =>
+                              setTeachForm((prev) => ({ ...prev, selector: event.target.value }))
+                            }
+                            placeholder="text=Sports or a[href*='sports']"
+                            className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                          />
+                        </label>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                            URL Contains (optional)
+                            <input
+                              value={teachForm.urlContains}
+                              onChange={(event) =>
+                                setTeachForm((prev) => ({ ...prev, urlContains: event.target.value }))
+                              }
+                              placeholder="pricecharting.com/search"
+                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                            Priority
+                            <input
+                              type="number"
+                              value={teachForm.priority}
+                              onChange={(event) =>
+                                setTeachForm((prev) => ({
+                                  ...prev,
+                                  priority: Number(event.target.value) || 0,
+                                }))
+                              }
+                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                            />
+                          </label>
+                        </div>
+                        <label className="flex items-center gap-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                          <input
+                            type="checkbox"
+                            checked={teachForm.enabled}
+                            onChange={(event) =>
+                              setTeachForm((prev) => ({ ...prev, enabled: event.target.checked }))
+                            }
+                          />
+                          Enabled
+                        </label>
+                        <button
+                          type="button"
+                          onClick={handleCreateRule}
+                          className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200"
+                        >
+                          Save Rule
+                        </button>
+                      </div>
+                      <div className="mt-4 space-y-2">
+                        {rulesForActiveSource.length === 0 && (
+                          <p className="text-xs text-slate-500">No rules for this source yet.</p>
+                        )}
+                        {rulesForActiveSource.map((rule) => (
+                          <div
+                            key={rule.id}
+                            className="flex items-center justify-between gap-2 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2 text-xs text-slate-300"
+                          >
+                            <div className="flex-1">
+                              <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                {rule.action} · {rule.source}
+                              </div>
+                              <div className="line-clamp-1">{rule.selector}</div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRule(rule.id)}
+                              className="text-[10px] uppercase tracking-[0.3em] text-rose-300"
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="flex flex-1 items-center justify-center text-xs uppercase tracking-[0.3em] text-slate-500">

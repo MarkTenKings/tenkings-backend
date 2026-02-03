@@ -1,5 +1,5 @@
 import { BrowserContext } from "playwright";
-import { safeScreenshot, safeWaitForTimeout, toSafeKeyPart } from "../utils";
+import { applyPlaybookRules, safeScreenshot, safeWaitForTimeout, toSafeKeyPart } from "../utils";
 
 import type { Comp, SourceResult } from "./ebay";
 
@@ -17,8 +17,9 @@ export async function fetchPriceChartingComps(options: {
   jobId: string;
   upload: UploadFn;
   categoryType?: string | null;
+  rules?: { action: string; selector: string; urlContains?: string | null }[];
 }) {
-  const { context, query, maxComps, jobId, upload, categoryType } = options;
+  const { context, query, maxComps, jobId, upload, categoryType, rules = [] } = options;
   const searchUrl = buildPriceChartingSearchUrl(query);
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
@@ -45,6 +46,9 @@ export async function fetchPriceChartingComps(options: {
     try {
       await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
       await safeWaitForTimeout(page, 1500);
+      if (rules.length) {
+        await applyPlaybookRules(page, rules);
+      }
 
   const openMoreMenu = async () => {
     const selectors = ["text=More", "[aria-label='More']", "button:has-text('More')", "a:has-text('More')"];

@@ -51,3 +51,36 @@ export async function safeWaitForTimeout(
     return false;
   }
 }
+
+export type PlaybookRule = {
+  action: string;
+  selector: string;
+  urlContains?: string | null;
+};
+
+export async function applyPlaybookRules(
+  page: { locator: (selector: string) => any; url: () => string; waitForLoadState: (state: string) => Promise<void> },
+  rules: PlaybookRule[]
+) {
+  let applied = 0;
+  for (const rule of rules) {
+    if (rule.action !== "click" || !rule.selector) {
+      continue;
+    }
+    const url = page.url?.() ?? "";
+    if (rule.urlContains && !url.includes(rule.urlContains)) {
+      continue;
+    }
+    try {
+      const locator = page.locator(rule.selector);
+      if ((await locator.count?.()) > 0) {
+        await locator.first().click().catch(() => undefined);
+        await page.waitForLoadState("networkidle").catch(() => undefined);
+        applied += 1;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return applied;
+}
