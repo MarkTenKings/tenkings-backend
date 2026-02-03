@@ -44,11 +44,11 @@ function parseArgs(argv: string[]): Args {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.query) {
-    console.error("Usage: --query \"search terms\" [--sources ebay_sold,tcgplayer,pricecharting,cardladder]");
+    console.error("Usage: --query \"search terms\" [--sources ebay_sold,tcgplayer,pricecharting]");
     process.exit(1);
   }
 
-  const sources = (args.sources ?? ["ebay_sold", "tcgplayer", "pricecharting", "cardladder"]).filter(Boolean);
+  const sources = (args.sources ?? ["ebay_sold", "tcgplayer", "pricecharting"]).filter(Boolean);
 
   const job = await enqueueBytebotLiteJob({
     searchQuery: args.query,

@@ -19,7 +19,6 @@ const SOURCE_LABELS: Record<string, string> = {
   ebay_sold: "eBay Sold",
   tcgplayer: "TCGplayer",
   pricecharting: "PriceCharting",
-  cardladder: "Card Ladder",
 };
 
 const AI_STATUS_MESSAGES = [
@@ -389,8 +388,8 @@ export default function KingsReview() {
       const categoryType = activeCard?.classificationNormalized?.categoryType ?? null;
       const sourceList =
         categoryType === "tcg"
-          ? ["ebay_sold", "tcgplayer", "pricecharting", "cardladder"]
-          : ["ebay_sold", "pricecharting", "cardladder"];
+          ? ["ebay_sold", "tcgplayer", "pricecharting"]
+          : ["ebay_sold", "pricecharting"];
       const res = await fetch("/api/admin/kingsreview/enqueue", {
         method: "POST",
         headers: {

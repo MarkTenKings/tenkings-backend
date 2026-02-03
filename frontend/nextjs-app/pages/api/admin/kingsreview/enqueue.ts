@@ -15,7 +15,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const cardAssetId = typeof body.cardAssetId === "string" ? body.cardAssetId : undefined;
     const sources = Array.isArray(body.sources)
       ? body.sources
-      : ["ebay_sold", "tcgplayer", "pricecharting", "cardladder"];
+      : ["ebay_sold", "tcgplayer", "pricecharting"];
     const categoryType = typeof body.categoryType === "string" ? body.categoryType : null;
 
     if (!query) {

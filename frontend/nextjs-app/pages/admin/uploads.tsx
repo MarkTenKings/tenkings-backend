@@ -1528,8 +1528,8 @@ export default function AdminUploads() {
       const query = buildIntakeQuery();
       const sourceList =
         intakeRequired.category === "tcg"
-          ? ["ebay_sold", "tcgplayer", "pricecharting", "cardladder"]
-          : ["ebay_sold", "pricecharting", "cardladder"];
+          ? ["ebay_sold", "tcgplayer", "pricecharting"]
+          : ["ebay_sold", "pricecharting"];
       const res = await fetch(resolveApiUrl("/api/admin/kingsreview/enqueue"), {
         method: "POST",
         mode: isRemoteApi ? "cors" : "same-origin",

@@ -9,7 +9,6 @@ import { createSpacesUploader } from "./storage/spaces";
 import { fetchEbaySoldComps } from "./sources/ebay";
 import { fetchTcgplayerComps } from "./sources/tcgplayer";
 import { fetchPriceChartingComps } from "./sources/pricecharting";
-import { fetchCardLadderComps } from "./sources/cardladder";
 import { sleep } from "./utils";
 
 type JobResult = {
@@ -132,19 +131,6 @@ async function processJob(
           continue;
         }
 
-        if (source === "cardladder") {
-          results.push(
-            await fetchCardLadderComps({
-              context,
-              query: job.searchQuery,
-              maxComps: job.maxComps,
-              jobId: job.id,
-              upload,
-              categoryType: job.payload?.categoryType ?? null,
-            })
-          );
-          continue;
-        }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Source failed";
         results.push({
