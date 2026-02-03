@@ -23,6 +23,15 @@ export async function fetchCardLadderComps(options: {
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
 
+  const bearerToken = process.env.CARDLADDER_BEARER_TOKEN;
+  const appCheckToken = process.env.CARDLADDER_APPCHECK_TOKEN;
+  if (bearerToken) {
+    await page.setExtraHTTPHeaders({
+      Authorization: `Bearer ${bearerToken}`,
+      ...(appCheckToken ? { "x-firebase-appcheck": appCheckToken } : {}),
+    });
+  }
+
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
 
