@@ -201,6 +201,7 @@ model User {
   createdEvidenceItems CardEvidenceItem[] @relation("CardEvidenceCreatedBy")
   createdPhotos        CardPhoto[]        @relation("CardPhotoCreatedBy")
   inventoryBatchesCreated InventoryBatch[] @relation("InventoryBatchCreatedBy")
+  bytebotPlaybookRules BytebotPlaybookRule[]
   sessions        Session[]
   qrCodesCreated  QrCode[]        @relation("QrCodeCreatedBy")
   qrCodesBound    QrCode[]        @relation("QrCodeBoundBy")
