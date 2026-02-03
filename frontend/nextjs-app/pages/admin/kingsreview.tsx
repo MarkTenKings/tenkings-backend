@@ -162,7 +162,7 @@ export default function KingsReview() {
           if (!nextCards.length) {
             return null;
           }
-          if (prev && nextCards.some((card) => card.id === prev)) {
+          if (prev && nextCards.some((card: CardSummary) => card.id === prev)) {
             return prev;
           }
           return nextCards[0].id;
