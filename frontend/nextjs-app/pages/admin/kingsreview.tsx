@@ -94,6 +94,7 @@ export default function KingsReview() {
   const { session, loading, ensureSession, logout } = useSession();
   const [stage, setStage] = useState<string>("IN_REVIEW");
   const [cards, setCards] = useState<CardSummary[]>([]);
+  const [cardsLoading, setCardsLoading] = useState(false);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [activeCard, setActiveCard] = useState<CardDetail | null>(null);
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
@@ -141,9 +142,12 @@ export default function KingsReview() {
 
     const loadCards = async () => {
       setError(null);
+      setCardsLoading(true);
       try {
         const queryString =
-          stage === "READY_FOR_HUMAN_REVIEW" && includeUnstaged ? `?stage=${stage}&includeUnstaged=1` : `?stage=${stage}`;
+          includeUnstaged && (stage === "READY_FOR_HUMAN_REVIEW" || stage === "IN_REVIEW")
+            ? `?stage=${stage}&includeUnstaged=1`
+            : `?stage=${stage}`;
         const res = await fetch(`/api/admin/kingsreview/cards${queryString}`, {
           headers: adminHeaders(),
           cache: "no-store",
@@ -152,11 +156,21 @@ export default function KingsReview() {
           throw new Error("Failed to load cards");
         }
         const data = await res.json();
-        setCards(data.cards ?? []);
-        const nextId = data.cards?.[0]?.id ?? null;
-        setActiveCardId((prev) => prev ?? nextId);
+        const nextCards = data.cards ?? [];
+        setCards(nextCards);
+        setActiveCardId((prev) => {
+          if (!nextCards.length) {
+            return null;
+          }
+          if (prev && nextCards.some((card) => card.id === prev)) {
+            return prev;
+          }
+          return nextCards[0].id;
+        });
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load cards");
+      } finally {
+        setCardsLoading(false);
       }
     };
 
@@ -169,7 +183,9 @@ export default function KingsReview() {
     }
     const interval = setInterval(() => {
       const queryString =
-        stage === "READY_FOR_HUMAN_REVIEW" && includeUnstaged ? `?stage=${stage}&includeUnstaged=1` : `?stage=${stage}`;
+        includeUnstaged && (stage === "READY_FOR_HUMAN_REVIEW" || stage === "IN_REVIEW")
+          ? `?stage=${stage}&includeUnstaged=1`
+          : `?stage=${stage}`;
       fetch(`/api/admin/kingsreview/cards${queryString}`, {
         headers: adminHeaders(),
         cache: "no-store",
@@ -179,8 +195,17 @@ export default function KingsReview() {
           if (!data?.cards) {
             return;
           }
-          setCards(data.cards);
-          setActiveCardId((prev) => prev ?? data.cards?.[0]?.id ?? null);
+          const nextCards = data.cards ?? [];
+          setCards(nextCards);
+          setActiveCardId((prev) => {
+            if (!nextCards.length) {
+              return null;
+            }
+            if (prev && nextCards.some((card: CardSummary) => card.id === prev)) {
+              return prev;
+            }
+            return nextCards[0].id;
+          });
         })
         .catch(() => undefined);
     }, 2000);
@@ -551,7 +576,7 @@ export default function KingsReview() {
                 onClick={() => {
                   setStage(item.id);
                   setActiveCardId(null);
-                  setCards([]);
+                  setCardsLoading(true);
                 }}
                 className={`rounded-full border px-4 py-2 text-[11px] uppercase tracking-[0.3em] transition ${
                   stage === item.id
@@ -612,9 +637,14 @@ export default function KingsReview() {
                     <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{card.status}</span>
                   </button>
                 ))}
-                {cards.length === 0 && (
+                {cards.length === 0 && !cardsLoading && (
                   <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
                     No cards in this stage
+                  </p>
+                )}
+                {cards.length === 0 && cardsLoading && (
+                  <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
+                    Loading cards…
                   </p>
                 )}
               </div>

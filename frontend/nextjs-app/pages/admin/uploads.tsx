@@ -709,11 +709,31 @@ export default function AdminUploads() {
       intakeRequired.category === "sport"
         ? intakeRequired.playerName.trim()
         : intakeRequired.cardName.trim();
-    const productLine = intakeOptional.productLine.trim();
+    const productLineRaw = intakeOptional.productLine.trim();
     const cardNumber = intakeOptional.cardNumber.trim();
     const gradeCompany = intakeOptional.graded ? intakeOptional.gradeCompany.trim() : "";
     const gradeValue = intakeOptional.graded ? intakeOptional.gradeValue.trim() : "";
     const grade = [gradeCompany, gradeValue].filter((part) => part.length > 0).join(" ");
+    const normalizeProductLine = () => {
+      if (!productLineRaw) {
+        return "";
+      }
+      if (!manufacturer) {
+        return productLineRaw;
+      }
+      const manufacturerTokens = manufacturer
+        .split(/\s+/)
+        .map((token) => token.toLowerCase())
+        .filter(Boolean);
+      if (!manufacturerTokens.length) {
+        return productLineRaw;
+      }
+      const filteredTokens = productLineRaw
+        .split(/\s+/)
+        .filter((token) => !manufacturerTokens.includes(token.toLowerCase()));
+      return filteredTokens.join(" ").trim() || productLineRaw;
+    };
+    const productLine = normalizeProductLine();
     const parts = [year, manufacturer, productLine, primary, cardNumber, grade]
       .filter((part) => part.length > 0)
       .map((part) => part.trim());
@@ -1193,7 +1213,8 @@ export default function AdminUploads() {
     if (!intakeCardId) {
       return "Capture the front of the card first.";
     }
-    if (!intakeBackPhotoId) {
+    const hasBackCapture = Boolean(intakeBackPhotoId || intakeBackPreview || pendingBackBlob);
+    if (!hasBackCapture) {
       return "Capture the back of the card before continuing.";
     }
     if (intakeRequired.category === "sport") {
@@ -1218,7 +1239,7 @@ export default function AdminUploads() {
       return "Year is required.";
     }
     return null;
-  }, [intakeBackPhotoId, intakeCardId, intakeRequired]);
+  }, [intakeBackPhotoId, intakeBackPreview, intakeCardId, intakeRequired, pendingBackBlob]);
 
   const applySuggestions = useCallback(
     (suggestions: Record<string, string>) => {

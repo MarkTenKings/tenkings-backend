@@ -22,12 +22,29 @@ export async function fetchPriceChartingComps(options: {
   const searchUrl = buildPriceChartingSearchUrl(query);
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
+  page.on("crash", () => {
+    console.warn("[bytebot-lite] PriceCharting page crashed");
+  });
+
+  const captureWithRetry = async () => {
+    let shot = await safeScreenshot(page, { fullPage: false, type: "jpeg", quality: 70 });
+    if (shot) {
+      return shot;
+    }
+    try {
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(1200);
+    } catch {
+      return null;
+    }
+    return await safeScreenshot(page, { fullPage: false, type: "jpeg", quality: 70 });
+  };
 
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
 
   const openMoreMenu = async () => {
-    const selectors = ["text=More", "[aria-label='More']", "button:has-text('More')"];
+    const selectors = ["text=More", "[aria-label='More']", "button:has-text('More')", "a:has-text('More')"];
     for (const selector of selectors) {
       const locator = page.locator(selector);
       if (await locator.count()) {
@@ -39,40 +56,45 @@ export async function fetchPriceChartingComps(options: {
     return false;
   };
 
+  const clickCategory = async (labels: string[]) => {
+    for (const label of labels) {
+      const link = page.getByRole("link", { name: label });
+      if (await link.count()) {
+        await link.first().click().catch(() => undefined);
+        await page.waitForLoadState("networkidle").catch(() => undefined);
+        await page.waitForTimeout(600);
+        return true;
+      }
+      const button = page.getByRole("button", { name: label });
+      if (await button.count()) {
+        await button.first().click().catch(() => undefined);
+        await page.waitForLoadState("networkidle").catch(() => undefined);
+        await page.waitForTimeout(600);
+        return true;
+      }
+      const any = page.locator("a,button,li,div", { hasText: label });
+      if (await any.count()) {
+        await any.first().click().catch(() => undefined);
+        await page.waitForLoadState("networkidle").catch(() => undefined);
+        await page.waitForTimeout(600);
+        return true;
+      }
+    }
+    return false;
+  };
+
   if (categoryType === "sport" || categoryType === "tcg") {
     await openMoreMenu();
   }
 
   if (categoryType === "sport") {
-    const sportsSelectors = [
-      "text=Sports",
-      "text=Sports Cards",
-      "text=Baseball",
-      "text=Basketball",
-      "text=Football",
-    ];
-    for (const selector of sportsSelectors) {
-      const locator = page.locator(selector);
-      if (await locator.count()) {
-        await locator.first().click().catch(() => undefined);
-        await page.waitForTimeout(500);
-        break;
-      }
-    }
+    await clickCategory(["Sports", "Sports Cards", "Baseball", "Basketball", "Football"]);
   }
   if (categoryType === "tcg") {
-    const tcgSelectors = ["text=Pokemon", "text=Pokémon", "text=TCG", "text=Trading Card Game"];
-    for (const selector of tcgSelectors) {
-      const locator = page.locator(selector);
-      if (await locator.count()) {
-        await locator.first().click().catch(() => undefined);
-        await page.waitForTimeout(500);
-        break;
-      }
-    }
+    await clickCategory(["Pokemon", "Pokémon", "TCG", "Trading Card Game"]);
   }
 
-  const searchShot = await safeScreenshot(page, { fullPage: false, type: "jpeg", quality: 70 });
+  const searchShot = await captureWithRetry();
   let searchShotUrl = "";
   if (searchShot) {
     const searchShotKey = `${jobId}/pricecharting-search-${toSafeKeyPart(query)}.jpg`;
@@ -95,10 +117,22 @@ export async function fetchPriceChartingComps(options: {
     const item = items[index];
     const detail = await context.newPage();
     detail.setDefaultTimeout(20000);
+    detail.on("crash", () => {
+      console.warn("[bytebot-lite] PriceCharting detail page crashed");
+    });
     await detail.goto(item.url, { waitUntil: "domcontentloaded" });
     await detail.waitForTimeout(1200);
 
-    const detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
+    let detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
+    if (!detailShot) {
+      try {
+        await detail.reload({ waitUntil: "domcontentloaded" });
+        await detail.waitForTimeout(900);
+        detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
+      } catch {
+        detailShot = null;
+      }
+    }
     let detailUrl = "";
     if (detailShot) {
       const detailKey = `${jobId}/pricecharting-comp-${index + 1}-${toSafeKeyPart(item.title)}.jpg`;

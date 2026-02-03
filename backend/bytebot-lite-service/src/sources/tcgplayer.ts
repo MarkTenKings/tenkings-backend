@@ -35,12 +35,29 @@ export async function fetchTcgplayerComps(options: {
   const searchUrl = buildTcgplayerSearchUrl(query);
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
+  page.on("crash", () => {
+    console.warn("[bytebot-lite] TCGplayer page crashed");
+  });
+
+  const captureWithRetry = async () => {
+    let shot = await safeScreenshot(page, { fullPage: false, type: "jpeg", quality: 70 });
+    if (shot) {
+      return shot;
+    }
+    try {
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForTimeout(1200);
+    } catch {
+      return null;
+    }
+    return await safeScreenshot(page, { fullPage: false, type: "jpeg", quality: 70 });
+  };
 
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("a[href*='/product/']", { timeout: 15000 }).catch(() => undefined);
   await page.waitForTimeout(1500);
 
-  const searchShot = await safeScreenshot(page, { fullPage: false, type: "jpeg", quality: 70 });
+  const searchShot = await captureWithRetry();
   let searchShotUrl = "";
   if (searchShot) {
     const searchShotKey = `${jobId}/tcgplayer-search-${toSafeKeyPart(query)}.jpg`;
@@ -63,10 +80,22 @@ export async function fetchTcgplayerComps(options: {
     const item = items[index];
     const detail = await context.newPage();
     detail.setDefaultTimeout(20000);
+    detail.on("crash", () => {
+      console.warn("[bytebot-lite] TCGplayer detail page crashed");
+    });
     await detail.goto(item.url, { waitUntil: "domcontentloaded" });
     await detail.waitForTimeout(1500);
 
-    const detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
+    let detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
+    if (!detailShot) {
+      try {
+        await detail.reload({ waitUntil: "domcontentloaded" });
+        await detail.waitForTimeout(1000);
+        detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
+      } catch {
+        detailShot = null;
+      }
+    }
     let detailUrl = "";
     if (detailShot) {
       const detailKey = `${jobId}/tcgplayer-comp-${index + 1}-${toSafeKeyPart(item.title)}.jpg`;
