@@ -837,16 +837,26 @@ export default function AdminUploads() {
         storageMode: string;
       };
 
-      if (presignPayload.storageMode !== "local" && presignPayload.storageMode !== "mock") {
+      if (
+        presignPayload.storageMode !== "local" &&
+        presignPayload.storageMode !== "mock" &&
+        presignPayload.storageMode !== "s3"
+      ) {
         throw new Error("Unsupported storage mode returned by server");
+      }
+
+      const uploadHeaders: Record<string, string> = {
+        "Content-Type": optimizedFile.type || file.type,
+      };
+      if (presignPayload.storageMode !== "s3") {
+        Object.assign(uploadHeaders, buildAdminHeaders(token));
       }
 
       const uploadRes = await fetch(resolveApiUrl(presignPayload.uploadUrl), {
         method: "PUT",
         mode: isRemoteApi ? "cors" : "same-origin",
         headers: {
-          ...buildAdminHeaders(token),
-          "Content-Type": optimizedFile.type || file.type,
+          ...uploadHeaders,
         },
         body: optimizedFile,
       });
@@ -920,16 +930,26 @@ export default function AdminUploads() {
         storageMode: string;
       };
 
-      if (presignPayload.storageMode !== "local" && presignPayload.storageMode !== "mock") {
+      if (
+        presignPayload.storageMode !== "local" &&
+        presignPayload.storageMode !== "mock" &&
+        presignPayload.storageMode !== "s3"
+      ) {
         throw new Error("Unsupported storage mode returned by server");
+      }
+
+      const uploadHeaders: Record<string, string> = {
+        "Content-Type": optimizedFile.type || file.type,
+      };
+      if (presignPayload.storageMode !== "s3") {
+        Object.assign(uploadHeaders, buildAdminHeaders(token));
       }
 
       const uploadRes = await fetch(resolveApiUrl(presignPayload.uploadUrl), {
         method: "PUT",
         mode: isRemoteApi ? "cors" : "same-origin",
         headers: {
-          ...buildAdminHeaders(token),
-          "Content-Type": optimizedFile.type || file.type,
+          ...uploadHeaders,
         },
         body: optimizedFile,
       });
@@ -1738,17 +1758,27 @@ export default function AdminUploads() {
           setBatchId(presignPayload.batchId);
         }
 
-        if (presignPayload.storageMode !== "local" && presignPayload.storageMode !== "mock") {
+        if (
+          presignPayload.storageMode !== "local" &&
+          presignPayload.storageMode !== "mock" &&
+          presignPayload.storageMode !== "s3"
+        ) {
           throw new Error("Unsupported storage mode returned by server");
         }
 
         updateResult(index, { status: "uploading" });
+        const uploadHeaders: Record<string, string> = {
+          "Content-Type": optimizedFile.type || file.type,
+        };
+        if (presignPayload.storageMode !== "s3") {
+          Object.assign(uploadHeaders, buildAdminHeaders(token));
+        }
+
         const uploadRes = await fetch(resolveApiUrl(presignPayload.uploadUrl), {
           method: "PUT",
           mode: isRemoteApi ? "cors" : "same-origin",
           headers: {
-            ...buildAdminHeaders(token),
-            "Content-Type": optimizedFile.type || file.type,
+            ...uploadHeaders,
           },
           body: optimizedFile,
         });

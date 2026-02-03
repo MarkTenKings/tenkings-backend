@@ -6,6 +6,7 @@ import {
   buildStorageKey,
   ensureLocalRoot,
   getStorageMode,
+  presignUploadUrl,
   publicUrlFor,
 } from "../../../../../lib/server/storage";
 import { MAX_UPLOAD_BYTES } from "../../../../../lib/server/uploads";
@@ -72,10 +73,6 @@ const handler = async function handler(req: NextApiRequest, res: NextApiResponse
     const storageKey = buildStorageKey(admin.user.id, photoId, fileName);
     const mode = getStorageMode();
 
-    if (mode === "s3") {
-      throw new Error("S3 storage mode is not configured yet. Set CARD_STORAGE_MODE=local or mock.");
-    }
-
     if (mode === "local") {
       await ensureLocalRoot();
     }
@@ -95,9 +92,9 @@ const handler = async function handler(req: NextApiRequest, res: NextApiResponse
     });
 
     const uploadUrl =
-      mode === "local" || mode === "mock"
-        ? `/api/admin/kingsreview/photos/file?photoId=${photoId}`
-        : "https://example-upload-configure-s3";
+      mode === "s3"
+        ? await presignUploadUrl(storageKey, mimeType)
+        : `/api/admin/kingsreview/photos/file?photoId=${photoId}`;
 
     return res.status(200).json({
       uploadUrl,

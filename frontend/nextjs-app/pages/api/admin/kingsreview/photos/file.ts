@@ -62,7 +62,8 @@ const handler = async function handler(req: NextApiRequest, res: NextApiResponse
       await writeLocalFile(photo.storageKey, buffer);
     }
 
-    const publicUrl = buildSiteUrl(publicUrlFor(photo.storageKey));
+    const rawPublicUrl = publicUrlFor(photo.storageKey);
+    const publicUrl = /^https?:\/\//i.test(rawPublicUrl) ? rawPublicUrl : buildSiteUrl(rawPublicUrl);
 
     await prisma.cardPhoto.update({
       where: { id: photoId },
