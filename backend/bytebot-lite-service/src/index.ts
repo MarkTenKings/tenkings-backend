@@ -52,37 +52,7 @@ async function processJob(
   browserType = chromium
 ) {
   const upload = createSpacesUploader();
-  const browser = await browserType.launch({
-    headless: HEADLESS,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-gpu",
-      "--disable-dev-shm-usage",
-      "--single-process",
-      "--no-zygote",
-    ],
-  });
-
   try {
-    const context = await browser.newContext({
-      viewport: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-    });
-
-    const cardLadderCookies = process.env.CARDLADDER_COOKIES_JSON;
-    if (cardLadderCookies) {
-      try {
-        const parsed = JSON.parse(cardLadderCookies);
-        if (Array.isArray(parsed)) {
-          await context.addCookies(parsed);
-        }
-      } catch {
-        console.warn("[bytebot-lite] Failed to parse CARDLADDER_COOKIES_JSON");
-      }
-    }
-
     const sources = job.sources ?? [];
     if (sources.length === 0) {
       throw new Error("No sources provided.");
@@ -90,7 +60,26 @@ async function processJob(
 
     const results = [];
     for (const source of sources) {
+      let browser: any = null;
+      let context: any = null;
       try {
+        browser = await browserType.launch({
+          headless: HEADLESS,
+          args: [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            "--single-process",
+            "--no-zygote",
+          ],
+        });
+        context = await browser.newContext({
+          viewport: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        });
+
         if (source === "ebay_sold") {
           results.push(
             await fetchEbaySoldComps({
@@ -130,7 +119,6 @@ async function processJob(
           );
           continue;
         }
-
       } catch (error) {
         const message = error instanceof Error ? error.message : "Source failed";
         results.push({
@@ -140,10 +128,23 @@ async function processJob(
           comps: [],
           error: message,
         } as any);
+      } finally {
+        try {
+          if (context) {
+            await context.close();
+          }
+        } catch {
+          // ignore
+        }
+        try {
+          if (browser) {
+            await browser.close();
+          }
+        } catch {
+          // ignore
+        }
       }
     }
-
-    await context.close();
 
     const payload: JobResult = {
       jobId: job.id,
@@ -173,7 +174,7 @@ async function processJob(
     await markBytebotLiteJobStatus(job.id, BytebotLiteJobStatus.FAILED, message);
     console.error(`[bytebot-lite] worker ${workerId} job ${job.id} failed: ${details}`);
   } finally {
-    await browser.close();
+    // browser handled per-source
   }
 }
 
@@ -193,6 +194,7 @@ async function workerLoop(workerId: number) {
       searchQuery: job.searchQuery,
       sources: job.sources,
       maxComps: job.maxComps,
+      payload: (job as { payload?: { categoryType?: string | null } }).payload,
     });
   }
 }
