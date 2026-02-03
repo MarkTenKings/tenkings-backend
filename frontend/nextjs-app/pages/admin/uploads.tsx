@@ -714,8 +714,19 @@ export default function AdminUploads() {
     const gradeCompany = intakeOptional.graded ? intakeOptional.gradeCompany.trim() : "";
     const gradeValue = intakeOptional.graded ? intakeOptional.gradeValue.trim() : "";
     const grade = [gradeCompany, gradeValue].filter((part) => part.length > 0).join(" ");
-    const parts = [year, manufacturer, productLine, primary, cardNumber, grade].filter((part) => part.length > 0);
-    return parts.join(" ").replace(/\s+/g, " ").trim();
+    const parts = [year, manufacturer, productLine, primary, cardNumber, grade]
+      .filter((part) => part.length > 0)
+      .map((part) => part.trim());
+    const seen = new Set<string>();
+    const normalizedParts = parts.filter((part) => {
+      const key = part.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+    return normalizedParts.join(" ").replace(/\s+/g, " ").trim();
   }, [
     intakeOptional.cardNumber,
     intakeOptional.gradeCompany,

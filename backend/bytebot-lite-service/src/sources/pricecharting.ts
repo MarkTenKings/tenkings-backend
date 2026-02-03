@@ -26,8 +26,31 @@ export async function fetchPriceChartingComps(options: {
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
   await page.waitForTimeout(1500);
 
+  const openMoreMenu = async () => {
+    const selectors = ["text=More", "[aria-label='More']", "button:has-text('More')"];
+    for (const selector of selectors) {
+      const locator = page.locator(selector);
+      if (await locator.count()) {
+        await locator.first().click().catch(() => undefined);
+        await page.waitForTimeout(400);
+        return true;
+      }
+    }
+    return false;
+  };
+
+  if (categoryType === "sport" || categoryType === "tcg") {
+    await openMoreMenu();
+  }
+
   if (categoryType === "sport") {
-    const sportsSelectors = ["text=Sports Cards", "text=Sports", "text=Baseball", "text=Basketball", "text=Football"];
+    const sportsSelectors = [
+      "text=Sports",
+      "text=Sports Cards",
+      "text=Baseball",
+      "text=Basketball",
+      "text=Football",
+    ];
     for (const selector of sportsSelectors) {
       const locator = page.locator(selector);
       if (await locator.count()) {
