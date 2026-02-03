@@ -1,9 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
-import { getStorageMode, writeLocalFile } from "../../../../../lib/server/storage";
+import { getStorageMode, publicUrlFor, writeLocalFile } from "../../../../../lib/server/storage";
 import { MAX_UPLOAD_BYTES } from "../../../../../lib/server/uploads";
 import { withAdminCors } from "../../../../../lib/server/cors";
+import { buildSiteUrl } from "../../../../../lib/server/urls";
 
 export const config = {
   api: {
@@ -61,13 +62,12 @@ const handler = async function handler(req: NextApiRequest, res: NextApiResponse
       await writeLocalFile(photo.storageKey, buffer);
     }
 
-    const mimeType = (req.headers["content-type"] as string | undefined) ?? photo.mimeType ?? "application/octet-stream";
-    const base64 = buffer.toString("base64");
+    const publicUrl = buildSiteUrl(publicUrlFor(photo.storageKey));
 
     await prisma.cardPhoto.update({
       where: { id: photoId },
       data: {
-        imageUrl: `data:${mimeType};base64,${base64}`,
+        imageUrl: publicUrl,
       },
     });
 

@@ -127,7 +127,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(404).json({ message: "Card not found" });
     }
 
-    const backImageUrl = card.photos?.[0]?.imageUrl ?? null;
+    const rawBackImageUrl = card.photos?.[0]?.imageUrl ?? null;
+    const backImageUrl =
+      rawBackImageUrl && /^https?:\/\//i.test(rawBackImageUrl) ? rawBackImageUrl : null;
     if ((!card.ocrText || !card.ocrText.trim()) && !backImageUrl) {
       return res.status(200).json({
         suggestions: {},
