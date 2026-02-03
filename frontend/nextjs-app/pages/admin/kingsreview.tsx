@@ -8,11 +8,8 @@ import { buildAdminHeaders } from "../../lib/adminHeaders";
 import { useSession } from "../../hooks/useSession";
 
 const STAGES = [
-  { id: "IN_REVIEW", label: "In Review" },
   { id: "BYTEBOT_RUNNING", label: "AI Running" },
   { id: "READY_FOR_HUMAN_REVIEW", label: "Ready" },
-  { id: "ESCALATED_REVIEW", label: "Escalated" },
-  { id: "REVIEW_COMPLETE", label: "Complete" },
 ] as const;
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -92,7 +89,7 @@ type BytebotJob = {
 export default function KingsReview() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
-  const [stage, setStage] = useState<string>("IN_REVIEW");
+  const [stage, setStage] = useState<string>("READY_FOR_HUMAN_REVIEW");
   const [cards, setCards] = useState<CardSummary[]>([]);
   const [cardsLoading, setCardsLoading] = useState(false);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
@@ -107,7 +104,7 @@ export default function KingsReview() {
   const [enqueueing, setEnqueueing] = useState(false);
   const [aiMessageIndex, setAiMessageIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [includeUnstaged, setIncludeUnstaged] = useState<boolean>(true);
+  const [purging, setPurging] = useState(false);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -144,10 +141,7 @@ export default function KingsReview() {
       setError(null);
       setCardsLoading(true);
       try {
-        const queryString =
-          includeUnstaged && (stage === "READY_FOR_HUMAN_REVIEW" || stage === "IN_REVIEW")
-            ? `?stage=${stage}&includeUnstaged=1`
-            : `?stage=${stage}`;
+        const queryString = `?stage=${stage}`;
         const res = await fetch(`/api/admin/kingsreview/cards${queryString}`, {
           headers: adminHeaders(),
           cache: "no-store",
@@ -175,17 +169,14 @@ export default function KingsReview() {
     };
 
     loadCards();
-  }, [adminHeaders, includeUnstaged, isAdmin, session, stage]);
+  }, [adminHeaders, isAdmin, session, stage]);
 
   useEffect(() => {
     if (!session || !isAdmin) {
       return;
     }
     const interval = setInterval(() => {
-      const queryString =
-        includeUnstaged && (stage === "READY_FOR_HUMAN_REVIEW" || stage === "IN_REVIEW")
-          ? `?stage=${stage}&includeUnstaged=1`
-          : `?stage=${stage}`;
+      const queryString = `?stage=${stage}`;
       fetch(`/api/admin/kingsreview/cards${queryString}`, {
         headers: adminHeaders(),
         cache: "no-store",
@@ -210,7 +201,7 @@ export default function KingsReview() {
         .catch(() => undefined);
     }, 2000);
     return () => clearInterval(interval);
-  }, [adminHeaders, includeUnstaged, isAdmin, session, stage]);
+  }, [adminHeaders, isAdmin, session, stage]);
 
   useEffect(() => {
     if (!router.isReady) {
@@ -591,19 +582,38 @@ export default function KingsReview() {
                 {item.label}
               </button>
             ))}
-            {(stage === "READY_FOR_HUMAN_REVIEW" || stage === "IN_REVIEW") && (
-              <button
-                type="button"
-                onClick={() => setIncludeUnstaged((prev) => !prev)}
-                className={`rounded-full border px-4 py-2 text-[11px] uppercase tracking-[0.3em] transition ${
-                  includeUnstaged
-                    ? "border-emerald-400/60 bg-emerald-500/20 text-emerald-200"
-                    : "border-white/20 text-slate-300 hover:border-white/40 hover:text-white"
-                }`}
-              >
-                {includeUnstaged ? "Including Unstaged" : "Hide Unstaged"}
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={async () => {
+                if (!window.confirm("Delete all cards currently in KingsReview stages? This cannot be undone.")) {
+                  return;
+                }
+                setPurging(true);
+                setError(null);
+                try {
+                  const res = await fetch("/api/admin/kingsreview/purge", {
+                    method: "POST",
+                    headers: adminHeaders(),
+                  });
+                  if (!res.ok) {
+                    const payload = await res.json().catch(() => ({}));
+                    throw new Error(payload?.message ?? "Failed to purge cards");
+                  }
+                  const payload = await res.json().catch(() => ({}));
+                  setCards([]);
+                  setActiveCardId(null);
+                  setError(`Purged ${payload?.deleted ?? 0} cards from KingsReview.`);
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Failed to purge cards");
+                } finally {
+                  setPurging(false);
+                }
+              }}
+              className="rounded-full border border-rose-400/60 bg-rose-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
+              disabled={purging}
+            >
+              {purging ? "Purging…" : "Delete All Test Cards"}
+            </button>
           </div>
         </header>
 
@@ -753,8 +763,6 @@ export default function KingsReview() {
                       >
                         <option value="BYTEBOT_RUNNING">AI Running</option>
                         <option value="READY_FOR_HUMAN_REVIEW">Ready for Review</option>
-                        <option value="ESCALATED_REVIEW">Escalated Review</option>
-                        <option value="REVIEW_COMPLETE">Review Complete</option>
                         <option value="INVENTORY_READY_FOR_SALE">Inventory Ready</option>
                       </select>
                     </label>
