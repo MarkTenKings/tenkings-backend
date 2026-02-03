@@ -36,3 +36,18 @@ export async function safeScreenshot(
     }
   }
 }
+
+export async function safeWaitForTimeout(
+  page: { waitForTimeout: (ms: number) => Promise<void>; isClosed?: () => boolean },
+  ms: number
+) {
+  try {
+    if (page.isClosed?.()) {
+      return false;
+    }
+    await page.waitForTimeout(ms);
+    return true;
+  } catch {
+    return false;
+  }
+}

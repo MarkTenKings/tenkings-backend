@@ -1,5 +1,5 @@
 import { BrowserContext } from "playwright";
-import { safeScreenshot, toSafeKeyPart } from "../utils";
+import { safeScreenshot, safeWaitForTimeout, toSafeKeyPart } from "../utils";
 
 import type { Comp, SourceResult } from "./ebay";
 
@@ -33,7 +33,7 @@ export async function fetchPriceChartingComps(options: {
     }
     try {
       await page.reload({ waitUntil: "domcontentloaded" });
-      await page.waitForTimeout(1200);
+      await safeWaitForTimeout(page, 1200);
     } catch {
       return null;
     }
@@ -41,7 +41,7 @@ export async function fetchPriceChartingComps(options: {
   };
 
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(1500);
+  await safeWaitForTimeout(page, 1500);
 
   const openMoreMenu = async () => {
     const selectors = ["text=More", "[aria-label='More']", "button:has-text('More')", "a:has-text('More')"];
@@ -49,7 +49,7 @@ export async function fetchPriceChartingComps(options: {
       const locator = page.locator(selector);
       if (await locator.count()) {
         await locator.first().click().catch(() => undefined);
-        await page.waitForTimeout(400);
+        await safeWaitForTimeout(page, 400);
         return true;
       }
     }
@@ -62,21 +62,21 @@ export async function fetchPriceChartingComps(options: {
       if (await link.count()) {
         await link.first().click().catch(() => undefined);
         await page.waitForLoadState("networkidle").catch(() => undefined);
-        await page.waitForTimeout(600);
+        await safeWaitForTimeout(page, 600);
         return true;
       }
       const button = page.getByRole("button", { name: label });
       if (await button.count()) {
         await button.first().click().catch(() => undefined);
         await page.waitForLoadState("networkidle").catch(() => undefined);
-        await page.waitForTimeout(600);
+        await safeWaitForTimeout(page, 600);
         return true;
       }
       const any = page.locator("a,button,li,div", { hasText: label });
       if (await any.count()) {
         await any.first().click().catch(() => undefined);
         await page.waitForLoadState("networkidle").catch(() => undefined);
-        await page.waitForTimeout(600);
+        await safeWaitForTimeout(page, 600);
         return true;
       }
     }
@@ -87,11 +87,54 @@ export async function fetchPriceChartingComps(options: {
     await openMoreMenu();
   }
 
+  const selectFromDropdown = async (labels: string[]) => {
+    const selects = await page.locator("select").all();
+    for (const select of selects) {
+      const options = await select.locator("option").all();
+      for (const option of options) {
+        const text = (await option.textContent())?.trim() ?? "";
+        if (!text) continue;
+        if (labels.some((label) => text.toLowerCase().includes(label.toLowerCase()))) {
+          const value = await option.getAttribute("value");
+          if (value) {
+            await select.selectOption(value).catch(() => undefined);
+            await page.waitForLoadState("networkidle").catch(() => undefined);
+            await safeWaitForTimeout(page, 600);
+            return true;
+          }
+        }
+      }
+    }
+    return false;
+  };
+
   if (categoryType === "sport") {
-    await clickCategory(["Sports", "Sports Cards", "Baseball", "Basketball", "Football"]);
+    const clicked = await clickCategory(["Sports", "Sports Cards", "Baseball", "Basketball", "Football"]);
+    if (!clicked) {
+      await selectFromDropdown(["sports", "baseball", "basketball", "football"]);
+    }
+    if (!page.url().toLowerCase().includes("sports")) {
+      const sportsLink = page.locator("a[href*='sports'], a[href*='sports-cards']").first();
+      if (await sportsLink.count()) {
+        await sportsLink.click().catch(() => undefined);
+        await page.waitForLoadState("networkidle").catch(() => undefined);
+        await safeWaitForTimeout(page, 600);
+      }
+    }
   }
   if (categoryType === "tcg") {
-    await clickCategory(["Pokemon", "Pokémon", "TCG", "Trading Card Game"]);
+    const clicked = await clickCategory(["Pokemon", "Pokémon", "TCG", "Trading Card Game"]);
+    if (!clicked) {
+      await selectFromDropdown(["pokemon", "tcg", "trading card"]);
+    }
+    if (!page.url().toLowerCase().includes("pokemon") && !page.url().toLowerCase().includes("tcg")) {
+      const tcgLink = page.locator("a[href*='pokemon'], a[href*='tcg']").first();
+      if (await tcgLink.count()) {
+        await tcgLink.click().catch(() => undefined);
+        await page.waitForLoadState("networkidle").catch(() => undefined);
+        await safeWaitForTimeout(page, 600);
+      }
+    }
   }
 
   const searchShot = await captureWithRetry();
@@ -107,7 +150,13 @@ export async function fetchPriceChartingComps(options: {
         title: node.textContent?.trim() ?? "",
         url: (node as HTMLAnchorElement).href ?? "",
       }))
-      .filter((item) => item.title && item.url && item.url.includes("pricecharting.com/game"))
+      .filter((item) => {
+        if (!item.title || !item.url) return false;
+        if (!item.url.includes("pricecharting.com/")) return false;
+        if (item.url.includes("/search-products")) return false;
+        if (item.url.endsWith("pricecharting.com/")) return false;
+        return true;
+      })
   );
 
   const items = rawItems.slice(0, maxComps);
@@ -121,13 +170,13 @@ export async function fetchPriceChartingComps(options: {
       console.warn("[bytebot-lite] PriceCharting detail page crashed");
     });
     await detail.goto(item.url, { waitUntil: "domcontentloaded" });
-    await detail.waitForTimeout(1200);
+    await safeWaitForTimeout(detail, 1200);
 
     let detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
     if (!detailShot) {
       try {
         await detail.reload({ waitUntil: "domcontentloaded" });
-        await detail.waitForTimeout(900);
+        await safeWaitForTimeout(detail, 900);
         detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
       } catch {
         detailShot = null;

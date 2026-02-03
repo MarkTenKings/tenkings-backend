@@ -1,5 +1,5 @@
 import { BrowserContext } from "playwright";
-import { safeScreenshot, toSafeKeyPart } from "../utils";
+import { safeScreenshot, safeWaitForTimeout, toSafeKeyPart } from "../utils";
 
 import type { Comp, SourceResult } from "./ebay";
 
@@ -46,7 +46,7 @@ export async function fetchTcgplayerComps(options: {
     }
     try {
       await page.reload({ waitUntil: "domcontentloaded" });
-      await page.waitForTimeout(1200);
+      await safeWaitForTimeout(page, 1200);
     } catch {
       return null;
     }
@@ -55,7 +55,7 @@ export async function fetchTcgplayerComps(options: {
 
   await page.goto(searchUrl, { waitUntil: "domcontentloaded" });
   await page.waitForSelector("a[href*='/product/']", { timeout: 15000 }).catch(() => undefined);
-  await page.waitForTimeout(1500);
+  await safeWaitForTimeout(page, 1500);
 
   const searchShot = await captureWithRetry();
   let searchShotUrl = "";
@@ -84,13 +84,13 @@ export async function fetchTcgplayerComps(options: {
       console.warn("[bytebot-lite] TCGplayer detail page crashed");
     });
     await detail.goto(item.url, { waitUntil: "domcontentloaded" });
-    await detail.waitForTimeout(1500);
+    await safeWaitForTimeout(detail, 1500);
 
     let detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
     if (!detailShot) {
       try {
         await detail.reload({ waitUntil: "domcontentloaded" });
-        await detail.waitForTimeout(1000);
+        await safeWaitForTimeout(detail, 1000);
         detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
       } catch {
         detailShot = null;
