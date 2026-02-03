@@ -290,7 +290,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     if (!fields.gradeCompany || !fields.gradeValue || !fields.graded) {
-      const rawOcr = card.ocrText;
+      const rawOcr = card.ocrText ?? "";
       const normalizedOcr = rawOcr
         .replace(/\bP\s*5\s*A\b/gi, "PSA")
         .replace(/\bP\s*S\s*A\b/gi, "PSA")
