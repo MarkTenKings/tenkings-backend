@@ -857,7 +857,7 @@ export default function AdminUploads() {
 
       const uploadRes = await fetch(resolveApiUrl(presignPayload.uploadUrl), {
         method: "PUT",
-        mode: isRemoteApi ? "cors" : "same-origin",
+        mode: presignPayload.storageMode === "s3" ? "cors" : isRemoteApi ? "cors" : "same-origin",
         headers: {
           ...uploadHeaders,
         },
@@ -953,7 +953,7 @@ export default function AdminUploads() {
 
       const uploadRes = await fetch(resolveApiUrl(presignPayload.uploadUrl), {
         method: "PUT",
-        mode: isRemoteApi ? "cors" : "same-origin",
+        mode: presignPayload.storageMode === "s3" ? "cors" : isRemoteApi ? "cors" : "same-origin",
         headers: {
           ...uploadHeaders,
         },
@@ -1792,7 +1792,7 @@ export default function AdminUploads() {
 
         const uploadRes = await fetch(resolveApiUrl(presignPayload.uploadUrl), {
           method: "PUT",
-          mode: isRemoteApi ? "cors" : "same-origin",
+          mode: presignPayload.storageMode === "s3" ? "cors" : isRemoteApi ? "cors" : "same-origin",
           headers: {
             ...uploadHeaders,
           },
