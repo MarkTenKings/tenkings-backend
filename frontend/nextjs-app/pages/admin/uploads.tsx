@@ -2184,6 +2184,13 @@ export default function AdminUploads() {
                       : "Tap to try OCR autofill"}
                     {ocrSummary ? ` · ${ocrSummary}` : ""}
                   </span>
+                  {ocrStatus === "error" && ocrError?.includes("Card asset not ready") ? (
+                    <span className="text-[10px] normal-case tracking-normal text-slate-400">
+                      Card ID: {intakeCardId ?? "none"} · Front: {intakeFrontPreview ? "yes" : "no"} · Back:{" "}
+                      {intakeBackPreview ? "yes" : "no"} · Tilt: {intakeTiltPreview ? "yes" : "no"}
+                      {intakeError ? ` · Upload error: ${intakeError}` : ""}
+                    </span>
+                  ) : null}
                 </div>
                 <button
                   type="button"
