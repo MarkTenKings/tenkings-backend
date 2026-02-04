@@ -316,10 +316,6 @@ export default function KingsReview() {
       if (event.key.toLowerCase() === "t") {
         setShowTeach((prev) => !prev);
       }
-      if (event.key === " ") {
-        event.preventDefault();
-        setPausePolling((prev) => !prev);
-      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
