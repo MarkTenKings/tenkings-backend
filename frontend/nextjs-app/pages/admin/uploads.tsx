@@ -1964,26 +1964,26 @@ export default function AdminUploads() {
         <meta name="robots" content="noindex" />
       </Head>
 
-      <div className="flex flex-1 flex-col gap-10 px-6 py-12">
-        <header className="space-y-3">
-          <p className="text-sm uppercase tracking-[0.32em] text-violet-300">Processing Console</p>
+      <div className="flex flex-1 flex-col gap-8 px-6 py-12">
+        <header className="space-y-2">
           <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Add Cards</h1>
-          <p className="max-w-3xl text-sm text-slate-300">
-            Capture card photos and enter the required intake details.
-          </p>
-          <Link className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white" href="/admin">
-            ← Back to console
-          </Link>
+          <div className="flex flex-wrap items-center justify-between gap-4">
+            <Link className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white" href="/admin">
+              ← Console
+            </Link>
+            <Link
+              className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
+              href="/admin/kingsreview"
+            >
+              KingsReview →
+            </Link>
+          </div>
         </header>
 
-        <section className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-night-900/70 p-6">
+        <section className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <p className="text-xs uppercase tracking-[0.32em] text-sky-300">KingsReview Intake</p>
               <h2 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">Add Cards/Items</h2>
-              <p className="mt-2 max-w-2xl text-sm text-slate-300">
-                Guided workflow for staff: front photo → back photo → optional tilt → required fields → optional fields → send to KingsReview AI.
-              </p>
             </div>
             <div className="flex items-center gap-3">
               <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Step</span>
@@ -2506,31 +2506,25 @@ export default function AdminUploads() {
           )}
         </section>
 
-        <section className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/50 p-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Recent uploads</p>
-              <h2 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">Batches</h2>
-            </div>
-            <Link
-              href="/admin"
-              className="text-xs uppercase tracking-[0.28em] text-slate-500 transition hover:text-slate-200"
-            >
-              Dashboard
-            </Link>
-          </div>
+        <section className="rounded-3xl border border-white/10 bg-night-900/50 p-4">
+          <details className="group">
+            <summary className="flex cursor-pointer items-center justify-between text-sm uppercase tracking-[0.3em] text-slate-300">
+              <span>Recent Uploads · Batches</span>
+              <span className="text-xs text-slate-500 transition group-open:text-slate-300">Toggle</span>
+            </summary>
 
-          {batchesLoading && <p className="text-sm text-slate-400">Loading batches…</p>}
-          {batchesError && <p className="text-sm text-rose-300">{batchesError}</p>}
+            <div className="mt-4 flex flex-col gap-4">
+              {batchesLoading && <p className="text-sm text-slate-400">Loading batches…</p>}
+              {batchesError && <p className="text-sm text-rose-300">{batchesError}</p>}
 
-          {!batchesLoading && !batchesError && batches.length === 0 && (
-            <p className="text-sm text-slate-400">No batches yet. Upload card images to start a new batch.</p>
-          )}
+              {!batchesLoading && !batchesError && batches.length === 0 && (
+                <p className="text-sm text-slate-400">No batches yet. Upload card images to start a new batch.</p>
+              )}
 
-          {!batchesLoading && batches.length > 0 && (
-            <ul className="grid gap-3">
-              {batches.map((batch) => (
-                <li key={batch.id} className="rounded-2xl border border-white/10 bg-night-900/70 p-4">
+              {!batchesLoading && batches.length > 0 && (
+                <ul className="grid gap-3">
+                  {batches.map((batch) => (
+                    <li key={batch.id} className="rounded-2xl border border-white/10 bg-night-900/70 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
                         <p className="text-xs uppercase tracking-[0.28em] text-slate-400">
@@ -2579,10 +2573,12 @@ export default function AdminUploads() {
                         </ul>
                       </div>
                     )}
-                </li>
-              ))}
-            </ul>
-          )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </details>
         </section>
       </div>
 
