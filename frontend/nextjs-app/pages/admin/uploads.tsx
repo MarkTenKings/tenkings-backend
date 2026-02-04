@@ -1388,7 +1388,14 @@ export default function AdminUploads() {
 
 
   const fetchOcrSuggestions = useCallback(async () => {
-    if (!intakeCardId || !session?.token) {
+    if (!session?.token) {
+      setOcrStatus("error");
+      setOcrError("Your session expired. Sign in again and retry.");
+      return;
+    }
+    if (!intakeCardId) {
+      setOcrStatus("error");
+      setOcrError("Card asset not ready yet. Wait a moment and retry.");
       return;
     }
     try {
