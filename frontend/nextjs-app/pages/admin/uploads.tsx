@@ -1966,7 +1966,7 @@ export default function AdminUploads() {
 
       <div className="flex flex-1 flex-col gap-8 px-6 py-12">
         <header className="space-y-2">
-          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Add Cards</h1>
+          <h1 className="text-center font-heading text-4xl uppercase tracking-[0.18em] text-white">Add Cards</h1>
           <div className="flex flex-wrap items-center justify-between gap-4">
             <Link className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white" href="/admin">
               ← Console
