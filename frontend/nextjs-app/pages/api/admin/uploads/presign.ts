@@ -5,6 +5,7 @@ import { requireAdminSession, toErrorResponse } from "../../../../lib/server/adm
 import {
   buildStorageKey,
   ensureLocalRoot,
+  getS3ObjectAcl,
   getStorageMode,
   presignUploadUrl,
   publicUrlFor,
@@ -19,6 +20,7 @@ interface PresignResponse {
   fields: Record<string, string>;
   publicUrl: string;
   storageMode: string;
+  acl?: string | null;
 }
 
 const handler: NextApiHandler<PresignResponse | { message: string }> = async function handler(
@@ -130,6 +132,7 @@ const handler: NextApiHandler<PresignResponse | { message: string }> = async fun
       fields: {},
       publicUrl: publicUrlFor(storageKey),
       storageMode: mode,
+      acl: getS3ObjectAcl(),
     });
   } catch (error) {
     const result = toErrorResponse(error);

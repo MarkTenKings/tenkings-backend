@@ -835,6 +835,7 @@ export default function AdminUploads() {
         fields: Record<string, string>;
         publicUrl: string;
         storageMode: string;
+        acl?: string | null;
       };
 
       if (
@@ -848,7 +849,9 @@ export default function AdminUploads() {
       const uploadHeaders: Record<string, string> = {
         "Content-Type": optimizedFile.type || file.type,
       };
-      if (presignPayload.storageMode !== "s3") {
+      if (presignPayload.storageMode === "s3" && presignPayload.acl) {
+        uploadHeaders["x-amz-acl"] = presignPayload.acl;
+      } else if (presignPayload.storageMode !== "s3") {
         Object.assign(uploadHeaders, buildAdminHeaders(token));
       }
 
@@ -928,6 +931,7 @@ export default function AdminUploads() {
         uploadUrl: string;
         publicUrl: string;
         storageMode: string;
+        acl?: string | null;
       };
 
       if (
@@ -941,7 +945,9 @@ export default function AdminUploads() {
       const uploadHeaders: Record<string, string> = {
         "Content-Type": optimizedFile.type || file.type,
       };
-      if (presignPayload.storageMode !== "s3") {
+      if (presignPayload.storageMode === "s3" && presignPayload.acl) {
+        uploadHeaders["x-amz-acl"] = presignPayload.acl;
+      } else if (presignPayload.storageMode !== "s3") {
         Object.assign(uploadHeaders, buildAdminHeaders(token));
       }
 
@@ -1757,6 +1763,7 @@ export default function AdminUploads() {
           fields: Record<string, string>;
           publicUrl: string;
           storageMode: string;
+          acl?: string | null;
         };
 
         if (!sharedBatchId) {
@@ -1777,7 +1784,9 @@ export default function AdminUploads() {
         const uploadHeaders: Record<string, string> = {
           "Content-Type": optimizedFile.type || file.type,
         };
-        if (presignPayload.storageMode !== "s3") {
+        if (presignPayload.storageMode === "s3" && presignPayload.acl) {
+          uploadHeaders["x-amz-acl"] = presignPayload.acl;
+        } else if (presignPayload.storageMode !== "s3") {
           Object.assign(uploadHeaders, buildAdminHeaders(token));
         }
 

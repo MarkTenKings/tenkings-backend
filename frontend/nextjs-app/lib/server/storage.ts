@@ -52,6 +52,10 @@ export function getStorageMode(): StorageMode {
   return mode === "s3" ? "s3" : "local";
 }
 
+export function getS3ObjectAcl(): string | null {
+  return getStorageMode() === "s3" ? s3ObjectAcl : null;
+}
+
 function getS3Client(): S3Client {
   if (getStorageMode() !== "s3") {
     throw new Error("S3 storage client requested while storage mode is not s3");

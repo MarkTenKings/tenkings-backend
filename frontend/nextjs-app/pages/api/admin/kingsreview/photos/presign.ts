@@ -5,6 +5,7 @@ import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/
 import {
   buildStorageKey,
   ensureLocalRoot,
+  getS3ObjectAcl,
   getStorageMode,
   presignUploadUrl,
   publicUrlFor,
@@ -18,6 +19,7 @@ interface PresignResponse {
   fields: Record<string, string>;
   publicUrl: string;
   storageMode: string;
+  acl?: string | null;
 }
 
 const handler = async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -102,6 +104,7 @@ const handler = async function handler(req: NextApiRequest, res: NextApiResponse
       fields: {},
       publicUrl: publicUrlFor(storageKey),
       storageMode: mode,
+      acl: getS3ObjectAcl(),
     } as PresignResponse);
   } catch (error) {
     const result = toErrorResponse(error);
