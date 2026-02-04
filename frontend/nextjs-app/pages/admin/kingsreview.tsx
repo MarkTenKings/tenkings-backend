@@ -116,8 +116,10 @@ export default function KingsReview() {
   const [aiMessageIndex, setAiMessageIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [purging, setPurging] = useState(false);
-  const [pausePolling, setPausePolling] = useState(false);
   const [showTeach, setShowTeach] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteSelection, setDeleteSelection] = useState<string[]>([]);
   const [playbookRules, setPlaybookRules] = useState<PlaybookRule[]>([]);
   const [teachForm, setTeachForm] = useState({
     source: "pricecharting",
@@ -138,6 +140,52 @@ export default function KingsReview() {
     () => buildAdminHeaders(session?.token),
     [session?.token]
   );
+  const toggleDeleteSelection = useCallback((cardId: string) => {
+    setDeleteSelection((prev) =>
+      prev.includes(cardId) ? prev.filter((id) => id !== cardId) : [...prev, cardId]
+    );
+  }, []);
+  const handleSelectAll = useCallback(
+    (checked: boolean) => {
+      setDeleteSelection(checked ? cards.map((card) => card.id) : []);
+    },
+    [cards]
+  );
+  const handleDeleteSelected = useCallback(async () => {
+    if (deleteSelection.length === 0) {
+      return;
+    }
+    setPurging(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/kingsreview/purge", {
+        method: "POST",
+        headers: { ...adminHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ cardIds: deleteSelection }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to delete cards");
+      }
+      const payload = await res.json().catch(() => ({}));
+      const remainingCards = cards.filter((card) => !deleteSelection.includes(card.id));
+      setCards(remainingCards);
+      setActiveCardId((prev) => {
+        if (!prev || !deleteSelection.includes(prev)) {
+          return prev;
+        }
+        return remainingCards[0]?.id ?? null;
+      });
+      setError(`Deleted ${payload?.deleted ?? deleteSelection.length} cards from KingsReview.`);
+      setShowDeleteConfirm(false);
+      setShowDeleteDialog(false);
+      setDeleteSelection([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete cards");
+    } finally {
+      setPurging(false);
+    }
+  }, [adminHeaders, cards, deleteSelection]);
 
   const sources = job?.result?.sources ?? [];
   const activeSourceData = sources.find((source) => source.source === activeSource) ?? sources[0] ?? null;
@@ -202,9 +250,6 @@ export default function KingsReview() {
       return;
     }
     const interval = setInterval(() => {
-      if (pausePolling) {
-        return;
-      }
       const queryString = `?stage=${stage}`;
       fetch(`/api/admin/kingsreview/cards${queryString}`, {
         headers: adminHeaders(),
@@ -230,7 +275,7 @@ export default function KingsReview() {
         .catch(() => undefined);
     }, 2000);
     return () => clearInterval(interval);
-  }, [adminHeaders, isAdmin, pausePolling, session, stage]);
+  }, [adminHeaders, isAdmin, session, stage]);
 
   useEffect(() => {
     if (!router.isReady) {
@@ -661,18 +706,18 @@ export default function KingsReview() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
               href="/admin/uploads"
-              className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-400 transition hover:border-white/40 hover:text-white"
+              className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
             >
               ← Add Cards
             </Link>
             <Link
               href="/admin/inventory-ready"
-              className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-400 transition hover:border-white/40 hover:text-white"
+              className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
             >
               Inventory Ready →
             </Link>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             {STAGES.map((item) => (
               <button
                 key={item.id}
@@ -693,52 +738,128 @@ export default function KingsReview() {
             ))}
             <button
               type="button"
-              onClick={async () => {
-                if (!window.confirm("Delete all cards currently in KingsReview stages? This cannot be undone.")) {
-                  return;
-                }
-                setPurging(true);
-                setError(null);
-                try {
-                  const res = await fetch("/api/admin/kingsreview/purge", {
-                    method: "POST",
-                    headers: adminHeaders(),
-                  });
-                  if (!res.ok) {
-                    const payload = await res.json().catch(() => ({}));
-                    throw new Error(payload?.message ?? "Failed to purge cards");
-                  }
-                  const payload = await res.json().catch(() => ({}));
-                  setCards([]);
-                  setActiveCardId(null);
-                  setError(`Purged ${payload?.deleted ?? 0} cards from KingsReview.`);
-                } catch (err) {
-                  setError(err instanceof Error ? err.message : "Failed to purge cards");
-                } finally {
-                  setPurging(false);
-                }
+              onClick={() => {
+                setDeleteSelection([]);
+                setShowDeleteDialog(true);
               }}
-              className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1.5 text-[8px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60 sm:px-4 sm:py-2 sm:text-[11px]"
+              className="inline-flex items-center justify-center rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1.5 text-[8px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60 sm:px-4 sm:py-2 sm:text-[11px]"
               disabled={purging}
+              aria-label="Delete cards"
+              title="Delete cards"
             >
-              {purging ? "Purging…" : "Delete All Test Cards"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setPausePolling((prev) => !prev)}
-              className="rounded-full border border-white/20 px-3 py-1.5 text-[8px] uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white sm:px-4 sm:py-2 sm:text-[11px]"
-            >
-              {pausePolling ? "Resume Polling" : "Pause Polling"}
+              <svg aria-hidden="true" className="h-3 w-3 sm:h-4 sm:w-4" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M6 7h12M9 7v11m6-11v11M10 4h4a1 1 0 0 1 1 1v2H9V5a1 1 0 0 1 1-1zM5 7h14l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7z"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </button>
             <button
               type="button"
               onClick={() => setShowTeach((prev) => !prev)}
               className="rounded-full border border-sky-400/60 bg-sky-500/10 px-3 py-1.5 text-[8px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 sm:px-4 sm:py-2 sm:text-[11px]"
             >
-              {showTeach ? "Hide Teach Mode" : "Teach Mode"}
+              {showTeach ? "Hide Teach" : "Teach"}
             </button>
           </div>
         </header>
+
+        {showDeleteDialog && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+            <div className="w-full max-w-2xl rounded-3xl border border-white/10 bg-night-950 p-6 shadow-2xl">
+              <div className="flex items-center justify-between">
+                <h2 className="font-heading text-xl uppercase tracking-[0.18em] text-white">Delete Cards</h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setShowDeleteDialog(false);
+                    setDeleteSelection([]);
+                  }}
+                  className="rounded-full border border-white/20 px-3 py-1 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
+                >
+                  X
+                </button>
+              </div>
+
+              {showDeleteConfirm ? (
+                <div className="mt-6 space-y-6 text-sm text-slate-300">
+                  <p>Are you sure you want to delete these cards? It will remove them permanently from the Ten Kings system.</p>
+                  <div className="flex flex-wrap items-center justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.28em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                    >
+                      No, don’t delete
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleDeleteSelected}
+                      disabled={purging}
+                      className="rounded-full border border-rose-400/60 bg-rose-500/20 px-4 py-2 text-xs uppercase tracking-[0.28em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
+                    >
+                      {purging ? "Deleting…" : "Yes, delete"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-6 space-y-4">
+                  <label className="flex items-center gap-3 text-xs uppercase tracking-[0.3em] text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={cards.length > 0 && deleteSelection.length === cards.length}
+                      onChange={(event) => handleSelectAll(event.currentTarget.checked)}
+                      className="h-4 w-4 accent-rose-400"
+                    />
+                    Select all
+                  </label>
+
+                  <div className="max-h-80 space-y-2 overflow-y-auto rounded-2xl border border-white/10 bg-night-900/60 p-3">
+                    {cards.length === 0 && (
+                      <p className="text-sm text-slate-400">No cards available to delete.</p>
+                    )}
+                    {cards.map((card) => (
+                      <label
+                        key={`delete-${card.id}`}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-night-900/80 px-3 py-2 text-sm text-slate-200"
+                      >
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="checkbox"
+                            checked={deleteSelection.includes(card.id)}
+                            onChange={() => toggleDeleteSelection(card.id)}
+                            className="h-4 w-4 accent-rose-400"
+                          />
+                          <span className="truncate">
+                            {card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
+                          </span>
+                        </div>
+                        <span className="text-[10px] uppercase tracking-[0.28em] text-slate-500">
+                          {new Date(card.updatedAt).toLocaleDateString()}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center justify-end">
+                    <button
+                      type="button"
+                      onClick={() => setShowDeleteConfirm(true)}
+                      disabled={deleteSelection.length === 0}
+                      className="rounded-full border border-rose-400/60 bg-rose-500/20 px-5 py-2 text-xs uppercase tracking-[0.28em] text-rose-200 transition hover:border-rose-300 disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">

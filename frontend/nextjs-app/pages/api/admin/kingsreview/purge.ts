@@ -12,11 +12,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(405).json({ message: "Method not allowed" });
     }
 
-    const cards = await prisma.cardAsset.findMany({
-      where: { reviewStage: { in: TARGET_STAGES as any } },
-      select: { id: true },
-    });
-    const cardIds = cards.map((card) => card.id);
+    const requestedIds = Array.isArray(req.body?.cardIds) ? req.body.cardIds.filter(Boolean) : null;
+    const cardIds = requestedIds && requestedIds.length > 0
+      ? requestedIds
+      : (
+          await prisma.cardAsset.findMany({
+            where: { reviewStage: { in: TARGET_STAGES as any } },
+            select: { id: true },
+          })
+        ).map((card) => card.id);
     if (cardIds.length === 0) {
       return res.status(200).json({ deleted: 0 });
     }
