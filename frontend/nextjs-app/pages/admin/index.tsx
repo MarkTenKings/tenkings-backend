@@ -72,60 +72,43 @@ export default function AdminHome() {
     return (
       <div className="flex flex-1 flex-col gap-10 px-6 py-12">
         <header className="space-y-3">
-          <p className="text-xs uppercase tracking-[0.3em] text-violet-300">Ten Kings · Ops</p>
-          <h1 className="font-heading text-5xl uppercase tracking-[0.18em] text-white">Processing Console</h1>
+          <h1 className="font-heading text-8xl uppercase tracking-[0.18em] text-gold-500">Ten Kings Processing</h1>
           <p className="max-w-2xl text-sm text-slate-300">
             Intake → Review → Inventory → Locations.
           </p>
         </header>
 
         <section className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
-          <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Add Cards</h2>
-            <p className="mt-3 text-sm text-slate-400">
-              Upload cards and enter intake details.
-            </p>
+          <div className="flex items-center justify-center rounded-3xl border border-white/10 bg-night-900/70 p-3">
             <Link
               href="/admin/uploads"
-              className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
+              className="inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
             >
-              Open Uploads
+              Add Cards
             </Link>
           </div>
-          <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">KingsReview</h2>
-            <p className="mt-3 text-sm text-slate-400">
-              Review comps and lock value.
-            </p>
+          <div className="flex items-center justify-center rounded-3xl border border-white/10 bg-night-900/70 p-3">
             <Link
               href="/admin/kingsreview"
-              className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
+              className="inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
             >
-              Open KingsReview
+              KingsReview
             </Link>
           </div>
-          <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Inventory Ready</h2>
-            <p className="mt-3 text-sm text-slate-400">
-              Select cards and assign to locations.
-            </p>
+          <div className="flex items-center justify-center rounded-3xl border border-white/10 bg-night-900/70 p-3">
             <Link
               href="/admin/inventory-ready"
-              className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
+              className="inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
             >
-              Open Inventory
+              Inventory Ready
             </Link>
           </div>
-          <div className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-6">
-            <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">Assigned Batches</h2>
-            <p className="mt-3 text-sm text-slate-400">
-              Review location batches, totals, and print labels.
-            </p>
+          <div className="flex items-center justify-center rounded-3xl border border-white/10 bg-night-900/70 p-3">
             <Link
               href="/admin/location-batches"
-              className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
+              className="inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
             >
-              Open Batches
+              Assigned Locations
             </Link>
           </div>
         </section>
