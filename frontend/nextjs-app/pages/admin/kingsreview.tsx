@@ -67,6 +67,12 @@ type JobResultComp = {
   soldDate: string | null;
   screenshotUrl: string;
   notes?: string | null;
+  patternMatch?: {
+    score: number;
+    distance: number;
+    colorDistance: number;
+    tier: "verified" | "likely" | "weak" | "none";
+  };
 };
 
 type JobResultSource = {

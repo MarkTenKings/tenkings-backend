@@ -541,6 +541,8 @@ model CardAsset {
   ocrJson                 Json?
   ocrSuggestionJson       Json?
   ocrSuggestionUpdatedAt  DateTime?
+  patternSignatureJson    Json?
+  patternSignatureUpdatedAt DateTime?
   classificationJson      Json?
   classificationSourcesJson Json?
   valuationMinor          Int?

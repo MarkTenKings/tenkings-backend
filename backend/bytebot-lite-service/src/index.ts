@@ -11,6 +11,7 @@ import { fetchTcgplayerComps } from "./sources/tcgplayer";
 import { fetchPriceChartingComps } from "./sources/pricecharting";
 import { sleep } from "./utils";
 import { startTeachServer } from "./teachServer";
+import { compareImageSignatures, computeImageSignature, ImageSignature } from "./pattern";
 
 type PlaybookRule = {
   id: string;
@@ -40,6 +41,12 @@ type JobResult = {
       soldDate: string | null;
       screenshotUrl: string;
       notes?: string | null;
+      patternMatch?: {
+        score: number;
+        distance: number;
+        colorDistance: number;
+        tier: "verified" | "likely" | "weak" | "none";
+      };
     }>;
     error?: string | null;
   }>;
@@ -50,6 +57,94 @@ const CONCURRENCY = Math.max(1, Number(process.env.BYTEBOT_LITE_CONCURRENCY ?? 1
 const HEADLESS = (process.env.BYTEBOT_LITE_HEADLESS ?? "true").toLowerCase() !== "false";
 const VIEWPORT_WIDTH = Number(process.env.BYTEBOT_LITE_VIEWPORT_WIDTH ?? 1280);
 const VIEWPORT_HEIGHT = Number(process.env.BYTEBOT_LITE_VIEWPORT_HEIGHT ?? 720);
+const PATTERN_ENABLED = (process.env.BYTEBOT_PATTERN_ENABLED ?? "false").toLowerCase() === "true";
+const PATTERN_MIN_SCORE = Number(process.env.BYTEBOT_PATTERN_MIN_SCORE ?? 0.7);
+
+function classifyPatternTier(score: number) {
+  if (score >= 0.9) {
+    return "verified" as const;
+  }
+  if (score >= 0.8) {
+    return "likely" as const;
+  }
+  if (score >= PATTERN_MIN_SCORE) {
+    return "weak" as const;
+  }
+  return "none" as const;
+}
+
+async function resolveCardPatternSignature(cardAssetId: string | null) {
+  if (!PATTERN_ENABLED || !cardAssetId) {
+    return null;
+  }
+  const asset = await prisma.cardAsset.findUnique({
+    where: { id: cardAssetId },
+    select: {
+      id: true,
+      patternSignatureJson: true,
+      photos: { select: { kind: true, imageUrl: true } },
+    },
+  });
+  if (!asset) {
+    return null;
+  }
+  if (asset.patternSignatureJson) {
+    return asset.patternSignatureJson as ImageSignature;
+  }
+  const front = asset.photos.find((photo) => photo.kind === "FRONT")?.imageUrl;
+  if (!front) {
+    return null;
+  }
+  const signature = await computeImageSignature(front);
+  if (!signature) {
+    return null;
+  }
+  await prisma.cardAsset.update({
+    where: { id: asset.id },
+    data: {
+      patternSignatureJson: signature as any,
+      patternSignatureUpdatedAt: new Date(),
+    },
+  });
+  return signature;
+}
+
+async function attachPatternMatches(
+  sources: JobResult["sources"],
+  signature: ImageSignature | null
+) {
+  if (!PATTERN_ENABLED || !signature) {
+    return sources;
+  }
+  const updatedSources = [];
+  for (const source of sources) {
+    const updatedComps = [];
+    for (const comp of source.comps) {
+      if (!comp.screenshotUrl || !comp.screenshotUrl.startsWith("http")) {
+        updatedComps.push(comp);
+        continue;
+      }
+      const compSignature = await computeImageSignature(comp.screenshotUrl);
+      if (!compSignature) {
+        updatedComps.push(comp);
+        continue;
+      }
+      const comparison = compareImageSignatures(signature, compSignature);
+      const tier = classifyPatternTier(comparison.score);
+      updatedComps.push({
+        ...comp,
+        patternMatch: {
+          score: Number(comparison.score.toFixed(3)),
+          distance: comparison.distance,
+          colorDistance: Number(comparison.colorDistance.toFixed(2)),
+          tier,
+        },
+      });
+    }
+    updatedSources.push({ ...source, comps: updatedComps });
+  }
+  return updatedSources;
+}
 
 async function processJob(
   workerId: number,
@@ -71,6 +166,7 @@ async function processJob(
     }
 
     const results = [];
+    const cardPatternSignature = await resolveCardPatternSignature(job.cardAssetId ?? null);
     const playbookRules = await prisma.bytebotPlaybookRule.findMany({
       where: {
         source: { in: sources },
@@ -195,7 +291,7 @@ async function processJob(
       cardAssetId: job.cardAssetId ?? null,
       searchQuery: job.searchQuery,
       generatedAt: new Date().toISOString(),
-      sources: results,
+      sources: await attachPatternMatches(results as JobResult["sources"], cardPatternSignature),
     };
 
     await markBytebotLiteJobStatus(job.id, BytebotLiteJobStatus.COMPLETE, undefined, payload);
