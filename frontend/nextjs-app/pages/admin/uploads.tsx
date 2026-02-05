@@ -1958,7 +1958,7 @@ export default function AdminUploads() {
   }
 
   return (
-    <AppShell>
+    <AppShell hideHeader={cameraOpen} hideFooter={cameraOpen}>
       <Head>
         <title>Ten Kings · Admin Uploads</title>
         <meta name="robots" content="noindex" />
@@ -1966,38 +1966,29 @@ export default function AdminUploads() {
 
       <div className="flex flex-1 flex-col gap-8 px-6 py-12">
         <header className="space-y-2">
-          <h1 className="text-center font-heading text-4xl uppercase tracking-[0.18em] text-white">Add Cards</h1>
           <div className="flex flex-wrap items-center justify-between gap-4">
-            <Link className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white" href="/admin">
+            <Link className="inline-flex text-[10px] uppercase tracking-[0.28em] text-slate-400 transition hover:text-white" href="/admin">
               ← Console
             </Link>
             <Link
-              className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
+              className="inline-flex text-[10px] uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
               href="/admin/kingsreview"
             >
               KingsReview →
             </Link>
           </div>
+          <h1 className="text-center font-heading text-4xl uppercase tracking-[0.18em] text-white">Add Cards</h1>
         </header>
 
         <section className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h2 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">Add Cards/Items</h2>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Step</span>
-              <span className="rounded-full border border-white/10 bg-night-800 px-3 py-1 text-xs uppercase tracking-[0.28em] text-white">
-                {intakeStep.replace("_", " ")}
-              </span>
-              <button
-                type="button"
-                onClick={resetIntake}
-                className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/30 hover:text-white"
-              >
-                Reset
-              </button>
-            </div>
+          <div className="flex flex-wrap items-center justify-end gap-4">
+            <button
+              type="button"
+              onClick={resetIntake}
+              className="rounded-full border border-white/10 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/30 hover:text-white"
+            >
+              Reset
+            </button>
           </div>
 
           {intakeError && (
@@ -2009,15 +2000,13 @@ export default function AdminUploads() {
           {intakeStep === "front" && (
             <div className="grid gap-4 md:grid-cols-[240px,1fr]">
               <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-300">
-                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Step 1</p>
-                <p className="mt-2">Capture the front of the card.</p>
                 <button
                   type="button"
                   onClick={() => void openIntakeCapture("front")}
                   disabled={intakeBusy}
-                  className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-sm font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Capture front
+                  Add Card
                 </button>
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
@@ -2645,7 +2634,7 @@ export default function AdminUploads() {
               </div>
             )}
             {supportsZoom && !capturePreviewUrl && zoomBounds.max - zoomBounds.min > 0.01 && (
-              <div className="pointer-events-auto absolute bottom-28 left-0 right-0 flex justify-center px-12">
+              <div className="pointer-events-auto absolute bottom-24 left-0 right-0 flex justify-center px-12">
                 <input
                   type="range"
                   min={zoomBounds.min}
@@ -2662,65 +2651,65 @@ export default function AdminUploads() {
                 {cameraError}
               </div>
             )}
-          </div>
-          <div className="relative flex items-center justify-center gap-10 bg-gradient-to-t from-black via-black/70 to-transparent px-6 pb-10 pt-8">
-            <div className="mr-auto flex items-center gap-3">
-              {[
-                { key: "front", label: "Front", preview: intakeFrontPreview, done: Boolean(intakeFrontPreview) },
-                { key: "back", label: "Back", preview: intakeBackPreview, done: Boolean(intakeBackPreview) },
-                ...(intakeTiltSkipped && !intakeTiltPreview
-                  ? []
-                  : [{ key: "tilt", label: "Tilt", preview: intakeTiltPreview, done: Boolean(intakeTiltPreview) }]),
-              ].map((entry) => (
-                <div
-                  key={entry.key}
-                  className={`relative h-12 w-12 overflow-hidden rounded-xl border text-[9px] uppercase tracking-[0.2em] ${
-                    entry.done ? "border-emerald-400/70" : "border-white/20"
-                  }`}
+            <div className="pointer-events-auto absolute bottom-6 left-0 right-0 flex items-center justify-center gap-10 px-6">
+              <div className="mr-auto flex items-center gap-3">
+                {[
+                  { key: "front", label: "Front", preview: intakeFrontPreview, done: Boolean(intakeFrontPreview) },
+                  { key: "back", label: "Back", preview: intakeBackPreview, done: Boolean(intakeBackPreview) },
+                  ...(intakeTiltSkipped && !intakeTiltPreview
+                    ? []
+                    : [{ key: "tilt", label: "Tilt", preview: intakeTiltPreview, done: Boolean(intakeTiltPreview) }]),
+                ].map((entry) => (
+                  <div
+                    key={entry.key}
+                    className={`relative h-12 w-12 overflow-hidden rounded-xl border text-[9px] uppercase tracking-[0.2em] ${
+                      entry.done ? "border-emerald-400/70" : "border-white/20"
+                    }`}
+                  >
+                    {entry.preview ? (
+                      <img src={entry.preview} alt={`${entry.label} preview`} className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center bg-black/40 text-slate-400">
+                        {entry.label}
+                      </div>
+                    )}
+                    {entry.done && (
+                      <span className="absolute right-1 top-1 rounded-full bg-emerald-400 px-1 py-[1px] text-[8px] font-semibold text-night-900">
+                        ✓
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {capturedBlob ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={handleRetake}
+                    className="rounded-full border border-white/30 bg-white/10 px-6 py-3 text-xs uppercase tracking-[0.32em] text-slate-100 transition hover:border-white/60 hover:text-white"
+                  >
+                    Retake
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmCapture}
+                    className="rounded-full border border-gold-500/70 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400"
+                  >
+                    Use photo
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleCapture}
+                  onTouchStart={handleCapture}
+                  disabled={cameraLoading}
+                  className="rounded-full border border-white/30 bg-white/10 px-10 py-3 text-xs uppercase tracking-[0.32em] text-slate-100 transition hover:border-white/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {entry.preview ? (
-                    <img src={entry.preview} alt={`${entry.label} preview`} className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center bg-black/40 text-slate-400">
-                      {entry.label}
-                    </div>
-                  )}
-                  {entry.done && (
-                    <span className="absolute right-1 top-1 rounded-full bg-emerald-400 px-1 py-[1px] text-[8px] font-semibold text-night-900">
-                      ✓
-                    </span>
-                  )}
-                </div>
-              ))}
+                  {cameraLoading ? "Loading…" : "Capture"}
+                </button>
+              )}
             </div>
-            {capturedBlob ? (
-              <>
-                <button
-                  type="button"
-                  onClick={handleRetake}
-                  className="rounded-full border border-white/30 bg-white/10 px-6 py-3 text-xs uppercase tracking-[0.32em] text-slate-100 transition hover:border-white/60 hover:text-white"
-                >
-                  Retake
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmCapture}
-                  className="rounded-full border border-gold-500/70 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400"
-                >
-                  Use photo
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={handleCapture}
-                onTouchStart={handleCapture}
-                disabled={cameraLoading}
-                className="rounded-full border border-white/30 bg-white/10 px-10 py-3 text-xs uppercase tracking-[0.32em] text-slate-100 transition hover:border-white/60 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {cameraLoading ? "Loading…" : "Capture"}
-              </button>
-            )}
           </div>
         </div>
       )}

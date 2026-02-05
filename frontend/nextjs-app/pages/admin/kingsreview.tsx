@@ -698,21 +698,21 @@ export default function KingsReview() {
     return (
       <div className="flex h-full flex-col gap-6 px-6 py-8">
         <header className="flex flex-col gap-4">
-          <h1 className="text-center font-heading text-4xl uppercase tracking-[0.2em] text-white">KingsReview</h1>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
               href="/admin/uploads"
-              className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
+              className="inline-flex text-[10px] uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
             >
               ← Add Cards
             </Link>
             <Link
               href="/admin/inventory-ready"
-              className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
+              className="inline-flex text-[10px] uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
             >
               Inventory Ready →
             </Link>
           </div>
+          <h1 className="text-center font-heading text-4xl uppercase tracking-[0.2em] text-white">KingsReview</h1>
           <div className="flex flex-wrap items-center gap-2">
             {STAGES.map((item) => (
               <button
@@ -723,7 +723,7 @@ export default function KingsReview() {
                   setActiveCardId(null);
                   setCardsLoading(true);
                 }}
-                className={`rounded-full border px-3 py-1.5 text-[8px] uppercase tracking-[0.3em] transition sm:px-4 sm:py-2 sm:text-[11px] ${
+                className={`rounded-full border px-3 py-1.5 text-[9px] uppercase tracking-[0.3em] transition sm:px-4 sm:py-2 sm:text-[11px] ${
                   stage === item.id
                     ? "border-gold-400 bg-gold-500/20 text-gold-200"
                     : "border-white/20 text-slate-300 hover:border-white/40 hover:text-white"
@@ -734,11 +734,18 @@ export default function KingsReview() {
             ))}
             <button
               type="button"
+              onClick={() => setShowTeach((prev) => !prev)}
+              className="rounded-full border border-sky-400/60 bg-sky-500/10 px-3 py-1.5 text-[9px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 sm:px-4 sm:py-2 sm:text-[11px]"
+            >
+              {showTeach ? "Hide Teach" : "Teach"}
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 setDeleteSelection([]);
                 setShowDeleteDialog(true);
               }}
-              className="inline-flex items-center justify-center rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1.5 text-[8px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60 sm:px-4 sm:py-2 sm:text-[11px]"
+              className="ml-auto inline-flex items-center justify-center rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1.5 text-[9px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60 sm:px-4 sm:py-2 sm:text-[11px]"
               disabled={purging}
               aria-label="Delete cards"
               title="Delete cards"
@@ -752,13 +759,6 @@ export default function KingsReview() {
                   strokeLinejoin="round"
                 />
               </svg>
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowTeach((prev) => !prev)}
-              className="rounded-full border border-sky-400/60 bg-sky-500/10 px-3 py-1.5 text-[8px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 sm:px-4 sm:py-2 sm:text-[11px]"
-            >
-              {showTeach ? "Hide Teach" : "Teach"}
             </button>
           </div>
         </header>
