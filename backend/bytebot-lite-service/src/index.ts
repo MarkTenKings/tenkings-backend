@@ -40,6 +40,7 @@ type JobResult = {
       price: string | null;
       soldDate: string | null;
       screenshotUrl: string;
+      listingImageUrl?: string | null;
       notes?: string | null;
       patternMatch?: {
         score: number;
@@ -120,11 +121,12 @@ async function attachPatternMatches(
   for (const source of sources) {
     const updatedComps = [];
     for (const comp of source.comps) {
-      if (!comp.screenshotUrl || !comp.screenshotUrl.startsWith("http")) {
+      const patternUrl = comp.listingImageUrl ?? comp.screenshotUrl;
+      if (!patternUrl || !patternUrl.startsWith("http")) {
         updatedComps.push(comp);
         continue;
       }
-      const compSignature = await computeImageSignature(comp.screenshotUrl);
+      const compSignature = await computeImageSignature(patternUrl);
       if (!compSignature) {
         updatedComps.push(comp);
         continue;

@@ -8,6 +8,7 @@ export type Comp = {
   price: string | null;
   soldDate: string | null;
   screenshotUrl: string;
+  listingImageUrl?: string | null;
   notes?: string | null;
 };
 
@@ -105,6 +106,21 @@ export async function fetchEbaySoldComps(options: {
         await detail.goto(item.link, { waitUntil: "domcontentloaded" });
         await safeWaitForTimeout(detail, 1200);
 
+        const listingImageUrl = await detail
+          .$$eval("meta[property='og:image']", (nodes) =>
+            nodes[0]?.getAttribute("content") ?? ""
+          )
+          .catch(() => "")
+          .then((value) => (value ? value : ""))
+          .then(async (value) => {
+            if (value) {
+              return value;
+            }
+            return await detail
+              .$eval("#icImg", (node) => (node as HTMLImageElement).src ?? "")
+              .catch(() => "");
+          });
+
         let detailShot = await safeScreenshot(detail, { fullPage: false, type: "jpeg", quality: 70 });
         if (!detailShot) {
           try {
@@ -132,6 +148,7 @@ export async function fetchEbaySoldComps(options: {
           price: detailPrice || item.price || null,
           soldDate: item.soldDate ? item.soldDate.replace(/^Sold\s*/i, "").trim() : null,
           screenshotUrl: detailUrl || "",
+          listingImageUrl: listingImageUrl || null,
         });
 
         await detail.close();

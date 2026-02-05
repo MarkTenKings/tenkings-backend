@@ -66,6 +66,7 @@ type JobResultComp = {
   price: string | null;
   soldDate: string | null;
   screenshotUrl: string;
+  listingImageUrl?: string | null;
   notes?: string | null;
   patternMatch?: {
     score: number;
@@ -73,6 +74,21 @@ type JobResultComp = {
     colorDistance: number;
     tier: "verified" | "likely" | "weak" | "none";
   };
+};
+
+type PatternTier = "verified" | "likely" | "weak" | "none";
+
+const patternBadgeClass = (tier: PatternTier) => {
+  switch (tier) {
+    case "verified":
+      return "border-emerald-400/60 bg-emerald-500/20 text-emerald-200";
+    case "likely":
+      return "border-sky-400/60 bg-sky-500/20 text-sky-200";
+    case "weak":
+      return "border-amber-400/60 bg-amber-500/20 text-amber-200";
+    default:
+      return "border-white/10 text-slate-400";
+  }
 };
 
 type JobResultSource = {
@@ -1361,8 +1377,17 @@ export default function KingsReview() {
                     }`}
                   >
                     <span className="line-clamp-1 flex-1">{comp.title ?? comp.url}</span>
-                    <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                      {comp.price ?? ""}
+                    <span className="ml-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                      {comp.patternMatch && (
+                        <span
+                          className={`rounded-full border px-2 py-1 text-[9px] uppercase tracking-[0.3em] ${patternBadgeClass(
+                            comp.patternMatch.tier
+                          )}`}
+                        >
+                          {comp.patternMatch.tier}
+                        </span>
+                      )}
+                      <span>{comp.price ?? ""}</span>
                     </span>
                   </button>
                 ))}
@@ -1379,6 +1404,20 @@ export default function KingsReview() {
                   <p className="text-sm text-white">{activeComp.title ?? "Untitled comp"}</p>
                   <p>{activeComp.price ?? ""}</p>
                   <p className="text-slate-500">{activeComp.soldDate ?? ""}</p>
+                  {activeComp.patternMatch && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1 text-[10px] uppercase tracking-[0.3em]">
+                      <span
+                        className={`rounded-full border px-2 py-1 ${patternBadgeClass(
+                          activeComp.patternMatch.tier
+                        )}`}
+                      >
+                        Pattern {activeComp.patternMatch.tier}
+                      </span>
+                      <span className="text-slate-500">
+                        Score {activeComp.patternMatch.score}
+                      </span>
+                    </div>
+                  )}
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <a
