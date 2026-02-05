@@ -95,6 +95,40 @@ export async function fetchEbaySoldComps(options: {
         .slice(0, maxComps);
 
       const comps: Comp[] = [];
+      let usedSearchFallback = false;
+
+      if (items.length === 0) {
+        const fallbackItems = await page
+          .$$eval("li.s-item", (nodes) =>
+            nodes
+              .map((node) => {
+                const title = node.querySelector(".s-item__title")?.textContent?.trim() ?? "";
+                const link = node.querySelector("a.s-item__link")?.getAttribute("href") ?? "";
+                const price = node.querySelector(".s-item__price")?.textContent?.trim() ?? "";
+                const soldDate = node.querySelector(".s-item__ended-date")?.textContent?.trim() ?? "";
+                const img = node.querySelector(".s-item__image-img") as HTMLImageElement | null;
+                const imageUrl = img?.getAttribute("src") ?? "";
+                return { title, link, price, soldDate, imageUrl };
+              })
+              .filter((item) => item.link && item.title && !item.title.includes("Shop on eBay"))
+          )
+          .catch(() => []);
+
+        const limitedFallback = fallbackItems.slice(0, maxComps);
+        for (const item of limitedFallback) {
+          comps.push({
+            source: "ebay_sold",
+            title: item.title || null,
+            url: item.link,
+            price: item.price || null,
+            soldDate: item.soldDate ? item.soldDate.replace(/^Sold\s*/i, "").trim() : null,
+            screenshotUrl: "",
+            listingImageUrl: item.imageUrl || null,
+            notes: "Search tile fallback (listing page not opened).",
+          });
+        }
+        usedSearchFallback = comps.length > 0;
+      }
 
       for (let index = 0; index < items.length; index += 1) {
         const item = items[index];
@@ -149,6 +183,7 @@ export async function fetchEbaySoldComps(options: {
           soldDate: item.soldDate ? item.soldDate.replace(/^Sold\s*/i, "").trim() : null,
           screenshotUrl: detailUrl || "",
           listingImageUrl: listingImageUrl || null,
+          notes: usedSearchFallback ? "Listing page opened after search fallback." : undefined,
         });
 
         await detail.close();
