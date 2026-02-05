@@ -23,7 +23,6 @@ const defaultCardAttributes: CardAttributes = {
   brand: null,
   setName: null,
   variantKeywords: [],
-  serialNumber: null,
   numbered: null,
   rookie: false,
   autograph: false,
@@ -39,7 +38,6 @@ const cloneCardAttributes = (attributes: CardAttributes): CardAttributes => ({
   brand: attributes.brand,
   setName: attributes.setName,
   variantKeywords: [...attributes.variantKeywords],
-  serialNumber: attributes.serialNumber,
   numbered: attributes.numbered,
   rookie: attributes.rookie,
   autograph: attributes.autograph,
@@ -277,9 +275,6 @@ const applyAttributeUpdates = (
   }
   if (Object.prototype.hasOwnProperty.call(updates, "setName")) {
     next.setName = sanitizeStringOptional(updates.setName, next.setName);
-  }
-  if (Object.prototype.hasOwnProperty.call(updates, "serialNumber")) {
-    next.serialNumber = sanitizeStringOptional(updates.serialNumber, next.serialNumber);
   }
   if (Object.prototype.hasOwnProperty.call(updates, "numbered")) {
     next.numbered = sanitizeStringOptional(updates.numbered, next.numbered);

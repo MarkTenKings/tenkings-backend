@@ -21,7 +21,6 @@ type SuggestionFields = {
   cardName: string | null;
   setName: string | null;
   cardNumber: string | null;
-  serialNumber: string | null;
   numbered: string | null;
   autograph: string | null;
   memorabilia: string | null;
@@ -44,7 +43,6 @@ const FIELD_KEYS: (keyof SuggestionFields)[] = [
   "cardName",
   "setName",
   "cardNumber",
-  "serialNumber",
   "numbered",
   "autograph",
   "memorabilia",
@@ -114,6 +112,17 @@ function extractOutputText(payload: any): string | null {
     }
   }
   return null;
+}
+
+function normalizeForNumbered(input: string): string {
+  return input
+    .toUpperCase()
+    .replace(/(?<=\d)[O]/g, "0")
+    .replace(/[O](?=\d)/g, "0")
+    .replace(/(?<=\d)[IL]/g, "1")
+    .replace(/[IL](?=\d)/g, "1")
+    .replace(/(?<=\d)S/g, "5")
+    .replace(/S(?=\d)/g, "5");
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse>) {
@@ -188,7 +197,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     };
 
     const frontText = card.ocrText ?? "";
-    const prompt = `OCR TEXT (FRONT):\n${frontText}\n\nRules:\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.\n- Always attempt sport if OCR includes Baseball/MLB, Basketball/NBA, Football/NFL, Hockey/NHL, Soccer/FIFA.\n- Autograph=true if OCR shows AUTO/AUTOGRAPH/SIGNATURE.\n- Memorabilia=true if OCR shows PATCH/JERSEY/RELIC/MEM.\n- Numbered should be like "3/10" when present.\n- If slab label shows grading (PSA, BGS, SGC, CGC), set graded=true and extract gradeCompany + gradeValue. Accept formats like "PSA 9" or "9 PSA".\n- A back image may be provided; use it for year/numbered/grade if needed.`;
+    const prompt = `OCR TEXT (FRONT):\n${frontText}\n\nRules:\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.\n- Always attempt sport if OCR includes Baseball/MLB, Basketball/NBA, Football/NFL, Hockey/NHL, Soccer/FIFA.\n- Autograph=true if OCR shows AUTO/AUTOGRAPH/SIGNATURE.\n- Patch=true if OCR shows PATCH/JERSEY/RELIC/MEM.\n- Numbered should be like "3/10" when present.\n- If slab label shows grading (PSA, BGS, SGC, CGC), set graded=true and extract gradeCompany + gradeValue. Accept formats like "PSA 9" or "9 PSA".\n- A back image may be provided; use it for year/numbered/grade if needed.`;
 
     const openaiRes = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -248,6 +257,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }, {} as SuggestionConfidence);
 
     const combinedText = frontText.toLowerCase();
+    const normalizedNumberedText = normalizeForNumbered(frontText);
     if (!fields.sport) {
       const text = combinedText;
       const inferredSport =
@@ -283,7 +293,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     if (!fields.numbered) {
-      const numberedMatch = combinedText.match(/\b\d{1,3}\s*\/\s*\d{1,3}\b/);
+      const numberedMatch = normalizedNumberedText.match(/\b\d{1,4}\s*\/\s*\d{1,4}\b/);
       if (numberedMatch) {
         fields.numbered = numberedMatch[0].replace(/\s+/g, "");
         confidence.numbered = Math.max(confidence.numbered ?? 0, DEFAULT_THRESHOLD);
@@ -291,7 +301,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     if (!fields.autograph) {
-      if (combinedText.includes("autograph") || combinedText.includes("auto") || combinedText.includes("signature")) {
+      if (/\bauto(?:graph)?\b/i.test(frontText) || /\bsignature\b/i.test(frontText) || /\bsigned\b/i.test(frontText)) {
         fields.autograph = "true";
         confidence.autograph = Math.max(confidence.autograph ?? 0, DEFAULT_THRESHOLD);
       }
@@ -299,11 +309,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     if (!fields.memorabilia) {
       if (
-        combinedText.includes("patch") ||
-        combinedText.includes("jersey") ||
-        combinedText.includes("relic") ||
-        combinedText.includes("memorabilia") ||
-        combinedText.includes("mem")
+        /\bpatch\b/i.test(frontText) ||
+        /\bjersey\b/i.test(frontText) ||
+        /\brelic\b/i.test(frontText) ||
+        /\bmemorabilia\b/i.test(frontText) ||
+        /\bgame[-\s]?worn\b/i.test(frontText) ||
+        /\bplayer[-\s]?worn\b/i.test(frontText) ||
+        /\b(event|event[-\s]?worn)\b/i.test(frontText) ||
+        /\bswatch\b/i.test(frontText) ||
+        /\bmem\b/i.test(frontText)
       ) {
         fields.memorabilia = "true";
         confidence.memorabilia = Math.max(confidence.memorabilia ?? 0, DEFAULT_THRESHOLD);

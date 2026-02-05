@@ -116,7 +116,6 @@ type AttributeFormState = {
   brand: string;
   setName: string;
   variantKeywords: string;
-  serialNumber: string;
   numbered: string;
   rookie: boolean;
   autograph: boolean;
@@ -208,7 +207,6 @@ const buildAttributeFormState = (attributes: CardAttributes | null): AttributeFo
   brand: attributes?.brand ?? "",
   setName: attributes?.setName ?? "",
   variantKeywords: (attributes?.variantKeywords ?? []).join(", "),
-  serialNumber: attributes?.serialNumber ?? "",
   numbered: attributes?.numbered ?? "",
   rookie: attributes?.rookie ?? false,
   autograph: attributes?.autograph ?? false,
@@ -388,9 +386,6 @@ export default function AdminCardDetail() {
     if (attributes.variantKeywords.length > 0) {
       entries.push({ label: "Variants", value: attributes.variantKeywords.join(", ") });
     }
-    if (attributes.serialNumber) {
-      entries.push({ label: "Serial", value: attributes.serialNumber });
-    }
     if (attributes.numbered) {
       entries.push({ label: "Numbered", value: attributes.numbered });
     }
@@ -402,7 +397,7 @@ export default function AdminCardDetail() {
     }
     entries.push({ label: "Rookie", value: attributes.rookie ? "Yes" : "No" });
     entries.push({ label: "Autograph", value: attributes.autograph ? "Yes" : "No" });
-    entries.push({ label: "Memorabilia", value: attributes.memorabilia ? "Yes" : "No" });
+    entries.push({ label: "Patch", value: attributes.memorabilia ? "Yes" : "No" });
 
     return entries.filter((entry) => entry.value.trim().length > 0);
   }, [card?.classification]);
@@ -897,7 +892,6 @@ export default function AdminCardDetail() {
         brand: emptyToNull(attributeForm.brand),
         setName: emptyToNull(attributeForm.setName),
         variantKeywords: parseVariantKeywords(attributeForm.variantKeywords),
-        serialNumber: emptyToNull(attributeForm.serialNumber),
         numbered: emptyToNull(attributeForm.numbered),
         rookie: attributeForm.rookie,
         autograph: attributeForm.autograph,
@@ -1163,7 +1157,6 @@ export default function AdminCardDetail() {
                         "cardName",
                         "setName",
                         "cardNumber",
-                        "serialNumber",
                       ];
 
                       return (
@@ -1351,14 +1344,6 @@ export default function AdminCardDetail() {
                       />
                     </label>
                     <label className="flex flex-col gap-1 text-xs text-slate-300">
-                      <span className="text-[10px] uppercase tracking-[0.28em] text-slate-400">Serial Number</span>
-                      <input
-                        value={attributeForm.serialNumber}
-                        onChange={handleAttributeInputChange("serialNumber")}
-                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1 text-xs text-slate-300">
                       <span className="text-[10px] uppercase tracking-[0.28em] text-slate-400">Numbered</span>
                       <input
                         value={attributeForm.numbered}
@@ -1410,7 +1395,7 @@ export default function AdminCardDetail() {
                         checked={attributeForm.memorabilia}
                         onChange={handleAttributeCheckboxChange("memorabilia")}
                       />
-                      Memorabilia
+                      Patch
                     </label>
                   </div>
                 </div>

@@ -5,7 +5,6 @@ export interface CardAttributes {
   brand: string | null;
   setName: string | null;
   variantKeywords: string[];
-  serialNumber: string | null;
   numbered: string | null;
   rookie: boolean;
   autograph: boolean;
@@ -605,7 +604,6 @@ export function extractCardAttributes(
   const brand = extractBrand(lines);
   const setName = extractSet(lines);
   const variantKeywords = extractVariantKeywords(lines);
-  const serialNumber = extractSerial(rawText);
   const numbered = extractSerial(rawText);
   const { company: gradeCompany, value: gradeValue } = extractGrade(rawText);
 
@@ -616,7 +614,6 @@ export function extractCardAttributes(
     brand,
     setName,
     variantKeywords,
-    serialNumber,
     numbered,
     rookie: hasRookieIndicator(lines),
     autograph: hasAutographIndicator(lines),

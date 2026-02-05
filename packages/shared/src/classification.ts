@@ -312,7 +312,6 @@ function coerceCardAttributes(value: Record<string, unknown> | null | undefined)
     variantKeywords: Array.isArray(value.variantKeywords)
       ? value.variantKeywords.filter((entry): entry is string => typeof entry === "string")
       : [],
-    serialNumber: typeof value.serialNumber === "string" ? value.serialNumber : null,
     numbered: typeof value.numbered === "string" ? value.numbered : null,
     rookie: value.rookie == null ? false : safeBoolean(value.rookie),
     autograph: value.autograph == null ? false : safeBoolean(value.autograph),

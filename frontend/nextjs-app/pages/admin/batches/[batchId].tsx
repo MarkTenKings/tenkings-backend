@@ -154,7 +154,6 @@ const buildAttributeTags = (attributes: CardAttributes | null): string[] => {
     attributes.playerName,
     attributes.teamName,
     ...attributes.variantKeywords.slice(0, 2),
-    attributes.serialNumber,
     attributes.numbered,
     attributes.autograph ? "Autograph" : null,
     attributes.memorabilia ? "Patch" : null,
@@ -192,7 +191,6 @@ type AttributeFormState = {
   brand: string;
   setName: string;
   variantKeywords: string;
-  serialNumber: string;
   numbered: string;
   rookie: boolean;
   autograph: boolean;
@@ -307,7 +305,6 @@ const buildAttributeFormState = (attributes: CardAttributes | null): AttributeFo
   brand: attributes?.brand ?? "",
   setName: attributes?.setName ?? "",
   variantKeywords: (attributes?.variantKeywords ?? []).join(", "),
-  serialNumber: attributes?.serialNumber ?? "",
   numbered: attributes?.numbered ?? "",
   rookie: attributes?.rookie ?? false,
   autograph: attributes?.autograph ?? false,
@@ -1338,7 +1335,6 @@ const handleBulkSave = async (cardId: string) => {
       brand: emptyToNull(formState.attributes.brand),
       setName: emptyToNull(formState.attributes.setName),
       variantKeywords: parseVariantKeywords(formState.attributes.variantKeywords),
-      serialNumber: emptyToNull(formState.attributes.serialNumber),
       numbered: emptyToNull(formState.attributes.numbered),
       rookie: formState.attributes.rookie,
       autograph: formState.attributes.autograph,
@@ -1921,20 +1917,12 @@ const handleSendToKingsReview = async (cardId: string) => {
                                       placeholder="Team"
                                       className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
                                     />
-                                    <div className="grid grid-cols-2 gap-2">
-                                      <input
-                                        value={formState.attributes.year}
-                                        onChange={handleAttributeFieldChange(asset.id, "year")}
-                                        placeholder="Year"
-                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                                      />
-                                      <input
-                                        value={formState.attributes.serialNumber}
-                                        onChange={handleAttributeFieldChange(asset.id, "serialNumber")}
-                                        placeholder="Serial"
-                                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                                      />
-                                    </div>
+                                    <input
+                                      value={formState.attributes.year}
+                                      onChange={handleAttributeFieldChange(asset.id, "year")}
+                                      placeholder="Year"
+                                      className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
+                                    />
                                     <div className="grid grid-cols-2 gap-2">
                                       <input
                                         value={formState.attributes.numbered}
@@ -1999,11 +1987,11 @@ const handleSendToKingsReview = async (cardId: string) => {
                                       <input
                                         type="checkbox"
                                         className="h-4 w-4 accent-emerald-400"
-                                        checked={formState.attributes.memorabilia}
-                                        onChange={handleAttributeCheckboxChange(asset.id, "memorabilia")}
-                                      />
-                                      Memorabilia
-                                    </label>
+                                      checked={formState.attributes.memorabilia}
+                                      onChange={handleAttributeCheckboxChange(asset.id, "memorabilia")}
+                                    />
+                                    Patch
+                                  </label>
                                   </div>
                                 </div>
                               </details>

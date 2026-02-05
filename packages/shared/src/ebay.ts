@@ -138,7 +138,7 @@ function buildVariantQuery(attributes: CardAttributes, playerName: string | null
     playerName,
     attributes.brand ?? attributes.setName,
     ...attributes.variantKeywords,
-    attributes.serialNumber,
+    attributes.numbered,
     attributes.autograph ? "autograph" : null,
     attributes.memorabilia ? "patch" : null,
     attributes.rookie ? "rookie" : null,
@@ -176,7 +176,7 @@ function buildMemorabiliaQuery(attributes: CardAttributes, playerName: string | 
     playerName,
     attributes.brand ?? attributes.setName,
     "patch",
-    attributes.serialNumber,
+    attributes.numbered,
   ]);
 }
 
@@ -188,7 +188,7 @@ function buildAutoQuery(attributes: CardAttributes, playerName: string | null): 
     playerName,
     attributes.brand ?? attributes.setName,
     "autograph",
-    attributes.serialNumber,
+    attributes.numbered,
   ]);
 }
 
@@ -223,7 +223,7 @@ function buildExactQuery(
     attributes.autograph ? "autograph" : null,
     attributes.memorabilia ? "patch" : null,
     gradePhrase,
-    attributes.serialNumber,
+    attributes.numbered,
     original,
   ]);
 }

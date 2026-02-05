@@ -56,7 +56,6 @@ type IntakeOptionalFields = {
   teamName: string;
   productLine: string;
   cardNumber: string;
-  serialNumber: string;
   numbered: string;
   autograph: boolean;
   memorabilia: boolean;
@@ -131,7 +130,6 @@ export default function AdminUploads() {
     teamName: "",
     productLine: "",
     cardNumber: "",
-    serialNumber: "",
     numbered: "",
     autograph: false,
     memorabilia: false,
@@ -650,14 +648,13 @@ export default function AdminUploads() {
       cardName: "",
       game: "",
     });
-    setIntakeOptional({
-      teamName: "",
-      productLine: "",
-      cardNumber: "",
-      serialNumber: "",
-      numbered: "",
-      autograph: false,
-      memorabilia: false,
+      setIntakeOptional({
+        teamName: "",
+        productLine: "",
+        cardNumber: "",
+        numbered: "",
+        autograph: false,
+        memorabilia: false,
       graded: false,
       gradeCompany: "",
       gradeValue: "",
@@ -1157,7 +1154,6 @@ export default function AdminUploads() {
         brand: intakeRequired.manufacturer.trim() || null,
         setName: intakeOptional.productLine.trim() || null,
         variantKeywords: [] as string[],
-        serialNumber: intakeOptional.serialNumber.trim() || null,
         numbered: intakeOptional.numbered.trim() || null,
         rookie: false,
         autograph: includeOptional ? intakeOptional.autograph : false,
@@ -1324,10 +1320,6 @@ export default function AdminUploads() {
           next.cardNumber = suggestions.cardNumber;
           ocrAppliedOptionalFieldsRef.current.push("cardNumber");
         }
-        if (suggestions.serialNumber && !intakeOptionalTouched.serialNumber && !prev.serialNumber.trim()) {
-          next.serialNumber = suggestions.serialNumber;
-          ocrAppliedOptionalFieldsRef.current.push("serialNumber");
-        }
         if (suggestions.numbered && !intakeOptionalTouched.numbered && !prev.numbered.trim()) {
           next.numbered = suggestions.numbered;
           ocrAppliedOptionalFieldsRef.current.push("numbered");
@@ -1382,7 +1374,6 @@ export default function AdminUploads() {
       ocrApplied,
       intakeOptionalTouched.cardNumber,
       intakeOptionalTouched.productLine,
-      intakeOptionalTouched.serialNumber,
       intakeOptionalTouched.numbered,
       intakeOptionalTouched.autograph,
       intakeOptionalTouched.memorabilia,
@@ -1529,12 +1520,6 @@ export default function AdminUploads() {
           if (field === "cardNumber") {
             if (next.cardNumber === intakeSuggested.cardNumber) {
               next.cardNumber = optionalBackup.cardNumber;
-            }
-            return;
-          }
-          if (field === "serialNumber") {
-            if (next.serialNumber === intakeSuggested.serialNumber) {
-              next.serialNumber = optionalBackup.serialNumber;
             }
             return;
           }
@@ -2241,26 +2226,15 @@ export default function AdminUploads() {
                     intakeOptional.productLine
                   )}`}
                 />
-                <div className="grid gap-2 md:grid-cols-2">
-                  <input
-                    placeholder="Card number"
-                    value={intakeOptional.cardNumber}
-                    onChange={handleOptionalChange("cardNumber")}
-                    className={`rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
-                      "cardNumber",
-                      intakeOptional.cardNumber
-                    )}`}
-                  />
-                  <input
-                    placeholder="Serial number (e.g. 17/199)"
-                    value={intakeOptional.serialNumber}
-                    onChange={handleOptionalChange("serialNumber")}
-                    className={`rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
-                      "serialNumber",
-                      intakeOptional.serialNumber
-                    )}`}
-                  />
-                </div>
+                <input
+                  placeholder="Card number"
+                  value={intakeOptional.cardNumber}
+                  onChange={handleOptionalChange("cardNumber")}
+                  className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                    "cardNumber",
+                    intakeOptional.cardNumber
+                  )}`}
+                />
                 <div className="grid gap-2 md:grid-cols-2">
                   <input
                     placeholder="Numbered (e.g. 3/10)"
@@ -2295,7 +2269,7 @@ export default function AdminUploads() {
                       }}
                       className="h-4 w-4 accent-sky-400"
                     />
-                    Memorabilia
+                    Patch
                   </label>
                   <label className="inline-flex items-center gap-2">
                     <input
