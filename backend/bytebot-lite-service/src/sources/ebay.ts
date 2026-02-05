@@ -32,6 +32,14 @@ export function buildEbaySoldUrl(query: string) {
   return `https://www.ebay.com/sch/i.html?${params.toString()}`;
 }
 
+function buildFallbackQuery(query: string) {
+  let next = query;
+  next = next.replace(/\b\d+\s*\/\s*\d+\b/g, "");
+  next = next.replace(/\b(PSA|BGS|SGC|CGC)\s*\d{1,2}\b/gi, "");
+  next = next.replace(/\s{2,}/g, " ").trim();
+  return next || query;
+}
+
 export async function fetchEbaySoldComps(options: {
   context: BrowserContext;
   query: string;
@@ -105,8 +113,22 @@ export async function fetchEbaySoldComps(options: {
           )
           .catch(() => []);
 
-      const rawItems = await collectTiles();
+      let rawItems = await collectTiles();
       const items = rawItems.filter((item) => item.link && item.title && !item.title.includes("Shop on eBay"));
+
+      if (items.length === 0) {
+        const fallbackQuery = buildFallbackQuery(query);
+        if (fallbackQuery !== query) {
+          const fallbackUrl = buildEbaySoldUrl(fallbackQuery);
+          await page.goto(fallbackUrl, { waitUntil: "domcontentloaded" });
+          if (rules.length) {
+            await applyPlaybookRules(page, rules);
+          }
+          await page.waitForSelector("li.s-item", { timeout: 15000 }).catch(() => undefined);
+          await safeWaitForTimeout(page, 1500);
+          rawItems = await collectTiles();
+        }
+      }
 
       const comps: Comp[] = [];
       const matchedTiles: Array<
