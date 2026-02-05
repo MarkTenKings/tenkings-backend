@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import crypto from "node:crypto";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 
@@ -54,6 +55,23 @@ const FIELD_KEYS: (keyof SuggestionFields)[] = [
 
 const SYSTEM_PROMPT = `You are extracting structured trading card fields from OCR text.
 Return only JSON that matches the provided schema.`;
+
+function buildProxyUrl(req: NextApiRequest, targetUrl: string): string | null {
+  const secret = process.env.OCR_PROXY_SECRET ?? process.env.OPENAI_API_KEY;
+  if (!secret) {
+    return null;
+  }
+  const host = req.headers.host;
+  if (!host) {
+    return null;
+  }
+  const protocol = (req.headers["x-forwarded-proto"] as string) || "https";
+  const expires = Date.now() + 5 * 60 * 1000;
+  const payload = `${targetUrl}|${expires}`;
+  const signature = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
+  const encodedUrl = encodeURIComponent(targetUrl);
+  return `${protocol}://${host}/api/public/ocr-image?url=${encodedUrl}&exp=${expires}&sig=${signature}`;
+}
 
 function sanitizeString(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -130,6 +148,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const rawBackImageUrl = card.photos?.[0]?.imageUrl ?? null;
     const backImageUrl =
       rawBackImageUrl && /^https?:\/\//i.test(rawBackImageUrl) ? rawBackImageUrl : null;
+    const backProxyUrl = backImageUrl ? buildProxyUrl(req, backImageUrl) : null;
     if ((!card.ocrText || !card.ocrText.trim()) && !backImageUrl) {
       return res.status(200).json({
         suggestions: {},
@@ -188,7 +207,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             role: "user",
             content: [
               { type: "input_text", text: prompt },
-              ...(backImageUrl ? [{ type: "input_image", image_url: backImageUrl }] : []),
+              ...(backProxyUrl ? [{ type: "input_image", image_url: backProxyUrl }] : []),
             ],
           },
         ],
