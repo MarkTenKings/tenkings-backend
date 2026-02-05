@@ -217,16 +217,14 @@ export default function KingsReview() {
   const rulesForActiveSource = playbookRules.filter(
     (rule) => rule.source === (activeSourceData?.source ?? teachForm.source)
   );
+  const isRunningStage =
+    (activeCard?.reviewStage ?? stage) === "BYTEBOT_RUNNING";
   const aiStatus =
-    job?.status === "IN_PROGRESS"
+    isRunningStage && job?.status === "IN_PROGRESS"
       ? "AI running"
-      : job?.status === "QUEUED"
+      : isRunningStage && job?.status === "QUEUED"
         ? "Queued"
-        : job?.status === "COMPLETE"
-          ? "AI complete"
-          : job?.status === "FAILED"
-            ? "AI failed"
-            : null;
+        : null;
   const aiMessage = job?.status === "IN_PROGRESS" ? AI_STATUS_MESSAGES[aiMessageIndex] : null;
 
   useEffect(() => {
@@ -619,16 +617,34 @@ export default function KingsReview() {
     setRegenerating(true);
     setError(null);
     try {
-      const res = await fetch(`/api/admin/cards/${activeCardId}/regenerate-comps`, {
+      const categoryType = activeCard?.classificationNormalized?.categoryType ?? null;
+      const sourceList =
+        categoryType === "tcg"
+          ? ["ebay_sold", "tcgplayer", "pricecharting"]
+          : ["ebay_sold", "pricecharting"];
+      const nextQuery = job?.searchQuery ?? query.trim();
+      if (!nextQuery) {
+        throw new Error("Search query is required to regenerate comps");
+      }
+      const res = await fetch("/api/admin/kingsreview/enqueue", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...adminHeaders(),
         },
+        body: JSON.stringify({
+          query: nextQuery,
+          cardAssetId: activeCardId,
+          sources: sourceList,
+          categoryType,
+        }),
       });
       if (!res.ok) {
         throw new Error("Failed to regenerate comps");
       }
+      const data = await res.json();
+      setJob(data.job ?? null);
+      setActiveSource(null);
       setError("Comps regeneration queued.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to regenerate comps");

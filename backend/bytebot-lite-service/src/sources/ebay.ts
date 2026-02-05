@@ -107,14 +107,25 @@ export async function fetchEbaySoldComps(options: {
               const price = node.querySelector(".s-item__price")?.textContent?.trim() ?? "";
               const soldDate = node.querySelector(".s-item__ended-date")?.textContent?.trim() ?? "";
               const img = node.querySelector(".s-item__image-img") as HTMLImageElement | null;
-              const imageUrl = img?.getAttribute("src") ?? "";
+              let imageUrl =
+                img?.getAttribute("src") ??
+                img?.getAttribute("data-src") ??
+                img?.getAttribute("data-lazy-src") ??
+                "";
+              if (!imageUrl) {
+                const srcset = img?.getAttribute("srcset") ?? "";
+                imageUrl = srcset.split(",")[0]?.trim().split(" ")[0] ?? "";
+              }
               return { title, link, price, soldDate, imageUrl };
             })
           )
           .catch(() => []);
 
+      const normalizeItems = (rawItems: Array<any>) =>
+        rawItems.filter((item) => item.link && item.title && !item.title.includes("Shop on eBay"));
+
       let rawItems = await collectTiles();
-      const items = rawItems.filter((item) => item.link && item.title && !item.title.includes("Shop on eBay"));
+      let items = normalizeItems(rawItems);
 
       if (items.length === 0) {
         const fallbackQuery = buildFallbackQuery(query);
@@ -127,6 +138,7 @@ export async function fetchEbaySoldComps(options: {
           await page.waitForSelector("li.s-item", { timeout: 15000 }).catch(() => undefined);
           await safeWaitForTimeout(page, 1500);
           rawItems = await collectTiles();
+          items = normalizeItems(rawItems);
         }
       }
 
