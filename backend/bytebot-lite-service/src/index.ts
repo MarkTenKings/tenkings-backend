@@ -211,6 +211,8 @@ async function processJob(
             jobId: job.id,
             upload,
             rules: rulesBySource[source] ?? [],
+            patternSignature: cardPatternSignature,
+            patternMinScore: PATTERN_MIN_SCORE,
           });
         }
 
