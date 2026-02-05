@@ -215,7 +215,7 @@ export default function KingsReview() {
       setError(null);
       setCardsLoading(true);
       try {
-        const queryString = `?stage=${stage}`;
+        const queryString = `?stage=${stage}&limit=1000`;
         const res = await fetch(`/api/admin/kingsreview/cards${queryString}`, {
           headers: adminHeaders(),
           cache: "no-store",
@@ -250,7 +250,7 @@ export default function KingsReview() {
       return;
     }
     const interval = setInterval(() => {
-      const queryString = `?stage=${stage}`;
+      const queryString = `?stage=${stage}&limit=1000`;
       fetch(`/api/admin/kingsreview/cards${queryString}`, {
         headers: adminHeaders(),
         cache: "no-store",

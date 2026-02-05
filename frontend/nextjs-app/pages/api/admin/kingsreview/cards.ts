@@ -2,7 +2,8 @@ import { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
-const DEFAULT_LIMIT = 50;
+const DEFAULT_LIMIT = 200;
+const MAX_LIMIT = 1000;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
@@ -14,7 +15,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const stage = typeof req.query.stage === "string" ? req.query.stage : "READY_FOR_HUMAN_REVIEW";
     const includeUnstaged = req.query.includeUnstaged === "1";
-    const limit = Math.min(Number(req.query.limit ?? DEFAULT_LIMIT) || DEFAULT_LIMIT, 200);
+    const limit = Math.min(Number(req.query.limit ?? DEFAULT_LIMIT) || DEFAULT_LIMIT, MAX_LIMIT);
     const offset = Number(req.query.offset ?? 0) || 0;
 
     const cards = await prisma.cardAsset.findMany({
