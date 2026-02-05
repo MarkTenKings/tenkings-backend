@@ -119,6 +119,7 @@ export default function KingsReview() {
   const [query, setQuery] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [enqueueing, setEnqueueing] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const [aiMessageIndex, setAiMessageIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [purging, setPurging] = useState(false);
@@ -595,6 +596,31 @@ export default function KingsReview() {
     }
   };
 
+  const handleRegenerateComps = async () => {
+    if (!activeCardId || regenerating) {
+      return;
+    }
+    setRegenerating(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/cards/${activeCardId}/regenerate-comps`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...adminHeaders(),
+        },
+      });
+      if (!res.ok) {
+        throw new Error("Failed to regenerate comps");
+      }
+      setError("Comps regeneration queued.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to regenerate comps");
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
   const handleAttachComp = async (comp: JobResultComp, kind: string) => {
     if (!activeCardId) {
       return;
@@ -1053,6 +1079,16 @@ export default function KingsReview() {
                         className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 disabled:opacity-60"
                       >
                         {enqueueing ? "Running…" : "Run"}
+                      </button>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleRegenerateComps}
+                        disabled={regenerating}
+                        className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 disabled:opacity-60"
+                      >
+                        {regenerating ? "Regenerating…" : "Regenerate Comps"}
                       </button>
                     </div>
                   </div>
