@@ -419,8 +419,8 @@ export default function AdminVariants() {
               </button>
               <button
                 type="button"
-                onClick={() => setCsvText(\"\")}
-                className=\"rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-200\"
+                onClick={() => setCsvText("")}
+                className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-200"
               >
                 Clear
               </button>
