@@ -18,7 +18,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const total = await prisma.cardVariantReferenceImage.count();
     const pending = await prisma.cardVariantReferenceImage.count({
       where: {
-        OR: [{ qualityScore: null }, { cropEmbeddings: null }],
+        OR: [{ qualityScore:null }, { cropEmbeddings: { equals: null } }],
       },
     });
     const processed = Math.max(0, total - pending);
