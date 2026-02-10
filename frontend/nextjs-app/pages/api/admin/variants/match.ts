@@ -127,7 +127,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
         let bestScore = 0;
         for (const ref of refs) {
-          const embeddings = Array.isArray(ref.cropEmbeddings) ? ref.cropEmbeddings : [];
+          const embeddings = Array.isArray(ref.cropEmbeddings) ? (ref.cropEmbeddings as any[]) : [];
           let refScore = 0;
           let refCount = 0;
           for (const emb of embeddings) {
