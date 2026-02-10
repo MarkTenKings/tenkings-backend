@@ -12,6 +12,7 @@ import { fetchPriceChartingComps } from "./sources/pricecharting";
 import { sleep } from "./utils";
 import { startTeachServer } from "./teachServer";
 import { compareImageSignatures, computeImageSignature, ImageSignature } from "./pattern";
+import { processPendingReferences } from "./reference/queue";
 
 type PlaybookRule = {
   id: string;
@@ -60,6 +61,7 @@ const VIEWPORT_WIDTH = Number(process.env.BYTEBOT_LITE_VIEWPORT_WIDTH ?? 1280);
 const VIEWPORT_HEIGHT = Number(process.env.BYTEBOT_LITE_VIEWPORT_HEIGHT ?? 720);
 const PATTERN_ENABLED = (process.env.BYTEBOT_PATTERN_ENABLED ?? "false").toLowerCase() === "true";
 const PATTERN_MIN_SCORE = Number(process.env.BYTEBOT_PATTERN_MIN_SCORE ?? 0.7);
+const REFERENCE_POLL_INTERVAL_MS = Number(process.env.BYTEBOT_REFERENCE_POLL_INTERVAL_MS ?? 15000);
 
 function classifyPatternTier(score: number) {
   if (score >= 0.9) {
@@ -343,12 +345,30 @@ async function workerLoop(workerId: number) {
   }
 }
 
+async function referenceLoop() {
+  console.log("[bytebot-lite] reference worker online");
+  while (true) {
+    try {
+      const count = await processPendingReferences(8);
+      if (count === 0) {
+        await sleep(REFERENCE_POLL_INTERVAL_MS);
+      }
+    } catch (error) {
+      console.error("[bytebot-lite] reference worker error", error);
+      await sleep(REFERENCE_POLL_INTERVAL_MS);
+    }
+  }
+}
+
 async function runWorkers() {
   const workers = Array.from({ length: CONCURRENCY }, (_, index) => workerLoop(index + 1));
   await Promise.all(workers);
 }
 
 startTeachServer();
+referenceLoop().catch((error) => {
+  console.error("[bytebot-lite] reference worker boot failed", error);
+});
 runWorkers().catch((error) => {
   const message = error instanceof Error ? error.message : "Unknown error";
   console.error(`[bytebot-lite] worker boot failed: ${message}`);

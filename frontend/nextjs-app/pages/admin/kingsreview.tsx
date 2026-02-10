@@ -45,6 +45,19 @@ type CardSummary = {
 type CardDetail = CardSummary & {
   customDetails: string | null;
   classificationNormalized?: { categoryType?: string | null } | null;
+  variantId?: string | null;
+  variantConfidence?: number | null;
+  variantDecision?: {
+    selectedParallelId: string | null;
+    confidence: number | null;
+    humanOverride: boolean;
+    humanNotes: string | null;
+    candidates: Array<{
+      parallelId: string;
+      confidence: number | null;
+      reason: string | null;
+    }>;
+  } | null;
 };
 
 type EvidenceItem = {
@@ -76,7 +89,38 @@ type JobResultComp = {
   };
 };
 
+type VariantCandidate = {
+  parallelId: string;
+  confidence: number | null;
+  reason: string | null;
+};
+
+type VariantReference = {
+  id: string;
+  setId: string;
+  parallelId: string;
+  rawImageUrl: string;
+  cropUrls: string[];
+  qualityScore: number | null;
+};
+
 type PatternTier = "verified" | "likely" | "weak" | "none";
+
+type VariantReasonParts = {
+  mode: string;
+  foilScore: number | null;
+};
+
+const parseVariantReason = (reason: string | null | undefined): VariantReasonParts => {
+  if (!reason) {
+    return { mode: "unknown", foilScore: null };
+  }
+  const parts = reason.split("|").map((part) => part.trim());
+  const mode = parts[0] || "unknown";
+  const foilPart = parts.find((part) => part.startsWith("foil="));
+  const foilScore = foilPart ? Number(foilPart.replace("foil=", "")) : null;
+  return { mode, foilScore: Number.isFinite(foilScore) ? foilScore : null };
+};
 
 const patternBadgeClass = (tier: PatternTier) => {
   switch (tier) {
@@ -134,6 +178,13 @@ export default function KingsReview() {
   const [zoom, setZoom] = useState<number>(1);
   const [query, setQuery] = useState<string>("");
   const [saving, setSaving] = useState(false);
+  const [variantNotes, setVariantNotes] = useState("");
+  const [variantSetId, setVariantSetId] = useState("");
+  const [variantCardNumber, setVariantCardNumber] = useState("");
+  const [variantInspectOpen, setVariantInspectOpen] = useState(false);
+  const [variantInspectCandidate, setVariantInspectCandidate] = useState<VariantCandidate | null>(null);
+  const [variantInspectRefs, setVariantInspectRefs] = useState<VariantReference[]>([]);
+  const [variantInspectLoading, setVariantInspectLoading] = useState(false);
   const [enqueueing, setEnqueueing] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [aiMessageIndex, setAiMessageIndex] = useState(0);
@@ -377,7 +428,16 @@ export default function KingsReview() {
           createdAt: card.createdAt,
           updatedAt: card.updatedAt,
           classificationNormalized: card.classificationNormalized ?? null,
+          variantId: card.variantId ?? null,
+          variantConfidence: card.variantConfidence ?? null,
+          variantDecision: card.variantDecision ?? null,
         });
+        setVariantSetId(
+          (card.classificationNormalized as any)?.setName ??
+            (card.classificationNormalized as any)?.setCode ??
+            ""
+        );
+        setVariantCardNumber((card.classificationNormalized as any)?.cardNumber ?? "");
         setQuery(card.customTitle ?? card.fileName ?? "");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load card");
@@ -521,6 +581,146 @@ export default function KingsReview() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleVariantDecision = async (
+    parallelId: string,
+    confidence?: number | null,
+    override?: boolean
+  ) => {
+    if (!activeCard) {
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/variants/decision", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...adminHeaders(),
+        },
+        body: JSON.stringify({
+          cardAssetId: activeCard.id,
+          selectedParallelId: parallelId,
+          confidence: confidence ?? activeCard.variantDecision?.confidence ?? activeCard.variantConfidence ?? null,
+          candidates: [],
+          humanOverride: Boolean(override),
+          humanNotes: variantNotes.trim() || null,
+        }),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to save variant decision");
+      }
+      setActiveCard((prev) =>
+        prev
+          ? {
+              ...prev,
+              variantId: parallelId,
+              variantConfidence:
+                confidence ?? prev.variantDecision?.confidence ?? prev.variantConfidence ?? null,
+              variantDecision: {
+                selectedParallelId: parallelId,
+                confidence:
+                  confidence ?? prev.variantDecision?.confidence ?? prev.variantConfidence ?? null,
+                humanOverride: Boolean(override),
+                humanNotes: variantNotes.trim() || null,
+              },
+            }
+          : prev
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save variant decision");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleVariantMatch = async () => {
+    if (!activeCard) {
+      return;
+    }
+    if (!variantSetId.trim() || !variantCardNumber.trim()) {
+      setError("Set ID and Card # are required to run the matcher.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/variants/match", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...adminHeaders(),
+        },
+        body: JSON.stringify({
+          cardAssetId: activeCard.id,
+          setId: variantSetId.trim(),
+          cardNumber: variantCardNumber.trim(),
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Failed to run matcher");
+      }
+      if (payload?.candidates?.length) {
+        const top = payload.candidates[0];
+        setActiveCard((prev) =>
+          prev
+            ? {
+                ...prev,
+                variantId: top.parallelId,
+                variantConfidence: top.confidence,
+                variantDecision: {
+                  selectedParallelId: top.parallelId,
+                  confidence: top.confidence,
+                  humanOverride: false,
+                  humanNotes: prev.variantDecision?.humanNotes ?? null,
+                  candidates: payload.candidates,
+                },
+              }
+            : prev
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to run matcher");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openVariantInspect = async (candidate: VariantCandidate) => {
+    if (!variantSetId.trim()) {
+      setError("Set ID is required to load reference images.");
+      return;
+    }
+    setVariantInspectCandidate(candidate);
+    setVariantInspectRefs([]);
+    setVariantInspectOpen(true);
+    setVariantInspectLoading(true);
+    try {
+      const res = await fetch(
+        `/api/admin/variants/reference?setId=${encodeURIComponent(variantSetId.trim())}&parallelId=${encodeURIComponent(
+          candidate.parallelId
+        )}&limit=20`,
+        { headers: adminHeaders() }
+      );
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Failed to load reference images");
+      }
+      setVariantInspectRefs(payload.references ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load reference images");
+    } finally {
+      setVariantInspectLoading(false);
+    }
+  };
+
+  const closeVariantInspect = () => {
+    setVariantInspectOpen(false);
+    setVariantInspectCandidate(null);
+    setVariantInspectRefs([]);
   };
 
   const handleCreateRule = async () => {
@@ -1054,6 +1254,134 @@ export default function KingsReview() {
                         <span>•</span>
                         <span>{activeCard.resolvedTeamName ?? "Unknown team"}</span>
                       </div>
+                      <div className="rounded-2xl border border-white/10 bg-night-950/60 px-3 py-3 text-[11px] uppercase tracking-[0.28em] text-slate-400">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-slate-500">Variant</span>
+                          <span className="text-slate-200">
+                            {activeCard.variantDecision?.selectedParallelId ??
+                              activeCard.variantId ??
+                              "Not set"}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
+                          <span>
+                            Confidence{" "}
+                            {activeCard.variantDecision?.confidence ??
+                              activeCard.variantConfidence ??
+                              "—"}
+                          </span>
+                          {activeCard.variantDecision?.humanOverride && (
+                            <span className="rounded-full border border-amber-400/60 bg-amber-500/20 px-2 py-1 text-[9px] text-amber-200">
+                              Human Override
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-3 grid gap-2">
+                          <input
+                            value={variantNotes}
+                            onChange={(event) => setVariantNotes(event.target.value)}
+                            placeholder="Variant notes / reason"
+                            className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
+                          />
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <input
+                              value={variantSetId}
+                              onChange={(event) => setVariantSetId(event.target.value)}
+                              placeholder="Set ID"
+                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
+                            />
+                            <input
+                              value={variantCardNumber}
+                              onChange={(event) => setVariantCardNumber(event.target.value)}
+                              placeholder="Card #"
+                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
+                            />
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={handleVariantMatch}
+                              disabled={saving}
+                              className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-emerald-200 disabled:opacity-60"
+                            >
+                              Run Matcher
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleVariantDecision(
+                                  activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "",
+                                  activeCard.variantDecision?.confidence ?? activeCard.variantConfidence ?? null,
+                                  true
+                                )
+                              }
+                              disabled={saving}
+                              className="rounded-full border border-sky-400/60 bg-sky-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-sky-200 disabled:opacity-60"
+                            >
+                              Confirm Variant
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleVariantDecision("Unknown", null, true)}
+                              disabled={saving}
+                              className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-rose-200 disabled:opacity-60"
+                            >
+                              Mark Unknown
+                            </button>
+                          </div>
+                          {activeCard.variantDecision?.candidates?.length ? (
+                            <div className="mt-2 space-y-1 text-[10px] uppercase tracking-[0.24em] text-slate-500">
+                              {activeCard.variantDecision.candidates.map((candidate) => (
+                                (() => {
+                                  const reason = parseVariantReason(candidate.reason);
+                                  return (
+                                <button
+                                  key={candidate.parallelId}
+                                  type="button"
+                                  onClick={() =>
+                                    handleVariantDecision(
+                                      candidate.parallelId,
+                                      candidate.confidence ?? null,
+                                      true
+                                    )
+                                  }
+                                  className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-left text-[10px] uppercase tracking-[0.24em] text-slate-300 hover:border-sky-400/60"
+                                >
+                                  <span className="flex flex-1 items-center gap-3">
+                                    <span>{candidate.parallelId}</span>
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        openVariantInspect(candidate as VariantCandidate);
+                                      }}
+                                      className="rounded-full border border-white/20 px-2 py-1 text-[9px] uppercase tracking-[0.28em] text-slate-300 hover:border-sky-400/60"
+                                    >
+                                      View
+                                    </button>
+                                    <span className="rounded-full border border-white/10 px-2 py-1 text-[9px] uppercase tracking-[0.28em] text-slate-400">
+                                      {reason.mode}
+                                    </span>
+                                    {reason.foilScore != null && (
+                                      <span className="rounded-full border border-amber-400/60 bg-amber-500/10 px-2 py-1 text-[9px] uppercase tracking-[0.28em] text-amber-200">
+                                        Foil {reason.foilScore.toFixed(2)}
+                                      </span>
+                                    )}
+                                  </span>
+                                  <span>{candidate.confidence ?? "—"}</span>
+                                </button>
+                                  );
+                                })()
+                              ))}
+                            </div>
+                          ) : null}
+                          {activeCard.variantDecision?.humanNotes && (
+                            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">
+                              Notes: {activeCard.variantDecision.humanNotes}
+                            </p>
+                          )}
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -1458,6 +1786,108 @@ export default function KingsReview() {
             )}
           </section>
         </div>
+        {variantInspectOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6 py-10">
+            <div className="w-full max-w-5xl rounded-3xl border border-white/10 bg-night-900 p-6 text-slate-200 shadow-2xl">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Variant Inspect</p>
+                  <h2 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">
+                    {variantInspectCandidate?.parallelId ?? "Variant"}
+                  </h2>
+                {variantInspectCandidate && (
+                  <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">
+                    Confidence {variantInspectCandidate.confidence ?? "—"} ·{" "}
+                    {parseVariantReason(variantInspectCandidate.reason).mode}
+                    {parseVariantReason(variantInspectCandidate.reason).foilScore != null && (
+                      <> · Foil {parseVariantReason(variantInspectCandidate.reason).foilScore?.toFixed(2)}</>
+                    )}
+                  </p>
+                )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      variantInspectCandidate &&
+                      handleVariantDecision(
+                        variantInspectCandidate.parallelId,
+                        variantInspectCandidate.confidence ?? null,
+                        true
+                      )
+                    }
+                    className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.28em] text-emerald-200"
+                  >
+                    Confirm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleVariantDecision("Unknown", null, true);
+                      closeVariantInspect();
+                    }}
+                    className="rounded-full border border-rose-400/60 bg-rose-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.28em] text-rose-200"
+                  >
+                    Reject
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeVariantInspect}
+                    className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.28em] text-slate-200"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+
+              {variantInspectLoading ? (
+                <div className="mt-6 text-xs uppercase tracking-[0.3em] text-slate-500">
+                  Loading references…
+                </div>
+              ) : (
+                <div className="mt-6 grid gap-4 md:grid-cols-2">
+                  {variantInspectRefs.map((ref) => (
+                    <div key={ref.id} className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                          {ref.parallelId}
+                        </p>
+                        <span className="text-[10px] uppercase tracking-[0.28em] text-slate-500">
+                          Quality {ref.qualityScore != null ? ref.qualityScore.toFixed(2) : "—"}
+                        </span>
+                      </div>
+                      <div className="mt-3 grid gap-3">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={ref.rawImageUrl}
+                          alt={ref.parallelId}
+                          className="h-48 w-full rounded-xl object-cover"
+                        />
+                        {ref.cropUrls?.length ? (
+                          <div className="grid grid-cols-3 gap-2">
+                            {ref.cropUrls.slice(0, 6).map((url) => (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img key={url} src={url} alt="crop" className="h-20 w-full rounded-lg object-cover" />
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[10px] uppercase tracking-[0.28em] text-slate-500">
+                            Crops pending
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {variantInspectRefs.length === 0 && (
+                    <div className="rounded-2xl border border-white/10 bg-night-950/60 p-4 text-xs uppercase tracking-[0.3em] text-slate-500">
+                      No reference images found for this variant yet.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         )
       </div>
     );

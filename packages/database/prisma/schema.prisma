@@ -581,6 +581,8 @@ model CardAsset {
   reviewStageUpdatedAt    DateTime?
   inventoryBatchId        String?
   inventoryAssignedAt     DateTime?
+  variantId               String?
+  variantConfidence       Float?
 
   batch              CardBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
   assignedDefinition PackDefinition? @relation(fields: [assignedDefinitionId], references: [id], onDelete: SetNull)
@@ -592,9 +594,55 @@ model CardAsset {
   inventoryBatch     InventoryBatch? @relation(fields: [inventoryBatchId], references: [id], onDelete: SetNull)
   humanReviewer      User?           @relation("CardAssetHumanReviewer", fields: [humanReviewedById], references: [id])
   sportsDbPlayer     SportsDbPlayer? @relation(fields: [sportsDbPlayerId], references: [id], onDelete: SetNull)
+  variantDecisions   CardVariantDecision[]
 
   @@index([sportsDbPlayerId])
   @@index([inventoryBatchId])
+}
+
+model CardVariant {
+  id             String   @id @default(uuid())
+  setId          String
+  cardNumber     String
+  parallelId     String
+  parallelFamily String?
+  keywords       String[] @default([])
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([setId, cardNumber])
+  @@unique([setId, cardNumber, parallelId])
+}
+
+model CardVariantReferenceImage {
+  id             String   @id @default(uuid())
+  setId          String
+  parallelId     String
+  sourceUrl      String?
+  rawImageUrl    String
+  cropUrls       String[] @default([])
+  cropEmbeddings Json?
+  qualityScore   Float?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([setId, parallelId])
+}
+
+model CardVariantDecision {
+  id                 String   @id @default(uuid())
+  cardAssetId        String
+  candidatesJson     Json
+  selectedParallelId String?
+  confidence         Float?
+  humanOverride      Boolean  @default(false)
+  humanNotes         String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  cardAsset CardAsset @relation(fields: [cardAssetId], references: [id], onDelete: Cascade)
+
+  @@index([cardAssetId])
 }
 
 model InventoryBatch {

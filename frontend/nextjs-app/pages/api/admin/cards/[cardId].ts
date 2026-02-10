@@ -508,6 +508,19 @@ interface CardResponse {
   ebaySoldUrlHighGrade: string | null;
   ebaySoldUrlPlayerComp: string | null;
   ebaySoldUrlAiGrade: string | null;
+  variantId: string | null;
+  variantConfidence: number | null;
+  variantDecision: {
+    selectedParallelId: string | null;
+    confidence: number | null;
+    humanOverride: boolean;
+    humanNotes: string | null;
+    candidates: Array<{
+      parallelId: string;
+      confidence: number | null;
+      reason: string | null;
+    }>;
+  } | null;
   assignedDefinitionId: string | null;
   assignedAt: string | null;
   reviewStage: string | null;
@@ -604,6 +617,11 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     return null;
   }
 
+  const latestDecision = await prisma.cardVariantDecision.findFirst({
+    where: { cardAssetId: card.id },
+    orderBy: { createdAt: "desc" },
+  });
+
   const gradingRaw = (card.aiGradingJson as Record<string, unknown> | null) ?? null;
   const gradingRecord = Array.isArray((gradingRaw as any)?.records)
     ? (gradingRaw as any).records[0]
@@ -671,6 +689,26 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     ebaySoldUrlHighGrade: card.ebaySoldUrlHighGrade ?? null,
     ebaySoldUrlPlayerComp: card.ebaySoldUrlPlayerComp ?? null,
     ebaySoldUrlAiGrade: card.ebaySoldUrlAiGrade ?? null,
+    variantId: card.variantId ?? null,
+    variantConfidence: card.variantConfidence ?? null,
+    variantDecision: latestDecision
+      ? {
+          selectedParallelId: latestDecision.selectedParallelId ?? null,
+          confidence: latestDecision.confidence ?? null,
+          humanOverride: latestDecision.humanOverride,
+          humanNotes: latestDecision.humanNotes ?? null,
+          candidates: Array.isArray(latestDecision.candidatesJson)
+            ? (latestDecision.candidatesJson as Array<any>).map((entry) => ({
+                parallelId: String(entry?.parallelId ?? ""),
+                confidence:
+                  entry?.confidence != null && Number.isFinite(Number(entry.confidence))
+                    ? Number(entry.confidence)
+                    : null,
+                reason: entry?.reason ? String(entry.reason) : null,
+              }))
+            : [],
+        }
+      : null,
     assignedDefinitionId: card.assignedDefinitionId,
     assignedAt: card.assignedAt ? card.assignedAt.toISOString() : null,
     reviewStage: card.reviewStage ?? null,
