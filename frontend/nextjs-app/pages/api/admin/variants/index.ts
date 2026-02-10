@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma, Prisma } from "@tenkings/database";
+import { prisma } from "@tenkings/database";
+import { Prisma } from "@prisma/client";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 type VariantRow = {
