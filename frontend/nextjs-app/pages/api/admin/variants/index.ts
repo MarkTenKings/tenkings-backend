@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma } from "@tenkings/database";
+import { prisma, Prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 type VariantRow = {
@@ -42,9 +42,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const where = q
         ? {
             OR: [
-              { setId: { contains: q, mode: "insensitive" } },
-              { cardNumber: { contains: q, mode: "insensitive" } },
-              { parallelId: { contains: q, mode: "insensitive" } },
+              { setId: { contains: q, mode: Prisma.QueryMode.insensitive } },
+              { cardNumber: { contains: q, mode: Prisma.QueryMode.insensitive } },
+              { parallelId: { contains: q, mode: Prisma.QueryMode.insensitive } },
             ],
           }
         : {};
