@@ -625,6 +625,7 @@ export default function KingsReview() {
                   confidence ?? prev.variantDecision?.confidence ?? prev.variantConfidence ?? null,
                 humanOverride: Boolean(override),
                 humanNotes: variantNotes.trim() || null,
+                candidates: prev.variantDecision?.candidates ?? [],
               },
             }
           : prev
