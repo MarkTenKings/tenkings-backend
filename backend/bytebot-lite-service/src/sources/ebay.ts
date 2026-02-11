@@ -63,9 +63,13 @@ async function fetchEbaySoldCompsSerpApi(options: {
   maxComps: number;
   apiKey: string;
 }) {
+  const trimmedQuery = options.query.trim();
+  if (!trimmedQuery) {
+    throw new Error("SerpApi eBay query is empty.");
+  }
   const params = new URLSearchParams({
     engine: "ebay",
-    _nkw: options.query,
+    _nkw: trimmedQuery,
     ebay_domain: "ebay.com",
     show_only: "Sold,Complete",
     _sop: "13",
@@ -75,7 +79,10 @@ async function fetchEbaySoldCompsSerpApi(options: {
 
   const response = await fetch(`${SERPAPI_ENDPOINT}?${params.toString()}`);
   if (!response.ok) {
-    throw new Error(`SerpApi eBay request failed (${response.status})`);
+    const body = await response.text().catch(() => "");
+    throw new Error(
+      `SerpApi eBay request failed (${response.status})${body ? `: ${body.slice(0, 500)}` : ""}`
+    );
   }
   const data = await response.json();
   if (data?.search_metadata?.status && data.search_metadata.status !== "Success") {
