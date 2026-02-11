@@ -1,4 +1,5 @@
 import { prisma } from "@tenkings/database";
+import { Prisma } from "@prisma/client";
 import { computeReferenceEmbeddings } from "./embedding";
 import { computeQualityScore } from "./quality";
 
@@ -19,7 +20,9 @@ export async function processReferenceImage(referenceId: string) {
     data: {
       qualityScore: quality?.score ?? reference.qualityScore ?? null,
       cropUrls: embeddings.cropUrls?.length ? embeddings.cropUrls : reference.cropUrls ?? [],
-      cropEmbeddings: embeddings.embeddings.length ? embeddings.embeddings : reference.cropEmbeddings ?? null,
+      cropEmbeddings: embeddings.embeddings.length
+        ? embeddings.embeddings
+        : reference.cropEmbeddings ?? Prisma.JsonNull,
     },
   });
 }
@@ -27,7 +30,11 @@ export async function processReferenceImage(referenceId: string) {
 export async function processPendingReferences(limit = 10) {
   const pending = await prisma.cardVariantReferenceImage.findMany({
     where: {
-      OR: [{ qualityScore: null }, { cropEmbeddings: null }],
+      OR: [
+        { qualityScore: null },
+        { cropEmbeddings: { equals: Prisma.JsonNull } },
+        { cropEmbeddings: { equals: Prisma.DbNull } },
+      ],
     },
     take: limit,
     orderBy: [{ createdAt: "asc" }],

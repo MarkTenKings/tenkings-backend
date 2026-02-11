@@ -145,6 +145,16 @@ export async function computeReferenceEmbeddings(params: {
   referenceId: string;
 }): Promise<ReferenceEmbeddingResult> {
   const { imageUrl, referenceId } = params;
+  let buffer: Buffer | null = null;
+  const loadBuffer = async () => {
+    if (buffer) return buffer;
+    const response = await fetch(imageUrl);
+    if (!response.ok) {
+      return null;
+    }
+    buffer = Buffer.from(await response.arrayBuffer());
+    return buffer;
+  };
   try {
     const embeddingService = process.env.VARIANT_EMBEDDING_URL;
     if (embeddingService) {
@@ -159,9 +169,16 @@ export async function computeReferenceEmbeddings(params: {
         const serviceCropUrls = Array.isArray(payload?.cropUrls) ? payload.cropUrls : [];
         if (serviceEmbeddings.length > 0 && serviceCropUrls.length === 0) {
           // We got embeddings but no crops; fall back to local crop generation for previews.
-          const local = await computeReferenceEmbeddingsLocal(buffer, referenceId);
+          const localBuffer = await loadBuffer();
+          if (localBuffer) {
+            const local = await computeReferenceEmbeddingsLocal(localBuffer, referenceId);
+            return {
+              cropUrls: local.cropUrls,
+              embeddings: serviceEmbeddings,
+            };
+          }
           return {
-            cropUrls: local.cropUrls,
+            cropUrls: [],
             embeddings: serviceEmbeddings,
           };
         }
@@ -174,12 +191,11 @@ export async function computeReferenceEmbeddings(params: {
       }
     }
 
-    const response = await fetch(imageUrl);
-    if (!response.ok) {
+    const localBuffer = await loadBuffer();
+    if (!localBuffer) {
       return { cropUrls: [], embeddings: [] };
     }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    return await computeReferenceEmbeddingsLocal(buffer, referenceId);
+    return await computeReferenceEmbeddingsLocal(localBuffer, referenceId);
   } catch {
     return { cropUrls: [], embeddings: [] };
   }
