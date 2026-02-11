@@ -17,6 +17,8 @@
     "@tenkings/database": "workspace:*",
     "@tenkings/shared": "workspace:*",
     "@types/pdfkit": "^0.17.3",
+    "adm-zip": "^0.5.12",
+    "busboy": "^1.6.0",
     "nanoid": "^5.1.6",
     "next": "14.2.5",
     "obs-websocket-js": "^5.0.5",

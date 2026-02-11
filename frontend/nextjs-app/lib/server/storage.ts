@@ -144,6 +144,30 @@ export async function presignUploadUrl(storageKey: string, contentType: string) 
   return getSignedUrl(client as any, command as any, { expiresIn: 60 * 10 });
 }
 
+export async function uploadBuffer(
+  storageKey: string,
+  buffer: Buffer,
+  contentType: string
+) {
+  const mode = getStorageMode();
+  if (mode === "s3") {
+    const client = getS3Client();
+    await client.send(
+      new PutObjectCommand({
+        Bucket: s3Bucket,
+        Key: storageKey,
+        Body: buffer,
+        ContentType: contentType,
+        ACL: s3ObjectAcl,
+      })
+    );
+    return publicUrlFor(storageKey);
+  }
+
+  await writeLocalFile(storageKey, buffer);
+  return publicUrlFor(storageKey);
+}
+
 function sanitizeFileName(input: string) {
   const normalized = input.trim().toLowerCase();
   const base = normalized.replace(/[^a-z0-9_.-]+/g, "-");
