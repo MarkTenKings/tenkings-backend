@@ -14,8 +14,6 @@ const STAGES = [
 
 const SOURCE_LABELS: Record<string, string> = {
   ebay_sold: "eBay Sold",
-  tcgplayer: "TCGplayer",
-  pricecharting: "PriceCharting",
 };
 
 const AI_STATUS_MESSAGES = [
@@ -196,7 +194,6 @@ export default function KingsReview() {
   const [deleteSelection, setDeleteSelection] = useState<string[]>([]);
   const [playbookRules, setPlaybookRules] = useState<PlaybookRule[]>([]);
   const [teachForm, setTeachForm] = useState({
-    source: "pricecharting",
     action: "click",
     selector: "",
     urlContains: "",
@@ -781,10 +778,7 @@ export default function KingsReview() {
     setError(null);
     try {
       const categoryType = activeCard?.classificationNormalized?.categoryType ?? null;
-      const sourceList =
-        categoryType === "tcg"
-          ? ["ebay_sold", "tcgplayer", "pricecharting"]
-          : ["ebay_sold", "pricecharting"];
+      const sourceList = ["ebay_sold"];
       const res = await fetch("/api/admin/kingsreview/enqueue", {
         method: "POST",
         headers: {
@@ -819,10 +813,7 @@ export default function KingsReview() {
     setError(null);
     try {
       const categoryType = activeCard?.classificationNormalized?.categoryType ?? null;
-      const sourceList =
-        categoryType === "tcg"
-          ? ["ebay_sold", "tcgplayer", "pricecharting"]
-          : ["ebay_sold", "pricecharting"];
+      const sourceList = ["ebay_sold"];
       const nextQuery = job?.searchQuery ?? query.trim();
       if (!nextQuery) {
         throw new Error("Search query is required to regenerate comps");
@@ -916,6 +907,22 @@ export default function KingsReview() {
       setEvidenceItems((prev) => [data.item, ...prev]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to attach search evidence");
+    }
+  };
+
+  const handleDeleteEvidence = async (id: string) => {
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/kingsreview/evidence?id=${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: adminHeaders(),
+      });
+      if (!res.ok) {
+        throw new Error("Failed to remove evidence");
+      }
+      setEvidenceItems((prev) => prev.filter((item) => item.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove evidence");
     }
   };
 
@@ -1460,14 +1467,23 @@ export default function KingsReview() {
                       {evidenceItems.map((item) => (
                         <div key={item.id} className="flex items-center justify-between gap-2 text-xs text-slate-300">
                           <span className="line-clamp-1">{item.title ?? item.url}</span>
-                          <a
-                            href={item.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] uppercase tracking-[0.3em] text-sky-300"
-                          >
-                            Open
-                          </a>
+                          <div className="flex items-center gap-2">
+                            <a
+                              href={item.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] uppercase tracking-[0.3em] text-sky-300"
+                            >
+                              Open
+                            </a>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteEvidence(item.id)}
+                              className="text-[10px] uppercase tracking-[0.3em] text-rose-300"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </div>
                       ))}
                       {evidenceItems.length === 0 && (
@@ -1503,8 +1519,6 @@ export default function KingsReview() {
                             className="rounded-full border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200"
                           >
                             <option value="ebay_sold">eBay Sold</option>
-                            <option value="pricecharting">PriceCharting</option>
-                            <option value="tcgplayer">TCGplayer</option>
                           </select>
                         </label>
                         <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
@@ -1526,7 +1540,7 @@ export default function KingsReview() {
                               onChange={(event) =>
                                 setTeachForm((prev) => ({ ...prev, urlContains: event.target.value }))
                               }
-                              placeholder="pricecharting.com/search"
+                              placeholder="e.g. ebay.com/sch"
                               className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
                             />
                           </label>
@@ -1776,7 +1790,7 @@ export default function KingsReview() {
                   <button
                     type="button"
                     onClick={() =>
-                      handleAttachComp(activeComp, activeComp.source === "tcgplayer" ? "MARKET_COMP" : "SOLD_COMP")
+                      handleAttachComp(activeComp, "SOLD_COMP")
                     }
                     className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
                   >

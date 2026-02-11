@@ -13,9 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const body = req.body ?? {};
     const query = typeof body.query === "string" ? body.query.trim() : "";
     const cardAssetId = typeof body.cardAssetId === "string" ? body.cardAssetId : undefined;
-    const sources = Array.isArray(body.sources)
-      ? body.sources
-      : ["ebay_sold", "tcgplayer", "pricecharting"];
+    const sources = ["ebay_sold"];
     const categoryType = typeof body.categoryType === "string" ? body.categoryType : null;
 
     if (!query) {
@@ -46,6 +44,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const job = await enqueueBytebotLiteJob({
       searchQuery: query,
       sources,
+      maxComps: 20,
       cardAssetId,
       payload: {
         query,

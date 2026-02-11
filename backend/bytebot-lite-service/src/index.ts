@@ -188,22 +188,24 @@ async function processJob(
       let browser: any = null;
       let context: any = null;
       try {
-        browser = await browserType.launch({
-          headless: HEADLESS,
-          args: [
-            "--no-sandbox",
-            "--disable-setuid-sandbox",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-            "--single-process",
-            "--no-zygote",
-          ],
-        });
-        context = await browser.newContext({
-          viewport: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
-          userAgent:
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        });
+        if (source !== "ebay_sold") {
+          browser = await browserType.launch({
+            headless: HEADLESS,
+            args: [
+              "--no-sandbox",
+              "--disable-setuid-sandbox",
+              "--disable-gpu",
+              "--disable-dev-shm-usage",
+              "--single-process",
+              "--no-zygote",
+            ],
+          });
+          context = await browser.newContext({
+            viewport: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
+            userAgent:
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+          });
+        }
 
         if (source === "ebay_sold") {
           return await fetchEbaySoldComps({
@@ -302,6 +304,13 @@ async function processJob(
 
     await markBytebotLiteJobStatus(job.id, BytebotLiteJobStatus.COMPLETE, undefined, payload);
     if (job.cardAssetId) {
+      await autoAttachEbayComps({
+        id: job.id,
+        cardAssetId: job.cardAssetId,
+        sources: payload.sources,
+      });
+    }
+    if (job.cardAssetId) {
       await prisma.cardAsset.update({
         where: { id: job.cardAssetId },
         data: {
@@ -321,6 +330,57 @@ async function processJob(
     console.error(`[bytebot-lite] worker ${workerId} job ${job.id} failed: ${details}`);
   } finally {
     // browser handled per-source
+  }
+}
+
+async function autoAttachEbayComps(job: {
+  id: string;
+  cardAssetId: string;
+  sources: JobResult["sources"];
+}) {
+  const ebaySource = job.sources.find((source) => source.source === "ebay_sold");
+  if (!ebaySource || !ebaySource.comps.length) {
+    return;
+  }
+
+  const desired = ebaySource.comps
+    .filter((comp) => comp.url)
+    .slice(0, 10);
+  const unique = new Map<string, (typeof desired)[number]>();
+  for (const comp of desired) {
+    if (!unique.has(comp.url)) {
+      unique.set(comp.url, comp);
+    }
+  }
+  const topFive = Array.from(unique.values()).slice(0, 5);
+  if (topFive.length === 0) {
+    return;
+  }
+
+  const existing = await prisma.cardEvidenceItem.findMany({
+    where: {
+      cardAssetId: job.cardAssetId,
+      url: { in: topFive.map((comp) => comp.url) },
+    },
+    select: { url: true },
+  });
+  const existingUrls = new Set(existing.map((item) => item.url));
+  const rows = topFive
+    .filter((comp) => !existingUrls.has(comp.url))
+    .map((comp) => ({
+      cardAssetId: job.cardAssetId,
+      kind: "SOLD_COMP" as const,
+      source: "ebay_sold",
+      title: comp.title ?? null,
+      url: comp.url,
+      screenshotUrl: comp.screenshotUrl || null,
+      price: comp.price ?? null,
+      soldDate: comp.soldDate ?? null,
+      note: comp.notes ?? "Auto-attached from SerpApi",
+    }));
+
+  if (rows.length) {
+    await prisma.cardEvidenceItem.createMany({ data: rows });
   }
 }
 

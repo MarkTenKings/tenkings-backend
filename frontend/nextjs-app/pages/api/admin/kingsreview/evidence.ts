@@ -45,6 +45,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ item });
     }
 
+    if (req.method === "DELETE") {
+      const id = typeof req.query.id === "string" ? req.query.id : "";
+      if (!id) {
+        return res.status(400).json({ message: "id is required" });
+      }
+      await prisma.cardEvidenceItem.delete({ where: { id } });
+      return res.status(200).json({ ok: true });
+    }
+
     return res.status(405).json({ message: "Method not allowed" });
   } catch (error) {
     const { status, message } = toErrorResponse(error);

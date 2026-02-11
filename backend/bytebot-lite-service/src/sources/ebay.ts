@@ -21,6 +21,7 @@ export type SourceResult = {
 };
 
 type UploadFn = (buffer: Buffer, key: string, contentType: string) => Promise<{ url: string }>;
+const SERPAPI_ENDPOINT = "https://serpapi.com/search.json";
 
 export function buildEbaySoldUrl(query: string) {
   const params = new URLSearchParams({
@@ -41,7 +42,98 @@ function buildFallbackQuery(query: string) {
 }
 
 export async function fetchEbaySoldComps(options: {
-  context: BrowserContext;
+  context?: BrowserContext | null;
+  query: string;
+  maxComps: number;
+  jobId: string;
+  upload: UploadFn;
+  rules?: { action: string; selector: string; urlContains?: string | null }[];
+  patternSignature?: ImageSignature | null;
+  patternMinScore?: number;
+}) {
+  const serpApiKey = process.env.SERPAPI_KEY ?? "";
+  if (!serpApiKey) {
+    throw new Error("SERPAPI_KEY is required for ebay_sold.");
+  }
+  return await fetchEbaySoldCompsSerpApi({ ...options, apiKey: serpApiKey });
+}
+
+async function fetchEbaySoldCompsSerpApi(options: {
+  query: string;
+  maxComps: number;
+  apiKey: string;
+}) {
+  const params = new URLSearchParams({
+    engine: "ebay",
+    _nkw: options.query,
+    ebay_domain: "ebay.com",
+    show_only: "Sold,Complete",
+    _sop: "13",
+    _ipg: "50",
+    api_key: options.apiKey,
+  });
+
+  const response = await fetch(`${SERPAPI_ENDPOINT}?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`SerpApi eBay request failed (${response.status})`);
+  }
+  const data = await response.json();
+  if (data?.search_metadata?.status && data.search_metadata.status !== "Success") {
+    throw new Error(data?.search_metadata?.error ?? "SerpApi eBay returned error");
+  }
+
+  const rawItems = Array.isArray(data?.organic_results) ? data.organic_results : [];
+  const normalizePrice = (price: any) => {
+    if (!price) return null;
+    if (typeof price === "string") return price.trim();
+    if (typeof price?.raw === "string") return price.raw.trim();
+    if (typeof price?.extracted === "number") return `${price.extracted}`;
+    if (typeof price?.from?.raw === "string" || typeof price?.to?.raw === "string") {
+      const from = price?.from?.raw ? String(price.from.raw).trim() : "";
+      const to = price?.to?.raw ? String(price.to.raw).trim() : "";
+      return [from, to].filter(Boolean).join(" - ") || null;
+    }
+    return null;
+  };
+
+  const items = rawItems
+    .map((item: any) => ({
+      title: typeof item.title === "string" ? item.title.trim() : "",
+      link: typeof item.link === "string" ? item.link.trim() : "",
+      price: normalizePrice(item.price),
+      soldDate: typeof item.sold_date === "string" ? item.sold_date.trim() : null,
+      thumbnail: typeof item.thumbnail === "string" ? item.thumbnail.trim() : "",
+      sponsored: Boolean(item.sponsored),
+    }))
+    .filter((item: any) => item.link && item.title);
+
+  const organicItems = items.filter((item: any) => !item.sponsored);
+  const targetItems = (organicItems.length ? organicItems : items).slice(0, Math.max(1, options.maxComps));
+  const searchScreenshotUrl =
+    targetItems.find((item: any) => item.thumbnail)?.thumbnail ??
+    (items[0]?.thumbnail ?? "");
+
+  const comps: Comp[] = targetItems.map((item) => ({
+    source: "ebay_sold",
+    title: item.title || null,
+    url: item.link,
+    price: item.price ?? null,
+    soldDate: item.soldDate,
+    screenshotUrl: item.thumbnail || "",
+    listingImageUrl: item.thumbnail || null,
+    notes: "SerpApi eBay sold results",
+  }));
+
+  return {
+    source: "ebay_sold",
+    searchUrl: data?.search_metadata?.ebay_url ?? buildEbaySoldUrl(options.query),
+    searchScreenshotUrl,
+    comps,
+  };
+}
+
+async function fetchEbaySoldCompsPlaywright(options: {
+  context?: BrowserContext | null;
   query: string;
   maxComps: number;
   jobId: string;
@@ -60,6 +152,9 @@ export async function fetchEbaySoldComps(options: {
     patternSignature,
     patternMinScore = 0.7,
   } = options;
+  if (!context) {
+    throw new Error("Playwright context is required when SerpApi is not configured.");
+  }
   const searchUrl = buildEbaySoldUrl(query);
 
   for (let attempt = 1; attempt <= 2; attempt += 1) {
