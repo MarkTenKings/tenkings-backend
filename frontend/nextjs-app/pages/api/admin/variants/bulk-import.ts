@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import Busboy from "busboy";
+import { Prisma } from "@prisma/client";
 import AdmZip from "adm-zip";
 import path from "node:path";
 import { prisma } from "@tenkings/database";
@@ -255,7 +256,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             rawImageUrl: publicUrl,
             sourceUrl: match.sourceUrl ?? null,
             cropUrls: [],
-            cropEmbeddings: null,
+            cropEmbeddings: Prisma.JsonNull,
             qualityScore: null,
           },
         });
