@@ -96,7 +96,16 @@ async function fetchEbaySoldCompsSerpApi(options: {
     return null;
   };
 
-  const items = rawItems
+  type EbaySerpItem = {
+    title: string;
+    link: string;
+    price: string | null;
+    soldDate: string | null;
+    thumbnail: string;
+    sponsored: boolean;
+  };
+
+  const items: EbaySerpItem[] = rawItems
     .map((item: any) => ({
       title: typeof item.title === "string" ? item.title.trim() : "",
       link: typeof item.link === "string" ? item.link.trim() : "",
@@ -107,10 +116,13 @@ async function fetchEbaySoldCompsSerpApi(options: {
     }))
     .filter((item: { link: string; title: string }) => item.link && item.title);
 
-  const organicItems = items.filter((item: any) => !item.sponsored);
-  const targetItems = (organicItems.length ? organicItems : items).slice(0, Math.max(1, options.maxComps));
+  const organicItems = items.filter((item) => !item.sponsored);
+  const targetItems: EbaySerpItem[] = (organicItems.length ? organicItems : items).slice(
+    0,
+    Math.max(1, options.maxComps)
+  );
   const searchScreenshotUrl =
-    targetItems.find((item: any) => item.thumbnail)?.thumbnail ??
+    targetItems.find((item) => item.thumbnail)?.thumbnail ??
     (items[0]?.thumbnail ?? "");
 
   const comps: Comp[] = targetItems.map((item) => ({
