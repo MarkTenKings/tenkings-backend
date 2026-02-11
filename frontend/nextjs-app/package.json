@@ -30,6 +30,7 @@
     "zod": "^4.1.11"
   },
   "devDependencies": {
+    "@types/busboy": "^1.5.4",
     "@types/node": "20.14.12",
     "@types/qrcode": "^1.5.6",
     "@types/react": "18.3.3",
