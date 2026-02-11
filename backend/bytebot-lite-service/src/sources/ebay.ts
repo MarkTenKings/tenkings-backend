@@ -72,7 +72,6 @@ async function fetchEbaySoldCompsSerpApi(options: {
     _nkw: trimmedQuery,
     ebay_domain: "ebay.com",
     show_only: "Sold,Complete",
-    _sop: "13",
     _ipg: "50",
     api_key: options.apiKey,
   });
