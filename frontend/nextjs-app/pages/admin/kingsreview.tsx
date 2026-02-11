@@ -18,8 +18,7 @@ const SOURCE_LABELS: Record<string, string> = {
 
 const AI_STATUS_MESSAGES = [
   "Searching sold listings",
-  "Capturing evidence screenshots",
-  "Checking TCGplayer comps",
+  "Collecting comps",
   "Organizing results",
 ] as const;
 
@@ -41,8 +40,11 @@ type CardSummary = {
 };
 
 type CardDetail = CardSummary & {
+  ocrText?: string | null;
+  classification?: Record<string, unknown> | null;
   customDetails: string | null;
   classificationNormalized?: { categoryType?: string | null } | null;
+  photos?: Array<{ id: string; kind: string; imageUrl: string }>;
   variantId?: string | null;
   variantConfidence?: number | null;
   variantDecision?: {
@@ -266,6 +268,15 @@ export default function KingsReview() {
   const rulesForActiveSource = playbookRules.filter(
     (rule) => rule.source === (activeSourceData?.source ?? teachForm.source)
   );
+  const activePhotos = useMemo(() => {
+    if (!activeCard?.photos?.length) {
+      return {};
+    }
+    return activeCard.photos.reduce<Record<string, string>>((acc, photo) => {
+      acc[photo.kind] = photo.imageUrl;
+      return acc;
+    }, {});
+  }, [activeCard?.photos]);
   const isRunningStage =
     (activeCard?.reviewStage ?? stage) === "BYTEBOT_RUNNING";
   const aiStatus =
@@ -396,7 +407,7 @@ export default function KingsReview() {
       return;
     }
 
-    const loadCard = async () => {
+  const loadCard = async () => {
       setError(null);
       try {
         const res = await fetch(`/api/admin/cards/${activeCardId}`, {
@@ -414,6 +425,8 @@ export default function KingsReview() {
           fileName: card.fileName,
           imageUrl: card.imageUrl,
           thumbnailUrl: card.thumbnailUrl,
+          ocrText: card.ocrText ?? null,
+          classification: card.classification ?? null,
           customTitle: card.customTitle ?? null,
           customDetails: card.customDetails ?? null,
           resolvedPlayerName: card.sportsDb?.playerName ?? card.resolvedPlayerName ?? null,
@@ -429,6 +442,7 @@ export default function KingsReview() {
           variantId: card.variantId ?? null,
           variantConfidence: card.variantConfidence ?? null,
           variantDecision: card.variantDecision ?? null,
+          photos: Array.isArray(card.photos) ? card.photos : [],
         });
         setVariantSetId(
           (card.classificationNormalized as any)?.setName ??
@@ -791,6 +805,7 @@ export default function KingsReview() {
           cardAssetId: activeCardId,
           sources: sourceList,
           categoryType,
+          useManual: true,
         }),
       });
       if (!res.ok) {
@@ -830,6 +845,7 @@ export default function KingsReview() {
           cardAssetId: activeCardId,
           sources: sourceList,
           categoryType,
+          useManual: false,
         }),
       });
       if (!res.ok) {
@@ -1202,15 +1218,80 @@ export default function KingsReview() {
               {activeCard ? (
                 <div className="mt-4 flex flex-col gap-4">
                   <div className="grid gap-4">
-                    <div className="aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-800">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={activeCard.thumbnailUrl ?? activeCard.imageUrl}
-                        alt={activeCard.fileName}
-                        className="h-full w-full object-cover"
-                      />
+                    <div className="grid gap-3 md:grid-cols-3">
+                      {[
+                        { label: "Front", url: activePhotos.FRONT ?? activeCard.imageUrl },
+                        { label: "Back", url: activePhotos.BACK },
+                        { label: "Tilt", url: activePhotos.TILT },
+                      ].map((photo) => (
+                        <div
+                          key={photo.label}
+                          className="rounded-2xl border border-white/10 bg-night-800/70 p-2"
+                        >
+                          <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">{photo.label}</p>
+                          <div className="mt-2 aspect-[4/5] overflow-hidden rounded-xl border border-white/10 bg-night-900">
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            {photo.url ? (
+                              <img
+                                src={photo.url}
+                                alt={`${photo.label} image`}
+                                className="h-full w-full object-contain"
+                              />
+                            ) : (
+                              <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                Missing
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-night-950/60 px-3 py-3 text-[11px] uppercase tracking-[0.28em] text-slate-400">
+                      <div className="grid gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-slate-500">Set</span>
+                          <span className="text-slate-200">
+                            {(activeCard.classificationNormalized as any)?.setName ??
+                              (activeCard.classificationNormalized as any)?.setCode ??
+                              "—"}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-slate-500">Card #</span>
+                          <span className="text-slate-200">
+                            {(activeCard.classificationNormalized as any)?.cardNumber ??
+                              (activeCard.classification as any)?.cardNumber ??
+                              "—"}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-slate-500">Year</span>
+                          <span className="text-slate-200">
+                            {(activeCard.classificationNormalized as any)?.year ??
+                              (activeCard.classification as any)?.year ??
+                              "—"}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-slate-500">Parallel</span>
+                          <span className="text-slate-200">
+                            {(activeCard.classificationNormalized as any)?.parallelName ??
+                              (activeCard.classification as any)?.parallel ??
+                              "—"}
+                          </span>
+                        </div>
+                      </div>
                     </div>
                     <div className="space-y-3 text-xs text-slate-300">
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">OCR Text</span>
+                        <textarea
+                          value={activeCard.ocrText ?? ""}
+                          readOnly
+                          rows={3}
+                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-slate-200"
+                        />
+                      </label>
                       <label className="flex flex-col gap-1">
                         <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Custom Title</span>
                         <input
@@ -1467,7 +1548,19 @@ export default function KingsReview() {
                     <div className="mt-2 space-y-2">
                       {evidenceItems.map((item) => (
                         <div key={item.id} className="flex items-center justify-between gap-2 text-xs text-slate-300">
-                          <span className="line-clamp-1">{item.title ?? item.url}</span>
+                          <div className="flex items-center gap-3">
+                            <div className="h-10 w-8 overflow-hidden rounded-lg border border-white/10 bg-night-900">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              {item.screenshotUrl ? (
+                                <img
+                                  src={item.screenshotUrl}
+                                  alt={item.title ?? "Evidence"}
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : null}
+                            </div>
+                            <span className="line-clamp-1">{item.title ?? item.url}</span>
+                          </div>
                           <div className="flex items-center gap-2">
                             <a
                               href={item.url}
@@ -1635,6 +1728,45 @@ export default function KingsReview() {
                 </button>
               </div>
             </div>
+            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+              <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Selected Comp</p>
+              {activeComp ? (
+                <div className="mt-3 grid gap-3">
+                  <div className="aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-900">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={activeComp.listingImageUrl ?? activeComp.screenshotUrl}
+                      alt={activeComp.title ?? "Comp"}
+                      className="h-full w-full object-contain"
+                    />
+                  </div>
+                  <div className="text-xs text-slate-300">
+                    <p className="text-sm text-white">{activeComp.title ?? "Untitled comp"}</p>
+                    <p>{activeComp.price ?? ""}</p>
+                    <p className="text-slate-500">{activeComp.soldDate ?? ""}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href={activeComp.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-300"
+                    >
+                      Open Listing
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => handleAttachComp(activeComp, "SOLD_COMP")}
+                      className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
+                    >
+                      Attach to Card
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="mt-3 text-xs text-slate-500">Select a comp to preview.</div>
+              )}
+            </div>
             <div className="flex flex-wrap gap-2">
               {sources.map((source) => (
                 <button
@@ -1720,6 +1852,24 @@ export default function KingsReview() {
                 </a>
               )}
             </div>
+            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+              <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Search Query</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-slate-200"
+                />
+                <button
+                  type="button"
+                  onClick={handleEnqueue}
+                  disabled={enqueueing}
+                  className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 disabled:opacity-60"
+                >
+                  {enqueueing ? "Running…" : "Generate Comps"}
+                </button>
+              </div>
+            </div>
             <div className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-night-950/60 p-3">
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
@@ -1736,7 +1886,19 @@ export default function KingsReview() {
                         : "border-white/10 text-slate-300 hover:border-white/30"
                     }`}
                   >
-                    <span className="line-clamp-1 flex-1">{comp.title ?? comp.url}</span>
+                    <span className="flex flex-1 items-center gap-3">
+                      <span className="h-10 w-8 overflow-hidden rounded-lg border border-white/10 bg-night-900">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        {comp.listingImageUrl || comp.screenshotUrl ? (
+                          <img
+                            src={comp.listingImageUrl ?? comp.screenshotUrl}
+                            alt={comp.title ?? "Comp"}
+                            className="h-full w-full object-cover"
+                          />
+                        ) : null}
+                      </span>
+                      <span className="line-clamp-1">{comp.title ?? comp.url}</span>
+                    </span>
                     <span className="ml-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">
                       {comp.patternMatch && (
                         <span
@@ -1754,52 +1916,6 @@ export default function KingsReview() {
               </div>
             </div>
 
-            {activeComp && (
-              <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-                <div className="aspect-[4/3] overflow-hidden rounded-2xl border border-white/10 bg-night-800">
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={activeComp.screenshotUrl} alt={activeComp.title ?? "Comp"} className="h-full w-full object-cover" />
-                </div>
-                <div className="mt-3 space-y-1 text-xs text-slate-300">
-                  <p className="text-sm text-white">{activeComp.title ?? "Untitled comp"}</p>
-                  <p>{activeComp.price ?? ""}</p>
-                  <p className="text-slate-500">{activeComp.soldDate ?? ""}</p>
-                  {activeComp.patternMatch && (
-                    <div className="flex flex-wrap items-center gap-2 pt-1 text-[10px] uppercase tracking-[0.3em]">
-                      <span
-                        className={`rounded-full border px-2 py-1 ${patternBadgeClass(
-                          activeComp.patternMatch.tier
-                        )}`}
-                      >
-                        Pattern {activeComp.patternMatch.tier}
-                      </span>
-                      <span className="text-slate-500">
-                        Score {activeComp.patternMatch.score}
-                      </span>
-                    </div>
-                  )}
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <a
-                    href={activeComp.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-300"
-                  >
-                    Open Listing
-                  </a>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      handleAttachComp(activeComp, "SOLD_COMP")
-                    }
-                    className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
-                  >
-                    Attach to Card
-                  </button>
-                </div>
-              </div>
-            )}
           </section>
         </div>
         {variantInspectOpen && (

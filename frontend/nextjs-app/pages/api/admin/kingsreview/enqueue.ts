@@ -11,10 +11,64 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     const body = req.body ?? {};
-    const query = typeof body.query === "string" ? body.query.trim() : "";
+    const rawQuery = typeof body.query === "string" ? body.query.trim() : "";
+    const useManual = Boolean(body.useManual);
     const cardAssetId = typeof body.cardAssetId === "string" ? body.cardAssetId : undefined;
     const sources = ["ebay_sold"];
     const categoryType = typeof body.categoryType === "string" ? body.categoryType : null;
+
+    let query = rawQuery;
+    if (cardAssetId && !useManual) {
+      const card = await prisma.cardAsset.findFirst({
+        where: { id: cardAssetId, batch: { uploadedById: admin.user.id } },
+        select: {
+          customTitle: true,
+          ocrText: true,
+          resolvedPlayerName: true,
+          resolvedTeamName: true,
+          classificationJson: true,
+          classificationSourcesJson: true,
+          variantId: true,
+        },
+      });
+      if (card) {
+        const normalized =
+          typeof card.classificationJson === "object" && card.classificationJson
+            ? ((card.classificationJson as any).normalized ?? null)
+            : null;
+        const attributes =
+          typeof card.classificationJson === "object" && card.classificationJson
+            ? ((card.classificationJson as any).attributes ?? null)
+            : null;
+        const textPool = `${card.customTitle ?? ""} ${card.ocrText ?? ""}`;
+        const serialMatch = textPool.match(/\/\s*\d{1,3}/);
+        const serial = serialMatch ? serialMatch[0].replace(/\s+/g, "") : null;
+        const gradeMatch = textPool.match(/\b(PSA|BGS|SGC|CGC)\s*\d{1,2}\b/i);
+        const grade = gradeMatch ? gradeMatch[0].toUpperCase().replace(/\s+/g, " ") : null;
+        const flags = [];
+        if (/\b(auto|autograph)\b/i.test(textPool)) flags.push("Auto");
+        if (/\b(patch|relic|rpa)\b/i.test(textPool)) flags.push("Patch");
+        if (/\b(rookie|rc)\b/i.test(textPool)) flags.push("Rookie");
+
+        const tokens = [
+          normalized?.year ?? attributes?.year,
+          normalized?.setName ?? normalized?.setCode ?? attributes?.setName,
+          card.resolvedPlayerName ?? attributes?.playerName,
+          normalized?.cardNumber ?? attributes?.cardNumber,
+          normalized?.parallelName ?? attributes?.parallel,
+          card.variantId,
+          serial,
+          grade,
+          ...flags,
+        ]
+          .filter((entry) => typeof entry === "string" && entry.trim().length > 0)
+          .map((entry) => String(entry).trim());
+
+        if (tokens.length) {
+          query = tokens.join(" ");
+        }
+      }
+    }
 
     if (!query) {
       return res.status(400).json({ message: "query is required" });
