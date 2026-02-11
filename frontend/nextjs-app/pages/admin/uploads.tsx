@@ -962,6 +962,20 @@ export default function AdminUploads() {
         throw new Error(text || "Failed to store file");
       }
 
+      try {
+        await fetch(resolveApiUrl("/api/admin/kingsreview/photos/process"), {
+          method: "POST",
+          mode: isRemoteApi ? "cors" : "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            ...buildAdminHeaders(token),
+          },
+          body: JSON.stringify({ photoId: presignPayload.photoId }),
+        });
+      } catch (error) {
+        console.warn("PhotoRoom processing failed for card photo", error);
+      }
+
       return presignPayload;
     },
     [intakeCardId, isRemoteApi, resolveApiUrl, session?.token]
