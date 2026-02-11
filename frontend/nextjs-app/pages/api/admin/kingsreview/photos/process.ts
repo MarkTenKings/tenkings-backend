@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { buildSiteUrl } from "../../../../../lib/server/urls";
-import { publicUrlFor, uploadBuffer } from "../../../../../lib/server/storage";
+import { publicUrlFor, readStorageBuffer, uploadBuffer } from "../../../../../lib/server/storage";
 import { withAdminCors } from "../../../../../lib/server/cors";
 
 type ProcessResponse = {
@@ -75,13 +75,7 @@ const handler = async function handler(
       return res.status(200).json({ message: "PhotoRoom not configured" });
     }
 
-    const rawPublicUrl = publicUrlFor(photo.storageKey);
-    const publicUrl = /^https?:\/\//i.test(rawPublicUrl) ? rawPublicUrl : buildSiteUrl(rawPublicUrl);
-    const downloadRes = await fetch(publicUrl);
-    if (!downloadRes.ok) {
-      throw new Error(`Failed to load photo source (${downloadRes.status})`);
-    }
-    const sourceBuffer = Buffer.from(await downloadRes.arrayBuffer());
+    const sourceBuffer = await readStorageBuffer(photo.storageKey);
 
     const processedBuffer = await runPhotoroom(sourceBuffer, apiKey);
     const updatedUrl = await uploadBuffer(photo.storageKey, processedBuffer, "image/png");

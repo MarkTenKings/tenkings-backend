@@ -542,6 +542,11 @@ interface CardResponse {
     exactVisualizationUrl: string | null;
   } | null;
   classificationSources: Record<string, unknown> | null;
+  photos: Array<{
+    id: string;
+    kind: string;
+    imageUrl: string;
+  }>;
   label:
     | {
         id: string;
@@ -583,6 +588,14 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     where: { id: cardId, batch: { uploadedById } },
     include: {
       batch: true,
+      photos: {
+        select: {
+          id: true,
+          kind: true,
+          imageUrl: true,
+        },
+        orderBy: { createdAt: "asc" },
+      },
       notes: {
         orderBy: { createdAt: "desc" },
         include: {
@@ -739,6 +752,11 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
         ? null
         : aiGrade,
     classificationSources: (card.classificationSourcesJson as Record<string, unknown> | null) ?? null,
+    photos: card.photos.map((photo) => ({
+      id: photo.id,
+      kind: photo.kind,
+      imageUrl: photo.imageUrl,
+    })),
     label: labelRecord
       ? {
           id: labelRecord.id,

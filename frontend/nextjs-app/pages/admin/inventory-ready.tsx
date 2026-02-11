@@ -18,6 +18,28 @@ type InventoryCard = {
   inventoryBatchId: string | null;
 };
 
+type InventoryCardDetail = {
+  id: string;
+  fileName: string;
+  imageUrl: string;
+  thumbnailUrl: string | null;
+  customTitle: string | null;
+  customDetails: string | null;
+  ocrText: string | null;
+  classificationNormalized?: { [key: string]: unknown } | null;
+  classification?: { [key: string]: unknown } | null;
+  photos?: Array<{ id: string; kind: string; imageUrl: string }>;
+};
+
+type EvidenceItem = {
+  id: string;
+  title: string | null;
+  url: string;
+  screenshotUrl: string | null;
+  price: string | null;
+  soldDate: string | null;
+};
+
 type LocationSummary = {
   id: string;
   name: string;
@@ -36,6 +58,9 @@ export default function InventoryReady() {
   const [cards, setCards] = useState<InventoryCard[]>([]);
   const [locations, setLocations] = useState<LocationSummary[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [activeCardDetail, setActiveCardDetail] = useState<InventoryCardDetail | null>(null);
+  const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
   const [dragging, setDragging] = useState(false);
   const dragModeRef = useRef<"select" | "deselect" | null>(null);
   const draggingRef = useRef(false);
@@ -162,6 +187,47 @@ export default function InventoryReady() {
     return () => window.removeEventListener("mouseup", stopDragging);
   }, []);
 
+  useEffect(() => {
+    if (!activeCardId || !session || !isAdmin) {
+      setActiveCardDetail(null);
+      setEvidenceItems([]);
+      return;
+    }
+
+    const loadDetails = async () => {
+      try {
+        const [cardRes, evidenceRes] = await Promise.all([
+          fetch(`/api/admin/cards/${activeCardId}`, { headers: adminHeaders() }),
+          fetch(`/api/admin/kingsreview/evidence?cardAssetId=${activeCardId}`, { headers: adminHeaders() }),
+        ]);
+        if (cardRes.ok) {
+          const data = await cardRes.json();
+          const card = data.card ?? data;
+          setActiveCardDetail({
+            id: card.id,
+            fileName: card.fileName,
+            imageUrl: card.imageUrl,
+            thumbnailUrl: card.thumbnailUrl ?? null,
+            customTitle: card.customTitle ?? null,
+            customDetails: card.customDetails ?? null,
+            ocrText: card.ocrText ?? null,
+            classificationNormalized: card.classificationNormalized ?? null,
+            classification: card.classification ?? null,
+            photos: Array.isArray(card.photos) ? card.photos : [],
+          });
+        }
+        if (evidenceRes.ok) {
+          const data = await evidenceRes.json();
+          setEvidenceItems(data.items ?? []);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    loadDetails();
+  }, [activeCardId, adminHeaders, isAdmin, session]);
+
   const updateSelection = useCallback((id: string, mode?: "select" | "deselect") => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -180,6 +246,7 @@ export default function InventoryReady() {
       return;
     }
     event.preventDefault();
+    setActiveCardId(id);
     const shouldSelect = !selectedIds.has(id);
     dragModeRef.current = shouldSelect ? "select" : "deselect";
     draggingRef.current = true;
@@ -505,6 +572,125 @@ export default function InventoryReady() {
               );
             })}
           </div>
+
+          {activeCardDetail && (
+            <div className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Selected Card Details</p>
+              <div className="mt-4 grid gap-6 lg:grid-cols-[1.1fr_1fr]">
+                <div className="grid gap-3 md:grid-cols-3">
+                  {(() => {
+                    const photoMap = (activeCardDetail.photos ?? []).reduce<Record<string, string>>(
+                      (acc, photo) => {
+                        acc[photo.kind] = photo.imageUrl;
+                        return acc;
+                      },
+                      {}
+                    );
+                    const photos = [
+                      { label: "Front", url: photoMap.FRONT ?? activeCardDetail.imageUrl },
+                      { label: "Back", url: photoMap.BACK },
+                      { label: "Tilt", url: photoMap.TILT },
+                    ];
+                    return photos.map((photo) => (
+                      <div key={photo.label} className="rounded-2xl border border-white/10 bg-night-800/70 p-2">
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">{photo.label}</p>
+                        <div className="mt-2 aspect-[4/5] overflow-hidden rounded-xl border border-white/10 bg-night-900">
+                          {photo.url ? (
+                            <img
+                              src={photo.url}
+                              alt={`${photo.label} image`}
+                              className="h-full w-full object-contain"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                              Missing
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+                <div className="space-y-4 text-xs text-slate-300">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Title</p>
+                    <p className="text-sm text-white">
+                      {activeCardDetail.customTitle ?? activeCardDetail.fileName}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">OCR Text</p>
+                    <div className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] text-slate-200">
+                      {activeCardDetail.ocrText ?? "—"}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-night-950/60 px-3 py-3 text-[11px] uppercase tracking-[0.28em] text-slate-400">
+                    <div className="grid gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-slate-500">Set</span>
+                        <span className="text-slate-200">
+                          {(activeCardDetail.classificationNormalized as any)?.setName ??
+                            (activeCardDetail.classificationNormalized as any)?.setCode ??
+                            "—"}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-slate-500">Card #</span>
+                        <span className="text-slate-200">
+                          {(activeCardDetail.classificationNormalized as any)?.cardNumber ??
+                            (activeCardDetail.classification as any)?.cardNumber ??
+                            "—"}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-slate-500">Year</span>
+                        <span className="text-slate-200">
+                          {(activeCardDetail.classificationNormalized as any)?.year ??
+                            (activeCardDetail.classification as any)?.year ??
+                            "—"}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Attached Evidence</p>
+                    <div className="mt-2 space-y-2">
+                      {evidenceItems.map((item) => (
+                        <div key={item.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-night-900/60 px-3 py-2">
+                          <div className="h-10 w-8 overflow-hidden rounded-lg border border-white/10 bg-night-900">
+                            {item.screenshotUrl ? (
+                              <img
+                                src={item.screenshotUrl}
+                                alt={item.title ?? "Evidence"}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : null}
+                          </div>
+                          <div className="flex-1">
+                            <a
+                              href={item.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-sky-300 hover:text-sky-200"
+                            >
+                              {item.title ?? item.url}
+                            </a>
+                            <div className="text-[10px] text-slate-500">
+                              {item.price ?? ""} {item.soldDate ?? ""}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {evidenceItems.length === 0 && (
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">No evidence attached.</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       </div>
     );

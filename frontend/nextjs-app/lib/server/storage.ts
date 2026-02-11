@@ -1,6 +1,6 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
-import { ObjectCannedACL, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, ObjectCannedACL, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const DEFAULT_MODE = "local";
@@ -112,6 +112,34 @@ export async function writeLocalFile(storageKey: string, data: Buffer) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, data);
   return filePath;
+}
+
+export async function readStorageBuffer(storageKey: string) {
+  const mode = getStorageMode();
+  if (mode === "s3") {
+    const client = getS3Client();
+    const response = await client.send(
+      new GetObjectCommand({
+        Bucket: s3Bucket,
+        Key: storageKey,
+      })
+    );
+    const body = response.Body;
+    if (!body || typeof (body as any).on !== "function") {
+      throw new Error("Unable to read S3 object body");
+    }
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve, reject) => {
+      (body as any)
+        .on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)))
+        .on("end", () => resolve())
+        .on("error", (err: Error) => reject(err));
+    });
+    return Buffer.concat(chunks);
+  }
+
+  const filePath = getLocalFilePath(storageKey);
+  return fs.readFile(filePath);
 }
 
 export function publicUrlFor(storageKey: string) {

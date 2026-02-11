@@ -50,20 +50,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         if (/\b(patch|relic|rpa)\b/i.test(textPool)) flags.push("Patch");
         if (/\b(rookie|rc)\b/i.test(textPool)) flags.push("Rookie");
 
-        const tokens = [
+        const candidateTokens = [
           normalized?.year ?? attributes?.year,
+          attributes?.brand ?? normalized?.company,
           normalized?.setName ?? normalized?.setCode ?? attributes?.setName,
           card.resolvedPlayerName ?? attributes?.playerName,
+          attributes?.teamName,
           normalized?.cardNumber ?? attributes?.cardNumber,
+          attributes?.numbered,
           normalized?.parallelName ?? attributes?.parallel,
+          ...(Array.isArray(attributes?.variantKeywords) ? attributes?.variantKeywords : []),
           card.variantId,
           serial,
           grade,
+          attributes?.gradeCompany,
+          attributes?.gradeValue,
           ...flags,
-        ]
-          .filter((entry) => typeof entry === "string" && entry.trim().length > 0)
-          .map((entry) => String(entry).trim());
-
+        ];
+        const tokenSet = new Set<string>();
+        candidateTokens.forEach((entry) => {
+          if (typeof entry !== "string") return;
+          const trimmed = entry.trim();
+          if (!trimmed) return;
+          tokenSet.add(trimmed);
+        });
+        const tokens = Array.from(tokenSet);
         if (tokens.length) {
           query = tokens.join(" ");
         }
