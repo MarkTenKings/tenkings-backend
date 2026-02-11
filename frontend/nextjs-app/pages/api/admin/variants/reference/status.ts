@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
+import { Prisma } from "@prisma/client";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 
 type ResponseBody =
@@ -18,7 +19,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const total = await prisma.cardVariantReferenceImage.count();
     const pending = await prisma.cardVariantReferenceImage.count({
       where: {
-        OR: [{ qualityScore:null }, { cropEmbeddings: { equals: null } }],
+        OR: [{ qualityScore:null }, { cropEmbeddings: { equals: Prisma.JsonNull } }],
       },
     });
     const processed = Math.max(0, total - pending);
