@@ -12,6 +12,7 @@ type VariantRow = {
   parallelId: string;
   parallelFamily: string | null;
   keywords: string[];
+  oddsInfo: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -36,9 +37,9 @@ const parseKeywords = (value: string) =>
     .map((entry) => entry.trim())
     .filter(Boolean);
 
-const SAMPLE_CSV = `setId,cardNumber,parallelId,parallelFamily,keywords
-2025 Panini Prizm Basketball,188,Silver,Refractor,Silver|Prizm
-2025 Panini Prizm Basketball,188,Cracked Ice,Cracked Ice,Cracked Ice|Ice
+const SAMPLE_CSV = `setId,cardNumber,parallelId,parallelFamily,keywords,oddsInfo
+2025 Panini Prizm Basketball,188,Silver,Refractor,Silver|Prizm,odds hobby 1:11|blaster 1:11
+2025 Panini Prizm Basketball,188,Cracked Ice,Cracked Ice,Cracked Ice|Ice,odds hobby 1:69|blaster 1:396
 `;
 
 export default function AdminVariants() {
@@ -64,9 +65,12 @@ export default function AdminVariants() {
     parallelId: "",
     parallelFamily: "",
     keywords: "",
+    oddsInfo: "",
   });
   const [csvText, setCsvText] = useState("");
   const [csvMode, setCsvMode] = useState("upsert");
+  const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
+  const [bulkZipFile, setBulkZipFile] = useState<File | null>(null);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -162,6 +166,7 @@ export default function AdminVariants() {
           parallelId: form.parallelId.trim(),
           parallelFamily: form.parallelFamily.trim() || null,
           keywords: parseKeywords(form.keywords),
+          oddsInfo: form.oddsInfo.trim() || null,
         }),
       });
       const payload = await res.json();
@@ -169,7 +174,7 @@ export default function AdminVariants() {
         throw new Error(payload?.message ?? "Failed to add variant");
       }
       setVariants((prev) => [payload.variant, ...prev]);
-      setForm({ setId: "", cardNumber: "", parallelId: "", parallelFamily: "", keywords: "" });
+      setForm({ setId: "", cardNumber: "", parallelId: "", parallelFamily: "", keywords: "", oddsInfo: "" });
       setStatus({ type: "success", message: "Variant added." });
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : "Failed to add variant" });
@@ -206,6 +211,41 @@ export default function AdminVariants() {
       await fetchVariants();
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : "Import failed" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleBulkImport = async () => {
+    if (!bulkCsvFile) {
+      setStatus({ type: "error", message: "CSV file is required for bulk import." });
+      return;
+    }
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append("csv", bulkCsvFile);
+      if (bulkZipFile) {
+        form.append("zip", bulkZipFile);
+      }
+      const res = await fetch("/api/admin/variants/bulk-import", {
+        method: "POST",
+        headers: {
+          ...adminHeaders,
+        },
+        body: form,
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Bulk import failed");
+      }
+      setStatus({
+        type: "success",
+        message: `Imported ${payload.variantsUpserted} variants, ${payload.imagesImported} images (skipped ${payload.imagesSkipped}).`,
+      });
+      await fetchVariants();
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : "Bulk import failed" });
     } finally {
       setBusy(false);
     }
@@ -372,6 +412,12 @@ export default function AdminVariants() {
                 onChange={(event) => setForm((prev) => ({ ...prev, keywords: event.target.value }))}
                 className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
               />
+              <input
+                placeholder="Odds info (optional, not used for comps)"
+                value={form.oddsInfo}
+                onChange={(event) => setForm((prev) => ({ ...prev, oddsInfo: event.target.value }))}
+                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+              />
               <button
                 type="button"
                 onClick={handleAdd}
@@ -387,8 +433,14 @@ export default function AdminVariants() {
             <h2 className="text-xs uppercase tracking-[0.3em] text-slate-400">CSV Import</h2>
             <p className="mt-2 text-xs text-slate-400">
               Required headers: <span className="font-mono">setId, cardNumber, parallelId</span>. Optional:
-              <span className="font-mono"> parallelFamily, keywords</span>.
+              <span className="font-mono"> parallelFamily, keywords, oddsInfo</span>.
             </p>
+            <a
+              href="/templates/variant-template.csv"
+              className="mt-2 inline-flex text-[10px] uppercase tracking-[0.28em] text-sky-300 hover:text-sky-200"
+            >
+              Download Template
+            </a>
             <div className="mt-3 flex flex-wrap gap-2">
               <label className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300">
                 Upload CSV
@@ -479,6 +531,54 @@ export default function AdminVariants() {
         </section>
 
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xs uppercase tracking-[0.3em] text-slate-400">Bulk Import (CSV + ZIP)</h2>
+              <p className="mt-2 text-xs text-slate-400">
+                Upload a CSV and optional ZIP of images. Filenames must match the CSV imageFilename column.
+              </p>
+            </div>
+            <a
+              href="/templates/variant-template.csv"
+              className="text-[10px] uppercase tracking-[0.28em] text-sky-300 hover:text-sky-200"
+            >
+              Download Template
+            </a>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <label className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300">
+              Upload CSV
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(event) => setBulkCsvFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
+            <label className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300">
+              Upload ZIP (optional)
+              <input
+                type="file"
+                accept=".zip,application/zip"
+                className="hidden"
+                onChange={(event) => setBulkZipFile(event.target.files?.[0] ?? null)}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={handleBulkImport}
+              disabled={busy}
+              className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-emerald-200 disabled:opacity-60"
+            >
+              Run Bulk Import
+            </button>
+          </div>
+          <div className="mt-3 text-[10px] uppercase tracking-[0.28em] text-slate-500">
+            CSV: {bulkCsvFile?.name ?? "none"} · ZIP: {bulkZipFile?.name ?? "none"}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
           <div className="flex flex-wrap items-center gap-3">
             <input
               value={query}
@@ -513,6 +613,7 @@ export default function AdminVariants() {
                   <th className="py-2">Parallel</th>
                   <th className="py-2">Family</th>
                   <th className="py-2">Keywords</th>
+                  <th className="py-2">Odds</th>
                 </tr>
               </thead>
               <tbody>
@@ -525,11 +626,12 @@ export default function AdminVariants() {
                     <td className="py-2 pr-4 text-slate-400">
                       {variant.keywords?.length ? variant.keywords.join(", ") : "—"}
                     </td>
+                    <td className="py-2 pr-4 text-slate-500">{variant.oddsInfo ?? "—"}</td>
                   </tr>
                 ))}
                 {variants.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="py-6 text-center text-xs text-slate-500">
+                    <td colSpan={6} className="py-6 text-center text-xs text-slate-500">
                       No variants loaded yet. Use search or import CSV.
                     </td>
                   </tr>

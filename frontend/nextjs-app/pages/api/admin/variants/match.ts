@@ -78,14 +78,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const foilScore = await computeFoilScore(foilSourceUrl);
 
-    const variants = await prisma.cardVariant.findMany({
+    const normalizedSetId = String(setId).trim();
+    const normalizedCardNumber = String(cardNumber).trim();
+    let variants = await prisma.cardVariant.findMany({
       where: {
-        setId: String(setId).trim(),
-        cardNumber: String(cardNumber).trim(),
+        setId: normalizedSetId,
+        cardNumber: normalizedCardNumber,
       },
       orderBy: [{ parallelId: "asc" }],
-      take: 5,
+      take: 25,
     });
+
+    if (variants.length === 0) {
+      variants = await prisma.cardVariant.findMany({
+        where: {
+          setId: normalizedSetId,
+          cardNumber: "ALL",
+        },
+        orderBy: [{ parallelId: "asc" }],
+        take: 25,
+      });
+    }
 
     if (variants.length === 0) {
       return res.status(404).json({ message: "No variants found for this set/card" });

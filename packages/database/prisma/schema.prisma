@@ -607,6 +607,7 @@ model CardVariant {
   parallelId     String
   parallelFamily String?
   keywords       String[] @default([])
+  oddsInfo       String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

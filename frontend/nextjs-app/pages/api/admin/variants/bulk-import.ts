@@ -33,6 +33,7 @@ type ParsedRow = {
   parallelId: string;
   parallelFamily?: string | null;
   keywords?: string[];
+  oddsInfo?: string | null;
   sourceUrl?: string | null;
   imageFilename?: string | null;
 };
@@ -173,6 +174,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const keywordsRaw = headerIndex("keywords") !== -1
         ? row[headerIndex("keywords")]?.trim()
         : undefined;
+      const oddsInfo = headerIndex("oddsInfo") !== -1
+        ? row[headerIndex("oddsInfo")]?.trim()
+        : undefined;
       const sourceUrl = headerIndex("sourceUrl") !== -1
         ? row[headerIndex("sourceUrl")]?.trim()
         : undefined;
@@ -185,6 +189,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         parallelId,
         parallelFamily: parallelFamily ? parallelFamily : null,
         keywords: normalizeKeywords(keywordsRaw),
+        oddsInfo: oddsInfo ? oddsInfo : null,
         sourceUrl: sourceUrl ? sourceUrl : null,
         imageFilename: imageFilename ? imageFilename : null,
       });
@@ -206,6 +211,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           update: {
             parallelFamily: entry.parallelFamily ?? null,
             keywords: entry.keywords ?? [],
+            oddsInfo: entry.oddsInfo ?? null,
           },
           create: {
             setId: entry.setId,
@@ -213,6 +219,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             parallelId: entry.parallelId,
             parallelFamily: entry.parallelFamily ?? null,
             keywords: entry.keywords ?? [],
+            oddsInfo: entry.oddsInfo ?? null,
           },
         });
         variantsUpserted += 1;

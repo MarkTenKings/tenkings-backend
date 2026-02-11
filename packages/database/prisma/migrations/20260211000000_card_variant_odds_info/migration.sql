@@ -1,0 +1,1 @@
+ALTER TABLE "CardVariant" ADD COLUMN IF NOT EXISTS "oddsInfo" TEXT;
