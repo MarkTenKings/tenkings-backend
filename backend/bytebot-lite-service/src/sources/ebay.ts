@@ -105,7 +105,7 @@ async function fetchEbaySoldCompsSerpApi(options: {
       thumbnail: typeof item.thumbnail === "string" ? item.thumbnail.trim() : "",
       sponsored: Boolean(item.sponsored),
     }))
-    .filter((item: any) => item.link && item.title);
+    .filter((item: { link: string; title: string }) => item.link && item.title);
 
   const organicItems = items.filter((item: any) => !item.sponsored);
   const targetItems = (organicItems.length ? organicItems : items).slice(0, Math.max(1, options.maxComps));

@@ -194,6 +194,7 @@ export default function KingsReview() {
   const [deleteSelection, setDeleteSelection] = useState<string[]>([]);
   const [playbookRules, setPlaybookRules] = useState<PlaybookRule[]>([]);
   const [teachForm, setTeachForm] = useState({
+    source: "ebay_sold",
     action: "click",
     selector: "",
     urlContains: "",
