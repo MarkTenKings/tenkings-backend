@@ -169,14 +169,19 @@ export default function KingsReview() {
   const [stage, setStage] = useState<string>("READY_FOR_HUMAN_REVIEW");
   const [cards, setCards] = useState<CardSummary[]>([]);
   const [cardsLoading, setCardsLoading] = useState(false);
+  const [cardsOffset, setCardsOffset] = useState(0);
+  const [cardsHasMore, setCardsHasMore] = useState(true);
+  const [cardsLoadingMore, setCardsLoadingMore] = useState(false);
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [activeCard, setActiveCard] = useState<CardDetail | null>(null);
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
   const [job, setJob] = useState<BytebotJob | null>(null);
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [activeCompIndex, setActiveCompIndex] = useState<number | null>(null);
+  const [activePhotoKind, setActivePhotoKind] = useState<"FRONT" | "BACK" | "TILT">("FRONT");
   const [zoom, setZoom] = useState<number>(1);
   const [query, setQuery] = useState<string>("");
+  const [queryTouched, setQueryTouched] = useState(false);
   const [saving, setSaving] = useState(false);
   const [variantNotes, setVariantNotes] = useState("");
   const [variantSetId, setVariantSetId] = useState("");
@@ -273,10 +278,22 @@ export default function KingsReview() {
       return {};
     }
     return activeCard.photos.reduce<Record<string, string>>((acc, photo) => {
-      acc[photo.kind] = photo.imageUrl;
+      const key = typeof photo.kind === "string" ? photo.kind.toUpperCase() : photo.kind;
+      acc[key] = photo.imageUrl;
       return acc;
     }, {});
   }, [activeCard?.photos]);
+  const activeAttributes = useMemo(() => {
+    if (!activeCard?.classification || typeof activeCard.classification !== "object") {
+      return null;
+    }
+    const raw = activeCard.classification as Record<string, unknown>;
+    const attributes = raw.attributes;
+    if (attributes && typeof attributes === "object") {
+      return attributes as Record<string, unknown>;
+    }
+    return raw;
+  }, [activeCard?.classification]);
   const isRunningStage =
     (activeCard?.reviewStage ?? stage) === "BYTEBOT_RUNNING";
   const aiStatus =
@@ -295,8 +312,10 @@ export default function KingsReview() {
     const loadCards = async () => {
       setError(null);
       setCardsLoading(true);
+      setCardsOffset(0);
+      setCardsHasMore(true);
       try {
-        const queryString = `?stage=${stage}&limit=1000`;
+        const queryString = `?stage=${stage}&limit=10&offset=0`;
         const res = await fetch(`/api/admin/kingsreview/cards${queryString}`, {
           headers: adminHeaders(),
           cache: "no-store",
@@ -307,6 +326,8 @@ export default function KingsReview() {
         const data = await res.json();
         const nextCards = data.cards ?? [];
         setCards(nextCards);
+        setCardsHasMore(nextCards.length === 10);
+        setCardsOffset(nextCards.length);
         setActiveCardId((prev) => {
           if (!nextCards.length) {
             return null;
@@ -324,14 +345,41 @@ export default function KingsReview() {
     };
 
     loadCards();
-  }, [adminHeaders, isAdmin, session, stage]);
+  }, [adminHeaders, cardsOffset, isAdmin, session, stage]);
+
+  const loadMoreCards = useCallback(async () => {
+    if (cardsLoadingMore || !cardsHasMore) {
+      return;
+    }
+    setCardsLoadingMore(true);
+    try {
+      const queryString = `?stage=${stage}&limit=10&offset=${cardsOffset}`;
+      const res = await fetch(`/api/admin/kingsreview/cards${queryString}`, {
+        headers: adminHeaders(),
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        throw new Error("Failed to load more cards");
+      }
+      const data = await res.json();
+      const nextCards = data.cards ?? [];
+      setCards((prev) => [...prev, ...nextCards]);
+      setCardsHasMore(nextCards.length === 10);
+      setCardsOffset((prev) => prev + nextCards.length);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load more cards");
+    } finally {
+      setCardsLoadingMore(false);
+    }
+  }, [adminHeaders, cardsHasMore, cardsLoadingMore, cardsOffset, stage]);
 
   useEffect(() => {
     if (!session || !isAdmin) {
       return;
     }
     const interval = setInterval(() => {
-      const queryString = `?stage=${stage}&limit=1000`;
+      const limit = Math.max(cardsOffset, 10);
+      const queryString = `?stage=${stage}&limit=${limit}&offset=0`;
       fetch(`/api/admin/kingsreview/cards${queryString}`, {
         headers: adminHeaders(),
         cache: "no-store",
@@ -343,6 +391,8 @@ export default function KingsReview() {
           }
           const nextCards = data.cards ?? [];
           setCards(nextCards);
+          setCardsOffset(nextCards.length);
+          setCardsHasMore(nextCards.length === limit);
           setActiveCardId((prev) => {
             if (!nextCards.length) {
               return null;
@@ -444,13 +494,16 @@ export default function KingsReview() {
           variantDecision: card.variantDecision ?? null,
           photos: Array.isArray(card.photos) ? card.photos : [],
         });
+        setActivePhotoKind("FRONT");
         setVariantSetId(
           (card.classificationNormalized as any)?.setName ??
             (card.classificationNormalized as any)?.setCode ??
             ""
         );
         setVariantCardNumber((card.classificationNormalized as any)?.cardNumber ?? "");
-        setQuery(card.customTitle ?? card.fileName ?? "");
+        if (!queryTouched) {
+          setQuery(card.customTitle ?? card.fileName ?? "");
+        }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load card");
       }
@@ -467,6 +520,10 @@ export default function KingsReview() {
         }
         const data = await res.json();
         setJob(data.job ?? null);
+        if (data.job?.searchQuery) {
+          setQuery(data.job.searchQuery);
+          setQueryTouched(false);
+        }
         const nextSource = data.job?.result?.sources?.[0]?.source ?? null;
         setActiveSource((prev) => prev ?? nextSource);
         setActiveCompIndex(null);
@@ -1159,7 +1216,15 @@ export default function KingsReview() {
               <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto pr-2">
-              <div className="max-h-40 overflow-auto rounded-2xl border border-white/10 bg-night-950/50 p-2">
+              <div
+                className="max-h-40 overflow-auto rounded-2xl border border-white/10 bg-night-950/50 p-2"
+                onScroll={(event) => {
+                  const target = event.currentTarget;
+                  if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
+                    loadMoreCards().catch(() => undefined);
+                  }
+                }}
+              >
                 {cards.map((card) => (
                   <button
                     key={card.id}
@@ -1190,6 +1255,11 @@ export default function KingsReview() {
                     Loading cards…
                   </p>
                 )}
+                {cardsLoadingMore && (
+                  <p className="px-3 py-2 text-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                    Loading more…
+                  </p>
+                )}
               </div>
 
               {aiStatus && (
@@ -1217,340 +1287,195 @@ export default function KingsReview() {
 
               {activeCard ? (
                 <div className="mt-4 flex flex-col gap-4">
-                  <div className="grid gap-4">
-                    <div className="grid gap-3 md:grid-cols-3">
-                      {[
-                        { label: "Front", url: activePhotos.FRONT ?? activeCard.imageUrl },
-                        { label: "Back", url: activePhotos.BACK },
-                        { label: "Tilt", url: activePhotos.TILT },
-                      ].map((photo) => (
-                        <div
-                          key={photo.label}
-                          className="rounded-2xl border border-white/10 bg-night-800/70 p-2"
-                        >
-                          <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">{photo.label}</p>
-                          <div className="mt-2 aspect-[4/5] overflow-hidden rounded-xl border border-white/10 bg-night-900">
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            {photo.url ? (
-                              <img
-                                src={photo.url}
-                                alt={`${photo.label} image`}
-                                className="h-full w-full object-contain"
-                              />
-                            ) : (
-                              <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                                Missing
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="rounded-2xl border border-white/10 bg-night-950/60 px-3 py-3 text-[11px] uppercase tracking-[0.28em] text-slate-400">
-                      <div className="grid gap-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-slate-500">Set</span>
-                          <span className="text-slate-200">
-                            {(activeCard.classificationNormalized as any)?.setName ??
-                              (activeCard.classificationNormalized as any)?.setCode ??
-                              "—"}
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-slate-500">Card #</span>
-                          <span className="text-slate-200">
-                            {(activeCard.classificationNormalized as any)?.cardNumber ??
-                              (activeCard.classification as any)?.cardNumber ??
-                              "—"}
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-slate-500">Year</span>
-                          <span className="text-slate-200">
-                            {(activeCard.classificationNormalized as any)?.year ??
-                              (activeCard.classification as any)?.year ??
-                              "—"}
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-slate-500">Parallel</span>
-                          <span className="text-slate-200">
-                            {(activeCard.classificationNormalized as any)?.parallelName ??
-                              (activeCard.classification as any)?.parallel ??
-                              "—"}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="space-y-3 text-xs text-slate-300">
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">OCR Text</span>
-                        <textarea
-                          value={activeCard.ocrText ?? ""}
-                          readOnly
-                          rows={3}
-                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-slate-200"
-                        />
-                      </label>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Custom Title</span>
-                        <input
-                          value={activeCard.customTitle ?? ""}
-                          onChange={(event) =>
-                            setActiveCard((prev) => (prev ? { ...prev, customTitle: event.target.value } : prev))
-                          }
-                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
-                        />
-                      </label>
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Notes</span>
-                        <textarea
-                          value={activeCard.customDetails ?? ""}
-                          onChange={(event) =>
-                            setActiveCard((prev) => (prev ? { ...prev, customDetails: event.target.value } : prev))
-                          }
-                          rows={4}
-                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
-                        />
-                      </label>
-                      <div className="grid grid-cols-2 gap-3">
-                        <label className="flex flex-col gap-1">
-                          <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Valuation</span>
-                          <input
-                            value={activeCard.valuationMinor ?? ""}
-                            onChange={(event) =>
-                              setActiveCard((prev) =>
-                                prev ? { ...prev, valuationMinor: Number(event.target.value) || null } : prev
-                              )
-                            }
-                            className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
-                          />
-                        </label>
-                        <label className="flex flex-col gap-1">
-                          <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Currency</span>
-                          <input
-                            value={activeCard.valuationCurrency ?? "USD"}
-                            onChange={(event) =>
-                              setActiveCard((prev) =>
-                                prev ? { ...prev, valuationCurrency: event.target.value } : prev
-                              )
-                            }
-                            className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
-                          />
-                        </label>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.3em] text-slate-500">
-                        <span>{activeCard.resolvedPlayerName ?? "Unknown player"}</span>
-                        <span>•</span>
-                        <span>{activeCard.resolvedTeamName ?? "Unknown team"}</span>
-                      </div>
-                      <div className="rounded-2xl border border-white/10 bg-night-950/60 px-3 py-3 text-[11px] uppercase tracking-[0.28em] text-slate-400">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-slate-500">Variant</span>
-                          <span className="text-slate-200">
-                            {activeCard.variantDecision?.selectedParallelId ??
-                              activeCard.variantId ??
-                              "Not set"}
-                          </span>
-                        </div>
-                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
-                          <span>
-                            Confidence{" "}
-                            {activeCard.variantDecision?.confidence ??
-                              activeCard.variantConfidence ??
-                              "—"}
-                          </span>
-                          {activeCard.variantDecision?.humanOverride && (
-                            <span className="rounded-full border border-amber-400/60 bg-amber-500/20 px-2 py-1 text-[9px] text-amber-200">
-                              Human Override
-                            </span>
-                          )}
-                        </div>
-                        <div className="mt-3 grid gap-2">
-                          <input
-                            value={variantNotes}
-                            onChange={(event) => setVariantNotes(event.target.value)}
-                            placeholder="Variant notes / reason"
-                            className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
-                          />
-                          <div className="grid gap-2 md:grid-cols-2">
-                            <input
-                              value={variantSetId}
-                              onChange={(event) => setVariantSetId(event.target.value)}
-                              placeholder="Set ID"
-                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
+                  <div className="aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-800">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={activePhotos[activePhotoKind] ?? activeCard.imageUrl}
+                      alt={activeCard.fileName}
+                      className="h-full w-full object-contain"
+                    />
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {[
+                      { label: "Front", kind: "FRONT" as const, url: activePhotos.FRONT ?? activeCard.imageUrl },
+                      { label: "Back", kind: "BACK" as const, url: activePhotos.BACK },
+                      { label: "Tilt", kind: "TILT" as const, url: activePhotos.TILT },
+                    ].map((photo) => (
+                      <button
+                        key={photo.label}
+                        type="button"
+                        onClick={() => setActivePhotoKind(photo.kind)}
+                        className={`rounded-2xl border p-2 text-left ${
+                          activePhotoKind === photo.kind
+                            ? "border-sky-400/60 bg-sky-500/10"
+                            : "border-white/10 bg-night-800/70"
+                        }`}
+                      >
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">{photo.label}</p>
+                        <div className="mt-2 aspect-[4/5] overflow-hidden rounded-xl border border-white/10 bg-night-900">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {photo.url ? (
+                            <img
+                              src={photo.url}
+                              alt={`${photo.label} image`}
+                              className="h-full w-full object-contain"
                             />
-                            <input
-                              value={variantCardNumber}
-                              onChange={(event) => setVariantCardNumber(event.target.value)}
-                              placeholder="Card #"
-                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
-                            />
-                          </div>
-                          <div className="flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={handleVariantMatch}
-                              disabled={saving}
-                              className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-emerald-200 disabled:opacity-60"
-                            >
-                              Run Matcher
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleVariantDecision(
-                                  activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "",
-                                  activeCard.variantDecision?.confidence ?? activeCard.variantConfidence ?? null,
-                                  true
-                                )
-                              }
-                              disabled={saving}
-                              className="rounded-full border border-sky-400/60 bg-sky-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-sky-200 disabled:opacity-60"
-                            >
-                              Confirm Variant
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleVariantDecision("Unknown", null, true)}
-                              disabled={saving}
-                              className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-rose-200 disabled:opacity-60"
-                            >
-                              Mark Unknown
-                            </button>
-                          </div>
-                          {activeCard.variantDecision?.candidates?.length ? (
-                            <div className="mt-2 space-y-1 text-[10px] uppercase tracking-[0.24em] text-slate-500">
-                              {activeCard.variantDecision.candidates.map((candidate) => (
-                                (() => {
-                                  const reason = parseVariantReason(candidate.reason);
-                                  return (
-                                <button
-                                  key={candidate.parallelId}
-                                  type="button"
-                                  onClick={() =>
-                                    handleVariantDecision(
-                                      candidate.parallelId,
-                                      candidate.confidence ?? null,
-                                      true
-                                    )
-                                  }
-                                  className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-left text-[10px] uppercase tracking-[0.24em] text-slate-300 hover:border-sky-400/60"
-                                >
-                                  <span className="flex flex-1 items-center gap-3">
-                                    <span>{candidate.parallelId}</span>
-                                    <button
-                                      type="button"
-                                      onClick={(event) => {
-                                        event.stopPropagation();
-                                        openVariantInspect(candidate as VariantCandidate);
-                                      }}
-                                      className="rounded-full border border-white/20 px-2 py-1 text-[9px] uppercase tracking-[0.28em] text-slate-300 hover:border-sky-400/60"
-                                    >
-                                      View
-                                    </button>
-                                    <span className="rounded-full border border-white/10 px-2 py-1 text-[9px] uppercase tracking-[0.28em] text-slate-400">
-                                      {reason.mode}
-                                    </span>
-                                    {reason.foilScore != null && (
-                                      <span className="rounded-full border border-amber-400/60 bg-amber-500/10 px-2 py-1 text-[9px] uppercase tracking-[0.28em] text-amber-200">
-                                        Foil {reason.foilScore.toFixed(2)}
-                                      </span>
-                                    )}
-                                  </span>
-                                  <span>{candidate.confidence ?? "—"}</span>
-                                </button>
-                                  );
-                                })()
-                              ))}
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                              Missing
                             </div>
-                          ) : null}
-                          {activeCard.variantDecision?.humanNotes && (
-                            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">
-                              Notes: {activeCard.variantDecision.humanNotes}
-                            </p>
                           )}
                         </div>
-                      </div>
-                    </div>
+                      </button>
+                    ))}
                   </div>
-
                   <div className="grid gap-2">
-                    <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                      Stage override
-                      <select
-                        value={activeCard.reviewStage ?? "READY_FOR_HUMAN_REVIEW"}
-                        onChange={(event) => handleStageUpdate(event.target.value)}
-                        className="rounded-full border border-white/10 bg-night-800 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200 outline-none transition focus:border-gold-400/60"
-                      >
-                        <option value="BYTEBOT_RUNNING">AI Running</option>
-                        <option value="READY_FOR_HUMAN_REVIEW">Ready for Review</option>
-                        <option value="INVENTORY_READY_FOR_SALE">Inventory Ready</option>
-                      </select>
+                    <input
+                      value={
+                        activeCard.resolvedPlayerName ??
+                        (activeAttributes?.playerName as string | undefined) ??
+                        ""
+                      }
+                      readOnly
+                      placeholder="Player name"
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <input
+                      value={
+                        (activeAttributes?.sport as string | undefined) ??
+                        (activeCard.classificationNormalized as any)?.sport?.sport ??
+                        ""
+                      }
+                      readOnly
+                      placeholder="Sport"
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <input
+                      value={
+                        (activeAttributes?.brand as string | undefined) ??
+                        (activeCard.classificationNormalized as any)?.company ??
+                        ""
+                      }
+                      readOnly
+                      placeholder="Manufacturer"
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <input
+                      value={
+                        (activeCard.classificationNormalized as any)?.year ??
+                        (activeAttributes?.year as string | undefined) ??
+                        ""
+                      }
+                      readOnly
+                      placeholder="Year"
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <input
+                      value={
+                        activeCard.resolvedTeamName ??
+                        (activeAttributes?.teamName as string | undefined) ??
+                        ""
+                      }
+                      readOnly
+                      placeholder="Team name"
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <input
+                      value={
+                        (activeCard.classificationNormalized as any)?.setName ??
+                        (activeCard.classificationNormalized as any)?.setCode ??
+                        (activeAttributes?.setName as string | undefined) ??
+                        ""
+                      }
+                      readOnly
+                      placeholder="Set"
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <input
+                      value={
+                        (activeCard.classificationNormalized as any)?.cardNumber ??
+                        (activeCard.classification as any)?.cardNumber ??
+                        ""
+                      }
+                      readOnly
+                      placeholder="Card number"
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <input
+                      value={(activeAttributes?.numbered as string | undefined) ?? ""}
+                      readOnly
+                      placeholder="Numbered (e.g. 3/10)"
+                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                    />
+                    <div className="flex flex-wrap gap-4 text-xs uppercase tracking-[0.24em] text-slate-400">
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(activeAttributes?.autograph)}
+                          readOnly
+                          className="h-4 w-4 accent-sky-400"
+                        />
+                        Autograph
+                      </label>
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(activeAttributes?.memorabilia)}
+                          readOnly
+                          className="h-4 w-4 accent-sky-400"
+                        />
+                        Patch
+                      </label>
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={Boolean(activeAttributes?.graded)}
+                          readOnly
+                          className="h-4 w-4 accent-sky-400"
+                        />
+                        Graded
+                      </label>
+                    </div>
+                    {Boolean(activeAttributes?.graded) && (
+                      <div className="grid gap-2 md:grid-cols-2">
+                        <input
+                          value={(activeAttributes?.gradeCompany as string | undefined) ?? ""}
+                          readOnly
+                          placeholder="Grade company"
+                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                        />
+                        <input
+                          value={(activeAttributes?.gradeValue as string | undefined) ?? ""}
+                          readOnly
+                          placeholder="Grade value"
+                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                        />
+                      </div>
+                    )}
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Price Valuation</span>
+                      <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-night-800 px-3 py-2">
+                        <span className="text-sm text-slate-400">$</span>
+                        <input
+                          value={activeCard.valuationMinor ?? ""}
+                          onChange={(event) =>
+                            setActiveCard((prev) =>
+                              prev ? { ...prev, valuationMinor: Number(event.target.value) || null } : prev
+                            )
+                          }
+                          className="flex-1 bg-transparent text-sm text-white outline-none"
+                        />
+                      </div>
                     </label>
-                    <button
-                      type="button"
-                      onClick={handleSave}
-                      disabled={saving}
-                      className="rounded-full border border-gold-400/60 bg-gold-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-gold-200 transition hover:border-gold-300 disabled:opacity-60"
-                    >
-                      {saving ? "Saving…" : "Save Card"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleStageUpdate("INVENTORY_READY_FOR_SALE")}
-                      disabled={saving}
-                      className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-300 disabled:opacity-60"
-                    >
-                      Move to Inventory Ready
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleStageUpdate("ESCALATED_REVIEW")}
-                      disabled={saving}
-                      className="rounded-full border border-rose-400/60 bg-rose-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
-                    >
-                      Escalate Review
-                    </button>
-                  </div>
-
-                  <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-                    <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Research Query</p>
-                    <div className="mt-2 flex gap-2">
-                      <input
-                        value={query}
-                        onChange={(event) => setQuery(event.target.value)}
-                        className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white outline-none focus:border-gold-400/60"
-                      />
-                      <button
-                        type="button"
-                        onClick={handleEnqueue}
-                        disabled={enqueueing}
-                        className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 disabled:opacity-60"
-                      >
-                        {enqueueing ? "Running…" : "Run"}
-                      </button>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={handleRegenerateComps}
-                        disabled={regenerating}
-                        className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 disabled:opacity-60"
-                      >
-                        {regenerating ? "Regenerating…" : "Regenerate Comps"}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-                    <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Attached Evidence</p>
-                    <div className="mt-2 space-y-2">
-                      {evidenceItems.map((item) => (
-                        <div key={item.id} className="flex items-center justify-between gap-2 text-xs text-slate-300">
-                          <div className="flex items-center gap-3">
-                            <div className="h-10 w-8 overflow-hidden rounded-lg border border-white/10 bg-night-900">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                      <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Attached Evidence</p>
+                      <div className="mt-3 space-y-3">
+                        {evidenceItems.map((item) => (
+                          <div
+                            key={item.id}
+                            className="grid gap-3 rounded-2xl border border-white/10 bg-white/90 p-3 text-xs text-black md:grid-cols-2"
+                          >
+                            <div className="aspect-[4/3] overflow-hidden rounded-xl border border-black/10 bg-white">
                               {item.screenshotUrl ? (
                                 <img
                                   src={item.screenshotUrl}
@@ -1559,145 +1484,308 @@ export default function KingsReview() {
                                 />
                               ) : null}
                             </div>
-                            <span className="line-clamp-1">{item.title ?? item.url}</span>
+                            <div className="flex flex-col justify-between gap-2">
+                              <div>
+                                <div className="text-lg font-semibold text-emerald-600">
+                                  {item.price ?? "—"}
+                                </div>
+                                <div className="text-xs uppercase tracking-[0.2em] text-emerald-500">
+                                  {item.soldDate ? `Sold ${item.soldDate}` : ""}
+                                </div>
+                              </div>
+                              <div className="text-xs text-black">
+                                {item.title ?? item.url}
+                              </div>
+                              <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.3em]">
+                                <a
+                                  href={item.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-black underline"
+                                >
+                                  Open
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteEvidence(item.id)}
+                                  className="text-rose-700"
+                                >
+                                  Remove
+                                </button>
+                              </div>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <a
-                              href={item.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[10px] uppercase tracking-[0.3em] text-sky-300"
+                        ))}
+                        {evidenceItems.length === 0 && (
+                          <p className="text-xs text-slate-500">No evidence attached yet.</p>
+                        )}
+                      </div>
+                    </div>
+                    <details className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                      <summary className="cursor-pointer text-[10px] uppercase tracking-[0.3em] text-slate-400">
+                        Advanced Controls
+                      </summary>
+                      <div className="mt-3 space-y-3 text-xs text-slate-300">
+                        <div className="rounded-2xl border border-white/10 bg-night-900/60 px-3 py-3 text-[11px] uppercase tracking-[0.28em] text-slate-400">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-slate-500">Variant</span>
+                            <span className="text-slate-200">
+                              {activeCard.variantDecision?.selectedParallelId ??
+                                activeCard.variantId ??
+                                "Not set"}
+                            </span>
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
+                            <span>
+                              Confidence{" "}
+                              {activeCard.variantDecision?.confidence ??
+                                activeCard.variantConfidence ??
+                                "—"}
+                            </span>
+                            {activeCard.variantDecision?.humanOverride && (
+                              <span className="rounded-full border border-amber-400/60 bg-amber-500/20 px-2 py-1 text-[9px] text-amber-200">
+                                Human Override
+                              </span>
+                            )}
+                          </div>
+                          <div className="mt-3 grid gap-2">
+                            <input
+                              value={variantNotes}
+                              onChange={(event) => setVariantNotes(event.target.value)}
+                              placeholder="Variant notes / reason"
+                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
+                            />
+                            <div className="grid gap-2 md:grid-cols-2">
+                              <input
+                                value={variantSetId}
+                                onChange={(event) => setVariantSetId(event.target.value)}
+                                placeholder="Set ID"
+                                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
+                              />
+                              <input
+                                value={variantCardNumber}
+                                onChange={(event) => setVariantCardNumber(event.target.value)}
+                                placeholder="Card #"
+                                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
+                              />
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={handleVariantMatch}
+                                disabled={saving}
+                                className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-emerald-200 disabled:opacity-60"
+                              >
+                                Run Matcher
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleVariantDecision(
+                                    activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "",
+                                    activeCard.variantDecision?.confidence ?? activeCard.variantConfidence ?? null,
+                                    true
+                                  )
+                                }
+                                disabled={saving}
+                                className="rounded-full border border-sky-400/60 bg-sky-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-sky-200 disabled:opacity-60"
+                              >
+                                Confirm Variant
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleVariantDecision("Unknown", null, true)}
+                                disabled={saving}
+                                className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-rose-200 disabled:opacity-60"
+                              >
+                                Mark Unknown
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="grid gap-2">
+                          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                            Stage override
+                            <select
+                              value={activeCard.reviewStage ?? "READY_FOR_HUMAN_REVIEW"}
+                              onChange={(event) => handleStageUpdate(event.target.value)}
+                              className="rounded-full border border-white/10 bg-night-800 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200 outline-none transition focus:border-gold-400/60"
                             >
-                              Open
-                            </a>
+                              <option value="BYTEBOT_RUNNING">AI Running</option>
+                              <option value="READY_FOR_HUMAN_REVIEW">Ready for Review</option>
+                              <option value="INVENTORY_READY_FOR_SALE">Inventory Ready</option>
+                            </select>
+                          </label>
+                          <button
+                            type="button"
+                            onClick={handleSave}
+                            disabled={saving}
+                            className="rounded-full border border-gold-400/60 bg-gold-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-gold-200 transition hover:border-gold-300 disabled:opacity-60"
+                          >
+                            {saving ? "Saving…" : "Save Card"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleStageUpdate("INVENTORY_READY_FOR_SALE")}
+                            disabled={saving}
+                            className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-300 disabled:opacity-60"
+                          >
+                            Move to Inventory Ready
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleStageUpdate("ESCALATED_REVIEW")}
+                            disabled={saving}
+                            className="rounded-full border border-rose-400/60 bg-rose-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
+                          >
+                            Escalate Review
+                          </button>
+                        </div>
+                        <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                          <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Research Query</p>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <input
+                              value={query}
+                              onChange={(event) => {
+                                setQuery(event.target.value);
+                                setQueryTouched(true);
+                              }}
+                              className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                            />
                             <button
                               type="button"
-                              onClick={() => handleDeleteEvidence(item.id)}
-                              className="text-[10px] uppercase tracking-[0.3em] text-rose-300"
+                              onClick={handleEnqueue}
+                              disabled={enqueueing}
+                              className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 disabled:opacity-60"
                             >
-                              Remove
+                              {enqueueing ? "Running…" : "Run"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={handleRegenerateComps}
+                              disabled={regenerating}
+                              className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-200 disabled:opacity-60"
+                            >
+                              {regenerating ? "Regenerating…" : "Regenerate Comps"}
                             </button>
                           </div>
                         </div>
-                      ))}
-                      {evidenceItems.length === 0 && (
-                        <p className="text-xs text-slate-500">No evidence attached yet.</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {showTeach && (
-                    <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-[10px] uppercase tracking-[0.3em] text-sky-300">Teach Bytebot</p>
-                        <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                          Space = Pause · T = Toggle
-                        </span>
-                      </div>
-                      <div className="mt-2">
-                        <Link
-                          href="/admin/bytebot/teach"
-                          className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-400 transition hover:border-white/40 hover:text-white"
-                        >
-                          Open Live Teach Session →
-                        </Link>
-                      </div>
-                      <div className="mt-3 grid gap-2">
-                        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                          Source
-                          <select
-                            value={teachForm.source}
-                            onChange={(event) =>
-                              setTeachForm((prev) => ({ ...prev, source: event.target.value }))
-                            }
-                            className="rounded-full border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200"
-                          >
-                            <option value="ebay_sold">eBay Sold</option>
-                          </select>
-                        </label>
-                        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                          Selector (Playwright)
-                          <input
-                            value={teachForm.selector}
-                            onChange={(event) =>
-                              setTeachForm((prev) => ({ ...prev, selector: event.target.value }))
-                            }
-                            placeholder="text=Sports or a[href*='sports']"
-                            className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
-                          />
-                        </label>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                            URL Contains (optional)
-                            <input
-                              value={teachForm.urlContains}
-                              onChange={(event) =>
-                                setTeachForm((prev) => ({ ...prev, urlContains: event.target.value }))
-                              }
-                              placeholder="e.g. ebay.com/sch"
-                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
-                            />
-                          </label>
-                          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                            Priority
-                            <input
-                              type="number"
-                              value={teachForm.priority}
-                              onChange={(event) =>
-                                setTeachForm((prev) => ({
-                                  ...prev,
-                                  priority: Number(event.target.value) || 0,
-                                }))
-                              }
-                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
-                            />
-                          </label>
-                        </div>
-                        <label className="flex items-center gap-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                          <input
-                            type="checkbox"
-                            checked={teachForm.enabled}
-                            onChange={(event) =>
-                              setTeachForm((prev) => ({ ...prev, enabled: event.target.checked }))
-                            }
-                          />
-                          Enabled
-                        </label>
-                        <button
-                          type="button"
-                          onClick={handleCreateRule}
-                          className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200"
-                        >
-                          Save Rule
-                        </button>
-                      </div>
-                      <div className="mt-4 space-y-2">
-                        {rulesForActiveSource.length === 0 && (
-                          <p className="text-xs text-slate-500">No rules for this source yet.</p>
-                        )}
-                        {rulesForActiveSource.map((rule) => (
-                          <div
-                            key={rule.id}
-                            className="flex items-center justify-between gap-2 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2 text-xs text-slate-300"
-                          >
-                            <div className="flex-1">
-                              <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                                {rule.action} · {rule.source}
+                        {showTeach && (
+                          <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-3">
+                            <div className="flex items-center justify-between">
+                              <p className="text-[10px] uppercase tracking-[0.3em] text-sky-300">Teach Bytebot</p>
+                              <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                Space = Pause · T = Toggle
+                              </span>
+                            </div>
+                            <div className="mt-2">
+                              <Link
+                                href="/admin/bytebot/teach"
+                                className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-400 transition hover:border-white/40 hover:text-white"
+                              >
+                                Open Live Teach Session →
+                              </Link>
+                            </div>
+                            <div className="mt-3 grid gap-2">
+                              <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                Source
+                                <select
+                                  value={teachForm.source}
+                                  onChange={(event) =>
+                                    setTeachForm((prev) => ({ ...prev, source: event.target.value }))
+                                  }
+                                  className="rounded-full border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200"
+                                >
+                                  <option value="ebay_sold">eBay Sold</option>
+                                </select>
+                              </label>
+                              <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                Selector (Playwright)
+                                <input
+                                  value={teachForm.selector}
+                                  onChange={(event) =>
+                                    setTeachForm((prev) => ({ ...prev, selector: event.target.value }))
+                                  }
+                                  placeholder="text=Sports or a[href*='sports']"
+                                  className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                                />
+                              </label>
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                  URL Contains (optional)
+                                  <input
+                                    value={teachForm.urlContains}
+                                    onChange={(event) =>
+                                      setTeachForm((prev) => ({ ...prev, urlContains: event.target.value }))
+                                    }
+                                    placeholder="e.g. ebay.com/sch"
+                                    className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                                  />
+                                </label>
+                                <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                  Priority
+                                  <input
+                                    type="number"
+                                    value={teachForm.priority}
+                                    onChange={(event) =>
+                                      setTeachForm((prev) => ({
+                                        ...prev,
+                                        priority: Number(event.target.value) || 0,
+                                      }))
+                                    }
+                                    className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                                  />
+                                </label>
                               </div>
-                              <div className="line-clamp-1">{rule.selector}</div>
+                              <label className="flex items-center gap-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                <input
+                                  type="checkbox"
+                                  checked={teachForm.enabled}
+                                  onChange={(event) =>
+                                    setTeachForm((prev) => ({ ...prev, enabled: event.target.checked }))
+                                  }
+                                  className="h-4 w-4 accent-sky-400"
+                                />
+                                Enabled
+                              </label>
                             </div>
                             <button
                               type="button"
-                              onClick={() => handleDeleteRule(rule.id)}
-                              className="text-[10px] uppercase tracking-[0.3em] text-rose-300"
+                              onClick={handleCreateRule}
+                              className="mt-3 rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200"
                             >
-                              Delete
+                              Save Rule
                             </button>
+                            <div className="mt-4 space-y-2">
+                              {rulesForActiveSource.length === 0 && (
+                                <p className="text-xs text-slate-500">No rules for this source yet.</p>
+                              )}
+                              {rulesForActiveSource.map((rule) => (
+                                <div
+                                  key={rule.id}
+                                  className="flex items-center justify-between gap-2 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2 text-xs text-slate-300"
+                                >
+                                  <div className="flex-1">
+                                    <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                      {rule.action} · {rule.source}
+                                    </div>
+                                    <div className="line-clamp-1">{rule.selector}</div>
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteRule(rule.id)}
+                                    className="text-[10px] uppercase tracking-[0.3em] text-rose-300"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                        ))}
+                        )}
                       </div>
-                    </div>
-                  )}
+                    </details>
+                  </div>
                 </div>
               ) : (
                 <div className="flex flex-1 items-center justify-center text-xs uppercase tracking-[0.3em] text-slate-500">
@@ -1710,11 +1798,11 @@ export default function KingsReview() {
           <section className="flex h-full min-h-0 flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.1))}
-                className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.1))}
+                  className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
                 >
                   -
                 </button>
@@ -1857,7 +1945,10 @@ export default function KingsReview() {
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <input
                   value={query}
-                  onChange={(event) => setQuery(event.target.value)}
+                  onChange={(event) => {
+                    setQuery(event.target.value);
+                    setQueryTouched(true);
+                  }}
                   className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-slate-200"
                 />
                 <button
@@ -1880,14 +1971,14 @@ export default function KingsReview() {
                     key={`${comp.url}-${index}`}
                     type="button"
                     onClick={() => setActiveCompIndex(index)}
-                    className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2 text-left text-xs transition ${
+                    className={`w-full rounded-2xl border p-3 text-left transition ${
                       activeCompIndex === index
-                        ? "border-sky-400/60 bg-sky-500/10 text-sky-200"
-                        : "border-white/10 text-slate-300 hover:border-white/30"
+                        ? "border-sky-400/60 bg-sky-500/10"
+                        : "border-white/10 bg-white/90 hover:border-white/30"
                     }`}
                   >
-                    <span className="flex flex-1 items-center gap-3">
-                      <span className="h-10 w-8 overflow-hidden rounded-lg border border-white/10 bg-night-900">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="aspect-[4/3] overflow-hidden rounded-xl border border-black/10 bg-white">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         {comp.listingImageUrl || comp.screenshotUrl ? (
                           <img
@@ -1896,21 +1987,22 @@ export default function KingsReview() {
                             className="h-full w-full object-cover"
                           />
                         ) : null}
-                      </span>
-                      <span className="line-clamp-1">{comp.title ?? comp.url}</span>
-                    </span>
-                    <span className="ml-2 flex items-center gap-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                      {comp.patternMatch && (
-                        <span
-                          className={`rounded-full border px-2 py-1 text-[9px] uppercase tracking-[0.3em] ${patternBadgeClass(
-                            comp.patternMatch.tier
-                          )}`}
-                        >
-                          {comp.patternMatch.tier}
-                        </span>
-                      )}
-                      <span>{comp.price ?? ""}</span>
-                    </span>
+                      </div>
+                      <div className="flex flex-col justify-between gap-2 text-black">
+                        <div>
+                          <div className="text-lg font-semibold text-emerald-600">{comp.price ?? "—"}</div>
+                          <div className="text-xs uppercase tracking-[0.2em] text-emerald-500">
+                            {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
+                          </div>
+                        </div>
+                        <div className="text-xs">{comp.title ?? comp.url}</div>
+                        {comp.patternMatch && (
+                          <div className="text-[10px] uppercase tracking-[0.3em] text-slate-600">
+                            Pattern {comp.patternMatch.tier}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </button>
                 ))}
               </div>
