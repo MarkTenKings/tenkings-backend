@@ -693,6 +693,7 @@ model CardPhoto {
   fileSize     Int
   mimeType     String
   imageUrl     String
+  thumbnailUrl String?
   createdById  String?
   createdAt    DateTime      @default(now())
 

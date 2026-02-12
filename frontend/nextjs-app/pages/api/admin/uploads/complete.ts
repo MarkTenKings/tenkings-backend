@@ -8,7 +8,8 @@ import {
 } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { buildSiteUrl } from "../../../../lib/server/urls";
-import { readStorageBuffer, uploadBuffer } from "../../../../lib/server/storage";
+import { buildThumbnailKey, normalizeStorageUrl, readStorageBuffer, uploadBuffer } from "../../../../lib/server/storage";
+import { createThumbnailPng } from "../../../../lib/server/images";
 import { withAdminCors } from "../../../../lib/server/cors";
 
 interface CompletePayload {
@@ -84,9 +85,26 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
       }
     });
 
+    const thumbnailKey = buildThumbnailKey(asset.storageKey);
+    const ensureThumbnail = async (sourceBuffer: Buffer) => {
+      try {
+        const thumbBuffer = await createThumbnailPng(sourceBuffer);
+        const thumbUrl = await uploadBuffer(thumbnailKey, thumbBuffer, "image/png");
+        return normalizeStorageUrl(thumbUrl) ?? thumbUrl;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await prisma.cardAsset.update({
+          where: { id: asset.id },
+          data: { errorMessage: `Thumbnail failed: ${message}` },
+        });
+        return null;
+      }
+    };
+
     if (photoroomEnabled) {
       try {
         const sourceBuffer = await readStorageBuffer(asset.storageKey);
+        const thumbUrl = await ensureThumbnail(sourceBuffer);
         const form = new FormData();
         const blob = new Blob([sourceBuffer], { type: "image/png" });
         form.append("imageFile", blob, "capture.png");
@@ -114,11 +132,13 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
         const processedBuffer = Buffer.from(await response.arrayBuffer());
         const updatedUrl = await uploadBuffer(asset.storageKey, processedBuffer, "image/png");
         const normalizedUrl = /^https?:\/\//i.test(updatedUrl) ? updatedUrl : buildSiteUrl(updatedUrl);
+        const refreshedThumbUrl = await ensureThumbnail(processedBuffer);
 
         await prisma.cardAsset.update({
           where: { id: asset.id },
           data: {
             imageUrl: normalizedUrl,
+            thumbnailUrl: refreshedThumbUrl ?? thumbUrl,
             status: CardAssetStatus.OCR_PENDING,
             processingStartedAt: null,
             processingCompletedAt: null,
@@ -140,6 +160,23 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
         await enqueueProcessingJob({
           cardAssetId: asset.id,
           type: ProcessingJobType.OCR,
+        });
+      }
+    } else {
+      try {
+        const sourceBuffer = await readStorageBuffer(asset.storageKey);
+        const thumbUrl = await ensureThumbnail(sourceBuffer);
+        if (thumbUrl) {
+          await prisma.cardAsset.update({
+            where: { id: asset.id },
+            data: { thumbnailUrl: thumbUrl },
+          });
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await prisma.cardAsset.update({
+          where: { id: asset.id },
+          data: { errorMessage: `Thumbnail failed: ${message}` },
         });
       }
     }

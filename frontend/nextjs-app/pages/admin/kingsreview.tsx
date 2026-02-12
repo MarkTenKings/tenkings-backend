@@ -44,7 +44,7 @@ type CardDetail = CardSummary & {
   classification?: Record<string, unknown> | null;
   customDetails: string | null;
   classificationNormalized?: { categoryType?: string | null } | null;
-  photos?: Array<{ id: string; kind: string; imageUrl: string }>;
+  photos?: Array<{ id: string; kind: string; imageUrl: string; thumbnailUrl?: string | null }>;
   variantId?: string | null;
   variantConfidence?: number | null;
   variantDecision?: {
@@ -291,6 +291,22 @@ export default function KingsReview() {
       return acc;
     }, {});
   }, [activeCard?.photos]);
+  const activePhotoThumbs = useMemo(() => {
+    if (!activeCard?.photos?.length) {
+      return {};
+    }
+    return activeCard.photos.reduce<Record<string, string>>((acc, photo) => {
+      if (!photo.thumbnailUrl) {
+        return acc;
+      }
+      const key = typeof photo.kind === "string" ? photo.kind.toUpperCase() : photo.kind;
+      acc[key] = photo.thumbnailUrl;
+      if (typeof key === "string") {
+        acc[key.toLowerCase()] = photo.thumbnailUrl;
+      }
+      return acc;
+    }, {});
+  }, [activeCard?.photos]);
   const activeAttributes = useMemo(() => {
     if (!activeCard?.classification || typeof activeCard.classification !== "object") {
       return null;
@@ -437,7 +453,10 @@ export default function KingsReview() {
       }
       preloadImage(detail.thumbnailUrl);
       preloadImage(detail.imageUrl);
-      (detail.photos ?? []).forEach((photo) => preloadImage(photo.imageUrl));
+      (detail.photos ?? []).forEach((photo) => {
+        preloadImage(photo.thumbnailUrl ?? null);
+        preloadImage(photo.imageUrl);
+      });
     },
     [fetchCardDetail, preloadImage]
   );
@@ -710,14 +729,20 @@ export default function KingsReview() {
       setActiveCardImageUrl(null);
       return;
     }
-    const fallback = activeCard.thumbnailUrl ?? activeCard.imageUrl;
-    setActiveCardImageUrl(fallback ?? null);
-    if (activeCard.thumbnailUrl && activeCard.imageUrl && activeCard.thumbnailUrl !== activeCard.imageUrl) {
+
+    const isFront = activePhotoKind === "FRONT";
+    const thumb = isFront ? activeCard.thumbnailUrl : activePhotoThumbs[activePhotoKind];
+    const full = isFront ? activeCard.imageUrl : activePhotos[activePhotoKind];
+
+    const fallback = thumb ?? full ?? null;
+    setActiveCardImageUrl(fallback);
+
+    if (full && full !== fallback) {
       const img = new Image();
-      img.onload = () => setActiveCardImageUrl(activeCard.imageUrl);
-      img.src = activeCard.imageUrl;
+      img.onload = () => setActiveCardImageUrl(full);
+      img.src = full;
     }
-  }, [activeCard]);
+  }, [activeCard, activePhotoKind, activePhotoThumbs, activePhotos]);
 
   const handleSave = async () => {
     if (!activeCard) {
@@ -1419,16 +1444,36 @@ export default function KingsReview() {
                   <div className="mx-auto w-[90%] aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-950">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={activePhotos[activePhotoKind] ?? activeCardImageUrl ?? activeCard.imageUrl}
+                      src={
+                        activeCardImageUrl ??
+                        activePhotoThumbs[activePhotoKind] ??
+                        activePhotos[activePhotoKind] ??
+                        activeCard.imageUrl
+                      }
                       alt={activeCard.fileName}
                       className="h-full w-full object-cover"
                     />
                   </div>
                   <div className="grid gap-3 md:grid-cols-3">
                     {[
-                      { label: "Front", kind: "FRONT" as const, url: activePhotos.FRONT ?? activeCard.imageUrl },
-                      { label: "Back", kind: "BACK" as const, url: activePhotos.BACK },
-                      { label: "Tilt", kind: "TILT" as const, url: activePhotos.TILT },
+                      {
+                        label: "Front",
+                        kind: "FRONT" as const,
+                        url: activeCard.thumbnailUrl ?? activeCard.imageUrl,
+                        full: activeCard.imageUrl,
+                      },
+                      {
+                        label: "Back",
+                        kind: "BACK" as const,
+                        url: activePhotoThumbs.BACK ?? activePhotos.BACK,
+                        full: activePhotos.BACK,
+                      },
+                      {
+                        label: "Tilt",
+                        kind: "TILT" as const,
+                        url: activePhotoThumbs.TILT ?? activePhotos.TILT,
+                        full: activePhotos.TILT,
+                      },
                     ].map((photo) => (
                       <button
                         key={photo.label}

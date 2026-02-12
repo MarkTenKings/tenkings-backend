@@ -196,6 +196,13 @@ export async function uploadBuffer(
   return publicUrlFor(storageKey);
 }
 
+export function buildThumbnailKey(storageKey: string) {
+  const normalized = storageKey.replace(/\\/g, "/");
+  const extIndex = normalized.lastIndexOf(".");
+  const base = extIndex > -1 ? normalized.slice(0, extIndex) : normalized;
+  return `${base}-thumb.png`;
+}
+
 export function normalizeStorageUrl(input: string | null | undefined) {
   if (!input) return input ?? null;
   if (!/^https?:\/\//i.test(input)) {

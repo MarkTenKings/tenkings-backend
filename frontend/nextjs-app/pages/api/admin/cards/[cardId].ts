@@ -547,6 +547,7 @@ interface CardResponse {
     id: string;
     kind: string;
     imageUrl: string;
+    thumbnailUrl: string | null;
   }>;
   label:
     | {
@@ -594,6 +595,7 @@ async function fetchCard(cardId: string, uploadedById?: string | null): Promise<
           id: true,
           kind: true,
           imageUrl: true,
+          thumbnailUrl: true,
         },
         orderBy: { createdAt: "asc" },
       },
@@ -757,6 +759,7 @@ async function fetchCard(cardId: string, uploadedById?: string | null): Promise<
       id: photo.id,
       kind: photo.kind,
       imageUrl: normalizeStorageUrl(photo.imageUrl) ?? photo.imageUrl,
+      thumbnailUrl: normalizeStorageUrl(photo.thumbnailUrl) ?? photo.thumbnailUrl,
     })),
     label: labelRecord
       ? {

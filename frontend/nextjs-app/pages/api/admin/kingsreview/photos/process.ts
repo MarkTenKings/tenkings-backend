@@ -2,12 +2,19 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { buildSiteUrl } from "../../../../../lib/server/urls";
-import { publicUrlFor, readStorageBuffer, uploadBuffer } from "../../../../../lib/server/storage";
+import {
+  buildThumbnailKey,
+  normalizeStorageUrl,
+  readStorageBuffer,
+  uploadBuffer,
+} from "../../../../../lib/server/storage";
+import { createThumbnailPng } from "../../../../../lib/server/images";
 import { withAdminCors } from "../../../../../lib/server/cors";
 
 type ProcessResponse = {
   message: string;
   imageUrl?: string;
+  thumbnailUrl?: string;
 };
 
 const PHOTOROOM_ENDPOINT = "https://image-api.photoroom.com/v2/edit";
@@ -81,12 +88,22 @@ const handler = async function handler(
     const updatedUrl = await uploadBuffer(photo.storageKey, processedBuffer, "image/png");
     const normalizedUrl = /^https?:\/\//i.test(updatedUrl) ? updatedUrl : buildSiteUrl(updatedUrl);
 
+    const thumbKey = buildThumbnailKey(photo.storageKey);
+    let thumbnailUrl: string | null = null;
+    try {
+      const thumbBuffer = await createThumbnailPng(processedBuffer);
+      const thumbUploaded = await uploadBuffer(thumbKey, thumbBuffer, "image/png");
+      thumbnailUrl = normalizeStorageUrl(thumbUploaded) ?? thumbUploaded;
+    } catch {
+      thumbnailUrl = null;
+    }
+
     await prisma.cardPhoto.update({
       where: { id: photo.id },
-      data: { imageUrl: normalizedUrl },
+      data: { imageUrl: normalizedUrl, thumbnailUrl },
     });
 
-    return res.status(200).json({ message: "Processed", imageUrl: normalizedUrl });
+    return res.status(200).json({ message: "Processed", imageUrl: normalizedUrl, thumbnailUrl: thumbnailUrl ?? undefined });
   } catch (error) {
     const result = toErrorResponse(error);
     return res.status(result.status).json({ message: result.message });
