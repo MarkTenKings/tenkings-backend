@@ -376,8 +376,8 @@ export default function KingsReview() {
             throw new Error(`Failed to load card (${res.status})${text ? `: ${text}` : ""}`);
           }
           const payload = await res.json();
-          const card = payload?.card ?? null;
-          if (!card) {
+          const card = (payload?.card ?? payload) as any;
+          if (!card || !card.id) {
             throw new Error("Failed to load card (empty response)");
           }
           const detail: CardDetail = {
