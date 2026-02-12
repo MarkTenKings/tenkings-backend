@@ -584,9 +584,9 @@ type CardUpdatePayload = {
   aiGradeRangeHigh?: number | string | null;
 };
 
-async function fetchCard(cardId: string, uploadedById: string): Promise<CardResponse | null> {
+async function fetchCard(cardId: string, uploadedById?: string | null): Promise<CardResponse | null> {
   const card = await prisma.cardAsset.findFirst({
-    where: { id: cardId, batch: { uploadedById } },
+    where: uploadedById ? { id: cardId, batch: { uploadedById } } : { id: cardId },
     include: {
       batch: true,
       photos: {
@@ -793,7 +793,7 @@ export default async function handler(
     }
 
     if (req.method === "GET") {
-      const card = await fetchCard(cardId, admin.user.id);
+      const card = await fetchCard(cardId);
       if (!card) {
         return res.status(404).json({ message: "Card not found" });
       }
@@ -803,7 +803,7 @@ export default async function handler(
     if (req.method === "PATCH") {
       const body = (req.body ?? {}) as CardUpdatePayload;
       const card = await prisma.cardAsset.findFirst({
-        where: { id: cardId, batch: { uploadedById: admin.user.id } },
+        where: { id: cardId },
         select: {
           id: true,
           ocrText: true,
@@ -1029,7 +1029,7 @@ export default async function handler(
         await ensureInventoryReadyArtifacts(card.id, admin.user.id);
       }
 
-      const updated = await fetchCard(cardId, admin.user.id);
+      const updated = await fetchCard(cardId);
       if (!updated) {
         return res.status(500).json({ message: "Card updated but could not be retrieved" });
       }

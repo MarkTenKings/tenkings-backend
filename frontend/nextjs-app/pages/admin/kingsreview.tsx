@@ -328,7 +328,8 @@ export default function KingsReview() {
           cache: "no-store",
         });
         if (!res.ok) {
-          throw new Error("Failed to load cards");
+          const text = await res.text().catch(() => "");
+          throw new Error(`Failed to load cards (${res.status})${text ? `: ${text}` : ""}`);
         }
         const data = await res.json();
         const nextCards = data.cards ?? [];
@@ -371,7 +372,8 @@ export default function KingsReview() {
             cache: "no-store",
           });
           if (!res.ok) {
-            return null;
+            const text = await res.text().catch(() => "");
+            throw new Error(`Failed to load card (${res.status})${text ? `: ${text}` : ""}`);
           }
           const payload = await res.json();
           const card = payload?.card ?? null;
