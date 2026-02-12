@@ -77,6 +77,7 @@ export default function InventoryReady() {
   const [assigning, setAssigning] = useState(false);
   const [assignStatus, setAssignStatus] = useState<string | null>(null);
   const [returning, setReturning] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -327,6 +328,43 @@ export default function InventoryReady() {
     }
   };
 
+  const handleDelete = async () => {
+    if (selectedIds.size === 0) {
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete ${selectedIds.size} inventory-ready cards? This cannot be undone.`
+    );
+    if (!confirmed) {
+      return;
+    }
+    setDeleting(true);
+    setAssignStatus(null);
+    setError(null);
+    try {
+      const res = await fetch("/api/admin/inventory-ready/purge", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...adminHeaders(),
+        },
+        body: JSON.stringify({ cardIds: Array.from(selectedIds) }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to delete cards");
+      }
+      const payload = await res.json().catch(() => ({}));
+      setCards((prev) => prev.filter((card) => !selectedIds.has(card.id)));
+      setSelectedIds(new Set());
+      setAssignStatus(`Deleted ${payload?.deleted ?? 0} cards.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete cards");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const content = () => {
     if (loading) {
       return (
@@ -499,6 +537,14 @@ export default function InventoryReady() {
               className="w-full rounded-2xl border border-white/20 bg-night-800/70 px-4 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-slate-200 transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {returning ? "Returning..." : "Return to KingsReview"}
+            </button>
+            <button
+              type="button"
+              onClick={handleDelete}
+              disabled={deleting || selectedIds.size === 0}
+              className="w-full rounded-2xl border border-rose-400/60 bg-rose-500/20 px-4 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-rose-200 transition hover:border-rose-300 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {deleting ? "Deleting..." : "Delete Selected"}
             </button>
           </div>
         </section>
