@@ -60,7 +60,7 @@ function buildProxyUrl(req: NextApiRequest, targetUrl: string): string | null {
   if (!secret) {
     return null;
   }
-  const normalizedTarget = normalizeStorageUrl(targetUrl);
+  const normalizedTarget = normalizeStorageUrl(targetUrl) ?? targetUrl;
   const host = req.headers.host;
   if (!host) {
     return null;
