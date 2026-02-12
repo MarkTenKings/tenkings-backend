@@ -378,7 +378,7 @@ export default function KingsReview() {
           const payload = await res.json();
           const card = payload?.card ?? null;
           if (!card) {
-            return null;
+            throw new Error("Failed to load card (empty response)");
           }
           const detail: CardDetail = {
             id: card.id,
@@ -406,8 +406,6 @@ export default function KingsReview() {
           };
           cardDetailCacheRef.current.set(cardId, detail);
           return detail;
-        } catch (err) {
-          return null;
         } finally {
           inflightCardRef.current.delete(cardId);
         }
