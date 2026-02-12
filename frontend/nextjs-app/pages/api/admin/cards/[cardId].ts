@@ -15,6 +15,7 @@ import {
 } from "@tenkings/shared";
 import { ensureLabelPairForItem } from "../../../../lib/server/qrCodes";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { normalizeStorageUrl } from "../../../../lib/server/storage";
 
 const defaultCardAttributes: CardAttributes = {
   playerName: null,
@@ -681,8 +682,8 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     status: card.status,
     fileName: card.fileName,
     fileSize: card.fileSize,
-    imageUrl: card.imageUrl,
-    thumbnailUrl: card.thumbnailUrl,
+    imageUrl: normalizeStorageUrl(card.imageUrl),
+    thumbnailUrl: normalizeStorageUrl(card.thumbnailUrl),
     mimeType: card.mimeType,
     ocrText: card.ocrText,
     ocrSuggestions: {
@@ -755,7 +756,7 @@ async function fetchCard(cardId: string, uploadedById: string): Promise<CardResp
     photos: card.photos.map((photo) => ({
       id: photo.id,
       kind: photo.kind,
-      imageUrl: photo.imageUrl,
+      imageUrl: normalizeStorageUrl(photo.imageUrl),
     })),
     label: labelRecord
       ? {
