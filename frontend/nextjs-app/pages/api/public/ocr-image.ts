@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "node:crypto";
 import { toErrorResponse } from "../../../lib/server/admin";
+import { normalizeStorageUrl } from "../../../lib/server/storage";
 
 const MAX_AGE_MS = 5 * 60 * 1000;
 
@@ -20,10 +21,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(405).json({ message: "Method not allowed" });
     }
 
-    const url = typeof req.query.url === "string" ? req.query.url : "";
+    const rawUrl = typeof req.query.url === "string" ? req.query.url : "";
     const exp = typeof req.query.exp === "string" ? Number(req.query.exp) : NaN;
     const sig = typeof req.query.sig === "string" ? req.query.sig : "";
-    if (!url || Number.isNaN(exp) || !sig) {
+    if (!rawUrl || Number.isNaN(exp) || !sig) {
       return res.status(400).json({ message: "Missing url, exp, or sig" });
     }
 
@@ -41,21 +42,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(503).json({ message: "Storage base URL not configured" });
     }
 
-    const parsed = new URL(url);
+    const normalizedUrl = normalizeStorageUrl(rawUrl) ?? rawUrl;
+    const parsed = new URL(normalizedUrl);
     if (parsed.host !== allowedHost) {
       return res.status(403).json({ message: "Host not allowed" });
     }
 
-    const payload = `${url}|${exp}`;
+    const payload = `${normalizedUrl}|${exp}`;
     const expected = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
-    if (!crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig))) {
+    const sigBuffer = Buffer.from(sig);
+    const expectedBuffer = Buffer.from(expected);
+    const matchesExpected =
+      sigBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(expectedBuffer, sigBuffer);
+
+    let matchesRaw = false;
+    if (!matchesExpected && normalizedUrl !== rawUrl) {
+      const rawPayload = `${rawUrl}|${exp}`;
+      const rawExpected = crypto.createHmac("sha256", secret).update(rawPayload).digest("base64url");
+      const rawBuffer = Buffer.from(rawExpected);
+      matchesRaw = sigBuffer.length === rawBuffer.length && crypto.timingSafeEqual(rawBuffer, sigBuffer);
+    }
+
+    if (!matchesExpected && !matchesRaw) {
       return res.status(403).json({ message: "Invalid signature" });
     }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12_000);
     try {
-      const response = await fetch(url, { signal: controller.signal });
+      const response = await fetch(normalizedUrl, { signal: controller.signal });
       if (!response.ok) {
         return res.status(502).json({ message: `Upstream error: ${response.status}` });
       }
