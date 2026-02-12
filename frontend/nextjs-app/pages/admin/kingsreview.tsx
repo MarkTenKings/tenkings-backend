@@ -204,6 +204,7 @@ export default function KingsReview() {
   const lastJobIdRef = useRef<string | null>(null);
   const cardDetailCacheRef = useRef<Map<string, CardDetail>>(new Map());
   const inflightCardRef = useRef<Map<string, Promise<CardDetail | null>>>(new Map());
+  const imagePreloadRef = useRef<Set<string>>(new Set());
   const [teachForm, setTeachForm] = useState({
     source: "ebay_sold",
     action: "click",
@@ -416,6 +417,31 @@ export default function KingsReview() {
     [adminHeaders]
   );
 
+  const preloadImage = useCallback((url: string | null | undefined) => {
+    if (!url) {
+      return;
+    }
+    if (imagePreloadRef.current.has(url)) {
+      return;
+    }
+    imagePreloadRef.current.add(url);
+    const img = new Image();
+    img.src = url;
+  }, []);
+
+  const preloadCardAssets = useCallback(
+    async (cardId: string) => {
+      const detail = await fetchCardDetail(cardId);
+      if (!detail) {
+        return;
+      }
+      preloadImage(detail.thumbnailUrl);
+      preloadImage(detail.imageUrl);
+      detail.photos.forEach((photo) => preloadImage(photo.imageUrl));
+    },
+    [fetchCardDetail, preloadImage]
+  );
+
   const loadMoreCards = useCallback(async () => {
     if (cardsLoadingMore || !cardsHasMore) {
       return;
@@ -483,9 +509,24 @@ export default function KingsReview() {
     }
     const preloadTargets = cards.slice(0, 10);
     preloadTargets.forEach((card) => {
-      void fetchCardDetail(card.id);
+      void preloadCardAssets(card.id);
     });
-  }, [cards, fetchCardDetail]);
+  }, [cards, preloadCardAssets]);
+
+  useEffect(() => {
+    if (!activeCardId || !cards.length) {
+      return;
+    }
+    const index = cards.findIndex((card) => card.id === activeCardId);
+    if (index === -1) {
+      return;
+    }
+    const start = Math.max(0, index - 10);
+    const end = Math.min(cards.length, index + 21);
+    cards.slice(start, end).forEach((card) => {
+      void preloadCardAssets(card.id);
+    });
+  }, [activeCardId, cards, preloadCardAssets]);
 
   useEffect(() => {
     if (!router.isReady) {
@@ -1315,6 +1356,9 @@ export default function KingsReview() {
                     key={card.id}
                     type="button"
                     onClick={() => setActiveCardId(card.id)}
+                    onMouseEnter={() => {
+                      void preloadCardAssets(card.id);
+                    }}
                     className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs transition ${
                       activeCardId === card.id
                         ? "bg-gold-500/15 text-gold-200"
