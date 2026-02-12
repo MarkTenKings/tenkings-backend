@@ -179,6 +179,7 @@ export default function KingsReview() {
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [activeCompIndex, setActiveCompIndex] = useState<number | null>(null);
   const [activePhotoKind, setActivePhotoKind] = useState<"FRONT" | "BACK" | "TILT">("FRONT");
+  const [activeCardImageUrl, setActiveCardImageUrl] = useState<string | null>(null);
   const [zoom, setZoom] = useState<number>(1);
   const [query, setQuery] = useState<string>("");
   const [queryTouched, setQueryTouched] = useState(false);
@@ -201,6 +202,8 @@ export default function KingsReview() {
   const [deleteSelection, setDeleteSelection] = useState<string[]>([]);
   const [playbookRules, setPlaybookRules] = useState<PlaybookRule[]>([]);
   const lastJobIdRef = useRef<string | null>(null);
+  const cardDetailCacheRef = useRef<Map<string, CardDetail>>(new Map());
+  const inflightCardRef = useRef<Map<string, Promise<CardDetail | null>>>(new Map());
   const [teachForm, setTeachForm] = useState({
     source: "ebay_sold",
     action: "click",
@@ -349,7 +352,69 @@ export default function KingsReview() {
     };
 
     loadCards();
-  }, [adminHeaders, cardsOffset, isAdmin, session, stage]);
+  }, [adminHeaders, isAdmin, session, stage]);
+
+  const fetchCardDetail = useCallback(
+    async (cardId: string) => {
+      const cached = cardDetailCacheRef.current.get(cardId) ?? null;
+      if (cached) {
+        return cached;
+      }
+      const inflight = inflightCardRef.current.get(cardId);
+      if (inflight) {
+        return inflight;
+      }
+      const promise = (async () => {
+        try {
+          const res = await fetch(`/api/admin/cards/${cardId}`, {
+            headers: adminHeaders(),
+            cache: "no-store",
+          });
+          if (!res.ok) {
+            return null;
+          }
+          const payload = await res.json();
+          const card = payload?.card ?? null;
+          if (!card) {
+            return null;
+          }
+          const detail: CardDetail = {
+            id: card.id,
+            fileName: card.fileName,
+            imageUrl: card.imageUrl,
+            thumbnailUrl: card.thumbnailUrl,
+            ocrText: card.ocrText ?? null,
+            classification: card.classification ?? null,
+            customTitle: card.customTitle ?? null,
+            customDetails: card.customDetails ?? null,
+            resolvedPlayerName: card.sportsDb?.playerName ?? card.resolvedPlayerName ?? null,
+            resolvedTeamName: card.sportsDb?.teamName ?? card.resolvedTeamName ?? null,
+            valuationMinor: card.valuationMinor ?? null,
+            valuationCurrency: card.valuationCurrency ?? "USD",
+            status: card.status,
+            reviewStage: card.reviewStage ?? null,
+            reviewStageUpdatedAt: card.reviewStageUpdatedAt ?? null,
+            createdAt: card.createdAt,
+            updatedAt: card.updatedAt,
+            classificationNormalized: card.classificationNormalized ?? null,
+            variantId: card.variantId ?? null,
+            variantConfidence: card.variantConfidence ?? null,
+            variantDecision: card.variantDecision ?? null,
+            photos: Array.isArray(card.photos) ? card.photos : [],
+          };
+          cardDetailCacheRef.current.set(cardId, detail);
+          return detail;
+        } catch (err) {
+          return null;
+        } finally {
+          inflightCardRef.current.delete(cardId);
+        }
+      })();
+      inflightCardRef.current.set(cardId, promise);
+      return promise;
+    },
+    [adminHeaders]
+  );
 
   const loadMoreCards = useCallback(async () => {
     if (cardsLoadingMore || !cardsHasMore) {
@@ -410,7 +475,17 @@ export default function KingsReview() {
         .catch(() => undefined);
     }, 2000);
     return () => clearInterval(interval);
-  }, [adminHeaders, isAdmin, session, stage]);
+  }, [adminHeaders, cardsOffset, isAdmin, session, stage]);
+
+  useEffect(() => {
+    if (!cards.length) {
+      return;
+    }
+    const preloadTargets = cards.slice(0, 10);
+    preloadTargets.forEach((card) => {
+      void fetchCardDetail(card.id);
+    });
+  }, [cards, fetchCardDetail]);
 
   useEffect(() => {
     if (!router.isReady) {
@@ -461,52 +536,34 @@ export default function KingsReview() {
       return;
     }
 
-  const loadCard = async () => {
+    const loadCard = async () => {
       setError(null);
       try {
-        const res = await fetch(`/api/admin/cards/${activeCardId}`, {
-          headers: adminHeaders(),
-        });
-        if (!res.ok) {
-          const payload = await res.json().catch(() => ({}));
-          const message = payload?.message ?? "Failed to load card";
-          throw new Error(message);
+        const cached = cardDetailCacheRef.current.get(activeCardId) ?? null;
+        if (cached) {
+          setActiveCard(cached);
         }
-        const data = await res.json();
-        const card = data.card ?? data;
-        setActiveCard({
-          id: card.id,
-          fileName: card.fileName,
-          imageUrl: card.imageUrl,
-          thumbnailUrl: card.thumbnailUrl,
-          ocrText: card.ocrText ?? null,
-          classification: card.classification ?? null,
-          customTitle: card.customTitle ?? null,
-          customDetails: card.customDetails ?? null,
-          resolvedPlayerName: card.sportsDb?.playerName ?? card.resolvedPlayerName ?? null,
-          resolvedTeamName: card.sportsDb?.teamName ?? card.resolvedTeamName ?? null,
-          valuationMinor: card.valuationMinor ?? null,
-          valuationCurrency: card.valuationCurrency ?? "USD",
-          status: card.status,
-          reviewStage: card.reviewStage ?? null,
-          reviewStageUpdatedAt: card.reviewStageUpdatedAt ?? null,
-          createdAt: card.createdAt,
-          updatedAt: card.updatedAt,
-          classificationNormalized: card.classificationNormalized ?? null,
-          variantId: card.variantId ?? null,
-          variantConfidence: card.variantConfidence ?? null,
-          variantDecision: card.variantDecision ?? null,
-          photos: Array.isArray(card.photos) ? card.photos : [],
-        });
-        setActivePhotoKind("FRONT");
-        setVariantSetId(
-          (card.classificationNormalized as any)?.setName ??
-            (card.classificationNormalized as any)?.setCode ??
-            ""
-        );
-        setVariantCardNumber((card.classificationNormalized as any)?.cardNumber ?? "");
-        if (!queryTouched) {
-          setQuery(card.customTitle ?? card.fileName ?? "");
+
+        const fresh = await fetchCardDetail(activeCardId);
+        if (!fresh && !cached) {
+          throw new Error("Failed to load card");
+        }
+        if (fresh) {
+          setActiveCard(fresh);
+        }
+
+        const nextCard = fresh ?? cached;
+        if (nextCard) {
+          setActivePhotoKind("FRONT");
+          setVariantSetId(
+            (nextCard.classificationNormalized as any)?.setName ??
+              (nextCard.classificationNormalized as any)?.setCode ??
+              ""
+          );
+          setVariantCardNumber((nextCard.classificationNormalized as any)?.cardNumber ?? "");
+          if (!queryTouched) {
+            setQuery(nextCard.customTitle ?? nextCard.fileName ?? "");
+          }
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load card");
@@ -606,6 +663,20 @@ export default function KingsReview() {
 
     return () => clearInterval(interval);
   }, [job?.status]);
+
+  useEffect(() => {
+    if (!activeCard) {
+      setActiveCardImageUrl(null);
+      return;
+    }
+    const fallback = activeCard.thumbnailUrl ?? activeCard.imageUrl;
+    setActiveCardImageUrl(fallback ?? null);
+    if (activeCard.thumbnailUrl && activeCard.imageUrl && activeCard.thumbnailUrl !== activeCard.imageUrl) {
+      const img = new Image();
+      img.onload = () => setActiveCardImageUrl(activeCard.imageUrl);
+      img.src = activeCard.imageUrl;
+    }
+  }, [activeCard]);
 
   const handleSave = async () => {
     if (!activeCard) {
@@ -1304,7 +1375,7 @@ export default function KingsReview() {
                   <div className="mx-auto w-[90%] aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-950">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={activePhotos[activePhotoKind] ?? activeCard.imageUrl}
+                      src={activePhotos[activePhotoKind] ?? activeCardImageUrl ?? activeCard.imageUrl}
                       alt={activeCard.fileName}
                       className="h-full w-full object-cover"
                     />
