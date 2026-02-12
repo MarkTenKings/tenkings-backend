@@ -437,7 +437,7 @@ export default function KingsReview() {
       }
       preloadImage(detail.thumbnailUrl);
       preloadImage(detail.imageUrl);
-      detail.photos.forEach((photo) => preloadImage(photo.imageUrl));
+      (detail.photos ?? []).forEach((photo) => preloadImage(photo.imageUrl));
     },
     [fetchCardDetail, preloadImage]
   );
