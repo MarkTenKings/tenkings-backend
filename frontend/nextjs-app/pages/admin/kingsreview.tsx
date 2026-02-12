@@ -1,7 +1,7 @@
 import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
@@ -200,6 +200,7 @@ export default function KingsReview() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteSelection, setDeleteSelection] = useState<string[]>([]);
   const [playbookRules, setPlaybookRules] = useState<PlaybookRule[]>([]);
+  const lastJobIdRef = useRef<string | null>(null);
   const [teachForm, setTeachForm] = useState({
     source: "ebay_sold",
     action: "click",
@@ -280,6 +281,9 @@ export default function KingsReview() {
     return activeCard.photos.reduce<Record<string, string>>((acc, photo) => {
       const key = typeof photo.kind === "string" ? photo.kind.toUpperCase() : photo.kind;
       acc[key] = photo.imageUrl;
+      if (typeof key === "string") {
+        acc[key.toLowerCase()] = photo.imageUrl;
+      }
       return acc;
     }, {});
   }, [activeCard?.photos]);
@@ -515,20 +519,23 @@ export default function KingsReview() {
           headers: adminHeaders(),
         });
         if (!res.ok) {
-          setJob(null);
           return;
         }
         const data = await res.json();
-        setJob(data.job ?? null);
-        if (data.job?.searchQuery) {
-          setQuery(data.job.searchQuery);
+        const nextJob = data.job ?? null;
+        setJob(nextJob);
+        if (nextJob?.searchQuery) {
+          setQuery(nextJob.searchQuery);
           setQueryTouched(false);
         }
-        const nextSource = data.job?.result?.sources?.[0]?.source ?? null;
+        const nextSource = nextJob?.result?.sources?.[0]?.source ?? null;
         setActiveSource((prev) => prev ?? nextSource);
-        setActiveCompIndex(null);
+        if (nextJob?.id && nextJob.id !== lastJobIdRef.current) {
+          lastJobIdRef.current = nextJob.id;
+          setActiveCompIndex(null);
+        }
       } catch (err) {
-        setJob(null);
+        // ignore transient failures to avoid clearing comps
       }
     };
 
@@ -571,7 +578,14 @@ export default function KingsReview() {
           return;
         }
         const data = await res.json();
-        setJob(data.job ?? null);
+        const nextJob = data.job ?? null;
+        if (nextJob) {
+          setJob(nextJob);
+          if (nextJob.id !== lastJobIdRef.current) {
+            lastJobIdRef.current = nextJob.id;
+            setActiveCompIndex(null);
+          }
+        }
       } catch (err) {
         // ignore polling errors
       }
@@ -1287,12 +1301,12 @@ export default function KingsReview() {
 
               {activeCard ? (
                 <div className="mt-4 flex flex-col gap-4">
-                  <div className="aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-800">
+                  <div className="mx-auto w-[90%] aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-950">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={activePhotos[activePhotoKind] ?? activeCard.imageUrl}
                       alt={activeCard.fileName}
-                      className="h-full w-full object-contain"
+                      className="h-full w-full object-cover"
                     />
                   </div>
                   <div className="grid gap-3 md:grid-cols-3">
@@ -1318,7 +1332,7 @@ export default function KingsReview() {
                             <img
                               src={photo.url}
                               alt={`${photo.label} image`}
-                              className="h-full w-full object-contain"
+                              className="h-full w-full object-cover"
                             />
                           ) : (
                             <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
@@ -1473,27 +1487,28 @@ export default function KingsReview() {
                         {evidenceItems.map((item) => (
                           <div
                             key={item.id}
-                            className="grid gap-3 rounded-2xl border border-white/10 bg-white/90 p-3 text-xs text-black md:grid-cols-2"
+                            className="grid gap-3 rounded-2xl border border-white/20 bg-black/90 p-3 text-xs text-white md:grid-cols-2"
                           >
-                            <div className="aspect-[4/3] overflow-hidden rounded-xl border border-black/10 bg-white">
+                            <div className="mx-auto w-[90%] aspect-[9/16] overflow-hidden rounded-xl border border-white/20 bg-black">
                               {item.screenshotUrl ? (
                                 <img
                                   src={item.screenshotUrl}
                                   alt={item.title ?? "Evidence"}
-                                  className="h-full w-full object-cover"
+                                  className="h-full w-full object-contain p-3"
+                                  referrerPolicy="no-referrer"
                                 />
                               ) : null}
                             </div>
                             <div className="flex flex-col justify-between gap-2">
                               <div>
-                                <div className="text-lg font-semibold text-emerald-600">
+                                <div className="text-xl font-bold text-emerald-400">
                                   {item.price ?? "—"}
                                 </div>
-                                <div className="text-xs uppercase tracking-[0.2em] text-emerald-500">
+                                <div className="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-300">
                                   {item.soldDate ? `Sold ${item.soldDate}` : ""}
                                 </div>
                               </div>
-                              <div className="text-xs text-black">
+                              <div className="text-xs text-white">
                                 {item.title ?? item.url}
                               </div>
                               <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.3em]">
@@ -1501,7 +1516,7 @@ export default function KingsReview() {
                                   href={item.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-black underline"
+                                  className="text-white underline"
                                 >
                                   Open
                                 </a>
@@ -1820,12 +1835,13 @@ export default function KingsReview() {
               <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Selected Comp</p>
               {activeComp ? (
                 <div className="mt-3 grid gap-3">
-                  <div className="aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-900">
+                  <div className="mx-auto w-[90%] aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-900">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={activeComp.listingImageUrl ?? activeComp.screenshotUrl}
                       alt={activeComp.title ?? "Comp"}
                       className="h-full w-full object-contain"
+                      referrerPolicy="no-referrer"
                     />
                   </div>
                   <div className="text-xs text-slate-300">
@@ -1973,31 +1989,32 @@ export default function KingsReview() {
                     onClick={() => setActiveCompIndex(index)}
                     className={`w-full rounded-2xl border p-3 text-left transition ${
                       activeCompIndex === index
-                        ? "border-sky-400/60 bg-sky-500/10"
-                        : "border-white/10 bg-white/90 hover:border-white/30"
+                        ? "border-emerald-400/60 bg-emerald-500/10"
+                        : "border-white/20 bg-black/90 hover:border-white/40"
                     }`}
                   >
                     <div className="grid gap-3 md:grid-cols-2">
-                      <div className="aspect-[4/3] overflow-hidden rounded-xl border border-black/10 bg-white">
+                      <div className="mx-auto w-[90%] aspect-[9/16] overflow-hidden rounded-xl border border-white/20 bg-black">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         {comp.listingImageUrl || comp.screenshotUrl ? (
                           <img
                             src={comp.listingImageUrl ?? comp.screenshotUrl}
                             alt={comp.title ?? "Comp"}
-                            className="h-full w-full object-cover"
+                            className="h-full w-full object-contain p-3"
+                            referrerPolicy="no-referrer"
                           />
                         ) : null}
                       </div>
-                      <div className="flex flex-col justify-between gap-2 text-black">
+                      <div className="flex flex-col justify-between gap-2 text-white">
                         <div>
-                          <div className="text-lg font-semibold text-emerald-600">{comp.price ?? "—"}</div>
-                          <div className="text-xs uppercase tracking-[0.2em] text-emerald-500">
+                          <div className="text-xl font-bold text-emerald-400">{comp.price ?? "—"}</div>
+                          <div className="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-300">
                             {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
                           </div>
                         </div>
                         <div className="text-xs">{comp.title ?? comp.url}</div>
                         {comp.patternMatch && (
-                          <div className="text-[10px] uppercase tracking-[0.3em] text-slate-600">
+                          <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
                             Pattern {comp.patternMatch.tier}
                           </div>
                         )}
