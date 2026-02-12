@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "node:crypto";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
+import { normalizeStorageUrl } from "../../../../../lib/server/storage";
 
 type SuggestResponse =
   | {
@@ -59,15 +60,16 @@ function buildProxyUrl(req: NextApiRequest, targetUrl: string): string | null {
   if (!secret) {
     return null;
   }
+  const normalizedTarget = normalizeStorageUrl(targetUrl);
   const host = req.headers.host;
   if (!host) {
     return null;
   }
   const protocol = (req.headers["x-forwarded-proto"] as string) || "https";
   const expires = Date.now() + 5 * 60 * 1000;
-  const payload = `${targetUrl}|${expires}`;
+  const payload = `${normalizedTarget}|${expires}`;
   const signature = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
-  const encodedUrl = encodeURIComponent(targetUrl);
+  const encodedUrl = encodeURIComponent(normalizedTarget);
   return `${protocol}://${host}/api/public/ocr-image?url=${encodedUrl}&exp=${expires}&sig=${signature}`;
 }
 

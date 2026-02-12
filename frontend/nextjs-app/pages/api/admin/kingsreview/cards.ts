@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { normalizeStorageUrl } from "../../../../lib/server/storage";
 
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
@@ -52,7 +53,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       },
     });
 
-    return res.status(200).json({ cards });
+    const normalized = cards.map((card) => ({
+      ...card,
+      imageUrl: normalizeStorageUrl(card.imageUrl),
+      thumbnailUrl: normalizeStorageUrl(card.thumbnailUrl),
+    }));
+
+    return res.status(200).json({ cards: normalized });
   } catch (error) {
     const { status, message } = toErrorResponse(error);
     return res.status(status).json({ message });

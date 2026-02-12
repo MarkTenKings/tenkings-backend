@@ -196,6 +196,33 @@ export async function uploadBuffer(
   return publicUrlFor(storageKey);
 }
 
+export function normalizeStorageUrl(input: string | null | undefined) {
+  if (!input) return input ?? null;
+  if (!/^https?:\/\//i.test(input)) {
+    return input;
+  }
+  try {
+    const url = new URL(input);
+    const host = url.host;
+    const publicHost = s3PublicBaseUrl ? new URL(s3PublicBaseUrl).host : null;
+    const matchesPublicHost = publicHost ? host === publicHost : false;
+    const matchesBucketHost =
+      s3Bucket && host.startsWith(`${s3Bucket}.`) && host.includes("digitaloceanspaces.com");
+    const matchesEndpointHost = s3Endpoint
+      ? host === s3Endpoint.replace(/^https?:\/\//, "").replace(/\/$/, "")
+      : false;
+
+    if (!matchesPublicHost && !matchesBucketHost && !matchesEndpointHost) {
+      return input;
+    }
+
+    url.pathname = url.pathname.toLowerCase();
+    return url.toString();
+  } catch {
+    return input;
+  }
+}
+
 function sanitizeFileName(input: string) {
   const normalized = input.trim().toLowerCase();
   const base = normalized.replace(/[^a-z0-9_.-]+/g, "-");
