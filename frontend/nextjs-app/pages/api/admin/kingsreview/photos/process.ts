@@ -77,43 +77,68 @@ const handler = async function handler(
       return res.status(403).json({ message: "You do not own this batch" });
     }
 
-    if (photo.backgroundRemovedAt) {
-      return res.status(200).json({ message: "Already processed", imageUrl: photo.imageUrl, thumbnailUrl: photo.thumbnailUrl ?? undefined });
-    }
-
-    const apiKey = (process.env.PHOTOROOM_API_KEY ?? "").trim();
-    if (!apiKey) {
-      return res.status(200).json({ message: "PhotoRoom not configured" });
-    }
+    const mode = typeof req.query.mode === "string" ? req.query.mode : "";
 
     const sourceBuffer = await readStorageBuffer(photo.storageKey);
-
-    const processedBuffer = await runPhotoroom(sourceBuffer, apiKey);
-    const updatedUrl = await uploadBuffer(photo.storageKey, processedBuffer, "image/png");
-    const normalizedUrl = /^https?:\/\//i.test(updatedUrl) ? updatedUrl : buildSiteUrl(updatedUrl);
-
     const thumbKey = buildThumbnailKey(photo.storageKey);
     let thumbnailUrl: string | null = null;
     try {
-      const thumbBuffer = await createThumbnailPng(processedBuffer);
+      const thumbBuffer = await createThumbnailPng(sourceBuffer);
       const thumbUploaded = await uploadBuffer(thumbKey, thumbBuffer, "image/png");
       thumbnailUrl = normalizeStorageUrl(thumbUploaded) ?? thumbUploaded;
     } catch {
       thumbnailUrl = null;
     }
 
+    if (mode === "thumbnail") {
+      if (thumbnailUrl) {
+        await prisma.cardPhoto.update({
+          where: { id: photo.id },
+          data: { thumbnailUrl },
+        });
+      }
+      return res.status(200).json({ message: "Thumbnail updated", thumbnailUrl: thumbnailUrl ?? undefined });
+    }
+
+    if (photo.backgroundRemovedAt) {
+      return res.status(200).json({ message: "Already processed", imageUrl: photo.imageUrl, thumbnailUrl: photo.thumbnailUrl ?? thumbnailUrl ?? undefined });
+    }
+
+    const apiKey = (process.env.PHOTOROOM_API_KEY ?? "").trim();
+    if (!apiKey) {
+      return res.status(200).json({ message: "PhotoRoom not configured", thumbnailUrl: thumbnailUrl ?? undefined });
+    }
+
+    const processedBuffer = await runPhotoroom(sourceBuffer, apiKey);
+    const updatedUrl = await uploadBuffer(photo.storageKey, processedBuffer, "image/png");
+    const normalizedUrl = /^https?:\/\//i.test(updatedUrl) ? updatedUrl : buildSiteUrl(updatedUrl);
+
+    const processedThumbKey = buildThumbnailKey(photo.storageKey);
+    let processedThumbnailUrl: string | null = null;
+    try {
+      const processedThumbBuffer = await createThumbnailPng(processedBuffer);
+      const processedThumbUploaded = await uploadBuffer(processedThumbKey, processedThumbBuffer, "image/png");
+      processedThumbnailUrl = normalizeStorageUrl(processedThumbUploaded) ?? processedThumbUploaded;
+    } catch {
+      processedThumbnailUrl = null;
+    }
+
     await prisma.cardPhoto.update({
       where: { id: photo.id },
       data: {
         imageUrl: normalizedUrl,
-        thumbnailUrl,
+        thumbnailUrl: processedThumbnailUrl ?? thumbnailUrl,
         mimeType: "image/png",
         fileSize: processedBuffer.length,
         backgroundRemovedAt: new Date(),
       },
     });
 
-    return res.status(200).json({ message: "Processed", imageUrl: normalizedUrl, thumbnailUrl: thumbnailUrl ?? undefined });
+    return res.status(200).json({
+      message: "Processed",
+      imageUrl: normalizedUrl,
+      thumbnailUrl: processedThumbnailUrl ?? thumbnailUrl ?? undefined,
+    });
   } catch (error) {
     const result = toErrorResponse(error);
     return res.status(result.status).json({ message: result.message });
