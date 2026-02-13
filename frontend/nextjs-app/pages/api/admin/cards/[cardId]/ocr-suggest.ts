@@ -73,6 +73,14 @@ function buildProxyUrl(req: NextApiRequest, targetUrl: string): string | null {
   return `${protocol}://${host}/api/public/ocr-image?url=${encodedUrl}&exp=${expires}&sig=${signature}`;
 }
 
+function pickImageUrl(primary?: string | null, thumbnail?: string | null): string | null {
+  const candidate = thumbnail ?? primary ?? null;
+  if (!candidate) {
+    return null;
+  }
+  return /^https?:\/\//i.test(candidate) ? candidate : null;
+}
+
 function sanitizeString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -134,20 +142,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   try {
-    const admin = await requireAdminSession(req);
+    await requireAdminSession(req);
     const { cardId } = req.query;
     if (typeof cardId !== "string" || !cardId.trim()) {
       return res.status(400).json({ message: "cardId is required" });
     }
 
     const card = await prisma.cardAsset.findFirst({
-      where: { id: cardId, batch: { uploadedById: admin.user.id } },
+      where: { id: cardId },
       select: {
         ocrText: true,
+        imageUrl: true,
+        thumbnailUrl: true,
         photos: {
-          where: { kind: "BACK" },
-          select: { imageUrl: true },
-          take: 1,
+          where: { kind: { in: ["BACK", "TILT"] } },
+          select: { kind: true, imageUrl: true, thumbnailUrl: true },
         },
       },
     });
@@ -156,11 +165,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(404).json({ message: "Card not found" });
     }
 
-    const rawBackImageUrl = card.photos?.[0]?.imageUrl ?? null;
-    const backImageUrl =
-      rawBackImageUrl && /^https?:\/\//i.test(rawBackImageUrl) ? rawBackImageUrl : null;
+    const frontImageUrl = pickImageUrl(card.imageUrl, card.thumbnailUrl);
+    const backPhoto = card.photos.find((photo) => photo.kind === "BACK");
+    const tiltPhoto = card.photos.find((photo) => photo.kind === "TILT");
+    const backImageUrl = pickImageUrl(backPhoto?.imageUrl, backPhoto?.thumbnailUrl);
+    const tiltImageUrl = pickImageUrl(tiltPhoto?.imageUrl, tiltPhoto?.thumbnailUrl);
+
+    const frontProxyUrl = frontImageUrl ? buildProxyUrl(req, frontImageUrl) : null;
     const backProxyUrl = backImageUrl ? buildProxyUrl(req, backImageUrl) : null;
-    if ((!card.ocrText || !card.ocrText.trim()) && !backImageUrl) {
+    const tiltProxyUrl = tiltImageUrl ? buildProxyUrl(req, tiltImageUrl) : null;
+
+    if ((!card.ocrText || !card.ocrText.trim()) && !frontProxyUrl && !backProxyUrl && !tiltProxyUrl) {
       return res.status(200).json({
         suggestions: {},
         threshold: DEFAULT_THRESHOLD,
@@ -199,7 +214,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     };
 
     const frontText = card.ocrText ?? "";
-    const prompt = `OCR TEXT (FRONT):\n${frontText}\n\nRules:\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.\n- Always attempt sport if OCR includes Baseball/MLB, Basketball/NBA, Football/NFL, Hockey/NHL, Soccer/FIFA.\n- Autograph=true if OCR shows AUTO/AUTOGRAPH/SIGNATURE.\n- Patch=true if OCR shows PATCH/JERSEY/RELIC/MEM.\n- Numbered should be like "3/10" when present.\n- If slab label shows grading (PSA, BGS, SGC, CGC), set graded=true and extract gradeCompany + gradeValue. Accept formats like "PSA 9" or "9 PSA".\n- A back image may be provided; use it for year/numbered/grade if needed.`;
+    const prompt = `OCR TEXT (FRONT):\n${frontText}\n\nRules:\n- Use the FRONT image as the primary source.\n- Use BACK image for year, card number, and product line if clearer.\n- Use TILT image to detect serial-numbered text like \"2/5\" or \"03/25\" if it is hard to see.\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.\n- Always attempt sport if OCR includes Baseball/MLB, Basketball/NBA, Football/NFL, Hockey/NHL, Soccer/FIFA.\n- Autograph=true if OCR shows AUTO/AUTOGRAPH/SIGNATURE.\n- Patch=true if OCR shows PATCH/JERSEY/RELIC/MEM.\n- Numbered should be like \"3/10\" when present.\n- If slab label shows grading (PSA, BGS, SGC, CGC), set graded=true and extract gradeCompany + gradeValue. Accept formats like \"PSA 9\" or \"9 PSA\".`;
 
     const openaiRes = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
@@ -218,7 +233,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             role: "user",
             content: [
               { type: "input_text", text: prompt },
+              ...(frontProxyUrl ? [{ type: "input_image", image_url: frontProxyUrl }] : []),
               ...(backProxyUrl ? [{ type: "input_image", image_url: backProxyUrl }] : []),
+              ...(tiltProxyUrl ? [{ type: "input_image", image_url: tiltProxyUrl }] : []),
             ],
           },
         ],

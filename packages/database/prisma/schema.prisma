@@ -541,6 +541,7 @@ model CardAsset {
   ocrJson                 Json?
   ocrSuggestionJson       Json?
   ocrSuggestionUpdatedAt  DateTime?
+  backgroundRemovedAt     DateTime?
   patternSignatureJson    Json?
   patternSignatureUpdatedAt DateTime?
   classificationJson      Json?
@@ -694,6 +695,7 @@ model CardPhoto {
   mimeType     String
   imageUrl     String
   thumbnailUrl String?
+  backgroundRemovedAt DateTime?
   createdById  String?
   createdAt    DateTime      @default(now())
 

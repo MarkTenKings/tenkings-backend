@@ -77,6 +77,10 @@ const handler = async function handler(
       return res.status(403).json({ message: "You do not own this batch" });
     }
 
+    if (photo.backgroundRemovedAt) {
+      return res.status(200).json({ message: "Already processed", imageUrl: photo.imageUrl, thumbnailUrl: photo.thumbnailUrl ?? undefined });
+    }
+
     const apiKey = (process.env.PHOTOROOM_API_KEY ?? "").trim();
     if (!apiKey) {
       return res.status(200).json({ message: "PhotoRoom not configured" });
@@ -100,7 +104,13 @@ const handler = async function handler(
 
     await prisma.cardPhoto.update({
       where: { id: photo.id },
-      data: { imageUrl: normalizedUrl, thumbnailUrl },
+      data: {
+        imageUrl: normalizedUrl,
+        thumbnailUrl,
+        mimeType: "image/png",
+        fileSize: processedBuffer.length,
+        backgroundRemovedAt: new Date(),
+      },
     });
 
     return res.status(200).json({ message: "Processed", imageUrl: normalizedUrl, thumbnailUrl: thumbnailUrl ?? undefined });

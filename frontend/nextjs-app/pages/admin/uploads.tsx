@@ -195,10 +195,13 @@ export default function AdminUploads() {
   const [streamVersion, setStreamVersion] = useState(0);
   const ocrSuggestRef = useRef(false);
   const ocrRetryRef = useRef(0);
+  const ocrRequestIdRef = useRef(0);
+  const ocrCardIdRef = useRef<string | null>(null);
   const ocrBackupRef = useRef<IntakeRequiredFields | null>(null);
   const ocrAppliedFieldsRef = useRef<OcrApplyField[]>([]);
   const ocrOptionalBackupRef = useRef<IntakeOptionalFields | null>(null);
   const ocrAppliedOptionalFieldsRef = useRef<(keyof IntakeOptionalFields)[]>([]);
+  const photoroomRequestedRef = useRef<string | null>(null);
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -637,6 +640,23 @@ export default function AdminUploads() {
     [apiBase]
   );
 
+  const resetOcrState = useCallback(() => {
+    setOcrStatus(null);
+    setOcrAudit(null);
+    setOcrApplied(false);
+    setOcrMode(null);
+    setOcrError(null);
+    ocrSuggestRef.current = false;
+    ocrRetryRef.current = 0;
+    ocrRequestIdRef.current = 0;
+    ocrCardIdRef.current = null;
+    ocrBackupRef.current = null;
+    ocrAppliedFieldsRef.current = [];
+    ocrOptionalBackupRef.current = null;
+    ocrAppliedOptionalFieldsRef.current = [];
+    photoroomRequestedRef.current = null;
+  }, []);
+
   const resetIntake = useCallback(() => {
     setIntakeStep("front");
     setIntakeRequired({
@@ -680,18 +700,8 @@ export default function AdminUploads() {
     setIntakeSuggested({});
     setIntakeTouched({});
     setIntakeOptionalTouched({});
-    setOcrStatus(null);
-    setOcrAudit(null);
-    setOcrApplied(false);
-    setOcrMode(null);
-    setOcrError(null);
-    ocrSuggestRef.current = false;
-    ocrRetryRef.current = 0;
-    ocrBackupRef.current = null;
-    ocrAppliedFieldsRef.current = [];
-    ocrOptionalBackupRef.current = null;
-    ocrAppliedOptionalFieldsRef.current = [];
-  }, []);
+    resetOcrState();
+  }, [resetOcrState]);
 
   const openIntakeCapture = useCallback(
     async (target: "front" | "back" | "tilt") => {
@@ -962,20 +972,6 @@ export default function AdminUploads() {
         throw new Error(text || "Failed to store file");
       }
 
-      try {
-        await fetch(resolveApiUrl("/api/admin/kingsreview/photos/process"), {
-          method: "POST",
-          mode: isRemoteApi ? "cors" : "same-origin",
-          headers: {
-            "Content-Type": "application/json",
-            ...buildAdminHeaders(token),
-          },
-          body: JSON.stringify({ photoId: presignPayload.photoId }),
-        });
-      } catch (error) {
-        console.warn("PhotoRoom processing failed for card photo", error);
-      }
-
       return presignPayload;
     },
     [intakeCardId, isRemoteApi, resolveApiUrl, session?.token]
@@ -1001,9 +997,16 @@ export default function AdminUploads() {
         setIntakeError(message);
       } finally {
         setIntakePhotoBusy(false);
+        if (intakeCardId) {
+          setTimeout(() => {
+            if (ocrCardIdRef.current === intakeCardId) {
+              void fetchOcrSuggestions(intakeCardId);
+            }
+          }, 300);
+        }
       }
     },
-    [uploadCardPhoto]
+    [fetchOcrSuggestions, intakeCardId, uploadCardPhoto]
   );
 
   useEffect(() => {
@@ -1038,18 +1041,19 @@ export default function AdminUploads() {
           setIntakeStep("back");
           setIntakeCaptureTarget("back");
           setIntakeTiltSkipped(false);
-          void (async () => {
-            try {
-              const presign = await uploadCardAsset(file);
-              setIntakeCardId(presign.assetId);
-              setIntakeBatchId(presign.batchId);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : "Failed to capture photo.";
-              setIntakeError(message);
-            } finally {
-              setIntakePhotoBusy(false);
-            }
-          })();
+        void (async () => {
+          try {
+            const presign = await uploadCardAsset(file);
+            setIntakeCardId(presign.assetId);
+            setIntakeBatchId(presign.batchId);
+            startOcrForCard(presign.assetId);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to capture photo.";
+            setIntakeError(message);
+          } finally {
+            setIntakePhotoBusy(false);
+          }
+        })();
         } else if (target === "back") {
           setIntakeBackPreview(URL.createObjectURL(blob));
           setIntakeStep("tilt");
@@ -1079,7 +1083,7 @@ export default function AdminUploads() {
         }
       }
     },
-    [closeCamera, intakeCardId, uploadCardAsset, uploadQueuedPhoto]
+    [closeCamera, intakeCardId, startOcrForCard, uploadCardAsset, uploadQueuedPhoto]
   );
 
   const handleCapture = useCallback(async () => {
@@ -1397,24 +1401,51 @@ export default function AdminUploads() {
     ]
   );
 
+  const triggerPhotoroomForCard = useCallback(
+    async (cardId: string) => {
+      if (!session?.token) {
+        return;
+      }
+      try {
+        await fetch(resolveApiUrl(`/api/admin/cards/${cardId}/photoroom`), {
+          method: "POST",
+          mode: isRemoteApi ? "cors" : "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            ...buildAdminHeaders(session.token),
+          },
+        });
+      } catch (error) {
+        console.warn("PhotoRoom background removal failed", error);
+      }
+    },
+    [isRemoteApi, resolveApiUrl, session?.token]
+  );
 
-  const fetchOcrSuggestions = useCallback(async () => {
+
+  const fetchOcrSuggestions = useCallback(async (cardId: string) => {
     if (!session?.token) {
       setOcrStatus("error");
       setOcrError("Your session expired. Sign in again and retry.");
       return;
     }
-    if (!intakeCardId) {
+    if (!cardId) {
       setOcrStatus("error");
       setOcrError("Card asset not ready yet. Wait a moment and retry.");
       return;
     }
+    const requestId = ocrRequestIdRef.current + 1;
+    ocrRequestIdRef.current = requestId;
+    ocrCardIdRef.current = cardId;
     try {
       setOcrStatus("running");
       setOcrError(null);
-      const res = await fetch(`/api/admin/cards/${intakeCardId}/ocr-suggest`, {
+      const res = await fetch(`/api/admin/cards/${cardId}/ocr-suggest`, {
         headers: buildAdminHeaders(session.token),
       });
+      if (ocrRequestIdRef.current !== requestId || ocrCardIdRef.current !== cardId) {
+        return;
+      }
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
         setOcrStatus("error");
@@ -1422,17 +1453,26 @@ export default function AdminUploads() {
         return;
       }
       const payload = await res.json();
+      if (ocrRequestIdRef.current !== requestId || ocrCardIdRef.current !== cardId) {
+        return;
+      }
       setOcrAudit(payload?.audit ?? null);
       if (payload?.status === "pending") {
         setOcrStatus("pending");
         if (ocrRetryRef.current < 6) {
           ocrRetryRef.current += 1;
           setTimeout(() => {
-            ocrSuggestRef.current = false;
-            void fetchOcrSuggestions();
+            if (ocrCardIdRef.current !== cardId) {
+              return;
+            }
+            void fetchOcrSuggestions(cardId);
           }, 1500);
         }
         return;
+      }
+      if (photoroomRequestedRef.current !== cardId) {
+        photoroomRequestedRef.current = cardId;
+        void triggerPhotoroomForCard(cardId);
       }
       const suggestions = payload?.suggestions ?? {};
       if (Object.keys(suggestions).length > 0) {
@@ -1449,7 +1489,24 @@ export default function AdminUploads() {
       setOcrError("OCR request failed");
       // ignore suggestion failures
     }
-  }, [applySuggestions, intakeCardId, session?.token]);
+  }, [applySuggestions, session?.token, triggerPhotoroomForCard]);
+
+  const startOcrForCard = useCallback(
+    (cardId: string) => {
+      if (!cardId) {
+        return;
+      }
+      if (!session?.token) {
+        setOcrStatus("error");
+        setOcrError("Your session expired. Sign in again and retry.");
+        return;
+      }
+      resetOcrState();
+      ocrSuggestRef.current = true;
+      void fetchOcrSuggestions(cardId);
+    },
+    [fetchOcrSuggestions, resetOcrState, session?.token]
+  );
 
   const buildSuggestionsFromAudit = useCallback(
     (threshold: number) => {
@@ -1479,7 +1536,12 @@ export default function AdminUploads() {
             return;
           }
         }
-        void fetchOcrSuggestions();
+        if (intakeCardId) {
+          void fetchOcrSuggestions(intakeCardId);
+        } else {
+          setOcrStatus("error");
+          setOcrError("Card asset not ready yet. Wait a moment and retry.");
+        }
         return;
       }
       applySuggestions(intakeSuggested);
@@ -1563,15 +1625,13 @@ export default function AdminUploads() {
   }, [applySuggestions, buildSuggestionsFromAudit, fetchOcrSuggestions, intakeSuggested, ocrApplied, ocrAudit, ocrStatus]);
 
   useEffect(() => {
-    if (intakeStep !== "required" || !intakeCardId) {
+    if (!intakeCardId) {
       return;
     }
-    if (ocrSuggestRef.current) {
-      return;
+    if (ocrCardIdRef.current && ocrCardIdRef.current !== intakeCardId) {
+      resetOcrState();
     }
-    ocrSuggestRef.current = true;
-    void fetchOcrSuggestions();
-  }, [fetchOcrSuggestions, intakeCardId, intakeStep]);
+  }, [intakeCardId, resetOcrState]);
 
   const ocrSummary = useMemo(() => {
     const confidence = (ocrAudit as { confidence?: Record<string, number | null> } | null)?.confidence ?? null;
