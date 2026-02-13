@@ -136,19 +136,20 @@ const patternBadgeClass = (tier: PatternTier) => {
 };
 
 const queueStatusMeta = (card: CardSummary) => {
-  const rawStatus = (card.status ?? "").toLowerCase();
-  const rawStage = (card.reviewStage ?? "").toLowerCase();
+  const rawStatus = (card.status ?? "").toLowerCase().trim();
+  const rawStage = (card.reviewStage ?? "").toLowerCase().trim();
+  const errorStates = new Set(["error", "failed", "failure", "ocr_failed", "bytebot_failed"]);
 
-  if (rawStatus.includes("error") || rawStatus.includes("fail")) {
+  if (errorStates.has(rawStatus) || rawStatus.endsWith("_error") || rawStatus.endsWith("_failed")) {
     return { label: "ERROR", className: "border-rose-400/50 bg-rose-500/20 text-rose-200" };
   }
-  if (rawStatus.includes("process") || rawStatus.includes("running") || rawStage.includes("bytebot_running")) {
+  if (rawStatus.includes("process") || rawStatus.includes("running") || rawStage === "bytebot_running") {
     return { label: "PROCESSING", className: "border-sky-400/50 bg-sky-500/20 text-sky-200" };
   }
-  if (rawStatus.includes("ready") || rawStage.includes("ready_for_human_review")) {
+  if (rawStatus.includes("ready") || rawStage === "ready_for_human_review") {
     return { label: "READY", className: "border-emerald-400/50 bg-emerald-500/20 text-emerald-200" };
   }
-  if (rawStatus.includes("queue") || rawStatus.includes("pend")) {
+  if (rawStatus.includes("queue") || rawStatus.includes("pend") || !rawStatus) {
     return { label: "QUEUED", className: "border-amber-400/40 bg-amber-500/15 text-amber-200" };
   }
   return { label: "", className: "" };
@@ -1274,6 +1275,51 @@ export default function KingsReview() {
             >
               {showTeach ? "Hide Teach" : "Teach"}
             </button>
+            <div className="flex min-w-[320px] flex-1 flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-night-950/50 p-2">
+              <input
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setQueryTouched(true);
+                }}
+                placeholder="Search query"
+                className="min-w-[180px] flex-1 rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-slate-200"
+              />
+              <button
+                type="button"
+                onClick={handleEnqueue}
+                disabled={enqueueing}
+                className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 disabled:opacity-60"
+              >
+                {enqueueing ? "Running…" : "Generate Comps"}
+              </button>
+              {(sources.length ? sources : [{ source: "ebay_sold" } as { source: string }]).map((source) => (
+                <button
+                  key={source.source}
+                  type="button"
+                  onClick={() => {
+                    setActiveSource(source.source);
+                    setActiveCompIndex(null);
+                  }}
+                  className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.3em] transition ${
+                    activeSourceData?.source === source.source
+                      ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
+                      : "border-white/10 text-slate-400"
+                  }`}
+                >
+                  {SOURCE_LABELS[source.source] ?? source.source}
+                </button>
+              ))}
+              {activeSourceData && (
+                <button
+                  type="button"
+                  onClick={handleAttachSearch}
+                  className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
+                >
+                  Attach Search
+                </button>
+              )}
+            </div>
             <button
               type="button"
               onClick={() => {
@@ -1398,21 +1444,21 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:h-full lg:grid-cols-[1fr_2fr_2fr]">
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
+        <div className="grid flex-1 min-h-0 overflow-hidden gap-4 md:gap-5 xl:gap-6 lg:grid-cols-[1fr_2fr_2fr]">
+          <section
+            className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain"
+            onScroll={(event) => {
+              const target = event.currentTarget;
+              if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
+                loadMoreCards().catch(() => undefined);
+              }
+            }}
+          >
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
               <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
             </div>
-            <div
-              className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2"
-              onScroll={(event) => {
-                const target = event.currentTarget;
-                if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
-                  loadMoreCards().catch(() => undefined);
-                }
-              }}
-            >
+            <div className="rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2">
               {cards.map((card) => {
                 const status = queueStatusMeta(card);
                 return (
@@ -1464,7 +1510,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -1713,11 +1759,11 @@ export default function KingsReview() {
                     </label>
                     <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
                       <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Attached Evidence</p>
-                      <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
+                      <div className="mt-3 space-y-2">
                         {evidenceItems.map((item) => (
                           <div
                             key={item.id}
-                            className="grid grid-cols-[96px_1fr] gap-3 rounded-2xl border border-white/20 bg-black/90 p-2.5 text-xs text-white sm:grid-cols-[120px_1fr]"
+                            className="grid h-[150px] grid-cols-[96px_1fr] gap-3 rounded-2xl border border-white/20 bg-black/90 p-2.5 text-xs text-white sm:grid-cols-[120px_1fr]"
                           >
                             <div className="mx-auto w-full aspect-[9/16] overflow-hidden rounded-xl border border-white/20 bg-black">
                               {item.screenshotUrl ? (
@@ -2043,7 +2089,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
             <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-0 lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
               <div className="flex items-center justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
@@ -2059,60 +2105,11 @@ export default function KingsReview() {
                 )}
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-                <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Search Query</p>
-                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <input
-                    value={query}
-                    onChange={(event) => {
-                      setQuery(event.target.value);
-                      setQueryTouched(true);
-                    }}
-                    className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-slate-200"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleEnqueue}
-                    disabled={enqueueing}
-                    className="w-full rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 disabled:opacity-60 sm:w-auto"
-                  >
-                    {enqueueing ? "Running…" : "Generate Comps"}
-                  </button>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-2">
-                  {sources.map((source) => (
-                    <button
-                      key={source.source}
-                      type="button"
-                      onClick={() => {
-                        setActiveSource(source.source);
-                        setActiveCompIndex(null);
-                      }}
-                      className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.3em] transition ${
-                        activeSourceData?.source === source.source
-                          ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
-                          : "border-white/10 text-slate-400"
-                      }`}
-                    >
-                      {SOURCE_LABELS[source.source] ?? source.source}
-                    </button>
-                  ))}
-                  {activeSourceData && (
-                    <button
-                      type="button"
-                      onClick={handleAttachSearch}
-                      className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
-                    >
-                      Attach Search
-                    </button>
-                  )}
-                </div>
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
                 <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Selected Comp</p>
                 {activeComp ? (
                   <div className="mt-3 space-y-3">
                     <div className="grid gap-3">
-                      <div className="mx-auto w-full aspect-[4/5] overflow-hidden rounded-xl border border-white/20 bg-black">
+                      <div className="mx-auto w-[78%] aspect-[4/5] overflow-hidden rounded-xl border border-white/20 bg-black lg:w-[68%]">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         {activeComp.listingImageUrl || activeComp.screenshotUrl ? (
                           <img
@@ -2161,7 +2158,7 @@ export default function KingsReview() {
                 )}
               </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
+            <div className="flex-1 min-h-0 rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
               )}
@@ -2173,7 +2170,7 @@ export default function KingsReview() {
                       key={`${comp.url}-${index}`}
                       type="button"
                       onClick={() => setActiveCompIndex(index)}
-                      className={`relative w-full overflow-hidden rounded-2xl border p-2.5 text-left transition md:p-3 ${
+                      className={`relative h-[150px] w-full overflow-hidden rounded-2xl border p-2.5 text-left transition md:p-3 ${
                         activeCompIndex === index
                           ? "border-emerald-400/60 bg-emerald-500/10 shadow-[0_0_0_1px_rgba(52,211,153,0.2)]"
                           : "border-white/20 bg-black/90 hover:-translate-y-0.5 hover:border-white/40"
