@@ -977,6 +977,39 @@ export default function AdminUploads() {
     [intakeCardId, isRemoteApi, resolveApiUrl, session?.token]
   );
 
+  useEffect(() => {
+    if (!intakeCardId) {
+      return;
+    }
+    if (pendingBackBlob) {
+      const blob = pendingBackBlob;
+      setPendingBackBlob(null);
+      void uploadQueuedPhoto(blob, "BACK");
+    }
+    if (pendingTiltBlob) {
+      const blob = pendingTiltBlob;
+      setPendingTiltBlob(null);
+      void uploadQueuedPhoto(blob, "TILT");
+    }
+  }, [intakeCardId, pendingBackBlob, pendingTiltBlob, uploadQueuedPhoto]);
+
+  const startOcrForCard = useCallback(
+    (cardId: string) => {
+      if (!cardId) {
+        return;
+      }
+      if (!session?.token) {
+        setOcrStatus("error");
+        setOcrError("Your session expired. Sign in again and retry.");
+        return;
+      }
+      resetOcrState();
+      ocrSuggestRef.current = true;
+      void fetchOcrSuggestions(cardId);
+    },
+    [fetchOcrSuggestions, resetOcrState, session?.token]
+  );
+
   const confirmIntakeCapture = useCallback(
     async (target: "front" | "back" | "tilt", blob: Blob) => {
       try {
@@ -993,19 +1026,19 @@ export default function AdminUploads() {
           setIntakeStep("back");
           setIntakeCaptureTarget("back");
           setIntakeTiltSkipped(false);
-        void (async () => {
-          try {
-            const presign = await uploadCardAsset(file);
-            setIntakeCardId(presign.assetId);
-            setIntakeBatchId(presign.batchId);
-            startOcrForCard(presign.assetId);
-          } catch (error) {
-            const message = error instanceof Error ? error.message : "Failed to capture photo.";
-            setIntakeError(message);
-          } finally {
-            setIntakePhotoBusy(false);
-          }
-        })();
+          void (async () => {
+            try {
+              const presign = await uploadCardAsset(file);
+              setIntakeCardId(presign.assetId);
+              setIntakeBatchId(presign.batchId);
+              startOcrForCard(presign.assetId);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Failed to capture photo.";
+              setIntakeError(message);
+            } finally {
+              setIntakePhotoBusy(false);
+            }
+          })();
         } else if (target === "back") {
           setIntakeBackPreview(URL.createObjectURL(blob));
           setIntakeStep("tilt");
@@ -1037,22 +1070,6 @@ export default function AdminUploads() {
     },
     [closeCamera, intakeCardId, startOcrForCard, uploadCardAsset, uploadQueuedPhoto]
   );
-
-  useEffect(() => {
-    if (!intakeCardId) {
-      return;
-    }
-    if (pendingBackBlob) {
-      const blob = pendingBackBlob;
-      setPendingBackBlob(null);
-      void uploadQueuedPhoto(blob, "BACK");
-    }
-    if (pendingTiltBlob) {
-      const blob = pendingTiltBlob;
-      setPendingTiltBlob(null);
-      void uploadQueuedPhoto(blob, "TILT");
-    }
-  }, [intakeCardId, pendingBackBlob, pendingTiltBlob, uploadQueuedPhoto]);
 
   const handleCapture = useCallback(async () => {
     if (captureLocked) {
@@ -1489,23 +1506,6 @@ export default function AdminUploads() {
       }
     },
     [fetchOcrSuggestions, intakeCardId, uploadCardPhoto]
-  );
-
-  const startOcrForCard = useCallback(
-    (cardId: string) => {
-      if (!cardId) {
-        return;
-      }
-      if (!session?.token) {
-        setOcrStatus("error");
-        setOcrError("Your session expired. Sign in again and retry.");
-        return;
-      }
-      resetOcrState();
-      ocrSuggestRef.current = true;
-      void fetchOcrSuggestions(cardId);
-    },
-    [fetchOcrSuggestions, resetOcrState, session?.token]
   );
 
   const buildSuggestionsFromAudit = useCallback(
