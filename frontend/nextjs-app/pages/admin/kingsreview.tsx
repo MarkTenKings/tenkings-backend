@@ -1193,7 +1193,7 @@ export default function KingsReview() {
     }
 
     return (
-      <div className="flex h-full flex-col gap-6 px-6 py-8">
+      <div className="flex h-full flex-col gap-6 px-6 py-8 lg:overflow-hidden">
         <header className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
@@ -1360,8 +1360,8 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:grid-cols-[1.05fr_1.45fr_1.15fr]">
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0">
+        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:h-[calc(100vh-260px)] lg:min-h-[640px] lg:grid-cols-[1.05fr_1.45fr_1.15fr]">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
               <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
@@ -1420,8 +1420,8 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-2">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto">
+            <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
                 <button
@@ -2065,7 +2065,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
             <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-3 lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
               <div className="flex items-center justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
@@ -2106,7 +2106,7 @@ export default function KingsReview() {
                 {activeComp ? (
                   <div className="mt-3 space-y-3">
                     <div className="grid gap-3 md:grid-cols-2">
-                      <div className="mx-auto w-full max-w-[180px] aspect-[4/5] overflow-hidden rounded-xl border border-white/20 bg-black sm:w-[90%] sm:max-w-none sm:aspect-[9/16]">
+                      <div className="mx-auto w-[90%] aspect-[4/5] overflow-hidden rounded-xl border border-white/20 bg-black">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         {activeComp.listingImageUrl || activeComp.screenshotUrl ? (
                           <img
