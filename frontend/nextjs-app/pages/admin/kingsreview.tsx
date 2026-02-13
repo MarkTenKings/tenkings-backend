@@ -1193,7 +1193,7 @@ export default function KingsReview() {
     }
 
     return (
-      <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:h-full lg:flex-1 lg:gap-6 lg:overflow-hidden">
+      <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:h-full lg:flex-1 lg:gap-6">
         <header className="shrink-0 flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
@@ -1360,7 +1360,7 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:h-full lg:grid-cols-[1.05fr_1.45fr_1.15fr]">
+        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:max-h-[calc(100dvh-230px)] lg:grid-cols-[1.05fr_1.45fr_1.15fr]">
           <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
@@ -1368,7 +1368,7 @@ export default function KingsReview() {
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto pr-1 md:pr-2">
               <div
-                className="h-[42vh] overflow-auto rounded-2xl border border-white/10 bg-night-950/50 p-2 lg:h-full"
+                className="h-[42vh] overflow-y-scroll rounded-2xl border border-white/10 bg-night-950/50 p-2 lg:h-full"
                 onScroll={(event) => {
                   const target = event.currentTarget;
                   if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
@@ -2155,7 +2155,7 @@ export default function KingsReview() {
                 )}
               </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
+            <div className="flex-1 min-h-0 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
               )}
