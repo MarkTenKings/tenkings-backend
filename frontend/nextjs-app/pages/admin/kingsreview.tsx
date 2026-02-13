@@ -1446,7 +1446,7 @@ export default function KingsReview() {
 
         <div className="grid flex-1 min-h-0 overflow-hidden gap-4 md:gap-5 xl:gap-6 lg:grid-cols-[1fr_2fr_2fr]">
           <section
-            className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain"
+            className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:h-[2700px] lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain"
             onScroll={(event) => {
               const target = event.currentTarget;
               if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
@@ -1510,7 +1510,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:h-[2700px] lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -2089,7 +2089,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:h-[2700px] lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
             <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-0 lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
               <div className="flex items-center justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
