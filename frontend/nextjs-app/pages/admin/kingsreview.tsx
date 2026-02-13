@@ -295,7 +295,6 @@ export default function KingsReview() {
   const sources = job?.result?.sources ?? [];
   const activeSourceData = sources.find((source) => source.source === activeSource) ?? sources[0] ?? null;
   const comps = activeSourceData?.comps ?? [];
-  const activeComp = activeCompIndex !== null ? comps[activeCompIndex] : comps[0] ?? null;
   const normalizeCompUrl = useCallback((value: string | null | undefined) => {
     if (!value) {
       return "";
@@ -1247,7 +1246,20 @@ export default function KingsReview() {
     return (
       <div className="flex h-screen flex-1 flex-col gap-3 overflow-hidden bg-gold-500/90 px-4 py-4 sm:px-6 lg:px-[50px]">
         <header className="shrink-0">
-          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-black/30 bg-night-950/80 p-2">
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black p-2">
+            <Link
+              href="/admin/uploads"
+              className="inline-flex rounded-full border border-white/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
+            >
+              ← Add Cards
+            </Link>
+            <p className="hidden px-2 font-heading text-sm uppercase tracking-[0.24em] text-gold-300 lg:block">KingsReview</p>
+            <Link
+              href="/admin/inventory-ready"
+              className="inline-flex rounded-full border border-white/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
+            >
+              Inventory Ready →
+            </Link>
             {STAGES.map((item) => (
               <button
                 key={item.id}
@@ -1442,9 +1454,9 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden lg:flex-row lg:items-stretch lg:justify-between">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:h-[calc(100vh-118px)] lg:flex-row lg:items-stretch lg:justify-center lg:gap-6">
           <section
-            className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-black/40 bg-night-950 p-3 md:gap-4 md:rounded-3xl lg:w-[333px]"
+            className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]"
             onScroll={(event) => {
               const target = event.currentTarget;
               if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
@@ -1508,7 +1520,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-black/40 bg-night-950 p-3 md:gap-4 md:rounded-3xl lg:w-[333px]">
+          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -2101,91 +2113,37 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-black/40 bg-night-950 p-3 md:gap-4 md:rounded-3xl lg:w-[333px]">
-            <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-0 lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
-              <div className="flex items-center justify-between">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
-                {activeSourceData?.searchUrl && (
-                  <a
-                    href={activeSourceData.searchUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[10px] uppercase tracking-[0.3em] text-sky-300"
-                  >
-                    Open Search
-                  </a>
-                )}
-              </div>
-              <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-                <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Selected Comp</p>
-                {activeComp ? (
-                  <div className="mt-3 space-y-3">
-                    <div className="grid gap-3">
-                      <div className="mx-auto w-full max-w-[300px] aspect-[4/5] overflow-hidden rounded-xl border border-white/20 bg-black">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        {activeComp.listingImageUrl || activeComp.screenshotUrl ? (
-                          <img
-                            src={activeComp.listingImageUrl ?? activeComp.screenshotUrl}
-                            alt={activeComp.title ?? "Selected comp"}
-                            className="h-full w-full object-contain"
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : null}
-                      </div>
-                      <div className="flex flex-col justify-between gap-2 text-white">
-                        <div>
-                          <div className="text-lg font-bold text-emerald-400 md:text-xl">{activeComp.price ?? "—"}</div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
-                            {activeComp.soldDate ? `Sold ${activeComp.soldDate}` : ""}
-                          </div>
-                        </div>
-                        <div className="line-clamp-2 text-xs">{activeComp.title ?? activeComp.url}</div>
-                        {activeComp.patternMatch && (
-                          <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
-                            Pattern {activeComp.patternMatch.tier}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                      <a
-                        href={activeComp.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="w-full rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-300 sm:w-auto"
-                      >
-                        Open Listing
-                      </a>
-                      <button
-                        type="button"
-                        onClick={() => handleAttachComp(activeComp, "SOLD_COMP")}
-                        className="w-full rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-emerald-200 sm:w-auto"
-                      >
-                        Attach to Card
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-3 text-xs text-slate-500">Select a comp to preview.</div>
-                )}
-              </div>
+          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
+              {activeSourceData?.searchUrl && (
+                <a
+                  href={activeSourceData.searchUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] uppercase tracking-[0.3em] text-sky-300"
+                >
+                  Open Search
+                </a>
+              )}
             </div>
-            <div className="flex-1 min-h-0 rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
+            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
               )}
               <div className="space-y-2">
                 {comps.map((comp, index) => {
                   const compAttached = attachedCompKeys.has(normalizeCompUrl(comp.url));
+                  const isExpanded = activeCompIndex === index;
                   return (
                     <button
                       key={`${comp.url}-${index}`}
                       type="button"
-                      onClick={() => setActiveCompIndex(index)}
-                      className={`relative h-[150px] w-full overflow-hidden rounded-2xl border p-2.5 text-left transition md:p-3 ${
-                        activeCompIndex === index
-                          ? "border-emerald-400/60 bg-emerald-500/10 shadow-[0_0_0_1px_rgba(52,211,153,0.2)]"
-                          : "border-white/20 bg-black/90 hover:-translate-y-0.5 hover:border-white/40"
+                      onClick={() => setActiveCompIndex((prev) => (prev === index ? null : index))}
+                      className={`relative w-full overflow-hidden rounded-2xl border p-2.5 text-left transition md:p-3 ${
+                        isExpanded
+                          ? "h-[360px] border-emerald-400/60 bg-emerald-500/10 shadow-[0_0_0_1px_rgba(52,211,153,0.2)]"
+                          : "h-[150px] border-white/20 bg-black/90 hover:-translate-y-0.5 hover:border-white/40"
                       }`}
                     >
                       {compAttached && (
@@ -2196,33 +2154,79 @@ export default function KingsReview() {
                           </span>
                         </div>
                       )}
-                      <div className="grid h-full grid-cols-[96px_1fr] gap-3 sm:grid-cols-[120px_1fr]">
-                        <div className="mx-auto h-full w-full max-w-[96px] overflow-hidden rounded-xl border border-white/20 bg-black sm:max-w-[120px]">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          {comp.listingImageUrl || comp.screenshotUrl ? (
-                            <img
-                              src={comp.listingImageUrl ?? comp.screenshotUrl}
-                              alt={comp.title ?? "Comp"}
-                              className="h-full w-full object-contain p-3"
-                              referrerPolicy="no-referrer"
-                            />
-                          ) : null}
-                        </div>
-                        <div className="flex flex-col justify-between gap-2 text-white">
-                          <div>
-                            <div className="text-lg font-bold text-emerald-400 md:text-xl">{comp.price ?? "—"}</div>
-                            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
-                              {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
+                      {isExpanded ? (
+                        <div className="grid h-full grid-rows-[1fr_auto] gap-3 text-white">
+                          <div className="mx-auto w-full max-w-[300px] overflow-hidden rounded-xl border border-white/20 bg-black">
+                            {(comp.listingImageUrl || comp.screenshotUrl) && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={comp.listingImageUrl ?? comp.screenshotUrl}
+                                alt={comp.title ?? "Comp"}
+                                className="h-full w-full object-contain p-2"
+                                referrerPolicy="no-referrer"
+                              />
+                            )}
+                          </div>
+                          <div className="space-y-2">
+                            <div>
+                              <div className="text-lg font-bold text-emerald-400 md:text-xl">{comp.price ?? "—"}</div>
+                              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
+                                {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
+                              </div>
+                            </div>
+                            <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
+                            <div className="flex flex-wrap gap-2">
+                              <a
+                                href={comp.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="rounded-full border border-white/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-slate-300"
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                Open Listing
+                              </a>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void handleAttachComp(comp, "SOLD_COMP");
+                                }}
+                                className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
+                              >
+                                Attach to Card
+                              </button>
                             </div>
                           </div>
-                          <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
-                          {comp.patternMatch && (
-                            <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
-                              Pattern {comp.patternMatch.tier}
-                            </div>
-                          )}
                         </div>
-                      </div>
+                      ) : (
+                        <div className="grid h-full grid-cols-[96px_1fr] gap-3 sm:grid-cols-[120px_1fr]">
+                          <div className="mx-auto h-full w-full max-w-[96px] overflow-hidden rounded-xl border border-white/20 bg-black sm:max-w-[120px]">
+                            {(comp.listingImageUrl || comp.screenshotUrl) && (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={comp.listingImageUrl ?? comp.screenshotUrl}
+                                alt={comp.title ?? "Comp"}
+                                className="h-full w-full object-contain p-3"
+                                referrerPolicy="no-referrer"
+                              />
+                            )}
+                          </div>
+                          <div className="flex flex-col justify-between gap-2 text-white">
+                            <div>
+                              <div className="text-lg font-bold text-emerald-400 md:text-xl">{comp.price ?? "—"}</div>
+                              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
+                                {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
+                              </div>
+                            </div>
+                            <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
+                            {comp.patternMatch && (
+                              <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
+                                Pattern {comp.patternMatch.tier}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </button>
                   );
                 })}
