@@ -110,6 +110,9 @@ const handler = async function handler(
       return res.status(200).json({ message: "PhotoRoom not configured", thumbnailUrl: thumbnailUrl ?? undefined });
     }
 
+    let processedImageUrl: string | null = null;
+    let processedThumbUrl: string | null = null;
+
     await photoroomQueue.run(async () => {
       const processedBuffer = await runPhotoroom(sourceBuffer, apiKey);
       const updatedUrl = await uploadBuffer(photo.storageKey, processedBuffer, "image/png");
@@ -135,12 +138,15 @@ const handler = async function handler(
           backgroundRemovedAt: new Date(),
         },
       });
+
+      processedImageUrl = normalizedUrl;
+      processedThumbUrl = processedThumbnailUrl ?? thumbnailUrl ?? null;
     });
 
     return res.status(200).json({
       message: "Processed",
-      imageUrl: normalizedUrl,
-      thumbnailUrl: processedThumbnailUrl ?? thumbnailUrl ?? undefined,
+      imageUrl: processedImageUrl ?? photo.imageUrl,
+      thumbnailUrl: processedThumbUrl ?? undefined,
     });
   } catch (error) {
     const result = toErrorResponse(error);
