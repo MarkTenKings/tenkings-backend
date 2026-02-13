@@ -368,6 +368,36 @@ export default function KingsReview() {
   const aiMessage = job?.status === "IN_PROGRESS" ? AI_STATUS_MESSAGES[aiMessageIndex] : null;
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const html = document.documentElement;
+    const body = document.body;
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+
+    const applyDesktopOverflow = () => {
+      if (mq.matches) {
+        html.style.overflow = "hidden";
+        body.style.overflow = "hidden";
+      } else {
+        html.style.overflow = prevHtmlOverflow;
+        body.style.overflow = prevBodyOverflow;
+      }
+    };
+
+    applyDesktopOverflow();
+    const onChange = () => applyDesktopOverflow();
+    mq.addEventListener("change", onChange);
+    return () => {
+      mq.removeEventListener("change", onChange);
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!session || !isAdmin) {
       return;
     }
@@ -1765,7 +1795,7 @@ export default function KingsReview() {
                             key={item.id}
                             className="grid h-[150px] grid-cols-[96px_1fr] gap-3 rounded-2xl border border-white/20 bg-black/90 p-2.5 text-xs text-white sm:grid-cols-[120px_1fr]"
                           >
-                            <div className="mx-auto w-full aspect-[9/16] overflow-hidden rounded-xl border border-white/20 bg-black">
+                            <div className="mx-auto h-full w-full max-w-[96px] overflow-hidden rounded-xl border border-white/20 bg-black sm:max-w-[120px]">
                               {item.screenshotUrl ? (
                                 <img
                                   src={item.screenshotUrl}
@@ -2184,8 +2214,8 @@ export default function KingsReview() {
                           </span>
                         </div>
                       )}
-                      <div className="grid grid-cols-[96px_1fr] gap-3 sm:grid-cols-[120px_1fr]">
-                        <div className="mx-auto w-full aspect-[9/16] overflow-hidden rounded-xl border border-white/20 bg-black">
+                      <div className="grid h-full grid-cols-[96px_1fr] gap-3 sm:grid-cols-[120px_1fr]">
+                        <div className="mx-auto h-full w-full max-w-[96px] overflow-hidden rounded-xl border border-white/20 bg-black sm:max-w-[120px]">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           {comp.listingImageUrl || comp.screenshotUrl ? (
                             <img
