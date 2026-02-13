@@ -977,38 +977,6 @@ export default function AdminUploads() {
     [intakeCardId, isRemoteApi, resolveApiUrl, session?.token]
   );
 
-  const uploadQueuedPhoto = useCallback(
-    async (blob: Blob, kind: "BACK" | "TILT") => {
-      const mime = blob.type || "image/jpeg";
-      const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const fileName = `intake-${kind.toLowerCase()}-${timestamp}.${extension}`;
-      const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
-      setIntakePhotoBusy(true);
-      try {
-        const presign = await uploadCardPhoto(file, kind);
-        if (kind === "BACK") {
-          setIntakeBackPhotoId(presign.photoId);
-        } else {
-          setIntakeTiltPhotoId(presign.photoId);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to upload photo.";
-        setIntakeError(message);
-      } finally {
-        setIntakePhotoBusy(false);
-        if (intakeCardId) {
-          setTimeout(() => {
-            if (ocrCardIdRef.current === intakeCardId) {
-              void fetchOcrSuggestions(intakeCardId);
-            }
-          }, 300);
-        }
-      }
-    },
-    [fetchOcrSuggestions, intakeCardId, uploadCardPhoto]
-  );
-
   useEffect(() => {
     if (!intakeCardId) {
       return;
@@ -1490,6 +1458,38 @@ export default function AdminUploads() {
       // ignore suggestion failures
     }
   }, [applySuggestions, session?.token, triggerPhotoroomForCard]);
+
+  const uploadQueuedPhoto = useCallback(
+    async (blob: Blob, kind: "BACK" | "TILT") => {
+      const mime = blob.type || "image/jpeg";
+      const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+      const fileName = `intake-${kind.toLowerCase()}-${timestamp}.${extension}`;
+      const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
+      setIntakePhotoBusy(true);
+      try {
+        const presign = await uploadCardPhoto(file, kind);
+        if (kind === "BACK") {
+          setIntakeBackPhotoId(presign.photoId);
+        } else {
+          setIntakeTiltPhotoId(presign.photoId);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to upload photo.";
+        setIntakeError(message);
+      } finally {
+        setIntakePhotoBusy(false);
+        if (intakeCardId) {
+          setTimeout(() => {
+            if (ocrCardIdRef.current === intakeCardId) {
+              void fetchOcrSuggestions(intakeCardId);
+            }
+          }, 300);
+        }
+      }
+    },
+    [fetchOcrSuggestions, intakeCardId, uploadCardPhoto]
+  );
 
   const startOcrForCard = useCallback(
     (cardId: string) => {
