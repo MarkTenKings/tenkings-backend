@@ -275,6 +275,25 @@ export default function KingsReview() {
   const activeSourceData = sources.find((source) => source.source === activeSource) ?? sources[0] ?? null;
   const comps = activeSourceData?.comps ?? [];
   const activeComp = activeCompIndex !== null ? comps[activeCompIndex] : comps[0] ?? null;
+  const normalizeCompUrl = useCallback((value: string | null | undefined) => {
+    if (!value) {
+      return "";
+    }
+    try {
+      const parsed = new URL(value);
+      return `${parsed.hostname.toLowerCase()}${parsed.pathname.replace(/\/+$/, "").toLowerCase()}`;
+    } catch {
+      return value.trim().toLowerCase();
+    }
+  }, []);
+  const attachedCompKeys = useMemo(() => {
+    return new Set(
+      evidenceItems
+        .filter((item) => item.kind === "SOLD_COMP")
+        .map((item) => normalizeCompUrl(item.url))
+        .filter(Boolean)
+    );
+  }, [evidenceItems, normalizeCompUrl]);
   const rulesForActiveSource = playbookRules.filter(
     (rule) => rule.source === (activeSourceData?.source ?? teachForm.source)
   );
@@ -1193,7 +1212,7 @@ export default function KingsReview() {
     }
 
     return (
-      <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:h-full lg:flex-1 lg:gap-6">
+      <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:flex-1 lg:gap-6">
         <header className="shrink-0 flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
@@ -1360,8 +1379,8 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:h-[calc(100dvh-230px)] lg:min-h-[640px] lg:grid-cols-[1.05fr_1.45fr_1.15fr]">
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
+        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:h-[calc(100dvh-220px)] lg:min-h-[650px] lg:grid-cols-[1fr_2fr_2fr]">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:h-[calc(100dvh-220px)] lg:overflow-hidden">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
               <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
@@ -1418,7 +1437,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:h-[calc(100dvh-220px)] lg:overflow-y-auto">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -1478,7 +1497,7 @@ export default function KingsReview() {
                       className="h-full w-full object-cover"
                     />
                   </div>
-                  <div className="grid gap-3 md:grid-cols-3">
+                  <div className="mx-auto grid w-[78%] gap-2 md:grid-cols-3 lg:w-[68%]">
                     {[
                       {
                         label: "Front",
@@ -1510,7 +1529,7 @@ export default function KingsReview() {
                         }`}
                       >
                         <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">{photo.label}</p>
-                        <div className="mt-2 aspect-[4/5] overflow-hidden rounded-xl border border-white/10 bg-night-900">
+                        <div className="mt-2 aspect-[3/2] overflow-hidden rounded-xl border border-white/10 bg-night-900">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           {photo.url ? (
                             <img
@@ -1667,32 +1686,32 @@ export default function KingsReview() {
                     </label>
                     <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
                       <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Attached Evidence</p>
-                      <div className="mt-3 space-y-3">
+                      <div className="mt-3 max-h-[420px] space-y-2 overflow-y-auto pr-1">
                         {evidenceItems.map((item) => (
                           <div
                             key={item.id}
-                            className="grid gap-3 rounded-2xl border border-white/20 bg-black/90 p-3 text-xs text-white md:grid-cols-2"
+                            className="grid grid-cols-[96px_1fr] gap-3 rounded-2xl border border-white/20 bg-black/90 p-2.5 text-xs text-white sm:grid-cols-[120px_1fr]"
                           >
-                            <div className="mx-auto w-[90%] aspect-[9/16] overflow-hidden rounded-xl border border-white/20 bg-black">
+                            <div className="mx-auto w-full aspect-[9/16] overflow-hidden rounded-xl border border-white/20 bg-black">
                               {item.screenshotUrl ? (
                                 <img
                                   src={item.screenshotUrl}
                                   alt={item.title ?? "Evidence"}
-                                  className="h-full w-full object-contain p-3"
+                                  className="h-full w-full object-contain p-2"
                                   referrerPolicy="no-referrer"
                                 />
                               ) : null}
                             </div>
-                            <div className="flex flex-col justify-between gap-2">
+                            <div className="flex min-h-[120px] flex-col justify-between gap-2">
                               <div>
-                                <div className="text-xl font-bold text-emerald-400">
+                                <div className="text-lg font-bold text-emerald-400">
                                   {item.price ?? "—"}
                                 </div>
-                                <div className="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-300">
+                                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300">
                                   {item.soldDate ? `Sold ${item.soldDate}` : ""}
                                 </div>
                               </div>
-                              <div className="text-xs text-white">
+                              <div className="line-clamp-2 text-xs text-white">
                                 {item.title ?? item.url}
                               </div>
                               <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.3em]">
@@ -1992,78 +2011,12 @@ export default function KingsReview() {
                 </div>
               )}
             </div>
-            <div className="flex flex-wrap gap-2">
-              {sources.map((source) => (
-                <button
-                  key={source.source}
-                  type="button"
-                  onClick={() => {
-                    setActiveSource(source.source);
-                    setActiveCompIndex(null);
-                  }}
-                  className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.3em] transition ${
-                    activeSourceData?.source === source.source
-                      ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
-                      : "border-white/10 text-slate-400"
-                  }`}
-                >
-                  {SOURCE_LABELS[source.source] ?? source.source}
-                </button>
-              ))}
-            </div>
-            {activeSourceData && (
-              <div className="flex flex-wrap items-center gap-2">
-                {activeSourceData.searchScreenshotUrl && (
-                  <a
-                    href={activeSourceData.searchScreenshotUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-300"
-                  >
-                    Open Image
-                  </a>
-                )}
-                <button
-                  type="button"
-                  onClick={handleAttachSearch}
-                  className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
-                >
-                  Attach Search
-                </button>
-              </div>
-            )}
-            <div className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-night-950/60 p-3">
-              {activeSourceData ? (
-                <div style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }}>
-                  {activeSourceData.error && (
-                    <div className="mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-                      {activeSourceData.error}
-                    </div>
-                  )}
-                  {activeSourceData.searchScreenshotUrl ? (
-                    <>
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={activeSourceData.searchScreenshotUrl}
-                        alt={`${activeSourceData.source} search screenshot`}
-                        className="w-full"
-                      />
-                    </>
-                  ) : (
-                    <div className="text-xs text-slate-500">
-                      No search screenshot captured yet. Use “Open Search” to verify results.
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="flex h-full items-center justify-center text-xs uppercase tracking-[0.3em] text-slate-500">
-                  No evidence captured yet
-                </div>
-              )}
+            <div className="rounded-2xl border border-white/10 bg-night-950/40 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
+              Evidence captured in real time. Use Comp Detail to review and attach comps.
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:h-[calc(100dvh-220px)] lg:overflow-hidden">
             <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-0 lg:max-h-[34%] lg:overflow-y-auto lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
               <div className="flex items-center justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
@@ -2097,6 +2050,34 @@ export default function KingsReview() {
                   >
                     {enqueueing ? "Running…" : "Generate Comps"}
                   </button>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  {sources.map((source) => (
+                    <button
+                      key={source.source}
+                      type="button"
+                      onClick={() => {
+                        setActiveSource(source.source);
+                        setActiveCompIndex(null);
+                      }}
+                      className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.3em] transition ${
+                        activeSourceData?.source === source.source
+                          ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
+                          : "border-white/10 text-slate-400"
+                      }`}
+                    >
+                      {SOURCE_LABELS[source.source] ?? source.source}
+                    </button>
+                  ))}
+                  {activeSourceData && (
+                    <button
+                      type="button"
+                      onClick={handleAttachSearch}
+                      className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
+                    >
+                      Attach Search
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
@@ -2157,47 +2138,58 @@ export default function KingsReview() {
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
               )}
-              <div className="space-y-3">
-                {comps.map((comp, index) => (
-                  <button
-                    key={`${comp.url}-${index}`}
-                    type="button"
-                    onClick={() => setActiveCompIndex(index)}
-                    className={`w-full rounded-2xl border p-2.5 text-left transition md:p-3 ${
-                      activeCompIndex === index
-                        ? "border-emerald-400/60 bg-emerald-500/10 shadow-[0_0_0_1px_rgba(52,211,153,0.2)]"
-                        : "border-white/20 bg-black/90 hover:-translate-y-0.5 hover:border-white/40"
-                    }`}
-                  >
-                    <div className="grid grid-cols-[96px_1fr] gap-3 sm:grid-cols-[120px_1fr]">
-                      <div className="mx-auto w-full aspect-[9/16] overflow-hidden rounded-xl border border-white/20 bg-black">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        {comp.listingImageUrl || comp.screenshotUrl ? (
-                          <img
-                            src={comp.listingImageUrl ?? comp.screenshotUrl}
-                            alt={comp.title ?? "Comp"}
-                            className="h-full w-full object-contain p-3"
-                            referrerPolicy="no-referrer"
-                          />
-                        ) : null}
-                      </div>
-                      <div className="flex flex-col justify-between gap-2 text-white">
-                        <div>
-                          <div className="text-lg font-bold text-emerald-400 md:text-xl">{comp.price ?? "—"}</div>
-                          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
-                            {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
-                          </div>
+              <div className="space-y-2">
+                {comps.map((comp, index) => {
+                  const compAttached = attachedCompKeys.has(normalizeCompUrl(comp.url));
+                  return (
+                    <button
+                      key={`${comp.url}-${index}`}
+                      type="button"
+                      onClick={() => setActiveCompIndex(index)}
+                      className={`relative w-full overflow-hidden rounded-2xl border p-2.5 text-left transition md:p-3 ${
+                        activeCompIndex === index
+                          ? "border-emerald-400/60 bg-emerald-500/10 shadow-[0_0_0_1px_rgba(52,211,153,0.2)]"
+                          : "border-white/20 bg-black/90 hover:-translate-y-0.5 hover:border-white/40"
+                      }`}
+                    >
+                      {compAttached && (
+                        <div className="absolute inset-0 z-10 flex items-center justify-center gap-3 bg-emerald-600/40 backdrop-blur-[1px]">
+                          <span className="text-3xl leading-none text-emerald-100">✓</span>
+                          <span className="text-lg font-semibold uppercase tracking-[0.32em] text-emerald-100">
+                            Evidence
+                          </span>
                         </div>
-                        <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
-                        {comp.patternMatch && (
-                          <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
-                            Pattern {comp.patternMatch.tier}
+                      )}
+                      <div className="grid grid-cols-[96px_1fr] gap-3 sm:grid-cols-[120px_1fr]">
+                        <div className="mx-auto w-full aspect-[9/16] overflow-hidden rounded-xl border border-white/20 bg-black">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          {comp.listingImageUrl || comp.screenshotUrl ? (
+                            <img
+                              src={comp.listingImageUrl ?? comp.screenshotUrl}
+                              alt={comp.title ?? "Comp"}
+                              className="h-full w-full object-contain p-3"
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : null}
+                        </div>
+                        <div className="flex flex-col justify-between gap-2 text-white">
+                          <div>
+                            <div className="text-lg font-bold text-emerald-400 md:text-xl">{comp.price ?? "—"}</div>
+                            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
+                              {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
+                            </div>
                           </div>
-                        )}
+                          <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
+                          {comp.patternMatch && (
+                            <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
+                              Pattern {comp.patternMatch.tier}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </section>
