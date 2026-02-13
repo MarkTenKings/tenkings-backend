@@ -977,22 +977,6 @@ export default function AdminUploads() {
     [intakeCardId, isRemoteApi, resolveApiUrl, session?.token]
   );
 
-  useEffect(() => {
-    if (!intakeCardId) {
-      return;
-    }
-    if (pendingBackBlob) {
-      const blob = pendingBackBlob;
-      setPendingBackBlob(null);
-      void uploadQueuedPhoto(blob, "BACK");
-    }
-    if (pendingTiltBlob) {
-      const blob = pendingTiltBlob;
-      setPendingTiltBlob(null);
-      void uploadQueuedPhoto(blob, "TILT");
-    }
-  }, [intakeCardId, pendingBackBlob, pendingTiltBlob, uploadQueuedPhoto]);
-
   const startOcrForCard = useCallback(
     (cardId: string) => {
       if (!cardId) {
@@ -1009,136 +993,6 @@ export default function AdminUploads() {
     },
     [fetchOcrSuggestions, resetOcrState, session?.token]
   );
-
-  const confirmIntakeCapture = useCallback(
-    async (target: "front" | "back" | "tilt", blob: Blob) => {
-      try {
-        setIntakeError(null);
-        const mime = blob.type || "image/jpeg";
-        const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
-        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-        const fileName = `intake-${target}-${timestamp}.${extension}`;
-        const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
-
-        if (target === "front") {
-          setIntakePhotoBusy(true);
-          setIntakeFrontPreview(URL.createObjectURL(blob));
-          setIntakeStep("back");
-          setIntakeCaptureTarget("back");
-          setIntakeTiltSkipped(false);
-          void (async () => {
-            try {
-              const presign = await uploadCardAsset(file);
-              setIntakeCardId(presign.assetId);
-              setIntakeBatchId(presign.batchId);
-              startOcrForCard(presign.assetId);
-            } catch (error) {
-              const message = error instanceof Error ? error.message : "Failed to capture photo.";
-              setIntakeError(message);
-            } finally {
-              setIntakePhotoBusy(false);
-            }
-          })();
-        } else if (target === "back") {
-          setIntakeBackPreview(URL.createObjectURL(blob));
-          setIntakeStep("tilt");
-          setIntakeCaptureTarget("tilt");
-          if (intakeCardId) {
-            void uploadQueuedPhoto(blob, "BACK");
-          } else {
-            setPendingBackBlob(blob);
-          }
-        } else {
-          setIntakeTiltPreview(URL.createObjectURL(blob));
-          setIntakeStep("required");
-          setIntakeCaptureTarget(null);
-          if (intakeCardId) {
-            void uploadQueuedPhoto(blob, "TILT");
-          } else {
-            setPendingTiltBlob(blob);
-          }
-          closeCamera();
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to capture photo.";
-        setIntakeError(message);
-      } finally {
-        if (target === "front" || target === "back") {
-          setIntakeCaptureTarget((prev) => prev ?? null);
-        }
-      }
-    },
-    [closeCamera, intakeCardId, startOcrForCard, uploadCardAsset, uploadQueuedPhoto]
-  );
-
-  const handleCapture = useCallback(async () => {
-    if (captureLocked) {
-      return;
-    }
-    setCaptureLocked(true);
-    setTimeout(() => setCaptureLocked(false), 250);
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) {
-      setCameraError("Camera not ready yet.");
-      return;
-    }
-    const { videoWidth, videoHeight } = video;
-    if (!videoWidth || !videoHeight) {
-      setCameraError("Camera is warming up—try again.");
-      return;
-    }
-    canvas.width = videoWidth;
-    canvas.height = videoHeight;
-    const context = canvas.getContext("2d");
-    if (!context) {
-      setCameraError("Canvas not supported in this browser.");
-      return;
-    }
-    context.drawImage(video, 0, 0, videoWidth, videoHeight);
-    const blob: Blob | null = await new Promise((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", 0.92)
-    );
-    if (!blob) {
-      setCameraError("Failed to capture image.");
-      return;
-    }
-    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
-      navigator.vibrate(30);
-    }
-    setFlashActive(true);
-    setTimeout(() => setFlashActive(false), 120);
-    if (intakeCaptureTarget) {
-      void confirmIntakeCapture(intakeCaptureTarget, blob);
-      return;
-    }
-    if (capturePreviewUrl) {
-      URL.revokeObjectURL(capturePreviewUrl);
-    }
-    setCapturedBlob(blob);
-    setCapturePreviewUrl(URL.createObjectURL(blob));
-  }, [captureLocked, capturePreviewUrl, confirmIntakeCapture, intakeCaptureTarget]);
-
-  const handleConfirmCapture = useCallback(() => {
-    if (!capturedBlob) {
-      setCameraError("Capture an image first.");
-      return;
-    }
-    if (intakeCaptureTarget) {
-      void confirmIntakeCapture(intakeCaptureTarget, capturedBlob);
-      return;
-    }
-    const mime = capturedBlob.type || "image/jpeg";
-    const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const fileName = `capture-${timestamp}.${extension}`;
-    const file = new File([capturedBlob], fileName, {
-      type: mime,
-      lastModified: Date.now(),
-    });
-    appendFiles([file]);
-    closeCamera();
-  }, [appendFiles, capturedBlob, closeCamera, confirmIntakeCapture, intakeCaptureTarget]);
 
   const saveIntakeMetadata = useCallback(
     async (includeOptional: boolean) => {
@@ -1507,6 +1361,152 @@ export default function AdminUploads() {
     },
     [fetchOcrSuggestions, intakeCardId, uploadCardPhoto]
   );
+
+  useEffect(() => {
+    if (!intakeCardId) {
+      return;
+    }
+    if (pendingBackBlob) {
+      const blob = pendingBackBlob;
+      setPendingBackBlob(null);
+      void uploadQueuedPhoto(blob, "BACK");
+    }
+    if (pendingTiltBlob) {
+      const blob = pendingTiltBlob;
+      setPendingTiltBlob(null);
+      void uploadQueuedPhoto(blob, "TILT");
+    }
+  }, [intakeCardId, pendingBackBlob, pendingTiltBlob, uploadQueuedPhoto]);
+
+  const confirmIntakeCapture = useCallback(
+    async (target: "front" | "back" | "tilt", blob: Blob) => {
+      try {
+        setIntakeError(null);
+        const mime = blob.type || "image/jpeg";
+        const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
+        const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+        const fileName = `intake-${target}-${timestamp}.${extension}`;
+        const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
+
+        if (target === "front") {
+          setIntakePhotoBusy(true);
+          setIntakeFrontPreview(URL.createObjectURL(blob));
+          setIntakeStep("back");
+          setIntakeCaptureTarget("back");
+          setIntakeTiltSkipped(false);
+          void (async () => {
+            try {
+              const presign = await uploadCardAsset(file);
+              setIntakeCardId(presign.assetId);
+              setIntakeBatchId(presign.batchId);
+              startOcrForCard(presign.assetId);
+            } catch (error) {
+              const message = error instanceof Error ? error.message : "Failed to capture photo.";
+              setIntakeError(message);
+            } finally {
+              setIntakePhotoBusy(false);
+            }
+          })();
+        } else if (target === "back") {
+          setIntakeBackPreview(URL.createObjectURL(blob));
+          setIntakeStep("tilt");
+          setIntakeCaptureTarget("tilt");
+          if (intakeCardId) {
+            void uploadQueuedPhoto(blob, "BACK");
+          } else {
+            setPendingBackBlob(blob);
+          }
+        } else {
+          setIntakeTiltPreview(URL.createObjectURL(blob));
+          setIntakeStep("required");
+          setIntakeCaptureTarget(null);
+          if (intakeCardId) {
+            void uploadQueuedPhoto(blob, "TILT");
+          } else {
+            setPendingTiltBlob(blob);
+          }
+          closeCamera();
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to capture photo.";
+        setIntakeError(message);
+      } finally {
+        if (target === "front" || target === "back") {
+          setIntakeCaptureTarget((prev) => prev ?? null);
+        }
+      }
+    },
+    [closeCamera, intakeCardId, startOcrForCard, uploadCardAsset, uploadQueuedPhoto]
+  );
+
+  const handleCapture = useCallback(async () => {
+    if (captureLocked) {
+      return;
+    }
+    setCaptureLocked(true);
+    setTimeout(() => setCaptureLocked(false), 250);
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) {
+      setCameraError("Camera not ready yet.");
+      return;
+    }
+    const { videoWidth, videoHeight } = video;
+    if (!videoWidth || !videoHeight) {
+      setCameraError("Camera is warming up—try again.");
+      return;
+    }
+    canvas.width = videoWidth;
+    canvas.height = videoHeight;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      setCameraError("Canvas not supported in this browser.");
+      return;
+    }
+    context.drawImage(video, 0, 0, videoWidth, videoHeight);
+    const blob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", 0.92)
+    );
+    if (!blob) {
+      setCameraError("Failed to capture image.");
+      return;
+    }
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+      navigator.vibrate(30);
+    }
+    setFlashActive(true);
+    setTimeout(() => setFlashActive(false), 120);
+    if (intakeCaptureTarget) {
+      void confirmIntakeCapture(intakeCaptureTarget, blob);
+      return;
+    }
+    if (capturePreviewUrl) {
+      URL.revokeObjectURL(capturePreviewUrl);
+    }
+    setCapturedBlob(blob);
+    setCapturePreviewUrl(URL.createObjectURL(blob));
+  }, [captureLocked, capturePreviewUrl, confirmIntakeCapture, intakeCaptureTarget]);
+
+  const handleConfirmCapture = useCallback(() => {
+    if (!capturedBlob) {
+      setCameraError("Capture an image first.");
+      return;
+    }
+    if (intakeCaptureTarget) {
+      void confirmIntakeCapture(intakeCaptureTarget, capturedBlob);
+      return;
+    }
+    const mime = capturedBlob.type || "image/jpeg";
+    const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const fileName = `capture-${timestamp}.${extension}`;
+    const file = new File([capturedBlob], fileName, {
+      type: mime,
+      lastModified: Date.now(),
+    });
+    appendFiles([file]);
+    closeCamera();
+  }, [appendFiles, capturedBlob, closeCamera, confirmIntakeCapture, intakeCaptureTarget]);
 
   const buildSuggestionsFromAudit = useCallback(
     (threshold: number) => {
