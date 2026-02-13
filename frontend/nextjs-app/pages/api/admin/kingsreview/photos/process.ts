@@ -10,6 +10,7 @@ import {
 } from "../../../../../lib/server/storage";
 import { createThumbnailPng } from "../../../../../lib/server/images";
 import { withAdminCors } from "../../../../../lib/server/cors";
+import { photoroomQueue } from "../../../../../lib/server/queues";
 
 type ProcessResponse = {
   message: string;
@@ -109,29 +110,31 @@ const handler = async function handler(
       return res.status(200).json({ message: "PhotoRoom not configured", thumbnailUrl: thumbnailUrl ?? undefined });
     }
 
-    const processedBuffer = await runPhotoroom(sourceBuffer, apiKey);
-    const updatedUrl = await uploadBuffer(photo.storageKey, processedBuffer, "image/png");
-    const normalizedUrl = /^https?:\/\//i.test(updatedUrl) ? updatedUrl : buildSiteUrl(updatedUrl);
+    await photoroomQueue.run(async () => {
+      const processedBuffer = await runPhotoroom(sourceBuffer, apiKey);
+      const updatedUrl = await uploadBuffer(photo.storageKey, processedBuffer, "image/png");
+      const normalizedUrl = /^https?:\/\//i.test(updatedUrl) ? updatedUrl : buildSiteUrl(updatedUrl);
 
-    const processedThumbKey = buildThumbnailKey(photo.storageKey);
-    let processedThumbnailUrl: string | null = null;
-    try {
-      const processedThumbBuffer = await createThumbnailPng(processedBuffer);
-      const processedThumbUploaded = await uploadBuffer(processedThumbKey, processedThumbBuffer, "image/png");
-      processedThumbnailUrl = normalizeStorageUrl(processedThumbUploaded) ?? processedThumbUploaded;
-    } catch {
-      processedThumbnailUrl = null;
-    }
+      const processedThumbKey = buildThumbnailKey(photo.storageKey);
+      let processedThumbnailUrl: string | null = null;
+      try {
+        const processedThumbBuffer = await createThumbnailPng(processedBuffer);
+        const processedThumbUploaded = await uploadBuffer(processedThumbKey, processedThumbBuffer, "image/png");
+        processedThumbnailUrl = normalizeStorageUrl(processedThumbUploaded) ?? processedThumbUploaded;
+      } catch {
+        processedThumbnailUrl = null;
+      }
 
-    await prisma.cardPhoto.update({
-      where: { id: photo.id },
-      data: {
-        imageUrl: normalizedUrl,
-        thumbnailUrl: processedThumbnailUrl ?? thumbnailUrl,
-        mimeType: "image/png",
-        fileSize: processedBuffer.length,
-        backgroundRemovedAt: new Date(),
-      },
+      await prisma.cardPhoto.update({
+        where: { id: photo.id },
+        data: {
+          imageUrl: normalizedUrl,
+          thumbnailUrl: processedThumbnailUrl ?? thumbnailUrl,
+          mimeType: "image/png",
+          fileSize: processedBuffer.length,
+          backgroundRemovedAt: new Date(),
+        },
+      });
     });
 
     return res.status(200).json({

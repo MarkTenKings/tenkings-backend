@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { normalizeStorageUrl } from "../../../../../lib/server/storage";
+import { ocrSuggestQueue } from "../../../../../lib/server/queues";
 
 type SuggestResponse =
   | {
@@ -33,7 +34,8 @@ type SuggestionFields = {
 type SuggestionConfidence = Record<keyof SuggestionFields, number | null>;
 
 const DEFAULT_THRESHOLD = 0.7;
-const MODEL_NAME = "gpt-4o-2024-08-06";
+const FAST_MODEL = "gpt-4o-mini";
+const ACCURATE_MODEL = "gpt-4o-2024-08-06";
 
 const FIELD_KEYS: (keyof SuggestionFields)[] = [
   "playerName",
@@ -216,46 +218,52 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const frontText = card.ocrText ?? "";
     const prompt = `OCR TEXT (FRONT):\n${frontText}\n\nRules:\n- Use the FRONT image as the primary source.\n- Use BACK image for year, card number, and product line if clearer.\n- Use TILT image to detect serial-numbered text like \"2/5\" or \"03/25\" if it is hard to see.\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.\n- Always attempt sport if OCR includes Baseball/MLB, Basketball/NBA, Football/NFL, Hockey/NHL, Soccer/FIFA.\n- Autograph=true if OCR shows AUTO/AUTOGRAPH/SIGNATURE.\n- Patch=true if OCR shows PATCH/JERSEY/RELIC/MEM.\n- Numbered should be like \"3/10\" when present.\n- If slab label shows grading (PSA, BGS, SGC, CGC), set graded=true and extract gradeCompany + gradeValue. Accept formats like \"PSA 9\" or \"9 PSA\".`;
 
-    const openaiRes = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: MODEL_NAME,
-        input: [
-          {
-            role: "system",
-            content: [{ type: "input_text", text: SYSTEM_PROMPT }],
-          },
-          {
-            role: "user",
-            content: [
-              { type: "input_text", text: prompt },
-              ...(frontProxyUrl ? [{ type: "input_image", image_url: frontProxyUrl }] : []),
-              ...(backProxyUrl ? [{ type: "input_image", image_url: backProxyUrl }] : []),
-              ...(tiltProxyUrl ? [{ type: "input_image", image_url: tiltProxyUrl }] : []),
-            ],
-          },
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "card_ocr",
-            strict: true,
-            schema,
-          },
+    const requestPayload = (model: string) => ({
+      model,
+      input: [
+        {
+          role: "system",
+          content: [{ type: "input_text", text: SYSTEM_PROMPT }],
         },
-      }),
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: prompt },
+            ...(frontProxyUrl ? [{ type: "input_image", image_url: frontProxyUrl }] : []),
+            ...(backProxyUrl ? [{ type: "input_image", image_url: backProxyUrl }] : []),
+            ...(tiltProxyUrl ? [{ type: "input_image", image_url: tiltProxyUrl }] : []),
+          ],
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "card_ocr",
+          strict: true,
+          schema,
+        },
+      },
     });
 
-    if (!openaiRes.ok) {
-      const message = await openaiRes.text().catch(() => "");
-      return res.status(502).json({ message: message || "OCR suggestion request failed" });
-    }
+    const runOpenAi = async (model: string) => {
+      const openaiRes = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestPayload(model)),
+      });
 
-    const payload = await openaiRes.json();
+      if (!openaiRes.ok) {
+        const message = await openaiRes.text().catch(() => "");
+        throw new Error(message || "OCR suggestion request failed");
+      }
+
+      return openaiRes.json();
+    };
+
+    const payload = await ocrSuggestQueue.run(() => runOpenAi(FAST_MODEL));
     const outputText = extractOutputText(payload);
     if (!outputText) {
       return res.status(502).json({ message: "OCR suggestion response was empty" });
@@ -382,13 +390,63 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     });
 
+    const needsFallback = (() => {
+      const isSport = Boolean(fields.playerName || fields.sport);
+      const isTcg = Boolean(fields.cardName || fields.game);
+      const hasCore = isSport
+        ? Boolean(fields.playerName && fields.manufacturer && fields.year)
+        : Boolean(fields.cardName && fields.game && fields.manufacturer);
+      const avgConfidence =
+        FIELD_KEYS.reduce((sum, key) => sum + (confidence[key] ?? 0), 0) / FIELD_KEYS.length;
+      return !hasCore || avgConfidence < 0.45;
+    })();
+
+    let finalFields = fields;
+    let finalConfidence = confidence;
+    let finalSuggestions = suggestions;
+    let fallbackUsed = false;
+
+    if (needsFallback) {
+      try {
+        const fallbackPayload = await ocrSuggestQueue.run(() => runOpenAi(ACCURATE_MODEL));
+        const fallbackText = extractOutputText(fallbackPayload);
+        if (fallbackText) {
+          const parsedFallback = JSON.parse(fallbackText);
+          const fallbackFields = FIELD_KEYS.reduce((acc, key) => {
+            acc[key] = sanitizeString(parsedFallback?.fields?.[key]);
+            return acc;
+          }, {} as SuggestionFields);
+          const fallbackConfidence = FIELD_KEYS.reduce((acc, key) => {
+            acc[key] = sanitizeConfidence(parsedFallback?.confidence?.[key]);
+            return acc;
+          }, {} as SuggestionConfidence);
+
+          const nextSuggestions: Record<string, string> = {};
+          FIELD_KEYS.forEach((key) => {
+            const value = fallbackFields[key];
+            const score = fallbackConfidence[key];
+            if (value && score != null && score >= DEFAULT_THRESHOLD) {
+              nextSuggestions[key] = value;
+            }
+          });
+
+          finalFields = fallbackFields;
+          finalConfidence = fallbackConfidence;
+          finalSuggestions = nextSuggestions;
+          fallbackUsed = true;
+        }
+      } catch (error) {
+        // ignore fallback errors
+      }
+    }
+
     const audit = {
       source: "openai",
-      model: MODEL_NAME,
+      model: fallbackUsed ? ACCURATE_MODEL : FAST_MODEL,
       threshold: DEFAULT_THRESHOLD,
       createdAt: new Date().toISOString(),
-      fields,
-      confidence,
+      fields: finalFields,
+      confidence: finalConfidence,
     };
 
     await prisma.cardAsset.update({
@@ -400,7 +458,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
 
     return res.status(200).json({
-      suggestions,
+      suggestions: finalSuggestions,
       threshold: DEFAULT_THRESHOLD,
       audit,
       status: "ok",

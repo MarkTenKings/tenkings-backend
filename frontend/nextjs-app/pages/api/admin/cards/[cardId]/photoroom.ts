@@ -10,6 +10,7 @@ import {
 } from "../../../../../lib/server/storage";
 import { createThumbnailPng } from "../../../../../lib/server/images";
 import { withAdminCors } from "../../../../../lib/server/cors";
+import { photoroomQueue } from "../../../../../lib/server/queues";
 
 const PHOTOROOM_ENDPOINT = "https://image-api.photoroom.com/v2/edit";
 
@@ -172,15 +173,17 @@ const handler = async function handler(req: NextApiRequest, res: NextApiResponse
     let processed = 0;
     let skipped = 0;
 
-    const assetResult = await processAsset(cardId, apiKey);
-    processed += assetResult.processed;
-    skipped += assetResult.skipped;
+    await photoroomQueue.run(async () => {
+      const assetResult = await processAsset(cardId, apiKey);
+      processed += assetResult.processed;
+      skipped += assetResult.skipped;
 
-    for (const photo of card.photos) {
-      const result = await processPhoto(photo.id, apiKey);
-      processed += result.processed;
-      skipped += result.skipped;
-    }
+      for (const photo of card.photos) {
+        const result = await processPhoto(photo.id, apiKey);
+        processed += result.processed;
+        skipped += result.skipped;
+      }
+    });
 
     return res.status(200).json({ message: "PhotoRoom processed", processed, skipped });
   } catch (error) {
