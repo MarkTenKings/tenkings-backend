@@ -145,7 +145,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(200).json({
         suggestions: {},
         threshold: DEFAULT_THRESHOLD,
-        audit: { source: "openai", model: FAST_MODEL, createdAt: new Date().toISOString(), fields: {}, confidence: {} },
+        audit: { source: "local-ocr", model: "paddleocr", createdAt: new Date().toISOString(), fields: {}, confidence: {} },
         status: "pending",
       });
     }
