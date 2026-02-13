@@ -1232,7 +1232,7 @@ export default function KingsReview() {
     }
 
     return (
-      <div className="flex flex-1 min-h-0 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:gap-6 lg:overflow-hidden">
+      <div className="flex min-h-screen flex-1 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:gap-6 lg:overflow-hidden">
         <header className="shrink-0 flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
@@ -1531,7 +1531,7 @@ export default function KingsReview() {
                 </button>
               </div>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3 lg:max-h-[34%] lg:overflow-y-auto">
+            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
               {aiStatus && (
                 <div className="mt-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2">
                   <span className="inline-flex h-4 w-4 items-center justify-center">
