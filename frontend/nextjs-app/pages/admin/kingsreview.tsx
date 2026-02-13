@@ -1467,7 +1467,7 @@ export default function KingsReview() {
 
               {activeCard ? (
                 <div className="mt-4 flex flex-col gap-4">
-                  <div className="mx-auto w-[90%] aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-950">
+                  <div className="mx-auto w-[78%] aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-950 lg:w-[68%]">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={
@@ -2065,7 +2065,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto">
             <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-3 lg:max-h-[34%] lg:overflow-y-auto lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
               <div className="flex items-center justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
@@ -2105,14 +2105,14 @@ export default function KingsReview() {
                 <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Selected Comp</p>
                 {activeComp ? (
                   <div className="mt-3 space-y-3">
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="mx-auto w-[90%] aspect-[4/5] overflow-hidden rounded-xl border border-white/20 bg-black">
+                    <div className="grid gap-3">
+                      <div className="mx-auto w-full aspect-[4/5] overflow-hidden rounded-xl border border-white/20 bg-black">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         {activeComp.listingImageUrl || activeComp.screenshotUrl ? (
                           <img
                             src={activeComp.listingImageUrl ?? activeComp.screenshotUrl}
                             alt={activeComp.title ?? "Selected comp"}
-                            className="h-full w-full object-contain p-3"
+                            className="h-full w-full object-contain"
                             referrerPolicy="no-referrer"
                           />
                         ) : null}
@@ -2155,7 +2155,7 @@ export default function KingsReview() {
                 )}
               </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
+            <div className="flex-1 min-h-0 rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
               )}
