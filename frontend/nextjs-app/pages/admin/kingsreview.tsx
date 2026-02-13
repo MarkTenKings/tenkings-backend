@@ -21,6 +21,7 @@ const AI_STATUS_MESSAGES = [
   "Collecting comps",
   "Organizing results",
 ] as const;
+const PHOTO_CAROUSEL_ORDER = ["FRONT", "BACK", "TILT"] as const;
 
 type CardSummary = {
   id: string;
@@ -366,6 +367,18 @@ export default function KingsReview() {
         ? "Queued"
         : null;
   const aiMessage = job?.status === "IN_PROGRESS" ? AI_STATUS_MESSAGES[aiMessageIndex] : null;
+  const activePhotoIndex = Math.max(0, PHOTO_CAROUSEL_ORDER.indexOf(activePhotoKind));
+
+  useEffect(() => {
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, []);
 
   useEffect(() => {
     if (!session || !isAdmin) {
@@ -1232,24 +1245,9 @@ export default function KingsReview() {
     }
 
     return (
-      <div className="flex min-h-screen flex-1 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:gap-6 lg:overflow-hidden">
-        <header className="shrink-0 flex flex-col gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <Link
-              href="/admin/uploads"
-              className="inline-flex text-[10px] uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
-            >
-              ← Add Cards
-            </Link>
-            <Link
-              href="/admin/inventory-ready"
-              className="inline-flex text-[10px] uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
-            >
-              Inventory Ready →
-            </Link>
-          </div>
-          <h1 className="text-center font-heading text-4xl uppercase tracking-[0.2em] text-white">KingsReview</h1>
-          <div className="flex flex-wrap items-center gap-2">
+      <div className="flex h-screen flex-1 flex-col gap-3 overflow-hidden bg-gold-500/90 px-4 py-4 sm:px-6 lg:px-[50px]">
+        <header className="shrink-0">
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-black/30 bg-night-950/80 p-2">
             {STAGES.map((item) => (
               <button
                 key={item.id}
@@ -1275,7 +1273,7 @@ export default function KingsReview() {
             >
               {showTeach ? "Hide Teach" : "Teach"}
             </button>
-            <div className="flex min-w-[320px] flex-1 flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-night-950/50 p-2">
+            <div className="flex min-w-[260px] flex-1 flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-night-950/50 p-2">
               <input
                 value={query}
                 onChange={(event) => {
@@ -1283,7 +1281,7 @@ export default function KingsReview() {
                   setQueryTouched(true);
                 }}
                 placeholder="Search query"
-                className="min-w-[180px] flex-1 rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-slate-200"
+                className="min-w-[160px] flex-1 rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-slate-200"
               />
               <button
                 type="button"
@@ -1444,9 +1442,9 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="grid flex-1 min-h-0 overflow-hidden gap-4 md:gap-5 xl:gap-6 lg:grid-cols-[1fr_2fr_2fr]">
+        <div className="flex h-full min-h-0 flex-col gap-4 overflow-hidden lg:flex-row lg:items-stretch lg:justify-between">
           <section
-            className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:h-[2700px] lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain"
+            className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-black/40 bg-night-950 p-3 md:gap-4 md:rounded-3xl lg:w-[333px]"
             onScroll={(event) => {
               const target = event.currentTarget;
               if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
@@ -1510,7 +1508,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:h-[2700px] lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
+          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-black/40 bg-night-950 p-3 md:gap-4 md:rounded-3xl lg:w-[333px]">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -1557,69 +1555,82 @@ export default function KingsReview() {
 
               {activeCard ? (
                 <div className="mt-4 flex flex-col gap-4">
-                  <div className="mx-auto w-[78%] aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-950 lg:w-[68%]">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={
-                        activeCardImageUrl ??
-                        activePhotoThumbs[activePhotoKind] ??
-                        activePhotos[activePhotoKind] ??
-                        activeCard.imageUrl
-                      }
-                      alt={activeCard.fileName}
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                  <div className="mx-auto grid w-[78%] gap-2 md:grid-cols-3 lg:w-[68%]">
-                    {[
-                      {
-                        label: "Front",
-                        kind: "FRONT" as const,
-                        url: activeCard.thumbnailUrl ?? activeCard.imageUrl,
-                        full: activeCard.imageUrl,
-                      },
-                      {
-                        label: "Back",
-                        kind: "BACK" as const,
-                        url: activePhotoThumbs.BACK ?? activePhotos.BACK,
-                        full: activePhotos.BACK,
-                      },
-                      {
-                        label: "Tilt",
-                        kind: "TILT" as const,
-                        url: activePhotoThumbs.TILT ?? activePhotos.TILT,
-                        full: activePhotos.TILT,
-                      },
-                    ].map((photo) => (
-                      <button
-                        key={photo.label}
-                        type="button"
-                        onClick={() => setActivePhotoKind(photo.kind)}
-                        className={`rounded-2xl border p-2 text-left ${
-                          activePhotoKind === photo.kind
-                            ? "border-sky-400/60 bg-sky-500/10"
-                            : "border-white/10 bg-night-800/70"
-                        }`}
+                  <div className="mx-auto w-full max-w-[300px]">
+                    <div className="relative aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-950">
+                      <div
+                        className="flex h-full w-full transition-transform duration-300 ease-out"
+                        style={{ transform: `translateX(-${activePhotoIndex * 100}%)` }}
                       >
-                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">{photo.label}</p>
-                        <div className="mt-2 aspect-[3/2] overflow-hidden rounded-xl border border-white/10 bg-night-900">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          {photo.url ? (
-                            <img
-                              src={photo.url}
-                              alt={`${photo.label} image`}
-                              className="h-full w-full object-cover"
-                            />
-                          ) : (
-                            <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                              Missing
+                        {PHOTO_CAROUSEL_ORDER.map((kind) => {
+                          const isFront = kind === "FRONT";
+                          const imageUrl = isFront
+                            ? activeCard.imageUrl
+                            : (activePhotos[kind] as string | undefined) ?? (activePhotoThumbs[kind] as string | undefined);
+                          return (
+                            <div key={kind} className="h-full w-full shrink-0">
+                              {imageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={imageUrl}
+                                  alt={`${activeCard.fileName} ${kind.toLowerCase()}`}
+                                  className="h-full w-full object-cover"
+                                />
+                              ) : (
+                                <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                  Missing
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
+                          );
+                        })}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActivePhotoKind(
+                            PHOTO_CAROUSEL_ORDER[
+                              (activePhotoIndex - 1 + PHOTO_CAROUSEL_ORDER.length) % PHOTO_CAROUSEL_ORDER.length
+                            ]
+                          )
+                        }
+                        className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full border border-white/30 bg-black/60 px-2 py-1 text-xs uppercase tracking-[0.2em] text-white"
+                      >
+                        ←
                       </button>
-                    ))}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setActivePhotoKind(
+                            PHOTO_CAROUSEL_ORDER[(activePhotoIndex + 1) % PHOTO_CAROUSEL_ORDER.length]
+                          )
+                        }
+                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full border border-white/30 bg-black/60 px-2 py-1 text-xs uppercase tracking-[0.2em] text-white"
+                      >
+                        →
+                      </button>
+                    </div>
+                    <div className="mt-2 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-400">
+                      {PHOTO_CAROUSEL_ORDER.map((kind, index) => (
+                        <button
+                          key={kind}
+                          type="button"
+                          onClick={() => setActivePhotoKind(kind)}
+                          className={`rounded-full border px-2 py-0.5 ${
+                            activePhotoIndex === index
+                              ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
+                              : "border-white/20 text-slate-400"
+                          }`}
+                        >
+                          {kind}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                  <div className="grid gap-2">
+                  <details className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                    <summary className="cursor-pointer text-[10px] uppercase tracking-[0.3em] text-slate-400">
+                      Card Details
+                    </summary>
+                    <div className="mt-3 grid gap-2">
                     <input
                       value={
                         activeCard.resolvedPlayerName ??
@@ -2076,7 +2087,8 @@ export default function KingsReview() {
                         )}
                       </div>
                     </details>
-                  </div>
+                    </div>
+                  </details>
                 </div>
               ) : (
                 <div className="flex flex-1 items-center justify-center text-xs uppercase tracking-[0.3em] text-slate-500">
@@ -2089,7 +2101,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:h-[2700px] lg:min-h-0 lg:overflow-y-auto lg:overscroll-contain">
+          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-black/40 bg-night-950 p-3 md:gap-4 md:rounded-3xl lg:w-[333px]">
             <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-0 lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
               <div className="flex items-center justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
@@ -2109,7 +2121,7 @@ export default function KingsReview() {
                 {activeComp ? (
                   <div className="mt-3 space-y-3">
                     <div className="grid gap-3">
-                      <div className="mx-auto w-[78%] aspect-[4/5] overflow-hidden rounded-xl border border-white/20 bg-black lg:w-[68%]">
+                      <div className="mx-auto w-full max-w-[300px] aspect-[4/5] overflow-hidden rounded-xl border border-white/20 bg-black">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         {activeComp.listingImageUrl || activeComp.screenshotUrl ? (
                           <img
@@ -2326,7 +2338,7 @@ export default function KingsReview() {
   };
 
   return (
-    <AppShell hideFooter>
+    <AppShell hideHeader hideFooter>
       <Head>
         <title>KingsReview · Ten Kings</title>
       </Head>
