@@ -368,36 +368,6 @@ export default function KingsReview() {
   const aiMessage = job?.status === "IN_PROGRESS" ? AI_STATUS_MESSAGES[aiMessageIndex] : null;
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const html = document.documentElement;
-    const body = document.body;
-    const mq = window.matchMedia("(min-width: 1024px)");
-    const prevHtmlOverflow = html.style.overflow;
-    const prevBodyOverflow = body.style.overflow;
-
-    const applyDesktopOverflow = () => {
-      if (mq.matches) {
-        html.style.overflow = "hidden";
-        body.style.overflow = "hidden";
-      } else {
-        html.style.overflow = prevHtmlOverflow;
-        body.style.overflow = prevBodyOverflow;
-      }
-    };
-
-    applyDesktopOverflow();
-    const onChange = () => applyDesktopOverflow();
-    mq.addEventListener("change", onChange);
-    return () => {
-      mq.removeEventListener("change", onChange);
-      html.style.overflow = prevHtmlOverflow;
-      body.style.overflow = prevBodyOverflow;
-    };
-  }, []);
-
-  useEffect(() => {
     if (!session || !isAdmin) {
       return;
     }
