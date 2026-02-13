@@ -1456,71 +1456,75 @@ export default function KingsReview() {
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:h-[calc(100vh-118px)] lg:flex-row lg:items-stretch lg:justify-center lg:gap-[72px]">
           <section
-            className="flex h-full min-h-0 flex-col gap-3 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]"
-            onScroll={(event) => {
-              const target = event.currentTarget;
-              if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
-                loadMoreCards().catch(() => undefined);
-              }
-            }}
+            className="flex h-full min-h-0 flex-col gap-3 rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]"
           >
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
               <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2">
-              {cards.map((card) => {
-                const status = queueStatusMeta(card);
-                return (
-                  <button
-                    key={card.id}
-                    type="button"
-                    onClick={() => setActiveCardId(card.id)}
-                    onMouseEnter={() => {
-                      void preloadCardAssets(card.id);
-                    }}
-                    title={card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
-                    className={`group w-full rounded-xl px-3 py-3 text-left transition ${
-                      activeCardId === card.id
-                        ? "border border-gold-400/40 bg-gold-500/15 text-gold-200"
-                        : "border border-transparent text-slate-300 hover:bg-white/5"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <span className="line-clamp-2 text-sm font-semibold leading-tight">
-                        {card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
-                      </span>
-                      {status.label && (
-                        <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] uppercase tracking-[0.2em] ${status.className}`}>
-                          {status.label}
+            <div
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2"
+              onScroll={(event) => {
+                const target = event.currentTarget;
+                if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
+                  loadMoreCards().catch(() => undefined);
+                }
+              }}
+            >
+              <div>
+                {cards.map((card) => {
+                  const status = queueStatusMeta(card);
+                  return (
+                    <button
+                      key={card.id}
+                      type="button"
+                      onClick={() => setActiveCardId(card.id)}
+                      onMouseEnter={() => {
+                        void preloadCardAssets(card.id);
+                      }}
+                      title={card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
+                      className={`group w-full rounded-xl px-3 py-3 text-left transition ${
+                        activeCardId === card.id
+                          ? "border border-gold-400/40 bg-gold-500/15 text-gold-200"
+                          : "border border-transparent text-slate-300 hover:bg-white/5"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="line-clamp-2 text-sm font-semibold leading-tight">
+                          {card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
                         </span>
-                      )}
-                    </div>
-                    <div className="mt-1 text-[10px] uppercase tracking-[0.24em] text-slate-500">
-                      {new Date(card.updatedAt).toLocaleString()}
-                    </div>
-                  </button>
-                );
-              })}
-              {cards.length === 0 && !cardsLoading && (
-                <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
-                  No cards in this stage
-                </p>
-              )}
-              {cards.length === 0 && cardsLoading && (
-                <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
-                  Loading cards…
-                </p>
-              )}
-              {cardsLoadingMore && (
-                <p className="px-3 py-2 text-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                  Loading more…
-                </p>
-              )}
+                        {status.label && (
+                          <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] uppercase tracking-[0.2em] ${status.className}`}>
+                            {status.label}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-1 text-[10px] uppercase tracking-[0.24em] text-slate-500">
+                        {new Date(card.updatedAt).toLocaleString()}
+                      </div>
+                    </button>
+                  );
+                })}
+                {cards.length === 0 && !cardsLoading && (
+                  <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
+                    No cards in this stage
+                  </p>
+                )}
+                {cards.length === 0 && cardsLoading && (
+                  <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
+                    Loading cards…
+                  </p>
+                )}
+                {cardsLoadingMore && (
+                  <p className="px-3 py-2 text-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                    Loading more…
+                  </p>
+                )}
+              </div>
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
+          <section className="flex h-full min-h-0 flex-col gap-3 rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -1541,6 +1545,7 @@ export default function KingsReview() {
                 </button>
               </div>
             </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
               {aiStatus && (
                 <div className="mt-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2">
@@ -2111,9 +2116,10 @@ export default function KingsReview() {
             <div className="rounded-2xl border border-white/10 bg-night-950/40 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
               Evidence captured in real time. Use Comp Detail to review and attach comps.
             </div>
+            </div>
           </section>
 
-          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
+          <section className="flex h-full min-h-0 flex-col gap-3 rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
               {activeSourceData?.searchUrl && (
@@ -2127,7 +2133,7 @@ export default function KingsReview() {
                 </a>
               )}
             </div>
-            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
               )}
