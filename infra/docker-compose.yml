@@ -172,6 +172,15 @@ services:
     depends_on:
       - postgres
 
+  ocr-service:
+    build:
+      context: ..
+      dockerfile: backend/ocr-service/Dockerfile
+    restart: unless-stopped
+    env_file: ../env/ocr-service.env
+    ports:
+      - "8090:7001"
+
   vending-gw:
     build:
       context: ..

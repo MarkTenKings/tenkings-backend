@@ -38,3 +38,7 @@
   vending.api.tenkings.co {
     reverse_proxy vending-gw:8080
   }
+
+  ocr.api.tenkings.co {
+    reverse_proxy ocr-service:7001
+  }

@@ -3,7 +3,8 @@ import crypto from "node:crypto";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { normalizeStorageUrl } from "../../../../../lib/server/storage";
-import { ocrSuggestQueue } from "../../../../../lib/server/queues";
+import { runLocalOcr } from "../../../../../lib/server/localOcr";
+import { extractCardAttributes } from "@tenkings/shared";
 
 type SuggestResponse =
   | {
@@ -34,8 +35,17 @@ type SuggestionFields = {
 type SuggestionConfidence = Record<keyof SuggestionFields, number | null>;
 
 const DEFAULT_THRESHOLD = 0.7;
-const FAST_MODEL = "gpt-4o-mini";
-const ACCURATE_MODEL = "gpt-4o-2024-08-06";
+const TCG_KEYWORDS = [
+  "pokemon",
+  "magic",
+  "yugioh",
+  "yu-gi-oh",
+  "lorcana",
+  "one piece",
+  "digimon",
+  "tcg",
+  "trading card",
+];
 
 const FIELD_KEYS: (keyof SuggestionFields)[] = [
   "playerName",
@@ -54,15 +64,12 @@ const FIELD_KEYS: (keyof SuggestionFields)[] = [
   "gradeValue",
 ];
 
-const SYSTEM_PROMPT = `You are extracting structured trading card fields from OCR text.
-Return only JSON that matches the provided schema.`;
-
 function buildProxyUrl(req: NextApiRequest, targetUrl: string): string | null {
+  const normalizedTarget = normalizeStorageUrl(targetUrl) ?? targetUrl;
   const secret = process.env.OCR_PROXY_SECRET ?? process.env.OPENAI_API_KEY;
   if (!secret) {
-    return null;
+    return /^https?:\/\//i.test(normalizedTarget) ? normalizedTarget : null;
   }
-  const normalizedTarget = normalizeStorageUrl(targetUrl) ?? targetUrl;
   const host = req.headers.host;
   if (!host) {
     return null;
@@ -81,49 +88,6 @@ function pickImageUrl(primary?: string | null, thumbnail?: string | null): strin
     return null;
   }
   return /^https?:\/\//i.test(candidate) ? candidate : null;
-}
-
-function sanitizeString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length ? trimmed : null;
-}
-
-function sanitizeConfidence(value: unknown): number | null {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    return null;
-  }
-  if (value < 0) return 0;
-  if (value > 1) return 1;
-  return value;
-}
-
-function extractOutputText(payload: any): string | null {
-  if (payload && typeof payload.output_text === "string") {
-    return payload.output_text;
-  }
-  if (Array.isArray(payload?.output)) {
-    for (const item of payload.output) {
-      const content = item?.content;
-      if (!Array.isArray(content)) {
-        continue;
-      }
-      for (const entry of content) {
-        if (entry?.type === "output_text" && typeof entry.text === "string") {
-          return entry.text;
-        }
-        if (entry?.type === "output_json" && entry.json) {
-          return JSON.stringify(entry.json);
-        }
-        if (typeof entry?.text === "string") {
-          return entry.text;
-        }
-      }
-    }
-  }
-  return null;
 }
 
 function normalizeForNumbered(input: string): string {
@@ -186,128 +150,79 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return res.status(503).json({ message: "OPENAI_API_KEY is not configured" });
-    }
+    const images = [
+      ...(frontProxyUrl ? [{ id: "front", url: frontProxyUrl }] : []),
+      ...(backProxyUrl ? [{ id: "back", url: backProxyUrl }] : []),
+      ...(tiltProxyUrl ? [{ id: "tilt", url: tiltProxyUrl }] : []),
+    ];
 
-    const schema = {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        fields: {
-          type: "object",
-          additionalProperties: false,
-          properties: Object.fromEntries(
-            FIELD_KEYS.map((key) => [key, { type: ["string", "null"] }])
-          ),
-          required: FIELD_KEYS,
-        },
-        confidence: {
-          type: "object",
-          additionalProperties: false,
-          properties: Object.fromEntries(
-            FIELD_KEYS.map((key) => [key, { type: ["number", "null"] }])
-          ),
-          required: FIELD_KEYS,
-        },
-      },
-      required: ["fields", "confidence"],
-    };
-
-    const frontText = card.ocrText ?? "";
-    const prompt = `OCR TEXT (FRONT):\n${frontText}\n\nRules:\n- Use the FRONT image as the primary source.\n- Use BACK image for year, card number, and product line if clearer.\n- Use TILT image to detect serial-numbered text like \"2/5\" or \"03/25\" if it is hard to see.\n- Prefer the player name over variant names.\n- Manufacturer is the brand (Topps, Panini, Upper Deck, Leaf, etc.).\n- Year should be a 4-digit year if present.\n- For TCG, use cardName and game; for sports, use playerName and sport.\n- Always attempt sport if OCR includes Baseball/MLB, Basketball/NBA, Football/NFL, Hockey/NHL, Soccer/FIFA.\n- Autograph=true if OCR shows AUTO/AUTOGRAPH/SIGNATURE.\n- Patch=true if OCR shows PATCH/JERSEY/RELIC/MEM.\n- Numbered should be like \"3/10\" when present.\n- If slab label shows grading (PSA, BGS, SGC, CGC), set graded=true and extract gradeCompany + gradeValue. Accept formats like \"PSA 9\" or \"9 PSA\".`;
-
-    const requestPayload = (model: string) => ({
-      model,
-      input: [
-        {
-          role: "system",
-          content: [{ type: "input_text", text: SYSTEM_PROMPT }],
-        },
-        {
-          role: "user",
-          content: [
-            { type: "input_text", text: prompt },
-            ...(frontProxyUrl ? [{ type: "input_image", image_url: frontProxyUrl }] : []),
-            ...(backProxyUrl ? [{ type: "input_image", image_url: backProxyUrl }] : []),
-            ...(tiltProxyUrl ? [{ type: "input_image", image_url: tiltProxyUrl }] : []),
-          ],
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "card_ocr",
-          strict: true,
-          schema,
-        },
-      },
-    });
-
-    const runOpenAi = async (model: string) => {
-      const openaiRes = await fetch("https://api.openai.com/v1/responses", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(requestPayload(model)),
+    if (images.length === 0) {
+      return res.status(200).json({
+        suggestions: {},
+        threshold: DEFAULT_THRESHOLD,
+        audit: { source: "local-ocr", model: "paddleocr", createdAt: new Date().toISOString(), fields: {}, confidence: {} },
+        status: "pending",
       });
-
-      if (!openaiRes.ok) {
-        const message = await openaiRes.text().catch(() => "");
-        throw new Error(message || "OCR suggestion request failed");
-      }
-
-      return openaiRes.json();
-    };
-
-    const payload = await ocrSuggestQueue.run(() => runOpenAi(FAST_MODEL));
-    const outputText = extractOutputText(payload);
-    if (!outputText) {
-      return res.status(502).json({ message: "OCR suggestion response was empty" });
     }
 
-    const parsed = JSON.parse(outputText);
-    const rawFields = parsed?.fields ?? {};
-    const rawConfidence = parsed?.confidence ?? {};
+    const ocrResponse = await runLocalOcr(images);
+    const combinedTextRaw = ocrResponse.combined_text ?? "";
+    const combinedText = combinedTextRaw.toLowerCase();
+    const normalizedNumberedText = normalizeForNumbered(combinedTextRaw);
 
-    const fields = FIELD_KEYS.reduce((acc, key) => {
-      acc[key] = sanitizeString(rawFields[key]);
-      return acc;
-    }, {} as SuggestionFields);
+    const attributes = extractCardAttributes(combinedTextRaw);
+    const fields: SuggestionFields = {
+      playerName: attributes.playerName ?? null,
+      year: attributes.year ?? null,
+      manufacturer: attributes.brand ?? null,
+      sport: null,
+      game: null,
+      cardName: null,
+      setName: attributes.setName ?? null,
+      cardNumber: null,
+      numbered: attributes.numbered ?? null,
+      autograph: attributes.autograph ? "true" : null,
+      memorabilia: attributes.memorabilia ? "true" : null,
+      graded: attributes.gradeCompany && attributes.gradeValue ? "true" : null,
+      gradeCompany: attributes.gradeCompany ?? null,
+      gradeValue: attributes.gradeValue ?? null,
+    };
 
-    const confidence = FIELD_KEYS.reduce((acc, key) => {
-      acc[key] = sanitizeConfidence(rawConfidence[key]);
+    const confidence: SuggestionConfidence = FIELD_KEYS.reduce((acc, key) => {
+      acc[key] = fields[key] ? 0.9 : null;
       return acc;
     }, {} as SuggestionConfidence);
-
-    const combinedText = frontText.toLowerCase();
-    const normalizedNumberedText = normalizeForNumbered(frontText);
     if (!fields.sport) {
-      const text = combinedText;
       const inferredSport =
-        text.includes("baseball") || text.includes("mlb")
+        combinedText.includes("baseball") || combinedText.includes("mlb")
           ? "Baseball"
-          : text.includes("basketball") || text.includes("nba")
+          : combinedText.includes("basketball") || combinedText.includes("nba")
           ? "Basketball"
-          : text.includes("football") || text.includes("nfl")
+          : combinedText.includes("football") || combinedText.includes("nfl")
           ? "Football"
-          : text.includes("hockey") || text.includes("nhl")
+          : combinedText.includes("hockey") || combinedText.includes("nhl")
           ? "Hockey"
-          : text.includes("soccer") || text.includes("fifa")
+          : combinedText.includes("soccer") || combinedText.includes("fifa")
           ? "Soccer"
-          : text.includes("qb") || text.includes("wr") || text.includes("rb") || text.includes("te")
-          ? "Football"
-          : text.includes("pg") || text.includes("sg") || text.includes("sf") || text.includes("pf")
-          ? "Basketball"
-          : text.includes("2b") || text.includes("3b") || text.includes("ss") || text.includes("of")
-          ? "Baseball"
           : null;
       if (inferredSport) {
         fields.sport = inferredSport;
-        confidence.sport = Math.max(confidence.sport ?? 0, DEFAULT_THRESHOLD);
+        confidence.sport = 0.9;
+      }
+    }
+
+    if (!fields.game) {
+      const match = TCG_KEYWORDS.find((keyword) => combinedText.includes(keyword));
+      if (match) {
+        fields.game = match
+          .replace("yu-gi-oh", "Yu-Gi-Oh!")
+          .replace("yugioh", "Yu-Gi-Oh!")
+          .replace("pokemon", "Pokemon")
+          .replace("magic", "Magic")
+          .replace("lorcana", "Lorcana")
+          .replace("one piece", "One Piece")
+          .replace("digimon", "Digimon");
+        confidence.game = 0.8;
       }
     }
 
@@ -315,7 +230,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const yearMatch = combinedText.match(/\b(19|20)\d{2}\b/);
       if (yearMatch) {
         fields.year = yearMatch[0];
-        confidence.year = Math.max(confidence.year ?? 0, DEFAULT_THRESHOLD);
+        confidence.year = 0.9;
       }
     }
 
@@ -323,36 +238,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const numberedMatch = normalizedNumberedText.match(/\b\d{1,4}\s*\/\s*\d{1,4}\b/);
       if (numberedMatch) {
         fields.numbered = numberedMatch[0].replace(/\s+/g, "");
-        confidence.numbered = Math.max(confidence.numbered ?? 0, DEFAULT_THRESHOLD);
+        confidence.numbered = 0.9;
       }
     }
 
     if (!fields.autograph) {
-      if (/\bauto(?:graph)?\b/i.test(frontText) || /\bsignature\b/i.test(frontText) || /\bsigned\b/i.test(frontText)) {
+      if (/\bauto(?:graph)?\b/i.test(combinedTextRaw) || /\bsignature\b/i.test(combinedTextRaw) || /\bsigned\b/i.test(combinedTextRaw)) {
         fields.autograph = "true";
-        confidence.autograph = Math.max(confidence.autograph ?? 0, DEFAULT_THRESHOLD);
+        confidence.autograph = 0.9;
       }
     }
 
     if (!fields.memorabilia) {
       if (
-        /\bpatch\b/i.test(frontText) ||
-        /\bjersey\b/i.test(frontText) ||
-        /\brelic\b/i.test(frontText) ||
-        /\bmemorabilia\b/i.test(frontText) ||
-        /\bgame[-\s]?worn\b/i.test(frontText) ||
-        /\bplayer[-\s]?worn\b/i.test(frontText) ||
-        /\b(event|event[-\s]?worn)\b/i.test(frontText) ||
-        /\bswatch\b/i.test(frontText) ||
-        /\bmem\b/i.test(frontText)
+        /\bpatch\b/i.test(combinedTextRaw) ||
+        /\bjersey\b/i.test(combinedTextRaw) ||
+        /\brelic\b/i.test(combinedTextRaw) ||
+        /\bmemorabilia\b/i.test(combinedTextRaw) ||
+        /\bgame[-\s]?worn\b/i.test(combinedTextRaw) ||
+        /\bplayer[-\s]?worn\b/i.test(combinedTextRaw) ||
+        /\b(event|event[-\s]?worn)\b/i.test(combinedTextRaw) ||
+        /\bswatch\b/i.test(combinedTextRaw) ||
+        /\bmem\b/i.test(combinedTextRaw)
       ) {
         fields.memorabilia = "true";
-        confidence.memorabilia = Math.max(confidence.memorabilia ?? 0, DEFAULT_THRESHOLD);
+        confidence.memorabilia = 0.9;
       }
     }
 
     if (!fields.gradeCompany || !fields.gradeValue || !fields.graded) {
-      const rawOcr = card.ocrText ?? "";
+      const rawOcr = combinedTextRaw;
       const normalizedOcr = rawOcr
         .replace(/\bP\s*5\s*A\b/gi, "PSA")
         .replace(/\bP\s*S\s*A\b/gi, "PSA")
@@ -368,15 +283,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         const normalizedCompany = company.toUpperCase();
         if (!fields.gradeCompany) {
           fields.gradeCompany = normalizedCompany;
-          confidence.gradeCompany = Math.max(confidence.gradeCompany ?? 0, DEFAULT_THRESHOLD);
+          confidence.gradeCompany = 0.9;
         }
         if (!fields.gradeValue) {
           fields.gradeValue = value;
-          confidence.gradeValue = Math.max(confidence.gradeValue ?? 0, DEFAULT_THRESHOLD);
+          confidence.gradeValue = 0.9;
         }
         if (!fields.graded) {
           fields.graded = "true";
-          confidence.graded = Math.max(confidence.graded ?? 0, DEFAULT_THRESHOLD);
+          confidence.graded = 0.9;
         }
       }
     }
@@ -390,63 +305,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     });
 
-    const needsFallback = (() => {
-      const isSport = Boolean(fields.playerName || fields.sport);
-      const isTcg = Boolean(fields.cardName || fields.game);
-      const hasCore = isSport
-        ? Boolean(fields.playerName && fields.manufacturer && fields.year)
-        : Boolean(fields.cardName && fields.game && fields.manufacturer);
-      const avgConfidence =
-        FIELD_KEYS.reduce((sum, key) => sum + (confidence[key] ?? 0), 0) / FIELD_KEYS.length;
-      return !hasCore || avgConfidence < 0.45;
-    })();
-
-    let finalFields = fields;
-    let finalConfidence = confidence;
-    let finalSuggestions = suggestions;
-    let fallbackUsed = false;
-
-    if (needsFallback) {
-      try {
-        const fallbackPayload = await ocrSuggestQueue.run(() => runOpenAi(ACCURATE_MODEL));
-        const fallbackText = extractOutputText(fallbackPayload);
-        if (fallbackText) {
-          const parsedFallback = JSON.parse(fallbackText);
-          const fallbackFields = FIELD_KEYS.reduce((acc, key) => {
-            acc[key] = sanitizeString(parsedFallback?.fields?.[key]);
-            return acc;
-          }, {} as SuggestionFields);
-          const fallbackConfidence = FIELD_KEYS.reduce((acc, key) => {
-            acc[key] = sanitizeConfidence(parsedFallback?.confidence?.[key]);
-            return acc;
-          }, {} as SuggestionConfidence);
-
-          const nextSuggestions: Record<string, string> = {};
-          FIELD_KEYS.forEach((key) => {
-            const value = fallbackFields[key];
-            const score = fallbackConfidence[key];
-            if (value && score != null && score >= DEFAULT_THRESHOLD) {
-              nextSuggestions[key] = value;
-            }
-          });
-
-          finalFields = fallbackFields;
-          finalConfidence = fallbackConfidence;
-          finalSuggestions = nextSuggestions;
-          fallbackUsed = true;
-        }
-      } catch (error) {
-        // ignore fallback errors
-      }
-    }
-
     const audit = {
-      source: "openai",
-      model: fallbackUsed ? ACCURATE_MODEL : FAST_MODEL,
+      source: "local-ocr",
+      model: "paddleocr",
       threshold: DEFAULT_THRESHOLD,
       createdAt: new Date().toISOString(),
-      fields: finalFields,
-      confidence: finalConfidence,
+      fields,
+      confidence,
     };
 
     await prisma.cardAsset.update({
@@ -457,8 +322,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       },
     });
 
+    await prisma.cardAsset.update({
+      where: { id: cardId },
+      data: {
+        ocrText: combinedTextRaw,
+        ocrSuggestionJson: audit,
+        ocrSuggestionUpdatedAt: new Date(),
+      },
+    });
+
     return res.status(200).json({
-      suggestions: finalSuggestions,
+      suggestions,
       threshold: DEFAULT_THRESHOLD,
       audit,
       status: "ok",
