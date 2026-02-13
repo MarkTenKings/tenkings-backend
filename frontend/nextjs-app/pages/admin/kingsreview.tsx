@@ -1360,23 +1360,22 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:max-h-[calc(100dvh-230px)] lg:grid-cols-[1.05fr_1.45fr_1.15fr]">
+        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:h-[calc(100dvh-230px)] lg:min-h-[640px] lg:grid-cols-[1.05fr_1.45fr_1.15fr]">
           <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
               <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto pr-1 md:pr-2">
-              <div
-                className="h-[42vh] overflow-y-scroll rounded-2xl border border-white/10 bg-night-950/50 p-2 lg:h-full"
-                onScroll={(event) => {
-                  const target = event.currentTarget;
-                  if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
-                    loadMoreCards().catch(() => undefined);
-                  }
-                }}
-              >
-                {cards.map((card) => (
+            <div
+              className="h-[42vh] flex-1 min-h-0 overflow-y-scroll rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2 lg:h-full"
+              onScroll={(event) => {
+                const target = event.currentTarget;
+                if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
+                  loadMoreCards().catch(() => undefined);
+                }
+              }}
+            >
+              {cards.map((card) => (
                   <button
                     key={card.id}
                     type="button"
@@ -1401,26 +1400,25 @@ export default function KingsReview() {
                     </span>
                   </button>
                 ))}
-                {cards.length === 0 && !cardsLoading && (
-                  <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
-                    No cards in this stage
-                  </p>
-                )}
-                {cards.length === 0 && cardsLoading && (
-                  <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
-                    Loading cards…
-                  </p>
-                )}
-                {cardsLoadingMore && (
-                  <p className="px-3 py-2 text-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                    Loading more…
-                  </p>
-                )}
-              </div>
+              {cards.length === 0 && !cardsLoading && (
+                <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
+                  No cards in this stage
+                </p>
+              )}
+              {cards.length === 0 && cardsLoading && (
+                <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
+                  Loading cards…
+                </p>
+              )}
+              {cardsLoadingMore && (
+                <p className="px-3 py-2 text-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                  Loading more…
+                </p>
+              )}
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
