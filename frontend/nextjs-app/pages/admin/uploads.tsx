@@ -977,23 +977,6 @@ export default function AdminUploads() {
     [intakeCardId, isRemoteApi, resolveApiUrl, session?.token]
   );
 
-  const startOcrForCard = useCallback(
-    (cardId: string) => {
-      if (!cardId) {
-        return;
-      }
-      if (!session?.token) {
-        setOcrStatus("error");
-        setOcrError("Your session expired. Sign in again and retry.");
-        return;
-      }
-      resetOcrState();
-      ocrSuggestRef.current = true;
-      void fetchOcrSuggestions(cardId);
-    },
-    [fetchOcrSuggestions, resetOcrState, session?.token]
-  );
-
   const saveIntakeMetadata = useCallback(
     async (includeOptional: boolean) => {
       const token = session?.token;
@@ -1329,6 +1312,23 @@ export default function AdminUploads() {
       // ignore suggestion failures
     }
   }, [applySuggestions, session?.token, triggerPhotoroomForCard]);
+
+  const startOcrForCard = useCallback(
+    (cardId: string) => {
+      if (!cardId) {
+        return;
+      }
+      if (!session?.token) {
+        setOcrStatus("error");
+        setOcrError("Your session expired. Sign in again and retry.");
+        return;
+      }
+      resetOcrState();
+      ocrSuggestRef.current = true;
+      void fetchOcrSuggestions(cardId);
+    },
+    [fetchOcrSuggestions, resetOcrState, session?.token]
+  );
 
   const uploadQueuedPhoto = useCallback(
     async (blob: Blob, kind: "BACK" | "TILT") => {
