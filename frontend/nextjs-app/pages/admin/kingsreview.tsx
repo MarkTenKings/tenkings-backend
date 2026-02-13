@@ -1454,9 +1454,9 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:h-[calc(100vh-118px)] lg:flex-row lg:items-stretch lg:justify-center lg:gap-6">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:h-[calc(100vh-118px)] lg:flex-row lg:items-stretch lg:justify-center lg:gap-[72px]">
           <section
-            className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]"
+            className="flex h-full min-h-0 flex-col gap-3 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]"
             onScroll={(event) => {
               const target = event.currentTarget;
               if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
@@ -1520,7 +1520,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
+          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -2113,7 +2113,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
+          <section className="flex h-full min-h-0 flex-col gap-3 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
               {activeSourceData?.searchUrl && (
