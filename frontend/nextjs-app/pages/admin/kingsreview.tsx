@@ -1193,7 +1193,7 @@ export default function KingsReview() {
     }
 
     return (
-      <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:h-[calc(100dvh-128px)] lg:gap-6 lg:overflow-hidden">
+      <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:flex-1 lg:gap-6 lg:overflow-hidden">
         <header className="flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
@@ -1360,7 +1360,7 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:grid-cols-[1.05fr_1.45fr_1.15fr]">
+        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:h-full lg:grid-cols-[1.05fr_1.45fr_1.15fr]">
           <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
@@ -1420,7 +1420,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -1441,7 +1441,7 @@ export default function KingsReview() {
                 </button>
               </div>
             </div>
-            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3 lg:max-h-[34%] lg:overflow-y-auto">
               {aiStatus && (
                 <div className="mt-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2">
                   <span className="inline-flex h-4 w-4 items-center justify-center">
@@ -2066,7 +2066,7 @@ export default function KingsReview() {
           </section>
 
           <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
-            <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-3 lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
+            <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-3 lg:max-h-[34%] lg:overflow-y-auto lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
               <div className="flex items-center justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
                 {activeSourceData?.searchUrl && (
