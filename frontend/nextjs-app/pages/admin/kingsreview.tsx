@@ -1360,15 +1360,15 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="grid flex-1 min-h-0 gap-6 lg:grid-cols-[1.1fr_1.4fr_1.1fr]">
-          <section className="flex h-full min-h-0 flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
-            <div className="flex items-center justify-between">
+        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:grid-cols-[1.05fr_1.45fr_1.15fr]">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
               <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto pr-2">
+            <div className="flex-1 min-h-0 overflow-y-auto pr-1 md:pr-2">
               <div
-                className="max-h-40 overflow-auto rounded-2xl border border-white/10 bg-night-950/50 p-2"
+                className="h-[42vh] overflow-auto rounded-2xl border border-white/10 bg-night-950/50 p-2 lg:h-full"
                 onScroll={(event) => {
                   const target = event.currentTarget;
                   if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
@@ -1384,19 +1384,21 @@ export default function KingsReview() {
                     onMouseEnter={() => {
                       void preloadCardAssets(card.id);
                     }}
-                    className={`flex w-full items-center gap-3 rounded-2xl px-3 py-2 text-left text-xs transition ${
+                    className={`group flex w-full items-center gap-2 rounded-xl px-2.5 py-2.5 text-left text-[11px] transition md:gap-3 md:px-3 md:py-2 md:text-xs ${
                       activeCardId === card.id
-                        ? "bg-gold-500/15 text-gold-200"
-                        : "text-slate-300 hover:bg-white/5"
+                        ? "border border-gold-400/40 bg-gold-500/15 text-gold-200"
+                        : "border border-transparent text-slate-300 hover:bg-white/5"
                     }`}
                   >
-                    <span className="line-clamp-1 flex-1">
+                    <span className="line-clamp-1 flex-1 pr-1">
                       {card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
                     </span>
-                    <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                    <span className="hidden text-[10px] uppercase tracking-[0.24em] text-slate-500 md:inline">
                       {new Date(card.updatedAt).toLocaleTimeString()}
                     </span>
-                    <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{card.status}</span>
+                    <span className="rounded-full border border-white/15 px-2 py-1 text-[9px] uppercase tracking-[0.2em] text-slate-400 group-hover:text-slate-300">
+                      {card.status.replaceAll("_", " ")}
+                    </span>
                   </button>
                 ))}
                 {cards.length === 0 && !cardsLoading && (
@@ -1415,7 +1417,31 @@ export default function KingsReview() {
                   </p>
                 )}
               </div>
+            </div>
+          </section>
 
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-2">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.1))}
+                  className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
+                >
+                  -
+                </button>
+                <span className="text-xs text-slate-400">{Math.round(zoom * 100)}%</span>
+                <button
+                  type="button"
+                  onClick={() => setZoom((prev) => Math.min(2, prev + 0.1))}
+                  className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
               {aiStatus && (
                 <div className="mt-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2">
                   <span className="inline-flex h-4 w-4 items-center justify-center">
@@ -1968,69 +1994,6 @@ export default function KingsReview() {
                 </div>
               )}
             </div>
-          </section>
-
-          <section className="flex h-full min-h-0 flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.1))}
-                  className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
-                >
-                  -
-                </button>
-                <span className="text-xs text-slate-400">{Math.round(zoom * 100)}%</span>
-                <button
-                  type="button"
-                  onClick={() => setZoom((prev) => Math.min(2, prev + 0.1))}
-                  className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-              <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Selected Comp</p>
-              {activeComp ? (
-                <div className="mt-3 grid gap-3">
-                  <div className="mx-auto w-[90%] aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-900">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={activeComp.listingImageUrl ?? activeComp.screenshotUrl}
-                      alt={activeComp.title ?? "Comp"}
-                      className="h-full w-full object-contain"
-                      referrerPolicy="no-referrer"
-                    />
-                  </div>
-                  <div className="text-xs text-slate-300">
-                    <p className="text-sm text-white">{activeComp.title ?? "Untitled comp"}</p>
-                    <p>{activeComp.price ?? ""}</p>
-                    <p className="text-slate-500">{activeComp.soldDate ?? ""}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <a
-                      href={activeComp.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-300"
-                    >
-                      Open Listing
-                    </a>
-                    <button
-                      type="button"
-                      onClick={() => handleAttachComp(activeComp, "SOLD_COMP")}
-                      className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
-                    >
-                      Attach to Card
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div className="mt-3 text-xs text-slate-500">Select a comp to preview.</div>
-              )}
-            </div>
             <div className="flex flex-wrap gap-2">
               {sources.map((source) => (
                 <button
@@ -2102,42 +2065,97 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
-            <div className="flex items-center justify-between">
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
-              {activeSourceData?.searchUrl && (
-                <a
-                  href={activeSourceData.searchUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-[10px] uppercase tracking-[0.3em] text-sky-300"
-                >
-                  Open Search
-                </a>
-              )}
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-              <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Search Query</p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <input
-                  value={query}
-                  onChange={(event) => {
-                    setQuery(event.target.value);
-                    setQueryTouched(true);
-                  }}
-                  className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-slate-200"
-                />
-                <button
-                  type="button"
-                  onClick={handleEnqueue}
-                  disabled={enqueueing}
-                  className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 disabled:opacity-60"
-                >
-                  {enqueueing ? "Running…" : "Generate Comps"}
-                </button>
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0">
+            <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-3 lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
+              <div className="flex items-center justify-between">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
+                {activeSourceData?.searchUrl && (
+                  <a
+                    href={activeSourceData.searchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[10px] uppercase tracking-[0.3em] text-sky-300"
+                  >
+                    Open Search
+                  </a>
+                )}
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Search Query</p>
+                <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <input
+                    value={query}
+                    onChange={(event) => {
+                      setQuery(event.target.value);
+                      setQueryTouched(true);
+                    }}
+                    className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-slate-200"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleEnqueue}
+                    disabled={enqueueing}
+                    className="w-full rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 disabled:opacity-60 sm:w-auto"
+                  >
+                    {enqueueing ? "Running…" : "Generate Comps"}
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Selected Comp</p>
+                {activeComp ? (
+                  <div className="mt-3 space-y-3">
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="mx-auto w-full max-w-[180px] aspect-[4/5] overflow-hidden rounded-xl border border-white/20 bg-black sm:w-[90%] sm:max-w-none sm:aspect-[9/16]">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        {activeComp.listingImageUrl || activeComp.screenshotUrl ? (
+                          <img
+                            src={activeComp.listingImageUrl ?? activeComp.screenshotUrl}
+                            alt={activeComp.title ?? "Selected comp"}
+                            className="h-full w-full object-contain p-3"
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : null}
+                      </div>
+                      <div className="flex flex-col justify-between gap-2 text-white">
+                        <div>
+                          <div className="text-lg font-bold text-emerald-400 md:text-xl">{activeComp.price ?? "—"}</div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
+                            {activeComp.soldDate ? `Sold ${activeComp.soldDate}` : ""}
+                          </div>
+                        </div>
+                        <div className="line-clamp-2 text-xs">{activeComp.title ?? activeComp.url}</div>
+                        {activeComp.patternMatch && (
+                          <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
+                            Pattern {activeComp.patternMatch.tier}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                      <a
+                        href={activeComp.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="w-full rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-300 sm:w-auto"
+                      >
+                        Open Listing
+                      </a>
+                      <button
+                        type="button"
+                        onClick={() => handleAttachComp(activeComp, "SOLD_COMP")}
+                        className="w-full rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-emerald-200 sm:w-auto"
+                      >
+                        Attach to Card
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mt-3 text-xs text-slate-500">Select a comp to preview.</div>
+                )}
               </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-night-950/60 p-3">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
               )}
@@ -2147,14 +2165,14 @@ export default function KingsReview() {
                     key={`${comp.url}-${index}`}
                     type="button"
                     onClick={() => setActiveCompIndex(index)}
-                    className={`w-full rounded-2xl border p-3 text-left transition ${
+                    className={`w-full rounded-2xl border p-2.5 text-left transition md:p-3 ${
                       activeCompIndex === index
-                        ? "border-emerald-400/60 bg-emerald-500/10"
-                        : "border-white/20 bg-black/90 hover:border-white/40"
+                        ? "border-emerald-400/60 bg-emerald-500/10 shadow-[0_0_0_1px_rgba(52,211,153,0.2)]"
+                        : "border-white/20 bg-black/90 hover:-translate-y-0.5 hover:border-white/40"
                     }`}
                   >
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="mx-auto w-[90%] aspect-[9/16] overflow-hidden rounded-xl border border-white/20 bg-black">
+                    <div className="grid grid-cols-[96px_1fr] gap-3 sm:grid-cols-[120px_1fr]">
+                      <div className="mx-auto w-full aspect-[9/16] overflow-hidden rounded-xl border border-white/20 bg-black">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         {comp.listingImageUrl || comp.screenshotUrl ? (
                           <img
@@ -2167,12 +2185,12 @@ export default function KingsReview() {
                       </div>
                       <div className="flex flex-col justify-between gap-2 text-white">
                         <div>
-                          <div className="text-xl font-bold text-emerald-400">{comp.price ?? "—"}</div>
-                          <div className="text-sm font-semibold uppercase tracking-[0.2em] text-emerald-300">
+                          <div className="text-lg font-bold text-emerald-400 md:text-xl">{comp.price ?? "—"}</div>
+                          <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
                             {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
                           </div>
                         </div>
-                        <div className="text-xs">{comp.title ?? comp.url}</div>
+                        <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
                         {comp.patternMatch && (
                           <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
                             Pattern {comp.patternMatch.tier}
@@ -2184,7 +2202,6 @@ export default function KingsReview() {
                 ))}
               </div>
             </div>
-
           </section>
         </div>
         {variantInspectOpen && (
