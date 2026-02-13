@@ -977,22 +977,6 @@ export default function AdminUploads() {
     [intakeCardId, isRemoteApi, resolveApiUrl, session?.token]
   );
 
-  useEffect(() => {
-    if (!intakeCardId) {
-      return;
-    }
-    if (pendingBackBlob) {
-      const blob = pendingBackBlob;
-      setPendingBackBlob(null);
-      void uploadQueuedPhoto(blob, "BACK");
-    }
-    if (pendingTiltBlob) {
-      const blob = pendingTiltBlob;
-      setPendingTiltBlob(null);
-      void uploadQueuedPhoto(blob, "TILT");
-    }
-  }, [intakeCardId, pendingBackBlob, pendingTiltBlob, uploadQueuedPhoto]);
-
   const confirmIntakeCapture = useCallback(
     async (target: "front" | "back" | "tilt", blob: Blob) => {
       try {
@@ -1053,6 +1037,22 @@ export default function AdminUploads() {
     },
     [closeCamera, intakeCardId, startOcrForCard, uploadCardAsset, uploadQueuedPhoto]
   );
+
+  useEffect(() => {
+    if (!intakeCardId) {
+      return;
+    }
+    if (pendingBackBlob) {
+      const blob = pendingBackBlob;
+      setPendingBackBlob(null);
+      void uploadQueuedPhoto(blob, "BACK");
+    }
+    if (pendingTiltBlob) {
+      const blob = pendingTiltBlob;
+      setPendingTiltBlob(null);
+      void uploadQueuedPhoto(blob, "TILT");
+    }
+  }, [intakeCardId, pendingBackBlob, pendingTiltBlob, uploadQueuedPhoto]);
 
   const handleCapture = useCallback(async () => {
     if (captureLocked) {
