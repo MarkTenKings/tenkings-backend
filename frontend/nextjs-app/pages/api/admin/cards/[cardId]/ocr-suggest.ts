@@ -35,6 +35,7 @@ type SuggestionFields = {
 type SuggestionConfidence = Record<keyof SuggestionFields, number | null>;
 
 const DEFAULT_THRESHOLD = 0.7;
+const OCR_LLM_MODEL = (process.env.OCR_LLM_MODEL ?? "gpt-4o-mini").trim();
 const TCG_KEYWORDS = [
   "pokemon",
   "magic",
@@ -63,6 +64,136 @@ const FIELD_KEYS: (keyof SuggestionFields)[] = [
   "gradeCompany",
   "gradeValue",
 ];
+
+type LlmParseResponse = {
+  fields: SuggestionFields;
+  confidence: SuggestionConfidence;
+};
+
+function coerceNullableString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function coerceConfidence(value: unknown): number | null {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return null;
+  }
+  if (value < 0 || value > 1) {
+    return null;
+  }
+  return value;
+}
+
+function parseLlmJsonPayload(raw: string): LlmParseResponse | null {
+  try {
+    const parsed = JSON.parse(raw) as {
+      fields?: Record<string, unknown>;
+      confidence?: Record<string, unknown>;
+    };
+    if (!parsed || typeof parsed !== "object") {
+      return null;
+    }
+
+    const fields = {} as SuggestionFields;
+    const confidence = {} as SuggestionConfidence;
+
+    FIELD_KEYS.forEach((key) => {
+      fields[key] = coerceNullableString(parsed.fields?.[key]);
+      confidence[key] = coerceConfidence(parsed.confidence?.[key]);
+    });
+
+    return { fields, confidence };
+  } catch {
+    return null;
+  }
+}
+
+async function parseWithLlm(ocrText: string): Promise<LlmParseResponse | null> {
+  const apiKey = (process.env.OPENAI_API_KEY ?? "").trim();
+  if (!apiKey) {
+    return null;
+  }
+  if (!ocrText.trim()) {
+    return null;
+  }
+
+  const schemaProperties: Record<string, unknown> = {};
+  FIELD_KEYS.forEach((key) => {
+    schemaProperties[key] = { type: ["string", "null"] };
+  });
+  const confidenceProperties: Record<string, unknown> = {};
+  FIELD_KEYS.forEach((key) => {
+    confidenceProperties[key] = { type: ["number", "null"], minimum: 0, maximum: 1 };
+  });
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: OCR_LLM_MODEL,
+      temperature: 0,
+      messages: [
+        {
+          role: "system",
+          content:
+            "Extract card metadata from OCR text. Return only JSON that matches the schema. Use null for unknown fields.",
+        },
+        {
+          role: "user",
+          content: `OCR text:\n${ocrText}`,
+        },
+      ],
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "card_ocr_parse",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            required: ["fields", "confidence"],
+            properties: {
+              fields: {
+                type: "object",
+                additionalProperties: false,
+                required: FIELD_KEYS,
+                properties: schemaProperties,
+              },
+              confidence: {
+                type: "object",
+                additionalProperties: false,
+                required: FIELD_KEYS,
+                properties: confidenceProperties,
+              },
+            },
+          },
+        },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`OpenAI parse failed (${response.status}): ${body}`);
+  }
+
+  const payload = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string | null } }>;
+  };
+  const content = payload.choices?.[0]?.message?.content;
+  if (!content) {
+    return null;
+  }
+
+  return parseLlmJsonPayload(content);
+}
 
 function buildProxyUrl(req: NextApiRequest, targetUrl: string): string | null {
   const normalizedTarget = normalizeStorageUrl(targetUrl) ?? targetUrl;
@@ -296,6 +427,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     }
 
+    try {
+      const llmResult = await parseWithLlm(combinedTextRaw);
+      if (llmResult) {
+        FIELD_KEYS.forEach((key) => {
+          if (llmResult.fields[key]) {
+            fields[key] = llmResult.fields[key];
+          }
+          if (llmResult.confidence[key] != null) {
+            confidence[key] = llmResult.confidence[key];
+          } else if (fields[key]) {
+            confidence[key] = 0.85;
+          }
+        });
+      }
+    } catch (error) {
+      console.warn("LLM OCR parse failed; using heuristic suggestions", error);
+    }
+
     const suggestions: Record<string, string> = {};
     FIELD_KEYS.forEach((key) => {
       const value = fields[key];
@@ -306,8 +455,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
 
     const audit = {
-      source: "local-ocr",
-      model: "paddleocr",
+      source: "local-ocr+llm",
+      model: `paddleocr|${OCR_LLM_MODEL}`,
       threshold: DEFAULT_THRESHOLD,
       createdAt: new Date().toISOString(),
       fields,
