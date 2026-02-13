@@ -1,13 +1,13 @@
-type Task<T> = {
-  run: () => Promise<T>;
-  resolve: (value: T) => void;
+type Task = {
+  run: () => Promise<unknown>;
+  resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
 };
 
 class AsyncQueue {
   private active = 0;
   private readonly limit: number;
-  private readonly queue: Task<unknown>[] = [];
+  private readonly queue: Task[] = [];
 
   constructor(limit: number) {
     this.limit = Math.max(1, Math.floor(limit));
@@ -18,7 +18,12 @@ class AsyncQueue {
       return this.execute(fn);
     }
     return new Promise<T>((resolve, reject) => {
-      this.queue.push({ run: fn, resolve, reject });
+      const task: Task = {
+        run: fn as () => Promise<unknown>,
+        resolve: resolve as (value: unknown) => void,
+        reject,
+      };
+      this.queue.push(task);
     });
   }
 
