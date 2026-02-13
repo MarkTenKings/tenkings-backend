@@ -135,6 +135,25 @@ const patternBadgeClass = (tier: PatternTier) => {
   }
 };
 
+const queueStatusMeta = (card: CardSummary) => {
+  const rawStatus = (card.status ?? "").toLowerCase();
+  const rawStage = (card.reviewStage ?? "").toLowerCase();
+
+  if (rawStatus.includes("error") || rawStatus.includes("fail")) {
+    return { label: "ERROR", className: "border-rose-400/50 bg-rose-500/20 text-rose-200" };
+  }
+  if (rawStatus.includes("process") || rawStatus.includes("running") || rawStage.includes("bytebot_running")) {
+    return { label: "PROCESSING", className: "border-sky-400/50 bg-sky-500/20 text-sky-200" };
+  }
+  if (rawStatus.includes("ready") || rawStage.includes("ready_for_human_review")) {
+    return { label: "READY", className: "border-emerald-400/50 bg-emerald-500/20 text-emerald-200" };
+  }
+  if (rawStatus.includes("queue") || rawStatus.includes("pend")) {
+    return { label: "QUEUED", className: "border-amber-400/40 bg-amber-500/15 text-amber-200" };
+  }
+  return { label: "", className: "" };
+};
+
 type JobResultSource = {
   source: string;
   searchUrl: string;
@@ -1212,7 +1231,7 @@ export default function KingsReview() {
     }
 
     return (
-      <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:flex-1 lg:gap-6">
+      <div className="flex flex-1 min-h-0 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:gap-6 lg:overflow-hidden">
         <header className="shrink-0 flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
@@ -1379,14 +1398,14 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:h-[calc(100dvh-220px)] lg:min-h-[650px] lg:grid-cols-[1fr_2fr_2fr]">
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:h-[calc(100dvh-220px)] lg:overflow-hidden">
+        <div className="grid flex-1 min-h-0 gap-4 md:gap-5 xl:gap-6 lg:h-full lg:grid-cols-[1fr_2fr_2fr]">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
               <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
             </div>
             <div
-              className="h-[42vh] flex-1 min-h-0 overflow-y-scroll rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2 lg:h-full"
+              className="flex-1 min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2"
               onScroll={(event) => {
                 const target = event.currentTarget;
                 if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
@@ -1394,7 +1413,9 @@ export default function KingsReview() {
                 }
               }}
             >
-              {cards.map((card) => (
+              {cards.map((card) => {
+                const status = queueStatusMeta(card);
+                return (
                   <button
                     key={card.id}
                     type="button"
@@ -1402,23 +1423,29 @@ export default function KingsReview() {
                     onMouseEnter={() => {
                       void preloadCardAssets(card.id);
                     }}
-                    className={`group flex w-full items-center gap-2 rounded-xl px-2.5 py-2.5 text-left text-[11px] transition md:gap-3 md:px-3 md:py-2 md:text-xs ${
+                    title={card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
+                    className={`group w-full rounded-xl px-3 py-3 text-left transition ${
                       activeCardId === card.id
                         ? "border border-gold-400/40 bg-gold-500/15 text-gold-200"
                         : "border border-transparent text-slate-300 hover:bg-white/5"
                     }`}
                   >
-                    <span className="line-clamp-1 flex-1 pr-1">
-                      {card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
-                    </span>
-                    <span className="hidden text-[10px] uppercase tracking-[0.24em] text-slate-500 md:inline">
-                      {new Date(card.updatedAt).toLocaleTimeString()}
-                    </span>
-                    <span className="rounded-full border border-white/15 px-2 py-1 text-[9px] uppercase tracking-[0.2em] text-slate-400 group-hover:text-slate-300">
-                      {card.status.replaceAll("_", " ")}
-                    </span>
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="line-clamp-2 text-sm font-semibold leading-tight">
+                        {card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
+                      </span>
+                      {status.label && (
+                        <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] uppercase tracking-[0.2em] ${status.className}`}>
+                          {status.label}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-[10px] uppercase tracking-[0.24em] text-slate-500">
+                      {new Date(card.updatedAt).toLocaleString()}
+                    </div>
                   </button>
-                ))}
+                );
+              })}
               {cards.length === 0 && !cardsLoading && (
                 <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
                   No cards in this stage
@@ -1437,7 +1464,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:h-[calc(100dvh-220px)] lg:overflow-y-auto">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -2016,8 +2043,8 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:h-[calc(100dvh-220px)] lg:overflow-hidden">
-            <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-0 lg:max-h-[34%] lg:overflow-y-auto lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
+            <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-0 lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
               <div className="flex items-center justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
                 {activeSourceData?.searchUrl && (
@@ -2302,7 +2329,7 @@ export default function KingsReview() {
   };
 
   return (
-    <AppShell>
+    <AppShell hideFooter>
       <Head>
         <title>KingsReview · Ten Kings</title>
       </Head>
