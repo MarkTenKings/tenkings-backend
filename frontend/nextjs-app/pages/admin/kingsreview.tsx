@@ -1193,8 +1193,8 @@ export default function KingsReview() {
     }
 
     return (
-      <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:flex-1 lg:gap-6 lg:overflow-hidden">
-        <header className="flex flex-col gap-4">
+      <div className="flex h-full min-h-0 flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:h-full lg:flex-1 lg:gap-6 lg:overflow-hidden">
+        <header className="shrink-0 flex flex-col gap-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Link
               href="/admin/uploads"
@@ -2065,8 +2065,8 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-y-auto">
-            <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-3 lg:max-h-[34%] lg:overflow-y-auto lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
+          <section className="flex h-full min-h-[320px] flex-col gap-3 rounded-2xl border border-white/10 bg-night-900/70 p-3 md:gap-4 md:rounded-3xl md:p-4 lg:min-h-0 lg:overflow-hidden">
+            <div className="z-20 space-y-3 border-b border-white/10 pb-3 lg:sticky lg:top-0 lg:max-h-[34%] lg:overflow-y-auto lg:rounded-2xl lg:border lg:border-white/10 lg:bg-night-900/95 lg:p-3 lg:shadow-[0_8px_20px_rgba(0,0,0,0.35)] lg:backdrop-blur">
               <div className="flex items-center justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
                 {activeSourceData?.searchUrl && (
@@ -2155,7 +2155,7 @@ export default function KingsReview() {
                 )}
               </div>
             </div>
-            <div className="flex-1 min-h-0 rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
               )}
