@@ -936,8 +936,8 @@ export default function KingsReview() {
     if (!activeCard) {
       return;
     }
-    if (!variantSetId.trim() || !variantCardNumber.trim()) {
-      setError("Set ID and Card # are required to run the matcher.");
+    if (!variantSetId.trim()) {
+      setError("Set ID is required to run the matcher.");
       return;
     }
     setSaving(true);
@@ -958,6 +958,12 @@ export default function KingsReview() {
       const payload = await res.json();
       if (!res.ok) {
         throw new Error(payload?.message ?? "Failed to run matcher");
+      }
+      if (payload?.matchedSetId) {
+        setVariantSetId(payload.matchedSetId);
+      }
+      if (payload?.matchedCardNumber) {
+        setVariantCardNumber(payload.matchedCardNumber);
       }
       if (payload?.candidates?.length) {
         const top = payload.candidates[0];

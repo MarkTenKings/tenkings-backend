@@ -5,6 +5,7 @@ import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/
 import { normalizeStorageUrl } from "../../../../../lib/server/storage";
 import { runLocalOcr } from "../../../../../lib/server/localOcr";
 import { extractCardAttributes } from "@tenkings/shared";
+import { runVariantMatch } from "../../../../../lib/server/variantMatcher";
 
 type SuggestResponse =
   | {
@@ -479,6 +480,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ocrSuggestionUpdatedAt: new Date(),
       },
     });
+
+    const suggestedSetId = fields.setName?.trim() || null;
+    const suggestedCardNumber = fields.cardNumber?.trim() || null;
+    if (suggestedSetId) {
+      try {
+        await runVariantMatch({
+          cardAssetId: cardId,
+          setId: suggestedSetId,
+          cardNumber: suggestedCardNumber,
+        });
+      } catch (error) {
+        console.warn("Auto variant match failed after OCR", error);
+      }
+    }
 
     return res.status(200).json({
       suggestions,
