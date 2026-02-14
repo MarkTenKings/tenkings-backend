@@ -613,6 +613,30 @@ export default function KingsReview() {
   }, [router.isReady, router.query.cardId, router.query.stage]);
 
   useEffect(() => {
+    if (!activeCardId) {
+      return;
+    }
+    const selectedCard = cards.find((card) => card.id === activeCardId);
+    if (!selectedCard) {
+      return;
+    }
+    // Render the newly selected card image immediately while detail fetch completes.
+    setActiveCard((prev) => {
+      if (prev?.id === selectedCard.id) {
+        return prev;
+      }
+      return {
+        ...selectedCard,
+        customDetails: null,
+        classification: null,
+        classificationNormalized: null,
+        photos: [],
+      };
+    });
+    setActivePhotoKind("FRONT");
+  }, [activeCardId, cards]);
+
+  useEffect(() => {
     if (!session || !isAdmin) {
       return;
     }
