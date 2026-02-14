@@ -133,11 +133,19 @@ function uniqueQuery(terms: Array<string | null | undefined>): string | null {
   return deduped.join(" ");
 }
 
+function extractNumberedDenominator(numbered: string | null | undefined): string | null {
+  if (!numbered) return null;
+  const match = numbered.match(/\/\s*(\d{1,4})\b/);
+  return match?.[1] ? `/${match[1]}` : null;
+}
+
 function buildVariantQuery(attributes: CardAttributes, playerName: string | null): string | null {
+  const numberedDenominator = extractNumberedDenominator(attributes.numbered);
   return uniqueQuery([
     playerName,
     attributes.brand ?? attributes.setName,
     ...attributes.variantKeywords,
+    numberedDenominator,
     attributes.numbered,
     attributes.autograph ? "autograph" : null,
     attributes.memorabilia ? "patch" : null,
@@ -172,10 +180,12 @@ function buildMemorabiliaQuery(attributes: CardAttributes, playerName: string | 
   if (!attributes.memorabilia) {
     return null;
   }
+  const numberedDenominator = extractNumberedDenominator(attributes.numbered);
   return uniqueQuery([
     playerName,
     attributes.brand ?? attributes.setName,
     "patch",
+    numberedDenominator,
     attributes.numbered,
   ]);
 }
@@ -184,10 +194,12 @@ function buildAutoQuery(attributes: CardAttributes, playerName: string | null): 
   if (!attributes.autograph) {
     return null;
   }
+  const numberedDenominator = extractNumberedDenominator(attributes.numbered);
   return uniqueQuery([
     playerName,
     attributes.brand ?? attributes.setName,
     "autograph",
+    numberedDenominator,
     attributes.numbered,
   ]);
 }
@@ -208,6 +220,7 @@ function buildExactQuery(
   playerName: string | null,
   original: string | null | undefined
 ): string | null {
+  const numberedDenominator = extractNumberedDenominator(attributes.numbered);
   const gradePhrase = attributes.gradeValue
     ? attributes.gradeCompany
       ? `${attributes.gradeCompany} ${attributes.gradeValue}`
@@ -223,6 +236,7 @@ function buildExactQuery(
     attributes.autograph ? "autograph" : null,
     attributes.memorabilia ? "patch" : null,
     gradePhrase,
+    numberedDenominator,
     attributes.numbered,
     original,
   ]);

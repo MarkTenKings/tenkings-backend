@@ -483,12 +483,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const suggestedSetId = fields.setName?.trim() || null;
     const suggestedCardNumber = fields.cardNumber?.trim() || null;
+    const suggestedNumbered = fields.numbered?.trim() || null;
     if (suggestedSetId) {
       try {
         await runVariantMatch({
           cardAssetId: cardId,
           setId: suggestedSetId,
           cardNumber: suggestedCardNumber,
+          numbered: suggestedNumbered,
         });
       } catch (error) {
         console.warn("Auto variant match failed after OCR", error);

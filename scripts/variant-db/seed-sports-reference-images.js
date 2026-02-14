@@ -84,49 +84,8 @@ async function fetchSerpEbayImages(apiKey, query, count) {
   return rows;
 }
 
-async function fetchSerpGoogleEbayImages(apiKey, query, count) {
-  const params = new URLSearchParams({
-    engine: "google_images",
-    q: `${query} site:ebay.com`,
-    api_key: apiKey,
-    num: String(Math.max(1, Math.min(100, count * 2))),
-  });
-  const response = await fetch(`https://serpapi.com/search.json?${params.toString()}`);
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`SerpApi error ${response.status}${text ? ` - ${text.slice(0, 200)}` : ""}`);
-  }
-  const payload = await response.json();
-  const images = Array.isArray(payload?.images_results) ? payload.images_results : [];
-  const rows = [];
-  const seen = new Set();
-  for (const image of images) {
-    const rawImageUrl =
-      typeof image?.thumbnail === "string"
-        ? image.thumbnail.trim()
-        : typeof image?.original === "string"
-        ? image.original.trim()
-        : "";
-    if (!rawImageUrl || isLikelyPlaceholderImage(rawImageUrl) || seen.has(rawImageUrl)) continue;
-    seen.add(rawImageUrl);
-    rows.push({
-      rawImageUrl,
-      sourceUrl: typeof image?.link === "string" ? image.link.trim() : null,
-    });
-    if (rows.length >= count) break;
-  }
-  return rows;
-}
-
 async function fetchSerpImages(apiKey, query, count) {
-  try {
-    const ebay = await fetchSerpEbayImages(apiKey, query, count);
-    if (ebay.length >= count) return ebay;
-    const fallback = await fetchSerpGoogleEbayImages(apiKey, query, count - ebay.length);
-    return [...ebay, ...fallback].slice(0, count);
-  } catch {
-    return await fetchSerpGoogleEbayImages(apiKey, query, count);
-  }
+  return await fetchSerpEbayImages(apiKey, query, count);
 }
 
 async function main() {

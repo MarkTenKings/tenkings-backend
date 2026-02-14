@@ -10,7 +10,7 @@ It supports:
 
 Sports automation scripts:
 - `collect-sports-variants.js` (auto-build merged sports CSV from configured sources)
-- `seed-sports-reference-images.js` (auto-seed reference images via SerpApi, eBay-first with eBay-only Google Images fallback)
+- `seed-sports-reference-images.js` (auto-seed reference images via SerpApi eBay engine only)
 - `run-sports-live.js` (single command pipeline)
 
 ## Command

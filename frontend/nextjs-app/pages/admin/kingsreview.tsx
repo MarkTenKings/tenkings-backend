@@ -949,10 +949,14 @@ export default function KingsReview() {
           "Content-Type": "application/json",
           ...adminHeaders(),
         },
+        // Send numbered denominator signal when available.
         body: JSON.stringify({
           cardAssetId: activeCard.id,
           setId: variantSetId.trim(),
           cardNumber: variantCardNumber.trim(),
+          numbered:
+            (typeof activeCard.classification?.numbered === "string" && activeCard.classification?.numbered) ||
+            (activeCard.ocrText?.match(/\b\d{1,4}\s*\/\s*\d{1,4}\b/)?.[0] ?? null),
         }),
       });
       const payload = await res.json();

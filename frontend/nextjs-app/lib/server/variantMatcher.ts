@@ -22,6 +22,9 @@ export type VariantMatchResult =
       matchedCardNumber?: string;
     };
 
+const MIN_MATCH_CONFIDENCE = 0.78;
+const MIN_MATCH_MARGIN = 0.05;
+
 async function computeFoilScore(imageUrl: string) {
   try {
     const response = await fetch(imageUrl);
@@ -108,12 +111,26 @@ async function findVariants(params: { setId: string; cardNumber?: string | null 
     where: whereExact,
     orderBy: [{ parallelId: "asc" }],
     take: 25,
+    select: {
+      setId: true,
+      cardNumber: true,
+      parallelId: true,
+      keywords: true,
+      oddsInfo: true,
+    },
   });
   if (variants.length === 0) {
     variants = await prisma.cardVariant.findMany({
       where: { setId, cardNumber: "ALL" },
       orderBy: [{ parallelId: "asc" }],
       take: 25,
+      select: {
+        setId: true,
+        cardNumber: true,
+        parallelId: true,
+        keywords: true,
+        oddsInfo: true,
+      },
     });
   }
   return variants;
@@ -136,10 +153,12 @@ export async function runVariantMatch(params: {
   cardAssetId: string;
   setId: string;
   cardNumber?: string | null;
+  numbered?: string | null;
 }): Promise<VariantMatchResult> {
   const cardAssetId = params.cardAssetId.trim();
   const setInput = params.setId.trim();
   const cardNumberInput = params.cardNumber?.trim() || "ALL";
+  const numberedInput = params.numbered?.trim() || null;
   if (!cardAssetId || !setInput) {
     return { ok: false, message: "cardAssetId and setId are required" };
   }
@@ -158,12 +177,24 @@ export async function runVariantMatch(params: {
   }
 
   let matchedSetId = "";
-  let variants: Array<{ setId: string; parallelId: string; cardNumber: string }> = [];
+  let variants: Array<{
+    setId: string;
+    parallelId: string;
+    cardNumber: string;
+    keywords: string[];
+    oddsInfo: string | null;
+  }> = [];
   for (const setId of setCandidates) {
     const rows = await findVariants({ setId, cardNumber: cardNumberInput === "ALL" ? "" : cardNumberInput });
     if (rows.length > 0) {
       matchedSetId = setId;
-      variants = rows.map((row) => ({ setId: row.setId, parallelId: row.parallelId, cardNumber: row.cardNumber }));
+      variants = rows.map((row) => ({
+        setId: row.setId,
+        parallelId: row.parallelId,
+        cardNumber: row.cardNumber,
+        keywords: Array.isArray(row.keywords) ? row.keywords : [],
+        oddsInfo: row.oddsInfo ?? null,
+      }));
       break;
     }
   }
@@ -175,63 +206,85 @@ export async function runVariantMatch(params: {
   const foilSourceUrl = tiltPhoto || cardAsset.imageUrl;
   const foilScore = await computeFoilScore(foilSourceUrl);
   const embeddingService = process.env.VARIANT_EMBEDDING_URL ?? "";
-
-  let candidates: VariantCandidate[] = [];
-  if (embeddingService) {
-    const embedRes = await fetch(embeddingService, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ imageUrl: cardAsset.imageUrl, mode: "card" }),
-    });
-    const embedPayload = await embedRes.json().catch(() => null);
-    const cardVectors: number[][] = Array.isArray(embedPayload?.embeddings)
-      ? embedPayload.embeddings.map((entry: any) => entry.vector).filter((vec: any) => Array.isArray(vec))
-      : [];
-
-    for (const variant of variants) {
-      const refs = await prisma.cardVariantReferenceImage.findMany({
-        where: { setId: variant.setId, parallelId: variant.parallelId },
-        take: 5,
-        orderBy: [{ qualityScore: "desc" }, { createdAt: "desc" }],
-      });
-
-      let bestScore = 0;
-      for (const ref of refs) {
-        const embeddings = Array.isArray(ref.cropEmbeddings) ? (ref.cropEmbeddings as any[]) : [];
-        let refScore = 0;
-        let refCount = 0;
-        for (const emb of embeddings) {
-          const vec = emb?.vector;
-          if (!Array.isArray(vec) || vec.length === 0) continue;
-          let best = 0;
-          for (const cardVec of cardVectors) {
-            const score = cosine(cardVec, vec);
-            if (score > best) best = score;
-          }
-          refScore += best;
-          refCount += 1;
-        }
-        if (refCount > 0) {
-          const avg = refScore / refCount;
-          if (avg > bestScore) bestScore = avg;
-        }
-      }
-
-      candidates.push({
-        parallelId: variant.parallelId,
-        confidence: Number(bestScore.toFixed(3)),
-        reason: "cosine",
-      });
-    }
-    candidates = candidates.sort((a, b) => b.confidence - a.confidence).slice(0, 5);
-  } else {
-    const confidences = [0.9, 0.82, 0.74, 0.66, 0.58];
-    candidates = variants.slice(0, 5).map((variant, index) => ({
-      parallelId: variant.parallelId,
-      confidence: confidences[index] ?? 0.5,
-      reason: "stub",
-    }));
+  if (!embeddingService) {
+    return { ok: false, message: "Variant embedding service is not configured" };
   }
+
+  const extractDenominator = (value: string | null | undefined) => {
+    if (!value) return null;
+    const match = value.match(/\/\s*(\d{1,4})\b/);
+    return match?.[1] ?? null;
+  };
+
+  const embedRes = await fetch(embeddingService, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageUrl: cardAsset.imageUrl, mode: "card" }),
+  });
+  const embedPayload = await embedRes.json().catch(() => null);
+  const cardVectors: number[][] = Array.isArray(embedPayload?.embeddings)
+    ? embedPayload.embeddings.map((entry: any) => entry.vector).filter((vec: any) => Array.isArray(vec))
+    : [];
+
+  if (cardVectors.length === 0) {
+    return { ok: false, message: "Card embedding could not be computed" };
+  }
+
+  const targetDenominator = extractDenominator(numberedInput);
+  let candidates: VariantCandidate[] = [];
+  for (const variant of variants) {
+    const refs = await prisma.cardVariantReferenceImage.findMany({
+      where: { setId: variant.setId, parallelId: variant.parallelId },
+      take: 5,
+      orderBy: [{ qualityScore: "desc" }, { createdAt: "desc" }],
+    });
+
+    let bestScore = 0;
+    for (const ref of refs) {
+      const embeddings = Array.isArray(ref.cropEmbeddings) ? (ref.cropEmbeddings as any[]) : [];
+      let refScore = 0;
+      let refCount = 0;
+      for (const emb of embeddings) {
+        const vec = emb?.vector;
+        if (!Array.isArray(vec) || vec.length === 0) continue;
+        let best = 0;
+        for (const cardVec of cardVectors) {
+          const score = cosine(cardVec, vec);
+          if (score > best) best = score;
+        }
+        refScore += best;
+        refCount += 1;
+      }
+      if (refCount > 0) {
+        const avg = refScore / refCount;
+        if (avg > bestScore) bestScore = avg;
+      }
+    }
+
+    let confidence = bestScore;
+    let reason = "cosine";
+    if (targetDenominator) {
+      const searchable = [
+        variant.parallelId,
+        variant.oddsInfo ?? "",
+        ...variant.keywords,
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (searchable.includes(`/${targetDenominator}`)) {
+        confidence = Math.min(1, confidence + 0.03);
+        reason = "cosine|numbered-denominator-boost";
+      }
+    }
+
+    candidates.push({
+      parallelId: variant.parallelId,
+      confidence: Number(confidence.toFixed(3)),
+      reason,
+    });
+  }
+
+  candidates = candidates.sort((a, b) => b.confidence - a.confidence).slice(0, 5);
 
   if (foilScore != null) {
     candidates = candidates.map((candidate) => ({
@@ -241,18 +294,21 @@ export async function runVariantMatch(params: {
   }
 
   const top = candidates[0];
+  const second = candidates[1];
+  const margin = top && second ? top.confidence - second.confidence : top ? top.confidence : 0;
+  const passesThreshold = Boolean(top && top.confidence >= MIN_MATCH_CONFIDENCE && margin >= MIN_MATCH_MARGIN);
   await prisma.cardVariantDecision.create({
     data: {
       cardAssetId,
       candidatesJson: candidates,
-      selectedParallelId: top?.parallelId ?? null,
-      confidence: top?.confidence ?? null,
+      selectedParallelId: passesThreshold ? top?.parallelId ?? null : null,
+      confidence: passesThreshold ? top?.confidence ?? null : null,
       humanOverride: false,
       humanNotes: null,
     },
   });
 
-  if (top) {
+  if (passesThreshold && top) {
     await prisma.cardAsset.update({
       where: { id: cardAssetId },
       data: {
@@ -260,6 +316,21 @@ export async function runVariantMatch(params: {
         variantConfidence: top.confidence,
       },
     });
+  } else {
+    await prisma.cardAsset.update({
+      where: { id: cardAssetId },
+      data: {
+        variantId: null,
+        variantConfidence: null,
+      },
+    });
+    return {
+      ok: false,
+      message: "No confident variant match",
+      candidates,
+      matchedSetId,
+      matchedCardNumber: cardNumberInput,
+    };
   }
 
   return {
