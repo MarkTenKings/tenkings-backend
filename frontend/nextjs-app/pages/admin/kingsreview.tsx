@@ -1454,16 +1454,16 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:h-[calc(100vh-118px)] lg:flex-row lg:items-stretch lg:justify-center lg:gap-[72px]">
+        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:flex-row lg:items-stretch lg:justify-center lg:gap-[72px]">
           <section
-            className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]"
+            className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[425px]"
           >
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
               <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
             </div>
             <div
-              className="h-full min-h-0 flex-1 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2"
+              className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2"
               onScroll={(event) => {
                 const target = event.currentTarget;
                 if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
@@ -1524,7 +1524,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
+          <section className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[425px]">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -1545,7 +1545,7 @@ export default function KingsReview() {
                 </button>
               </div>
             </div>
-            <div className="h-full min-h-0 flex-1 overflow-y-scroll overscroll-contain">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
             <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
               {aiStatus && (
                 <div className="mt-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2">
@@ -2119,7 +2119,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[390px]">
+          <section className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:w-[425px]">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
               {activeSourceData?.searchUrl && (
@@ -2133,7 +2133,7 @@ export default function KingsReview() {
                 </a>
               )}
             </div>
-            <div className="h-full min-h-0 flex-1 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
+            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
               )}
