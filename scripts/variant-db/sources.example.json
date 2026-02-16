@@ -1,0 +1,15 @@
+{
+  "source": "all",
+  "csv": [
+    "frontend/nextjs-app/public/templates/variant-template.csv"
+  ],
+  "withReferences": true,
+  "createOnly": false,
+  "dryRun": true,
+  "pokemon": {
+    "query": "supertype:pokemon",
+    "limit": 500,
+    "pageSize": 250,
+    "apiBase": "https://api.pokemontcg.io/v2/cards"
+  }
+}

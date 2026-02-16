@@ -9,8 +9,12 @@ It supports:
 - Optional reference image seeding from row image URLs
 
 Sports automation scripts:
+- `discover-sports-sets.js` (discover 2020-2026 sports set/checklist pages)
+- `build-sports-variants-csv.js` (extract parallel names from discovered set pages into CSV)
 - `collect-sports-variants.js` (auto-build merged sports CSV from configured sources)
-- `seed-sports-reference-images.js` (auto-seed reference images via SerpApi eBay engine only)
+- `seed-sports-reference-images.js` (auto-seed reference images via SerpApi eBay engine only, with quality gate filtering before insert)
+- `backfill-reference-quality-gate.js` (score existing refs and optionally delete rejects)
+- `list-reference-coverage-gaps.js` (find variants with low reference count)
 - `run-sports-live.js` (single command pipeline)
 
 ## Command
@@ -41,6 +45,30 @@ Optional controls:
 ```bash
 pnpm variants:sports:run --set-id "2025-26 Topps Basketball" --limit-variants 80 --images-per-variant 4
 pnpm variants:sports:run --skip-seed
+```
+
+### 0.5) 2020-2026 Sports discovery -> CSV (online research automation)
+```bash
+pnpm variants:sports:discover --from-year 2020 --to-year 2026 --sports baseball,football,basketball
+pnpm variants:sports:build-csv --manifest data/variants/sports/2020-2026/sports-sets.manifest.json --out data/variants/sports/2020-2026/sports-variants.auto.csv
+pnpm variants:sync --source csv --csv data/variants/sports/2020-2026/sports-variants.auto.csv --dry-run
+pnpm variants:sync --source csv --csv data/variants/sports/2020-2026/sports-variants.auto.csv
+```
+
+Then seed eBay reference images:
+```bash
+pnpm variants:sports:seed-refs --limit-variants 5000 --images-per-variant 4 --delay-ms 700
+```
+
+Backfill quality gate on existing references:
+```bash
+pnpm variants:sports:backfill-ref-quality --dry-run --limit 2000
+pnpm variants:sports:backfill-ref-quality --limit 50000 --delete-rejects
+```
+
+List reference coverage gaps (<4 by default):
+```bash
+pnpm variants:sports:coverage-gaps --min-refs 4 --out data/variants/sports/coverage-gaps.json
 ```
 
 ### 1) Sports from CSV (safe preview)

@@ -19,6 +19,14 @@
     "db:migrate": "npm run migrate:dev --workspace @tenkings/database",
     "db:deploy": "npm run migrate:deploy --workspace @tenkings/database",
     "db:push": "npm run db:push --workspace @tenkings/database",
+    "variants:sync": "node scripts/variant-db/sync-variant-db.js",
+    "variants:sports:discover": "node scripts/variant-db/discover-sports-sets.js",
+    "variants:sports:build-csv": "node scripts/variant-db/build-sports-variants-csv.js",
+    "variants:sports:collect": "node scripts/variant-db/collect-sports-variants.js",
+    "variants:sports:seed-refs": "node scripts/variant-db/seed-sports-reference-images.js",
+    "variants:sports:backfill-ref-quality": "node scripts/variant-db/backfill-reference-quality-gate.js",
+    "variants:sports:coverage-gaps": "node scripts/variant-db/list-reference-coverage-gaps.js",
+    "variants:sports:run": "node scripts/variant-db/run-sports-live.js",
     "vercel:build": "bash scripts/vercel-build.sh",
     "packs:mint": "node scripts/mint-pack-inventory.js"
   }

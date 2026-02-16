@@ -1,0 +1,12 @@
+{
+  "sources": [
+    {
+      "name": "Topps 2025-26 Basketball (local baseline)",
+      "kind": "csv",
+      "path": "frontend/nextjs-app/public/templates/2025-26-topps-basketball-parallels.csv",
+      "defaults": {
+        "cardNumber": "ALL"
+      }
+    }
+  ]
+}
