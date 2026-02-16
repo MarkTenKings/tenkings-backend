@@ -47,8 +47,8 @@ function chunkArray(input, size) {
   return chunks;
 }
 
-function buildVariantQuery(variant, parallelOverride = "") {
-  const setPart = variant.setId;
+function buildVariantQuery(variant, parallelOverride = "", querySetOverride = "") {
+  const setPart = querySetOverride || variant.setId;
   const cardPart = variant.cardNumber === "ALL" ? "" : `#${variant.cardNumber}`;
   const parallelPart = parallelOverride || variant.parallelId;
   const keywordPart = Array.isArray(variant.keywords) ? variant.keywords.slice(0, 3).join(" ") : "";
@@ -137,11 +137,11 @@ async function fetchSerpImages(apiKey, query, count) {
   return await fetchSerpEbayImages(apiKey, query, count);
 }
 
-async function fetchVariantImages(apiKey, variant, count) {
-  const queries = [buildVariantQuery(variant)];
+async function fetchVariantImages(apiKey, variant, count, querySetOverride = "") {
+  const queries = [buildVariantQuery(variant, "", querySetOverride)];
   const aliasTerms = deriveParallelSearchTerms(variant.parallelId);
   for (const alias of aliasTerms) {
-    queries.push(buildVariantQuery(variant, alias));
+    queries.push(buildVariantQuery(variant, alias, querySetOverride));
   }
 
   const rows = [];
@@ -197,6 +197,7 @@ async function main() {
   const imagesPerVariant = Math.max(1, Number(args["images-per-variant"] ?? 3) || 3);
   const delayMs = Math.max(0, Number(args["delay-ms"] ?? 700) || 700);
   const setFilter = args["set-id"] ? String(args["set-id"]).trim() : "";
+  const querySetOverride = args["query-set"] ? String(args["query-set"]).trim() : "";
   const apiKey = process.env.SERPAPI_KEY ?? "";
 
   if (!apiKey) {
@@ -249,7 +250,7 @@ async function main() {
           .filter(Boolean)
       );
 
-      const images = await fetchVariantImages(apiKey, variant, remainingSlots);
+      const images = await fetchVariantImages(apiKey, variant, remainingSlots, querySetOverride);
       if (images.length > 0) {
         variantsSeeded += 1;
       }
