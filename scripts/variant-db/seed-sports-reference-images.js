@@ -47,12 +47,51 @@ function chunkArray(input, size) {
   return chunks;
 }
 
-function buildVariantQuery(variant) {
+function buildVariantQuery(variant, parallelOverride = "") {
   const setPart = variant.setId;
   const cardPart = variant.cardNumber === "ALL" ? "" : `#${variant.cardNumber}`;
-  const parallelPart = variant.parallelId;
+  const parallelPart = parallelOverride || variant.parallelId;
   const keywordPart = Array.isArray(variant.keywords) ? variant.keywords.slice(0, 3).join(" ") : "";
   return [setPart, cardPart, parallelPart, keywordPart, "trading card"].filter(Boolean).join(" ");
+}
+
+function deriveParallelSearchTerms(parallelId) {
+  const text = String(parallelId || "").trim();
+  if (!text) return [];
+  const normalized = text.toLowerCase();
+  const terms = [];
+  const push = (value) => {
+    const next = String(value || "").trim();
+    if (!next) return;
+    if (!terms.some((item) => item.toLowerCase() === next.toLowerCase())) {
+      terms.push(next);
+    }
+  };
+
+  // Product-specific aliasing for hard insert/autograph/relic subsets.
+  if (normalized.includes("redemption")) push("Redemption");
+  if (normalized.includes("patch")) push("Patch");
+  if (normalized.includes("relic")) push("Relic");
+  if (normalized.includes("auto")) push("Auto Autograph");
+  if (normalized.includes("dual")) push("Rookie Dual Auto");
+  if (normalized.includes("triple")) push("Triple Auto");
+  if (normalized.includes("mojo")) push("Mojo Silver Pack");
+  if (normalized.includes("holo foil")) push("Holo Foil");
+  if (normalized.includes("home court")) push("Home Court");
+  if (normalized.includes("new school")) push("New School");
+  if (normalized.includes("hidden gems")) push("Hidden Gems");
+  if (normalized.includes("all kings")) push("All Kings");
+  if (normalized.includes("class of")) push("Class");
+  if (normalized.includes("notch")) push("Topps Notch Auto");
+  if (normalized.includes("follow back")) push("Social Media Redemption");
+  if (normalized.includes("photo shoot")) push("Rookie Auto");
+
+  // Generic simplification: try meaningful individual words as fallbacks.
+  const words = text.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+  for (const word of words) {
+    if (word.length >= 4) push(word);
+  }
+  return terms;
 }
 
 function isLikelyPlaceholderImage(url) {
@@ -96,6 +135,27 @@ async function fetchSerpEbayImages(apiKey, query, count) {
 
 async function fetchSerpImages(apiKey, query, count) {
   return await fetchSerpEbayImages(apiKey, query, count);
+}
+
+async function fetchVariantImages(apiKey, variant, count) {
+  const queries = [buildVariantQuery(variant)];
+  const aliasTerms = deriveParallelSearchTerms(variant.parallelId);
+  for (const alias of aliasTerms) {
+    queries.push(buildVariantQuery(variant, alias));
+  }
+
+  const rows = [];
+  const seen = new Set();
+  for (const query of queries) {
+    const batch = await fetchSerpImages(apiKey, query, count);
+    for (const image of batch) {
+      if (seen.has(image.rawImageUrl)) continue;
+      seen.add(image.rawImageUrl);
+      rows.push(image);
+      if (rows.length >= count) return rows;
+    }
+  }
+  return rows;
 }
 
 async function loadExistingRefCounts(prisma, variants) {
@@ -189,8 +249,7 @@ async function main() {
           .filter(Boolean)
       );
 
-      const query = buildVariantQuery(variant);
-      const images = await fetchSerpImages(apiKey, query, remainingSlots);
+      const images = await fetchVariantImages(apiKey, variant, remainingSlots);
       if (images.length > 0) {
         variantsSeeded += 1;
       }
