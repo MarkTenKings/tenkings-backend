@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
@@ -12,6 +12,8 @@ type VariantRow = {
   cardNumber: string;
   parallelId: string;
   parallelFamily: string | null;
+  referenceCount: number;
+  previewImageUrl: string | null;
 };
 
 type ReferenceRow = {
@@ -34,7 +36,7 @@ export default function VariantRefQaPage() {
     [session?.user.id, session?.user.phone]
   );
 
-  const [query, setQuery] = useState("2025-26 Topps Basketball");
+  const [query, setQuery] = useState("");
   const [variants, setVariants] = useState<VariantRow[]>([]);
   const [refs, setRefs] = useState<ReferenceRow[]>([]);
   const [selectedSetId, setSelectedSetId] = useState("");
@@ -43,10 +45,11 @@ export default function VariantRefQaPage() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<StatusMessage>(null);
+  const autoLoadedRef = useRef(false);
 
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
 
-  const loadVariants = async () => {
+  const loadVariants = useCallback(async () => {
     if (!session?.token) return;
     setBusy(true);
     try {
@@ -65,7 +68,14 @@ export default function VariantRefQaPage() {
     } finally {
       setBusy(false);
     }
-  };
+  }, [adminHeaders, query, session?.token]);
+
+  useEffect(() => {
+    if (!session?.token) return;
+    if (autoLoadedRef.current) return;
+    autoLoadedRef.current = true;
+    void loadVariants();
+  }, [loadVariants, session?.token]);
 
   const loadRefs = async (setId?: string, parallelId?: string) => {
     if (!session?.token) return;
@@ -150,7 +160,7 @@ export default function VariantRefQaPage() {
     }
   };
 
-  const uploadReplacement = async (file: File) => {
+  const uploadReplacement = useCallback(async (file: File) => {
     if (!session?.token) return;
     if (!selectedSetId.trim() || !selectedParallelId.trim()) {
       setStatus({ type: "error", message: "Select a variant first." });
@@ -198,12 +208,13 @@ export default function VariantRefQaPage() {
       }
       setRefs((prev) => [payload.reference as ReferenceRow, ...prev]);
       setStatus({ type: "success", message: "Replacement reference uploaded." });
+      await loadVariants();
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : "Upload failed" });
     } finally {
       setBusy(false);
     }
-  };
+  }, [adminHeaders, loadVariants, selectedParallelId, selectedSetId, session?.token, sourceUrl]);
 
   const handleReplacementFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -211,6 +222,26 @@ export default function VariantRefQaPage() {
     await uploadReplacement(file);
     event.target.value = "";
   };
+
+  useEffect(() => {
+    if (!selectedSetId || !selectedParallelId) return;
+    const handler = (event: ClipboardEvent) => {
+      const items = event.clipboardData?.items;
+      if (!items?.length) return;
+      const imageItem = Array.from(items).find((item) => item.type.startsWith("image/"));
+      if (!imageItem) return;
+      const blob = imageItem.getAsFile();
+      if (!blob) return;
+      event.preventDefault();
+      const extension = blob.type === "image/png" ? "png" : blob.type === "image/webp" ? "webp" : "jpg";
+      const file = new File([blob], `pasted-variant-ref-${Date.now()}.${extension}`, {
+        type: blob.type || "image/png",
+      });
+      void uploadReplacement(file);
+    };
+    window.addEventListener("paste", handler);
+    return () => window.removeEventListener("paste", handler);
+  }, [selectedSetId, selectedParallelId, uploadReplacement]);
 
   if (loading) {
     return (
@@ -278,6 +309,7 @@ export default function VariantRefQaPage() {
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
+                placeholder="Leave blank to load across all sets, or search by set/card/parallel"
                 className="rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
               />
             </label>
@@ -298,11 +330,18 @@ export default function VariantRefQaPage() {
                   <th className="px-3 py-2">Card #</th>
                   <th className="px-3 py-2">Parallel</th>
                   <th className="px-3 py-2">Action</th>
+                  <th className="px-3 py-2">Photos</th>
+                  <th className="px-3 py-2">Image</th>
                 </tr>
               </thead>
               <tbody>
-                {variants.map((variant) => (
-                  <tr key={variant.id} className="border-t border-white/5">
+                {variants.map((variant) => {
+                  const active = variant.setId === selectedSetId && variant.parallelId === selectedParallelId;
+                  return (
+                  <tr
+                    key={variant.id}
+                    className={`border-t border-white/5 ${active ? "bg-emerald-400/10 ring-1 ring-emerald-400/40" : ""}`}
+                  >
                     <td className="px-3 py-2">{variant.setId}</td>
                     <td className="px-3 py-2">{variant.cardNumber}</td>
                     <td className="px-3 py-2">{variant.parallelId}</td>
@@ -310,16 +349,35 @@ export default function VariantRefQaPage() {
                       <button
                         type="button"
                         onClick={() => void chooseVariant(variant)}
-                        className="rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.22em] text-slate-200"
+                        className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.22em] ${
+                          active
+                            ? "border-emerald-400/80 bg-emerald-500/20 text-emerald-100"
+                            : "border-white/20 text-slate-200"
+                        }`}
                       >
                         QA This
                       </button>
                     </td>
+                    <td className="px-3 py-2 text-slate-200">{variant.referenceCount ?? 0}</td>
+                    <td className="px-3 py-2">
+                      {variant.previewImageUrl ? (
+                        <a href={variant.previewImageUrl} target="_blank" rel="noreferrer">
+                          <img
+                            src={variant.previewImageUrl}
+                            alt={`${variant.parallelId} thumb`}
+                            className="h-10 w-10 rounded-md object-cover"
+                          />
+                        </a>
+                      ) : (
+                        <span className="text-[10px] uppercase tracking-[0.18em] text-slate-500">No image</span>
+                      )}
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
                 {variants.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="px-3 py-6 text-center text-xs text-slate-500">
+                    <td colSpan={6} className="px-3 py-6 text-center text-xs text-slate-500">
                       Load variants to start QA.
                     </td>
                   </tr>
@@ -369,6 +427,9 @@ export default function VariantRefQaPage() {
               Upload Replacement
               <input type="file" accept="image/*" onChange={handleReplacementFile} className="hidden" />
             </label>
+            <div className="rounded-full border border-sky-400/50 px-4 py-2 text-[11px] uppercase tracking-[0.2em] text-sky-200">
+              Paste Screenshot (Ctrl/Cmd+V)
+            </div>
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -439,4 +500,3 @@ export default function VariantRefQaPage() {
     </AppShell>
   );
 }
-

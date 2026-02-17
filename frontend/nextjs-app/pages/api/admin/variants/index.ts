@@ -10,6 +10,9 @@ type VariantRow = {
   parallelId: string;
   parallelFamily: string | null;
   keywords: string[];
+  oddsInfo: string | null;
+  referenceCount: number;
+  previewImageUrl: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -20,7 +23,13 @@ type ResponseBody =
   | { ok: true }
   | { message: string };
 
-function toRow(variant: any): VariantRow {
+function toRow(
+  variant: any,
+  extras?: {
+    referenceCount?: number;
+    previewImageUrl?: string | null;
+  }
+): VariantRow {
   return {
     id: variant.id,
     setId: variant.setId,
@@ -28,6 +37,9 @@ function toRow(variant: any): VariantRow {
     parallelId: variant.parallelId,
     parallelFamily: variant.parallelFamily ?? null,
     keywords: Array.isArray(variant.keywords) ? variant.keywords : [],
+    oddsInfo: variant.oddsInfo ?? null,
+    referenceCount: Math.max(0, Number(extras?.referenceCount ?? 0) || 0),
+    previewImageUrl: extras?.previewImageUrl ?? null,
     createdAt: variant.createdAt?.toISOString?.() ?? String(variant.createdAt),
     updatedAt: variant.updatedAt?.toISOString?.() ?? String(variant.updatedAt),
   };
@@ -55,11 +67,52 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         orderBy: [{ setId: "asc" }, { cardNumber: "asc" }, { parallelId: "asc" }],
         take,
       });
-      return res.status(200).json({ variants: variants.map(toRow) });
+      const keys = variants.map((variant) => ({ setId: variant.setId, parallelId: variant.parallelId }));
+      const referenceCounts = keys.length
+        ? await prisma.cardVariantReferenceImage.groupBy({
+            by: ["setId", "parallelId"],
+            where: { OR: keys },
+            _count: { _all: true },
+          })
+        : [];
+      const latestRefs = keys.length
+        ? await prisma.cardVariantReferenceImage.findMany({
+            where: { OR: keys },
+            orderBy: [{ updatedAt: "desc" }],
+            distinct: ["setId", "parallelId"],
+            select: {
+              setId: true,
+              parallelId: true,
+              cropUrls: true,
+              rawImageUrl: true,
+            },
+          })
+        : [];
+
+      const countByKey = new Map<string, number>();
+      for (const row of referenceCounts) {
+        countByKey.set(`${row.setId}::${row.parallelId}`, row._count._all);
+      }
+      const previewByKey = new Map<string, string>();
+      for (const row of latestRefs) {
+        const preview = Array.isArray(row.cropUrls) && row.cropUrls[0] ? row.cropUrls[0] : row.rawImageUrl;
+        if (!preview) continue;
+        previewByKey.set(`${row.setId}::${row.parallelId}`, preview);
+      }
+
+      return res.status(200).json({
+        variants: variants.map((variant) => {
+          const key = `${variant.setId}::${variant.parallelId}`;
+          return toRow(variant, {
+            referenceCount: countByKey.get(key) ?? 0,
+            previewImageUrl: previewByKey.get(key) ?? null,
+          });
+        }),
+      });
     }
 
     if (req.method === "POST") {
-      const { setId, cardNumber, parallelId, parallelFamily, keywords } = req.body ?? {};
+      const { setId, cardNumber, parallelId, parallelFamily, keywords, oddsInfo } = req.body ?? {};
       if (!setId || !cardNumber || !parallelId) {
         return res.status(400).json({ message: "Missing required fields." });
       }
@@ -72,13 +125,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           keywords: Array.isArray(keywords)
             ? keywords.map((entry: unknown) => String(entry).trim()).filter(Boolean)
             : [],
+          oddsInfo: oddsInfo ? String(oddsInfo).trim() : null,
         },
       });
       return res.status(200).json({ variant: toRow(variant) });
     }
 
     if (req.method === "PUT") {
-      const { id, setId, cardNumber, parallelId, parallelFamily, keywords } = req.body ?? {};
+      const { id, setId, cardNumber, parallelId, parallelFamily, keywords, oddsInfo } = req.body ?? {};
       if (!id) {
         return res.status(400).json({ message: "Missing variant id." });
       }
@@ -98,6 +152,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
                   : [],
               }
             : {}),
+          ...(oddsInfo !== undefined ? { oddsInfo: oddsInfo ? String(oddsInfo).trim() : null } : {}),
         },
       });
       return res.status(200).json({ variant: toRow(variant) });
