@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { Prisma } from "@prisma/client";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { getStorageMode, presignReadUrl } from "../../../../lib/server/storage";
 
 type VariantRow = {
   id: string;
@@ -51,7 +52,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     if (req.method === "GET") {
       const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
-      const take = Math.min(500, Math.max(1, Number(req.query.limit ?? 200) || 200));
+      const take = Math.min(2000, Math.max(1, Number(req.query.limit ?? 1000) || 1000));
       const where = q
         ? {
             OR: [
@@ -80,12 +81,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             where: { OR: keys },
             orderBy: [{ updatedAt: "desc" }],
             distinct: ["setId", "parallelId"],
-            select: {
+            select: ({
               setId: true,
               parallelId: true,
+              storageKey: true,
               cropUrls: true,
               rawImageUrl: true,
-            },
+            } as any),
           })
         : [];
 
@@ -94,8 +96,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         countByKey.set(`${row.setId}::${row.parallelId}`, row._count._all);
       }
       const previewByKey = new Map<string, string>();
+      const mode = getStorageMode();
       for (const row of latestRefs) {
-        const preview = Array.isArray(row.cropUrls) && row.cropUrls[0] ? row.cropUrls[0] : row.rawImageUrl;
+        let preview = Array.isArray(row.cropUrls) && row.cropUrls[0] ? row.cropUrls[0] : row.rawImageUrl;
+        if (mode === "s3" && row.storageKey) {
+          try {
+            preview = await presignReadUrl(row.storageKey, 60 * 30);
+          } catch {
+            // Keep persisted URL fallback.
+          }
+        }
         if (!preview) continue;
         previewByKey.set(`${row.setId}::${row.parallelId}`, preview);
       }

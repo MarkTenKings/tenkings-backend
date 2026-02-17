@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
+import { getStorageMode, presignReadUrl } from "../../../../../lib/server/storage";
 
 type ReferenceRow = {
   id: string;
@@ -10,6 +11,7 @@ type ReferenceRow = {
   pairKey: string | null;
   sourceListingId: string | null;
   playerSeed: string | null;
+  storageKey: string | null;
   sourceUrl: string | null;
   rawImageUrl: string;
   cropUrls: string[];
@@ -33,6 +35,7 @@ function toRow(reference: any): ReferenceRow {
     pairKey: reference.pairKey ?? null,
     sourceListingId: reference.sourceListingId ?? null,
     playerSeed: reference.playerSeed ?? null,
+    storageKey: reference.storageKey ?? null,
     sourceUrl: reference.sourceUrl ?? null,
     rawImageUrl: reference.rawImageUrl,
     cropUrls: Array.isArray(reference.cropUrls) ? reference.cropUrls : [],
@@ -72,7 +75,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         orderBy: [{ createdAt: "desc" }],
         take,
       });
-      return res.status(200).json({ references: references.map(toRow) });
+      const mode = getStorageMode();
+      const rows = await Promise.all(
+        references.map(async (reference) => {
+          const row = toRow(reference);
+          if (mode === "s3" && row.storageKey) {
+            try {
+              row.rawImageUrl = await presignReadUrl(row.storageKey, 60 * 30);
+            } catch {
+              // Keep persisted URL as fallback.
+            }
+          }
+          return row;
+        })
+      );
+      return res.status(200).json({ references: rows });
     }
 
     if (req.method === "POST") {
@@ -83,6 +100,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         pairKey,
         sourceListingId,
         playerSeed,
+        storageKey,
         rawImageUrl,
         sourceUrl,
         cropUrls,
@@ -104,20 +122,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         : null;
 
       const reference = await prisma.cardVariantReferenceImage.create({
-        data: {
+        data: ({
           setId: String(setId).trim(),
           parallelId: String(parallelId).trim(),
           refType: normalizedRefType,
           pairKey: normalizedPairKey,
           sourceListingId: derivedListingId,
           playerSeed: playerSeed ? String(playerSeed).trim() : null,
+          storageKey: storageKey ? String(storageKey).trim() : null,
           rawImageUrl: String(rawImageUrl).trim(),
           sourceUrl: normalizedSourceUrl,
           cropUrls: Array.isArray(cropUrls)
             ? cropUrls.map((entry: unknown) => String(entry).trim()).filter(Boolean)
             : [],
           qualityScore: typeof qualityScore === "number" ? qualityScore : null,
-        },
+        } as any),
       });
       return res.status(200).json({ reference: toRow(reference) });
     }

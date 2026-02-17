@@ -1,9 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "node:crypto";
 import { prisma } from "@tenkings/database";
+import { Prisma } from "@prisma/client";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { withAdminCors } from "../../../../../lib/server/cors";
-import { uploadBuffer, normalizeStorageUrl } from "../../../../../lib/server/storage";
+import { uploadBuffer, normalizeStorageUrl, readStorageBuffer } from "../../../../../lib/server/storage";
 import { buildSiteUrl } from "../../../../../lib/server/urls";
 import { photoroomQueue } from "../../../../../lib/server/queues";
 
@@ -72,14 +73,15 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
 
     const refs = await prisma.cardVariantReferenceImage.findMany({
       where: { id: { in: ids } },
-      select: {
+      select: ({
         id: true,
         setId: true,
         parallelId: true,
         refType: true,
+        storageKey: true,
         rawImageUrl: true,
         cropUrls: true,
-      },
+      } as any),
     });
 
     let processed = 0;
@@ -89,17 +91,23 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
     await photoroomQueue.run(async () => {
       for (const ref of refs) {
         try {
-          const sourceUrl = ref.cropUrls?.[0] || ref.rawImageUrl;
-          if (!sourceUrl) {
-            skipped += 1;
-            continue;
+          let sourceBuffer: Buffer | null = null;
+          if (ref.storageKey) {
+            sourceBuffer = await readStorageBuffer(ref.storageKey).catch(() => null);
           }
-          const response = await fetch(asAbsolute(sourceUrl));
-          if (!response.ok) {
-            skipped += 1;
-            continue;
+          if (!sourceBuffer) {
+            const sourceUrl = ref.cropUrls?.[0] || ref.rawImageUrl;
+            if (!sourceUrl) {
+              skipped += 1;
+              continue;
+            }
+            const response = await fetch(asAbsolute(sourceUrl));
+            if (!response.ok) {
+              skipped += 1;
+              continue;
+            }
+            sourceBuffer = Buffer.from(await response.arrayBuffer());
           }
-          const sourceBuffer = Buffer.from(await response.arrayBuffer());
           const processedBuffer = await runPhotoroom(sourceBuffer, apiKey);
           const storageKey = `variants/${ref.setId}/${ref.parallelId}/processed/${ref.refType || "front"}-${Date.now()}-${crypto
             .randomUUID()
@@ -113,7 +121,7 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
             data: {
               cropUrls: nextCropUrls,
               qualityScore: null,
-              cropEmbeddings: null,
+              cropEmbeddings: Prisma.JsonNull,
             },
           });
           processed += 1;
@@ -130,4 +138,3 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
     return res.status(result.status).json({ message: result.message });
   }
 });
-
