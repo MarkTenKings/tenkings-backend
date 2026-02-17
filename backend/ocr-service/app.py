@@ -30,10 +30,23 @@ class OcrRequest(BaseModel):
     images: List[OcrImage]
 
 
+class OcrPoint(BaseModel):
+    x: float
+    y: float
+
+
+class OcrToken(BaseModel):
+    text: str
+    confidence: float
+    bbox: List[OcrPoint] = []
+    image_id: Optional[str] = None
+
+
 class OcrResult(BaseModel):
     id: Optional[str]
     text: str
     confidence: float
+    tokens: List[OcrToken] = []
 
 
 class OcrResponse(BaseModel):
@@ -71,24 +84,42 @@ def _resize_image(image: Image.Image) -> Image.Image:
     return image.resize((OCR_MAX_WIDTH, new_height), Image.BILINEAR)
 
 
-def _run_ocr(image: Image.Image):
+def _run_ocr(image: Image.Image, image_id: Optional[str] = None):
     image = _resize_image(image)
     array = np.array(image)
     result = ocr_engine.ocr(array, cls=True)
     lines = []
     confidences = []
+    tokens: List[OcrToken] = []
     for entry in result:
         if not entry:
             continue
         for line in entry:
             text = line[1][0]
             conf = float(line[1][1])
+            raw_bbox = line[0] if isinstance(line, (list, tuple)) and len(line) > 0 else []
+            bbox_points: List[OcrPoint] = []
+            if isinstance(raw_bbox, (list, tuple)):
+                for point in raw_bbox:
+                    if isinstance(point, (list, tuple)) and len(point) >= 2:
+                        try:
+                            bbox_points.append(OcrPoint(x=float(point[0]), y=float(point[1])))
+                        except Exception:
+                            continue
             if text:
                 lines.append(text)
                 confidences.append(conf)
+                tokens.append(
+                    OcrToken(
+                        text=text,
+                        confidence=conf,
+                        bbox=bbox_points,
+                        image_id=image_id,
+                    )
+                )
     text = "\n".join(lines).strip()
     confidence = float(np.mean(confidences)) if confidences else 0.0
-    return text, confidence
+    return text, confidence, tokens
 
 
 @app.post("/ocr", response_model=OcrResponse)
@@ -99,8 +130,8 @@ async def ocr_endpoint(payload: OcrRequest, authorization: Optional[str] = Heade
 
     for item in payload.images:
         image = _load_image(item)
-        text, confidence = _run_ocr(image)
-        results.append(OcrResult(id=item.id, text=text, confidence=confidence))
+        text, confidence, tokens = _run_ocr(image, item.id)
+        results.append(OcrResult(id=item.id, text=text, confidence=confidence, tokens=tokens))
         if text:
             if item.id:
                 combined_parts.append(f"[{item.id}]\n{text}")

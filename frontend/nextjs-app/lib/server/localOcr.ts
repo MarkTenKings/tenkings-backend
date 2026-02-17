@@ -8,11 +8,19 @@ export type LocalOcrResult = {
   id?: string;
   text: string;
   confidence: number;
+  tokens?: LocalOcrToken[];
 };
 
 export type LocalOcrResponse = {
   results: LocalOcrResult[];
   combined_text: string;
+};
+
+export type LocalOcrToken = {
+  text: string;
+  confidence: number;
+  image_id?: string;
+  bbox?: Array<{ x: number; y: number }>;
 };
 
 export async function runLocalOcr(images: LocalOcrImage[]): Promise<LocalOcrResponse> {

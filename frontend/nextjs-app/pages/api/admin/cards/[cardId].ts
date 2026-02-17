@@ -71,6 +71,137 @@ type ClassificationUpdatePayload = {
   normalized?: NormalizedUpdatePayload | null;
 };
 
+type OcrSuggestionFields = Record<string, string | null>;
+
+type OcrTokenRef = {
+  text: string;
+  confidence: number;
+  imageId: string | null;
+  bbox: Array<{ x: number; y: number }>;
+};
+
+const FEEDBACK_FIELD_KEYS = [
+  "playerName",
+  "year",
+  "manufacturer",
+  "sport",
+  "game",
+  "cardName",
+  "setName",
+  "cardNumber",
+  "numbered",
+  "autograph",
+  "memorabilia",
+  "graded",
+  "gradeCompany",
+  "gradeValue",
+] as const;
+
+const normalizeFeedbackValue = (value: unknown): string | null => {
+  if (value == null) {
+    return null;
+  }
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+  const text = String(value).trim();
+  return text ? text : null;
+};
+
+const extractOcrSuggestionFields = (ocrSuggestionJson: unknown): OcrSuggestionFields => {
+  const rawFields =
+    typeof ocrSuggestionJson === "object" && ocrSuggestionJson
+      ? ((ocrSuggestionJson as Record<string, unknown>).fields as Record<string, unknown> | undefined)
+      : undefined;
+  return FEEDBACK_FIELD_KEYS.reduce<OcrSuggestionFields>((acc, key) => {
+    const value = rawFields?.[key];
+    acc[key] = typeof value === "string" && value.trim() ? value.trim() : null;
+    return acc;
+  }, {});
+};
+
+const extractOcrTokenRefs = (ocrSuggestionJson: unknown): OcrTokenRef[] => {
+  const rawTokens =
+    typeof ocrSuggestionJson === "object" && ocrSuggestionJson
+      ? ((ocrSuggestionJson as Record<string, unknown>).tokens as Array<Record<string, unknown>> | undefined)
+      : undefined;
+  if (!Array.isArray(rawTokens)) {
+    return [];
+  }
+  return rawTokens
+    .map((token) => {
+      const text = normalizeFeedbackValue(token.text);
+      if (!text) {
+        return null;
+      }
+      const confidence =
+        typeof token.confidence === "number" && Number.isFinite(token.confidence) ? token.confidence : 0;
+      const imageId = normalizeFeedbackValue(token.imageId);
+      const bbox = Array.isArray(token.bbox)
+        ? token.bbox
+            .map((point) => {
+              if (typeof point !== "object" || !point) {
+                return null;
+              }
+              const raw = point as Record<string, unknown>;
+              if (
+                typeof raw.x !== "number" ||
+                !Number.isFinite(raw.x) ||
+                typeof raw.y !== "number" ||
+                !Number.isFinite(raw.y)
+              ) {
+                return null;
+              }
+              return { x: raw.x, y: raw.y };
+            })
+            .filter((point): point is { x: number; y: number } => Boolean(point))
+            .slice(0, 8)
+        : [];
+      return { text, confidence, imageId, bbox };
+    })
+    .filter((token): token is OcrTokenRef => Boolean(token));
+};
+
+const buildFieldValueMap = (
+  attributes: CardAttributes,
+  normalized: NormalizedClassification | null
+): Record<(typeof FEEDBACK_FIELD_KEYS)[number], string | null> => ({
+  playerName: normalizeFeedbackValue(attributes.playerName),
+  year: normalizeFeedbackValue(attributes.year),
+  manufacturer: normalizeFeedbackValue(attributes.brand),
+  sport: normalizeFeedbackValue(normalized?.sport?.sport),
+  game: normalizeFeedbackValue(normalized?.tcg?.game),
+  cardName: normalizeFeedbackValue(normalized?.tcg?.cardName ?? normalized?.displayName),
+  setName: normalizeFeedbackValue(attributes.setName),
+  cardNumber: normalizeFeedbackValue(normalized?.cardNumber),
+  numbered: normalizeFeedbackValue(attributes.numbered),
+  autograph: normalizeFeedbackValue(attributes.autograph),
+  memorabilia: normalizeFeedbackValue(attributes.memorabilia),
+  graded: normalizeFeedbackValue(Boolean(attributes.gradeCompany || attributes.gradeValue)),
+  gradeCompany: normalizeFeedbackValue(attributes.gradeCompany),
+  gradeValue: normalizeFeedbackValue(attributes.gradeValue),
+});
+
+const buildTokenRefsForValue = (value: string | null, tokens: OcrTokenRef[]) => {
+  if (!value) {
+    return null;
+  }
+  const normalizedValue = value.toLowerCase();
+  const matches = tokens.filter((token) => {
+    const tokenText = token.text.toLowerCase();
+    return tokenText && (normalizedValue.includes(tokenText) || tokenText.includes(normalizedValue));
+  });
+  if (matches.length === 0) {
+    return null;
+  }
+  return matches.slice(0, 8).map((token) => ({
+    text: token.text,
+    confidence: token.confidence,
+    imageId: token.imageId,
+    bbox: token.bbox,
+  }));
+};
+
 
 const sanitizeStringInput = (value: unknown): string | null => {
   if (value === undefined) {
@@ -583,6 +714,7 @@ type CardUpdatePayload = {
   aiGradePsaEquivalent?: number | string | null;
   aiGradeRangeLow?: number | string | null;
   aiGradeRangeHigh?: number | string | null;
+  recordOcrFeedback?: boolean;
 };
 
 async function fetchCard(cardId: string, uploadedById?: string | null): Promise<CardResponse | null> {
@@ -813,6 +945,7 @@ export default async function handler(
           humanReviewedAt: true,
           humanReviewedById: true,
           classificationJson: true,
+          ocrSuggestionJson: true,
           classificationSourcesJson: true,
           aiGradePsaEquivalent: true,
           aiGradingJson: true,
@@ -832,6 +965,9 @@ export default async function handler(
       const updateData: Prisma.CardAssetUpdateInput = {};
       const updateDataAny = updateData as Record<string, unknown>;
       let touched = false;
+      const shouldRecordOcrFeedback = Boolean(body.recordOcrFeedback);
+      let feedbackAttributes: CardAttributes | null = null;
+      let feedbackNormalized: NormalizedClassification | null = null;
 
       if (body.classificationUpdates) {
         const existingPayload = parseClassificationPayload(card.classificationJson);
@@ -854,6 +990,8 @@ export default async function handler(
           updateDataAny.classificationJson = JSON.parse(JSON.stringify(payload));
           updateDataAny.resolvedPlayerName = attributes.playerName;
           updateDataAny.resolvedTeamName = attributes.teamName;
+          feedbackAttributes = attributes;
+          feedbackNormalized = normalized ?? null;
           touched = true;
         }
       }
@@ -1023,6 +1161,37 @@ export default async function handler(
         where: { id: card.id },
         data: updateData,
       });
+
+      if (shouldRecordOcrFeedback && feedbackAttributes) {
+        const suggestionFields = extractOcrSuggestionFields(card.ocrSuggestionJson);
+        const suggestionTokens = extractOcrTokenRefs(card.ocrSuggestionJson);
+        const fieldValues = buildFieldValueMap(feedbackAttributes, feedbackNormalized);
+        const modelVersion =
+          typeof card.ocrSuggestionJson === "object" && card.ocrSuggestionJson
+            ? normalizeFeedbackValue((card.ocrSuggestionJson as Record<string, unknown>).model)
+            : null;
+
+        const rows = FEEDBACK_FIELD_KEYS.map((key) => {
+          const modelValue = normalizeFeedbackValue(suggestionFields[key]);
+          const humanValue = normalizeFeedbackValue(fieldValues[key]);
+          return {
+            cardAssetId: card.id,
+            fieldName: key,
+            modelValue,
+            humanValue,
+            wasCorrect: modelValue === humanValue,
+            setId: normalizeFeedbackValue(feedbackAttributes?.setName),
+            year: normalizeFeedbackValue(feedbackAttributes?.year),
+            manufacturer: normalizeFeedbackValue(feedbackAttributes?.brand),
+            sport: normalizeFeedbackValue(feedbackNormalized?.sport?.sport),
+            cardNumber: normalizeFeedbackValue(feedbackNormalized?.cardNumber),
+            numbered: normalizeFeedbackValue(feedbackAttributes?.numbered),
+            tokenRefsJson: buildTokenRefsForValue(humanValue, suggestionTokens) as Prisma.InputJsonValue | null,
+            modelVersion,
+          };
+        });
+        await (prisma as any).ocrFeedbackEvent.createMany({ data: rows });
+      }
 
       if (
         Object.prototype.hasOwnProperty.call(body, "reviewStage") &&

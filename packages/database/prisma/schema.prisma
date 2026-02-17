@@ -596,6 +596,7 @@ model CardAsset {
   humanReviewer      User?           @relation("CardAssetHumanReviewer", fields: [humanReviewedById], references: [id])
   sportsDbPlayer     SportsDbPlayer? @relation(fields: [sportsDbPlayerId], references: [id], onDelete: SetNull)
   variantDecisions   CardVariantDecision[]
+  ocrFeedbackEvents  OcrFeedbackEvent[]
 
   @@index([sportsDbPlayerId])
   @@index([inventoryBatchId])
@@ -621,14 +622,19 @@ model CardVariantReferenceImage {
   setId          String
   parallelId     String
   sourceUrl      String?
+  listingTitle   String?
   rawImageUrl    String
   cropUrls       String[] @default([])
   cropEmbeddings Json?
   qualityScore   Float?
+  qualityGateScore       Int?
+  qualityGateStatus      String?
+  qualityGateReasonsJson Json?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
   @@index([setId, parallelId])
+  @@index([setId, parallelId, qualityGateStatus])
 }
 
 model CardVariantDecision {
@@ -645,6 +651,30 @@ model CardVariantDecision {
   cardAsset CardAsset @relation(fields: [cardAssetId], references: [id], onDelete: Cascade)
 
   @@index([cardAssetId])
+}
+
+model OcrFeedbackEvent {
+  id            String   @id @default(uuid())
+  cardAssetId   String
+  fieldName     String
+  modelValue    String?
+  humanValue    String?
+  wasCorrect    Boolean
+  setId         String?
+  year          String?
+  manufacturer  String?
+  sport         String?
+  cardNumber    String?
+  numbered      String?
+  tokenRefsJson Json?
+  modelVersion  String?
+  createdAt     DateTime @default(now())
+
+  cardAsset CardAsset @relation(fields: [cardAssetId], references: [id], onDelete: Cascade)
+
+  @@index([cardAssetId, createdAt])
+  @@index([fieldName, wasCorrect, createdAt])
+  @@index([setId, year, manufacturer])
 }
 
 model InventoryBatch {

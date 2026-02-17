@@ -314,6 +314,19 @@ export default function KingsReview() {
         .filter(Boolean)
     );
   }, [evidenceItems, normalizeCompUrl]);
+  const attachedCompItemByKey = useMemo(() => {
+    const map = new Map<string, EvidenceItem>();
+    evidenceItems
+      .filter((item) => item.kind === "SOLD_COMP")
+      .forEach((item) => {
+        const key = normalizeCompUrl(item.url);
+        if (!key || map.has(key)) {
+          return;
+        }
+        map.set(key, item);
+      });
+    return map;
+  }, [evidenceItems, normalizeCompUrl]);
   const rulesForActiveSource = playbookRules.filter(
     (rule) => rule.source === (activeSourceData?.source ?? teachForm.source)
   );
@@ -1236,6 +1249,15 @@ export default function KingsReview() {
     }
   };
 
+  const handleUnattachComp = async (compUrl: string) => {
+    const key = normalizeCompUrl(compUrl);
+    const item = attachedCompItemByKey.get(key);
+    if (!item) {
+      return;
+    }
+    await handleDeleteEvidence(item.id);
+  };
+
   const renderContent = () => {
     if (loading) {
       return (
@@ -1677,7 +1699,7 @@ export default function KingsReview() {
                       ))}
                     </div>
                   </div>
-                  <details className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                  <details open className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
                     <summary className="cursor-pointer text-[10px] uppercase tracking-[0.3em] text-slate-400">
                       Card Details
                     </summary>
@@ -1880,6 +1902,13 @@ export default function KingsReview() {
                       </summary>
                       <div className="mt-3 space-y-3 text-xs text-slate-300">
                         <div className="rounded-2xl border border-white/10 bg-night-900/60 px-3 py-3 text-[11px] uppercase tracking-[0.28em] text-slate-400">
+                          <div className="mb-2 text-[9px] tracking-[0.24em] text-slate-500">
+                            {activeCard.variantDecision?.selectedParallelId || activeCard.variantId
+                              ? "Status: Matched"
+                              : activeCard.variantDecision?.candidates?.length
+                              ? "Status: No confident match"
+                              : "Status: Not attempted"}
+                          </div>
                           <div className="flex flex-wrap items-center gap-2">
                             <span className="text-slate-500">Variant</span>
                             <span className="text-slate-200">
@@ -2187,10 +2216,12 @@ export default function KingsReview() {
                       }`}
                     >
                       {compAttached && (
-                        <div className="absolute inset-0 z-10 flex items-center justify-center gap-3 bg-emerald-600/40 backdrop-blur-[1px]">
-                          <span className="text-3xl leading-none text-emerald-100">✓</span>
-                          <span className="text-lg font-semibold uppercase tracking-[0.32em] text-emerald-100">
-                            Evidence
+                        <div className="absolute right-2 top-2 z-10 flex flex-col items-center">
+                          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/80 bg-emerald-500/20 text-[13px] font-bold text-emerald-300">
+                            ✓
+                          </span>
+                          <span className="mt-1 text-[9px] font-semibold uppercase tracking-[0.26em] text-emerald-300">
+                            Comp
                           </span>
                         </div>
                       )}
@@ -2225,16 +2256,29 @@ export default function KingsReview() {
                               >
                                 Open Listing
                               </a>
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  void handleAttachComp(comp, "SOLD_COMP");
-                                }}
-                                className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
-                              >
-                                Attach to Card
-                              </button>
+                              {compAttached ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void handleUnattachComp(comp.url);
+                                  }}
+                                  className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-rose-200"
+                                >
+                                  Unselect
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void handleAttachComp(comp, "SOLD_COMP");
+                                  }}
+                                  className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
+                                >
+                                  Mark Comp
+                                </button>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -2264,6 +2308,31 @@ export default function KingsReview() {
                                 Pattern {comp.patternMatch.tier}
                               </div>
                             )}
+                            <div className="flex flex-wrap gap-2">
+                              {compAttached ? (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void handleUnattachComp(comp.url);
+                                  }}
+                                  className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1 text-[9px] uppercase tracking-[0.26em] text-rose-200"
+                                >
+                                  Unselect
+                                </button>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void handleAttachComp(comp, "SOLD_COMP");
+                                  }}
+                                  className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[9px] uppercase tracking-[0.26em] text-emerald-200"
+                                >
+                                  Mark Comp
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       )}

@@ -215,7 +215,7 @@ function buildProxyUrl(req: NextApiRequest, targetUrl: string): string | null {
 }
 
 function pickImageUrl(primary?: string | null, thumbnail?: string | null): string | null {
-  const candidate = thumbnail ?? primary ?? null;
+  const candidate = primary ?? thumbnail ?? null;
   if (!candidate) {
     return null;
   }
@@ -298,6 +298,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const ocrResponse = await runLocalOcr(images);
+    const ocrTokens = ocrResponse.results.flatMap((result) => {
+      const tokens = Array.isArray(result.tokens) ? result.tokens : [];
+      return tokens.map((token) => ({
+        text: typeof token.text === "string" ? token.text : "",
+        confidence:
+          typeof token.confidence === "number" && Number.isFinite(token.confidence)
+            ? token.confidence
+            : 0,
+        imageId: token.image_id ?? result.id ?? null,
+        bbox: Array.isArray(token.bbox)
+          ? token.bbox
+              .map((point) => ({
+                x: typeof point?.x === "number" && Number.isFinite(point.x) ? point.x : 0,
+                y: typeof point?.y === "number" && Number.isFinite(point.y) ? point.y : 0,
+              }))
+              .slice(0, 8)
+          : [],
+      }));
+    });
     const combinedTextRaw = ocrResponse.combined_text ?? "";
     const combinedText = combinedTextRaw.toLowerCase();
     const normalizedNumberedText = normalizeForNumbered(combinedTextRaw);
@@ -462,6 +481,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       createdAt: new Date().toISOString(),
       fields,
       confidence,
+      tokens: ocrTokens,
     };
 
     await prisma.cardAsset.update({

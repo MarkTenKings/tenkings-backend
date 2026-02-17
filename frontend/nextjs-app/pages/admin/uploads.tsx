@@ -41,6 +41,7 @@ interface UploadResult {
 
 type IntakeStep = "front" | "back" | "tilt" | "required" | "optional" | "done";
 type IntakeCategory = "sport" | "tcg";
+type IntakeReviewMode = "capture" | "review";
 
 type IntakeRequiredFields = {
   category: IntakeCategory;
@@ -117,6 +118,8 @@ export default function AdminUploads() {
   const [batchesError, setBatchesError] = useState<string | null>(null);
 
   const [intakeStep, setIntakeStep] = useState<IntakeStep>("front");
+  const [intakeReviewMode, setIntakeReviewMode] = useState<IntakeReviewMode>("capture");
+  const [queuedReviewCardIds, setQueuedReviewCardIds] = useState<string[]>([]);
   const [intakeRequired, setIntakeRequired] = useState<IntakeRequiredFields>({
     category: "sport",
     playerName: "",
@@ -657,8 +660,9 @@ export default function AdminUploads() {
     photoroomRequestedRef.current = null;
   }, []);
 
-  const resetIntake = useCallback(() => {
+  const clearActiveIntakeState = useCallback(() => {
     setIntakeStep("front");
+    setIntakeReviewMode("capture");
     setIntakeRequired({
       category: "sport",
       playerName: "",
@@ -702,6 +706,11 @@ export default function AdminUploads() {
     setIntakeOptionalTouched({});
     resetOcrState();
   }, [resetOcrState]);
+
+  const resetIntake = useCallback(() => {
+    clearActiveIntakeState();
+    setQueuedReviewCardIds([]);
+  }, [clearActiveIntakeState]);
 
   const openIntakeCapture = useCallback(
     async (target: "front" | "back" | "tilt") => {
@@ -992,7 +1001,7 @@ export default function AdminUploads() {
   );
 
   const saveIntakeMetadata = useCallback(
-    async (includeOptional: boolean) => {
+    async (includeOptional: boolean, recordOcrFeedback = false) => {
       const token = session?.token;
       if (!token) {
         throw new Error("Your session expired. Sign in again and retry.");
@@ -1068,6 +1077,7 @@ export default function AdminUploads() {
           attributes,
           normalized,
         },
+        recordOcrFeedback,
       };
 
       const updateRes = await fetch(resolveApiUrl("/api/admin/cards/" + intakeCardId), {
@@ -1093,6 +1103,97 @@ export default function AdminUploads() {
       resolveApiUrl,
       session?.token,
     ]
+  );
+
+  const loadQueuedCardForReview = useCallback(
+    async (cardId: string) => {
+      const token = session?.token;
+      if (!token) {
+        throw new Error("Your session expired. Sign in again and retry.");
+      }
+      const res = await fetch(resolveApiUrl(`/api/admin/cards/${cardId}`), {
+        headers: buildAdminHeaders(token),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to load card for OCR review");
+      }
+
+      const payload = (await res.json()) as Record<string, any>;
+      const photos = Array.isArray(payload.photos) ? payload.photos : [];
+      const backPhoto = photos.find((photo: any) => photo?.kind === "BACK") ?? null;
+      const tiltPhoto = photos.find((photo: any) => photo?.kind === "TILT") ?? null;
+      const ocrFields = (payload.ocrSuggestions?.data?.fields ?? {}) as Record<string, string | null>;
+      const normalized = (payload.classificationNormalized ?? {}) as Record<string, any>;
+      const attributes = (payload.classification ?? {}) as Record<string, any>;
+      const categoryType = normalized.categoryType === "tcg" ? "tcg" : "sport";
+
+      setIntakeCardId(typeof payload.id === "string" ? payload.id : cardId);
+      setIntakeBatchId(typeof payload.batchId === "string" ? payload.batchId : null);
+      setIntakeFrontPreview(payload.imageUrl ?? null);
+      setIntakeBackPreview(backPhoto?.imageUrl ?? null);
+      setIntakeTiltPreview(tiltPhoto?.imageUrl ?? null);
+      setIntakeBackPhotoId(backPhoto?.id ?? null);
+      setIntakeTiltPhotoId(tiltPhoto?.id ?? null);
+
+      setIntakeRequired({
+        category: categoryType,
+        playerName:
+          categoryType === "sport"
+            ? String(attributes.playerName ?? ocrFields.playerName ?? "").trim()
+            : "",
+        sport:
+          categoryType === "sport" ? String(attributes.sport ?? ocrFields.sport ?? "").trim() : "",
+        manufacturer: String(attributes.brand ?? normalized.company ?? ocrFields.manufacturer ?? "").trim(),
+        year: String(attributes.year ?? normalized.year ?? ocrFields.year ?? "").trim(),
+        cardName:
+          categoryType === "tcg"
+            ? String(attributes.cardName ?? normalized.displayName ?? ocrFields.cardName ?? "").trim()
+            : "",
+        game:
+          categoryType === "tcg" ? String(attributes.game ?? ocrFields.game ?? "").trim() : "",
+      });
+
+      setIntakeOptional({
+        teamName: String(attributes.teamName ?? "").trim(),
+        productLine: String(attributes.setName ?? normalized.setName ?? ocrFields.setName ?? "").trim(),
+        cardNumber: String(normalized.cardNumber ?? ocrFields.cardNumber ?? "").trim(),
+        numbered: String(attributes.numbered ?? ocrFields.numbered ?? "").trim(),
+        autograph: Boolean(attributes.autograph ?? false),
+        memorabilia: Boolean(attributes.memorabilia ?? false),
+        graded:
+          String(ocrFields.graded ?? "").toLowerCase() === "true" ||
+          (Boolean(ocrFields.gradeCompany) && Boolean(ocrFields.gradeValue)),
+        gradeCompany: String(attributes.gradeCompany ?? ocrFields.gradeCompany ?? "").trim(),
+        gradeValue: String(attributes.gradeValue ?? ocrFields.gradeValue ?? "").trim(),
+        tcgSeries: "",
+        tcgRarity: String(normalized.rarity ?? "").trim(),
+        tcgFoil: false,
+        tcgLanguage: "",
+        tcgOutOf: "",
+      });
+
+      setIntakeSuggested(
+        Object.entries(ocrFields).reduce<Record<string, string>>((acc, [key, value]) => {
+          if (typeof value === "string" && value.trim()) {
+            acc[key] = value.trim();
+          }
+          return acc;
+        }, {})
+      );
+      setIntakeTouched({});
+      setIntakeOptionalTouched({});
+      setOcrAudit((payload.ocrSuggestions?.data as Record<string, unknown> | null) ?? null);
+      setOcrStatus(payload.ocrSuggestions?.data ? "ready" : "empty");
+      setOcrError(null);
+      setOcrApplied(false);
+      setOcrMode(null);
+      setIntakeReviewMode("review");
+      setIntakeStep("required");
+      setIntakeError(null);
+      setQueuedReviewCardIds((prev) => prev.filter((id) => id !== cardId));
+    },
+    [resolveApiUrl, session?.token]
   );
 
   const validateRequiredIntake = useCallback(() => {
@@ -1224,6 +1325,7 @@ export default function AdminUploads() {
       intakeTouched.playerName,
       intakeTouched.sport,
       intakeTouched.year,
+      intakeOptional,
       intakeRequired,
       ocrApplied,
       intakeOptionalTouched.cardNumber,
@@ -1432,14 +1534,20 @@ export default function AdminUploads() {
           }
         } else {
           setIntakeTiltPreview(URL.createObjectURL(blob));
-          setIntakeStep("required");
+          setIntakeStep("front");
           setIntakeCaptureTarget(null);
           if (intakeCardId) {
             void uploadQueuedPhoto(blob, "TILT");
+            setQueuedReviewCardIds((prev) =>
+              prev.includes(intakeCardId) ? prev : [...prev, intakeCardId]
+            );
           } else {
             setPendingTiltBlob(blob);
           }
+          clearActiveIntakeState();
+          setIntakeReviewMode("capture");
           closeCamera();
+          void openIntakeCapture("front");
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to capture photo.";
@@ -1450,7 +1558,7 @@ export default function AdminUploads() {
         }
       }
     },
-    [closeCamera, intakeCardId, startOcrForCard, uploadCardAsset, uploadQueuedPhoto]
+    [clearActiveIntakeState, closeCamera, intakeCardId, openIntakeCapture, startOcrForCard, uploadCardAsset, uploadQueuedPhoto]
   );
 
   const handleCapture = useCallback(async () => {
@@ -1636,7 +1744,7 @@ export default function AdminUploads() {
     }
     setOcrApplied(false);
     setOcrMode(null);
-  }, [applySuggestions, buildSuggestionsFromAudit, fetchOcrSuggestions, intakeSuggested, ocrApplied, ocrAudit, ocrStatus]);
+  }, [applySuggestions, buildSuggestionsFromAudit, fetchOcrSuggestions, intakeCardId, intakeSuggested, ocrApplied, ocrAudit, ocrStatus]);
 
   useEffect(() => {
     if (!intakeCardId) {
@@ -1707,7 +1815,7 @@ export default function AdminUploads() {
     }
     try {
       setIntakeBusy(true);
-      await saveIntakeMetadata(true);
+      await saveIntakeMetadata(true, true);
       const query = buildIntakeQuery();
       const sourceList =
         intakeRequired.category === "tcg"
@@ -1731,8 +1839,14 @@ export default function AdminUploads() {
         const payload = await res.json().catch(() => ({}));
         throw new Error(payload?.message ?? "Failed to enqueue KingsReview job.");
       }
-      resetIntake();
-      void openIntakeCapture("front");
+      const nextReviewCardId = queuedReviewCardIds[0] ?? null;
+      if (nextReviewCardId) {
+        clearActiveIntakeState();
+        await loadQueuedCardForReview(nextReviewCardId);
+      } else {
+        clearActiveIntakeState();
+        void openIntakeCapture("front");
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to send to KingsReview.";
       setIntakeError(message);
@@ -1741,10 +1855,13 @@ export default function AdminUploads() {
     }
   }, [
     buildIntakeQuery,
+    clearActiveIntakeState,
     intakeCardId,
+    intakeRequired.category,
     isRemoteApi,
+    loadQueuedCardForReview,
     openIntakeCapture,
-    resetIntake,
+    queuedReviewCardIds,
     resolveApiUrl,
     saveIntakeMetadata,
     session?.token,
@@ -2073,6 +2190,25 @@ export default function AdminUploads() {
           {intakeStep === "front" && (
             <div className="grid gap-4 md:grid-cols-[240px,1fr]">
               <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-300">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Capture Queue</p>
+                <p className="mt-2 text-xs text-slate-400">
+                  Cards waiting for OCR review:{" "}
+                  <span className="font-semibold text-gold-300">{queuedReviewCardIds.length}</span>
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const nextId = queuedReviewCardIds[0];
+                    if (!nextId) {
+                      return;
+                    }
+                    void loadQueuedCardForReview(nextId);
+                  }}
+                  disabled={intakeBusy || queuedReviewCardIds.length === 0}
+                  className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-transparent px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-gold-300 transition hover:border-gold-400 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  OCR Review →
+                </button>
                 <button
                   type="button"
                   onClick={() => void openIntakeCapture("front")}
@@ -2083,7 +2219,18 @@ export default function AdminUploads() {
                 </button>
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
-                {intakeFrontPreview ? (
+                {queuedReviewCardIds.length > 0 ? (
+                  <div className="space-y-2">
+                    <p className="text-xs uppercase tracking-[0.26em] text-slate-500">Queued Card IDs</p>
+                    <ul className="space-y-1 text-xs text-slate-300">
+                      {queuedReviewCardIds.slice(0, 8).map((id) => (
+                        <li key={id} className="truncate font-mono">
+                          {id}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : intakeFrontPreview ? (
                   <img src={intakeFrontPreview} alt="Front preview" className="h-full max-h-[320px] w-full rounded-xl object-contain" />
                 ) : (
                   <p>No front photo yet.</p>
@@ -2135,8 +2282,14 @@ export default function AdminUploads() {
                     onClick={() => {
                       setIntakeTiltSkipped(true);
                       setIntakeCaptureTarget(null);
-                      setIntakeStep("required");
+                      if (intakeCardId) {
+                        setQueuedReviewCardIds((prev) =>
+                          prev.includes(intakeCardId) ? prev : [...prev, intakeCardId]
+                        );
+                      }
+                      clearActiveIntakeState();
                       closeCamera();
+                      void openIntakeCapture("front");
                     }}
                     className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
                   >
