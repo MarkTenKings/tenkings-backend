@@ -1,0 +1,33 @@
+{
+  "setAliases": {
+    "2025-26 topps basketball": [
+      "2025-26 Topps",
+      "2025 Topps Basketball",
+      "2026 Topps Basketball",
+      "Topps Chrome Basketball",
+      "Topps Basketball"
+    ]
+  },
+  "setPlayers": {
+    "2025-26 topps basketball": [
+      "Victor Wembanyama",
+      "LeBron James",
+      "Jayson Tatum",
+      "Stephen Curry",
+      "Anthony Edwards",
+      "Luka Doncic",
+      "Shai Gilgeous-Alexander",
+      "Paolo Banchero"
+    ]
+  },
+  "parallelAliases": {
+    "holo foil": ["Holofoil", "Holo"],
+    "aqua holo foil": ["Aqua Holofoil", "Aqua Holo"],
+    "topps notch autos": ["Topps Notch Auto", "Notch Autograph"],
+    "signed & sealed": ["Signed and Sealed Auto"],
+    "social media follow back redemptions": ["Social Media Redemption", "Redemption"],
+    "topps chrome mojos (silver pack)": ["Mojo", "Silver Pack Mojo", "Topps Chrome Mojo"],
+    "retail ripper patches": ["Patch", "Rookie Patch"],
+    "own the game relics": ["Relic", "Memorabilia Relic"]
+  }
+}

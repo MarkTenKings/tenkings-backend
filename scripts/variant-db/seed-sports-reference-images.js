@@ -2,6 +2,7 @@
 "use strict";
 
 const path = require("node:path");
+const fs = require("node:fs");
 const { scoreReferenceCandidate } = require("./quality-gate");
 
 function loadPrismaClient() {
@@ -35,6 +36,31 @@ function parseArgs(argv) {
   return out;
 }
 
+function normalize(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function loadQueryAliasesConfig(configPath) {
+  const fallback = path.resolve(__dirname, "query-aliases.json");
+  const target = configPath ? path.resolve(process.cwd(), String(configPath)) : fallback;
+  try {
+    const raw = fs.readFileSync(target, "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      setAliases: parsed?.setAliases && typeof parsed.setAliases === "object" ? parsed.setAliases : {},
+      setPlayers: parsed?.setPlayers && typeof parsed.setPlayers === "object" ? parsed.setPlayers : {},
+      parallelAliases:
+        parsed?.parallelAliases && typeof parsed.parallelAliases === "object" ? parsed.parallelAliases : {},
+    };
+  } catch {
+    return { setAliases: {}, setPlayers: {}, parallelAliases: {} };
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -55,7 +81,7 @@ function buildVariantQuery(variant, parallelOverride = "", querySetOverride = ""
   return [setPart, cardPart, parallelPart, keywordPart, "trading card"].filter(Boolean).join(" ");
 }
 
-function deriveParallelSearchTerms(parallelId) {
+function deriveParallelSearchTerms(parallelId, config) {
   const text = String(parallelId || "").trim();
   if (!text) return [];
   const normalized = text.toLowerCase();
@@ -86,12 +112,51 @@ function deriveParallelSearchTerms(parallelId) {
   if (normalized.includes("follow back")) push("Social Media Redemption");
   if (normalized.includes("photo shoot")) push("Rookie Auto");
 
+  const explicitAliases = config?.parallelAliases?.[normalized];
+  if (Array.isArray(explicitAliases)) {
+    for (const alias of explicitAliases) push(alias);
+  }
+
   // Generic simplification: try meaningful individual words as fallbacks.
   const words = text.split(/[^a-zA-Z0-9]+/).filter(Boolean);
   for (const word of words) {
     if (word.length >= 4) push(word);
   }
   return terms;
+}
+
+function deriveSetSearchTerms(setId, querySetOverride, config) {
+  const base = String(querySetOverride || setId || "").trim();
+  const key = normalize(base);
+  const out = [];
+  const push = (value) => {
+    const next = String(value || "").trim();
+    if (!next) return;
+    if (!out.some((item) => item.toLowerCase() === next.toLowerCase())) {
+      out.push(next);
+    }
+  };
+  push(base);
+
+  if (key.includes("topps basketball")) {
+    push(base.replace("Topps Basketball", "Topps"));
+    push(base.replace("2025-26", "2025"));
+    push(base.replace("2025-26", "2026"));
+    push("Topps Chrome Basketball");
+  }
+
+  const configured = config?.setAliases?.[key];
+  if (Array.isArray(configured)) {
+    for (const alias of configured) push(alias);
+  }
+  return out;
+}
+
+function derivePlayerSeeds(setId, querySetOverride, config, maxPlayers) {
+  const key = normalize(querySetOverride || setId);
+  const list = config?.setPlayers?.[key];
+  if (!Array.isArray(list)) return [];
+  return list.map((name) => String(name || "").trim()).filter(Boolean).slice(0, Math.max(0, maxPlayers));
 }
 
 function isLikelyPlaceholderImage(url) {
@@ -137,22 +202,47 @@ async function fetchSerpImages(apiKey, query, count) {
   return await fetchSerpEbayImages(apiKey, query, count);
 }
 
-async function fetchVariantImages(apiKey, variant, count, querySetOverride = "") {
-  const queries = [buildVariantQuery(variant, "", querySetOverride)];
-  const aliasTerms = deriveParallelSearchTerms(variant.parallelId);
-  for (const alias of aliasTerms) {
-    queries.push(buildVariantQuery(variant, alias, querySetOverride));
+async function fetchVariantImages(apiKey, variant, count, options = {}) {
+  const querySetOverride = options.querySetOverride || "";
+  const queryAliases = options.queryAliases || {};
+  const maxPlayerSeeds = Math.max(0, Number(options.maxPlayerSeeds ?? 4) || 4);
+  const maxQueries = Math.max(1, Number(options.maxQueries ?? 12) || 12);
+
+  const setTerms = deriveSetSearchTerms(variant.setId, querySetOverride, queryAliases);
+  const parallelTerms = [variant.parallelId, ...deriveParallelSearchTerms(variant.parallelId, queryAliases)];
+  const playerSeeds = derivePlayerSeeds(variant.setId, querySetOverride, queryAliases, maxPlayerSeeds);
+
+  const queries = [];
+  const seenQueries = new Set();
+  const addQuery = (query) => {
+    const next = String(query || "").trim();
+    if (!next) return;
+    const key = next.toLowerCase();
+    if (seenQueries.has(key)) return;
+    seenQueries.add(key);
+    queries.push(next);
+  };
+
+  for (const setTerm of setTerms) {
+    const setVariant = { ...variant, setId: setTerm };
+    addQuery(buildVariantQuery(setVariant, "", ""));
+    for (const parallelTerm of parallelTerms) {
+      addQuery(buildVariantQuery(setVariant, parallelTerm, ""));
+      for (const player of playerSeeds) {
+        addQuery(`${buildVariantQuery(setVariant, parallelTerm, "")} ${player}`);
+      }
+    }
   }
 
   const rows = [];
   const seen = new Set();
-  for (const query of queries) {
-    const batch = await fetchSerpImages(apiKey, query, count);
+  for (const query of queries.slice(0, maxQueries)) {
+    const batch = await fetchSerpImages(apiKey, query, Math.max(count, 6));
     for (const image of batch) {
       if (seen.has(image.rawImageUrl)) continue;
       seen.add(image.rawImageUrl);
       rows.push(image);
-      if (rows.length >= count) return rows;
+      if (rows.length >= Math.max(count * 4, 12)) return rows;
     }
   }
   return rows;
@@ -198,6 +288,9 @@ async function main() {
   const delayMs = Math.max(0, Number(args["delay-ms"] ?? 700) || 700);
   const setFilter = args["set-id"] ? String(args["set-id"]).trim() : "";
   const querySetOverride = args["query-set"] ? String(args["query-set"]).trim() : "";
+  const maxPlayerSeeds = Math.max(0, Number(args["max-player-seeds"] ?? 4) || 4);
+  const maxQueries = Math.max(1, Number(args["max-queries"] ?? 12) || 12);
+  const queryAliases = loadQueryAliasesConfig(args["query-aliases-config"]);
   const apiKey = process.env.SERPAPI_KEY ?? "";
 
   if (!apiKey) {
@@ -250,7 +343,12 @@ async function main() {
           .filter(Boolean)
       );
 
-      const images = await fetchVariantImages(apiKey, variant, remainingSlots, querySetOverride);
+      const images = await fetchVariantImages(apiKey, variant, remainingSlots, {
+        querySetOverride,
+        queryAliases,
+        maxPlayerSeeds,
+        maxQueries,
+      });
       if (images.length > 0) {
         variantsSeeded += 1;
       }
