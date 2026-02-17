@@ -163,43 +163,86 @@ function isLikelyPlaceholderImage(url) {
   return /\/s_1x2\.gif(?:$|\?)/i.test(url);
 }
 
-async function fetchSerpEbayImages(apiKey, query, count) {
-  const params = new URLSearchParams({
-    engine: "ebay",
-    _nkw: query,
-    ebay_domain: "ebay.com",
-    api_key: apiKey,
-  });
-  const response = await fetch(`https://serpapi.com/search.json?${params.toString()}`);
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    throw new Error(`SerpApi eBay error ${response.status}${text ? ` - ${text.slice(0, 200)}` : ""}`);
-  }
-  const payload = await response.json();
-  const results = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
+async function fetchSerpEbayImages(apiKey, query, count, options = {}) {
+  const pages = Math.max(1, Number(options.pages ?? 1) || 1);
+  const resultsPerPage = Math.max(10, Math.min(240, Number(options.resultsPerPage ?? 100) || 100));
   const rows = [];
   const seen = new Set();
-  for (const item of results) {
-    const rawImageUrl =
-      typeof item?.thumbnail === "string"
-        ? item.thumbnail.trim()
-        : typeof item?.image === "string"
-        ? item.image.trim()
-        : "";
-    if (!rawImageUrl || isLikelyPlaceholderImage(rawImageUrl) || seen.has(rawImageUrl)) continue;
-    seen.add(rawImageUrl);
-    rows.push({
-      rawImageUrl,
-      sourceUrl: typeof item?.link === "string" ? item.link.trim() : null,
-      listingTitle: typeof item?.title === "string" ? item.title.trim() : null,
+  for (let page = 1; page <= pages; page += 1) {
+    const params = new URLSearchParams({
+      engine: "ebay",
+      _nkw: query,
+      ebay_domain: "ebay.com",
+      _pgn: String(page),
+      _ipg: String(resultsPerPage),
+      api_key: apiKey,
     });
-    if (rows.length >= count) break;
+    const response = await fetch(`https://serpapi.com/search.json?${params.toString()}`);
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(`SerpApi eBay error ${response.status}${text ? ` - ${text.slice(0, 200)}` : ""}`);
+    }
+    const payload = await response.json();
+    const results = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
+    for (const item of results) {
+      const rawImageUrl =
+        typeof item?.thumbnail === "string"
+          ? item.thumbnail.trim()
+          : typeof item?.image === "string"
+          ? item.image.trim()
+          : "";
+      if (!rawImageUrl || isLikelyPlaceholderImage(rawImageUrl) || seen.has(rawImageUrl)) continue;
+      seen.add(rawImageUrl);
+      rows.push({
+        rawImageUrl,
+        sourceUrl: typeof item?.link === "string" ? item.link.trim() : null,
+        listingTitle: typeof item?.title === "string" ? item.title.trim() : null,
+      });
+      if (rows.length >= count) return rows;
+    }
   }
   return rows;
 }
 
-async function fetchSerpImages(apiKey, query, count) {
-  return await fetchSerpEbayImages(apiKey, query, count);
+async function fetchSerpImages(apiKey, query, count, options = {}) {
+  return await fetchSerpEbayImages(apiKey, query, count, options);
+}
+
+function deriveVariantTypeTerms(parallelId) {
+  const normalized = normalize(parallelId);
+  const terms = [];
+  const push = (value) => {
+    const next = String(value || "").trim();
+    if (!next) return;
+    if (!terms.includes(next)) terms.push(next);
+  };
+  if (normalized.includes("auto")) {
+    push("autograph");
+    push("on card auto");
+    push("real ones autograph");
+  }
+  if (normalized.includes("patch") || normalized.includes("relic")) {
+    push("relic");
+    push("patch");
+    push("memorabilia");
+    push("game worn");
+  }
+  if (normalized.includes("redemption")) {
+    push("redemption");
+    push("redemption card");
+  }
+  if (
+    normalized.includes("hidden gems") ||
+    normalized.includes("all kings") ||
+    normalized.includes("class of") ||
+    normalized.includes("home court") ||
+    normalized.includes("new school")
+  ) {
+    push("insert");
+    push("ssp");
+    push("case hit");
+  }
+  return terms;
 }
 
 async function fetchVariantImages(apiKey, variant, count, options = {}) {
@@ -207,9 +250,12 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const queryAliases = options.queryAliases || {};
   const maxPlayerSeeds = Math.max(0, Number(options.maxPlayerSeeds ?? 4) || 4);
   const maxQueries = Math.max(1, Number(options.maxQueries ?? 12) || 12);
+  const pagesPerQuery = Math.max(1, Number(options.pagesPerQuery ?? 2) || 2);
+  const resultsPerPage = Math.max(10, Math.min(240, Number(options.resultsPerPage ?? 100) || 100));
 
   const setTerms = deriveSetSearchTerms(variant.setId, querySetOverride, queryAliases);
   const parallelTerms = [variant.parallelId, ...deriveParallelSearchTerms(variant.parallelId, queryAliases)];
+  const typeTerms = deriveVariantTypeTerms(variant.parallelId);
   const playerSeeds = derivePlayerSeeds(variant.setId, querySetOverride, queryAliases, maxPlayerSeeds);
 
   const queries = [];
@@ -228,16 +274,36 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
     addQuery(buildVariantQuery(setVariant, "", ""));
     for (const parallelTerm of parallelTerms) {
       addQuery(buildVariantQuery(setVariant, parallelTerm, ""));
+      for (const typeTerm of typeTerms) {
+        addQuery(`${buildVariantQuery(setVariant, parallelTerm, "")} ${typeTerm}`);
+      }
       for (const player of playerSeeds) {
         addQuery(`${buildVariantQuery(setVariant, parallelTerm, "")} ${player}`);
+        for (const typeTerm of typeTerms) {
+          addQuery(`${buildVariantQuery(setVariant, parallelTerm, "")} ${typeTerm} ${player}`);
+        }
       }
+    }
+  }
+  // Broad fallback without year-range set phrase for hard variants.
+  for (const parallelTerm of parallelTerms) {
+    addQuery(`Topps Basketball ${parallelTerm} trading card`);
+    addQuery(`Topps Chrome Basketball ${parallelTerm} trading card`);
+    for (const typeTerm of typeTerms) {
+      addQuery(`Topps Basketball ${parallelTerm} ${typeTerm} trading card`);
+    }
+    for (const player of playerSeeds) {
+      addQuery(`Topps Basketball ${parallelTerm} ${player} trading card`);
     }
   }
 
   const rows = [];
   const seen = new Set();
   for (const query of queries.slice(0, maxQueries)) {
-    const batch = await fetchSerpImages(apiKey, query, Math.max(count, 6));
+    const batch = await fetchSerpImages(apiKey, query, Math.max(count, 8), {
+      pages: pagesPerQuery,
+      resultsPerPage,
+    });
     for (const image of batch) {
       if (seen.has(image.rawImageUrl)) continue;
       seen.add(image.rawImageUrl);
@@ -290,6 +356,8 @@ async function main() {
   const querySetOverride = args["query-set"] ? String(args["query-set"]).trim() : "";
   const maxPlayerSeeds = Math.max(0, Number(args["max-player-seeds"] ?? 4) || 4);
   const maxQueries = Math.max(1, Number(args["max-queries"] ?? 12) || 12);
+  const pagesPerQuery = Math.max(1, Number(args["pages-per-query"] ?? 2) || 2);
+  const resultsPerPage = Math.max(10, Math.min(240, Number(args["results-per-page"] ?? 100) || 100));
   const queryAliases = loadQueryAliasesConfig(args["query-aliases-config"]);
   const apiKey = process.env.SERPAPI_KEY ?? "";
 
@@ -348,6 +416,8 @@ async function main() {
         queryAliases,
         maxPlayerSeeds,
         maxQueries,
+        pagesPerQuery,
+        resultsPerPage,
       });
       if (images.length > 0) {
         variantsSeeded += 1;
