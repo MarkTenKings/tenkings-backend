@@ -97,6 +97,7 @@ type VariantApiRow = {
   setId?: string;
   cardNumber?: string;
   parallelId?: string;
+  parallelFamily?: string | null;
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -176,6 +177,23 @@ const pickBestCandidate = (options: string[], hints: string[], minScore = 0.8): 
     }
   });
   return bestScore >= minScore ? best : null;
+};
+
+const isInsertLikeRow = (row: VariantApiRow): boolean => {
+  const family = sanitizeNullableText(row.parallelFamily).toLowerCase();
+  const parallel = sanitizeNullableText(row.parallelId).toLowerCase();
+  const marker = `${family} ${parallel}`;
+  if (!marker.trim()) {
+    return false;
+  }
+  return (
+    marker.includes("insert") ||
+    marker.includes("autograph") ||
+    marker.includes("auto") ||
+    marker.includes("relic") ||
+    marker.includes("patch") ||
+    marker.includes("memorabilia")
+  );
 };
 
 const inferSportFromProductLine = (value: string): string => {
@@ -2227,17 +2245,26 @@ export default function AdminUploads() {
       }
       setVariantCatalog(variants);
 
-      const parallels = Array.from(
+      const insertOptions = Array.from(
         new Set<string>(
           variants
-            .map((row) => (typeof row.parallelId === "string" ? row.parallelId.trim() : ""))
-            .filter((value: string): value is string => value.length > 0)
+            .filter((row) => isInsertLikeRow(row))
+            .map((row) => sanitizeNullableText(row.parallelId))
+            .filter(Boolean)
         )
       ).sort((a, b) => a.localeCompare(b));
 
-      // Until insert-set is a first-class taxonomy column, use parallel IDs as insert candidates too.
-      setInsertSetOptions(parallels);
-      setParallelOptions(parallels);
+      const parallelOptionsOnly = Array.from(
+        new Set<string>(
+          variants
+            .filter((row) => !isInsertLikeRow(row))
+            .map((row) => sanitizeNullableText(row.parallelId))
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b));
+
+      setInsertSetOptions(insertOptions);
+      setParallelOptions(parallelOptionsOnly.length > 0 ? parallelOptionsOnly : insertOptions);
     })().catch(() => {
       setVariantCatalog([]);
       setInsertSetOptions([]);
@@ -3113,76 +3140,46 @@ export default function AdminUploads() {
                 )}
                 {intakeRequired.category === "sport" && (
                   <>
-                    <select
-                      value={intakeOptional.insertSet}
-                      onChange={(event) => {
-                        setIntakeOptionalTouched((prev) => ({ ...prev, insertSet: true }));
-                        setIntakeOptional((prev) => ({ ...prev, insertSet: event.target.value === "None" ? "" : event.target.value }));
-                      }}
-                      className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                    <button
+                      type="button"
+                      onClick={() => setPickerModalField("insertSet")}
+                      className={`flex w-full items-center justify-between rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-left text-sm text-white ${suggestedClass(
                         "insertSet",
                         intakeOptional.insertSet
                       )}`}
                     >
-                      <option value="">Insert set (select or None)</option>
-                      <option value="None">None</option>
-                      {rankedInsertSetOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPickerModalField("insertSet")}
-                        className="rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-slate-300 transition hover:border-white/40 hover:text-white"
-                      >
-                        Browse Inserts
-                      </button>
-                      {intakeOptional.insertSet && optionPreviewUrls[intakeOptional.insertSet] ? (
-                        <img
-                          src={optionPreviewUrls[intakeOptional.insertSet]}
-                          alt={`${intakeOptional.insertSet} example`}
-                          className="h-12 w-12 rounded-lg border border-white/10 object-cover"
-                        />
-                      ) : null}
-                    </div>
-                    <select
-                      value={intakeOptional.parallel}
-                      onChange={(event) => {
-                        setIntakeOptionalTouched((prev) => ({ ...prev, parallel: true }));
-                        setIntakeOptional((prev) => ({ ...prev, parallel: event.target.value === "None" ? "" : event.target.value }));
-                      }}
-                      className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                      <span className={intakeOptional.insertSet ? "text-white" : "text-slate-400"}>
+                        {intakeOptional.insertSet || "Insert set (tap to choose)"}
+                      </span>
+                      <span className="text-xs uppercase tracking-[0.22em] text-slate-400">Select</span>
+                    </button>
+                    {intakeOptional.insertSet && optionPreviewUrls[intakeOptional.insertSet] ? (
+                      <img
+                        src={optionPreviewUrls[intakeOptional.insertSet]}
+                        alt={`${intakeOptional.insertSet} example`}
+                        className="h-14 w-14 rounded-lg border border-white/10 object-cover"
+                      />
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setPickerModalField("parallel")}
+                      className={`flex w-full items-center justify-between rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-left text-sm text-white ${suggestedClass(
                         "parallel",
                         intakeOptional.parallel
                       )}`}
                     >
-                      <option value="">Variant / parallel (select or None)</option>
-                      <option value="None">None</option>
-                      {rankedParallelOptions.map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setPickerModalField("parallel")}
-                        className="rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-slate-300 transition hover:border-white/40 hover:text-white"
-                      >
-                        Browse Parallels
-                      </button>
-                      {intakeOptional.parallel && optionPreviewUrls[intakeOptional.parallel] ? (
-                        <img
-                          src={optionPreviewUrls[intakeOptional.parallel]}
-                          alt={`${intakeOptional.parallel} example`}
-                          className="h-12 w-12 rounded-lg border border-white/10 object-cover"
-                        />
-                      ) : null}
-                    </div>
+                      <span className={intakeOptional.parallel ? "text-white" : "text-slate-400"}>
+                        {intakeOptional.parallel || "Variant / parallel (tap to choose)"}
+                      </span>
+                      <span className="text-xs uppercase tracking-[0.22em] text-slate-400">Select</span>
+                    </button>
+                    {intakeOptional.parallel && optionPreviewUrls[intakeOptional.parallel] ? (
+                      <img
+                        src={optionPreviewUrls[intakeOptional.parallel]}
+                        alt={`${intakeOptional.parallel} example`}
+                        className="h-14 w-14 rounded-lg border border-white/10 object-cover"
+                      />
+                    ) : null}
                   </>
                 )}
                 <input
@@ -3374,30 +3371,37 @@ export default function AdminUploads() {
                 </button>
               </div>
               <div className="grid max-h-[70vh] grid-cols-1 gap-2 overflow-auto pr-1 md:grid-cols-2">
-                {(pickerModalField === "insertSet" ? rankedInsertSetOptions : rankedParallelOptions).map((option) => (
+                {[
+                  "__NONE__",
+                  ...(pickerModalField === "insertSet" ? rankedInsertSetOptions : rankedParallelOptions),
+                ].map((option) => (
                   <button
                     key={`${pickerModalField}-${option}`}
                     type="button"
                     onClick={() => {
                       if (pickerModalField === "insertSet") {
                         setIntakeOptionalTouched((prev) => ({ ...prev, insertSet: true }));
-                        setIntakeOptional((prev) => ({ ...prev, insertSet: option }));
+                        setIntakeOptional((prev) => ({ ...prev, insertSet: option === "__NONE__" ? "" : option }));
                       } else {
                         setIntakeOptionalTouched((prev) => ({ ...prev, parallel: true }));
-                        setIntakeOptional((prev) => ({ ...prev, parallel: option }));
+                        setIntakeOptional((prev) => ({ ...prev, parallel: option === "__NONE__" ? "" : option }));
                       }
                       setPickerModalField(null);
                     }}
                     className="flex items-center gap-3 rounded-xl border border-white/10 bg-night-800/70 p-2 text-left hover:border-gold-400/40"
                   >
-                    {optionPreviewUrls[option] ? (
+                    {option === "__NONE__" ? (
+                      <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-white/10 text-[10px] uppercase tracking-[0.2em] text-slate-300">
+                        None
+                      </div>
+                    ) : optionPreviewUrls[option] ? (
                       <img src={optionPreviewUrls[option]} alt={`${option} example`} className="h-16 w-16 rounded-lg object-cover" />
                     ) : (
                       <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-white/10 text-[10px] uppercase tracking-[0.2em] text-slate-500">
                         No Img
                       </div>
                     )}
-                    <div className="text-sm text-slate-200">{option}</div>
+                    <div className="text-sm text-slate-200">{option === "__NONE__" ? "None" : option}</div>
                   </button>
                 ))}
               </div>
