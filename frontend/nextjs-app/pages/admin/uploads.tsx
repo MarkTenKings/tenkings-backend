@@ -107,6 +107,7 @@ const TIER_LABELS: Record<string, string> = {
 };
 
 const CAMERA_STORAGE_KEY = "tenkings.adminUploads.cameraDeviceId";
+const OCR_QUEUE_STORAGE_KEY = "tenkings.adminUploads.ocrQueue";
 
 const inferSportFromProductLine = (value: string): string => {
   const normalized = value.trim().toLowerCase();
@@ -193,6 +194,7 @@ export default function AdminUploads() {
   const [trainAiEnabled, setTrainAiEnabled] = useState(false);
   const [insertSetOptions, setInsertSetOptions] = useState<string[]>([]);
   const [parallelOptions, setParallelOptions] = useState<string[]>([]);
+  const [selectedQueueCardId, setSelectedQueueCardId] = useState<string | null>(null);
   type OcrApplyField = Exclude<keyof IntakeRequiredFields, "category">;
   const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty" | "error">(
     null
@@ -312,6 +314,45 @@ export default function AdminUploads() {
   useEffect(() => {
     void refreshVideoInputs();
   }, [refreshVideoInputs]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const raw = window.localStorage.getItem(OCR_QUEUE_STORAGE_KEY);
+    if (!raw) {
+      return;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) {
+        return;
+      }
+      const ids = parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+      if (ids.length > 0) {
+        setQueuedReviewCardIds(ids);
+      }
+    } catch {
+      // ignore malformed local storage payload
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(OCR_QUEUE_STORAGE_KEY, JSON.stringify(queuedReviewCardIds));
+  }, [queuedReviewCardIds]);
+
+  useEffect(() => {
+    if (queuedReviewCardIds.length === 0) {
+      setSelectedQueueCardId(null);
+      return;
+    }
+    if (!selectedQueueCardId || !queuedReviewCardIds.includes(selectedQueueCardId)) {
+      setSelectedQueueCardId(queuedReviewCardIds[0]);
+    }
+  }, [queuedReviewCardIds, selectedQueueCardId]);
 
   const stopCameraStream = useCallback(() => {
     const stream = streamRef.current;
@@ -745,6 +786,7 @@ export default function AdminUploads() {
   const resetIntake = useCallback(() => {
     clearActiveIntakeState();
     setQueuedReviewCardIds([]);
+    setSelectedQueueCardId(null);
   }, [clearActiveIntakeState]);
 
   const openIntakeCapture = useCallback(
@@ -1297,6 +1339,27 @@ export default function AdminUploads() {
     setIntakeRequired((prev) => ({ ...prev, sport: inferred }));
   }, [intakeOptional.productLine, intakeRequired.category, intakeRequired.sport]);
 
+  useEffect(() => {
+    if (intakeRequired.category !== "sport") {
+      return;
+    }
+    if (intakeOptionalTouched.productLine || intakeOptional.productLine.trim()) {
+      return;
+    }
+    const manufacturer = intakeRequired.manufacturer.trim();
+    const sport = intakeRequired.sport.trim();
+    if (!manufacturer || !sport) {
+      return;
+    }
+    setIntakeOptional((prev) => ({ ...prev, productLine: `${manufacturer} ${sport}`.trim() }));
+  }, [
+    intakeOptional.productLine,
+    intakeOptionalTouched.productLine,
+    intakeRequired.category,
+    intakeRequired.manufacturer,
+    intakeRequired.sport,
+  ]);
+
   const applySuggestions = useCallback(
     (suggestions: Record<string, string>) => {
       if (!ocrApplied) {
@@ -1843,7 +1906,7 @@ export default function AdminUploads() {
       setParallelOptions([]);
       return;
     }
-    const qParts = [intakeRequired.year, intakeRequired.manufacturer, intakeOptional.productLine]
+    const qParts = [intakeOptional.productLine, `${intakeRequired.year} ${intakeRequired.manufacturer}`]
       .map((entry) => entry.trim())
       .filter(Boolean);
     if (qParts.length < 2) {
@@ -1852,7 +1915,7 @@ export default function AdminUploads() {
       return;
     }
     const controller = new AbortController();
-    const q = qParts.join(" ");
+    const q = qParts[0];
     fetch(`/api/admin/variants?q=${encodeURIComponent(q)}&limit=500`, {
       headers: buildAdminHeaders(session.token),
       signal: controller.signal,
@@ -1864,16 +1927,6 @@ export default function AdminUploads() {
           setParallelOptions([]);
           return;
         }
-        const insertSets = Array.from(
-          new Set<string>(
-            payload.variants
-              .map((row: { cardNumber?: string }) => {
-                const cardNumber = typeof row.cardNumber === "string" ? row.cardNumber.trim() : "";
-                return cardNumber && cardNumber !== "ALL" ? cardNumber : "";
-              })
-              .filter((value: string): value is string => value.length > 0)
-          )
-        ).sort((a, b) => a.localeCompare(b));
         const parallels = Array.from(
           new Set<string>(
             payload.variants
@@ -1881,6 +1934,16 @@ export default function AdminUploads() {
               .filter((value: string): value is string => value.length > 0)
           )
         ).sort((a, b) => a.localeCompare(b));
+        const insertFamilies = Array.from(
+          new Set<string>(
+            payload.variants
+              .map((row: { parallelFamily?: string | null }) =>
+                typeof row.parallelFamily === "string" ? row.parallelFamily.trim() : ""
+              )
+              .filter((value: string): value is string => value.length > 0)
+          )
+        ).sort((a, b) => a.localeCompare(b));
+        const insertSets = insertFamilies.length > 0 ? insertFamilies : parallels;
         setInsertSetOptions(insertSets);
         setParallelOptions(parallels);
       })
@@ -1955,18 +2018,6 @@ export default function AdminUploads() {
       setIntakeBusy(false);
     }
   }, [saveIntakeMetadata, validateRequiredIntake]);
-
-  const handleIntakeOptionalSave = useCallback(async () => {
-    try {
-      setIntakeBusy(true);
-      await saveIntakeMetadata(true);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to save optional fields.";
-      setIntakeError(message);
-    } finally {
-      setIntakeBusy(false);
-    }
-  }, [saveIntakeMetadata]);
 
   const handleSendToKingsReview = useCallback(async () => {
     const error = validateRequiredIntake();
@@ -2368,26 +2419,49 @@ export default function AdminUploads() {
                 </p>
                 <button
                   type="button"
-                  onClick={() => {
-                    const nextId = queuedReviewCardIds[0];
-                    if (!nextId) {
-                      return;
-                    }
-                    void loadQueuedCardForReview(nextId);
-                  }}
-                  disabled={intakeBusy || queuedReviewCardIds.length === 0}
-                  className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-transparent px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-gold-300 transition hover:border-gold-400 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  OCR Review →
-                </button>
-                <button
-                  type="button"
                   onClick={() => void openIntakeCapture("front")}
                   disabled={intakeBusy}
                   className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-sm font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   Add Card
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!selectedQueueCardId) {
+                      return;
+                    }
+                    void loadQueuedCardForReview(selectedQueueCardId);
+                  }}
+                  disabled={intakeBusy || !selectedQueueCardId}
+                  className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-transparent px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-gold-300 transition hover:border-gold-400 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  OCR Review →
+                </button>
+                <div className="mt-4 space-y-2">
+                  <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">OCR Queue</p>
+                  {queuedReviewCardIds.length ? (
+                    <div className="max-h-48 space-y-1 overflow-auto rounded-xl border border-white/10 bg-night-900/50 p-2">
+                      {queuedReviewCardIds.map((id) => (
+                        <label
+                          key={id}
+                          className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 text-xs text-slate-200 hover:bg-white/5"
+                        >
+                          <input
+                            type="radio"
+                            name="ocr-queue"
+                            checked={selectedQueueCardId === id}
+                            onChange={() => setSelectedQueueCardId(id)}
+                            className="h-3.5 w-3.5 accent-gold-400"
+                          />
+                          <span className="truncate font-mono">{id}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-slate-500">No cards in OCR queue.</p>
+                  )}
+                </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
                 {queuedReviewCardIds.length > 0 ? (
@@ -2807,22 +2881,22 @@ export default function AdminUploads() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
+                    onClick={() => setIntakeStep("required")}
+                    disabled={intakeBusy}
+                    className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    ← Back
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => setTrainAiEnabled((prev) => !prev)}
                     className={`inline-flex items-center justify-center rounded-full border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.28em] transition ${
                       trainAiEnabled
                         ? "border-emerald-400/70 bg-emerald-500/20 text-emerald-200"
-                        : "border-white/20 text-slate-300 hover:border-white/40 hover:text-white"
+                        : "border-rose-400/70 bg-transparent text-rose-300 hover:border-rose-300 hover:text-rose-200"
                     }`}
                   >
-                    {trainAiEnabled ? "Train AI On" : "Train AI"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleIntakeOptionalSave()}
-                    disabled={intakeBusy}
-                    className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Save optional fields
+                    {trainAiEnabled ? "Train AI On" : "Train AI Off"}
                   </button>
                   <button
                     type="button"
