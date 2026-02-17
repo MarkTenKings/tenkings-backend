@@ -394,18 +394,19 @@ async function loadExistingRefCounts(prisma, variants) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const dryRun = Boolean(args["dry-run"]);
-  const allowWeak = Boolean(args["allow-weak"]);
+  const strictGate = Boolean(args["strict-gate"]);
+  const allowWeak = !strictGate || Boolean(args["allow-weak"]);
   const limitVariants = Math.max(1, Number(args["limit-variants"] ?? 50) || 50);
   const imagesPerVariant = Math.max(1, Number(args["images-per-variant"] ?? 3) || 3);
   const delayMs = Math.max(0, Number(args["delay-ms"] ?? 700) || 700);
   const setFilter = args["set-id"] ? String(args["set-id"]).trim() : "";
   const querySetOverride = args["query-set"] ? String(args["query-set"]).trim() : "";
-  const maxPlayerSeeds = Math.max(0, Number(args["max-player-seeds"] ?? 4) || 4);
-  const maxQueries = Math.max(1, Number(args["max-queries"] ?? 12) || 12);
-  const pagesPerQuery = Math.max(1, Number(args["pages-per-query"] ?? 2) || 2);
+  const maxPlayerSeeds = Math.max(0, Number(args["max-player-seeds"] ?? 0) || 0);
+  const maxQueries = Math.max(1, Number(args["max-queries"] ?? 1) || 1);
+  const pagesPerQuery = Math.max(1, Number(args["pages-per-query"] ?? 1) || 1);
   const resultsPerPage = Math.max(10, Math.min(240, Number(args["results-per-page"] ?? 100) || 100));
-  const includeKeywords = !Boolean(args["no-keywords"]);
-  const exactQuery = Boolean(args["exact-query"]);
+  const includeKeywords = false;
+  const exactQuery = !Boolean(args["expanded-query"]);
   const debugQueries = Boolean(args["debug-queries"]);
   const debugLimit = Math.max(1, Number(args["debug-limit"] ?? 20) || 20);
   const debugMatch = args["debug-match"] ? normalize(String(args["debug-match"])) : "";
