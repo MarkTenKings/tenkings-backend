@@ -73,11 +73,17 @@ function chunkArray(input, size) {
   return chunks;
 }
 
-function buildVariantQuery(variant, parallelOverride = "", querySetOverride = "") {
+function buildVariantQuery(
+  variant,
+  parallelOverride = "",
+  querySetOverride = "",
+  includeKeywords = true
+) {
   const setPart = querySetOverride || variant.setId;
   const cardPart = variant.cardNumber === "ALL" ? "" : `#${variant.cardNumber}`;
   const parallelPart = parallelOverride || variant.parallelId;
-  const keywordPart = Array.isArray(variant.keywords) ? variant.keywords.slice(0, 3).join(" ") : "";
+  const keywordPart =
+    includeKeywords && Array.isArray(variant.keywords) ? variant.keywords.slice(0, 3).join(" ") : "";
   return [setPart, cardPart, parallelPart, keywordPart, "trading card"].filter(Boolean).join(" ");
 }
 
@@ -252,6 +258,7 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const maxQueries = Math.max(1, Number(options.maxQueries ?? 12) || 12);
   const pagesPerQuery = Math.max(1, Number(options.pagesPerQuery ?? 2) || 2);
   const resultsPerPage = Math.max(10, Math.min(240, Number(options.resultsPerPage ?? 100) || 100));
+  const includeKeywords = options.includeKeywords !== false;
   const onQueries = typeof options.onQueries === "function" ? options.onQueries : null;
 
   const setTerms = deriveSetSearchTerms(variant.setId, querySetOverride, queryAliases);
@@ -272,16 +279,18 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
 
   for (const setTerm of setTerms) {
     const setVariant = { ...variant, setId: setTerm };
-    addQuery(buildVariantQuery(setVariant, "", ""));
+    addQuery(buildVariantQuery(setVariant, "", "", includeKeywords));
     for (const parallelTerm of parallelTerms) {
-      addQuery(buildVariantQuery(setVariant, parallelTerm, ""));
+      addQuery(buildVariantQuery(setVariant, parallelTerm, "", includeKeywords));
       for (const typeTerm of typeTerms) {
-        addQuery(`${buildVariantQuery(setVariant, parallelTerm, "")} ${typeTerm}`);
+        addQuery(`${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords)} ${typeTerm}`);
       }
       for (const player of playerSeeds) {
-        addQuery(`${buildVariantQuery(setVariant, parallelTerm, "")} ${player}`);
+        addQuery(`${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords)} ${player}`);
         for (const typeTerm of typeTerms) {
-          addQuery(`${buildVariantQuery(setVariant, parallelTerm, "")} ${typeTerm} ${player}`);
+          addQuery(
+            `${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords)} ${typeTerm} ${player}`
+          );
         }
       }
     }
@@ -362,6 +371,7 @@ async function main() {
   const maxQueries = Math.max(1, Number(args["max-queries"] ?? 12) || 12);
   const pagesPerQuery = Math.max(1, Number(args["pages-per-query"] ?? 2) || 2);
   const resultsPerPage = Math.max(10, Math.min(240, Number(args["results-per-page"] ?? 100) || 100));
+  const includeKeywords = !Boolean(args["no-keywords"]);
   const debugQueries = Boolean(args["debug-queries"]);
   const debugLimit = Math.max(1, Number(args["debug-limit"] ?? 20) || 20);
   const debugMatch = args["debug-match"] ? normalize(String(args["debug-match"])) : "";
@@ -426,6 +436,7 @@ async function main() {
         maxQueries,
         pagesPerQuery,
         resultsPerPage,
+        includeKeywords,
         onQueries: (queries) => {
           if (!debugQueries) return;
           if (debugPrinted >= debugLimit) return;
