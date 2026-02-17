@@ -128,6 +128,56 @@ const sanitizeNullableText = (value: string | null | undefined): string => {
   return normalized;
 };
 
+const tokenize = (value: string): string[] =>
+  value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+const scoreOption = (option: string, hints: string[]): number => {
+  if (!option.trim() || hints.length === 0) {
+    return 0;
+  }
+  const optionTokens = new Set(tokenize(option));
+  if (optionTokens.size === 0) {
+    return 0;
+  }
+  let score = 0;
+  hints.forEach((hint) => {
+    const cleanedHint = sanitizeNullableText(hint);
+    if (!cleanedHint) {
+      return;
+    }
+    const hintLower = cleanedHint.toLowerCase();
+    const optionLower = option.toLowerCase();
+    if (hintLower === optionLower) {
+      score += 1.5;
+    } else if (optionLower.includes(hintLower) || hintLower.includes(optionLower)) {
+      score += 0.9;
+    }
+    tokenize(cleanedHint).forEach((token) => {
+      if (optionTokens.has(token)) {
+        score += 0.25;
+      }
+    });
+  });
+  return score;
+};
+
+const pickBestCandidate = (options: string[], hints: string[], minScore = 0.8): string | null => {
+  let best: string | null = null;
+  let bestScore = 0;
+  options.forEach((option) => {
+    const score = scoreOption(option, hints);
+    if (score > bestScore) {
+      best = option;
+      bestScore = score;
+    }
+  });
+  return bestScore >= minScore ? best : null;
+};
+
 const inferSportFromProductLine = (value: string): string => {
   const normalized = value.trim().toLowerCase();
   if (!normalized) {
@@ -211,6 +261,7 @@ export default function AdminUploads() {
   const [intakeTouched, setIntakeTouched] = useState<Record<string, boolean>>({});
   const [intakeOptionalTouched, setIntakeOptionalTouched] = useState<Record<string, boolean>>({});
   const [trainAiEnabled, setTrainAiEnabled] = useState(false);
+  const [productLineOptions, setProductLineOptions] = useState<string[]>([]);
   const [insertSetOptions, setInsertSetOptions] = useState<string[]>([]);
   const [parallelOptions, setParallelOptions] = useState<string[]>([]);
   const [selectedQueueCardId, setSelectedQueueCardId] = useState<string | null>(null);
@@ -889,6 +940,7 @@ export default function AdminUploads() {
     setIntakeTouched({});
     setIntakeOptionalTouched({});
     setTrainAiEnabled(false);
+    setProductLineOptions([]);
     setInsertSetOptions([]);
     setParallelOptions([]);
     setVariantCatalog([]);
@@ -1489,6 +1541,83 @@ export default function AdminUploads() {
     intakeRequired.sport,
   ]);
 
+  useEffect(() => {
+    if (!session?.token || intakeRequired.category !== "sport") {
+      setProductLineOptions([]);
+      return;
+    }
+    const year = sanitizeNullableText(intakeRequired.year);
+    const manufacturer = sanitizeNullableText(intakeRequired.manufacturer);
+    if (!year || !manufacturer) {
+      setProductLineOptions([]);
+      return;
+    }
+    const controller = new AbortController();
+    const sportToken = sanitizeNullableText(intakeRequired.sport).toLowerCase();
+    const query = `${year} ${manufacturer}`.trim();
+    fetch(`/api/admin/variants?q=${encodeURIComponent(query)}&limit=500`, {
+      headers: buildAdminHeaders(session.token),
+      signal: controller.signal,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (!payload?.variants || !Array.isArray(payload.variants)) {
+          setProductLineOptions([]);
+          return;
+        }
+        const allSetIds = payload.variants
+          .map((row: { setId?: string }) => sanitizeNullableText(row?.setId))
+          .filter(Boolean);
+        const filteredSetIds = sportToken
+          ? allSetIds.filter((setId: string) => setId.toLowerCase().includes(sportToken))
+          : allSetIds;
+        const options = Array.from(new Set((filteredSetIds.length > 0 ? filteredSetIds : allSetIds) as string[])).sort(
+          (a, b) => a.localeCompare(b)
+        );
+        setProductLineOptions(options);
+      })
+      .catch(() => setProductLineOptions([]));
+    return () => controller.abort();
+  }, [
+    intakeRequired.category,
+    intakeRequired.manufacturer,
+    intakeRequired.sport,
+    intakeRequired.year,
+    session?.token,
+  ]);
+
+  useEffect(() => {
+    if (intakeRequired.category !== "sport" || productLineOptions.length === 0) {
+      return;
+    }
+    const current = sanitizeNullableText(intakeOptional.productLine);
+    if (current && productLineOptions.some((option) => option.toLowerCase() === current.toLowerCase())) {
+      return;
+    }
+    const candidate = pickBestCandidate(productLineOptions, [
+      sanitizeNullableText(intakeSuggested.setName),
+      sanitizeNullableText(intakeOptional.productLine),
+      `${sanitizeNullableText(intakeRequired.year)} ${sanitizeNullableText(intakeRequired.manufacturer)} ${sanitizeNullableText(
+        intakeRequired.sport
+      )}`.trim(),
+    ]);
+    if (candidate) {
+      setIntakeOptional((prev) => ({ ...prev, productLine: candidate }));
+      return;
+    }
+    if (current) {
+      setIntakeOptional((prev) => ({ ...prev, productLine: "" }));
+    }
+  }, [
+    intakeOptional.productLine,
+    intakeRequired.category,
+    intakeRequired.manufacturer,
+    intakeRequired.sport,
+    intakeRequired.year,
+    intakeSuggested.setName,
+    productLineOptions,
+  ]);
+
   const applySuggestions = useCallback(
     (suggestions: Record<string, string>) => {
       if (!ocrApplied) {
@@ -1531,22 +1660,33 @@ export default function AdminUploads() {
         const suggestedProductLine = sanitizeNullableText(suggestions.setName);
         const suggestedInsertSet = sanitizeNullableText(suggestions.insertSet);
         const suggestedParallel = sanitizeNullableText(suggestions.parallel);
-        const insertSetKnown =
-          !suggestedInsertSet ||
-          insertSetOptions.some((option) => option.toLowerCase() === suggestedInsertSet.toLowerCase());
-        const parallelKnown =
-          !suggestedParallel ||
-          parallelOptions.some((option) => option.toLowerCase() === suggestedParallel.toLowerCase());
-        if (suggestedProductLine && !intakeOptionalTouched.productLine && !prev.productLine.trim()) {
-          next.productLine = suggestedProductLine;
+        const constrainedProductLine =
+          suggestedProductLine && productLineOptions.length > 0
+            ? pickBestCandidate(productLineOptions, [
+                suggestedProductLine,
+                `${sanitizeNullableText(intakeRequired.year)} ${sanitizeNullableText(intakeRequired.manufacturer)} ${sanitizeNullableText(
+                  intakeRequired.sport
+                )}`.trim(),
+              ])
+            : suggestedProductLine || null;
+        if (constrainedProductLine && !intakeOptionalTouched.productLine && !prev.productLine.trim()) {
+          next.productLine = constrainedProductLine;
           ocrAppliedOptionalFieldsRef.current.push("productLine");
         }
-        if (suggestedInsertSet && insertSetKnown && !intakeOptionalTouched.insertSet && !prev.insertSet.trim()) {
-          next.insertSet = suggestedInsertSet;
+        const constrainedInsert =
+          suggestedInsertSet && insertSetOptions.length > 0
+            ? pickBestCandidate(insertSetOptions, [suggestedInsertSet, suggestedProductLine, suggestedParallel], 0.6)
+            : suggestedInsertSet || null;
+        if (constrainedInsert && !intakeOptionalTouched.insertSet && !prev.insertSet.trim()) {
+          next.insertSet = constrainedInsert;
           ocrAppliedOptionalFieldsRef.current.push("insertSet");
         }
-        if (suggestedParallel && parallelKnown && !intakeOptionalTouched.parallel && !prev.parallel.trim()) {
-          next.parallel = suggestedParallel;
+        const constrainedParallel =
+          suggestedParallel && parallelOptions.length > 0
+            ? pickBestCandidate(parallelOptions, [suggestedParallel, suggestedInsertSet, suggestedProductLine], 0.6)
+            : suggestedParallel || null;
+        if (constrainedParallel && !intakeOptionalTouched.parallel && !prev.parallel.trim()) {
+          next.parallel = constrainedParallel;
           ocrAppliedOptionalFieldsRef.current.push("parallel");
         }
         if (suggestions.cardNumber && !intakeOptionalTouched.cardNumber && !prev.cardNumber.trim()) {
@@ -1605,6 +1745,7 @@ export default function AdminUploads() {
       intakeTouched.year,
       intakeOptional,
       intakeRequired,
+      productLineOptions,
       ocrApplied,
       intakeOptionalTouched.cardNumber,
       intakeOptionalTouched.productLine,
@@ -2813,15 +2954,36 @@ export default function AdminUploads() {
                         intakeRequired.playerName
                       )}`}
                     />
-                    <input
-                      placeholder="Product line / set (e.g. Topps Basketball)"
-                      value={intakeOptional.productLine}
-                      onChange={handleOptionalChange("productLine")}
-                      className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
-                        "setName",
-                        intakeOptional.productLine
-                      )}`}
-                    />
+                    {productLineOptions.length > 0 ? (
+                      <select
+                        value={intakeOptional.productLine}
+                        onChange={(event) => {
+                          setIntakeOptionalTouched((prev) => ({ ...prev, productLine: true }));
+                          setIntakeOptional((prev) => ({ ...prev, productLine: event.target.value }));
+                        }}
+                        className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                          "setName",
+                          intakeOptional.productLine
+                        )}`}
+                      >
+                        <option value="">Product line / set (select)</option>
+                        {productLineOptions.map((option) => (
+                          <option key={option} value={option}>
+                            {option}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        placeholder="Product line / set (e.g. Topps Basketball)"
+                        value={intakeOptional.productLine}
+                        onChange={handleOptionalChange("productLine")}
+                        className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                          "setName",
+                          intakeOptional.productLine
+                        )}`}
+                      />
+                    )}
                     <div className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs uppercase tracking-[0.22em] text-slate-400">
                       Sport (auto): <span className="text-slate-200">{intakeRequired.sport || "Unknown"}</span>
                     </div>
