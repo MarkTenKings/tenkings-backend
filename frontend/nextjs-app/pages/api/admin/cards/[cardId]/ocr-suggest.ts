@@ -24,6 +24,8 @@ type SuggestionFields = {
   game: string | null;
   cardName: string | null;
   setName: string | null;
+  insertSet: string | null;
+  parallel: string | null;
   cardNumber: string | null;
   numbered: string | null;
   autograph: string | null;
@@ -57,6 +59,8 @@ const FIELD_KEYS: (keyof SuggestionFields)[] = [
   "game",
   "cardName",
   "setName",
+  "insertSet",
+  "parallel",
   "cardNumber",
   "numbered",
   "autograph",
@@ -330,6 +334,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       game: null,
       cardName: null,
       setName: attributes.setName ?? null,
+      insertSet: null,
+      parallel: null,
       cardNumber: null,
       numbered: attributes.numbered ?? null,
       autograph: attributes.autograph ? "true" : null,
@@ -390,6 +396,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       if (numberedMatch) {
         fields.numbered = numberedMatch[0].replace(/\s+/g, "");
         confidence.numbered = 0.9;
+      }
+    }
+
+    if (!fields.parallel) {
+      const parallelKeywords = [
+        "refractor",
+        "x-fractor",
+        "gold",
+        "silver",
+        "black",
+        "green",
+        "blue",
+        "red",
+        "purple",
+        "orange",
+        "holo",
+        "prizm",
+        "mojo",
+        "cracked ice",
+      ];
+      const hit = parallelKeywords.find((keyword) => combinedText.includes(keyword));
+      if (hit) {
+        fields.parallel = hit
+          .split(" ")
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" ");
+        confidence.parallel = 0.75;
       }
     }
 

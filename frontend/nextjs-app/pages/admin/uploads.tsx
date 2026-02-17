@@ -56,6 +56,8 @@ type IntakeRequiredFields = {
 type IntakeOptionalFields = {
   teamName: string;
   productLine: string;
+  insertSet: string;
+  parallel: string;
   cardNumber: string;
   numbered: string;
   autograph: boolean;
@@ -132,6 +134,8 @@ export default function AdminUploads() {
   const [intakeOptional, setIntakeOptional] = useState<IntakeOptionalFields>({
     teamName: "",
     productLine: "",
+    insertSet: "",
+    parallel: "",
     cardNumber: "",
     numbered: "",
     autograph: false,
@@ -163,6 +167,7 @@ export default function AdminUploads() {
   const [intakeSuggested, setIntakeSuggested] = useState<Record<string, string>>({});
   const [intakeTouched, setIntakeTouched] = useState<Record<string, boolean>>({});
   const [intakeOptionalTouched, setIntakeOptionalTouched] = useState<Record<string, boolean>>({});
+  const [parallelOptions, setParallelOptions] = useState<string[]>([]);
   type OcrApplyField = Exclude<keyof IntakeRequiredFields, "category">;
   const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty" | "error">(
     null
@@ -675,6 +680,8 @@ export default function AdminUploads() {
       setIntakeOptional({
         teamName: "",
         productLine: "",
+        insertSet: "",
+        parallel: "",
         cardNumber: "",
         numbered: "",
         autograph: false,
@@ -729,6 +736,8 @@ export default function AdminUploads() {
         ? intakeRequired.playerName.trim()
         : intakeRequired.cardName.trim();
     const productLineRaw = intakeOptional.productLine.trim();
+    const insertSet = intakeOptional.insertSet.trim();
+    const parallel = intakeOptional.parallel.trim();
     const cardNumber = intakeOptional.cardNumber.trim();
     const gradeCompany = intakeOptional.graded ? intakeOptional.gradeCompany.trim() : "";
     const gradeValue = intakeOptional.graded ? intakeOptional.gradeValue.trim() : "";
@@ -756,7 +765,19 @@ export default function AdminUploads() {
     const productLine = normalizeProductLine();
     const autograph = intakeOptional.autograph ? "Auto" : "";
     const memorabilia = intakeOptional.memorabilia ? "Patch" : "";
-    const parts = [year, manufacturer, productLine, primary, cardNumber, numbered, autograph, memorabilia, grade]
+    const parts = [
+      year,
+      manufacturer,
+      productLine,
+      insertSet,
+      primary,
+      cardNumber,
+      parallel,
+      numbered,
+      autograph,
+      memorabilia,
+      grade,
+    ]
       .filter((part) => part.length > 0)
       .map((part) => part.trim());
     const seen = new Set<string>();
@@ -772,6 +793,8 @@ export default function AdminUploads() {
   }, [
     intakeOptional.cardNumber,
     intakeOptional.numbered,
+    intakeOptional.insertSet,
+    intakeOptional.parallel,
     intakeOptional.gradeCompany,
     intakeOptional.gradeValue,
     intakeOptional.graded,
@@ -1015,8 +1038,8 @@ export default function AdminUploads() {
         teamName: intakeOptional.teamName.trim() || null,
         year: intakeRequired.year.trim() || null,
         brand: intakeRequired.manufacturer.trim() || null,
-        setName: intakeOptional.productLine.trim() || null,
-        variantKeywords: [] as string[],
+        setName: intakeOptional.insertSet.trim() || null,
+        variantKeywords: intakeOptional.parallel.trim() ? [intakeOptional.parallel.trim()] : [],
         numbered: intakeOptional.numbered.trim() || null,
         rookie: false,
         autograph: includeOptional ? intakeOptional.autograph : false,
@@ -1033,7 +1056,7 @@ export default function AdminUploads() {
             : intakeRequired.cardName.trim(),
         cardNumber: intakeOptional.cardNumber.trim() || null,
         setName: intakeOptional.productLine.trim() || null,
-        setCode: null,
+        setCode: intakeOptional.insertSet.trim() || null,
         year: intakeRequired.year.trim() || null,
         company: intakeRequired.manufacturer.trim() || null,
         rarity: includeOptional ? intakeOptional.tcgRarity.trim() || null : null,
@@ -1156,7 +1179,9 @@ export default function AdminUploads() {
 
       setIntakeOptional({
         teamName: String(attributes.teamName ?? "").trim(),
-        productLine: String(attributes.setName ?? normalized.setName ?? ocrFields.setName ?? "").trim(),
+        productLine: String(normalized.setName ?? ocrFields.setName ?? "").trim(),
+        insertSet: String(normalized.setCode ?? "").trim(),
+        parallel: String((attributes.variantKeywords ?? [])[0] ?? ocrFields.parallel ?? "").trim(),
         cardNumber: String(normalized.cardNumber ?? ocrFields.cardNumber ?? "").trim(),
         numbered: String(attributes.numbered ?? ocrFields.numbered ?? "").trim(),
         autograph: Boolean(attributes.autograph ?? false),
@@ -1271,6 +1296,14 @@ export default function AdminUploads() {
           next.productLine = suggestions.setName;
           ocrAppliedOptionalFieldsRef.current.push("productLine");
         }
+        if (suggestions.insertSet && !intakeOptionalTouched.insertSet && !prev.insertSet.trim()) {
+          next.insertSet = suggestions.insertSet;
+          ocrAppliedOptionalFieldsRef.current.push("insertSet");
+        }
+        if (suggestions.parallel && !intakeOptionalTouched.parallel && !prev.parallel.trim()) {
+          next.parallel = suggestions.parallel;
+          ocrAppliedOptionalFieldsRef.current.push("parallel");
+        }
         if (suggestions.cardNumber && !intakeOptionalTouched.cardNumber && !prev.cardNumber.trim()) {
           next.cardNumber = suggestions.cardNumber;
           ocrAppliedOptionalFieldsRef.current.push("cardNumber");
@@ -1330,6 +1363,8 @@ export default function AdminUploads() {
       ocrApplied,
       intakeOptionalTouched.cardNumber,
       intakeOptionalTouched.productLine,
+      intakeOptionalTouched.insertSet,
+      intakeOptionalTouched.parallel,
       intakeOptionalTouched.numbered,
       intakeOptionalTouched.autograph,
       intakeOptionalTouched.memorabilia,
@@ -1721,6 +1756,18 @@ export default function AdminUploads() {
             }
             return;
           }
+          if (field === "insertSet") {
+            if (next.insertSet === intakeSuggested.insertSet) {
+              next.insertSet = optionalBackup.insertSet;
+            }
+            return;
+          }
+          if (field === "parallel") {
+            if (next.parallel === intakeSuggested.parallel) {
+              next.parallel = optionalBackup.parallel;
+            }
+            return;
+          }
           if (field === "numbered") {
             if (next.numbered === intakeSuggested.numbered) {
               next.numbered = optionalBackup.numbered;
@@ -1745,6 +1792,43 @@ export default function AdminUploads() {
     setOcrApplied(false);
     setOcrMode(null);
   }, [applySuggestions, buildSuggestionsFromAudit, fetchOcrSuggestions, intakeCardId, intakeSuggested, ocrApplied, ocrAudit, ocrStatus]);
+
+  useEffect(() => {
+    if (!session?.token || intakeRequired.category !== "sport") {
+      setParallelOptions([]);
+      return;
+    }
+    const qParts = [intakeRequired.year, intakeRequired.manufacturer, intakeOptional.productLine]
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    if (qParts.length < 2) {
+      setParallelOptions([]);
+      return;
+    }
+    const controller = new AbortController();
+    const q = qParts.join(" ");
+    fetch(`/api/admin/variants?q=${encodeURIComponent(q)}&limit=500`, {
+      headers: buildAdminHeaders(session.token),
+      signal: controller.signal,
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (!payload?.variants || !Array.isArray(payload.variants)) {
+          setParallelOptions([]);
+          return;
+        }
+        const options = Array.from(
+          new Set<string>(
+            payload.variants
+              .map((row: { parallelId?: string }) => (typeof row.parallelId === "string" ? row.parallelId.trim() : ""))
+              .filter((value: string): value is string => value.length > 0)
+          )
+        ).sort((a, b) => a.localeCompare(b));
+        setParallelOptions(options);
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [intakeOptional.productLine, intakeRequired.category, intakeRequired.manufacturer, intakeRequired.year, session?.token]);
 
   useEffect(() => {
     if (!intakeCardId) {
@@ -2467,6 +2551,34 @@ export default function AdminUploads() {
                     intakeOptional.productLine
                   )}`}
                 />
+                {intakeRequired.category === "sport" && (
+                  <>
+                    <input
+                      placeholder="Insert set (e.g. Certified, MVP)"
+                      value={intakeOptional.insertSet}
+                      onChange={handleOptionalChange("insertSet")}
+                      className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                        "insertSet",
+                        intakeOptional.insertSet
+                      )}`}
+                    />
+                    <input
+                      list="parallel-options"
+                      placeholder="Variant / Parallel"
+                      value={intakeOptional.parallel}
+                      onChange={handleOptionalChange("parallel")}
+                      className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                        "parallel",
+                        intakeOptional.parallel
+                      )}`}
+                    />
+                    <datalist id="parallel-options">
+                      {parallelOptions.map((option) => (
+                        <option key={option} value={option} />
+                      ))}
+                    </datalist>
+                  </>
+                )}
                 <input
                   placeholder="Card number"
                   value={intakeOptional.cardNumber}
@@ -2614,6 +2726,9 @@ export default function AdminUploads() {
                   <li>Category: {intakeRequired.category === "sport" ? "Sports" : "TCG"}</li>
                   <li>Manufacturer: {intakeRequired.manufacturer || "—"}</li>
                   <li>Year: {intakeRequired.year || "—"}</li>
+                  <li>Product Set: {intakeOptional.productLine || "—"}</li>
+                  <li>Insert Set: {intakeOptional.insertSet || "—"}</li>
+                  <li>Parallel: {intakeOptional.parallel || "—"}</li>
                 </ul>
               </div>
             </div>

@@ -53,7 +53,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const candidateTokens = [
           normalized?.year ?? attributes?.year,
           attributes?.brand ?? normalized?.company,
-          normalized?.setName ?? normalized?.setCode ?? attributes?.setName,
+          normalized?.setName,
+          normalized?.setCode ?? attributes?.setName,
           card.resolvedPlayerName ?? attributes?.playerName,
           attributes?.teamName,
           normalized?.cardNumber ?? attributes?.cardNumber,
