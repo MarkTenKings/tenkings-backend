@@ -195,6 +195,7 @@ function canonicalizeUrl(raw) {
 async function fetchSerpEbayImages(apiKey, query, count, options = {}) {
   const pages = Math.max(1, Number(options.pages ?? 1) || 1);
   const resultsPerPage = Math.max(10, Math.min(240, Number(options.resultsPerPage ?? 100) || 100));
+  const disableDedupe = options.disableDedupe === true;
   const rows = [];
   const seen = new Set();
   for (let page = 1; page <= pages; page += 1) {
@@ -224,8 +225,9 @@ async function fetchSerpEbayImages(apiKey, query, count, options = {}) {
       const canonicalImageUrl = canonicalizeUrl(rawImageUrl);
       const canonicalSourceUrl = canonicalizeUrl(sourceUrl);
       const dedupeKey = canonicalSourceUrl || canonicalImageUrl;
-      if (!rawImageUrl || isLikelyPlaceholderImage(rawImageUrl) || !dedupeKey || seen.has(dedupeKey)) continue;
-      seen.add(dedupeKey);
+      if (!rawImageUrl || isLikelyPlaceholderImage(rawImageUrl) || !dedupeKey) continue;
+      if (!disableDedupe && seen.has(dedupeKey)) continue;
+      if (!disableDedupe) seen.add(dedupeKey);
       rows.push({
         rawImageUrl,
         sourceUrl: sourceUrl || null,
@@ -285,6 +287,7 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const maxQueries = Math.max(1, Number(options.maxQueries ?? 12) || 12);
   const pagesPerQuery = Math.max(1, Number(options.pagesPerQuery ?? 2) || 2);
   const resultsPerPage = Math.max(10, Math.min(240, Number(options.resultsPerPage ?? 100) || 100));
+  const disableDedupe = options.disableDedupe === true;
   const includeKeywords = options.includeKeywords !== false;
   const exactQuery = options.exactQuery === true;
   const onQueries = typeof options.onQueries === "function" ? options.onQueries : null;
@@ -349,6 +352,7 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
     const batch = await fetchSerpImages(apiKey, query, Math.max(count, 8), {
       pages: pagesPerQuery,
       resultsPerPage,
+      disableDedupe,
     });
     for (const image of batch) {
       if (seen.has(image.rawImageUrl)) continue;
@@ -396,6 +400,8 @@ async function main() {
   const dryRun = Boolean(args["dry-run"]);
   const strictGate = Boolean(args["strict-gate"]);
   const allowWeak = !strictGate || Boolean(args["allow-weak"]);
+  const noGate = Boolean(args["no-gate"]);
+  const noDedupe = Boolean(args["no-dedupe"]);
   const limitVariants = Math.max(1, Number(args["limit-variants"] ?? 50) || 50);
   const imagesPerVariant = Math.max(1, Number(args["images-per-variant"] ?? 3) || 3);
   const delayMs = Math.max(0, Number(args["delay-ms"] ?? 700) || 700);
@@ -479,6 +485,7 @@ async function main() {
         resultsPerPage,
         includeKeywords,
         exactQuery,
+        disableDedupe: noDedupe,
         onQueries: (queries) => {
           if (!debugQueries) return;
           if (debugPrinted >= debugLimit) return;
@@ -506,7 +513,10 @@ async function main() {
       for (const image of images) {
         const imageKey = canonicalizeUrl(image.rawImageUrl);
         const sourceKey = canonicalizeUrl(image.sourceUrl);
-        if ((imageKey && existingUrls.has(imageKey)) || (sourceKey && existingSourceUrls.has(sourceKey))) {
+        if (
+          !noDedupe &&
+          ((imageKey && existingUrls.has(imageKey)) || (sourceKey && existingSourceUrls.has(sourceKey)))
+        ) {
           referencesSkipped += 1;
           continue;
         }
@@ -518,12 +528,14 @@ async function main() {
           listingTitle: image.listingTitle,
           sourceUrl: image.sourceUrl,
         });
-        if (!(gate.status === "approved" || (allowWeak && gate.status === "weak"))) {
+        if (!noGate && !(gate.status === "approved" || (allowWeak && gate.status === "weak"))) {
           referencesSkipped += 1;
           continue;
         }
-        if (imageKey) existingUrls.add(imageKey);
-        if (sourceKey) existingSourceUrls.add(sourceKey);
+        if (!noDedupe) {
+          if (imageKey) existingUrls.add(imageKey);
+          if (sourceKey) existingSourceUrls.add(sourceKey);
+        }
         toInsert.push({
           ...image,
         });
@@ -559,6 +571,8 @@ async function main() {
           referencesInserted,
           referencesSkipped,
           imagesPerVariant,
+          noGate,
+          noDedupe,
         },
         null,
         2
