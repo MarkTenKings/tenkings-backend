@@ -60,6 +60,12 @@ Then seed eBay reference images:
 pnpm variants:sports:seed-refs --limit-variants 5000 --images-per-variant 4 --delay-ms 700
 ```
 
+Seed front and back separately with pairing keys:
+```bash
+pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --images-per-variant 2 --ref-side front --delay-ms 100
+pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --images-per-variant 2 --ref-side back --delay-ms 100
+```
+
 Hard-variant query expansion options:
 ```bash
 pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --images-per-variant 2 --allow-weak --query-set "2026 Topps Basketball" --max-player-seeds 6 --max-queries 20

@@ -20,6 +20,10 @@ type ReferenceRow = {
   id: string;
   setId: string;
   parallelId: string;
+  refType: string;
+  pairKey: string | null;
+  sourceListingId: string | null;
+  playerSeed: string | null;
   sourceUrl: string | null;
   rawImageUrl: string;
   cropUrls: string[];
@@ -41,6 +45,8 @@ export default function VariantRefQaPage() {
   const [refs, setRefs] = useState<ReferenceRow[]>([]);
   const [selectedSetId, setSelectedSetId] = useState("");
   const [selectedParallelId, setSelectedParallelId] = useState("");
+  const [refTypeFilter, setRefTypeFilter] = useState<"all" | "front" | "back">("all");
+  const [newRefType, setNewRefType] = useState<"front" | "back">("front");
   const [selectedRefIds, setSelectedRefIds] = useState<string[]>([]);
   const [sourceUrl, setSourceUrl] = useState("");
   const [busy, setBusy] = useState(false);
@@ -77,7 +83,7 @@ export default function VariantRefQaPage() {
     void loadVariants();
   }, [loadVariants, session?.token]);
 
-  const loadRefs = async (setId?: string, parallelId?: string) => {
+  const loadRefs = useCallback(async (setId?: string, parallelId?: string) => {
     if (!session?.token) return;
     const currentSetId = (setId ?? selectedSetId).trim();
     const currentParallelId = (parallelId ?? selectedParallelId).trim();
@@ -87,8 +93,9 @@ export default function VariantRefQaPage() {
     }
     setBusy(true);
     try {
+      const refTypeParam = refTypeFilter === "all" ? "" : `&refType=${encodeURIComponent(refTypeFilter)}`;
       const res = await fetch(
-        `/api/admin/variants/reference?setId=${encodeURIComponent(currentSetId)}&parallelId=${encodeURIComponent(currentParallelId)}&limit=500`,
+        `/api/admin/variants/reference?setId=${encodeURIComponent(currentSetId)}&parallelId=${encodeURIComponent(currentParallelId)}&limit=500${refTypeParam}`,
         { headers: { ...adminHeaders } }
       );
       const payload = await res.json().catch(() => ({}));
@@ -104,7 +111,7 @@ export default function VariantRefQaPage() {
     } finally {
       setBusy(false);
     }
-  };
+  }, [adminHeaders, refTypeFilter, selectedParallelId, selectedSetId, session?.token]);
 
   const chooseVariant = async (variant: VariantRow) => {
     setSelectedSetId(variant.setId);
@@ -160,6 +167,37 @@ export default function VariantRefQaPage() {
     }
   };
 
+  const processSelected = async () => {
+    if (!selectedRefIds.length) {
+      setStatus({ type: "error", message: "Select at least one reference image." });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/variants/reference/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+        body: JSON.stringify({ ids: selectedRefIds }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "PhotoRoom processing failed");
+      }
+      await loadRefs();
+      setStatus({
+        type: "success",
+        message: `PhotoRoom processed ${payload?.processed ?? 0}, skipped ${payload?.skipped ?? 0}.`,
+      });
+    } catch (error) {
+      setStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "PhotoRoom processing failed",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const uploadReplacement = useCallback(async (file: File) => {
     if (!session?.token) return;
     if (!selectedSetId.trim() || !selectedParallelId.trim()) {
@@ -198,6 +236,7 @@ export default function VariantRefQaPage() {
         body: JSON.stringify({
           setId: selectedSetId.trim(),
           parallelId: selectedParallelId.trim(),
+          refType: newRefType,
           rawImageUrl: presignPayload.publicUrl,
           sourceUrl: sourceUrl.trim() || null,
         }),
@@ -214,7 +253,7 @@ export default function VariantRefQaPage() {
     } finally {
       setBusy(false);
     }
-  }, [adminHeaders, loadVariants, selectedParallelId, selectedSetId, session?.token, sourceUrl]);
+  }, [adminHeaders, loadVariants, newRefType, selectedParallelId, selectedSetId, session?.token, sourceUrl]);
 
   const handleReplacementFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -242,6 +281,11 @@ export default function VariantRefQaPage() {
     window.addEventListener("paste", handler);
     return () => window.removeEventListener("paste", handler);
   }, [selectedSetId, selectedParallelId, uploadReplacement]);
+
+  useEffect(() => {
+    if (!selectedSetId || !selectedParallelId) return;
+    void loadRefs(selectedSetId, selectedParallelId);
+  }, [loadRefs, refTypeFilter, selectedParallelId, selectedSetId]);
 
   if (loading) {
     return (
@@ -394,6 +438,15 @@ export default function VariantRefQaPage() {
               <span className="text-slate-200">{selectedParallelId || "—"}</span>
             </div>
             <div className="flex gap-2">
+              <select
+                value={refTypeFilter}
+                onChange={(event) => setRefTypeFilter(event.target.value as "all" | "front" | "back")}
+                className="rounded-full border border-white/20 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.24em] text-slate-200"
+              >
+                <option value="all">All Sides</option>
+                <option value="front">Front Only</option>
+                <option value="back">Back Only</option>
+              </select>
               <button
                 type="button"
                 onClick={() => void loadRefs()}
@@ -410,6 +463,14 @@ export default function VariantRefQaPage() {
               >
                 Delete Selected ({selectedRefIds.length})
               </button>
+              <button
+                type="button"
+                onClick={() => void processSelected()}
+                disabled={busy || selectedRefIds.length === 0}
+                className="rounded-full border border-sky-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-sky-200 disabled:opacity-60"
+              >
+                Process Selected (PhotoRoom)
+              </button>
             </div>
           </div>
 
@@ -422,6 +483,17 @@ export default function VariantRefQaPage() {
                 placeholder="https://www.ebay.com/itm/..."
                 className="rounded-lg border border-white/10 bg-night-900 px-3 py-2 text-xs text-white"
               />
+            </label>
+            <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.22em] text-slate-500">
+              Ref Side
+              <select
+                value={newRefType}
+                onChange={(event) => setNewRefType(event.target.value as "front" | "back")}
+                className="rounded-lg border border-white/10 bg-night-900 px-3 py-2 text-xs text-white"
+              >
+                <option value="front">Front</option>
+                <option value="back">Back</option>
+              </select>
             </label>
             <label className="rounded-full border border-emerald-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-emerald-200">
               Upload Replacement
@@ -464,6 +536,15 @@ export default function VariantRefQaPage() {
                     <img src={preview} alt={`${ref.parallelId} ref`} className="h-52 w-full rounded-lg object-cover" />
                   </a>
                   <div className="mt-2 space-y-1 text-[11px] text-slate-400">
+                    <p>
+                      Side: <span className="text-slate-300">{ref.refType || "front"}</span>
+                    </p>
+                    <p>
+                      Pair: <span className="font-mono text-slate-300">{ref.pairKey || "—"}</span>
+                    </p>
+                    <p>
+                      Listing: <span className="font-mono text-slate-300">{ref.sourceListingId || "—"}</span>
+                    </p>
                     <p>ID: <span className="font-mono text-slate-300">{ref.id}</span></p>
                     <p>Quality: <span className="text-slate-300">{ref.qualityScore != null ? ref.qualityScore.toFixed(2) : "—"}</span></p>
                     {ref.sourceUrl ? (

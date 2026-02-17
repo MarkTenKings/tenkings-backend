@@ -621,6 +621,10 @@ model CardVariantReferenceImage {
   id             String   @id @default(uuid())
   setId          String
   parallelId     String
+  refType        String   @default("front")
+  pairKey        String?
+  sourceListingId String?
+  playerSeed     String?
   sourceUrl      String?
   listingTitle   String?
   rawImageUrl    String
@@ -634,6 +638,9 @@ model CardVariantReferenceImage {
   updatedAt      DateTime @updatedAt
 
   @@index([setId, parallelId])
+  @@index([setId, parallelId, refType])
+  @@index([pairKey])
+  @@index([sourceListingId])
   @@index([setId, parallelId, qualityGateStatus])
 }
 

@@ -192,6 +192,16 @@ function canonicalizeUrl(raw) {
   }
 }
 
+function parseListingId(url) {
+  const value = String(url || "").trim();
+  if (!value) return null;
+  const pathMatch = value.match(/\/itm\/(?:[^/?#]+\/)?(\d{8,20})(?:[/?#]|$)/i);
+  if (pathMatch?.[1]) return pathMatch[1];
+  const queryMatch = value.match(/[?&](?:item|itemId|itm|itm_id)=(\d{8,20})(?:[&#]|$)/i);
+  if (queryMatch?.[1]) return queryMatch[1];
+  return null;
+}
+
 async function fetchSerpEbayImages(apiKey, query, count, options = {}) {
   const pages = Math.max(1, Number(options.pages ?? 1) || 1);
   const resultsPerPage = Math.max(10, Math.min(240, Number(options.resultsPerPage ?? 100) || 100));
@@ -231,6 +241,7 @@ async function fetchSerpEbayImages(apiKey, query, count, options = {}) {
       rows.push({
         rawImageUrl,
         sourceUrl: sourceUrl || null,
+        sourceListingId: parseListingId(sourceUrl),
         listingTitle: typeof item?.title === "string" ? item.title.trim() : null,
       });
       if (rows.length >= count) return rows;
@@ -290,6 +301,7 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const disableDedupe = options.disableDedupe === true;
   const includeKeywords = options.includeKeywords !== false;
   const exactQuery = options.exactQuery === true;
+  const refSide = String(options.refSide || "front").toLowerCase() === "back" ? "back" : "front";
   const onQueries = typeof options.onQueries === "function" ? options.onQueries : null;
 
   const setTerms = deriveSetSearchTerms(variant.setId, querySetOverride, queryAliases);
@@ -310,7 +322,7 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
 
   if (exactQuery) {
     const exactSet = querySetOverride || variant.setId;
-    addQuery(`${exactSet} ${variant.parallelId}`.trim());
+    addQuery(`${exactSet} ${variant.parallelId}${refSide === "back" ? " back" : ""}`.trim());
   } else {
     for (const setTerm of setTerms) {
       const setVariant = { ...variant, setId: setTerm };
@@ -334,11 +346,21 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
     for (const parallelTerm of parallelTerms) {
       addQuery(`Topps Basketball ${parallelTerm} trading card`);
       addQuery(`Topps Chrome Basketball ${parallelTerm} trading card`);
+      if (refSide === "back") {
+        addQuery(`Topps Basketball ${parallelTerm} trading card back`);
+        addQuery(`Topps Chrome Basketball ${parallelTerm} trading card back`);
+      }
       for (const typeTerm of typeTerms) {
         addQuery(`Topps Basketball ${parallelTerm} ${typeTerm} trading card`);
+        if (refSide === "back") {
+          addQuery(`Topps Basketball ${parallelTerm} ${typeTerm} trading card back`);
+        }
       }
       for (const player of playerSeeds) {
         addQuery(`Topps Basketball ${parallelTerm} ${player} trading card`);
+        if (refSide === "back") {
+          addQuery(`Topps Basketball ${parallelTerm} ${player} trading card back`);
+        }
       }
     }
   }
@@ -368,27 +390,29 @@ async function loadExistingRefCounts(prisma, variants) {
   const unique = [];
   const seen = new Set();
   for (const variant of variants) {
-    const key = `${variant.setId}::${variant.parallelId}`;
+    const refType = String(variant.refType || "front");
+    const key = `${variant.setId}::${variant.parallelId}::${refType}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    unique.push({ setId: variant.setId, parallelId: variant.parallelId });
+    unique.push({ setId: variant.setId, parallelId: variant.parallelId, refType });
   }
 
   const countByKey = new Map();
   const chunks = chunkArray(unique, 300);
   for (const pairs of chunks) {
     const rows = await prisma.cardVariantReferenceImage.groupBy({
-      by: ["setId", "parallelId"],
+      by: ["setId", "parallelId", "refType"],
       where: {
         OR: pairs.map((pair) => ({
           setId: pair.setId,
           parallelId: pair.parallelId,
+          refType: pair.refType,
         })),
       },
       _count: { _all: true },
     });
     for (const row of rows) {
-      const key = `${row.setId}::${row.parallelId}`;
+      const key = `${row.setId}::${row.parallelId}::${row.refType || "front"}`;
       countByKey.set(key, row._count._all);
     }
   }
@@ -413,6 +437,7 @@ async function main() {
   const resultsPerPage = Math.max(10, Math.min(240, Number(args["results-per-page"] ?? 100) || 100));
   const includeKeywords = false;
   const exactQuery = !Boolean(args["expanded-query"]);
+  const refType = String(args["ref-side"] || "front").trim().toLowerCase() === "back" ? "back" : "front";
   const debugQueries = Boolean(args["debug-queries"]);
   const debugLimit = Math.max(1, Number(args["debug-limit"] ?? 20) || 20);
   const debugMatch = args["debug-match"] ? normalize(String(args["debug-match"])) : "";
@@ -436,9 +461,11 @@ async function main() {
         cardNumber: true,
         parallelId: true,
         keywords: true,
+        parallelFamily: true,
       },
     });
-    const existingCountByKey = await loadExistingRefCounts(prisma, variants);
+    const variantsWithRefType = variants.map((variant) => ({ ...variant, refType }));
+    const existingCountByKey = await loadExistingRefCounts(prisma, variantsWithRefType);
 
     let variantsChecked = 0;
     let variantsSeeded = 0;
@@ -448,7 +475,7 @@ async function main() {
 
     for (const variant of variants) {
       variantsChecked += 1;
-      const variantKey = `${variant.setId}::${variant.parallelId}`;
+      const variantKey = `${variant.setId}::${variant.parallelId}::${refType}`;
       const existingCount = existingCountByKey.get(variantKey) ?? 0;
       if (existingCount >= imagesPerVariant) {
         referencesSkipped += imagesPerVariant;
@@ -459,10 +486,12 @@ async function main() {
         where: {
           setId: variant.setId,
           parallelId: variant.parallelId,
+          refType,
         },
         select: {
           rawImageUrl: true,
           sourceUrl: true,
+          sourceListingId: true,
         },
       });
       const existingUrls = new Set(
@@ -475,6 +504,11 @@ async function main() {
           .map((row) => canonicalizeUrl(row.sourceUrl))
           .filter(Boolean)
       );
+      const existingListingIds = new Set(
+        existing
+          .map((row) => String(row.sourceListingId || "").trim())
+          .filter(Boolean)
+      );
 
       const images = await fetchVariantImages(apiKey, variant, remainingSlots, {
         querySetOverride,
@@ -485,6 +519,7 @@ async function main() {
         resultsPerPage,
         includeKeywords,
         exactQuery,
+        refSide: refType,
         disableDedupe: noDedupe,
         onQueries: (queries) => {
           if (!debugQueries) return;
@@ -515,7 +550,9 @@ async function main() {
         const sourceKey = canonicalizeUrl(image.sourceUrl);
         if (
           !noDedupe &&
-          ((imageKey && existingUrls.has(imageKey)) || (sourceKey && existingSourceUrls.has(sourceKey)))
+          ((imageKey && existingUrls.has(imageKey)) ||
+            (sourceKey && existingSourceUrls.has(sourceKey)) ||
+            (image.sourceListingId && existingListingIds.has(image.sourceListingId)))
         ) {
           referencesSkipped += 1;
           continue;
@@ -535,6 +572,7 @@ async function main() {
         if (!noDedupe) {
           if (imageKey) existingUrls.add(imageKey);
           if (sourceKey) existingSourceUrls.add(sourceKey);
+          if (image.sourceListingId) existingListingIds.add(image.sourceListingId);
         }
         toInsert.push({
           ...image,
@@ -546,6 +584,13 @@ async function main() {
           data: toInsert.map((image) => ({
             setId: variant.setId,
             parallelId: variant.parallelId,
+            refType,
+            pairKey: image.sourceListingId
+              ? `${variant.setId}::${variant.parallelId}::${image.sourceListingId}`
+              : null,
+            sourceListingId: image.sourceListingId ?? null,
+            playerSeed: null,
+            listingTitle: image.listingTitle ?? null,
             rawImageUrl: image.rawImageUrl,
             sourceUrl: image.sourceUrl,
             cropUrls: [],
@@ -571,6 +616,7 @@ async function main() {
           referencesInserted,
           referencesSkipped,
           imagesPerVariant,
+          refType,
           noGate,
           noDedupe,
         },
