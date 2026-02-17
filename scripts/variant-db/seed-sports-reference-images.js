@@ -77,14 +77,23 @@ function buildVariantQuery(
   variant,
   parallelOverride = "",
   querySetOverride = "",
-  includeKeywords = true
+  includeKeywords = true,
+  includeTradingCardToken = true
 ) {
   const setPart = querySetOverride || variant.setId;
   const cardPart = variant.cardNumber === "ALL" ? "" : `#${variant.cardNumber}`;
   const parallelPart = parallelOverride || variant.parallelId;
   const keywordPart =
     includeKeywords && Array.isArray(variant.keywords) ? variant.keywords.slice(0, 3).join(" ") : "";
-  return [setPart, cardPart, parallelPart, keywordPart, "trading card"].filter(Boolean).join(" ");
+  return [
+    setPart,
+    cardPart,
+    parallelPart,
+    keywordPart,
+    includeTradingCardToken ? "trading card" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 }
 
 function deriveParallelSearchTerms(parallelId, config) {
@@ -259,6 +268,7 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const pagesPerQuery = Math.max(1, Number(options.pagesPerQuery ?? 2) || 2);
   const resultsPerPage = Math.max(10, Math.min(240, Number(options.resultsPerPage ?? 100) || 100));
   const includeKeywords = options.includeKeywords !== false;
+  const exactQuery = options.exactQuery === true;
   const onQueries = typeof options.onQueries === "function" ? options.onQueries : null;
 
   const setTerms = deriveSetSearchTerms(variant.setId, querySetOverride, queryAliases);
@@ -277,33 +287,38 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
     queries.push(next);
   };
 
-  for (const setTerm of setTerms) {
-    const setVariant = { ...variant, setId: setTerm };
-    addQuery(buildVariantQuery(setVariant, "", "", includeKeywords));
-    for (const parallelTerm of parallelTerms) {
-      addQuery(buildVariantQuery(setVariant, parallelTerm, "", includeKeywords));
-      for (const typeTerm of typeTerms) {
-        addQuery(`${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords)} ${typeTerm}`);
-      }
-      for (const player of playerSeeds) {
-        addQuery(`${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords)} ${player}`);
+  if (exactQuery) {
+    const exactSet = querySetOverride || variant.setId;
+    addQuery(`${exactSet} ${variant.parallelId}`.trim());
+  } else {
+    for (const setTerm of setTerms) {
+      const setVariant = { ...variant, setId: setTerm };
+      addQuery(buildVariantQuery(setVariant, "", "", includeKeywords, true));
+      for (const parallelTerm of parallelTerms) {
+        addQuery(buildVariantQuery(setVariant, parallelTerm, "", includeKeywords, true));
         for (const typeTerm of typeTerms) {
-          addQuery(
-            `${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords)} ${typeTerm} ${player}`
-          );
+          addQuery(`${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords, true)} ${typeTerm}`);
+        }
+        for (const player of playerSeeds) {
+          addQuery(`${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords, true)} ${player}`);
+          for (const typeTerm of typeTerms) {
+            addQuery(
+              `${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords, true)} ${typeTerm} ${player}`
+            );
+          }
         }
       }
     }
-  }
-  // Broad fallback without year-range set phrase for hard variants.
-  for (const parallelTerm of parallelTerms) {
-    addQuery(`Topps Basketball ${parallelTerm} trading card`);
-    addQuery(`Topps Chrome Basketball ${parallelTerm} trading card`);
-    for (const typeTerm of typeTerms) {
-      addQuery(`Topps Basketball ${parallelTerm} ${typeTerm} trading card`);
-    }
-    for (const player of playerSeeds) {
-      addQuery(`Topps Basketball ${parallelTerm} ${player} trading card`);
+    // Broad fallback without year-range set phrase for hard variants.
+    for (const parallelTerm of parallelTerms) {
+      addQuery(`Topps Basketball ${parallelTerm} trading card`);
+      addQuery(`Topps Chrome Basketball ${parallelTerm} trading card`);
+      for (const typeTerm of typeTerms) {
+        addQuery(`Topps Basketball ${parallelTerm} ${typeTerm} trading card`);
+      }
+      for (const player of playerSeeds) {
+        addQuery(`Topps Basketball ${parallelTerm} ${player} trading card`);
+      }
     }
   }
   if (onQueries) {
@@ -372,6 +387,7 @@ async function main() {
   const pagesPerQuery = Math.max(1, Number(args["pages-per-query"] ?? 2) || 2);
   const resultsPerPage = Math.max(10, Math.min(240, Number(args["results-per-page"] ?? 100) || 100));
   const includeKeywords = !Boolean(args["no-keywords"]);
+  const exactQuery = Boolean(args["exact-query"]);
   const debugQueries = Boolean(args["debug-queries"]);
   const debugLimit = Math.max(1, Number(args["debug-limit"] ?? 20) || 20);
   const debugMatch = args["debug-match"] ? normalize(String(args["debug-match"])) : "";
@@ -437,6 +453,7 @@ async function main() {
         pagesPerQuery,
         resultsPerPage,
         includeKeywords,
+        exactQuery,
         onQueries: (queries) => {
           if (!debugQueries) return;
           if (debugPrinted >= debugLimit) return;
