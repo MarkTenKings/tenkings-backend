@@ -108,6 +108,29 @@ const TIER_LABELS: Record<string, string> = {
 
 const CAMERA_STORAGE_KEY = "tenkings.adminUploads.cameraDeviceId";
 
+const inferSportFromProductLine = (value: string): string => {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.includes("basketball") || normalized.includes("nba")) {
+    return "Basketball";
+  }
+  if (normalized.includes("football") || normalized.includes("nfl")) {
+    return "Football";
+  }
+  if (normalized.includes("baseball") || normalized.includes("mlb")) {
+    return "Baseball";
+  }
+  if (normalized.includes("hockey") || normalized.includes("nhl")) {
+    return "Hockey";
+  }
+  if (normalized.includes("soccer") || normalized.includes("fifa")) {
+    return "Soccer";
+  }
+  return "";
+};
+
 export default function AdminUploads() {
   const { session, loading, ensureSession, logout } = useSession();
   const [files, setFiles] = useState<File[]>([]);
@@ -167,6 +190,8 @@ export default function AdminUploads() {
   const [intakeSuggested, setIntakeSuggested] = useState<Record<string, string>>({});
   const [intakeTouched, setIntakeTouched] = useState<Record<string, boolean>>({});
   const [intakeOptionalTouched, setIntakeOptionalTouched] = useState<Record<string, boolean>>({});
+  const [trainAiEnabled, setTrainAiEnabled] = useState(false);
+  const [insertSetOptions, setInsertSetOptions] = useState<string[]>([]);
   const [parallelOptions, setParallelOptions] = useState<string[]>([]);
   type OcrApplyField = Exclude<keyof IntakeRequiredFields, "category">;
   const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty" | "error">(
@@ -711,6 +736,9 @@ export default function AdminUploads() {
     setIntakeSuggested({});
     setIntakeTouched({});
     setIntakeOptionalTouched({});
+    setTrainAiEnabled(false);
+    setInsertSetOptions([]);
+    setParallelOptions([]);
     resetOcrState();
   }, [resetOcrState]);
 
@@ -1024,7 +1052,7 @@ export default function AdminUploads() {
   );
 
   const saveIntakeMetadata = useCallback(
-    async (includeOptional: boolean, recordOcrFeedback = false) => {
+    async (includeOptional: boolean, recordOcrFeedback = false, trainAi = false) => {
       const token = session?.token;
       if (!token) {
         throw new Error("Your session expired. Sign in again and retry.");
@@ -1101,6 +1129,7 @@ export default function AdminUploads() {
           normalized,
         },
         recordOcrFeedback,
+        trainAiEnabled: trainAi,
       };
 
       const updateRes = await fetch(resolveApiUrl("/api/admin/cards/" + intakeCardId), {
@@ -1159,6 +1188,8 @@ export default function AdminUploads() {
       setIntakeBackPhotoId(backPhoto?.id ?? null);
       setIntakeTiltPhotoId(tiltPhoto?.id ?? null);
 
+      const nextProductLine = String(normalized.setName ?? ocrFields.setName ?? "").trim();
+      const inferredSport = inferSportFromProductLine(nextProductLine);
       setIntakeRequired({
         category: categoryType,
         playerName:
@@ -1166,7 +1197,9 @@ export default function AdminUploads() {
             ? String(attributes.playerName ?? ocrFields.playerName ?? "").trim()
             : "",
         sport:
-          categoryType === "sport" ? String(attributes.sport ?? ocrFields.sport ?? "").trim() : "",
+          categoryType === "sport"
+            ? String(attributes.sport ?? ocrFields.sport ?? inferredSport).trim()
+            : "",
         manufacturer: String(attributes.brand ?? normalized.company ?? ocrFields.manufacturer ?? "").trim(),
         year: String(attributes.year ?? normalized.year ?? ocrFields.year ?? "").trim(),
         cardName:
@@ -1179,7 +1212,7 @@ export default function AdminUploads() {
 
       setIntakeOptional({
         teamName: String(attributes.teamName ?? "").trim(),
-        productLine: String(normalized.setName ?? ocrFields.setName ?? "").trim(),
+        productLine: nextProductLine,
         insertSet: String(normalized.setCode ?? "").trim(),
         parallel: String((attributes.variantKeywords ?? [])[0] ?? ocrFields.parallel ?? "").trim(),
         cardNumber: String(normalized.cardNumber ?? ocrFields.cardNumber ?? "").trim(),
@@ -1233,8 +1266,8 @@ export default function AdminUploads() {
       if (!intakeRequired.playerName.trim()) {
         return "Player name is required.";
       }
-      if (!intakeRequired.sport.trim()) {
-        return "Sport is required.";
+      if (!intakeOptional.productLine.trim()) {
+        return "Product line / set is required.";
       }
     } else {
       if (!intakeRequired.cardName.trim()) {
@@ -1251,7 +1284,18 @@ export default function AdminUploads() {
       return "Year is required.";
     }
     return null;
-  }, [intakeBackPhotoId, intakeBackPreview, intakeCardId, intakeRequired, pendingBackBlob]);
+  }, [intakeBackPhotoId, intakeBackPreview, intakeCardId, intakeOptional.productLine, intakeRequired, pendingBackBlob]);
+
+  useEffect(() => {
+    if (intakeRequired.category !== "sport") {
+      return;
+    }
+    const inferred = inferSportFromProductLine(intakeOptional.productLine);
+    if (!inferred || inferred === intakeRequired.sport) {
+      return;
+    }
+    setIntakeRequired((prev) => ({ ...prev, sport: inferred }));
+  }, [intakeOptional.productLine, intakeRequired.category, intakeRequired.sport]);
 
   const applySuggestions = useCallback(
     (suggestions: Record<string, string>) => {
@@ -1795,6 +1839,7 @@ export default function AdminUploads() {
 
   useEffect(() => {
     if (!session?.token || intakeRequired.category !== "sport") {
+      setInsertSetOptions([]);
       setParallelOptions([]);
       return;
     }
@@ -1802,6 +1847,7 @@ export default function AdminUploads() {
       .map((entry) => entry.trim())
       .filter(Boolean);
     if (qParts.length < 2) {
+      setInsertSetOptions([]);
       setParallelOptions([]);
       return;
     }
@@ -1814,17 +1860,29 @@ export default function AdminUploads() {
       .then((res) => (res.ok ? res.json() : null))
       .then((payload) => {
         if (!payload?.variants || !Array.isArray(payload.variants)) {
+          setInsertSetOptions([]);
           setParallelOptions([]);
           return;
         }
-        const options = Array.from(
+        const insertSets = Array.from(
+          new Set<string>(
+            payload.variants
+              .map((row: { cardNumber?: string }) => {
+                const cardNumber = typeof row.cardNumber === "string" ? row.cardNumber.trim() : "";
+                return cardNumber && cardNumber !== "ALL" ? cardNumber : "";
+              })
+              .filter((value: string): value is string => value.length > 0)
+          )
+        ).sort((a, b) => a.localeCompare(b));
+        const parallels = Array.from(
           new Set<string>(
             payload.variants
               .map((row: { parallelId?: string }) => (typeof row.parallelId === "string" ? row.parallelId.trim() : ""))
               .filter((value: string): value is string => value.length > 0)
           )
         ).sort((a, b) => a.localeCompare(b));
-        setParallelOptions(options);
+        setInsertSetOptions(insertSets);
+        setParallelOptions(parallels);
       })
       .catch(() => undefined);
     return () => controller.abort();
@@ -1851,6 +1909,34 @@ export default function AdminUploads() {
       .map(([key, value]) => `${key} ${Math.round((value as number) * 100)}%`);
     return entries.length ? `Top OCR: ${entries.join(", ")}` : null;
   }, [ocrAudit]);
+
+  const rankedInsertSetOptions = useMemo(() => {
+    const options = [...insertSetOptions];
+    const suggested = (intakeSuggested.insertSet ?? "").trim();
+    if (!suggested) {
+      return options;
+    }
+    const idx = options.findIndex((value) => value.toLowerCase() === suggested.toLowerCase());
+    if (idx <= 0) {
+      return idx === 0 ? options : [suggested, ...options];
+    }
+    const [hit] = options.splice(idx, 1);
+    return [hit, ...options];
+  }, [insertSetOptions, intakeSuggested.insertSet]);
+
+  const rankedParallelOptions = useMemo(() => {
+    const options = [...parallelOptions];
+    const suggested = (intakeSuggested.parallel ?? "").trim();
+    if (!suggested) {
+      return options;
+    }
+    const idx = options.findIndex((value) => value.toLowerCase() === suggested.toLowerCase());
+    if (idx <= 0) {
+      return idx === 0 ? options : [suggested, ...options];
+    }
+    const [hit] = options.splice(idx, 1);
+    return [hit, ...options];
+  }, [intakeSuggested.parallel, parallelOptions]);
 
   const handleIntakeRequiredContinue = useCallback(async () => {
     const error = validateRequiredIntake();
@@ -1899,7 +1985,7 @@ export default function AdminUploads() {
     }
     try {
       setIntakeBusy(true);
-      await saveIntakeMetadata(true, true);
+      await saveIntakeMetadata(true, trainAiEnabled, trainAiEnabled);
       const query = buildIntakeQuery();
       const sourceList =
         intakeRequired.category === "tcg"
@@ -1948,6 +2034,7 @@ export default function AdminUploads() {
     queuedReviewCardIds,
     resolveApiUrl,
     saveIntakeMetadata,
+    trainAiEnabled,
     session?.token,
     validateRequiredIntake,
   ]);
@@ -2421,14 +2508,17 @@ export default function AdminUploads() {
                       )}`}
                     />
                     <input
-                      placeholder="Sport (NFL, NBA, MLB, etc.)"
-                      value={intakeRequired.sport}
-                      onChange={handleRequiredChange("sport")}
+                      placeholder="Product line / set (e.g. Topps Basketball)"
+                      value={intakeOptional.productLine}
+                      onChange={handleOptionalChange("productLine")}
                       className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
-                        "sport",
-                        intakeRequired.sport
+                        "setName",
+                        intakeOptional.productLine
                       )}`}
                     />
+                    <div className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs uppercase tracking-[0.22em] text-slate-400">
+                      Sport (auto): <span className="text-slate-200">{intakeRequired.sport || "Unknown"}</span>
+                    </div>
                   </>
                 ) : (
                   <>
@@ -2542,41 +2632,57 @@ export default function AdminUploads() {
                     intakeOptional.teamName
                   )}`}
                 />
-                <input
-                  placeholder="Product line / set (Prizm, Optic, etc.)"
-                  value={intakeOptional.productLine}
-                  onChange={handleOptionalChange("productLine")}
-                  className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
-                    "setName",
-                    intakeOptional.productLine
-                  )}`}
-                />
+                {intakeRequired.category === "tcg" && (
+                  <input
+                    placeholder="Product line / set"
+                    value={intakeOptional.productLine}
+                    onChange={handleOptionalChange("productLine")}
+                    className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                      "setName",
+                      intakeOptional.productLine
+                    )}`}
+                  />
+                )}
                 {intakeRequired.category === "sport" && (
                   <>
-                    <input
-                      placeholder="Insert set (e.g. Certified, MVP)"
+                    <select
                       value={intakeOptional.insertSet}
-                      onChange={handleOptionalChange("insertSet")}
+                      onChange={(event) => {
+                        setIntakeOptionalTouched((prev) => ({ ...prev, insertSet: true }));
+                        setIntakeOptional((prev) => ({ ...prev, insertSet: event.target.value === "None" ? "" : event.target.value }));
+                      }}
                       className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
                         "insertSet",
                         intakeOptional.insertSet
                       )}`}
-                    />
-                    <input
-                      list="parallel-options"
-                      placeholder="Variant / Parallel"
+                    >
+                      <option value="">Insert set (select or None)</option>
+                      <option value="None">None</option>
+                      {rankedInsertSetOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                    <select
                       value={intakeOptional.parallel}
-                      onChange={handleOptionalChange("parallel")}
+                      onChange={(event) => {
+                        setIntakeOptionalTouched((prev) => ({ ...prev, parallel: true }));
+                        setIntakeOptional((prev) => ({ ...prev, parallel: event.target.value === "None" ? "" : event.target.value }));
+                      }}
                       className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
                         "parallel",
                         intakeOptional.parallel
                       )}`}
-                    />
-                    <datalist id="parallel-options">
-                      {parallelOptions.map((option) => (
-                        <option key={option} value={option} />
+                    >
+                      <option value="">Variant / parallel (select or None)</option>
+                      <option value="None">None</option>
+                      {rankedParallelOptions.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
                       ))}
-                    </datalist>
+                    </select>
                   </>
                 )}
                 <input
@@ -2701,6 +2807,17 @@ export default function AdminUploads() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
+                    onClick={() => setTrainAiEnabled((prev) => !prev)}
+                    className={`inline-flex items-center justify-center rounded-full border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.28em] transition ${
+                      trainAiEnabled
+                        ? "border-emerald-400/70 bg-emerald-500/20 text-emerald-200"
+                        : "border-white/20 text-slate-300 hover:border-white/40 hover:text-white"
+                    }`}
+                  >
+                    {trainAiEnabled ? "Train AI On" : "Train AI"}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void handleIntakeOptionalSave()}
                     disabled={intakeBusy}
                     className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
@@ -2716,6 +2833,11 @@ export default function AdminUploads() {
                     Send to KingsReview AI
                   </button>
                 </div>
+                <p className="text-xs text-slate-500">
+                  {trainAiEnabled
+                    ? "Training enabled for this card."
+                    : "Training off for this card."}
+                </p>
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
                 <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Intake summary</p>

@@ -88,6 +88,8 @@ const FEEDBACK_FIELD_KEYS = [
   "game",
   "cardName",
   "setName",
+  "insertSet",
+  "parallel",
   "cardNumber",
   "numbered",
   "autograph",
@@ -173,6 +175,11 @@ const buildFieldValueMap = (
   game: normalizeFeedbackValue(normalized?.tcg?.game),
   cardName: normalizeFeedbackValue(normalized?.tcg?.cardName ?? normalized?.displayName),
   setName: normalizeFeedbackValue(attributes.setName),
+  insertSet: normalizeFeedbackValue(normalized?.setCode),
+  parallel:
+    Array.isArray(attributes.variantKeywords) && attributes.variantKeywords.length > 0
+      ? normalizeFeedbackValue(attributes.variantKeywords[0])
+      : null,
   cardNumber: normalizeFeedbackValue(normalized?.cardNumber),
   numbered: normalizeFeedbackValue(attributes.numbered),
   autograph: normalizeFeedbackValue(attributes.autograph),
@@ -715,6 +722,7 @@ type CardUpdatePayload = {
   aiGradeRangeLow?: number | string | null;
   aiGradeRangeHigh?: number | string | null;
   recordOcrFeedback?: boolean;
+  trainAiEnabled?: boolean;
 };
 
 async function fetchCard(cardId: string, uploadedById?: string | null): Promise<CardResponse | null> {
