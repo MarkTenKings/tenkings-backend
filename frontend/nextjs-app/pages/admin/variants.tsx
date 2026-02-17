@@ -1,4 +1,5 @@
 import Head from "next/head";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { useSession } from "../../hooks/useSession";
@@ -55,6 +56,13 @@ export default function AdminVariants() {
     setId: "",
     parallelId: "",
     sourceUrl: "",
+  });
+  const [seedForm, setSeedForm] = useState({
+    setId: "",
+    parallelId: "",
+    query: "",
+    limit: "20",
+    tbs: "",
   });
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusMessage>(null);
@@ -313,6 +321,43 @@ export default function AdminVariants() {
     }
   };
 
+  const handleSeedImages = async () => {
+    if (!seedForm.setId.trim() || !seedForm.parallelId.trim() || !seedForm.query.trim()) {
+      setStatus({ type: "error", message: "Set ID, Parallel ID, and query are required for seeding." });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/variants/reference/seed", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...adminHeaders,
+        },
+        body: JSON.stringify({
+          setId: seedForm.setId.trim(),
+          parallelId: seedForm.parallelId.trim(),
+          query: seedForm.query.trim(),
+          limit: Number(seedForm.limit) || 20,
+          tbs: seedForm.tbs.trim() || undefined,
+        }),
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Seed failed");
+      }
+      setStatus({
+        type: "success",
+        message: `Seeded ${payload.inserted} images (skipped ${payload.skipped}).`,
+      });
+      await fetchReferences();
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : "Seed failed" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const renderContent = () => {
     if (loading) {
       return (
@@ -528,6 +573,55 @@ export default function AdminVariants() {
               </label>
             </div>
           </div>
+
+          <div className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
+            <h2 className="text-xs uppercase tracking-[0.3em] text-slate-400">Seed Images (SerpApi)</h2>
+            <p className="mt-2 text-xs text-slate-400">
+              Pull Google Images results directly into the reference library. Use a tight query for the exact parallel.
+            </p>
+            <div className="mt-4 grid gap-3">
+              <input
+                placeholder="Set ID"
+                value={seedForm.setId}
+                onChange={(event) => setSeedForm((prev) => ({ ...prev, setId: event.target.value }))}
+                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+              />
+              <input
+                placeholder="Parallel ID"
+                value={seedForm.parallelId}
+                onChange={(event) => setSeedForm((prev) => ({ ...prev, parallelId: event.target.value }))}
+                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+              />
+              <input
+                placeholder="Search query (e.g., 2025 Prizm #188 Silver)"
+                value={seedForm.query}
+                onChange={(event) => setSeedForm((prev) => ({ ...prev, query: event.target.value }))}
+                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+              />
+              <div className="grid gap-3 md:grid-cols-[1fr_1fr]">
+                <input
+                  placeholder="Limit (default 20)"
+                  value={seedForm.limit}
+                  onChange={(event) => setSeedForm((prev) => ({ ...prev, limit: event.target.value }))}
+                  className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                />
+                <input
+                  placeholder="tbs (optional, e.g., isz:l)"
+                  value={seedForm.tbs}
+                  onChange={(event) => setSeedForm((prev) => ({ ...prev, tbs: event.target.value }))}
+                  className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleSeedImages}
+                disabled={busy}
+                className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-sky-200 disabled:opacity-60"
+              >
+                Seed Images
+              </button>
+            </div>
+          </div>
         </section>
 
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
@@ -652,6 +746,12 @@ export default function AdminVariants() {
               )}
             </div>
             <div className="flex flex-wrap gap-2">
+              <Link
+                href="/admin/variant-ref-qa"
+                className="rounded-full border border-emerald-400/50 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-emerald-200"
+              >
+                Open QA Page
+              </Link>
               <button
                 type="button"
                 onClick={() => fetchReferenceStatus()}
