@@ -172,6 +172,15 @@ export async function presignUploadUrl(storageKey: string, contentType: string) 
   return getSignedUrl(client as any, command as any, { expiresIn: 60 * 10 });
 }
 
+export async function presignReadUrl(storageKey: string, expiresInSeconds = 60 * 10) {
+  const client = getS3Client();
+  const command = new GetObjectCommand({
+    Bucket: s3Bucket,
+    Key: storageKey,
+  });
+  return getSignedUrl(client as any, command as any, { expiresIn: expiresInSeconds });
+}
+
 export async function uploadBuffer(
   storageKey: string,
   buffer: Buffer,
