@@ -46,6 +46,19 @@ function toRow(
   };
 }
 
+function storageKeyFromUrl(value: string | null | undefined) {
+  const url = String(value || "").trim();
+  if (!url) return null;
+  if (!/^https?:\/\//i.test(url)) return null;
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname.replace(/^\/+/, "");
+    return pathname || null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
   try {
     await requireAdminSession(req);
@@ -118,9 +131,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         const rawImageUrl = String((row as any).rawImageUrl || "");
         const storageKey = String((row as any).storageKey || "").trim();
         let preview = cropUrls[0] || rawImageUrl;
-        if (mode === "s3" && storageKey) {
+        const keyForPreview = storageKey || storageKeyFromUrl(preview);
+        if (mode === "s3" && keyForPreview) {
           try {
-            preview = await presignReadUrl(storageKey, 60 * 30);
+            preview = await presignReadUrl(keyForPreview, 60 * 30);
           } catch {
             // Keep persisted URL fallback.
           }

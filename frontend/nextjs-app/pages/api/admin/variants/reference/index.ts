@@ -55,6 +55,19 @@ function parseListingId(url: string | null | undefined) {
   return null;
 }
 
+function storageKeyFromUrl(value: string | null | undefined) {
+  const url = String(value || "").trim();
+  if (!url) return null;
+  if (!/^https?:\/\//i.test(url)) return null;
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname.replace(/^\/+/, "");
+    return pathname || null;
+  } catch {
+    return null;
+  }
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
   try {
     await requireAdminSession(req);
@@ -79,11 +92,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const rows = await Promise.all(
         references.map(async (reference) => {
           const row = toRow(reference);
-          if (mode === "s3" && row.storageKey) {
-            try {
-              row.rawImageUrl = await presignReadUrl(row.storageKey, 60 * 30);
-            } catch {
-              // Keep persisted URL as fallback.
+          if (mode === "s3") {
+            const rawKey = row.storageKey || storageKeyFromUrl(row.rawImageUrl);
+            if (rawKey) {
+              try {
+                row.rawImageUrl = await presignReadUrl(rawKey, 60 * 30);
+              } catch {
+                // Keep persisted URL as fallback.
+              }
+            }
+            if (Array.isArray(row.cropUrls) && row.cropUrls.length) {
+              const signedCropUrls: string[] = [];
+              for (const cropUrl of row.cropUrls) {
+                const cropKey = storageKeyFromUrl(cropUrl);
+                if (!cropKey) {
+                  signedCropUrls.push(cropUrl);
+                  continue;
+                }
+                try {
+                  signedCropUrls.push(await presignReadUrl(cropKey, 60 * 30));
+                } catch {
+                  signedCropUrls.push(cropUrl);
+                }
+              }
+              row.cropUrls = signedCropUrls;
             }
           }
           return row;
