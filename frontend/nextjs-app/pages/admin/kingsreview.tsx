@@ -646,7 +646,23 @@ export default function KingsReview() {
         photos: [],
       };
     });
-    setActivePhotoKind("FRONT");
+    setActivePhotoKind((prev) => {
+      const nextCard = selectedCard as CardSummary & {
+        photos?: Array<{ kind?: string | null }>;
+      };
+      const available = new Set(
+        (nextCard.photos ?? [])
+          .map((photo) => (typeof photo?.kind === "string" ? photo.kind.toUpperCase() : ""))
+          .filter(Boolean)
+      );
+      if (prev === "FRONT") {
+        return "FRONT";
+      }
+      if (available.has(prev)) {
+        return prev;
+      }
+      return "FRONT";
+    });
   }, [activeCardId, cards]);
 
   useEffect(() => {
@@ -702,7 +718,20 @@ export default function KingsReview() {
 
         const nextCard = fresh ?? cached;
         if (nextCard) {
-          setActivePhotoKind("FRONT");
+          setActivePhotoKind((prev) => {
+            const available = new Set(
+              (nextCard.photos ?? [])
+                .map((photo) => (typeof photo?.kind === "string" ? photo.kind.toUpperCase() : ""))
+                .filter(Boolean)
+            );
+            if (prev === "FRONT") {
+              return "FRONT";
+            }
+            if (available.has(prev)) {
+              return prev;
+            }
+            return "FRONT";
+          });
           setVariantSetId(
             (nextCard.classificationNormalized as any)?.setName ??
               (nextCard.classificationNormalized as any)?.setCode ??

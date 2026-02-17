@@ -62,6 +62,8 @@ const VIEWPORT_HEIGHT = Number(process.env.BYTEBOT_LITE_VIEWPORT_HEIGHT ?? 720);
 const PATTERN_ENABLED = (process.env.BYTEBOT_PATTERN_ENABLED ?? "false").toLowerCase() === "true";
 const PATTERN_MIN_SCORE = Number(process.env.BYTEBOT_PATTERN_MIN_SCORE ?? 0.7);
 const REFERENCE_POLL_INTERVAL_MS = Number(process.env.BYTEBOT_REFERENCE_POLL_INTERVAL_MS ?? 15000);
+const AUTO_ATTACH_COMPS =
+  (process.env.BYTEBOT_AUTO_ATTACH_COMPS ?? "false").toLowerCase() === "true";
 
 function classifyPatternTier(score: number) {
   if (score >= 0.9) {
@@ -303,7 +305,7 @@ async function processJob(
     };
 
     await markBytebotLiteJobStatus(job.id, BytebotLiteJobStatus.COMPLETE, undefined, payload);
-    if (job.cardAssetId) {
+    if (job.cardAssetId && AUTO_ATTACH_COMPS) {
       await autoAttachEbayComps({
         id: job.id,
         cardAssetId: job.cardAssetId,
