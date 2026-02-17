@@ -121,23 +121,44 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ? `${String(setId).trim()}::${String(parallelId).trim()}::${derivedListingId}`
         : null;
 
-      const reference = await prisma.cardVariantReferenceImage.create({
-        data: ({
-          setId: String(setId).trim(),
-          parallelId: String(parallelId).trim(),
-          refType: normalizedRefType,
-          pairKey: normalizedPairKey,
-          sourceListingId: derivedListingId,
-          playerSeed: playerSeed ? String(playerSeed).trim() : null,
-          storageKey: storageKey ? String(storageKey).trim() : null,
-          rawImageUrl: String(rawImageUrl).trim(),
-          sourceUrl: normalizedSourceUrl,
-          cropUrls: Array.isArray(cropUrls)
-            ? cropUrls.map((entry: unknown) => String(entry).trim()).filter(Boolean)
-            : [],
-          qualityScore: typeof qualityScore === "number" ? qualityScore : null,
-        } as any),
-      });
+      let reference: any;
+      try {
+        reference = await prisma.cardVariantReferenceImage.create({
+          data: ({
+            setId: String(setId).trim(),
+            parallelId: String(parallelId).trim(),
+            refType: normalizedRefType,
+            pairKey: normalizedPairKey,
+            sourceListingId: derivedListingId,
+            playerSeed: playerSeed ? String(playerSeed).trim() : null,
+            storageKey: storageKey ? String(storageKey).trim() : null,
+            rawImageUrl: String(rawImageUrl).trim(),
+            sourceUrl: normalizedSourceUrl,
+            cropUrls: Array.isArray(cropUrls)
+              ? cropUrls.map((entry: unknown) => String(entry).trim()).filter(Boolean)
+              : [],
+            qualityScore: typeof qualityScore === "number" ? qualityScore : null,
+          } as any),
+        });
+      } catch {
+        // Backward-compatible fallback when storageKey column/schema is not live.
+        reference = await prisma.cardVariantReferenceImage.create({
+          data: ({
+            setId: String(setId).trim(),
+            parallelId: String(parallelId).trim(),
+            refType: normalizedRefType,
+            pairKey: normalizedPairKey,
+            sourceListingId: derivedListingId,
+            playerSeed: playerSeed ? String(playerSeed).trim() : null,
+            rawImageUrl: String(rawImageUrl).trim(),
+            sourceUrl: normalizedSourceUrl,
+            cropUrls: Array.isArray(cropUrls)
+              ? cropUrls.map((entry: unknown) => String(entry).trim()).filter(Boolean)
+              : [],
+            qualityScore: typeof qualityScore === "number" ? qualityScore : null,
+          } as any),
+        });
+      }
       return res.status(200).json({ reference: toRow(reference) });
     }
 

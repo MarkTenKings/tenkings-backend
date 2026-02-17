@@ -76,8 +76,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             _count: { _all: true },
           })
         : [];
-      const latestRefs = keys.length
-        ? await prisma.cardVariantReferenceImage.findMany({
+      let latestRefs: any[] = [];
+      if (keys.length) {
+        try {
+          latestRefs = await prisma.cardVariantReferenceImage.findMany({
             where: { OR: keys },
             orderBy: [{ updatedAt: "desc" }],
             distinct: ["setId", "parallelId"],
@@ -88,8 +90,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
               cropUrls: true,
               rawImageUrl: true,
             } as any),
-          })
-        : [];
+          });
+        } catch {
+          // Backward-compatible fallback when storageKey column/schema is not live.
+          latestRefs = await prisma.cardVariantReferenceImage.findMany({
+            where: { OR: keys },
+            orderBy: [{ updatedAt: "desc" }],
+            distinct: ["setId", "parallelId"],
+            select: ({
+              setId: true,
+              parallelId: true,
+              cropUrls: true,
+              rawImageUrl: true,
+            } as any),
+          });
+        }
+      }
 
       const countByKey = new Map<string, number>();
       for (const row of referenceCounts) {

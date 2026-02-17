@@ -71,18 +71,34 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
       return res.status(400).json({ message: "ids[] is required" });
     }
 
-    const refs = await prisma.cardVariantReferenceImage.findMany({
-      where: { id: { in: ids } },
-      select: ({
-        id: true,
-        setId: true,
-        parallelId: true,
-        refType: true,
-        storageKey: true,
-        rawImageUrl: true,
-        cropUrls: true,
-      } as any),
-    });
+    let refs: any[] = [];
+    try {
+      refs = await prisma.cardVariantReferenceImage.findMany({
+        where: { id: { in: ids } },
+        select: ({
+          id: true,
+          setId: true,
+          parallelId: true,
+          refType: true,
+          storageKey: true,
+          rawImageUrl: true,
+          cropUrls: true,
+        } as any),
+      });
+    } catch {
+      // Backward-compatible fallback when storageKey column/schema is not live.
+      refs = await prisma.cardVariantReferenceImage.findMany({
+        where: { id: { in: ids } },
+        select: ({
+          id: true,
+          setId: true,
+          parallelId: true,
+          refType: true,
+          rawImageUrl: true,
+          cropUrls: true,
+        } as any),
+      });
+    }
 
     let processed = 0;
     let skipped = 0;
