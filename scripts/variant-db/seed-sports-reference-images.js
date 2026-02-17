@@ -178,6 +178,20 @@ function isLikelyPlaceholderImage(url) {
   return /\/s_1x2\.gif(?:$|\?)/i.test(url);
 }
 
+function canonicalizeUrl(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  try {
+    const parsed = new URL(value);
+    parsed.hash = "";
+    // Dedup by stable resource path (drop volatile query params).
+    parsed.search = "";
+    return parsed.toString();
+  } catch {
+    return value;
+  }
+}
+
 async function fetchSerpEbayImages(apiKey, query, count, options = {}) {
   const pages = Math.max(1, Number(options.pages ?? 1) || 1);
   const resultsPerPage = Math.max(10, Math.min(240, Number(options.resultsPerPage ?? 100) || 100));
@@ -206,11 +220,15 @@ async function fetchSerpEbayImages(apiKey, query, count, options = {}) {
           : typeof item?.image === "string"
           ? item.image.trim()
           : "";
-      if (!rawImageUrl || isLikelyPlaceholderImage(rawImageUrl) || seen.has(rawImageUrl)) continue;
-      seen.add(rawImageUrl);
+      const sourceUrl = typeof item?.link === "string" ? item.link.trim() : "";
+      const canonicalImageUrl = canonicalizeUrl(rawImageUrl);
+      const canonicalSourceUrl = canonicalizeUrl(sourceUrl);
+      const dedupeKey = canonicalSourceUrl || canonicalImageUrl;
+      if (!rawImageUrl || isLikelyPlaceholderImage(rawImageUrl) || !dedupeKey || seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
       rows.push({
         rawImageUrl,
-        sourceUrl: typeof item?.link === "string" ? item.link.trim() : null,
+        sourceUrl: sourceUrl || null,
         listingTitle: typeof item?.title === "string" ? item.title.trim() : null,
       });
       if (rows.length >= count) return rows;
@@ -437,11 +455,17 @@ async function main() {
         },
         select: {
           rawImageUrl: true,
+          sourceUrl: true,
         },
       });
       const existingUrls = new Set(
         existing
-          .map((row) => (typeof row.rawImageUrl === "string" ? row.rawImageUrl.trim() : ""))
+          .map((row) => canonicalizeUrl(row.rawImageUrl))
+          .filter(Boolean)
+      );
+      const existingSourceUrls = new Set(
+        existing
+          .map((row) => canonicalizeUrl(row.sourceUrl))
           .filter(Boolean)
       );
 
@@ -479,7 +503,9 @@ async function main() {
       }
       const toInsert = [];
       for (const image of images) {
-        if (existingUrls.has(image.rawImageUrl)) {
+        const imageKey = canonicalizeUrl(image.rawImageUrl);
+        const sourceKey = canonicalizeUrl(image.sourceUrl);
+        if ((imageKey && existingUrls.has(imageKey)) || (sourceKey && existingSourceUrls.has(sourceKey))) {
           referencesSkipped += 1;
           continue;
         }
@@ -495,7 +521,8 @@ async function main() {
           referencesSkipped += 1;
           continue;
         }
-        existingUrls.add(image.rawImageUrl);
+        if (imageKey) existingUrls.add(imageKey);
+        if (sourceKey) existingSourceUrls.add(sourceKey);
         toInsert.push({
           ...image,
         });
