@@ -252,6 +252,7 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const maxQueries = Math.max(1, Number(options.maxQueries ?? 12) || 12);
   const pagesPerQuery = Math.max(1, Number(options.pagesPerQuery ?? 2) || 2);
   const resultsPerPage = Math.max(10, Math.min(240, Number(options.resultsPerPage ?? 100) || 100));
+  const onQueries = typeof options.onQueries === "function" ? options.onQueries : null;
 
   const setTerms = deriveSetSearchTerms(variant.setId, querySetOverride, queryAliases);
   const parallelTerms = [variant.parallelId, ...deriveParallelSearchTerms(variant.parallelId, queryAliases)];
@@ -295,6 +296,9 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
     for (const player of playerSeeds) {
       addQuery(`Topps Basketball ${parallelTerm} ${player} trading card`);
     }
+  }
+  if (onQueries) {
+    onQueries(queries.slice(0, maxQueries));
   }
 
   const rows = [];
@@ -358,6 +362,9 @@ async function main() {
   const maxQueries = Math.max(1, Number(args["max-queries"] ?? 12) || 12);
   const pagesPerQuery = Math.max(1, Number(args["pages-per-query"] ?? 2) || 2);
   const resultsPerPage = Math.max(10, Math.min(240, Number(args["results-per-page"] ?? 100) || 100));
+  const debugQueries = Boolean(args["debug-queries"]);
+  const debugLimit = Math.max(1, Number(args["debug-limit"] ?? 20) || 20);
+  const debugMatch = args["debug-match"] ? normalize(String(args["debug-match"])) : "";
   const queryAliases = loadQueryAliasesConfig(args["query-aliases-config"]);
   const apiKey = process.env.SERPAPI_KEY ?? "";
 
@@ -386,6 +393,7 @@ async function main() {
     let variantsSeeded = 0;
     let referencesInserted = 0;
     let referencesSkipped = 0;
+    let debugPrinted = 0;
 
     for (const variant of variants) {
       variantsChecked += 1;
@@ -418,6 +426,25 @@ async function main() {
         maxQueries,
         pagesPerQuery,
         resultsPerPage,
+        onQueries: (queries) => {
+          if (!debugQueries) return;
+          if (debugPrinted >= debugLimit) return;
+          const matchHaystack = normalize(`${variant.setId} ${variant.parallelId}`);
+          if (debugMatch && !matchHaystack.includes(debugMatch)) return;
+          debugPrinted += 1;
+          console.log(
+            JSON.stringify(
+              {
+                debug: "queries",
+                setId: variant.setId,
+                parallelId: variant.parallelId,
+                queries,
+              },
+              null,
+              2
+            )
+          );
+        },
       });
       if (images.length > 0) {
         variantsSeeded += 1;
