@@ -93,6 +93,12 @@ interface BatchSummary {
   assignments: BatchAssignmentSummary[];
 }
 
+type VariantApiRow = {
+  setId?: string;
+  cardNumber?: string;
+  parallelId?: string;
+};
+
 const CATEGORY_LABELS: Record<string, string> = {
   SPORTS: "Sports",
   POKEMON: "Pokémon",
@@ -108,6 +114,19 @@ const TIER_LABELS: Record<string, string> = {
 
 const CAMERA_STORAGE_KEY = "tenkings.adminUploads.cameraDeviceId";
 const OCR_QUEUE_STORAGE_KEY = "tenkings.adminUploads.ocrQueue";
+const OCR_DRAFT_STORAGE_KEY = "tenkings.adminUploads.ocrDraft";
+
+const sanitizeNullableText = (value: string | null | undefined): string => {
+  const normalized = String(value ?? "").trim();
+  if (!normalized) {
+    return "";
+  }
+  const lowered = normalized.toLowerCase();
+  if (lowered === "null" || lowered === "undefined" || lowered === "n/a" || lowered === "na") {
+    return "";
+  }
+  return normalized;
+};
 
 const inferSportFromProductLine = (value: string): string => {
   const normalized = value.trim().toLowerCase();
@@ -195,6 +214,9 @@ export default function AdminUploads() {
   const [insertSetOptions, setInsertSetOptions] = useState<string[]>([]);
   const [parallelOptions, setParallelOptions] = useState<string[]>([]);
   const [selectedQueueCardId, setSelectedQueueCardId] = useState<string | null>(null);
+  const [variantCatalog, setVariantCatalog] = useState<VariantApiRow[]>([]);
+  const [optionPreviewUrls, setOptionPreviewUrls] = useState<Record<string, string>>({});
+  const [pickerModalField, setPickerModalField] = useState<null | "insertSet" | "parallel">(null);
   type OcrApplyField = Exclude<keyof IntakeRequiredFields, "category">;
   const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty" | "error">(
     null
@@ -237,6 +259,7 @@ export default function AdminUploads() {
   const ocrOptionalBackupRef = useRef<IntakeOptionalFields | null>(null);
   const ocrAppliedOptionalFieldsRef = useRef<(keyof IntakeOptionalFields)[]>([]);
   const photoroomRequestedRef = useRef<string | null>(null);
+  const restoredDraftRef = useRef(false);
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -341,8 +364,96 @@ export default function AdminUploads() {
     if (typeof window === "undefined") {
       return;
     }
+    const raw = window.localStorage.getItem(OCR_DRAFT_STORAGE_KEY);
+    if (!raw) {
+      return;
+    }
+    try {
+      const draft = JSON.parse(raw) as Record<string, unknown>;
+      if (typeof draft.intakeStep === "string") {
+        setIntakeStep(draft.intakeStep as IntakeStep);
+      }
+      if (typeof draft.intakeCardId === "string" && draft.intakeCardId.trim()) {
+        setIntakeCardId(draft.intakeCardId);
+      }
+      if (typeof draft.intakeBatchId === "string") {
+        setIntakeBatchId(draft.intakeBatchId || null);
+      }
+      if (typeof draft.intakeFrontPreview === "string") {
+        setIntakeFrontPreview(draft.intakeFrontPreview || null);
+      }
+      if (typeof draft.intakeBackPreview === "string") {
+        setIntakeBackPreview(draft.intakeBackPreview || null);
+      }
+      if (typeof draft.intakeTiltPreview === "string") {
+        setIntakeTiltPreview(draft.intakeTiltPreview || null);
+      }
+      if (typeof draft.intakeBackPhotoId === "string") {
+        setIntakeBackPhotoId(draft.intakeBackPhotoId || null);
+      }
+      if (typeof draft.intakeTiltPhotoId === "string") {
+        setIntakeTiltPhotoId(draft.intakeTiltPhotoId || null);
+      }
+      if (draft.intakeRequired && typeof draft.intakeRequired === "object") {
+        setIntakeRequired((prev) => ({ ...prev, ...(draft.intakeRequired as Partial<IntakeRequiredFields>) }));
+      }
+      if (draft.intakeOptional && typeof draft.intakeOptional === "object") {
+        setIntakeOptional((prev) => ({ ...prev, ...(draft.intakeOptional as Partial<IntakeOptionalFields>) }));
+      }
+      if (typeof draft.trainAiEnabled === "boolean") {
+        setTrainAiEnabled(draft.trainAiEnabled);
+      }
+      if (typeof draft.intakeReviewMode === "string") {
+        setIntakeReviewMode(draft.intakeReviewMode as IntakeReviewMode);
+      }
+    } catch {
+      // ignore malformed draft payload
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
     window.localStorage.setItem(OCR_QUEUE_STORAGE_KEY, JSON.stringify(queuedReviewCardIds));
   }, [queuedReviewCardIds]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (!intakeCardId && intakeStep === "front") {
+      return;
+    }
+    const draft = {
+      intakeStep,
+      intakeReviewMode,
+      intakeCardId,
+      intakeBatchId,
+      intakeBackPhotoId,
+      intakeTiltPhotoId,
+      intakeFrontPreview,
+      intakeBackPreview,
+      intakeTiltPreview,
+      intakeRequired,
+      intakeOptional,
+      trainAiEnabled,
+    };
+    window.localStorage.setItem(OCR_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  }, [
+    intakeBackPhotoId,
+    intakeBackPreview,
+    intakeBatchId,
+    intakeCardId,
+    intakeFrontPreview,
+    intakeOptional,
+    intakeRequired,
+    intakeReviewMode,
+    intakeStep,
+    intakeTiltPhotoId,
+    intakeTiltPreview,
+    trainAiEnabled,
+  ]);
 
   useEffect(() => {
     if (queuedReviewCardIds.length === 0) {
@@ -780,7 +891,13 @@ export default function AdminUploads() {
     setTrainAiEnabled(false);
     setInsertSetOptions([]);
     setParallelOptions([]);
+    setVariantCatalog([]);
+    setOptionPreviewUrls({});
     resetOcrState();
+    restoredDraftRef.current = false;
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(OCR_DRAFT_STORAGE_KEY);
+    }
   }, [resetOcrState]);
 
   const resetIntake = useCallback(() => {
@@ -1230,44 +1347,44 @@ export default function AdminUploads() {
       setIntakeBackPhotoId(backPhoto?.id ?? null);
       setIntakeTiltPhotoId(tiltPhoto?.id ?? null);
 
-      const nextProductLine = String(normalized.setName ?? ocrFields.setName ?? "").trim();
+      const nextProductLine = sanitizeNullableText(normalized.setName ?? ocrFields.setName ?? "");
       const inferredSport = inferSportFromProductLine(nextProductLine);
       setIntakeRequired({
         category: categoryType,
         playerName:
           categoryType === "sport"
-            ? String(attributes.playerName ?? ocrFields.playerName ?? "").trim()
+            ? sanitizeNullableText(attributes.playerName ?? ocrFields.playerName ?? "")
             : "",
         sport:
           categoryType === "sport"
-            ? String(attributes.sport ?? ocrFields.sport ?? inferredSport).trim()
+            ? sanitizeNullableText(attributes.sport ?? ocrFields.sport ?? inferredSport)
             : "",
-        manufacturer: String(attributes.brand ?? normalized.company ?? ocrFields.manufacturer ?? "").trim(),
-        year: String(attributes.year ?? normalized.year ?? ocrFields.year ?? "").trim(),
+        manufacturer: sanitizeNullableText(attributes.brand ?? normalized.company ?? ocrFields.manufacturer ?? ""),
+        year: sanitizeNullableText(attributes.year ?? normalized.year ?? ocrFields.year ?? ""),
         cardName:
           categoryType === "tcg"
-            ? String(attributes.cardName ?? normalized.displayName ?? ocrFields.cardName ?? "").trim()
+            ? sanitizeNullableText(attributes.cardName ?? normalized.displayName ?? ocrFields.cardName ?? "")
             : "",
         game:
-          categoryType === "tcg" ? String(attributes.game ?? ocrFields.game ?? "").trim() : "",
+          categoryType === "tcg" ? sanitizeNullableText(attributes.game ?? ocrFields.game ?? "") : "",
       });
 
       setIntakeOptional({
-        teamName: String(attributes.teamName ?? "").trim(),
+        teamName: sanitizeNullableText(attributes.teamName ?? ""),
         productLine: nextProductLine,
-        insertSet: String(normalized.setCode ?? "").trim(),
-        parallel: String((attributes.variantKeywords ?? [])[0] ?? ocrFields.parallel ?? "").trim(),
-        cardNumber: String(normalized.cardNumber ?? ocrFields.cardNumber ?? "").trim(),
-        numbered: String(attributes.numbered ?? ocrFields.numbered ?? "").trim(),
+        insertSet: sanitizeNullableText(normalized.setCode ?? ""),
+        parallel: sanitizeNullableText((attributes.variantKeywords ?? [])[0] ?? ocrFields.parallel ?? ""),
+        cardNumber: sanitizeNullableText(normalized.cardNumber ?? ocrFields.cardNumber ?? ""),
+        numbered: sanitizeNullableText(attributes.numbered ?? ocrFields.numbered ?? ""),
         autograph: Boolean(attributes.autograph ?? false),
         memorabilia: Boolean(attributes.memorabilia ?? false),
         graded:
           String(ocrFields.graded ?? "").toLowerCase() === "true" ||
           (Boolean(ocrFields.gradeCompany) && Boolean(ocrFields.gradeValue)),
-        gradeCompany: String(attributes.gradeCompany ?? ocrFields.gradeCompany ?? "").trim(),
-        gradeValue: String(attributes.gradeValue ?? ocrFields.gradeValue ?? "").trim(),
+        gradeCompany: sanitizeNullableText(attributes.gradeCompany ?? ocrFields.gradeCompany ?? ""),
+        gradeValue: sanitizeNullableText(attributes.gradeValue ?? ocrFields.gradeValue ?? ""),
         tcgSeries: "",
-        tcgRarity: String(normalized.rarity ?? "").trim(),
+        tcgRarity: sanitizeNullableText(normalized.rarity ?? ""),
         tcgFoil: false,
         tcgLanguage: "",
         tcgOutOf: "",
@@ -1275,8 +1392,9 @@ export default function AdminUploads() {
 
       setIntakeSuggested(
         Object.entries(ocrFields).reduce<Record<string, string>>((acc, [key, value]) => {
-          if (typeof value === "string" && value.trim()) {
-            acc[key] = value.trim();
+          const cleaned = sanitizeNullableText(typeof value === "string" ? value : "");
+          if (cleaned) {
+            acc[key] = cleaned;
           }
           return acc;
         }, {})
@@ -1295,6 +1413,17 @@ export default function AdminUploads() {
     },
     [resolveApiUrl, session?.token]
   );
+
+  useEffect(() => {
+    if (restoredDraftRef.current) {
+      return;
+    }
+    if (!session?.token || !intakeCardId || (intakeStep !== "required" && intakeStep !== "optional")) {
+      return;
+    }
+    restoredDraftRef.current = true;
+    void loadQueuedCardForReview(intakeCardId).catch(() => undefined);
+  }, [intakeCardId, intakeStep, loadQueuedCardForReview, session?.token]);
 
   const validateRequiredIntake = useCallback(() => {
     if (!intakeCardId) {
@@ -1399,16 +1528,25 @@ export default function AdminUploads() {
       });
       setIntakeOptional((prev) => {
         const next = { ...prev };
-        if (suggestions.setName && !intakeOptionalTouched.productLine && !prev.productLine.trim()) {
-          next.productLine = suggestions.setName;
+        const suggestedProductLine = sanitizeNullableText(suggestions.setName);
+        const suggestedInsertSet = sanitizeNullableText(suggestions.insertSet);
+        const suggestedParallel = sanitizeNullableText(suggestions.parallel);
+        const insertSetKnown =
+          !suggestedInsertSet ||
+          insertSetOptions.some((option) => option.toLowerCase() === suggestedInsertSet.toLowerCase());
+        const parallelKnown =
+          !suggestedParallel ||
+          parallelOptions.some((option) => option.toLowerCase() === suggestedParallel.toLowerCase());
+        if (suggestedProductLine && !intakeOptionalTouched.productLine && !prev.productLine.trim()) {
+          next.productLine = suggestedProductLine;
           ocrAppliedOptionalFieldsRef.current.push("productLine");
         }
-        if (suggestions.insertSet && !intakeOptionalTouched.insertSet && !prev.insertSet.trim()) {
-          next.insertSet = suggestions.insertSet;
+        if (suggestedInsertSet && insertSetKnown && !intakeOptionalTouched.insertSet && !prev.insertSet.trim()) {
+          next.insertSet = suggestedInsertSet;
           ocrAppliedOptionalFieldsRef.current.push("insertSet");
         }
-        if (suggestions.parallel && !intakeOptionalTouched.parallel && !prev.parallel.trim()) {
-          next.parallel = suggestions.parallel;
+        if (suggestedParallel && parallelKnown && !intakeOptionalTouched.parallel && !prev.parallel.trim()) {
+          next.parallel = suggestedParallel;
           ocrAppliedOptionalFieldsRef.current.push("parallel");
         }
         if (suggestions.cardNumber && !intakeOptionalTouched.cardNumber && !prev.cardNumber.trim()) {
@@ -1472,6 +1610,8 @@ export default function AdminUploads() {
       intakeOptionalTouched.productLine,
       intakeOptionalTouched.insertSet,
       intakeOptionalTouched.parallel,
+      insertSetOptions,
+      parallelOptions,
       intakeOptionalTouched.numbered,
       intakeOptionalTouched.autograph,
       intakeOptionalTouched.memorabilia,
@@ -1902,6 +2042,7 @@ export default function AdminUploads() {
 
   useEffect(() => {
     if (!session?.token || intakeRequired.category !== "sport") {
+      setVariantCatalog([]);
       setInsertSetOptions([]);
       setParallelOptions([]);
       return;
@@ -1910,6 +2051,7 @@ export default function AdminUploads() {
       .map((entry) => entry.trim())
       .filter(Boolean);
     if (qParts.length < 2) {
+      setVariantCatalog([]);
       setInsertSetOptions([]);
       setParallelOptions([]);
       return;
@@ -1928,20 +2070,21 @@ export default function AdminUploads() {
       if (!payload?.variants || !Array.isArray(payload.variants)) {
         return [];
       }
-      return payload.variants as Array<{ parallelId?: string }>;
+      return payload.variants as VariantApiRow[];
     };
     (async () => {
       const primaryQuery = qParts[0];
       const fallbackQuery = `${intakeRequired.year.trim()} ${intakeRequired.manufacturer.trim()}`.trim();
       const broadQuery = intakeRequired.manufacturer.trim();
 
-      let variants = await runFetch(primaryQuery);
+      let variants: VariantApiRow[] = await runFetch(primaryQuery);
       if (variants.length === 0 && fallbackQuery && fallbackQuery.toLowerCase() !== primaryQuery.toLowerCase()) {
         variants = await runFetch(fallbackQuery);
       }
       if (variants.length === 0 && broadQuery && broadQuery.toLowerCase() !== primaryQuery.toLowerCase()) {
         variants = await runFetch(broadQuery);
       }
+      setVariantCatalog(variants);
 
       const parallels = Array.from(
         new Set<string>(
@@ -1955,11 +2098,90 @@ export default function AdminUploads() {
       setInsertSetOptions(parallels);
       setParallelOptions(parallels);
     })().catch(() => {
+      setVariantCatalog([]);
       setInsertSetOptions([]);
       setParallelOptions([]);
     });
     return () => controller.abort();
   }, [intakeOptional.productLine, intakeRequired.category, intakeRequired.manufacturer, intakeRequired.year, session?.token]);
+
+  const optionSetIdMap = useMemo(() => {
+    const map = new Map<string, string>();
+    variantCatalog.forEach((row) => {
+      const option = sanitizeNullableText(row.parallelId);
+      const setId = sanitizeNullableText(row.setId);
+      if (!option || !setId || map.has(option)) {
+        return;
+      }
+      map.set(option, setId);
+    });
+    return map;
+  }, [variantCatalog]);
+
+  useEffect(() => {
+    if (!session?.token || intakeRequired.category !== "sport") {
+      return;
+    }
+    const controller = new AbortController();
+    const candidates = Array.from(
+      new Set(
+        [
+          ...insertSetOptions.slice(0, 40),
+          ...parallelOptions.slice(0, 40),
+          intakeOptional.insertSet,
+          intakeOptional.parallel,
+        ]
+          .map((value) => sanitizeNullableText(value))
+          .filter(Boolean)
+      )
+    );
+    const pending = candidates.filter((option) => !optionPreviewUrls[option]);
+    if (!pending.length) {
+      return;
+    }
+    (async () => {
+      const results = await Promise.all(
+        pending.map(async (option) => {
+          const setId = optionSetIdMap.get(option) ?? sanitizeNullableText(variantCatalog[0]?.setId);
+          if (!setId) {
+            return [option, ""] as const;
+          }
+          const res = await fetch(
+            `/api/admin/variants/reference?setId=${encodeURIComponent(setId)}&parallelId=${encodeURIComponent(option)}&limit=1`,
+            {
+              headers: buildAdminHeaders(session.token as string),
+              signal: controller.signal,
+            }
+          );
+          if (!res.ok) {
+            return [option, ""] as const;
+          }
+          const payload = await res.json().catch(() => null);
+          const row = Array.isArray(payload?.references) ? payload.references[0] : null;
+          const preview = sanitizeNullableText(row?.cropUrls?.[0] ?? row?.rawImageUrl ?? "");
+          return [option, preview] as const;
+        })
+      );
+      setOptionPreviewUrls((prev) => {
+        const next = { ...prev };
+        results.forEach(([option, preview]) => {
+          next[option] = preview;
+        });
+        return next;
+      });
+    })().catch(() => undefined);
+    return () => controller.abort();
+  }, [
+    intakeOptional.insertSet,
+    intakeOptional.parallel,
+    intakeRequired.category,
+    optionPreviewUrls,
+    optionSetIdMap,
+    insertSetOptions,
+    parallelOptions,
+    session?.token,
+    variantCatalog,
+  ]);
 
   useEffect(() => {
     if (!intakeCardId) {
@@ -2748,6 +2970,22 @@ export default function AdminUploads() {
                         </option>
                       ))}
                     </select>
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPickerModalField("insertSet")}
+                        className="rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-slate-300 transition hover:border-white/40 hover:text-white"
+                      >
+                        Browse Inserts
+                      </button>
+                      {intakeOptional.insertSet && optionPreviewUrls[intakeOptional.insertSet] ? (
+                        <img
+                          src={optionPreviewUrls[intakeOptional.insertSet]}
+                          alt={`${intakeOptional.insertSet} example`}
+                          className="h-12 w-12 rounded-lg border border-white/10 object-cover"
+                        />
+                      ) : null}
+                    </div>
                     <select
                       value={intakeOptional.parallel}
                       onChange={(event) => {
@@ -2767,6 +3005,22 @@ export default function AdminUploads() {
                         </option>
                       ))}
                     </select>
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setPickerModalField("parallel")}
+                        className="rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-slate-300 transition hover:border-white/40 hover:text-white"
+                      >
+                        Browse Parallels
+                      </button>
+                      {intakeOptional.parallel && optionPreviewUrls[intakeOptional.parallel] ? (
+                        <img
+                          src={optionPreviewUrls[intakeOptional.parallel]}
+                          alt={`${intakeOptional.parallel} example`}
+                          className="h-12 w-12 rounded-lg border border-white/10 object-cover"
+                        />
+                      ) : null}
+                    </div>
                   </>
                 )}
                 <input
@@ -2941,6 +3195,53 @@ export default function AdminUploads() {
           )}
 
         </section>
+
+        {pickerModalField && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+            <div className="w-full max-w-3xl rounded-2xl border border-white/10 bg-night-900 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-300">
+                  {pickerModalField === "insertSet" ? "Insert Set Examples" : "Variant / Parallel Examples"}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setPickerModalField(null)}
+                  className="rounded-full border border-white/20 px-3 py-1 text-xs uppercase tracking-[0.24em] text-slate-300"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="grid max-h-[70vh] grid-cols-1 gap-2 overflow-auto pr-1 md:grid-cols-2">
+                {(pickerModalField === "insertSet" ? rankedInsertSetOptions : rankedParallelOptions).map((option) => (
+                  <button
+                    key={`${pickerModalField}-${option}`}
+                    type="button"
+                    onClick={() => {
+                      if (pickerModalField === "insertSet") {
+                        setIntakeOptionalTouched((prev) => ({ ...prev, insertSet: true }));
+                        setIntakeOptional((prev) => ({ ...prev, insertSet: option }));
+                      } else {
+                        setIntakeOptionalTouched((prev) => ({ ...prev, parallel: true }));
+                        setIntakeOptional((prev) => ({ ...prev, parallel: option }));
+                      }
+                      setPickerModalField(null);
+                    }}
+                    className="flex items-center gap-3 rounded-xl border border-white/10 bg-night-800/70 p-2 text-left hover:border-gold-400/40"
+                  >
+                    {optionPreviewUrls[option] ? (
+                      <img src={optionPreviewUrls[option]} alt={`${option} example`} className="h-16 w-16 rounded-lg object-cover" />
+                    ) : (
+                      <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-white/10 text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                        No Img
+                      </div>
+                    )}
+                    <div className="text-sm text-slate-200">{option}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
 
         <section className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-night-900/70 p-6">
           <form className="flex flex-col gap-4" onSubmit={submitUploads}>
