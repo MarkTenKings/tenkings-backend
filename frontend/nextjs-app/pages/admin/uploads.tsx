@@ -1915,39 +1915,49 @@ export default function AdminUploads() {
       return;
     }
     const controller = new AbortController();
-    const q = qParts[0];
-    fetch(`/api/admin/variants?q=${encodeURIComponent(q)}&limit=500`, {
-      headers: buildAdminHeaders(session.token),
-      signal: controller.signal,
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((payload) => {
-        if (!payload?.variants || !Array.isArray(payload.variants)) {
-          setInsertSetOptions([]);
-          setParallelOptions([]);
-          return;
-        }
-        const parallels = Array.from(
-          new Set<string>(
-            payload.variants
-              .map((row: { parallelId?: string }) => (typeof row.parallelId === "string" ? row.parallelId.trim() : ""))
-              .filter((value: string): value is string => value.length > 0)
-          )
-        ).sort((a, b) => a.localeCompare(b));
-        const insertFamilies = Array.from(
-          new Set<string>(
-            payload.variants
-              .map((row: { parallelFamily?: string | null }) =>
-                typeof row.parallelFamily === "string" ? row.parallelFamily.trim() : ""
-              )
-              .filter((value: string): value is string => value.length > 0)
-          )
-        ).sort((a, b) => a.localeCompare(b));
-        const insertSets = insertFamilies.length > 0 ? insertFamilies : parallels;
-        setInsertSetOptions(insertSets);
-        setParallelOptions(parallels);
-      })
-      .catch(() => undefined);
+    const tokenHeaders = buildAdminHeaders(session.token);
+    const runFetch = async (query: string) => {
+      const res = await fetch(`/api/admin/variants?q=${encodeURIComponent(query)}&limit=500`, {
+        headers: tokenHeaders,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        return [];
+      }
+      const payload = await res.json().catch(() => null);
+      if (!payload?.variants || !Array.isArray(payload.variants)) {
+        return [];
+      }
+      return payload.variants as Array<{ parallelId?: string }>;
+    };
+    (async () => {
+      const primaryQuery = qParts[0];
+      const fallbackQuery = `${intakeRequired.year.trim()} ${intakeRequired.manufacturer.trim()}`.trim();
+      const broadQuery = intakeRequired.manufacturer.trim();
+
+      let variants = await runFetch(primaryQuery);
+      if (variants.length === 0 && fallbackQuery && fallbackQuery.toLowerCase() !== primaryQuery.toLowerCase()) {
+        variants = await runFetch(fallbackQuery);
+      }
+      if (variants.length === 0 && broadQuery && broadQuery.toLowerCase() !== primaryQuery.toLowerCase()) {
+        variants = await runFetch(broadQuery);
+      }
+
+      const parallels = Array.from(
+        new Set<string>(
+          variants
+            .map((row) => (typeof row.parallelId === "string" ? row.parallelId.trim() : ""))
+            .filter((value: string): value is string => value.length > 0)
+        )
+      ).sort((a, b) => a.localeCompare(b));
+
+      // Until insert-set is a first-class taxonomy column, use parallel IDs as insert candidates too.
+      setInsertSetOptions(parallels);
+      setParallelOptions(parallels);
+    })().catch(() => {
+      setInsertSetOptions([]);
+      setParallelOptions([]);
+    });
     return () => controller.abort();
   }, [intakeOptional.productLine, intakeRequired.category, intakeRequired.manufacturer, intakeRequired.year, session?.token]);
 
