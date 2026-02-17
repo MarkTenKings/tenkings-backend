@@ -115,7 +115,10 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
           const uploaded = await uploadBuffer(storageKey, processedBuffer, "image/png");
           const normalized = normalizeStorageUrl(uploaded) ?? uploaded;
           const absolute = asAbsolute(normalized);
-          const nextCropUrls = [absolute, ...(Array.isArray(ref.cropUrls) ? ref.cropUrls.filter(Boolean) : [])].slice(0, 6);
+          const existingCropUrls = Array.isArray((ref as any).cropUrls)
+            ? ((ref as any).cropUrls as string[]).filter(Boolean)
+            : [];
+          const nextCropUrls = [absolute, ...existingCropUrls].slice(0, 6);
           await prisma.cardVariantReferenceImage.update({
             where: { id: ref.id },
             data: {

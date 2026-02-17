@@ -98,10 +98,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const previewByKey = new Map<string, string>();
       const mode = getStorageMode();
       for (const row of latestRefs) {
-        let preview = Array.isArray(row.cropUrls) && row.cropUrls[0] ? row.cropUrls[0] : row.rawImageUrl;
-        if (mode === "s3" && row.storageKey) {
+        const cropUrls = Array.isArray((row as any).cropUrls) ? ((row as any).cropUrls as string[]) : [];
+        const rawImageUrl = String((row as any).rawImageUrl || "");
+        const storageKey = String((row as any).storageKey || "").trim();
+        let preview = cropUrls[0] || rawImageUrl;
+        if (mode === "s3" && storageKey) {
           try {
-            preview = await presignReadUrl(row.storageKey, 60 * 30);
+            preview = await presignReadUrl(storageKey, 60 * 30);
           } catch {
             // Keep persisted URL fallback.
           }
