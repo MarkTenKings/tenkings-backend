@@ -57,7 +57,6 @@ export default function VariantRefQaPage() {
   const [refs, setRefs] = useState<ReferenceRow[]>([]);
   const [selectedSetId, setSelectedSetId] = useState("");
   const [selectedParallelId, setSelectedParallelId] = useState("");
-  const [refTypeFilter, setRefTypeFilter] = useState<"all" | "front" | "back">("all");
   const [newRefType, setNewRefType] = useState<"front" | "back">("front");
   const [selectedRefIds, setSelectedRefIds] = useState<string[]>([]);
   const [sourceUrl, setSourceUrl] = useState("");
@@ -114,9 +113,8 @@ export default function VariantRefQaPage() {
     }
     setBusy(true);
     try {
-      const refTypeParam = refTypeFilter === "all" ? "" : `&refType=${encodeURIComponent(refTypeFilter)}`;
       const res = await fetch(
-        `/api/admin/variants/reference?setId=${encodeURIComponent(currentSetId)}&parallelId=${encodeURIComponent(currentParallelId)}&limit=500${refTypeParam}`,
+        `/api/admin/variants/reference?setId=${encodeURIComponent(currentSetId)}&parallelId=${encodeURIComponent(currentParallelId)}&limit=500`,
         { headers: { ...adminHeaders } }
       );
       const payload = await res.json().catch(() => ({}));
@@ -132,7 +130,7 @@ export default function VariantRefQaPage() {
     } finally {
       setBusy(false);
     }
-  }, [adminHeaders, refTypeFilter, selectedParallelId, selectedSetId, session?.token]);
+  }, [adminHeaders, selectedParallelId, selectedSetId, session?.token]);
 
   const chooseVariant = async (variant: VariantRow) => {
     setSelectedSetId(variant.setId);
@@ -156,33 +154,6 @@ export default function VariantRefQaPage() {
       setSelectedRefIds((prev) => prev.filter((refId) => refId !== id));
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : "Failed to delete reference" });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const deleteSelected = async () => {
-    if (!selectedRefIds.length) {
-      setStatus({ type: "error", message: "Select at least one reference image." });
-      return;
-    }
-    setBusy(true);
-    try {
-      for (const id of selectedRefIds) {
-        const res = await fetch(`/api/admin/variants/reference?id=${encodeURIComponent(id)}`, {
-          method: "DELETE",
-          headers: { ...adminHeaders },
-        });
-        if (!res.ok) {
-          const payload = await res.json().catch(() => ({}));
-          throw new Error(payload?.message ?? `Failed to delete ${id}`);
-        }
-      }
-      setRefs((prev) => prev.filter((row) => !selectedRefIds.includes(row.id)));
-      setSelectedRefIds([]);
-      setStatus({ type: "success", message: "Deleted selected references." });
-    } catch (error) {
-      setStatus({ type: "error", message: error instanceof Error ? error.message : "Bulk delete failed" });
     } finally {
       setBusy(false);
     }
@@ -327,15 +298,15 @@ export default function VariantRefQaPage() {
       if (!createRef.ok) {
         throw new Error(payload?.message ?? "Failed to save reference");
       }
-      setRefs((prev) => [payload.reference as ReferenceRow, ...prev]);
       setStatus({ type: "success", message: "Replacement reference uploaded." });
+      await loadRefs(selectedSetId.trim(), selectedParallelId.trim());
       await loadVariants();
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : "Upload failed" });
     } finally {
       setBusy(false);
     }
-  }, [adminHeaders, loadVariants, newRefType, selectedParallelId, selectedSetId, session?.token, sourceUrl]);
+  }, [adminHeaders, loadRefs, loadVariants, newRefType, selectedParallelId, selectedSetId, session?.token, sourceUrl]);
 
   const handleReplacementFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -368,37 +339,7 @@ export default function VariantRefQaPage() {
   useEffect(() => {
     if (!selectedSetId || !selectedParallelId) return;
     void loadRefs(selectedSetId, selectedParallelId);
-  }, [loadRefs, refTypeFilter, selectedParallelId, selectedSetId]);
-
-  const pasteFromClipboard = useCallback(async () => {
-    if (!selectedSetId || !selectedParallelId) {
-      setStatus({ type: "error", message: "Select a variant first." });
-      return;
-    }
-    const clipboard = typeof navigator !== "undefined" ? (navigator as any).clipboard : null;
-    if (!clipboard?.read) {
-      setStatus({ type: "error", message: "Clipboard read is not available in this browser. Use Ctrl/Cmd+V." });
-      return;
-    }
-    try {
-      const items = await clipboard.read();
-      for (const item of items) {
-        const imageType = item.types.find((type: string) => type.startsWith("image/"));
-        if (!imageType) continue;
-        const blob = await item.getType(imageType);
-        const file = fileFromBlob(blob, `clipboard-variant-ref-${Date.now()}`);
-        setStatus({ type: "success", message: "Clipboard image captured. Uploading..." });
-        await uploadReplacement(file);
-        return;
-      }
-      setStatus({ type: "error", message: "No image found in clipboard." });
-    } catch (error) {
-      setStatus({
-        type: "error",
-        message: error instanceof Error ? `Clipboard read failed: ${error.message}` : "Clipboard read failed",
-      });
-    }
-  }, [selectedParallelId, selectedSetId, uploadReplacement]);
+  }, [loadRefs, selectedParallelId, selectedSetId]);
 
   if (loading) {
     return (
@@ -560,15 +501,6 @@ export default function VariantRefQaPage() {
               <span className="text-slate-200">{selectedParallelId || "—"}</span>
             </div>
             <div className="flex gap-2">
-              <select
-                value={refTypeFilter}
-                onChange={(event) => setRefTypeFilter(event.target.value as "all" | "front" | "back")}
-                className="rounded-full border border-white/20 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.24em] text-slate-200"
-              >
-                <option value="all">All Sides</option>
-                <option value="front">Front Only</option>
-                <option value="back">Back Only</option>
-              </select>
               <button
                 type="button"
                 onClick={() => void loadRefs()}
@@ -576,14 +508,6 @@ export default function VariantRefQaPage() {
                 className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-slate-200 disabled:opacity-60"
               >
                 Refresh Refs
-              </button>
-              <button
-                type="button"
-                onClick={() => void deleteSelected()}
-                disabled={busy || selectedRefIds.length === 0}
-                className="rounded-full border border-rose-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-rose-200 disabled:opacity-60"
-              >
-                Delete Selected ({selectedRefIds.length})
               </button>
               <button
                 type="button"
@@ -595,19 +519,11 @@ export default function VariantRefQaPage() {
               </button>
               <button
                 type="button"
-                onClick={() => void setQaStatus("reject")}
-                disabled={busy || selectedRefIds.length === 0}
-                className="rounded-full border border-orange-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-orange-200 disabled:opacity-60"
-              >
-                Reject Selected
-              </button>
-              <button
-                type="button"
                 onClick={() => void promoteSelected()}
                 disabled={busy || selectedRefIds.length === 0}
                 className="rounded-full border border-violet-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-violet-200 disabled:opacity-60"
               >
-                Promote To Owned
+                Save Image
               </button>
               <button
                 type="button"
@@ -645,23 +561,12 @@ export default function VariantRefQaPage() {
               Upload Replacement
               <input type="file" accept="image/*" onChange={handleReplacementFile} className="hidden" />
             </label>
-            <div className="rounded-full border border-sky-400/50 px-4 py-2 text-[11px] uppercase tracking-[0.2em] text-sky-200">
-              Paste Screenshot (Ctrl/Cmd+V)
-            </div>
-            <button
-              type="button"
-              onClick={() => void pasteFromClipboard()}
-              disabled={busy || !selectedSetId || !selectedParallelId}
-              className="rounded-full border border-sky-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-sky-200 disabled:opacity-60"
-            >
-              Paste Now
-            </button>
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {refs.map((ref) => {
               const checked = selectedRefIds.includes(ref.id);
-              const preview = ref.storageKey ? ref.rawImageUrl : ref.cropUrls?.[0] || ref.rawImageUrl;
+              const preview = ref.cropUrls?.[0] || ref.rawImageUrl;
               return (
                 <article key={ref.id} className="rounded-xl border border-white/10 bg-night-800/60 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
