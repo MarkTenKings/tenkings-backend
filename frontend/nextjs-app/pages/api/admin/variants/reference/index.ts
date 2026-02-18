@@ -76,11 +76,55 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       if (parallelId) where.parallelId = parallelId;
       if (refType === "front" || refType === "back") where.refType = refType;
 
-      const references = await prisma.cardVariantReferenceImage.findMany({
-        where,
-        orderBy: [{ createdAt: "desc" }],
-        take,
-      });
+      let references: any[] = [];
+      try {
+        references = await prisma.cardVariantReferenceImage.findMany({
+          where,
+          orderBy: [{ createdAt: "desc" }],
+          take,
+          select: ({
+            id: true,
+            setId: true,
+            parallelId: true,
+            refType: true,
+            pairKey: true,
+            sourceListingId: true,
+            playerSeed: true,
+            storageKey: true,
+            qaStatus: true,
+            ownedStatus: true,
+            promotedAt: true,
+            sourceUrl: true,
+            rawImageUrl: true,
+            cropUrls: true,
+            qualityScore: true,
+            createdAt: true,
+            updatedAt: true,
+          } as any),
+        });
+      } catch {
+        // Backward-compatible fallback when storage/QA columns are not live yet.
+        references = await prisma.cardVariantReferenceImage.findMany({
+          where,
+          orderBy: [{ createdAt: "desc" }],
+          take,
+          select: ({
+            id: true,
+            setId: true,
+            parallelId: true,
+            refType: true,
+            pairKey: true,
+            sourceListingId: true,
+            playerSeed: true,
+            sourceUrl: true,
+            rawImageUrl: true,
+            cropUrls: true,
+            qualityScore: true,
+            createdAt: true,
+            updatedAt: true,
+          } as any),
+        });
+      }
       const mode = getStorageMode();
       const rows = await Promise.all(
         references.map(async (reference) => {
