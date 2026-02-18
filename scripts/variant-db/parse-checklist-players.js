@@ -31,6 +31,54 @@ function normalize(value) {
     .trim();
 }
 
+const DEFAULT_SET_PREFIX_MAP = {
+  "2025-26 topps basketball": {
+    dd: "THE DAILY DRIBBLE",
+    mvp: "MVP",
+    rts: "RISE TO STARDOM",
+    tc: "TOPPS CHROME MOJOS (SILVER PACK)",
+    bb: "BIG BOX BALLERS",
+    nl: "NO LIMIT",
+    ak: "ALL KINGS",
+    ns: "NEW SCHOOL",
+    hc: "HOME COURT",
+  },
+};
+
+const NBA_TEAM_SUFFIXES = [
+  "Atlanta Hawks",
+  "Boston Celtics",
+  "Brooklyn Nets",
+  "Charlotte Hornets",
+  "Chicago Bulls",
+  "Cleveland Cavaliers",
+  "Dallas Mavericks",
+  "Denver Nuggets",
+  "Detroit Pistons",
+  "Golden State Warriors",
+  "Houston Rockets",
+  "Indiana Pacers",
+  "LA Clippers",
+  "Los Angeles Clippers",
+  "Los Angeles Lakers",
+  "Memphis Grizzlies",
+  "Miami Heat",
+  "Milwaukee Bucks",
+  "Minnesota Timberwolves",
+  "New Orleans Pelicans",
+  "New York Knicks",
+  "Oklahoma City Thunder",
+  "Orlando Magic",
+  "Philadelphia 76ers",
+  "Phoenix Suns",
+  "Portland Trail Blazers",
+  "Sacramento Kings",
+  "San Antonio Spurs",
+  "Toronto Raptors",
+  "Utah Jazz",
+  "Washington Wizards",
+];
+
 function csvEscape(value) {
   const text = String(value ?? "");
   if (/[",\n]/.test(text)) {
@@ -107,7 +155,8 @@ function looksLikeSectionHeader(line) {
   if (line.length < 3 || line.length > 100) return false;
   if (/\d{3,}/.test(line)) return false;
   if (/^page\s+\d+/i.test(line)) return false;
-  const hasKeyword = /(insert|parallel|autograph|autos|relic|patch|variation|fo[i1]l|holo|mojo|ballers|topps|rookie|court|gems|kings|school|limit|chrome|rainbow|base)/i.test(
+  if (/^[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})+\s+[A-Za-z]/.test(line)) return false;
+  const hasKeyword = /(insert|parallel|autograph|autos|relic|patch|variation|fo[i1]l|holo|mojo|ballers|topps|rookie|court|gems|kings|school|limit|chrome|rainbow|base|dribble|stardom|mvp)/i.test(
     line
   );
   if (!hasKeyword) return false;
@@ -122,7 +171,9 @@ function parseCardCodeAndPlayer(line) {
   if (!compact) return null;
   const bits = compact.split(" ");
   const maybeCode = bits[0] || "";
-  const isCode = /^[A-Z0-9]+(?:-[A-Z0-9]+)*-\d+[A-Z0-9-]*$/i.test(maybeCode);
+  const looksLikeCode = /^[A-Z0-9]+(?:-[A-Z0-9]+)*$/i.test(maybeCode);
+  const hasSignal = /-|\d/.test(maybeCode);
+  const isCode = looksLikeCode && hasSignal;
   if (!isCode) return null;
   const rest = bits.slice(1).join(" ").trim();
   if (!rest) return null;
@@ -130,6 +181,49 @@ function parseCardCodeAndPlayer(line) {
   const playerName = rest.replace(/\s+(RC|Rookie Card|SP|SSP)$/i, "").trim();
   if (!/[a-zA-Z]/.test(playerName)) return null;
   return { cardNumber: maybeCode, playerName };
+}
+
+function inferSport(setId, explicitSport) {
+  const explicit = normalize(explicitSport);
+  if (explicit) return explicit;
+  const fromSet = normalize(setId);
+  if (fromSet.includes("basketball")) return "basketball";
+  if (fromSet.includes("baseball")) return "baseball";
+  if (fromSet.includes("football")) return "football";
+  if (fromSet.includes("hockey")) return "hockey";
+  return "";
+}
+
+function cleanPlayerName(rawName, sport) {
+  let name = String(rawName || "").replace(/\s+/g, " ").trim();
+  if (!name) return "";
+  if (sport === "basketball") {
+    for (const team of NBA_TEAM_SUFFIXES) {
+      const escaped = team.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const teamSuffix = new RegExp(`\\s+${escaped}$`, "i");
+      if (teamSuffix.test(name)) {
+        name = name.replace(teamSuffix, "").trim();
+        break;
+      }
+    }
+  }
+  return name;
+}
+
+function getCardPrefix(cardNumber) {
+  const first = String(cardNumber || "").split("-")[0] || "";
+  return normalize(first).replace(/[^a-z0-9]/g, "");
+}
+
+function normalizeParallelId(currentSection, cardNumber, prefixMap) {
+  const section = normalizeSectionName(currentSection || "Unknown");
+  if (!section) return "Unknown";
+  const sectionKey = normalize(section);
+  const generic = new Set(["unknown", "insert", "inserts", "parallel", "parallels", "base set"]);
+  if (!generic.has(sectionKey)) return section;
+  const prefix = getCardPrefix(cardNumber);
+  const mapped = prefix ? prefixMap[prefix] : "";
+  return mapped ? normalizeSectionName(mapped) : section;
 }
 
 function normalizeSectionName(raw) {
@@ -144,6 +238,8 @@ function normalizeSectionName(raw) {
 
 function parseToppsChecklistText(text, setId, options = {}) {
   const sectionMap = options.sectionMap || {};
+  const prefixMap = options.prefixMap || {};
+  const sport = inferSport(setId, options.sport);
   const lines = String(text || "")
     .split(/\r?\n/)
     .map((line) => line.replace(/\u00A0/g, " ").trim())
@@ -154,24 +250,28 @@ function parseToppsChecklistText(text, setId, options = {}) {
   let currentSection = "Unknown";
 
   for (const line of lines) {
+    const parsed = parseCardCodeAndPlayer(line);
+    if (parsed) {
+      const parallelId = normalizeParallelId(currentSection, parsed.cardNumber, prefixMap);
+      const playerName = cleanPlayerName(parsed.playerName, sport);
+      if (!playerName) continue;
+      const key = `${normalize(setId)}::${normalize(parallelId)}::${normalize(playerName)}::${normalize(parsed.cardNumber)}`;
+      if (dedupe.has(key)) continue;
+      dedupe.add(key);
+      rows.push({
+        setId,
+        parallelId,
+        playerName,
+        cardNumber: parsed.cardNumber,
+      });
+      continue;
+    }
     if (looksLikeSectionHeader(line)) {
       const normalizedHeader = normalize(line);
       const mapped = sectionMap[normalizedHeader];
       currentSection = normalizeSectionName(mapped || line);
       continue;
     }
-    const parsed = parseCardCodeAndPlayer(line);
-    if (!parsed) continue;
-    const parallelId = currentSection;
-    const key = `${normalize(setId)}::${normalize(parallelId)}::${normalize(parsed.playerName)}::${normalize(parsed.cardNumber)}`;
-    if (dedupe.has(key)) continue;
-    dedupe.add(key);
-    rows.push({
-      setId,
-      parallelId,
-      playerName: parsed.playerName,
-      cardNumber: parsed.cardNumber,
-    });
   }
   return rows;
 }
@@ -235,6 +335,19 @@ function loadSectionMap(mapPath) {
   }
 }
 
+function loadPrefixMap(mapPath) {
+  if (!mapPath) return {};
+  const target = path.resolve(process.cwd(), String(mapPath));
+  if (!fs.existsSync(target)) return {};
+  try {
+    const raw = fs.readFileSync(target, "utf8");
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const setId = String(args["set-id"] || "").trim();
@@ -244,6 +357,11 @@ async function main() {
   const out = String(args.out || "data/variants/checklists/players.csv").trim();
   const format = String(args.format || "auto").trim().toLowerCase();
   const sectionMap = loadSectionMap(args["section-map"]);
+  const sport = String(args.sport || "").trim();
+  const setKey = normalize(setId);
+  const builtinPrefixMap = DEFAULT_SET_PREFIX_MAP[setKey] || {};
+  const extraPrefixMap = loadPrefixMap(args["prefix-map"]);
+  const prefixMap = { ...builtinPrefixMap, ...extraPrefixMap };
 
   let localPath = "";
   let temporary = false;
@@ -271,10 +389,10 @@ async function main() {
     if (format === "csv" || ext === ".csv") {
       rows = parseChecklistCsv(fs.readFileSync(localPath, "utf8"), setId);
     } else if (format === "txt" || ext === ".txt") {
-      rows = parseToppsChecklistText(fs.readFileSync(localPath, "utf8"), setId, { sectionMap });
+      rows = parseToppsChecklistText(fs.readFileSync(localPath, "utf8"), setId, { sectionMap, prefixMap, sport });
     } else if (format === "pdf" || ext === ".pdf" || format === "auto") {
       const text = ext === ".pdf" ? extractPdfText(localPath) : fs.readFileSync(localPath, "utf8");
-      rows = parseToppsChecklistText(text, setId, { sectionMap });
+      rows = parseToppsChecklistText(text, setId, { sectionMap, prefixMap, sport });
       if (rows.length === 0 && ext !== ".pdf") {
         // fallback if auto was pointed at csv-ish text file
         rows = parseChecklistCsv(text, setId);
