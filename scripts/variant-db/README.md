@@ -11,8 +11,10 @@ It supports:
 Sports automation scripts:
 - `discover-sports-sets.js` (discover 2020-2026 sports set/checklist pages)
 - `build-sports-variants-csv.js` (extract parallel names from discovered set pages into CSV)
+- `build-checklist-source-manifest.js` (find best checklist source URL per discovered set page)
 - `collect-sports-variants.js` (auto-build merged sports CSV from configured sources)
 - `parse-checklist-players.js` (parse official checklist PDF/TXT/CSV into `setId,parallelId,playerName,cardNumber` CSV)
+- `parse-checklists-batch.js` (batch parse+validate checklist sources and emit seeding manifest)
 - `seed-sports-reference-images.js` (auto-seed reference images via SerpApi eBay engine only, with quality gate filtering before insert)
 - `backfill-reference-quality-gate.js` (score existing refs and optionally delete rejects)
 - `list-reference-coverage-gaps.js` (find variants with low reference count)
@@ -65,6 +67,32 @@ pnpm variants:sports:discover --from-year 2020 --to-year 2026 --sports baseball,
 pnpm variants:sports:build-csv --manifest data/variants/sports/2020-2026/sports-sets.manifest.json --out data/variants/sports/2020-2026/sports-variants.auto.csv
 pnpm variants:sync --source csv --csv data/variants/sports/2020-2026/sports-variants.auto.csv --dry-run
 pnpm variants:sync --source csv --csv data/variants/sports/2020-2026/sports-variants.auto.csv
+```
+
+### 0.6) 2020-2026 checklist source discovery -> batch parse/validate -> seeding manifest
+```bash
+pnpm variants:sports:build-checklist-sources \
+  --manifest data/variants/sports/2020-2026/sports-sets.manifest.json \
+  --from-year 2020 \
+  --to-year 2026 \
+  --sports baseball,football,basketball \
+  --manufacturers topps,panini,bowman,upper\ deck \
+  --out data/variants/checklists/checklist-sources.manifest.json
+
+pnpm variants:sports:parse-checklists-batch \
+  --manifest data/variants/checklists/checklist-sources.manifest.json \
+  --out-dir data/variants/checklists \
+  --out data/variants/checklists/checklist-parse-batch-report.json \
+  --batch-manifest-out data/variants/checklists/checklist-batch.generated.json \
+  --min-rows 300 \
+  --max-missing-card-pct 35 \
+  --max-unknown-parallel-pct 25 \
+  --continue-on-error true
+```
+
+Run unattended seed from the generated manifest:
+```bash
+pnpm variants:sports:run --manifest data/variants/checklists/checklist-batch.generated.json
 ```
 
 Then seed eBay reference images (exhaustive-player default):
