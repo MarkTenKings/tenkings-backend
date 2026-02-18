@@ -25,6 +25,9 @@ type ReferenceRow = {
   sourceListingId: string | null;
   playerSeed: string | null;
   storageKey: string | null;
+  qaStatus: string;
+  ownedStatus: string;
+  promotedAt: string | null;
   sourceUrl: string | null;
   rawImageUrl: string;
   cropUrls: string[];
@@ -210,6 +213,66 @@ export default function VariantRefQaPage() {
       setStatus({
         type: "error",
         message: error instanceof Error ? error.message : "PhotoRoom processing failed",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setQaStatus = async (qaStatus: "keep" | "reject" | "pending") => {
+    if (!selectedRefIds.length) {
+      setStatus({ type: "error", message: "Select at least one reference image." });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/variants/reference", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+        body: JSON.stringify({ ids: selectedRefIds, qaStatus }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Failed to update QA status");
+      }
+      await loadRefs();
+      setStatus({ type: "success", message: `Marked ${selectedRefIds.length} reference(s) as ${qaStatus}.` });
+    } catch (error) {
+      setStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to update QA status",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const promoteSelected = async () => {
+    if (!selectedRefIds.length) {
+      setStatus({ type: "error", message: "Select at least one reference image." });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/variants/reference/promote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+        body: JSON.stringify({ ids: selectedRefIds }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Promote to owned failed");
+      }
+      await loadRefs();
+      await loadVariants();
+      setStatus({
+        type: "success",
+        message: `Promoted ${payload?.promoted ?? 0} refs to owned. Skipped ${payload?.skipped ?? 0}.`,
+      });
+    } catch (error) {
+      setStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Promote to owned failed",
       });
     } finally {
       setBusy(false);
@@ -524,6 +587,30 @@ export default function VariantRefQaPage() {
               </button>
               <button
                 type="button"
+                onClick={() => void setQaStatus("keep")}
+                disabled={busy || selectedRefIds.length === 0}
+                className="rounded-full border border-emerald-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-emerald-200 disabled:opacity-60"
+              >
+                Keep Selected
+              </button>
+              <button
+                type="button"
+                onClick={() => void setQaStatus("reject")}
+                disabled={busy || selectedRefIds.length === 0}
+                className="rounded-full border border-orange-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-orange-200 disabled:opacity-60"
+              >
+                Reject Selected
+              </button>
+              <button
+                type="button"
+                onClick={() => void promoteSelected()}
+                disabled={busy || selectedRefIds.length === 0}
+                className="rounded-full border border-violet-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-violet-200 disabled:opacity-60"
+              >
+                Promote To Owned
+              </button>
+              <button
+                type="button"
                 onClick={() => void processSelected()}
                 disabled={busy || selectedRefIds.length === 0}
                 className="rounded-full border border-sky-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-sky-200 disabled:opacity-60"
@@ -603,6 +690,23 @@ export default function VariantRefQaPage() {
                     <img src={preview} alt={`${ref.parallelId} ref`} className="h-52 w-full rounded-lg object-cover" />
                   </a>
                   <div className="mt-2 space-y-1 text-[11px] text-slate-400">
+                    <p>
+                      QA:{" "}
+                      <span
+                        className={
+                          ref.qaStatus === "keep"
+                            ? "text-emerald-300"
+                            : ref.qaStatus === "reject"
+                            ? "text-orange-300"
+                            : "text-slate-300"
+                        }
+                      >
+                        {ref.qaStatus || "pending"}
+                      </span>
+                    </p>
+                    <p>
+                      Owned: <span className="text-slate-300">{ref.ownedStatus || "external"}</span>
+                    </p>
                     <p>
                       Side: <span className="text-slate-300">{ref.refType || "front"}</span>
                     </p>

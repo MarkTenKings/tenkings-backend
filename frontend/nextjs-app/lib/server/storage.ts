@@ -257,6 +257,41 @@ export function isManagedStorageUrl(input: string | null | undefined) {
   }
 }
 
+export function managedStorageKeyFromUrl(input: string | null | undefined) {
+  if (!input || !/^https?:\/\//i.test(input)) return null;
+  try {
+    const url = new URL(input);
+    const host = url.host;
+    const pathname = url.pathname.replace(/^\/+/, "");
+    if (!pathname) return null;
+
+    const publicHost = s3PublicBaseUrl ? new URL(s3PublicBaseUrl).host : null;
+    const endpointHost = s3Endpoint ? s3Endpoint.replace(/^https?:\/\//, "").replace(/\/$/, "") : null;
+    const isBucketHost =
+      Boolean(s3Bucket) && host.startsWith(`${s3Bucket}.`) && host.includes("digitaloceanspaces.com");
+    const isPublicHost = publicHost ? host === publicHost : false;
+    const isEndpointHost = endpointHost ? host === endpointHost : false;
+
+    if (isBucketHost || isPublicHost) {
+      // Virtual-host style: bucket is in host, path is key.
+      return pathname;
+    }
+
+    if (isEndpointHost && s3Bucket) {
+      // Path-style: first segment may be bucket.
+      const bucketPrefix = `${s3Bucket}/`;
+      if (pathname.startsWith(bucketPrefix)) {
+        return pathname.slice(bucketPrefix.length);
+      }
+      return pathname;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function sanitizeFileName(input: string) {
   const normalized = input.trim().toLowerCase();
   const base = normalized.replace(/[^a-z0-9_.-]+/g, "-");

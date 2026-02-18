@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
-import { getStorageMode, isManagedStorageUrl, presignReadUrl } from "../../../../../lib/server/storage";
+import { getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../../../../lib/server/storage";
 
 type ReferenceRow = {
   id: string;
@@ -12,6 +12,9 @@ type ReferenceRow = {
   sourceListingId: string | null;
   playerSeed: string | null;
   storageKey: string | null;
+  qaStatus: string;
+  ownedStatus: string;
+  promotedAt: string | null;
   sourceUrl: string | null;
   rawImageUrl: string;
   cropUrls: string[];
@@ -36,6 +39,9 @@ function toRow(reference: any): ReferenceRow {
     sourceListingId: reference.sourceListingId ?? null,
     playerSeed: reference.playerSeed ?? null,
     storageKey: reference.storageKey ?? null,
+    qaStatus: String(reference.qaStatus || "pending"),
+    ownedStatus: String(reference.ownedStatus || "external"),
+    promotedAt: reference.promotedAt ? reference.promotedAt.toISOString?.() ?? String(reference.promotedAt) : null,
     sourceUrl: reference.sourceUrl ?? null,
     rawImageUrl: reference.rawImageUrl,
     cropUrls: Array.isArray(reference.cropUrls) ? reference.cropUrls : [],
@@ -53,19 +59,6 @@ function parseListingId(url: string | null | undefined) {
   const queryMatch = value.match(/[?&](?:item|itemId|itm|itm_id)=(\d{8,20})(?:[&#]|$)/i);
   if (queryMatch?.[1]) return queryMatch[1];
   return null;
-}
-
-function storageKeyFromUrl(value: string | null | undefined) {
-  const url = String(value || "").trim();
-  if (!url) return null;
-  if (!/^https?:\/\//i.test(url)) return null;
-  try {
-    const parsed = new URL(url);
-    const pathname = parsed.pathname.replace(/^\/+/, "");
-    return pathname || null;
-  } catch {
-    return null;
-  }
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
@@ -93,7 +86,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         references.map(async (reference) => {
           const row = toRow(reference);
           if (mode === "s3") {
-            const rawKey = row.storageKey || (isManagedStorageUrl(row.rawImageUrl) ? storageKeyFromUrl(row.rawImageUrl) : null);
+            const rawKey = row.storageKey || managedStorageKeyFromUrl(row.rawImageUrl);
             if (rawKey) {
               try {
                 row.rawImageUrl = await presignReadUrl(rawKey, 60 * 30);
@@ -104,7 +97,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             if (Array.isArray(row.cropUrls) && row.cropUrls.length) {
               const signedCropUrls: string[] = [];
               for (const cropUrl of row.cropUrls) {
-                const cropKey = isManagedStorageUrl(cropUrl) ? storageKeyFromUrl(cropUrl) : null;
+                const cropKey = managedStorageKeyFromUrl(cropUrl);
                 if (!cropKey) {
                   signedCropUrls.push(cropUrl);
                   continue;
@@ -164,6 +157,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             sourceListingId: derivedListingId,
             playerSeed: playerSeed ? String(playerSeed).trim() : null,
             storageKey: storageKey ? String(storageKey).trim() : null,
+            qaStatus: "pending",
+            ownedStatus: storageKey ? "owned" : "external",
+            promotedAt: storageKey ? new Date() : null,
             rawImageUrl: String(rawImageUrl).trim(),
             sourceUrl: normalizedSourceUrl,
             cropUrls: Array.isArray(cropUrls)
@@ -194,6 +190,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(200).json({ reference: toRow(reference) });
     }
 
+    if (req.method === "PUT") {
+      const qaStatusRaw = req.body?.qaStatus;
+      const qaStatus =
+        qaStatusRaw === "keep" || qaStatusRaw === "reject" || qaStatusRaw === "pending"
+          ? qaStatusRaw
+          : null;
+      if (!qaStatus) {
+        return res.status(400).json({ message: "qaStatus must be keep, reject, or pending." });
+      }
+
+      const id = typeof req.body?.id === "string" ? req.body.id.trim() : "";
+      const ids = Array.isArray(req.body?.ids)
+        ? req.body.ids.map((value: unknown) => String(value || "").trim()).filter(Boolean)
+        : [];
+      const targetIds = id ? [id] : ids;
+      if (!targetIds.length) {
+        return res.status(400).json({ message: "id or ids[] is required." });
+      }
+      try {
+        await prisma.cardVariantReferenceImage.updateMany({
+          where: { id: { in: targetIds } },
+          data: { qaStatus } as any,
+        });
+      } catch {
+        return res.status(400).json({ message: "QA status columns not available yet. Run latest database migrations." });
+      }
+      const references = await prisma.cardVariantReferenceImage.findMany({
+        where: { id: { in: targetIds } },
+      });
+      return res.status(200).json({ references: references.map(toRow) } as any);
+    }
+
     if (req.method === "DELETE") {
       const id = typeof req.query.id === "string" ? req.query.id : "";
       if (!id) {
@@ -203,7 +231,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(200).json({ ok: true });
     }
 
-    res.setHeader("Allow", "GET,POST,DELETE");
+    res.setHeader("Allow", "GET,POST,PUT,DELETE");
     return res.status(405).json({ message: "Method not allowed" });
   } catch (error) {
     const response = toErrorResponse(error);

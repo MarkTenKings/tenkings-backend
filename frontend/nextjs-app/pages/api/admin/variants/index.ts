@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { Prisma } from "@prisma/client";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
-import { getStorageMode, isManagedStorageUrl, presignReadUrl } from "../../../../lib/server/storage";
+import { getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../../../lib/server/storage";
 
 type VariantRow = {
   id: string;
@@ -44,19 +44,6 @@ function toRow(
     createdAt: variant.createdAt?.toISOString?.() ?? String(variant.createdAt),
     updatedAt: variant.updatedAt?.toISOString?.() ?? String(variant.updatedAt),
   };
-}
-
-function storageKeyFromUrl(value: string | null | undefined) {
-  const url = String(value || "").trim();
-  if (!url) return null;
-  if (!/^https?:\/\//i.test(url)) return null;
-  try {
-    const parsed = new URL(url);
-    const pathname = parsed.pathname.replace(/^\/+/, "");
-    return pathname || null;
-  } catch {
-    return null;
-  }
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
@@ -131,7 +118,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         const rawImageUrl = String((row as any).rawImageUrl || "");
         const storageKey = String((row as any).storageKey || "").trim();
         let preview = cropUrls[0] || rawImageUrl;
-        const keyForPreview = storageKey || (isManagedStorageUrl(preview) ? storageKeyFromUrl(preview) : null);
+        const keyForPreview = storageKey || managedStorageKeyFromUrl(preview);
         if (mode === "s3" && keyForPreview) {
           try {
             preview = await presignReadUrl(keyForPreview, 60 * 30);

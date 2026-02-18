@@ -625,6 +625,10 @@ model CardVariantReferenceImage {
   pairKey        String?
   sourceListingId String?
   playerSeed     String?
+  storageKey     String?
+  qaStatus       String   @default("pending")
+  ownedStatus    String   @default("external")
+  promotedAt     DateTime?
   sourceUrl      String?
   listingTitle   String?
   rawImageUrl    String
@@ -641,6 +645,8 @@ model CardVariantReferenceImage {
   @@index([setId, parallelId, refType])
   @@index([pairKey])
   @@index([sourceListingId])
+  @@index([storageKey])
+  @@index([qaStatus, ownedStatus])
   @@index([setId, parallelId, qualityGateStatus])
 }
 
