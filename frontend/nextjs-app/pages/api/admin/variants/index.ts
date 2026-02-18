@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { Prisma } from "@prisma/client";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
-import { getStorageMode, presignReadUrl } from "../../../../lib/server/storage";
+import { getStorageMode, isManagedStorageUrl, presignReadUrl } from "../../../../lib/server/storage";
 
 type VariantRow = {
   id: string;
@@ -131,7 +131,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         const rawImageUrl = String((row as any).rawImageUrl || "");
         const storageKey = String((row as any).storageKey || "").trim();
         let preview = cropUrls[0] || rawImageUrl;
-        const keyForPreview = storageKey || storageKeyFromUrl(preview);
+        const keyForPreview = storageKey || (isManagedStorageUrl(preview) ? storageKeyFromUrl(preview) : null);
         if (mode === "s3" && keyForPreview) {
           try {
             preview = await presignReadUrl(keyForPreview, 60 * 30);

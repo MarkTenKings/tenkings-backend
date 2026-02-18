@@ -239,6 +239,24 @@ export function normalizeStorageUrl(input: string | null | undefined) {
   }
 }
 
+export function isManagedStorageUrl(input: string | null | undefined) {
+  if (!input || !/^https?:\/\//i.test(input)) return false;
+  try {
+    const url = new URL(input);
+    const host = url.host;
+    const publicHost = s3PublicBaseUrl ? new URL(s3PublicBaseUrl).host : null;
+    const matchesPublicHost = publicHost ? host === publicHost : false;
+    const matchesBucketHost =
+      s3Bucket && host.startsWith(`${s3Bucket}.`) && host.includes("digitaloceanspaces.com");
+    const matchesEndpointHost = s3Endpoint
+      ? host === s3Endpoint.replace(/^https?:\/\//, "").replace(/\/$/, "")
+      : false;
+    return Boolean(matchesPublicHost || matchesBucketHost || matchesEndpointHost);
+  } catch {
+    return false;
+  }
+}
+
 function sanitizeFileName(input: string) {
   const normalized = input.trim().toLowerCase();
   const base = normalized.replace(/[^a-z0-9_.-]+/g, "-");

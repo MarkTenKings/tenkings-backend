@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
-import { getStorageMode, presignReadUrl } from "../../../../../lib/server/storage";
+import { getStorageMode, isManagedStorageUrl, presignReadUrl } from "../../../../../lib/server/storage";
 
 type ReferenceRow = {
   id: string;
@@ -93,7 +93,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         references.map(async (reference) => {
           const row = toRow(reference);
           if (mode === "s3") {
-            const rawKey = row.storageKey || storageKeyFromUrl(row.rawImageUrl);
+            const rawKey = row.storageKey || (isManagedStorageUrl(row.rawImageUrl) ? storageKeyFromUrl(row.rawImageUrl) : null);
             if (rawKey) {
               try {
                 row.rawImageUrl = await presignReadUrl(rawKey, 60 * 30);
@@ -104,7 +104,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             if (Array.isArray(row.cropUrls) && row.cropUrls.length) {
               const signedCropUrls: string[] = [];
               for (const cropUrl of row.cropUrls) {
-                const cropKey = storageKeyFromUrl(cropUrl);
+                const cropKey = isManagedStorageUrl(cropUrl) ? storageKeyFromUrl(cropUrl) : null;
                 if (!cropKey) {
                   signedCropUrls.push(cropUrl);
                   continue;
