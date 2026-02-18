@@ -264,7 +264,9 @@ export function managedStorageKeyFromUrl(input: string | null | undefined) {
     const pathname = url.pathname.replace(/^\/+/, "");
     if (!pathname) return null;
 
-    const publicHost = s3PublicBaseUrl ? new URL(s3PublicBaseUrl).host : null;
+    const publicBase = s3PublicBaseUrl ? new URL(s3PublicBaseUrl) : null;
+    const publicHost = publicBase ? publicBase.host : null;
+    const publicBasePath = publicBase ? publicBase.pathname.replace(/^\/+|\/+$/g, "") : "";
     const endpointHost = s3Endpoint ? s3Endpoint.replace(/^https?:\/\//, "").replace(/\/$/, "") : null;
     const isBucketHost =
       Boolean(s3Bucket) && host.startsWith(`${s3Bucket}.`) && host.includes("digitaloceanspaces.com");
@@ -273,6 +275,20 @@ export function managedStorageKeyFromUrl(input: string | null | undefined) {
 
     if (isBucketHost || isPublicHost) {
       // Virtual-host style: bucket is in host, path is key.
+      // Also handle public base URLs that include a path prefix (e.g. /bucket-name).
+      if (publicBasePath) {
+        const prefixed = `${publicBasePath}/`;
+        if (pathname === publicBasePath) return "";
+        if (pathname.startsWith(prefixed)) {
+          return pathname.slice(prefixed.length);
+        }
+      }
+      if (s3Bucket) {
+        const bucketPrefix = `${s3Bucket}/`;
+        if (pathname.startsWith(bucketPrefix)) {
+          return pathname.slice(bucketPrefix.length);
+        }
+      }
       return pathname;
     }
 
