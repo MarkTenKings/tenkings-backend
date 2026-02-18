@@ -24,6 +24,7 @@ type ReferenceRow = {
   pairKey: string | null;
   sourceListingId: string | null;
   playerSeed: string | null;
+  storageKey: string | null;
   sourceUrl: string | null;
   rawImageUrl: string;
   cropUrls: string[];
@@ -33,6 +34,13 @@ type ReferenceRow = {
 
 type StatusMessage = { type: "success" | "error"; message: string } | null;
 
+function fileFromBlob(blob: Blob, fallbackName: string) {
+  const ext = blob.type === "image/png" ? "png" : blob.type === "image/webp" ? "webp" : "jpg";
+  return new File([blob], `${fallbackName}.${ext}`, {
+    type: blob.type || "image/png",
+  });
+}
+
 export default function VariantRefQaPage() {
   const { session, loading, ensureSession, logout } = useSession();
   const isAdmin = useMemo(
@@ -41,6 +49,7 @@ export default function VariantRefQaPage() {
   );
 
   const [query, setQuery] = useState("");
+  const [variantTypeFilter, setVariantTypeFilter] = useState<"all" | "insert" | "parallel">("all");
   const [variants, setVariants] = useState<VariantRow[]>([]);
   const [refs, setRefs] = useState<ReferenceRow[]>([]);
   const [selectedSetId, setSelectedSetId] = useState("");
@@ -59,7 +68,7 @@ export default function VariantRefQaPage() {
     if (!session?.token) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/admin/variants?q=${encodeURIComponent(query.trim())}&limit=500`, {
+      const res = await fetch(`/api/admin/variants?q=${encodeURIComponent(query.trim())}&limit=2000`, {
         headers: { ...adminHeaders },
       });
       const payload = await res.json().catch(() => ({}));
@@ -75,6 +84,15 @@ export default function VariantRefQaPage() {
       setBusy(false);
     }
   }, [adminHeaders, query, session?.token]);
+
+  const displayedVariants = useMemo(() => {
+    if (variantTypeFilter === "all") return variants;
+    return variants.filter((variant) => {
+      const family = String(variant.parallelFamily || "").toLowerCase();
+      const isInsert = family.includes("insert");
+      return variantTypeFilter === "insert" ? isInsert : !isInsert;
+    });
+  }, [variantTypeFilter, variants]);
 
   useEffect(() => {
     if (!session?.token) return;
@@ -237,6 +255,7 @@ export default function VariantRefQaPage() {
           setId: selectedSetId.trim(),
           parallelId: selectedParallelId.trim(),
           refType: newRefType,
+          storageKey: presignPayload.storageKey,
           rawImageUrl: presignPayload.publicUrl,
           sourceUrl: sourceUrl.trim() || null,
         }),
@@ -265,17 +284,18 @@ export default function VariantRefQaPage() {
   useEffect(() => {
     if (!selectedSetId || !selectedParallelId) return;
     const handler = (event: ClipboardEvent) => {
-      const items = event.clipboardData?.items;
-      if (!items?.length) return;
-      const imageItem = Array.from(items).find((item) => item.type.startsWith("image/"));
-      if (!imageItem) return;
-      const blob = imageItem.getAsFile();
+      const files = Array.from(event.clipboardData?.files || []);
+      const imageFromFiles = files.find((file) => file.type.startsWith("image/"));
+      const imageFromItems =
+        Array.from(event.clipboardData?.items || [])
+          .filter((item) => item.type.startsWith("image/"))
+          .map((item) => item.getAsFile())
+          .find(Boolean) ?? null;
+      const blob = imageFromFiles ?? imageFromItems;
       if (!blob) return;
       event.preventDefault();
-      const extension = blob.type === "image/png" ? "png" : blob.type === "image/webp" ? "webp" : "jpg";
-      const file = new File([blob], `pasted-variant-ref-${Date.now()}.${extension}`, {
-        type: blob.type || "image/png",
-      });
+      const file = fileFromBlob(blob, `pasted-variant-ref-${Date.now()}`);
+      setStatus({ type: "success", message: "Pasted image detected. Uploading..." });
       void uploadReplacement(file);
     };
     window.addEventListener("paste", handler);
@@ -286,6 +306,36 @@ export default function VariantRefQaPage() {
     if (!selectedSetId || !selectedParallelId) return;
     void loadRefs(selectedSetId, selectedParallelId);
   }, [loadRefs, refTypeFilter, selectedParallelId, selectedSetId]);
+
+  const pasteFromClipboard = useCallback(async () => {
+    if (!selectedSetId || !selectedParallelId) {
+      setStatus({ type: "error", message: "Select a variant first." });
+      return;
+    }
+    const clipboard = typeof navigator !== "undefined" ? (navigator as any).clipboard : null;
+    if (!clipboard?.read) {
+      setStatus({ type: "error", message: "Clipboard read is not available in this browser. Use Ctrl/Cmd+V." });
+      return;
+    }
+    try {
+      const items = await clipboard.read();
+      for (const item of items) {
+        const imageType = item.types.find((type: string) => type.startsWith("image/"));
+        if (!imageType) continue;
+        const blob = await item.getType(imageType);
+        const file = fileFromBlob(blob, `clipboard-variant-ref-${Date.now()}`);
+        setStatus({ type: "success", message: "Clipboard image captured. Uploading..." });
+        await uploadReplacement(file);
+        return;
+      }
+      setStatus({ type: "error", message: "No image found in clipboard." });
+    } catch (error) {
+      setStatus({
+        type: "error",
+        message: error instanceof Error ? `Clipboard read failed: ${error.message}` : "Clipboard read failed",
+      });
+    }
+  }, [selectedParallelId, selectedSetId, uploadReplacement]);
 
   if (loading) {
     return (
@@ -365,6 +415,15 @@ export default function VariantRefQaPage() {
             >
               Load Variants
             </button>
+            <select
+              value={variantTypeFilter}
+              onChange={(event) => setVariantTypeFilter(event.target.value as "all" | "insert" | "parallel")}
+              className="rounded-full border border-white/20 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.22em] text-slate-200"
+            >
+              <option value="all">All Types</option>
+              <option value="insert">Inserts</option>
+              <option value="parallel">Parallels</option>
+            </select>
           </div>
           <div className="mt-4 max-h-72 overflow-auto rounded-xl border border-white/10">
             <table className="w-full text-left text-xs text-slate-300">
@@ -379,7 +438,7 @@ export default function VariantRefQaPage() {
                 </tr>
               </thead>
               <tbody>
-                {variants.map((variant) => {
+                {displayedVariants.map((variant) => {
                   const active = variant.setId === selectedSetId && variant.parallelId === selectedParallelId;
                   return (
                   <tr
@@ -419,7 +478,7 @@ export default function VariantRefQaPage() {
                   </tr>
                   );
                 })}
-                {variants.length === 0 && (
+                {displayedVariants.length === 0 && (
                   <tr>
                     <td colSpan={6} className="px-3 py-6 text-center text-xs text-slate-500">
                       Load variants to start QA.
@@ -502,12 +561,20 @@ export default function VariantRefQaPage() {
             <div className="rounded-full border border-sky-400/50 px-4 py-2 text-[11px] uppercase tracking-[0.2em] text-sky-200">
               Paste Screenshot (Ctrl/Cmd+V)
             </div>
+            <button
+              type="button"
+              onClick={() => void pasteFromClipboard()}
+              disabled={busy || !selectedSetId || !selectedParallelId}
+              className="rounded-full border border-sky-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-sky-200 disabled:opacity-60"
+            >
+              Paste Now
+            </button>
           </div>
 
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {refs.map((ref) => {
               const checked = selectedRefIds.includes(ref.id);
-              const preview = ref.cropUrls?.[0] || ref.rawImageUrl;
+              const preview = ref.storageKey ? ref.rawImageUrl : ref.cropUrls?.[0] || ref.rawImageUrl;
               return (
                 <article key={ref.id} className="rounded-xl border border-white/10 bg-night-800/60 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
