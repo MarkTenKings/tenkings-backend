@@ -76,22 +76,27 @@ function main() {
   const playerNameIndex = headers.findIndex(
     (h) => h === "playername" || h === "player" || h === "name" || h === "athlete"
   );
+  const cardNumberIndex = headers.findIndex((h) => h === "cardnumber" || h === "card" || h === "cardno");
   if (setIdIndex < 0 || parallelIdIndex < 0 || playerNameIndex < 0) {
     throw new Error("CSV needs columns for setId, parallelId, playerName");
   }
 
   const setParallelPlayers = {};
+  const setParallelEntries = {};
   let rowsAccepted = 0;
   for (const line of lines.slice(1)) {
     const cells = parseCsvRow(line);
     const setId = String(cells[setIdIndex] || "").trim();
     const parallelId = String(cells[parallelIdIndex] || "").trim();
     const playerName = String(cells[playerNameIndex] || "").trim();
+    const cardNumber = cardNumberIndex >= 0 ? String(cells[cardNumberIndex] || "").trim() : "";
     if (!setId || !parallelId || !playerName) continue;
     const setKey = normalize(setId);
     const parallelKey = normalize(parallelId);
     if (!setParallelPlayers[setKey]) setParallelPlayers[setKey] = {};
+    if (!setParallelEntries[setKey]) setParallelEntries[setKey] = {};
     if (!Array.isArray(setParallelPlayers[setKey][parallelKey])) setParallelPlayers[setKey][parallelKey] = [];
+    if (!Array.isArray(setParallelEntries[setKey][parallelKey])) setParallelEntries[setKey][parallelKey] = [];
     if (
       !setParallelPlayers[setKey][parallelKey].some(
         (existing) => existing.toLowerCase() === playerName.toLowerCase()
@@ -100,12 +105,23 @@ function main() {
       setParallelPlayers[setKey][parallelKey].push(playerName);
       rowsAccepted += 1;
     }
+    const dedupeEntryKey = `${playerName.toLowerCase()}::${cardNumber.toLowerCase()}`;
+    if (
+      !setParallelEntries[setKey][parallelKey].some(
+        (entry) =>
+          `${String(entry?.playerName || "").toLowerCase()}::${String(entry?.cardNumber || "").toLowerCase()}` ===
+          dedupeEntryKey
+      )
+    ) {
+      setParallelEntries[setKey][parallelKey].push({ playerName, cardNumber });
+    }
   }
 
   const payload = {
     generatedAt: new Date().toISOString(),
     sourceCsv: input,
     setParallelPlayers,
+    setParallelEntries,
   };
   fs.mkdirSync(path.dirname(targetOut), { recursive: true });
   fs.writeFileSync(targetOut, `${JSON.stringify(payload, null, 2)}\n`, "utf8");

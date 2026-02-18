@@ -12,12 +12,12 @@ Sports automation scripts:
 - `discover-sports-sets.js` (discover 2020-2026 sports set/checklist pages)
 - `build-sports-variants-csv.js` (extract parallel names from discovered set pages into CSV)
 - `collect-sports-variants.js` (auto-build merged sports CSV from configured sources)
-- `parse-checklist-players.js` (parse official checklist PDF/TXT/CSV into `setId,parallelId,playerName` CSV)
+- `parse-checklist-players.js` (parse official checklist PDF/TXT/CSV into `setId,parallelId,playerName,cardNumber` CSV)
 - `seed-sports-reference-images.js` (auto-seed reference images via SerpApi eBay engine only, with quality gate filtering before insert)
 - `backfill-reference-quality-gate.js` (score existing refs and optionally delete rejects)
 - `list-reference-coverage-gaps.js` (find variants with low reference count)
 - `run-sports-live.js` (single command pipeline)
-- `build-checklist-player-map.js` (convert checklist CSV rows into set+parallel+player map for sniper seeding)
+- `build-checklist-player-map.js` (convert checklist CSV rows into set+parallel+player/card map for exhaustive-player seeding)
 - `build-qa-gap-queue.js` (build missing-reference queue JSON for QA)
 
 ## Command
@@ -58,9 +58,14 @@ pnpm variants:sync --source csv --csv data/variants/sports/2020-2026/sports-vari
 pnpm variants:sync --source csv --csv data/variants/sports/2020-2026/sports-variants.auto.csv
 ```
 
-Then seed eBay reference images (sniper mode default):
+Then seed eBay reference images (exhaustive-player default):
 ```bash
 pnpm variants:sports:seed-refs --limit-variants 5000 --images-per-variant 4 --delay-ms 700 --checklist-player-map data/variants/checklists/player-map.json
+```
+
+Variant-level coverage mode (old behavior):
+```bash
+pnpm variants:sports:seed-refs --mode sniper --limit-variants 5000 --images-per-variant 4 --delay-ms 700 --checklist-player-map data/variants/checklists/player-map.json
 ```
 
 Seed front and back separately with pairing keys:
@@ -69,7 +74,7 @@ pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --images-per-
 pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --images-per-variant 2 --ref-side back --delay-ms 100 --checklist-player-map data/variants/checklists/player-map.json
 ```
 
-Build checklist player map from CSV (columns: `setId,parallelId,playerName`):
+Build checklist player map from CSV (columns: `setId,parallelId,playerName,cardNumber`):
 ```bash
 pnpm variants:sports:build-player-map --csv data/variants/checklists/2025-26-topps-basketball.players.csv --out data/variants/checklists/player-map.json
 ```

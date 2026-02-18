@@ -92,20 +92,31 @@ function parseCsvRow(line) {
 }
 
 function loadChecklistPlayerMap(inputPath) {
-  if (!inputPath) return {};
+  if (!inputPath) return { setParallelPlayers: {}, setParallelEntries: {} };
   const target = path.resolve(process.cwd(), String(inputPath));
-  if (!fs.existsSync(target)) return {};
+  if (!fs.existsSync(target)) return { setParallelPlayers: {}, setParallelEntries: {} };
   if (target.toLowerCase().endsWith(".json")) {
     try {
       const raw = fs.readFileSync(target, "utf8");
       const parsed = JSON.parse(raw);
-      const payload =
-        parsed && parsed.setParallelPlayers && typeof parsed.setParallelPlayers === "object"
-          ? parsed.setParallelPlayers
-          : parsed;
-      return payload && typeof payload === "object" ? payload : {};
+      if (parsed && typeof parsed === "object") {
+        if (parsed.setParallelPlayers || parsed.setParallelEntries) {
+          return {
+            setParallelPlayers:
+              parsed.setParallelPlayers && typeof parsed.setParallelPlayers === "object"
+                ? parsed.setParallelPlayers
+                : {},
+            setParallelEntries:
+              parsed.setParallelEntries && typeof parsed.setParallelEntries === "object"
+                ? parsed.setParallelEntries
+                : {},
+          };
+        }
+        return { setParallelPlayers: parsed, setParallelEntries: {} };
+      }
+      return { setParallelPlayers: {}, setParallelEntries: {} };
     } catch {
-      return {};
+      return { setParallelPlayers: {}, setParallelEntries: {} };
     }
   }
   const raw = fs.readFileSync(target, "utf8");
@@ -117,24 +128,40 @@ function loadChecklistPlayerMap(inputPath) {
   const playerIndex = headers.findIndex(
     (h) => h === "playername" || h === "player" || h === "name" || h === "athlete"
   );
-  if (setIdIndex < 0 || parallelIndex < 0 || playerIndex < 0) return {};
+  const cardNumberIndex = headers.findIndex((h) => h === "cardnumber" || h === "card" || h === "cardno");
+  if (setIdIndex < 0 || parallelIndex < 0 || playerIndex < 0) {
+    return { setParallelPlayers: {}, setParallelEntries: {} };
+  }
 
   const map = {};
+  const entries = {};
   for (const line of lines.slice(1)) {
     const cells = parseCsvRow(line);
     const setId = String(cells[setIdIndex] || "").trim();
     const parallelId = String(cells[parallelIndex] || "").trim();
     const playerName = String(cells[playerIndex] || "").trim();
+    const cardNumber = cardNumberIndex >= 0 ? String(cells[cardNumberIndex] || "").trim() : "";
     if (!setId || !parallelId || !playerName) continue;
     const setKey = normalize(setId);
     const parallelKey = normalize(parallelId);
     if (!map[setKey]) map[setKey] = {};
+    if (!entries[setKey]) entries[setKey] = {};
     if (!Array.isArray(map[setKey][parallelKey])) map[setKey][parallelKey] = [];
+    if (!Array.isArray(entries[setKey][parallelKey])) entries[setKey][parallelKey] = [];
     if (!map[setKey][parallelKey].some((existing) => existing.toLowerCase() === playerName.toLowerCase())) {
       map[setKey][parallelKey].push(playerName);
     }
+    if (
+      !entries[setKey][parallelKey].some(
+        (entry) =>
+          String(entry?.playerName || "").toLowerCase() === playerName.toLowerCase() &&
+          String(entry?.cardNumber || "").toLowerCase() === cardNumber.toLowerCase()
+      )
+    ) {
+      entries[setKey][parallelKey].push({ playerName, cardNumber });
+    }
   }
-  return map;
+  return { setParallelPlayers: map, setParallelEntries: entries };
 }
 
 function sleep(ms) {
@@ -246,7 +273,7 @@ function deriveSetSearchTerms(setId, querySetOverride, config) {
 function derivePlayerSeeds(setId, parallelId, querySetOverride, config, checklistPlayersMap, maxPlayers) {
   const key = normalize(querySetOverride || setId);
   const parallelKey = normalize(parallelId);
-  const perParallelChecklist = checklistPlayersMap?.[key]?.[parallelKey];
+  const perParallelChecklist = checklistPlayersMap?.setParallelPlayers?.[key]?.[parallelKey];
   if (Array.isArray(perParallelChecklist) && perParallelChecklist.length > 0) {
     return perParallelChecklist
       .map((name) => String(name || "").trim())
@@ -263,6 +290,19 @@ function derivePlayerSeeds(setId, parallelId, querySetOverride, config, checklis
   const list = config?.setPlayers?.[key];
   if (!Array.isArray(list)) return [];
   return list.map((name) => String(name || "").trim()).filter(Boolean).slice(0, Math.max(0, maxPlayers));
+}
+
+function deriveChecklistEntries(setId, parallelId, querySetOverride, checklistPlayersMap) {
+  const key = normalize(querySetOverride || setId);
+  const parallelKey = normalize(parallelId);
+  const rows = checklistPlayersMap?.setParallelEntries?.[key]?.[parallelKey];
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((row) => ({
+      playerName: String(row?.playerName || "").trim(),
+      cardNumber: String(row?.cardNumber || "").trim(),
+    }))
+    .filter((row) => row.playerName);
 }
 
 function isLikelyPlaceholderImage(url) {
@@ -394,6 +434,10 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const includeKeywords = options.includeKeywords !== false;
   const exactQuery = options.exactQuery === true;
   const refSide = String(options.refSide || "front").toLowerCase() === "back" ? "back" : "front";
+  const forcedPlayer = String(options.forcedPlayer || "").trim();
+  const forcedCardNumber = String(options.forcedCardNumber || "").trim();
+  const forcedCardToken = forcedCardNumber ? `#${forcedCardNumber.replace(/^#/, "")}` : "";
+  const forcedPlayerSeedKey = String(options.forcedPlayerSeedKey || "").trim();
   const onQueries = typeof options.onQueries === "function" ? options.onQueries : null;
 
   const setTerms = deriveSetSearchTerms(variant.setId, querySetOverride, queryAliases);
@@ -407,11 +451,13 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
     checklistPlayersMap,
     maxPlayerSeeds
   );
+  const effectivePlayerSeeds = forcedPlayer ? [forcedPlayer] : playerSeeds;
 
   const queries = [];
   const seenQueries = new Set();
   const addQuery = (query, playerSeed = null) => {
-    const next = String(query || "").trim();
+    const base = String(query || "").trim();
+    const next = [base, forcedCardToken].filter(Boolean).join(" ").trim();
     if (!next) return;
     const key = next.toLowerCase();
     if (seenQueries.has(key)) return;
@@ -424,10 +470,10 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
     addQuery(`${exactSet} ${variant.parallelId}${refSide === "back" ? " back" : ""}`.trim());
     for (const parallelTerm of parallelTerms) {
       addQuery(`${exactSet} ${parallelTerm}${refSide === "back" ? " back" : ""}`.trim());
-      for (const player of playerSeeds) {
+      for (const player of effectivePlayerSeeds) {
         addQuery(
           `${exactSet} ${parallelTerm} ${player}${refSide === "back" ? " back" : ""}`.trim(),
-          player
+          forcedPlayerSeedKey || player
         );
       }
     }
@@ -440,8 +486,11 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
         for (const typeTerm of typeTerms) {
           addQuery(`${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords, true)} ${typeTerm}`);
         }
-        for (const player of playerSeeds) {
-          addQuery(`${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords, true)} ${player}`);
+        for (const player of effectivePlayerSeeds) {
+          addQuery(
+            `${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords, true)} ${player}`,
+            forcedPlayerSeedKey || player
+          );
           for (const typeTerm of typeTerms) {
             addQuery(
               `${buildVariantQuery(setVariant, parallelTerm, "", includeKeywords, true)} ${typeTerm} ${player}`
@@ -464,7 +513,7 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
           addQuery(`Topps Basketball ${parallelTerm} ${typeTerm} trading card back`);
         }
       }
-      for (const player of playerSeeds) {
+      for (const player of effectivePlayerSeeds) {
         addQuery(`Topps Basketball ${parallelTerm} ${player} trading card`);
         if (refSide === "back") {
           addQuery(`Topps Basketball ${parallelTerm} ${player} trading card back`);
@@ -546,6 +595,8 @@ async function main() {
   const maxQueries = Math.max(1, Number(args["max-queries"] ?? 80) || 80);
   const pagesPerQuery = Math.max(1, Number(args["pages-per-query"] ?? 1) || 1);
   const resultsPerPage = Math.max(10, Math.min(240, Number(args["results-per-page"] ?? 100) || 100));
+  const mode = String(args.mode || "exhaustive-player").trim().toLowerCase();
+  const exhaustivePlayerMode = mode === "exhaustive-player";
   const includeKeywords = false;
   const legacyBroadMode = Boolean(args["legacy-broad-mode"]);
   const exactQuery = !legacyBroadMode;
@@ -578,10 +629,14 @@ async function main() {
       },
     });
     const variantsWithRefType = variants.map((variant) => ({ ...variant, refType }));
-    const existingCountByKey = await loadExistingRefCounts(prisma, variantsWithRefType);
+    const existingCountByKey = exhaustivePlayerMode
+      ? new Map()
+      : await loadExistingRefCounts(prisma, variantsWithRefType);
 
     let variantsChecked = 0;
     let variantsSeeded = 0;
+    let checklistEntriesChecked = 0;
+    let checklistEntriesSeeded = 0;
     let referencesInserted = 0;
     let referencesSkipped = 0;
     let debugPrinted = 0;
@@ -589,12 +644,15 @@ async function main() {
     for (const variant of variants) {
       variantsChecked += 1;
       const variantKey = `${variant.setId}::${variant.parallelId}::${refType}`;
-      const existingCount = existingCountByKey.get(variantKey) ?? 0;
-      if (existingCount >= imagesPerVariant) {
-        referencesSkipped += imagesPerVariant;
-        continue;
-      }
-      const remainingSlots = Math.max(1, imagesPerVariant - existingCount);
+      const checklistEntries = exhaustivePlayerMode
+        ? deriveChecklistEntries(variant.setId, variant.parallelId, querySetOverride, checklistPlayersMap)
+        : [];
+      const targets = exhaustivePlayerMode
+        ? checklistEntries.length > 0
+          ? checklistEntries
+          : [{ playerName: "", cardNumber: "" }]
+        : [{ playerName: "", cardNumber: "" }];
+
       const existing = await prisma.cardVariantReferenceImage.findMany({
         where: {
           setId: variant.setId,
@@ -605,6 +663,7 @@ async function main() {
           rawImageUrl: true,
           sourceUrl: true,
           sourceListingId: true,
+          playerSeed: true,
         },
       });
       const existingUrls = new Set(
@@ -622,102 +681,140 @@ async function main() {
           .map((row) => String(row.sourceListingId || "").trim())
           .filter(Boolean)
       );
-
-      const images = await fetchVariantImages(apiKey, variant, remainingSlots, {
-        querySetOverride,
-        queryAliases,
-        checklistPlayersMap,
-        maxPlayerSeeds,
-        maxQueries,
-        pagesPerQuery,
-        resultsPerPage,
-        includeKeywords,
-        exactQuery,
-        refSide: refType,
-        disableDedupe: noDedupe,
-        onQueries: (queries) => {
-          if (!debugQueries) return;
-          if (debugPrinted >= debugLimit) return;
-          const matchHaystack = normalize(`${variant.setId} ${variant.parallelId}`);
-          if (debugMatch && !matchHaystack.includes(debugMatch)) return;
-          debugPrinted += 1;
-          console.log(
-            JSON.stringify(
-              {
-                debug: "queries",
-                setId: variant.setId,
-                parallelId: variant.parallelId,
-                queries,
-              },
-              null,
-              2
-            )
-          );
-        },
-      });
-      if (images.length > 0) {
-        variantsSeeded += 1;
-      }
-      const toInsert = [];
-      for (const image of images) {
-        const imageKey = canonicalizeUrl(image.rawImageUrl);
-        const sourceKey = canonicalizeUrl(image.sourceUrl);
-        if (
-          !noDedupe &&
-          ((imageKey && existingUrls.has(imageKey)) ||
-            (sourceKey && existingSourceUrls.has(sourceKey)) ||
-            (image.sourceListingId && existingListingIds.has(image.sourceListingId)))
-        ) {
-          referencesSkipped += 1;
-          continue;
-        }
-        const gate = scoreReferenceCandidate({
-          setId: variant.setId,
-          parallelId: variant.parallelId,
-          keywords: variant.keywords,
-          oddsInfo: null,
-          listingTitle: image.listingTitle,
-          sourceUrl: image.sourceUrl,
-        });
-        if (!noGate && !(gate.status === "approved" || (allowWeak && gate.status === "weak"))) {
-          referencesSkipped += 1;
-          continue;
-        }
-        if (!noDedupe) {
-          if (imageKey) existingUrls.add(imageKey);
-          if (sourceKey) existingSourceUrls.add(sourceKey);
-          if (image.sourceListingId) existingListingIds.add(image.sourceListingId);
-        }
-        toInsert.push({
-          ...image,
-        });
+      const existingByPlayerSeed = new Map();
+      for (const row of existing) {
+        const key = String(row.playerSeed || "").trim();
+        if (!key) continue;
+        existingByPlayerSeed.set(key, (existingByPlayerSeed.get(key) || 0) + 1);
       }
 
-      if (!dryRun && toInsert.length > 0) {
-        await prisma.cardVariantReferenceImage.createMany({
-          data: toInsert.map((image) => ({
+      let variantInsertedThisPass = 0;
+      for (const target of targets) {
+        const playerName = String(target.playerName || "").trim();
+        const cardNumber = String(target.cardNumber || "").trim();
+        const playerSeedKey = playerName ? `${playerName}::${cardNumber || "NA"}` : "";
+        if (exhaustivePlayerMode) {
+          checklistEntriesChecked += 1;
+          const existingForSeed = existingByPlayerSeed.get(playerSeedKey) || 0;
+          if (existingForSeed >= imagesPerVariant) {
+            referencesSkipped += imagesPerVariant;
+            continue;
+          }
+        } else {
+          const existingCount = existingCountByKey.get(variantKey) ?? 0;
+          if (existingCount >= imagesPerVariant) {
+            referencesSkipped += imagesPerVariant;
+            break;
+          }
+        }
+
+        const remainingSlots = exhaustivePlayerMode
+          ? Math.max(1, imagesPerVariant - (existingByPlayerSeed.get(playerSeedKey) || 0))
+          : Math.max(1, imagesPerVariant - (existingCountByKey.get(variantKey) ?? 0));
+        const images = await fetchVariantImages(apiKey, variant, remainingSlots, {
+          querySetOverride,
+          queryAliases,
+          checklistPlayersMap,
+          maxPlayerSeeds,
+          maxQueries,
+          pagesPerQuery,
+          resultsPerPage,
+          includeKeywords,
+          exactQuery,
+          refSide: refType,
+          disableDedupe: noDedupe,
+          forcedPlayer: playerName || undefined,
+          forcedCardNumber: cardNumber || undefined,
+          forcedPlayerSeedKey: playerSeedKey || undefined,
+          onQueries: (queries) => {
+            if (!debugQueries) return;
+            if (debugPrinted >= debugLimit) return;
+            const matchHaystack = normalize(`${variant.setId} ${variant.parallelId}`);
+            if (debugMatch && !matchHaystack.includes(debugMatch)) return;
+            debugPrinted += 1;
+            console.log(
+              JSON.stringify(
+                {
+                  debug: "queries",
+                  setId: variant.setId,
+                  parallelId: variant.parallelId,
+                  playerName: playerName || null,
+                  cardNumber: cardNumber || null,
+                  queries,
+                },
+                null,
+                2
+              )
+            );
+          },
+        });
+        const toInsert = [];
+        for (const image of images) {
+          const imageKey = canonicalizeUrl(image.rawImageUrl);
+          const sourceKey = canonicalizeUrl(image.sourceUrl);
+          if (
+            !noDedupe &&
+            ((imageKey && existingUrls.has(imageKey)) ||
+              (sourceKey && existingSourceUrls.has(sourceKey)) ||
+              (image.sourceListingId && existingListingIds.has(image.sourceListingId)))
+          ) {
+            referencesSkipped += 1;
+            continue;
+          }
+          const gate = scoreReferenceCandidate({
             setId: variant.setId,
             parallelId: variant.parallelId,
-            refType,
-            pairKey: image.sourceListingId
-              ? `${variant.setId}::${variant.parallelId}::${image.sourceListingId}`
-              : null,
-            sourceListingId: image.sourceListingId ?? null,
-            playerSeed: image.playerSeed ?? null,
-            listingTitle: image.listingTitle ?? null,
-            rawImageUrl: image.rawImageUrl,
+            keywords: variant.keywords,
+            oddsInfo: null,
+            listingTitle: image.listingTitle,
             sourceUrl: image.sourceUrl,
-            cropUrls: [],
-            cropEmbeddings: null,
-            qualityScore: null,
-          })),
-        });
-      }
-      referencesInserted += toInsert.length;
+          });
+          if (!noGate && !(gate.status === "approved" || (allowWeak && gate.status === "weak"))) {
+            referencesSkipped += 1;
+            continue;
+          }
+          if (!noDedupe) {
+            if (imageKey) existingUrls.add(imageKey);
+            if (sourceKey) existingSourceUrls.add(sourceKey);
+            if (image.sourceListingId) existingListingIds.add(image.sourceListingId);
+          }
+          toInsert.push({
+            ...image,
+            playerSeed: playerSeedKey || image.playerSeed || null,
+          });
+        }
 
-      if (delayMs > 0) {
-        await sleep(delayMs);
+        if (!dryRun && toInsert.length > 0) {
+          await prisma.cardVariantReferenceImage.createMany({
+            data: toInsert.map((image) => ({
+              setId: variant.setId,
+              parallelId: variant.parallelId,
+              refType,
+              pairKey: image.sourceListingId
+                ? `${variant.setId}::${variant.parallelId}::${image.sourceListingId}`
+                : null,
+              sourceListingId: image.sourceListingId ?? null,
+              playerSeed: image.playerSeed ?? null,
+              listingTitle: image.listingTitle ?? null,
+              rawImageUrl: image.rawImageUrl,
+              sourceUrl: image.sourceUrl,
+              cropUrls: [],
+              cropEmbeddings: null,
+              qualityScore: null,
+            })),
+          });
+        }
+        referencesInserted += toInsert.length;
+        variantInsertedThisPass += toInsert.length;
+        if (exhaustivePlayerMode && toInsert.length > 0) {
+          checklistEntriesSeeded += 1;
+          existingByPlayerSeed.set(playerSeedKey, (existingByPlayerSeed.get(playerSeedKey) || 0) + toInsert.length);
+        }
+        if (delayMs > 0) {
+          await sleep(delayMs);
+        }
       }
+      if (variantInsertedThisPass > 0) variantsSeeded += 1;
     }
 
     console.log(
@@ -727,13 +824,19 @@ async function main() {
           setFilter: setFilter || null,
           variantsChecked,
           variantsSeeded,
+          checklistEntriesChecked: exhaustivePlayerMode ? checklistEntriesChecked : null,
+          checklistEntriesSeeded: exhaustivePlayerMode ? checklistEntriesSeeded : null,
           referencesInserted,
           referencesSkipped,
           imagesPerVariant,
           refType,
           noGate,
           noDedupe,
-          mode: exactQuery ? "sniper" : "legacy-broad",
+          mode: exhaustivePlayerMode
+            ? "exhaustive-player"
+            : exactQuery
+            ? "sniper-coverage"
+            : "legacy-broad",
           checklistPlayerMap: args["checklist-player-map"]
             ? String(args["checklist-player-map"])
             : args["checklist-player-csv"]
