@@ -24,6 +24,7 @@
     "variants:sports:build-csv": "node scripts/variant-db/build-sports-variants-csv.js",
     "variants:sports:collect": "node scripts/variant-db/collect-sports-variants.js",
     "variants:sports:parse-checklist": "node scripts/variant-db/parse-checklist-players.js",
+    "variants:sports:validate-checklist": "node scripts/variant-db/validate-checklist-output.js",
     "variants:sports:seed-refs": "node scripts/variant-db/seed-sports-reference-images.js",
     "variants:sports:build-player-map": "node scripts/variant-db/build-checklist-player-map.js",
     "variants:sports:qa-queue": "node scripts/variant-db/build-qa-gap-queue.js",

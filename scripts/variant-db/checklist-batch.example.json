@@ -1,0 +1,27 @@
+{
+  "continueOnError": true,
+  "allowWarn": false,
+  "imagesPerVariant": 2,
+  "delayMs": 100,
+  "minRefs": 2,
+  "minRows": 500,
+  "maxMissingCardPct": 35,
+  "maxUnknownParallelPct": 25,
+  "sets": [
+    {
+      "setId": "2025-26 Topps Basketball",
+      "slug": "2025-26-topps-basketball",
+      "playersCsv": "data/variants/checklists/2025-26-topps-basketball.players.csv"
+    },
+    {
+      "setId": "2025 Topps Chrome Baseball",
+      "slug": "2025-topps-chrome-baseball",
+      "playersCsv": "data/variants/checklists/2025-topps-chrome-baseball.players.csv"
+    },
+    {
+      "setId": "2025 Panini Prizm Football",
+      "slug": "2025-panini-prizm-football",
+      "playersCsv": "data/variants/checklists/2025-panini-prizm-football.players.csv"
+    }
+  ]
+}

@@ -19,6 +19,7 @@ Sports automation scripts:
 - `run-sports-live.js` (single command pipeline)
 - `build-checklist-player-map.js` (convert checklist CSV rows into set+parallel+player/card map for exhaustive-player seeding)
 - `build-qa-gap-queue.js` (build missing-reference queue JSON for QA)
+- `validate-checklist-output.js` (check parsed checklist completeness/quality before seed)
 
 ## Command
 
@@ -46,8 +47,16 @@ pnpm variants:sports:run
 
 Optional controls:
 ```bash
+pnpm variants:sports:run --set-id "2025-26 Topps Basketball" --images-per-variant 4
 pnpm variants:sports:run --set-id "2025-26 Topps Basketball" --limit-variants 80 --images-per-variant 4
 pnpm variants:sports:run --skip-seed
+```
+
+Manifest-driven checklist batch (validation + map + seed + QA queue per set):
+```bash
+pnpm variants:sports:run --manifest scripts/variant-db/checklist-batch.example.json
+pnpm variants:sports:run --manifest scripts/variant-db/checklist-batch.example.json --allow-warn
+pnpm variants:sports:run --manifest scripts/variant-db/checklist-batch.example.json --batch-log-dir logs/seed-batch/manual-run
 ```
 
 ### 0.5) 2020-2026 Sports discovery -> CSV (online research automation)
@@ -92,6 +101,17 @@ pnpm variants:sports:parse-checklist \
   --out data/variants/checklists/2025-26-topps-basketball.players.csv
 ```
 
+Validate parsed checklist output (recommended gate before seed):
+```bash
+pnpm variants:sports:validate-checklist \
+  --csv data/variants/checklists/2025-26-topps-basketball.players.csv \
+  --set-id "2025-26 Topps Basketball" \
+  --min-rows 500 \
+  --max-missing-card-pct 35 \
+  --max-unknown-parallel-pct 25 \
+  --out data/variants/checklists/2025-26-topps-basketball.validation.json
+```
+
 If parsing from PDF on Linux, install:
 ```bash
 apt install -y poppler-utils
@@ -106,6 +126,24 @@ Legacy broad mode (hidden fallback only, not default):
 ```bash
 pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --legacy-broad-mode --max-player-seeds 6 --max-queries 20
 ```
+
+## Checklist Batch Manifest
+
+Reference template:
+- `scripts/variant-db/checklist-batch.example.json`
+
+Required per set:
+- `setId`
+- `playersCsv`
+
+Optional per set:
+- `slug`
+- `imagesPerVariant`
+- `delayMs`
+- `minRefs`
+- `refSide` (`front` or `back`)
+- `allowWarn`
+- `limitVariants` (only for capped test runs)
 
 Backfill quality gate on existing references:
 ```bash
