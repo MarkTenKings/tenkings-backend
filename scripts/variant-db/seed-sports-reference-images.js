@@ -586,7 +586,15 @@ async function main() {
   const allowWeak = !strictGate || Boolean(args["allow-weak"]);
   const noGate = Boolean(args["no-gate"]);
   const noDedupe = Boolean(args["no-dedupe"]);
-  const limitVariants = Math.max(1, Number(args["limit-variants"] ?? 50) || 50);
+  const limitVariantsArg = args["limit-variants"];
+  const parsedLimitVariants =
+    limitVariantsArg === undefined || limitVariantsArg === null || String(limitVariantsArg).trim() === ""
+      ? null
+      : Number(limitVariantsArg);
+  const limitVariants =
+    parsedLimitVariants !== null && Number.isFinite(parsedLimitVariants) && parsedLimitVariants > 0
+      ? Math.floor(parsedLimitVariants)
+      : null;
   const imagesPerVariant = Math.max(1, Number(args["images-per-variant"] ?? 3) || 3);
   const delayMs = Math.max(0, Number(args["delay-ms"] ?? 700) || 700);
   const setFilter = args["set-id"] ? String(args["set-id"]).trim() : "";
@@ -619,7 +627,7 @@ async function main() {
         ...(setFilter ? { setId: setFilter } : {}),
       },
       orderBy: [{ updatedAt: "desc" }],
-      take: limitVariants,
+      ...(limitVariants ? { take: limitVariants } : {}),
       select: {
         setId: true,
         cardNumber: true,
@@ -828,6 +836,7 @@ async function main() {
           checklistEntriesSeeded: exhaustivePlayerMode ? checklistEntriesSeeded : null,
           referencesInserted,
           referencesSkipped,
+          limitVariants,
           imagesPerVariant,
           refType,
           noGate,

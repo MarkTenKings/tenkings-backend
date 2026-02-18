@@ -60,7 +60,12 @@ pnpm variants:sync --source csv --csv data/variants/sports/2020-2026/sports-vari
 
 Then seed eBay reference images (exhaustive-player default):
 ```bash
-pnpm variants:sports:seed-refs --limit-variants 5000 --images-per-variant 4 --delay-ms 700 --checklist-player-map data/variants/checklists/player-map.json
+pnpm variants:sports:seed-refs --images-per-variant 4 --delay-ms 700 --checklist-player-map data/variants/checklists/player-map.json
+```
+
+Optional cap for test runs:
+```bash
+pnpm variants:sports:seed-refs --limit-variants 500 --images-per-variant 4 --delay-ms 700 --checklist-player-map data/variants/checklists/player-map.json
 ```
 
 Variant-level coverage mode (old behavior):
