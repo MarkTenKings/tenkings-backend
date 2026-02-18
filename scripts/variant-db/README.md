@@ -12,6 +12,7 @@ Sports automation scripts:
 - `discover-sports-sets.js` (discover 2020-2026 sports set/checklist pages)
 - `build-sports-variants-csv.js` (extract parallel names from discovered set pages into CSV)
 - `collect-sports-variants.js` (auto-build merged sports CSV from configured sources)
+- `parse-checklist-players.js` (parse official checklist PDF/TXT/CSV into `setId,parallelId,playerName` CSV)
 - `seed-sports-reference-images.js` (auto-seed reference images via SerpApi eBay engine only, with quality gate filtering before insert)
 - `backfill-reference-quality-gate.js` (score existing refs and optionally delete rejects)
 - `list-reference-coverage-gaps.js` (find variants with low reference count)
@@ -71,6 +72,19 @@ pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --images-per-
 Build checklist player map from CSV (columns: `setId,parallelId,playerName`):
 ```bash
 pnpm variants:sports:build-player-map --csv data/variants/checklists/2025-26-topps-basketball.players.csv --out data/variants/checklists/player-map.json
+```
+
+Parse official checklist into player CSV (Topps-first parser):
+```bash
+pnpm variants:sports:parse-checklist \
+  --set-id "2025-26 Topps Basketball" \
+  --in "https://cdn.shopify.com/s/files/1/0662/9749/5709/files/2025-26_Topps_Basketball_Checklist.pdf?v=1759329649" \
+  --out data/variants/checklists/2025-26-topps-basketball.players.csv
+```
+
+If parsing from PDF on Linux, install:
+```bash
+apt install -y poppler-utils
 ```
 
 Build QA gap queue (missing refs first):
