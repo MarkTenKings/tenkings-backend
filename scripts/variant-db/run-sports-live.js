@@ -42,10 +42,14 @@ function main() {
   const imagesPerVariant = String(args["images-per-variant"] || "3");
   const delayMs = String(args["delay-ms"] || "700");
   const setId = args["set-id"] ? String(args["set-id"]) : "";
+  const checklistPlayerMap = String(args["checklist-player-map"] || "data/variants/checklists/player-map.json");
+  const gapQueueOut = String(args["gap-queue-out"] || "data/variants/qa-gap-queue.json");
+  const minRefs = String(args["min-refs"] || imagesPerVariant);
 
   const collectScript = path.resolve(process.cwd(), "scripts/variant-db/collect-sports-variants.js");
   const syncScript = path.resolve(process.cwd(), "scripts/variant-db/sync-variant-db.js");
   const seedScript = path.resolve(process.cwd(), "scripts/variant-db/seed-sports-reference-images.js");
+  const queueScript = path.resolve(process.cwd(), "scripts/variant-db/build-qa-gap-queue.js");
 
   const collectArgs = ["--config", config, "--out", out];
   runNode(collectScript, collectArgs);
@@ -63,10 +67,15 @@ function main() {
       "--delay-ms",
       delayMs,
     ];
+    if (checklistPlayerMap) seedArgs.push("--checklist-player-map", checklistPlayerMap);
     if (setId) seedArgs.push("--set-id", setId);
     if (dryRun) seedArgs.push("--dry-run");
     runNode(seedScript, seedArgs);
   }
+
+  const queueArgs = ["--min-refs", minRefs, "--out", gapQueueOut];
+  if (setId) queueArgs.push("--set-id", setId);
+  runNode(queueScript, queueArgs);
 }
 
 main();

@@ -53,12 +53,88 @@ function loadQueryAliasesConfig(configPath) {
     return {
       setAliases: parsed?.setAliases && typeof parsed.setAliases === "object" ? parsed.setAliases : {},
       setPlayers: parsed?.setPlayers && typeof parsed.setPlayers === "object" ? parsed.setPlayers : {},
+      setParallelPlayers:
+        parsed?.setParallelPlayers && typeof parsed.setParallelPlayers === "object"
+          ? parsed.setParallelPlayers
+          : {},
       parallelAliases:
         parsed?.parallelAliases && typeof parsed.parallelAliases === "object" ? parsed.parallelAliases : {},
     };
   } catch {
-    return { setAliases: {}, setPlayers: {}, parallelAliases: {} };
+    return { setAliases: {}, setPlayers: {}, setParallelPlayers: {}, parallelAliases: {} };
   }
+}
+
+function parseCsvRow(line) {
+  const out = [];
+  let value = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"' && line[i + 1] === '"') {
+      value += '"';
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (ch === "," && !quoted) {
+      out.push(value.trim());
+      value = "";
+      continue;
+    }
+    value += ch;
+  }
+  out.push(value.trim());
+  return out;
+}
+
+function loadChecklistPlayerMap(inputPath) {
+  if (!inputPath) return {};
+  const target = path.resolve(process.cwd(), String(inputPath));
+  if (!fs.existsSync(target)) return {};
+  if (target.toLowerCase().endsWith(".json")) {
+    try {
+      const raw = fs.readFileSync(target, "utf8");
+      const parsed = JSON.parse(raw);
+      const payload =
+        parsed && parsed.setParallelPlayers && typeof parsed.setParallelPlayers === "object"
+          ? parsed.setParallelPlayers
+          : parsed;
+      return payload && typeof payload === "object" ? payload : {};
+    } catch {
+      return {};
+    }
+  }
+  const raw = fs.readFileSync(target, "utf8");
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length < 2) return {};
+  const headers = parseCsvRow(lines[0]).map((h) => normalize(h));
+  const setIdIndex = headers.findIndex((h) => h === "setid" || h === "set");
+  const parallelIndex = headers.findIndex((h) => h === "parallelid" || h === "parallel");
+  const playerIndex = headers.findIndex(
+    (h) => h === "playername" || h === "player" || h === "name" || h === "athlete"
+  );
+  if (setIdIndex < 0 || parallelIndex < 0 || playerIndex < 0) return {};
+
+  const map = {};
+  for (const line of lines.slice(1)) {
+    const cells = parseCsvRow(line);
+    const setId = String(cells[setIdIndex] || "").trim();
+    const parallelId = String(cells[parallelIndex] || "").trim();
+    const playerName = String(cells[playerIndex] || "").trim();
+    if (!setId || !parallelId || !playerName) continue;
+    const setKey = normalize(setId);
+    const parallelKey = normalize(parallelId);
+    if (!map[setKey]) map[setKey] = {};
+    if (!Array.isArray(map[setKey][parallelKey])) map[setKey][parallelKey] = [];
+    if (!map[setKey][parallelKey].some((existing) => existing.toLowerCase() === playerName.toLowerCase())) {
+      map[setKey][parallelKey].push(playerName);
+    }
+  }
+  return map;
 }
 
 function sleep(ms) {
@@ -167,8 +243,23 @@ function deriveSetSearchTerms(setId, querySetOverride, config) {
   return out;
 }
 
-function derivePlayerSeeds(setId, querySetOverride, config, maxPlayers) {
+function derivePlayerSeeds(setId, parallelId, querySetOverride, config, checklistPlayersMap, maxPlayers) {
   const key = normalize(querySetOverride || setId);
+  const parallelKey = normalize(parallelId);
+  const perParallelChecklist = checklistPlayersMap?.[key]?.[parallelKey];
+  if (Array.isArray(perParallelChecklist) && perParallelChecklist.length > 0) {
+    return perParallelChecklist
+      .map((name) => String(name || "").trim())
+      .filter(Boolean)
+      .slice(0, Math.max(0, maxPlayers));
+  }
+  const perParallelConfig = config?.setParallelPlayers?.[key]?.[parallelKey];
+  if (Array.isArray(perParallelConfig) && perParallelConfig.length > 0) {
+    return perParallelConfig
+      .map((name) => String(name || "").trim())
+      .filter(Boolean)
+      .slice(0, Math.max(0, maxPlayers));
+  }
   const list = config?.setPlayers?.[key];
   if (!Array.isArray(list)) return [];
   return list.map((name) => String(name || "").trim()).filter(Boolean).slice(0, Math.max(0, maxPlayers));
@@ -294,6 +385,7 @@ function deriveVariantTypeTerms(parallelId) {
 async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const querySetOverride = options.querySetOverride || "";
   const queryAliases = options.queryAliases || {};
+  const checklistPlayersMap = options.checklistPlayersMap || {};
   const maxPlayerSeeds = Math.max(0, Number(options.maxPlayerSeeds ?? 4) || 4);
   const maxQueries = Math.max(1, Number(options.maxQueries ?? 12) || 12);
   const pagesPerQuery = Math.max(1, Number(options.pagesPerQuery ?? 2) || 2);
@@ -307,22 +399,38 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const setTerms = deriveSetSearchTerms(variant.setId, querySetOverride, queryAliases);
   const parallelTerms = [variant.parallelId, ...deriveParallelSearchTerms(variant.parallelId, queryAliases)];
   const typeTerms = deriveVariantTypeTerms(variant.parallelId);
-  const playerSeeds = derivePlayerSeeds(variant.setId, querySetOverride, queryAliases, maxPlayerSeeds);
+  const playerSeeds = derivePlayerSeeds(
+    variant.setId,
+    variant.parallelId,
+    querySetOverride,
+    queryAliases,
+    checklistPlayersMap,
+    maxPlayerSeeds
+  );
 
   const queries = [];
   const seenQueries = new Set();
-  const addQuery = (query) => {
+  const addQuery = (query, playerSeed = null) => {
     const next = String(query || "").trim();
     if (!next) return;
     const key = next.toLowerCase();
     if (seenQueries.has(key)) return;
     seenQueries.add(key);
-    queries.push(next);
+    queries.push({ text: next, playerSeed: playerSeed ? String(playerSeed) : null });
   };
 
   if (exactQuery) {
     const exactSet = querySetOverride || variant.setId;
     addQuery(`${exactSet} ${variant.parallelId}${refSide === "back" ? " back" : ""}`.trim());
+    for (const parallelTerm of parallelTerms) {
+      addQuery(`${exactSet} ${parallelTerm}${refSide === "back" ? " back" : ""}`.trim());
+      for (const player of playerSeeds) {
+        addQuery(
+          `${exactSet} ${parallelTerm} ${player}${refSide === "back" ? " back" : ""}`.trim(),
+          player
+        );
+      }
+    }
   } else {
     for (const setTerm of setTerms) {
       const setVariant = { ...variant, setId: setTerm };
@@ -365,13 +473,13 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
     }
   }
   if (onQueries) {
-    onQueries(queries.slice(0, maxQueries));
+    onQueries(queries.slice(0, maxQueries).map((entry) => entry.text));
   }
 
   const rows = [];
   const seen = new Set();
-  for (const query of queries.slice(0, maxQueries)) {
-    const batch = await fetchSerpImages(apiKey, query, Math.max(count, 8), {
+  for (const queryEntry of queries.slice(0, maxQueries)) {
+    const batch = await fetchSerpImages(apiKey, queryEntry.text, Math.max(count, 8), {
       pages: pagesPerQuery,
       resultsPerPage,
       disableDedupe,
@@ -379,7 +487,10 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
     for (const image of batch) {
       if (seen.has(image.rawImageUrl)) continue;
       seen.add(image.rawImageUrl);
-      rows.push(image);
+      rows.push({
+        ...image,
+        playerSeed: queryEntry.playerSeed || null,
+      });
       if (rows.length >= Math.max(count * 4, 12)) return rows;
     }
   }
@@ -431,17 +542,19 @@ async function main() {
   const delayMs = Math.max(0, Number(args["delay-ms"] ?? 700) || 700);
   const setFilter = args["set-id"] ? String(args["set-id"]).trim() : "";
   const querySetOverride = args["query-set"] ? String(args["query-set"]).trim() : "";
-  const maxPlayerSeeds = Math.max(0, Number(args["max-player-seeds"] ?? 0) || 0);
-  const maxQueries = Math.max(1, Number(args["max-queries"] ?? 1) || 1);
+  const maxPlayerSeeds = Math.max(0, Number(args["max-player-seeds"] ?? 24) || 24);
+  const maxQueries = Math.max(1, Number(args["max-queries"] ?? 80) || 80);
   const pagesPerQuery = Math.max(1, Number(args["pages-per-query"] ?? 1) || 1);
   const resultsPerPage = Math.max(10, Math.min(240, Number(args["results-per-page"] ?? 100) || 100));
   const includeKeywords = false;
-  const exactQuery = !Boolean(args["expanded-query"]);
+  const legacyBroadMode = Boolean(args["legacy-broad-mode"]);
+  const exactQuery = !legacyBroadMode;
   const refType = String(args["ref-side"] || "front").trim().toLowerCase() === "back" ? "back" : "front";
   const debugQueries = Boolean(args["debug-queries"]);
   const debugLimit = Math.max(1, Number(args["debug-limit"] ?? 20) || 20);
   const debugMatch = args["debug-match"] ? normalize(String(args["debug-match"])) : "";
   const queryAliases = loadQueryAliasesConfig(args["query-aliases-config"]);
+  const checklistPlayersMap = loadChecklistPlayerMap(args["checklist-player-map"] || args["checklist-player-csv"]);
   const apiKey = process.env.SERPAPI_KEY ?? "";
 
   if (!apiKey) {
@@ -513,6 +626,7 @@ async function main() {
       const images = await fetchVariantImages(apiKey, variant, remainingSlots, {
         querySetOverride,
         queryAliases,
+        checklistPlayersMap,
         maxPlayerSeeds,
         maxQueries,
         pagesPerQuery,
@@ -589,7 +703,7 @@ async function main() {
               ? `${variant.setId}::${variant.parallelId}::${image.sourceListingId}`
               : null,
             sourceListingId: image.sourceListingId ?? null,
-            playerSeed: null,
+            playerSeed: image.playerSeed ?? null,
             listingTitle: image.listingTitle ?? null,
             rawImageUrl: image.rawImageUrl,
             sourceUrl: image.sourceUrl,
@@ -619,6 +733,12 @@ async function main() {
           refType,
           noGate,
           noDedupe,
+          mode: exactQuery ? "sniper" : "legacy-broad",
+          checklistPlayerMap: args["checklist-player-map"]
+            ? String(args["checklist-player-map"])
+            : args["checklist-player-csv"]
+            ? String(args["checklist-player-csv"])
+            : null,
         },
         null,
         2

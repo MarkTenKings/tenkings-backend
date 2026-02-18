@@ -20,6 +20,18 @@
       "Paolo Banchero"
     ]
   },
+  "setParallelPlayers": {
+    "2025-26 topps basketball": {
+      "8-bit ballers": [
+        "LeBron James",
+        "Victor Wembanyama"
+      ],
+      "no limit": [
+        "Jayson Tatum",
+        "Nikola Jokic"
+      ]
+    }
+  },
   "parallelAliases": {
     "holo foil": ["Holofoil", "Holo"],
     "aqua holo foil": ["Aqua Holofoil", "Aqua Holo"],

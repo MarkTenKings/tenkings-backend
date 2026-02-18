@@ -16,6 +16,8 @@ Sports automation scripts:
 - `backfill-reference-quality-gate.js` (score existing refs and optionally delete rejects)
 - `list-reference-coverage-gaps.js` (find variants with low reference count)
 - `run-sports-live.js` (single command pipeline)
+- `build-checklist-player-map.js` (convert checklist CSV rows into set+parallel+player map for sniper seeding)
+- `build-qa-gap-queue.js` (build missing-reference queue JSON for QA)
 
 ## Command
 
@@ -55,20 +57,30 @@ pnpm variants:sync --source csv --csv data/variants/sports/2020-2026/sports-vari
 pnpm variants:sync --source csv --csv data/variants/sports/2020-2026/sports-variants.auto.csv
 ```
 
-Then seed eBay reference images:
+Then seed eBay reference images (sniper mode default):
 ```bash
-pnpm variants:sports:seed-refs --limit-variants 5000 --images-per-variant 4 --delay-ms 700
+pnpm variants:sports:seed-refs --limit-variants 5000 --images-per-variant 4 --delay-ms 700 --checklist-player-map data/variants/checklists/player-map.json
 ```
 
 Seed front and back separately with pairing keys:
 ```bash
-pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --images-per-variant 2 --ref-side front --delay-ms 100
-pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --images-per-variant 2 --ref-side back --delay-ms 100
+pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --images-per-variant 2 --ref-side front --delay-ms 100 --checklist-player-map data/variants/checklists/player-map.json
+pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --images-per-variant 2 --ref-side back --delay-ms 100 --checklist-player-map data/variants/checklists/player-map.json
 ```
 
-Hard-variant query expansion options:
+Build checklist player map from CSV (columns: `setId,parallelId,playerName`):
 ```bash
-pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --images-per-variant 2 --allow-weak --query-set "2026 Topps Basketball" --max-player-seeds 6 --max-queries 20
+pnpm variants:sports:build-player-map --csv data/variants/checklists/2025-26-topps-basketball.players.csv --out data/variants/checklists/player-map.json
+```
+
+Build QA gap queue (missing refs first):
+```bash
+pnpm variants:sports:qa-queue --set-id "2025-26 Topps Basketball" --min-refs 2 --out data/variants/qa-gap-queue.json
+```
+
+Legacy broad mode (hidden fallback only, not default):
+```bash
+pnpm variants:sports:seed-refs --set-id "2025-26 Topps Basketball" --legacy-broad-mode --max-player-seeds 6 --max-queries 20
 ```
 
 Backfill quality gate on existing references:

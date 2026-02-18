@@ -24,6 +24,8 @@
     "variants:sports:build-csv": "node scripts/variant-db/build-sports-variants-csv.js",
     "variants:sports:collect": "node scripts/variant-db/collect-sports-variants.js",
     "variants:sports:seed-refs": "node scripts/variant-db/seed-sports-reference-images.js",
+    "variants:sports:build-player-map": "node scripts/variant-db/build-checklist-player-map.js",
+    "variants:sports:qa-queue": "node scripts/variant-db/build-qa-gap-queue.js",
     "variants:sports:backfill-ref-quality": "node scripts/variant-db/backfill-reference-quality-gate.js",
     "variants:sports:coverage-gaps": "node scripts/variant-db/list-reference-coverage-gaps.js",
     "variants:sports:run": "node scripts/variant-db/run-sports-live.js",

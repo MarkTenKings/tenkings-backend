@@ -62,6 +62,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (req.method === "GET") {
       const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
       const take = Math.min(2000, Math.max(1, Number(req.query.limit ?? 1000) || 1000));
+      const gapOnly = String(req.query.gapOnly || "").trim().toLowerCase() === "true";
+      const minRefs = Math.max(1, Number(req.query.minRefs ?? 2) || 2);
       const where = q
         ? {
             OR: [
@@ -139,15 +141,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         previewByKey.set(`${row.setId}::${row.parallelId}`, preview);
       }
 
-      return res.status(200).json({
-        variants: variants.map((variant) => {
-          const key = `${variant.setId}::${variant.parallelId}`;
-          return toRow(variant, {
-            referenceCount: countByKey.get(key) ?? 0,
-            previewImageUrl: previewByKey.get(key) ?? null,
-          });
-        }),
+      const rows = variants.map((variant) => {
+        const key = `${variant.setId}::${variant.parallelId}`;
+        return toRow(variant, {
+          referenceCount: countByKey.get(key) ?? 0,
+          previewImageUrl: previewByKey.get(key) ?? null,
+        });
       });
+      const filtered = gapOnly ? rows.filter((row) => row.referenceCount < minRefs) : rows;
+      filtered.sort((a, b) => {
+        const diff = a.referenceCount - b.referenceCount;
+        if (diff !== 0) return diff;
+        return (
+          a.setId.localeCompare(b.setId) ||
+          a.cardNumber.localeCompare(b.cardNumber) ||
+          a.parallelId.localeCompare(b.parallelId)
+        );
+      });
+
+      return res.status(200).json({ variants: filtered });
     }
 
     if (req.method === "POST") {

@@ -52,6 +52,8 @@ export default function VariantRefQaPage() {
   );
 
   const [query, setQuery] = useState("");
+  const [gapOnly, setGapOnly] = useState(true);
+  const [minRefs, setMinRefs] = useState(2);
   const [variantTypeFilter, setVariantTypeFilter] = useState<"all" | "insert" | "parallel">("all");
   const [variants, setVariants] = useState<VariantRow[]>([]);
   const [refs, setRefs] = useState<ReferenceRow[]>([]);
@@ -70,7 +72,13 @@ export default function VariantRefQaPage() {
     if (!session?.token) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/admin/variants?q=${encodeURIComponent(query.trim())}&limit=2000`, {
+      const params = new URLSearchParams({
+        q: query.trim(),
+        limit: "2000",
+        gapOnly: gapOnly ? "true" : "false",
+        minRefs: String(Math.max(1, minRefs || 1)),
+      });
+      const res = await fetch(`/api/admin/variants?${params.toString()}`, {
         headers: { ...adminHeaders },
       });
       const payload = await res.json().catch(() => ({}));
@@ -85,7 +93,7 @@ export default function VariantRefQaPage() {
     } finally {
       setBusy(false);
     }
-  }, [adminHeaders, query, session?.token]);
+  }, [adminHeaders, gapOnly, minRefs, query, session?.token]);
 
   const displayedVariants = useMemo(() => {
     if (variantTypeFilter === "all") return variants;
@@ -400,6 +408,25 @@ export default function VariantRefQaPage() {
               <option value="insert">Inserts</option>
               <option value="parallel">Parallels</option>
             </select>
+            <label className="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-2 text-[11px] uppercase tracking-[0.22em] text-slate-200">
+              <input
+                type="checkbox"
+                checked={gapOnly}
+                onChange={(event) => setGapOnly(event.target.checked)}
+                className="h-4 w-4 accent-gold-400"
+              />
+              Gap Queue
+            </label>
+            <label className="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-2 text-[11px] uppercase tracking-[0.22em] text-slate-200">
+              Min Refs
+              <input
+                type="number"
+                min={1}
+                value={minRefs}
+                onChange={(event) => setMinRefs(Math.max(1, Number(event.target.value) || 1))}
+                className="w-16 rounded border border-white/20 bg-night-900 px-2 py-1 text-[11px] text-white"
+              />
+            </label>
           </div>
           <div className="mt-4 max-h-72 overflow-auto rounded-xl border border-white/10">
             <table className="w-full text-left text-xs text-slate-300">
