@@ -24,6 +24,15 @@ type ResponseBody =
   | { ok: true }
   | { message: string };
 
+function keyFromStoredImage(value: string | null | undefined) {
+  const input = String(value || "").trim();
+  if (!input) return null;
+  if (/^https?:\/\//i.test(input)) {
+    return managedStorageKeyFromUrl(input);
+  }
+  return input;
+}
+
 function toRow(
   variant: any,
   extras?: {
@@ -118,7 +127,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         const rawImageUrl = String((row as any).rawImageUrl || "");
         const storageKey = String((row as any).storageKey || "").trim();
         let preview = cropUrls[0] || rawImageUrl;
-        const keyForPreview = storageKey || managedStorageKeyFromUrl(preview);
+        const keyForPreview = storageKey || keyFromStoredImage(preview);
         if (mode === "s3" && keyForPreview) {
           try {
             preview = await presignReadUrl(keyForPreview, 60 * 30);

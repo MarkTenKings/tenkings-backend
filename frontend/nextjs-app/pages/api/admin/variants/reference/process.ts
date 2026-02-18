@@ -4,7 +4,7 @@ import { prisma } from "@tenkings/database";
 import { Prisma } from "@prisma/client";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { withAdminCors } from "../../../../../lib/server/cors";
-import { uploadBuffer, normalizeStorageUrl, readStorageBuffer } from "../../../../../lib/server/storage";
+import { uploadBuffer, managedStorageKeyFromUrl, readStorageBuffer } from "../../../../../lib/server/storage";
 import { buildSiteUrl } from "../../../../../lib/server/urls";
 import { photoroomQueue } from "../../../../../lib/server/queues";
 
@@ -49,6 +49,15 @@ async function runPhotoroom(buffer: Buffer, apiKey: string): Promise<Buffer> {
 
 function asAbsolute(url: string) {
   return /^https?:\/\//i.test(url) ? url : buildSiteUrl(url);
+}
+
+function toManagedKey(value: string | null | undefined) {
+  const input = String(value || "").trim();
+  if (!input) return null;
+  if (/^https?:\/\//i.test(input)) {
+    return managedStorageKeyFromUrl(input);
+  }
+  return input;
 }
 
 export default withAdminCors(async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
@@ -112,29 +121,33 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
             sourceBuffer = await readStorageBuffer(ref.storageKey).catch(() => null);
           }
           if (!sourceBuffer) {
-            const sourceUrl = ref.cropUrls?.[0] || ref.rawImageUrl;
-            if (!sourceUrl) {
+            const sourceCandidate = String(ref.cropUrls?.[0] || ref.rawImageUrl || "").trim();
+            if (!sourceCandidate) {
               skipped += 1;
               continue;
             }
-            const response = await fetch(asAbsolute(sourceUrl));
-            if (!response.ok) {
-              skipped += 1;
-              continue;
+            const sourceKey = toManagedKey(sourceCandidate);
+            if (sourceKey) {
+              sourceBuffer = await readStorageBuffer(sourceKey).catch(() => null);
             }
-            sourceBuffer = Buffer.from(await response.arrayBuffer());
+            if (!sourceBuffer) {
+              const response = await fetch(asAbsolute(sourceCandidate));
+              if (!response.ok) {
+                skipped += 1;
+                continue;
+              }
+              sourceBuffer = Buffer.from(await response.arrayBuffer());
+            }
           }
           const processedBuffer = await runPhotoroom(sourceBuffer, apiKey);
           const storageKey = `variants/${ref.setId}/${ref.parallelId}/processed/${ref.refType || "front"}-${Date.now()}-${crypto
             .randomUUID()
             .slice(0, 8)}.png`;
-          const uploaded = await uploadBuffer(storageKey, processedBuffer, "image/png");
-          const normalized = normalizeStorageUrl(uploaded) ?? uploaded;
-          const absolute = asAbsolute(normalized);
+          await uploadBuffer(storageKey, processedBuffer, "image/png");
           const existingCropUrls = Array.isArray((ref as any).cropUrls)
             ? ((ref as any).cropUrls as string[]).filter(Boolean)
             : [];
-          const nextCropUrls = [absolute, ...existingCropUrls].slice(0, 6);
+          const nextCropUrls = [storageKey, ...existingCropUrls.filter((entry) => entry !== storageKey)].slice(0, 6);
           await prisma.cardVariantReferenceImage.update({
             where: { id: ref.id },
             data: {

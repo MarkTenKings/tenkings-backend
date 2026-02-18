@@ -61,6 +61,15 @@ function parseListingId(url: string | null | undefined) {
   return null;
 }
 
+function keyFromStoredImage(value: string | null | undefined) {
+  const input = String(value || "").trim();
+  if (!input) return null;
+  if (/^https?:\/\//i.test(input)) {
+    return managedStorageKeyFromUrl(input);
+  }
+  return input;
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
   try {
     await requireAdminSession(req);
@@ -130,7 +139,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         references.map(async (reference) => {
           const row = toRow(reference);
           if (mode === "s3") {
-            const rawKey = row.storageKey || managedStorageKeyFromUrl(row.rawImageUrl);
+            const rawKey = row.storageKey || keyFromStoredImage(row.rawImageUrl);
             if (rawKey) {
               try {
                 row.rawImageUrl = await presignReadUrl(rawKey, 60 * 30);
@@ -141,7 +150,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             if (Array.isArray(row.cropUrls) && row.cropUrls.length) {
               const signedCropUrls: string[] = [];
               for (const cropUrl of row.cropUrls) {
-                const cropKey = managedStorageKeyFromUrl(cropUrl);
+                const cropKey = keyFromStoredImage(cropUrl);
                 if (!cropKey) {
                   signedCropUrls.push(cropUrl);
                   continue;
