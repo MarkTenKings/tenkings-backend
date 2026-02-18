@@ -232,7 +232,6 @@ export function normalizeStorageUrl(input: string | null | undefined) {
       return input;
     }
 
-    url.pathname = url.pathname.toLowerCase();
     return url.toString();
   } catch {
     return input;
