@@ -190,34 +190,6 @@ export default function VariantRefQaPage() {
     }
   };
 
-  const setQaStatus = async (qaStatus: "keep" | "reject" | "pending") => {
-    if (!selectedRefIds.length) {
-      setStatus({ type: "error", message: "Select at least one reference image." });
-      return;
-    }
-    setBusy(true);
-    try {
-      const res = await fetch("/api/admin/variants/reference", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", ...adminHeaders },
-        body: JSON.stringify({ ids: selectedRefIds, qaStatus }),
-      });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(payload?.message ?? "Failed to update QA status");
-      }
-      await loadRefs();
-      setStatus({ type: "success", message: `Marked ${selectedRefIds.length} reference(s) as ${qaStatus}.` });
-    } catch (error) {
-      setStatus({
-        type: "error",
-        message: error instanceof Error ? error.message : "Failed to update QA status",
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const promoteSelected = async () => {
     if (!selectedRefIds.length) {
       setStatus({ type: "error", message: "Select at least one reference image." });
@@ -238,7 +210,7 @@ export default function VariantRefQaPage() {
       await loadVariants();
       setStatus({
         type: "success",
-        message: `Promoted ${payload?.promoted ?? 0} refs to owned. Skipped ${payload?.skipped ?? 0}.`,
+        message: `Saved ${payload?.promoted ?? 0} refs. Already owned ${payload?.alreadyOwned ?? 0}. Skipped ${payload?.skipped ?? 0}.`,
       });
     } catch (error) {
       setStatus({
@@ -508,14 +480,6 @@ export default function VariantRefQaPage() {
                 className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-slate-200 disabled:opacity-60"
               >
                 Refresh Refs
-              </button>
-              <button
-                type="button"
-                onClick={() => void setQaStatus("keep")}
-                disabled={busy || selectedRefIds.length === 0}
-                className="rounded-full border border-emerald-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-emerald-200 disabled:opacity-60"
-              >
-                Keep Selected
               </button>
               <button
                 type="button"
