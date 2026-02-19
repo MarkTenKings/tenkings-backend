@@ -59,6 +59,37 @@ function runNodeOrThrow(script, args, options = {}) {
   }
 }
 
+function runNodeCaptureOrThrow(script, args, options = {}) {
+  const result = spawnSync(process.execPath, [script, ...args], {
+    stdio: ["inherit", "pipe", "pipe"],
+    encoding: "utf8",
+    cwd: options.cwd || process.cwd(),
+    env: process.env,
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) {
+    throw result.error;
+  }
+  const status = result.status || 0;
+  if (status !== 0) {
+    throw new Error(`${path.basename(script)} exited with code ${status}`);
+  }
+  return String(result.stdout || "");
+}
+
+function tryParseLastJsonObject(text) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+  const start = raw.lastIndexOf("\n{");
+  const candidate = start >= 0 ? raw.slice(start + 1).trim() : raw;
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    return null;
+  }
+}
+
 function loadJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
@@ -214,7 +245,11 @@ function runManifestBatch(args) {
           seedArgs.push("--limit-variants", String(limitVariantsValue));
         }
         if (dryRun) seedArgs.push("--dry-run");
-        runNodeOrThrow(seedScript, seedArgs);
+        const seedStdout = runNodeCaptureOrThrow(seedScript, seedArgs);
+        const seedSummary = tryParseLastJsonObject(seedStdout);
+        if (seedSummary && Number.isFinite(Number(seedSummary.referencesInserted))) {
+          setSummary.refsInserted = Number(seedSummary.referencesInserted);
+        }
       }
 
       runNodeOrThrow(queueScript, [
