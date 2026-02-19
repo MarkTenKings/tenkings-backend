@@ -811,7 +811,7 @@ async function main() {
             sourceUrl: sanitizeNullableText(image.sourceUrl),
             sourceListingId: sanitizeNullableText(image.sourceListingId),
             listingTitle: sanitizeNullableText(image.listingTitle),
-            playerSeed: playerSeedKey || image.playerSeed || null,
+            playerSeed: sanitizeNullableText(playerSeedKey || image.playerSeed || null),
           });
         }
 
