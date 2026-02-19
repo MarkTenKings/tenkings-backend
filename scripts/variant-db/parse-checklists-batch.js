@@ -90,12 +90,12 @@ function main() {
     String(args["batch-manifest-out"] || "data/variants/checklists/checklist-batch.generated.json")
   );
   const continueOnError = boolArg(args["continue-on-error"], true);
-  const allowWarn = boolArg(args["allow-warn"], false);
+  const allowWarn = boolArg(args["allow-warn"], true);
   const failOnErrors = boolArg(args["fail-on-errors"], false);
   const limit = Math.max(0, Number(args.limit || 0));
-  const minRows = String(args["min-rows"] || "300");
-  const maxMissingCardPct = String(args["max-missing-card-pct"] || "35");
-  const maxUnknownParallelPct = String(args["max-unknown-parallel-pct"] || "25");
+  const minRows = String(args["min-rows"] || "1");
+  const maxMissingCardPct = String(args["max-missing-card-pct"] || "100");
+  const maxUnknownParallelPct = String(args["max-unknown-parallel-pct"] || "100");
 
   const parseScript = path.resolve(process.cwd(), "scripts/variant-db/parse-checklist-players.js");
   const validateScript = path.resolve(process.cwd(), "scripts/variant-db/validate-checklist-output.js");

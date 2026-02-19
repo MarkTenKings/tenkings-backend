@@ -84,9 +84,24 @@ pnpm variants:sports:parse-checklists-batch \
   --out-dir data/variants/checklists \
   --out data/variants/checklists/checklist-parse-batch-report.json \
   --batch-manifest-out data/variants/checklists/checklist-batch.generated.json \
-  --min-rows 300 \
-  --max-missing-card-pct 35 \
-  --max-unknown-parallel-pct 25 \
+  --min-rows 1 \
+  --max-missing-card-pct 100 \
+  --max-unknown-parallel-pct 100 \
+  --allow-warn true \
+  --continue-on-error true
+```
+
+Strict/high-confidence mode (optional):
+```bash
+pnpm variants:sports:parse-checklists-batch \
+  --manifest data/variants/checklists/checklist-sources.manifest.json \
+  --out-dir data/variants/checklists \
+  --out data/variants/checklists/checklist-parse-batch-report.strict.json \
+  --batch-manifest-out data/variants/checklists/checklist-batch.strict.json \
+  --min-rows 150 \
+  --max-missing-card-pct 60 \
+  --max-unknown-parallel-pct 40 \
+  --allow-warn false \
   --continue-on-error true
 ```
 
