@@ -13,3 +13,13 @@ coverage/
 tenkings-backend/
 
 env/
+
+# Local Python/runtime artifacts
+**/__pycache__/
+backend/variant-embedding-service/.venv/
+
+# Local TypeScript incremental build cache
+frontend/nextjs-app/tsconfig.tsbuildinfo
+
+# Generated variant pipeline artifact
+data/variants/sports.auto.csv
