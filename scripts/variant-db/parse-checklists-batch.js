@@ -91,6 +91,7 @@ function main() {
   );
   const continueOnError = boolArg(args["continue-on-error"], true);
   const allowWarn = boolArg(args["allow-warn"], false);
+  const failOnErrors = boolArg(args["fail-on-errors"], false);
   const limit = Math.max(0, Number(args.limit || 0));
   const minRows = String(args["min-rows"] || "300");
   const maxMissingCardPct = String(args["max-missing-card-pct"] || "35");
@@ -129,7 +130,7 @@ function main() {
 
   const batchManifest = {
     continueOnError: true,
-    allowWarn: false,
+    allowWarn,
     imagesPerVariant: 2,
     delayMs: 100,
     minRefs: 2,
@@ -158,16 +159,48 @@ function main() {
     const csvOut = path.join(outDir, `${slug}.players.csv`);
     const validationOut = path.join(outDir, `${slug}.validation.json`);
 
-    const parseArgsList = ["--set-id", setId, "--in", sourceUrl, "--out", path.relative(process.cwd(), csvOut)];
-    if (row.sourceFormat && row.sourceFormat !== "txt") {
-      parseArgsList.push("--format", String(row.sourceFormat));
-    }
-    if (row.sport) {
-      parseArgsList.push("--sport", String(row.sport));
+    const parseAttempts = [];
+    const attempted = new Set();
+    const enqueueParseAttempt = (inputUrl, format, label) => {
+      const url = String(inputUrl || "").trim();
+      if (!url) return;
+      const key = `${url}::${String(format || "").trim().toLowerCase() || "auto"}`;
+      if (attempted.has(key)) return;
+      attempted.add(key);
+      parseAttempts.push({ inputUrl: url, format: String(format || "").trim(), label });
+    };
+
+    const sourceFormat = String(row.sourceFormat || "").trim().toLowerCase();
+    enqueueParseAttempt(sourceUrl, sourceFormat && sourceFormat !== "txt" ? sourceFormat : "", "primary");
+    enqueueParseAttempt(sourceUrl, "", "primary-auto");
+    if (row.setUrl && String(row.setUrl).trim() !== sourceUrl) {
+      enqueueParseAttempt(String(row.setUrl), "txt", "set-page-fallback");
     }
 
-    const parseResult = runNode(parseScript, parseArgsList, process.cwd());
-    if (parseResult.status !== 0) {
+    let parseResult = null;
+    let parseJson = null;
+    let parseUsed = null;
+    const parseErrors = [];
+    for (const attempt of parseAttempts) {
+      const parseArgsList = ["--set-id", setId, "--in", attempt.inputUrl, "--out", path.relative(process.cwd(), csvOut)];
+      if (attempt.format) {
+        parseArgsList.push("--format", attempt.format);
+      }
+      if (row.sport) {
+        parseArgsList.push("--sport", String(row.sport));
+      }
+      const candidateResult = runNode(parseScript, parseArgsList, process.cwd());
+      if (candidateResult.status === 0) {
+        parseResult = candidateResult;
+        parseJson = parseLastJsonBlock(candidateResult.stdout);
+        parseUsed = attempt;
+        break;
+      }
+      const msg = candidateResult.stderr.trim() || candidateResult.stdout.trim() || `exit ${candidateResult.status}`;
+      parseErrors.push(`${attempt.label}: ${msg}`);
+    }
+
+    if (!parseResult) {
       report.totals.failed += 1;
       report.rows.push({
         setId,
@@ -175,14 +208,13 @@ function main() {
         sourceUrl,
         status: "failed",
         step: "parse",
-        reason: parseResult.stderr.trim() || parseResult.stdout.trim() || `exit ${parseResult.status}`,
+        reason: parseErrors.join(" || "),
       });
       if (!continueOnError) break;
       continue;
     }
 
     report.totals.parsed += 1;
-    const parseJson = parseLastJsonBlock(parseResult.stdout);
 
     const validateArgsList = [
       "--csv",
@@ -232,6 +264,8 @@ function main() {
       slug,
       sourceUrl,
       sourceFormat: row.sourceFormat || null,
+      parseInputUsed: parseUsed ? parseUsed.inputUrl : null,
+      parseModeUsed: parseUsed ? parseUsed.label : null,
       csvOut: path.relative(process.cwd(), csvOut),
       validationOut: path.relative(process.cwd(), validationOut),
       parseRows: Number(parseJson?.rows || 0) || null,
@@ -257,7 +291,7 @@ function main() {
     )
   );
 
-  if (report.totals.failed > 0) {
+  if (failOnErrors && report.totals.failed > 0) {
     process.exit(1);
   }
 }

@@ -283,19 +283,36 @@ function parseChecklistCsv(csvText, setIdOverride = "") {
   if (lines.length < 2) return [];
   const headers = parseCsvRow(lines[0]).map((h) => normalize(h));
   const setIdIndex = headers.findIndex((h) => h === "setid" || h === "set");
-  const parallelIndex = headers.findIndex((h) => h === "parallelid" || h === "parallel" || h === "insertset");
+  const parallelIndex = headers.findIndex(
+    (h) =>
+      h === "parallelid" ||
+      h === "parallel" ||
+      h === "insertset" ||
+      h === "insert" ||
+      h === "subset" ||
+      h === "program" ||
+      h === "series" ||
+      h === "setname" ||
+      h === "insertname"
+  );
   const playerIndex = headers.findIndex(
-    (h) => h === "playername" || h === "player" || h === "name" || h === "athlete"
+    (h) =>
+      h === "playername" ||
+      h === "player" ||
+      h === "name" ||
+      h === "athlete" ||
+      h === "subject" ||
+      h === "fullname"
   );
   const cardNumberIndex = headers.findIndex((h) => h === "cardnumber" || h === "card" || h === "cardno");
-  if (parallelIndex < 0 || playerIndex < 0) {
-    throw new Error("CSV requires at least parallelId and playerName columns");
+  if (playerIndex < 0) {
+    throw new Error("CSV requires at least playerName column");
   }
   const rows = [];
   for (const line of lines.slice(1)) {
     const cells = parseCsvRow(line);
     const setId = setIdOverride || String(cells[setIdIndex] || "").trim();
-    const parallelId = String(cells[parallelIndex] || "").trim();
+    const parallelId = parallelIndex >= 0 ? String(cells[parallelIndex] || "").trim() : "Base Set";
     const playerName = String(cells[playerIndex] || "").trim();
     const cardNumber = cardNumberIndex >= 0 ? String(cells[cardNumberIndex] || "").trim() : "";
     if (!setId || !parallelId || !playerName) continue;

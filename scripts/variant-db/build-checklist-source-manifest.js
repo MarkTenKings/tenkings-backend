@@ -69,7 +69,7 @@ function extractLinks(html, baseUrl) {
 function guessFormat(url) {
   const low = String(url || "").toLowerCase();
   if (low.includes(".csv")) return "csv";
-  if (low.includes(".xlsx") || low.includes(".xls")) return "csv";
+  if (low.includes(".xlsx") || low.includes(".xls")) return "xlsx";
   if (low.includes(".pdf")) return "pdf";
   if (low.includes(".txt")) return "txt";
   return "txt";
@@ -81,6 +81,7 @@ function scoreChecklistLink(link) {
   if (/\bchecklist\b/.test(haystack)) score += 20;
   if (/\b(download|xlsx|xls|spreadsheet|csv)\b/.test(haystack)) score += 20;
   if (/\b(pdf)\b/.test(haystack) || /\.pdf(?:$|\?)/.test(link.href)) score += 10;
+  if (/\.(xlsx?|xls)(?:$|\?)/.test(link.href)) score -= 10;
   if (/topps\.com|beckett\.com|cardboardconnection\.com|shopify\.com/.test(haystack)) score += 5;
   if (/baseball|basketball|football|nfl|nba|mlb/.test(haystack)) score += 4;
   if (/\/news\//.test(link.href)) score -= 3;
@@ -149,9 +150,14 @@ async function main() {
         .sort((a, b) => b.score - a.score);
       candidateCount = candidates.length;
       if (candidates.length > 0 && candidates[0].score >= 8) {
-        sourceUrl = candidates[0].href;
-        sourceFormat = guessFormat(candidates[0].href);
-        bestScore = candidates[0].score;
+        const preferred = candidates.find((candidate) => {
+          const format = guessFormat(candidate.href);
+          return format === "pdf" || format === "txt" || format === "csv";
+        });
+        const chosen = preferred || candidates[0];
+        sourceUrl = chosen.href;
+        sourceFormat = guessFormat(chosen.href);
+        bestScore = chosen.score;
       } else {
         sourceUrl = row.setUrl;
         sourceFormat = "txt";
