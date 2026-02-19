@@ -6,6 +6,11 @@ type ResponseBody =
   | { inserted: number; skipped: number }
   | { message: string };
 
+type SeedImageRow = {
+  rawImageUrl: string;
+  sourceUrl: string | null;
+};
+
 const SERPAPI_ENDPOINT = "https://serpapi.com/search.json";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
@@ -58,14 +63,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             : "",
         sourceUrl: typeof image?.link === "string" ? image.link.trim() : null,
       }))
-      .filter((row) => row.rawImageUrl)
-      .filter((row) => {
+      .filter((row: SeedImageRow) => row.rawImageUrl)
+      .filter((row: SeedImageRow) => {
         if (seen.has(row.rawImageUrl)) return false;
         seen.add(row.rawImageUrl);
         return true;
       })
       .slice(0, safeLimit)
-      .map((row) => ({
+      .map((row: SeedImageRow) => ({
         setId: String(setId).trim(),
         parallelId: String(parallelId).trim(),
         rawImageUrl: row.rawImageUrl,
