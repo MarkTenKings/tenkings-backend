@@ -44,6 +44,20 @@ function normalize(value) {
     .trim();
 }
 
+function sanitizeText(value) {
+  return String(value ?? "")
+    .replace(/\u0000/g, "")
+    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function sanitizeNullableText(value) {
+  if (value === undefined || value === null) return null;
+  const cleaned = sanitizeText(value);
+  return cleaned || null;
+}
+
 function loadQueryAliasesConfig(configPath) {
   const fallback = path.resolve(__dirname, "query-aliases.json");
   const target = configPath ? path.resolve(process.cwd(), String(configPath)) : fallback;
@@ -786,8 +800,17 @@ async function main() {
             if (sourceKey) existingSourceUrls.add(sourceKey);
             if (image.sourceListingId) existingListingIds.add(image.sourceListingId);
           }
+          const safeRawImageUrl = sanitizeText(image.rawImageUrl);
+          if (!safeRawImageUrl) {
+            referencesSkipped += 1;
+            continue;
+          }
           toInsert.push({
             ...image,
+            rawImageUrl: safeRawImageUrl,
+            sourceUrl: sanitizeNullableText(image.sourceUrl),
+            sourceListingId: sanitizeNullableText(image.sourceListingId),
+            listingTitle: sanitizeNullableText(image.listingTitle),
             playerSeed: playerSeedKey || image.playerSeed || null,
           });
         }
