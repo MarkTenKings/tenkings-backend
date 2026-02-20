@@ -65,6 +65,7 @@ function runNodeCaptureOrThrow(script, args, options = {}) {
     encoding: "utf8",
     cwd: options.cwd || process.cwd(),
     env: process.env,
+    ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
   });
   if (result.stdout) process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
@@ -73,9 +74,42 @@ function runNodeCaptureOrThrow(script, args, options = {}) {
   }
   const status = result.status || 0;
   if (status !== 0) {
+    const parsed = tryParseLastJsonObject(String(result.stdout || ""));
+    if (parsed && parsed.reasonCode) {
+      throw new Error(`${parsed.reasonCode}: ${parsed.message || `${path.basename(script)} exited with code ${status}`}`);
+    }
     throw new Error(`${path.basename(script)} exited with code ${status}`);
   }
   return String(result.stdout || "");
+}
+
+function classifyFailureReason(error) {
+  const message = String(error instanceof Error ? error.message : error || "");
+  const normalized = normalize(message);
+  if (normalized.includes("missing required env")) return "env_missing";
+  if (normalized.includes("serpapi key is required")) return "env_missing";
+  if (normalized.includes("environment variable not found database url")) return "env_missing";
+  if (normalized.includes("set_timeout")) return "set_timeout";
+  if (normalized.includes("player_timeout")) return "player_timeout";
+  if (normalized.includes("request_timeout")) return "request_timeout";
+  if (normalized.includes("validation failed")) return "validation_failed";
+  if (normalized.includes("validation warning blocked")) return "validation_warn_blocked";
+  if (normalized.includes("timed out")) return "process_timeout";
+  return "seed_failed";
+}
+
+function ensureRequiredEnv(keys) {
+  const missing = keys.filter((key) => !String(process.env[key] || "").trim());
+  if (missing.length === 0) return;
+  throw new Error(`missing required env: ${missing.join(", ")}`);
+}
+
+function writeQuarantine(logDir, slug, payload) {
+  const quarantineDir = path.join(logDir, "quarantine");
+  fs.mkdirSync(quarantineDir, { recursive: true });
+  const file = path.join(quarantineDir, `${slug}.json`);
+  fs.writeFileSync(file, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  return file;
 }
 
 function tryParseLastJsonObject(text) {
@@ -124,7 +158,14 @@ function runManifestBatch(args) {
 
   const manifestFile = path.resolve(process.cwd(), manifestPath);
   const manifest = loadJson(manifestFile);
-  const sets = resolveManifestSets(manifest);
+  const manifestSets = resolveManifestSets(manifest);
+  const setIdFilter = String(args["set-id"] || "").trim();
+  const sets = setIdFilter
+    ? manifestSets.filter((entry) => normalize(entry?.setId) === normalize(setIdFilter))
+    : manifestSets;
+  if (setIdFilter && sets.length === 0) {
+    throw new Error(`No manifest set matched --set-id "${setIdFilter}"`);
+  }
   const allowWarnGlobal = boolFromArg(args["allow-warn"], boolFromArg(manifest.allowWarn, false));
   const continueOnError = boolFromArg(
     args["continue-on-error"],
@@ -136,6 +177,7 @@ function runManifestBatch(args) {
   const defaultDelayMs = String(args["delay-ms"] || manifest.delayMs || "100");
   const defaultMinRefs = String(args["min-refs"] || manifest.minRefs || defaultImagesPerVariant);
   const defaultRefSide = String(args["ref-side"] || manifest.refSide || "front");
+  const seedSetTimeoutMs = Math.max(10_000, Number(args["seed-set-timeout-ms"] || manifest.seedSetTimeoutMs || 900_000) || 900_000);
   const globalLimitVariants = args["limit-variants"];
 
   const validateScript = path.resolve(process.cwd(), "scripts/variant-db/validate-checklist-output.js");
@@ -146,6 +188,7 @@ function runManifestBatch(args) {
   const summary = {
     generatedAt: new Date().toISOString(),
     manifest: manifestPath,
+    setIdFilter: setIdFilter || null,
     logDir: path.relative(process.cwd(), logDir),
     allowWarn: allowWarnGlobal,
     continueOnError,
@@ -195,6 +238,8 @@ function runManifestBatch(args) {
       validation: null,
       queueCount: null,
       refsInserted: null,
+      seedDiagnostics: null,
+      failedReason: null,
       reason: null,
     };
 
@@ -229,6 +274,7 @@ function runManifestBatch(args) {
       runNodeOrThrow(mapScript, ["--csv", playersCsv, "--out", path.relative(process.cwd(), playerMapOut)]);
 
       if (!Boolean(entry.skipSeed) && !Boolean(args["skip-seed"])) {
+        ensureRequiredEnv(["SERPAPI_KEY", "DATABASE_URL"]);
         const seedArgs = [
           "--set-id",
           setId,
@@ -240,15 +286,25 @@ function runManifestBatch(args) {
           refSide,
           "--checklist-player-map",
           path.relative(process.cwd(), playerMapOut),
+          "--set-timeout-ms",
+          String(seedSetTimeoutMs),
         ];
         if (limitVariantsValue !== undefined && String(limitVariantsValue).trim() !== "") {
           seedArgs.push("--limit-variants", String(limitVariantsValue));
         }
         if (dryRun) seedArgs.push("--dry-run");
-        const seedStdout = runNodeCaptureOrThrow(seedScript, seedArgs);
+        const seedStdout = runNodeCaptureOrThrow(seedScript, seedArgs, { timeoutMs: seedSetTimeoutMs + 30_000 });
         const seedSummary = tryParseLastJsonObject(seedStdout);
         if (seedSummary && Number.isFinite(Number(seedSummary.referencesInserted))) {
           setSummary.refsInserted = Number(seedSummary.referencesInserted);
+        }
+        if (seedSummary && typeof seedSummary === "object") {
+          setSummary.seedDiagnostics = {
+            requestTimeouts: Number(seedSummary.requestTimeouts || 0),
+            requestFailures: Number(seedSummary.requestFailures || 0),
+            playerTimeouts: Number(seedSummary.playerTimeouts || 0),
+            playerFailures: Number(seedSummary.playerFailures || 0),
+          };
         }
       }
 
@@ -269,6 +325,16 @@ function runManifestBatch(args) {
     } catch (error) {
       setSummary.status = "failed";
       setSummary.reason = error instanceof Error ? error.message : String(error);
+      setSummary.failedReason = classifyFailureReason(error);
+      const quarantinePath = writeQuarantine(logDir, slug, {
+        generatedAt: new Date().toISOString(),
+        setId,
+        slug,
+        playersCsv,
+        failedReason: setSummary.failedReason,
+        reason: setSummary.reason,
+      });
+      setSummary.quarantine = path.relative(process.cwd(), quarantinePath);
       summary.totals.failed += 1;
       summary.sets.push(setSummary);
       if (!continueOnError) break;

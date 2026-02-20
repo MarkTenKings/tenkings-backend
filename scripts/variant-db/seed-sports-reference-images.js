@@ -58,6 +58,59 @@ function sanitizeNullableText(value) {
   return cleaned || null;
 }
 
+function decodeHtmlEntities(value) {
+  let text = String(value ?? "");
+  text = text.replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code) || 0));
+  text = text.replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16) || 0));
+  return text
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#039;|&apos;/gi, "'")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">");
+}
+
+function stripHtml(value) {
+  const decoded = decodeHtmlEntities(value);
+  return decoded.replace(/<[^>]*>/g, " ").replace(/&[a-z0-9#]+;/gi, " ");
+}
+
+function sanitizeQueryToken(value, maxLen = 120) {
+  const cleaned = sanitizeText(stripHtml(value))
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[^a-zA-Z0-9#&'".:/+\-()\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.slice(0, maxLen).trim();
+}
+
+function sanitizeCardNumberToken(value) {
+  const cleaned = sanitizeQueryToken(value, 32).replace(/^#/, "");
+  const token = cleaned.replace(/[^0-9a-zA-Z-]/g, "");
+  return token.slice(0, 16);
+}
+
+function makeReasonError(reasonCode, message) {
+  const error = new Error(`${reasonCode}: ${message}`);
+  error.reasonCode = reasonCode;
+  return error;
+}
+
+function isReason(error, reasonCode) {
+  if (!error) return false;
+  if (error.reasonCode === reasonCode) return true;
+  return String(error.message || "").toLowerCase().includes(`${reasonCode}:`);
+}
+
+function ensureDeadline(deadlineAtMs, scope, reasonCode = "set_timeout") {
+  if (!deadlineAtMs) return;
+  if (Date.now() > deadlineAtMs) {
+    throw makeReasonError(reasonCode, `deadline exceeded while ${scope}`);
+  }
+}
+
 function loadQueryAliasesConfig(configPath) {
   const fallback = path.resolve(__dirname, "query-aliases.json");
   const target = configPath ? path.resolve(process.cwd(), String(configPath)) : fallback;
@@ -197,11 +250,14 @@ function buildVariantQuery(
   includeKeywords = true,
   includeTradingCardToken = true
 ) {
-  const setPart = querySetOverride || variant.setId;
-  const cardPart = variant.cardNumber === "ALL" ? "" : `#${variant.cardNumber}`;
-  const parallelPart = parallelOverride || variant.parallelId;
+  const setPart = sanitizeQueryToken(querySetOverride || variant.setId, 140);
+  const sanitizedCardNumber = sanitizeCardNumberToken(variant.cardNumber);
+  const cardPart = variant.cardNumber === "ALL" || !sanitizedCardNumber ? "" : `#${sanitizedCardNumber}`;
+  const parallelPart = sanitizeQueryToken(parallelOverride || variant.parallelId, 120);
   const keywordPart =
-    includeKeywords && Array.isArray(variant.keywords) ? variant.keywords.slice(0, 3).join(" ") : "";
+    includeKeywords && Array.isArray(variant.keywords)
+      ? sanitizeQueryToken(variant.keywords.slice(0, 3).join(" "), 80)
+      : "";
   return [
     setPart,
     cardPart,
@@ -214,12 +270,12 @@ function buildVariantQuery(
 }
 
 function deriveParallelSearchTerms(parallelId, config) {
-  const text = String(parallelId || "").trim();
+  const text = sanitizeQueryToken(parallelId, 140);
   if (!text) return [];
   const normalized = text.toLowerCase();
   const terms = [];
   const push = (value) => {
-    const next = String(value || "").trim();
+    const next = sanitizeQueryToken(value, 120);
     if (!next) return;
     if (!terms.some((item) => item.toLowerCase() === next.toLowerCase())) {
       terms.push(next);
@@ -258,11 +314,11 @@ function deriveParallelSearchTerms(parallelId, config) {
 }
 
 function deriveSetSearchTerms(setId, querySetOverride, config) {
-  const base = String(querySetOverride || setId || "").trim();
+  const base = sanitizeQueryToken(querySetOverride || setId || "", 160);
   const key = normalize(base);
   const out = [];
   const push = (value) => {
-    const next = String(value || "").trim();
+    const next = sanitizeQueryToken(value, 160);
     if (!next) return;
     if (!out.some((item) => item.toLowerCase() === next.toLowerCase())) {
       out.push(next);
@@ -290,20 +346,20 @@ function derivePlayerSeeds(setId, parallelId, querySetOverride, config, checklis
   const perParallelChecklist = checklistPlayersMap?.setParallelPlayers?.[key]?.[parallelKey];
   if (Array.isArray(perParallelChecklist) && perParallelChecklist.length > 0) {
     return perParallelChecklist
-      .map((name) => String(name || "").trim())
+      .map((name) => sanitizeQueryToken(name, 96))
       .filter(Boolean)
       .slice(0, Math.max(0, maxPlayers));
   }
   const perParallelConfig = config?.setParallelPlayers?.[key]?.[parallelKey];
   if (Array.isArray(perParallelConfig) && perParallelConfig.length > 0) {
     return perParallelConfig
-      .map((name) => String(name || "").trim())
+      .map((name) => sanitizeQueryToken(name, 96))
       .filter(Boolean)
       .slice(0, Math.max(0, maxPlayers));
   }
   const list = config?.setPlayers?.[key];
   if (!Array.isArray(list)) return [];
-  return list.map((name) => String(name || "").trim()).filter(Boolean).slice(0, Math.max(0, maxPlayers));
+  return list.map((name) => sanitizeQueryToken(name, 96)).filter(Boolean).slice(0, Math.max(0, maxPlayers));
 }
 
 function deriveChecklistEntries(setId, parallelId, querySetOverride, checklistPlayersMap) {
@@ -313,8 +369,8 @@ function deriveChecklistEntries(setId, parallelId, querySetOverride, checklistPl
   if (!Array.isArray(rows)) return [];
   return rows
     .map((row) => ({
-      playerName: String(row?.playerName || "").trim(),
-      cardNumber: String(row?.cardNumber || "").trim(),
+      playerName: sanitizeQueryToken(row?.playerName || "", 120),
+      cardNumber: sanitizeCardNumberToken(row?.cardNumber || ""),
     }))
     .filter((row) => row.playerName);
 }
@@ -347,13 +403,36 @@ function parseListingId(url) {
   return null;
 }
 
-async function fetchSerpEbayImages(apiKey, query, count, options = {}) {
-  const pages = Math.max(1, Number(options.pages ?? 1) || 1);
+function isRetriableStatus(status) {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+async function fetchWithTimeout(url, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } catch (error) {
+    if (error && (error.name === "AbortError" || error.code === "ABORT_ERR")) {
+      throw makeReasonError("request_timeout", `request exceeded ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchSerpPayloadWithRetry(apiKey, query, page, options = {}) {
+  const requestTimeoutMs = Math.max(1_000, Number(options.requestTimeoutMs ?? 15_000) || 15_000);
+  const requestRetries = Math.max(0, Number(options.requestRetries ?? 2) || 2);
+  const retryBaseDelayMs = Math.max(0, Number(options.retryBaseDelayMs ?? 800) || 800);
   const resultsPerPage = Math.max(10, Math.min(240, Number(options.resultsPerPage ?? 100) || 100));
-  const disableDedupe = options.disableDedupe === true;
-  const rows = [];
-  const seen = new Set();
-  for (let page = 1; page <= pages; page += 1) {
+  const setDeadlineAtMs = Number.isFinite(Number(options.setDeadlineAtMs)) ? Number(options.setDeadlineAtMs) : null;
+  const deadlineReasonCode = String(options.deadlineReasonCode || "set_timeout");
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= requestRetries; attempt += 1) {
+    ensureDeadline(setDeadlineAtMs, "issuing SerpApi request", deadlineReasonCode);
     const params = new URLSearchParams({
       engine: "ebay",
       _nkw: query,
@@ -362,12 +441,57 @@ async function fetchSerpEbayImages(apiKey, query, count, options = {}) {
       _ipg: String(resultsPerPage),
       api_key: apiKey,
     });
-    const response = await fetch(`https://serpapi.com/search.json?${params.toString()}`);
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`SerpApi eBay error ${response.status}${text ? ` - ${text.slice(0, 200)}` : ""}`);
+    const url = `https://serpapi.com/search.json?${params.toString()}`;
+    try {
+      const response = await fetchWithTimeout(url, requestTimeoutMs);
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        const message = `SerpApi eBay error ${response.status}${body ? ` - ${body.slice(0, 180)}` : ""}`;
+        const error = makeReasonError(isRetriableStatus(response.status) ? "request_failed" : "request_rejected", message);
+        error.status = response.status;
+        throw error;
+      }
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      const status = Number(error?.status);
+      const retriable =
+        isReason(error, "request_timeout") ||
+        isReason(error, "request_failed") ||
+        (Number.isFinite(status) && isRetriableStatus(status));
+      if (!retriable || attempt >= requestRetries) {
+        break;
+      }
+      const delay = retryBaseDelayMs * Math.max(1, 2 ** attempt);
+      if (delay > 0) {
+        await sleep(delay);
+      }
     }
-    const payload = await response.json();
+  }
+
+  if (isReason(lastError, "request_timeout")) {
+    throw makeReasonError("request_timeout", String(lastError?.message || "request timed out"));
+  }
+  throw makeReasonError("request_failed", String(lastError?.message || "request failed"));
+}
+
+async function fetchSerpEbayImages(apiKey, query, count, options = {}) {
+  const pages = Math.max(1, Number(options.pages ?? 1) || 1);
+  const resultsPerPage = Math.max(10, Math.min(240, Number(options.resultsPerPage ?? 100) || 100));
+  const disableDedupe = options.disableDedupe === true;
+  const deadlineReasonCode = String(options.deadlineReasonCode || "set_timeout");
+  const rows = [];
+  const seen = new Set();
+  for (let page = 1; page <= pages; page += 1) {
+    ensureDeadline(options.setDeadlineAtMs, "iterating SerpApi pages", deadlineReasonCode);
+    const payload = await fetchSerpPayloadWithRetry(apiKey, query, page, {
+      resultsPerPage,
+      requestTimeoutMs: options.requestTimeoutMs,
+      requestRetries: options.requestRetries,
+      retryBaseDelayMs: options.retryBaseDelayMs,
+      setDeadlineAtMs: options.setDeadlineAtMs,
+      deadlineReasonCode,
+    });
     const results = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
     for (const item of results) {
       const rawImageUrl =
@@ -396,7 +520,7 @@ async function fetchSerpEbayImages(apiKey, query, count, options = {}) {
 }
 
 async function fetchSerpImages(apiKey, query, count, options = {}) {
-  return await fetchSerpEbayImages(apiKey, query, count, options);
+  return await fetchSerpEbayImages(apiKey, sanitizeQueryToken(query, 240), count, options);
 }
 
 function deriveVariantTypeTerms(parallelId) {
@@ -448,11 +572,16 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const includeKeywords = options.includeKeywords !== false;
   const exactQuery = options.exactQuery === true;
   const refSide = String(options.refSide || "front").toLowerCase() === "back" ? "back" : "front";
-  const forcedPlayer = String(options.forcedPlayer || "").trim();
-  const forcedCardNumber = String(options.forcedCardNumber || "").trim();
-  const forcedCardToken = forcedCardNumber ? `#${forcedCardNumber.replace(/^#/, "")}` : "";
+  const forcedPlayer = sanitizeQueryToken(options.forcedPlayer || "", 96);
+  const forcedCardNumber = sanitizeCardNumberToken(options.forcedCardNumber || "");
+  const forcedCardToken = forcedCardNumber ? `#${forcedCardNumber}` : "";
   const forcedPlayerSeedKey = String(options.forcedPlayerSeedKey || "").trim();
   const onQueries = typeof options.onQueries === "function" ? options.onQueries : null;
+  const requestTimeoutMs = Math.max(1_000, Number(options.requestTimeoutMs ?? 15_000) || 15_000);
+  const requestRetries = Math.max(0, Number(options.requestRetries ?? 2) || 2);
+  const retryBaseDelayMs = Math.max(0, Number(options.retryBaseDelayMs ?? 800) || 800);
+  const setDeadlineAtMs = Number.isFinite(Number(options.setDeadlineAtMs)) ? Number(options.setDeadlineAtMs) : null;
+  const deadlineReasonCode = String(options.deadlineReasonCode || "set_timeout");
 
   const setTerms = deriveSetSearchTerms(variant.setId, querySetOverride, queryAliases);
   const parallelTerms = [variant.parallelId, ...deriveParallelSearchTerms(variant.parallelId, queryAliases)];
@@ -470,7 +599,7 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const queries = [];
   const seenQueries = new Set();
   const addQuery = (query, playerSeed = null) => {
-    const base = String(query || "").trim();
+    const base = sanitizeQueryToken(query || "", 220);
     const next = [base, forcedCardToken].filter(Boolean).join(" ").trim();
     if (!next) return;
     const key = next.toLowerCase();
@@ -542,10 +671,16 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
   const rows = [];
   const seen = new Set();
   for (const queryEntry of queries.slice(0, maxQueries)) {
+    ensureDeadline(setDeadlineAtMs, "issuing query batch", deadlineReasonCode);
     const batch = await fetchSerpImages(apiKey, queryEntry.text, Math.max(count, 8), {
       pages: pagesPerQuery,
       resultsPerPage,
       disableDedupe,
+      requestTimeoutMs,
+      requestRetries,
+      retryBaseDelayMs,
+      setDeadlineAtMs,
+      deadlineReasonCode,
     });
     for (const image of batch) {
       if (seen.has(image.rawImageUrl)) continue;
@@ -626,12 +761,22 @@ async function main() {
   const debugQueries = Boolean(args["debug-queries"]);
   const debugLimit = Math.max(1, Number(args["debug-limit"] ?? 20) || 20);
   const debugMatch = args["debug-match"] ? normalize(String(args["debug-match"])) : "";
+  const requestTimeoutMs = Math.max(1_000, Number(args["request-timeout-ms"] ?? 15_000) || 15_000);
+  const requestRetries = Math.max(0, Number(args["request-retries"] ?? 2) || 2);
+  const retryBaseDelayMs = Math.max(0, Number(args["retry-base-delay-ms"] ?? 800) || 800);
+  const playerTimeoutMs = Math.max(5_000, Number(args["player-timeout-ms"] ?? 90_000) || 90_000);
+  const setTimeoutMs = Math.max(30_000, Number(args["set-timeout-ms"] ?? 900_000) || 900_000);
+  const heartbeatEveryMs = Math.max(5_000, Number(args["heartbeat-ms"] ?? 30_000) || 30_000);
   const queryAliases = loadQueryAliasesConfig(args["query-aliases-config"]);
   const checklistPlayersMap = loadChecklistPlayerMap(args["checklist-player-map"] || args["checklist-player-csv"]);
   const apiKey = process.env.SERPAPI_KEY ?? "";
+  const databaseUrl = process.env.DATABASE_URL ?? "";
 
   if (!apiKey) {
-    throw new Error("SERPAPI_KEY is required for sports image seeding.");
+    throw makeReasonError("env_missing", "SERPAPI_KEY is required for sports image seeding.");
+  }
+  if (!databaseUrl) {
+    throw makeReasonError("env_missing", "DATABASE_URL is required for sports image seeding.");
   }
 
   const prisma = new PrismaClient();
@@ -662,9 +807,36 @@ async function main() {
     let referencesInserted = 0;
     let referencesSkipped = 0;
     let debugPrinted = 0;
+    let requestTimeouts = 0;
+    let requestFailures = 0;
+    let playerTimeouts = 0;
+    let playerFailures = 0;
+    const setStartedAt = Date.now();
+    const setDeadlineAtMs = setStartedAt + setTimeoutMs;
+    let lastHeartbeatAt = 0;
+
+    const maybeHeartbeat = (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastHeartbeatAt < heartbeatEveryMs) return;
+      lastHeartbeatAt = now;
+      console.log(
+        JSON.stringify({
+          progress: "seed",
+          setFilter: setFilter || null,
+          variantsChecked,
+          variantsTotal: variants.length,
+          referencesInserted,
+          requestTimeouts,
+          playerTimeouts,
+          elapsedMs: now - setStartedAt,
+        })
+      );
+    };
 
     for (const variant of variants) {
+      ensureDeadline(setDeadlineAtMs, "processing set variants");
       variantsChecked += 1;
+      maybeHeartbeat();
       const variantKey = `${variant.setId}::${variant.parallelId}::${refType}`;
       const checklistEntries = exhaustivePlayerMode
         ? deriveChecklistEntries(variant.setId, variant.parallelId, querySetOverride, checklistPlayersMap)
@@ -712,8 +884,9 @@ async function main() {
 
       let variantInsertedThisPass = 0;
       for (const target of targets) {
-        const playerName = String(target.playerName || "").trim();
-        const cardNumber = String(target.cardNumber || "").trim();
+        ensureDeadline(setDeadlineAtMs, "processing checklist target");
+        const playerName = sanitizeQueryToken(target.playerName || "", 120);
+        const cardNumber = sanitizeCardNumberToken(target.cardNumber || "");
         const playerSeedKey = playerName ? `${playerName}::${cardNumber || "NA"}` : "";
         if (exhaustivePlayerMode) {
           checklistEntriesChecked += 1;
@@ -733,86 +906,111 @@ async function main() {
         const remainingSlots = exhaustivePlayerMode
           ? Math.max(1, imagesPerVariant - (existingByPlayerSeed.get(playerSeedKey) || 0))
           : Math.max(1, imagesPerVariant - (existingCountByKey.get(variantKey) ?? 0));
-        const images = await fetchVariantImages(apiKey, variant, remainingSlots, {
-          querySetOverride,
-          queryAliases,
-          checklistPlayersMap,
-          maxPlayerSeeds,
-          maxQueries,
-          pagesPerQuery,
-          resultsPerPage,
-          includeKeywords,
-          exactQuery,
-          refSide: refType,
-          disableDedupe: noDedupe,
-          forcedPlayer: playerName || undefined,
-          forcedCardNumber: cardNumber || undefined,
-          forcedPlayerSeedKey: playerSeedKey || undefined,
-          onQueries: (queries) => {
-            if (!debugQueries) return;
-            if (debugPrinted >= debugLimit) return;
-            const matchHaystack = normalize(`${variant.setId} ${variant.parallelId}`);
-            if (debugMatch && !matchHaystack.includes(debugMatch)) return;
-            debugPrinted += 1;
-            console.log(
-              JSON.stringify(
-                {
-                  debug: "queries",
-                  setId: variant.setId,
-                  parallelId: variant.parallelId,
-                  playerName: playerName || null,
-                  cardNumber: cardNumber || null,
-                  queries,
-                },
-                null,
-                2
-              )
-            );
-          },
-        });
+        const playerDeadlineAtMs = Math.min(setDeadlineAtMs, Date.now() + playerTimeoutMs);
         const toInsert = [];
-        for (const image of images) {
-          const imageKey = canonicalizeUrl(image.rawImageUrl);
-          const sourceKey = canonicalizeUrl(image.sourceUrl);
-          if (
-            !noDedupe &&
-            ((imageKey && existingUrls.has(imageKey)) ||
-              (sourceKey && existingSourceUrls.has(sourceKey)) ||
-              (image.sourceListingId && existingListingIds.has(image.sourceListingId)))
-          ) {
-            referencesSkipped += 1;
-            continue;
-          }
-          const gate = scoreReferenceCandidate({
-            setId: variant.setId,
-            parallelId: variant.parallelId,
-            keywords: variant.keywords,
-            oddsInfo: null,
-            listingTitle: image.listingTitle,
-            sourceUrl: image.sourceUrl,
+        try {
+          const images = await fetchVariantImages(apiKey, variant, remainingSlots, {
+            querySetOverride,
+            queryAliases,
+            checklistPlayersMap,
+            maxPlayerSeeds,
+            maxQueries,
+            pagesPerQuery,
+            resultsPerPage,
+            includeKeywords,
+            exactQuery,
+            refSide: refType,
+            disableDedupe: noDedupe,
+            requestTimeoutMs,
+            requestRetries,
+            retryBaseDelayMs,
+            setDeadlineAtMs: playerDeadlineAtMs,
+            deadlineReasonCode: "player_timeout",
+            forcedPlayer: playerName || undefined,
+            forcedCardNumber: cardNumber || undefined,
+            forcedPlayerSeedKey: playerSeedKey || undefined,
+            onQueries: (queries) => {
+              if (!debugQueries) return;
+              if (debugPrinted >= debugLimit) return;
+              const matchHaystack = normalize(`${variant.setId} ${variant.parallelId}`);
+              if (debugMatch && !matchHaystack.includes(debugMatch)) return;
+              debugPrinted += 1;
+              console.log(
+                JSON.stringify(
+                  {
+                    debug: "queries",
+                    setId: variant.setId,
+                    parallelId: variant.parallelId,
+                    playerName: playerName || null,
+                    cardNumber: cardNumber || null,
+                    queries,
+                  },
+                  null,
+                  2
+                )
+              );
+            },
           });
-          if (!noGate && !(gate.status === "approved" || (allowWeak && gate.status === "weak"))) {
-            referencesSkipped += 1;
+          ensureDeadline(playerDeadlineAtMs, "processing fetched candidate images", "player_timeout");
+          for (const image of images) {
+            const imageKey = canonicalizeUrl(image.rawImageUrl);
+            const sourceKey = canonicalizeUrl(image.sourceUrl);
+            if (
+              !noDedupe &&
+              ((imageKey && existingUrls.has(imageKey)) ||
+                (sourceKey && existingSourceUrls.has(sourceKey)) ||
+                (image.sourceListingId && existingListingIds.has(image.sourceListingId)))
+            ) {
+              referencesSkipped += 1;
+              continue;
+            }
+            const gate = scoreReferenceCandidate({
+              setId: variant.setId,
+              parallelId: variant.parallelId,
+              keywords: variant.keywords,
+              oddsInfo: null,
+              listingTitle: image.listingTitle,
+              sourceUrl: image.sourceUrl,
+            });
+            if (!noGate && !(gate.status === "approved" || (allowWeak && gate.status === "weak"))) {
+              referencesSkipped += 1;
+              continue;
+            }
+            if (!noDedupe) {
+              if (imageKey) existingUrls.add(imageKey);
+              if (sourceKey) existingSourceUrls.add(sourceKey);
+              if (image.sourceListingId) existingListingIds.add(image.sourceListingId);
+            }
+            const safeRawImageUrl = sanitizeText(image.rawImageUrl);
+            if (!safeRawImageUrl) {
+              referencesSkipped += 1;
+              continue;
+            }
+            toInsert.push({
+              ...image,
+              rawImageUrl: safeRawImageUrl,
+              sourceUrl: sanitizeNullableText(image.sourceUrl),
+              sourceListingId: sanitizeNullableText(image.sourceListingId),
+              listingTitle: sanitizeNullableText(image.listingTitle),
+              playerSeed: sanitizeNullableText(playerSeedKey || image.playerSeed || null),
+            });
+          }
+        } catch (error) {
+          if (isReason(error, "player_timeout")) {
+            playerTimeouts += 1;
             continue;
           }
-          if (!noDedupe) {
-            if (imageKey) existingUrls.add(imageKey);
-            if (sourceKey) existingSourceUrls.add(sourceKey);
-            if (image.sourceListingId) existingListingIds.add(image.sourceListingId);
+          if (isReason(error, "set_timeout")) {
+            throw error;
           }
-          const safeRawImageUrl = sanitizeText(image.rawImageUrl);
-          if (!safeRawImageUrl) {
-            referencesSkipped += 1;
-            continue;
+          if (isReason(error, "request_timeout")) {
+            requestTimeouts += 1;
+          } else if (isReason(error, "request_failed") || isReason(error, "request_rejected")) {
+            requestFailures += 1;
+          } else {
+            playerFailures += 1;
           }
-          toInsert.push({
-            ...image,
-            rawImageUrl: safeRawImageUrl,
-            sourceUrl: sanitizeNullableText(image.sourceUrl),
-            sourceListingId: sanitizeNullableText(image.sourceListingId),
-            listingTitle: sanitizeNullableText(image.listingTitle),
-            playerSeed: sanitizeNullableText(playerSeedKey || image.playerSeed || null),
-          });
+          continue;
         }
 
         if (!dryRun && toInsert.length > 0) {
@@ -847,10 +1045,12 @@ async function main() {
       }
       if (variantInsertedThisPass > 0) variantsSeeded += 1;
     }
+    maybeHeartbeat(true);
 
     console.log(
       JSON.stringify(
         {
+          status: "ok",
           dryRun,
           setFilter: setFilter || null,
           variantsChecked,
@@ -859,8 +1059,16 @@ async function main() {
           checklistEntriesSeeded: exhaustivePlayerMode ? checklistEntriesSeeded : null,
           referencesInserted,
           referencesSkipped,
+          requestTimeouts,
+          requestFailures,
+          playerTimeouts,
+          playerFailures,
           limitVariants,
           imagesPerVariant,
+          requestTimeoutMs,
+          requestRetries,
+          playerTimeoutMs,
+          setTimeoutMs,
           refType,
           noGate,
           noDedupe,
@@ -885,6 +1093,19 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
+  const reasonCode = String(error?.reasonCode || "").trim() || "seed_failed";
+  const message = error instanceof Error ? error.message : String(error);
+  console.log(
+    JSON.stringify(
+      {
+        status: "failed",
+        reasonCode,
+        message,
+      },
+      null,
+      2
+    )
+  );
+  console.error(message);
   process.exit(1);
 });
