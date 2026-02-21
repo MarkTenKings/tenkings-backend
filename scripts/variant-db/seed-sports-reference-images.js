@@ -92,6 +92,21 @@ function sanitizeCardNumberToken(value) {
   return token.slice(0, 16);
 }
 
+function sanitizeParallelToken(value, maxLen = 120) {
+  const stripped = stripHtml(value)
+    .replace(/["']?\bname\b["']?\s*:/gi, " ")
+    .replace(/[\[\]{}"]/g, " ")
+    .replace(/,\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const cleaned = sanitizeQueryToken(stripped, maxLen);
+  const withoutBareName = cleaned
+    .replace(/\bname\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return withoutBareName || cleaned;
+}
+
 function makeReasonError(reasonCode, message) {
   const error = new Error(`${reasonCode}: ${message}`);
   error.reasonCode = reasonCode;
@@ -253,7 +268,7 @@ function buildVariantQuery(
   const setPart = sanitizeQueryToken(querySetOverride || variant.setId, 140);
   const sanitizedCardNumber = sanitizeCardNumberToken(variant.cardNumber);
   const cardPart = variant.cardNumber === "ALL" || !sanitizedCardNumber ? "" : `#${sanitizedCardNumber}`;
-  const parallelPart = sanitizeQueryToken(parallelOverride || variant.parallelId, 120);
+  const parallelPart = sanitizeParallelToken(parallelOverride || variant.parallelId, 120);
   const keywordPart =
     includeKeywords && Array.isArray(variant.keywords)
       ? sanitizeQueryToken(variant.keywords.slice(0, 3).join(" "), 80)
@@ -270,7 +285,7 @@ function buildVariantQuery(
 }
 
 function deriveParallelSearchTerms(parallelId, config) {
-  const text = sanitizeQueryToken(parallelId, 140);
+  const text = sanitizeParallelToken(parallelId, 140);
   if (!text) return [];
   const normalized = text.toLowerCase();
   const terms = [];
