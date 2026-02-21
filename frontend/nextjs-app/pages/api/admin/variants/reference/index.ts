@@ -90,7 +90,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       const where: Record<string, any> = {};
       if (setId) where.setId = setId;
-      if (cardNumber) where.cardNumber = cardNumber;
+      if (cardNumber) {
+        const normalizedCard = cardNumber.toUpperCase();
+        if (normalizedCard === "ALL") {
+          where.OR = [{ cardNumber: "ALL" }, { cardNumber: null }];
+        } else {
+          where.OR = [{ cardNumber }, { cardNumber: "ALL" }, { cardNumber: null }];
+        }
+      }
       if (parallelId) where.parallelId = parallelId;
       if (refType === "front" || refType === "back") where.refType = refType;
 
@@ -103,6 +110,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           select: ({
             id: true,
             setId: true,
+            cardNumber: true,
             parallelId: true,
             refType: true,
             pairKey: true,
