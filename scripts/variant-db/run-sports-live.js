@@ -113,6 +113,13 @@ function writeQuarantine(logDir, slug, payload) {
   return file;
 }
 
+function pushOptionalArg(argsOut, key, value) {
+  if (value === undefined || value === null) return;
+  const text = String(value).trim();
+  if (!text) return;
+  argsOut.push(`--${key}`, text);
+}
+
 function tryParseLastJsonObject(text) {
   const raw = String(text || "").trim();
   if (!raw) return null;
@@ -525,6 +532,29 @@ function runManifestBatch(args) {
           "--set-timeout-ms",
           String(seedSetTimeoutMs),
         ];
+        const forwardedSeedArgs = [
+          "target-offset",
+          "max-targets",
+          "progress-file",
+          "max-queries",
+          "pages-per-query",
+          "results-per-page",
+          "request-timeout-ms",
+          "request-retries",
+          "retry-base-delay-ms",
+          "player-timeout-ms",
+          "heartbeat-ms",
+          "mode",
+        ];
+        for (const key of forwardedSeedArgs) {
+          const entryValue = entry[key] ?? entry[key.replace(/-([a-z])/g, (_, c) => c.toUpperCase())];
+          const value = entryValue !== undefined ? entryValue : args[key];
+          pushOptionalArg(seedArgs, key, value);
+        }
+        if (Boolean(entry["no-resume"]) || Boolean(args["no-resume"])) seedArgs.push("--no-resume");
+        if (Boolean(entry["no-target-logs"]) || Boolean(args["no-target-logs"])) seedArgs.push("--no-target-logs");
+        if (Boolean(entry["no-gate"]) || Boolean(args["no-gate"])) seedArgs.push("--no-gate");
+        if (Boolean(entry["no-dedupe"]) || Boolean(args["no-dedupe"])) seedArgs.push("--no-dedupe");
         if (limitVariantsValue !== undefined && String(limitVariantsValue).trim() !== "") {
           seedArgs.push("--limit-variants", String(limitVariantsValue));
         }

@@ -258,6 +258,29 @@ function chunkArray(input, size) {
   return chunks;
 }
 
+function slugify(value) {
+  return normalize(value).replace(/\s+/g, "-") || "set";
+}
+
+function loadProgressState(filePath) {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return { variants: {} };
+    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    if (!parsed || typeof parsed !== "object") return { variants: {} };
+    if (!parsed.variants || typeof parsed.variants !== "object") parsed.variants = {};
+    return parsed;
+  } catch {
+    return { variants: {} };
+  }
+}
+
+function saveProgressState(filePath, state) {
+  if (!filePath) return;
+  const target = path.resolve(process.cwd(), filePath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
 function buildVariantQuery(
   variant,
   parallelOverride = "",
@@ -685,7 +708,8 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
 
   const rows = [];
   const seen = new Set();
-  for (const queryEntry of queries.slice(0, maxQueries)) {
+  const activeQueries = queries.slice(0, maxQueries);
+  for (const queryEntry of activeQueries) {
     ensureDeadline(setDeadlineAtMs, "issuing query batch", deadlineReasonCode);
     const batch = await fetchSerpImages(apiKey, queryEntry.text, Math.max(count, 8), {
       pages: pagesPerQuery,
@@ -704,10 +728,20 @@ async function fetchVariantImages(apiKey, variant, count, options = {}) {
         ...image,
         playerSeed: queryEntry.playerSeed || null,
       });
-      if (rows.length >= Math.max(count * 4, 12)) return rows;
+      if (rows.length >= Math.max(count * 4, 12)) {
+        return {
+          rows,
+          queriesTried: activeQueries.length,
+          queriesGenerated: queries.length,
+        };
+      }
     }
   }
-  return rows;
+  return {
+    rows,
+    queriesTried: activeQueries.length,
+    queriesGenerated: queries.length,
+  };
 }
 
 async function loadExistingRefCounts(prisma, variants) {
@@ -784,7 +818,8 @@ async function main() {
   const setFilter = args["set-id"] ? String(args["set-id"]).trim() : "";
   const querySetOverride = args["query-set"] ? String(args["query-set"]).trim() : "";
   const maxPlayerSeeds = Math.max(0, Number(args["max-player-seeds"] ?? 24) || 24);
-  const maxQueries = Math.max(1, Number(args["max-queries"] ?? 80) || 80);
+  const defaultMaxQueries = exhaustivePlayerMode ? 8 : 80;
+  const maxQueries = Math.max(1, Number(args["max-queries"] ?? defaultMaxQueries) || defaultMaxQueries);
   const pagesPerQuery = Math.max(1, Number(args["pages-per-query"] ?? 1) || 1);
   const resultsPerPage = Math.max(10, Math.min(240, Number(args["results-per-page"] ?? 100) || 100));
   const mode = String(args.mode || "exhaustive-player").trim().toLowerCase();
@@ -796,16 +831,28 @@ async function main() {
   const debugQueries = Boolean(args["debug-queries"]);
   const debugLimit = Math.max(1, Number(args["debug-limit"] ?? 20) || 20);
   const debugMatch = args["debug-match"] ? normalize(String(args["debug-match"])) : "";
-  const requestTimeoutMs = Math.max(1_000, Number(args["request-timeout-ms"] ?? 15_000) || 15_000);
-  const requestRetries = Math.max(0, Number(args["request-retries"] ?? 2) || 2);
+  const defaultRequestTimeoutMs = exhaustivePlayerMode ? 8_000 : 15_000;
+  const defaultRequestRetries = exhaustivePlayerMode ? 1 : 2;
+  const requestTimeoutMs = Math.max(1_000, Number(args["request-timeout-ms"] ?? defaultRequestTimeoutMs) || defaultRequestTimeoutMs);
+  const requestRetries = Math.max(0, Number(args["request-retries"] ?? defaultRequestRetries) || defaultRequestRetries);
   const retryBaseDelayMs = Math.max(0, Number(args["retry-base-delay-ms"] ?? 800) || 800);
-  const playerTimeoutMs = Math.max(5_000, Number(args["player-timeout-ms"] ?? 90_000) || 90_000);
+  const defaultPlayerTimeoutMs = exhaustivePlayerMode ? 20_000 : 90_000;
+  const playerTimeoutMs = Math.max(5_000, Number(args["player-timeout-ms"] ?? defaultPlayerTimeoutMs) || defaultPlayerTimeoutMs);
   const setTimeoutMs = Math.max(30_000, Number(args["set-timeout-ms"] ?? 900_000) || 900_000);
   const heartbeatEveryMs = Math.max(5_000, Number(args["heartbeat-ms"] ?? 30_000) || 30_000);
+  const targetOffset = Math.max(0, Number(args["target-offset"] ?? 0) || 0);
+  const parsedMaxTargets = Number(args["max-targets"] ?? 0);
+  const maxTargets = Number.isFinite(parsedMaxTargets) && parsedMaxTargets > 0 ? Math.floor(parsedMaxTargets) : null;
+  const resumeProgress = !Boolean(args["no-resume"]);
+  const logTargetOutcomes = !Boolean(args["no-target-logs"]);
   const queryAliases = loadQueryAliasesConfig(args["query-aliases-config"]);
   const checklistPlayersMap = loadChecklistPlayerMap(args["checklist-player-map"] || args["checklist-player-csv"]);
   const apiKey = process.env.SERPAPI_KEY ?? "";
   const databaseUrl = process.env.DATABASE_URL ?? "";
+  const progressFile = String(
+    args["progress-file"] ||
+      path.join("logs", "seed-progress", `${slugify(setFilter || "all")}.${refType}.json`)
+  );
 
   if (!apiKey) {
     throw makeReasonError("env_missing", "SERPAPI_KEY is required for sports image seeding.");
@@ -846,12 +893,29 @@ async function main() {
     let requestFailures = 0;
     let playerTimeouts = 0;
     let playerFailures = 0;
+    let targetsProcessed = 0;
+    let targetsSkippedExisting = 0;
+    let targetsWithInserts = 0;
     const setStartedAt = Date.now();
     const setDeadlineAtMs = setStartedAt + setTimeoutMs;
     let lastHeartbeatAt = 0;
     const seenImageUrlsInRun = new Set();
     const seenSourceUrlsInRun = new Set();
     const seenListingIdsInRun = new Set();
+    const progressState = resumeProgress ? loadProgressState(progressFile) : { variants: {} };
+    if (!progressState.variants || typeof progressState.variants !== "object") {
+      progressState.variants = {};
+    }
+
+    const updateVariantProgress = (variantKey, nextTargetIndex, extra = {}) => {
+      if (!resumeProgress) return;
+      progressState.variants[variantKey] = {
+        nextTargetIndex,
+        updatedAt: new Date().toISOString(),
+        ...extra,
+      };
+      saveProgressState(progressFile, progressState);
+    };
 
     const maybeHeartbeat = (force = false) => {
       const now = Date.now();
@@ -879,11 +943,15 @@ async function main() {
       const checklistEntries = exhaustivePlayerMode
         ? deriveChecklistEntries(variant.setId, variant.parallelId, querySetOverride, checklistPlayersMap)
         : [];
-      const targets = exhaustivePlayerMode
+      const fullTargets = exhaustivePlayerMode
         ? checklistEntries.length > 0
           ? checklistEntries
           : [{ playerName: "", cardNumber: "" }]
         : [{ playerName: "", cardNumber: "" }];
+      const resumedOffset = Number(progressState.variants?.[variantKey]?.nextTargetIndex || 0);
+      const startIndex = Math.max(targetOffset, resumeProgress ? resumedOffset : 0);
+      const endIndex = maxTargets ? Math.min(fullTargets.length, startIndex + maxTargets) : fullTargets.length;
+      const targets = fullTargets.slice(startIndex, endIndex);
       const preloadStartedAt = Date.now();
       const existingByPlayerSeed = exhaustivePlayerMode
         ? await loadExistingPlayerSeedCounts(prisma, variant, refType)
@@ -919,7 +987,10 @@ async function main() {
           progress: "variant_preload",
           setId: variant.setId,
           parallelId: variant.parallelId,
-          targets: targets.length,
+          targets: fullTargets.length,
+          targetsWindowStart: startIndex,
+          targetsWindowEnd: endIndex,
+          targetsWindowCount: targets.length,
           existingPlayerSeeds: existingByPlayerSeed.size,
           existingRefs: existingUrls.size,
           elapsedMs: preloadElapsedMs,
@@ -927,16 +998,25 @@ async function main() {
       );
 
       let variantInsertedThisPass = 0;
-      for (const target of targets) {
+      for (let localTargetIndex = 0; localTargetIndex < targets.length; localTargetIndex += 1) {
+        const target = targets[localTargetIndex];
+        const absoluteTargetIndex = startIndex + localTargetIndex;
         ensureDeadline(setDeadlineAtMs, "processing checklist target");
         const playerName = sanitizeQueryToken(target.playerName || "", 120);
         const cardNumber = sanitizeCardNumberToken(target.cardNumber || "");
         const playerSeedKey = playerName ? `${playerName}::${cardNumber || "NA"}` : "";
+        targetsProcessed += 1;
         if (exhaustivePlayerMode) {
           checklistEntriesChecked += 1;
           const existingForSeed = existingByPlayerSeed.get(playerSeedKey) || 0;
           if (existingForSeed >= imagesPerVariant) {
             referencesSkipped += imagesPerVariant;
+            targetsSkippedExisting += 1;
+            updateVariantProgress(variantKey, absoluteTargetIndex + 1, {
+              setId: variant.setId,
+              parallelId: variant.parallelId,
+              refType,
+            });
             continue;
           }
         } else {
@@ -952,8 +1032,12 @@ async function main() {
           : Math.max(1, imagesPerVariant - (existingCountByKey.get(variantKey) ?? 0));
         const playerDeadlineAtMs = Math.min(setDeadlineAtMs, Date.now() + playerTimeoutMs);
         const toInsert = [];
+        let queryCount = 0;
+        let queryGenerated = 0;
+        let imagesFound = 0;
+        let acceptedByGate = 0;
         try {
-          const images = await fetchVariantImages(apiKey, variant, remainingSlots, {
+          const fetchResult = await fetchVariantImages(apiKey, variant, remainingSlots, {
             querySetOverride,
             queryAliases,
             checklistPlayersMap,
@@ -995,6 +1079,10 @@ async function main() {
               );
             },
           });
+          const images = Array.isArray(fetchResult?.rows) ? fetchResult.rows : [];
+          queryCount = Number(fetchResult?.queriesTried || 0);
+          queryGenerated = Number(fetchResult?.queriesGenerated || 0);
+          imagesFound = images.length;
           ensureDeadline(playerDeadlineAtMs, "processing fetched candidate images", "player_timeout");
           for (const image of images) {
             const imageKey = canonicalizeUrl(image.rawImageUrl);
@@ -1039,8 +1127,29 @@ async function main() {
               listingTitle: sanitizeNullableText(image.listingTitle),
               playerSeed: sanitizeNullableText(playerSeedKey || image.playerSeed || null),
             });
+            acceptedByGate += 1;
           }
         } catch (error) {
+          if (logTargetOutcomes) {
+            console.log(
+              JSON.stringify({
+                progress: "target_result",
+                setId: variant.setId,
+                parallelId: variant.parallelId,
+                targetIndex: absoluteTargetIndex,
+                playerName: playerName || null,
+                cardNumber: cardNumber || null,
+                status: "error",
+                reasonCode: error?.reasonCode || null,
+                message: String(error?.message || error),
+                queriesTried: queryCount,
+                queriesGenerated: queryGenerated,
+                imagesFound,
+                acceptedByGate,
+                inserted: 0,
+              })
+            );
+          }
           if (isReason(error, "player_timeout")) {
             playerTimeouts += 1;
             continue;
@@ -1080,10 +1189,36 @@ async function main() {
         }
         referencesInserted += toInsert.length;
         variantInsertedThisPass += toInsert.length;
+        if (toInsert.length > 0) {
+          targetsWithInserts += 1;
+        }
+        if (logTargetOutcomes) {
+          console.log(
+            JSON.stringify({
+              progress: "target_result",
+              setId: variant.setId,
+              parallelId: variant.parallelId,
+              targetIndex: absoluteTargetIndex,
+              playerName: playerName || null,
+              cardNumber: cardNumber || null,
+              status: "ok",
+              queriesTried: queryCount,
+              queriesGenerated: queryGenerated,
+              imagesFound,
+              acceptedByGate,
+              inserted: toInsert.length,
+            })
+          );
+        }
         if (exhaustivePlayerMode && toInsert.length > 0) {
           checklistEntriesSeeded += 1;
           existingByPlayerSeed.set(playerSeedKey, (existingByPlayerSeed.get(playerSeedKey) || 0) + toInsert.length);
         }
+        updateVariantProgress(variantKey, absoluteTargetIndex + 1, {
+          setId: variant.setId,
+          parallelId: variant.parallelId,
+          refType,
+        });
         if (delayMs > 0) {
           await sleep(delayMs);
         }
@@ -1108,6 +1243,13 @@ async function main() {
           requestFailures,
           playerTimeouts,
           playerFailures,
+          targetsProcessed,
+          targetsSkippedExisting,
+          targetsWithInserts,
+          targetOffset,
+          maxTargets,
+          resumeProgress,
+          progressFile,
           limitVariants,
           imagesPerVariant,
           requestTimeoutMs,
