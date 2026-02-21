@@ -416,6 +416,24 @@ function deriveChecklistEntries(setId, parallelId, querySetOverride, checklistPl
     .filter((row) => row.playerName);
 }
 
+function isAllCardNumber(value) {
+  const token = sanitizeCardNumberToken(value || "");
+  return !token || token.toUpperCase() === "ALL";
+}
+
+function filterLegacyAllVariants(variants) {
+  const specificBySetParallel = new Set();
+  for (const variant of variants) {
+    if (isAllCardNumber(variant.cardNumber)) continue;
+    specificBySetParallel.add(`${normalize(variant.setId)}::${normalize(variant.parallelId)}`);
+  }
+  return variants.filter((variant) => {
+    if (!isAllCardNumber(variant.cardNumber)) return true;
+    const key = `${normalize(variant.setId)}::${normalize(variant.parallelId)}`;
+    return !specificBySetParallel.has(key);
+  });
+}
+
 function isLikelyPlaceholderImage(url) {
   return /\/s_1x2\.gif(?:$|\?)/i.test(url);
 }
@@ -885,7 +903,8 @@ async function main() {
         parallelFamily: true,
       },
     });
-    const variantsWithRefType = variants.map((variant) => ({ ...variant, refType }));
+    const filteredVariants = filterLegacyAllVariants(variants);
+    const variantsWithRefType = filteredVariants.map((variant) => ({ ...variant, refType }));
     const existingCountByKey = exhaustivePlayerMode
       ? new Map()
       : await loadExistingRefCounts(prisma, variantsWithRefType);
@@ -934,7 +953,7 @@ async function main() {
           progress: "seed",
           setFilter: setFilter || null,
           variantsChecked,
-          variantsTotal: variants.length,
+          variantsTotal: filteredVariants.length,
           referencesInserted,
           requestTimeouts,
           playerTimeouts,
@@ -943,7 +962,7 @@ async function main() {
       );
     };
 
-    for (const variant of variants) {
+    for (const variant of filteredVariants) {
       ensureDeadline(setDeadlineAtMs, "processing set variants");
       variantsChecked += 1;
       maybeHeartbeat();
