@@ -259,6 +259,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         await prisma.cardVariantReferenceImage.create({
           data: {
             setId: match.setId,
+            cardNumber: match.cardNumber,
             parallelId: match.parallelId,
             rawImageUrl: publicUrl,
             sourceUrl: match.sourceUrl ?? null,

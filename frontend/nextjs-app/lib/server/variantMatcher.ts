@@ -233,8 +233,17 @@ export async function runVariantMatch(params: {
   const targetDenominator = extractDenominator(numberedInput);
   let candidates: VariantCandidate[] = [];
   for (const variant of variants) {
+    const variantCardNumber = String(variant.cardNumber || "ALL").trim() || "ALL";
+    const referenceWhere: any =
+      variantCardNumber === "ALL"
+        ? { setId: variant.setId, parallelId: variant.parallelId }
+        : {
+            setId: variant.setId,
+            parallelId: variant.parallelId,
+            OR: [{ cardNumber: variantCardNumber }, { cardNumber: "ALL" }, { cardNumber: null }],
+          };
     const refs = await prisma.cardVariantReferenceImage.findMany({
-      where: { setId: variant.setId, parallelId: variant.parallelId },
+      where: referenceWhere,
       take: 5,
       orderBy: [{ qualityScore: "desc" }, { createdAt: "desc" }],
     });

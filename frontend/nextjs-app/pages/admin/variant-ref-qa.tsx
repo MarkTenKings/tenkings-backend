@@ -19,7 +19,9 @@ type VariantRow = {
 type ReferenceRow = {
   id: string;
   setId: string;
+  cardNumber: string | null;
   parallelId: string;
+  displayLabel: string;
   refType: string;
   pairKey: string | null;
   sourceListingId: string | null;
@@ -58,6 +60,7 @@ export default function VariantRefQaPage() {
   const [variants, setVariants] = useState<VariantRow[]>([]);
   const [refs, setRefs] = useState<ReferenceRow[]>([]);
   const [selectedSetId, setSelectedSetId] = useState("");
+  const [selectedCardNumber, setSelectedCardNumber] = useState("");
   const [selectedParallelId, setSelectedParallelId] = useState("");
   const [newRefType, setNewRefType] = useState<"front" | "back">("front");
   const [selectedRefIds, setSelectedRefIds] = useState<string[]>([]);
@@ -111,10 +114,11 @@ export default function VariantRefQaPage() {
     void loadVariants();
   }, [loadVariants, session?.token]);
 
-  const loadRefs = useCallback(async (setId?: string, parallelId?: string) => {
+  const loadRefs = useCallback(async (setId?: string, parallelId?: string, cardNumber?: string) => {
     if (!session?.token) return;
     const currentSetId = (setId ?? selectedSetId).trim();
     const currentParallelId = (parallelId ?? selectedParallelId).trim();
+    const currentCardNumber = (cardNumber ?? selectedCardNumber).trim();
     if (!currentSetId || !currentParallelId) {
       setStatus({ type: "error", message: "Select a variant first." });
       return;
@@ -122,7 +126,9 @@ export default function VariantRefQaPage() {
     setBusy(true);
     try {
       const res = await fetch(
-        `/api/admin/variants/reference?setId=${encodeURIComponent(currentSetId)}&parallelId=${encodeURIComponent(currentParallelId)}&limit=500`,
+        `/api/admin/variants/reference?setId=${encodeURIComponent(currentSetId)}&cardNumber=${encodeURIComponent(
+          currentCardNumber
+        )}&parallelId=${encodeURIComponent(currentParallelId)}&limit=500`,
         { headers: { ...adminHeaders } }
       );
       const payload = await res.json().catch(() => ({}));
@@ -138,12 +144,13 @@ export default function VariantRefQaPage() {
     } finally {
       setBusy(false);
     }
-  }, [adminHeaders, selectedParallelId, selectedSetId, session?.token]);
+  }, [adminHeaders, selectedCardNumber, selectedParallelId, selectedSetId, session?.token]);
 
   const chooseVariant = async (variant: VariantRow) => {
     setSelectedSetId(variant.setId);
+    setSelectedCardNumber(variant.cardNumber);
     setSelectedParallelId(variant.parallelId);
-    await loadRefs(variant.setId, variant.parallelId);
+    await loadRefs(variant.setId, variant.parallelId, variant.cardNumber);
   };
 
   const deleteRef = async (id: string) => {
@@ -314,12 +321,12 @@ export default function VariantRefQaPage() {
     };
     window.addEventListener("paste", handler);
     return () => window.removeEventListener("paste", handler);
-  }, [selectedSetId, selectedParallelId, uploadReplacement]);
+  }, [selectedSetId, selectedParallelId, selectedCardNumber, uploadReplacement]);
 
   useEffect(() => {
     if (!selectedSetId || !selectedParallelId) return;
-    void loadRefs(selectedSetId, selectedParallelId);
-  }, [loadRefs, selectedParallelId, selectedSetId]);
+    void loadRefs(selectedSetId, selectedParallelId, selectedCardNumber);
+  }, [loadRefs, selectedCardNumber, selectedParallelId, selectedSetId]);
 
   if (loading) {
     return (
@@ -497,7 +504,8 @@ export default function VariantRefQaPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs uppercase tracking-[0.24em] text-slate-400">
               Selected: <span className="text-slate-200">{selectedSetId || "—"}</span> ·{" "}
-              <span className="text-slate-200">{selectedParallelId || "—"}</span>
+              <span className="text-slate-200">{selectedParallelId || "—"}</span> ·{" "}
+              <span className="text-slate-200">#{selectedCardNumber || "—"}</span>
             </div>
             <div className="flex gap-2">
               <button
@@ -583,9 +591,15 @@ export default function VariantRefQaPage() {
                     </button>
                   </div>
                   <a href={preview} target="_blank" rel="noreferrer">
-                    <img src={preview} alt={`${ref.parallelId} ref`} className="h-52 w-full rounded-lg object-cover" />
+                    <img src={preview} alt={`${ref.displayLabel || ref.parallelId} ref`} className="h-52 w-full rounded-lg object-cover" />
                   </a>
                   <div className="mt-2 space-y-1 text-[11px] text-slate-400">
+                    <p>
+                      Label: <span className="text-slate-200">{ref.displayLabel || ref.parallelId}</span>
+                    </p>
+                    <p>
+                      Card #: <span className="text-slate-300">{ref.cardNumber || "—"}</span>
+                    </p>
                     <p>
                       QA:{" "}
                       <span

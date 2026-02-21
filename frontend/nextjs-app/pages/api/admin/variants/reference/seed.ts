@@ -22,7 +22,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(405).json({ message: "Method not allowed" });
     }
 
-    const { setId, parallelId, query, limit, tbs, gl, hl } = req.body ?? {};
+    const { setId, cardNumber, parallelId, query, limit, tbs, gl, hl } = req.body ?? {};
     if (!setId || !parallelId || !query) {
       return res.status(400).json({ message: "setId, parallelId, and query are required." });
     }
@@ -72,6 +72,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       .slice(0, safeLimit)
       .map((row: SeedImageRow) => ({
         setId: String(setId).trim(),
+        cardNumber: cardNumber ? String(cardNumber).trim() : "ALL",
         parallelId: String(parallelId).trim(),
         rawImageUrl: row.rawImageUrl,
         sourceUrl: row.sourceUrl,

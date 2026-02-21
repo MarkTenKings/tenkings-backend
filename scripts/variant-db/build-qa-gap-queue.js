@@ -56,14 +56,20 @@ async function main() {
         keywords: true,
       },
     });
-    const pairs = variants.map((variant) => ({ setId: variant.setId, parallelId: variant.parallelId, refType }));
+    const pairs = variants.map((variant) => ({
+      setId: variant.setId,
+      cardNumber: variant.cardNumber,
+      parallelId: variant.parallelId,
+      refType,
+    }));
     const counts =
       pairs.length > 0
         ? await prisma.cardVariantReferenceImage.groupBy({
-            by: ["setId", "parallelId", "refType"],
+            by: ["setId", "cardNumber", "parallelId", "refType"],
             where: {
               OR: pairs.map((pair) => ({
                 setId: pair.setId,
+                cardNumber: pair.cardNumber,
                 parallelId: pair.parallelId,
                 refType: pair.refType,
               })),
@@ -72,11 +78,14 @@ async function main() {
           })
         : [];
     const countByKey = new Map(
-      counts.map((row) => [`${row.setId}::${row.parallelId}::${row.refType || "front"}`, row._count._all])
+      counts.map((row) => [
+        `${row.setId}::${String(row.cardNumber || "ALL")}::${row.parallelId}::${row.refType || "front"}`,
+        row._count._all,
+      ])
     );
     const queue = variants
       .map((variant) => {
-        const refs = countByKey.get(`${variant.setId}::${variant.parallelId}::${refType}`) ?? 0;
+        const refs = countByKey.get(`${variant.setId}::${variant.cardNumber}::${variant.parallelId}::${refType}`) ?? 0;
         return {
           setId: variant.setId,
           parallelId: variant.parallelId,

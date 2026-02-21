@@ -620,6 +620,7 @@ model CardVariant {
 model CardVariantReferenceImage {
   id             String   @id @default(uuid())
   setId          String
+  cardNumber     String?
   parallelId     String
   refType        String   @default("front")
   pairKey        String?
@@ -642,7 +643,9 @@ model CardVariantReferenceImage {
   updatedAt      DateTime @updatedAt
 
   @@index([setId, parallelId])
+  @@index([setId, cardNumber, parallelId])
   @@index([setId, parallelId, refType])
+  @@index([setId, cardNumber, parallelId, refType])
   @@index([pairKey])
   @@index([sourceListingId])
   @@index([storageKey])

@@ -60,22 +60,25 @@ async function main() {
     });
 
     const counts = await prisma.cardVariantReferenceImage.groupBy({
-      by: ["setId", "parallelId"],
+      by: ["setId", "cardNumber", "parallelId"],
       where: {
         OR: variants.map((v) => ({
           setId: v.setId,
+          cardNumber: v.cardNumber,
           parallelId: v.parallelId,
         })),
       },
       _count: { _all: true },
     });
-    const map = new Map(counts.map((c) => [`${c.setId}::${c.parallelId}`, c._count._all]));
+    const map = new Map(
+      counts.map((c) => [`${c.setId}::${String(c.cardNumber || "ALL")}::${c.parallelId}`, c._count._all])
+    );
     const gaps = variants
       .map((v) => ({
         setId: v.setId,
         cardNumber: v.cardNumber,
         parallelId: v.parallelId,
-        refs: map.get(`${v.setId}::${v.parallelId}`) ?? 0,
+        refs: map.get(`${v.setId}::${v.cardNumber}::${v.parallelId}`) ?? 0,
       }))
       .filter((v) => v.refs < minRefs)
       .sort((a, b) => a.refs - b.refs);

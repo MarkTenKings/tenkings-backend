@@ -79,10 +79,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         orderBy: [{ setId: "asc" }, { cardNumber: "asc" }, { parallelId: "asc" }],
         take,
       });
-      const keys = variants.map((variant) => ({ setId: variant.setId, parallelId: variant.parallelId }));
+      const keys = variants.map((variant) => ({
+        setId: variant.setId,
+        cardNumber: variant.cardNumber,
+        parallelId: variant.parallelId,
+      }));
       const referenceCounts = keys.length
         ? await prisma.cardVariantReferenceImage.groupBy({
-            by: ["setId", "parallelId"],
+            by: ["setId", "cardNumber", "parallelId"],
             where: { OR: keys },
             _count: { _all: true },
           })
@@ -93,9 +97,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           latestRefs = await prisma.cardVariantReferenceImage.findMany({
             where: { OR: keys },
             orderBy: [{ updatedAt: "desc" }],
-            distinct: ["setId", "parallelId"],
+            distinct: ["setId", "cardNumber", "parallelId"],
             select: ({
               setId: true,
+              cardNumber: true,
               parallelId: true,
               storageKey: true,
               cropUrls: true,
@@ -107,9 +112,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           latestRefs = await prisma.cardVariantReferenceImage.findMany({
             where: { OR: keys },
             orderBy: [{ updatedAt: "desc" }],
-            distinct: ["setId", "parallelId"],
+            distinct: ["setId", "cardNumber", "parallelId"],
             select: ({
               setId: true,
+              cardNumber: true,
               parallelId: true,
               cropUrls: true,
               rawImageUrl: true,
@@ -120,7 +126,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       const countByKey = new Map<string, number>();
       for (const row of referenceCounts) {
-        countByKey.set(`${row.setId}::${row.parallelId}`, row._count._all);
+        countByKey.set(`${row.setId}::${String((row as any).cardNumber || "ALL")}::${row.parallelId}`, row._count._all);
       }
       const previewByKey = new Map<string, string>();
       const mode = getStorageMode();
@@ -138,11 +144,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           }
         }
         if (!preview) continue;
-        previewByKey.set(`${row.setId}::${row.parallelId}`, preview);
+        previewByKey.set(`${row.setId}::${String((row as any).cardNumber || "ALL")}::${row.parallelId}`, preview);
       }
 
       const rows = variants.map((variant) => {
-        const key = `${variant.setId}::${variant.parallelId}`;
+        const key = `${variant.setId}::${variant.cardNumber}::${variant.parallelId}`;
         return toRow(variant, {
           referenceCount: countByKey.get(key) ?? 0,
           previewImageUrl: previewByKey.get(key) ?? null,

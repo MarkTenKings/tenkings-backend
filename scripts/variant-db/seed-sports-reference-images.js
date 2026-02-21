@@ -749,20 +749,22 @@ async function loadExistingRefCounts(prisma, variants) {
   const seen = new Set();
   for (const variant of variants) {
     const refType = String(variant.refType || "front");
-    const key = `${variant.setId}::${variant.parallelId}::${refType}`;
+    const cardNumber = String(variant.cardNumber || "ALL").trim() || "ALL";
+    const key = `${variant.setId}::${cardNumber}::${variant.parallelId}::${refType}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    unique.push({ setId: variant.setId, parallelId: variant.parallelId, refType });
+    unique.push({ setId: variant.setId, cardNumber, parallelId: variant.parallelId, refType });
   }
 
   const countByKey = new Map();
   const chunks = chunkArray(unique, 300);
   for (const pairs of chunks) {
     const rows = await prisma.cardVariantReferenceImage.groupBy({
-      by: ["setId", "parallelId", "refType"],
+      by: ["setId", "cardNumber", "parallelId", "refType"],
       where: {
         OR: pairs.map((pair) => ({
           setId: pair.setId,
+          cardNumber: pair.cardNumber,
           parallelId: pair.parallelId,
           refType: pair.refType,
         })),
@@ -770,7 +772,8 @@ async function loadExistingRefCounts(prisma, variants) {
       _count: { _all: true },
     });
     for (const row of rows) {
-      const key = `${row.setId}::${row.parallelId}::${row.refType || "front"}`;
+      const cardNumber = String(row.cardNumber || "ALL").trim() || "ALL";
+      const key = `${row.setId}::${cardNumber}::${row.parallelId}::${row.refType || "front"}`;
       countByKey.set(key, row._count._all);
     }
   }
@@ -778,10 +781,12 @@ async function loadExistingRefCounts(prisma, variants) {
 }
 
 async function loadExistingPlayerSeedCounts(prisma, variant, refType) {
+  const variantCardNumber = String(variant.cardNumber || "ALL").trim() || "ALL";
   const rows = await prisma.cardVariantReferenceImage.groupBy({
     by: ["playerSeed"],
     where: {
       setId: variant.setId,
+      cardNumber: variantCardNumber,
       parallelId: variant.parallelId,
       refType,
       NOT: { playerSeed: null },
@@ -939,7 +944,8 @@ async function main() {
       ensureDeadline(setDeadlineAtMs, "processing set variants");
       variantsChecked += 1;
       maybeHeartbeat();
-      const variantKey = `${variant.setId}::${variant.parallelId}::${refType}`;
+      const variantCardNumber = String(variant.cardNumber || "ALL").trim() || "ALL";
+      const variantKey = `${variant.setId}::${variantCardNumber}::${variant.parallelId}::${refType}`;
       const checklistEntries = exhaustivePlayerMode
         ? deriveChecklistEntries(variant.setId, variant.parallelId, querySetOverride, checklistPlayersMap)
         : [];
@@ -963,6 +969,7 @@ async function main() {
         const existing = await prisma.cardVariantReferenceImage.findMany({
           where: {
             setId: variant.setId,
+            cardNumber: variantCardNumber,
             parallelId: variant.parallelId,
             refType,
           },
@@ -986,6 +993,7 @@ async function main() {
         JSON.stringify({
           progress: "variant_preload",
           setId: variant.setId,
+          cardNumber: variantCardNumber,
           parallelId: variant.parallelId,
           targets: fullTargets.length,
           targetsWindowStart: startIndex,
@@ -1014,6 +1022,7 @@ async function main() {
             targetsSkippedExisting += 1;
             updateVariantProgress(variantKey, absoluteTargetIndex + 1, {
               setId: variant.setId,
+              cardNumber: variantCardNumber,
               parallelId: variant.parallelId,
               refType,
             });
@@ -1068,6 +1077,7 @@ async function main() {
                   {
                     debug: "queries",
                     setId: variant.setId,
+                    cardNumber: variantCardNumber,
                     parallelId: variant.parallelId,
                     playerName: playerName || null,
                     cardNumber: cardNumber || null,
@@ -1135,6 +1145,7 @@ async function main() {
               JSON.stringify({
                 progress: "target_result",
                 setId: variant.setId,
+                cardNumber: variantCardNumber,
                 parallelId: variant.parallelId,
                 targetIndex: absoluteTargetIndex,
                 playerName: playerName || null,
@@ -1171,10 +1182,11 @@ async function main() {
           await prisma.cardVariantReferenceImage.createMany({
             data: toInsert.map((image) => ({
               setId: variant.setId,
+              cardNumber: cardNumber || variantCardNumber,
               parallelId: variant.parallelId,
               refType,
               pairKey: image.sourceListingId
-                ? `${variant.setId}::${variant.parallelId}::${image.sourceListingId}`
+                ? `${variant.setId}::${variant.parallelId}::${String(image.playerSeed || "NA")}::${image.sourceListingId}`
                 : null,
               sourceListingId: image.sourceListingId ?? null,
               playerSeed: image.playerSeed ?? null,
@@ -1197,6 +1209,7 @@ async function main() {
             JSON.stringify({
               progress: "target_result",
               setId: variant.setId,
+              cardNumber: variantCardNumber,
               parallelId: variant.parallelId,
               targetIndex: absoluteTargetIndex,
               playerName: playerName || null,
@@ -1216,6 +1229,7 @@ async function main() {
         }
         updateVariantProgress(variantKey, absoluteTargetIndex + 1, {
           setId: variant.setId,
+          cardNumber: variantCardNumber,
           parallelId: variant.parallelId,
           refType,
         });

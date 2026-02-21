@@ -6,7 +6,9 @@ import { getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../
 type ReferenceRow = {
   id: string;
   setId: string;
+  cardNumber: string | null;
   parallelId: string;
+  displayLabel: string;
   refType: string;
   pairKey: string | null;
   sourceListingId: string | null;
@@ -30,10 +32,15 @@ type ResponseBody =
   | { message: string };
 
 function toRow(reference: any): ReferenceRow {
+  const rawPlayerSeed = String(reference.playerSeed || "").trim();
+  const playerLabel = rawPlayerSeed ? rawPlayerSeed.split("::")[0]?.trim() || "" : "";
+  const displayLabel = playerLabel || String(reference.parallelId || "");
   return {
     id: reference.id,
     setId: reference.setId,
+    cardNumber: reference.cardNumber != null ? String(reference.cardNumber) : null,
     parallelId: reference.parallelId,
+    displayLabel,
     refType: String(reference.refType || "front"),
     pairKey: reference.pairKey ?? null,
     sourceListingId: reference.sourceListingId ?? null,
@@ -77,11 +84,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (req.method === "GET") {
       const setId = typeof req.query.setId === "string" ? req.query.setId.trim() : "";
       const parallelId = typeof req.query.parallelId === "string" ? req.query.parallelId.trim() : "";
+      const cardNumber = typeof req.query.cardNumber === "string" ? req.query.cardNumber.trim() : "";
       const refType = typeof req.query.refType === "string" ? req.query.refType.trim().toLowerCase() : "";
       const take = Math.min(500, Math.max(1, Number(req.query.limit ?? 200) || 200));
 
       const where: Record<string, any> = {};
       if (setId) where.setId = setId;
+      if (cardNumber) where.cardNumber = cardNumber;
       if (parallelId) where.parallelId = parallelId;
       if (refType === "front" || refType === "back") where.refType = refType;
 
@@ -120,6 +129,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           select: ({
             id: true,
             setId: true,
+            cardNumber: true,
             parallelId: true,
             refType: true,
             pairKey: true,
@@ -173,6 +183,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (req.method === "POST") {
       const {
         setId,
+        cardNumber,
         parallelId,
         refType,
         pairKey,
@@ -188,15 +199,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         return res.status(400).json({ message: "Missing required fields." });
       }
 
+      const normalizedCardNumber = cardNumber ? String(cardNumber).trim() : "ALL";
       const normalizedRefType = String(refType || "front").trim().toLowerCase() === "back" ? "back" : "front";
       const normalizedSourceUrl = sourceUrl ? String(sourceUrl).trim() : null;
       const derivedListingId = sourceListingId
         ? String(sourceListingId).trim()
         : parseListingId(normalizedSourceUrl);
+      const normalizedPlayerSeed = playerSeed ? String(playerSeed).trim() : null;
       const normalizedPairKey = pairKey
         ? String(pairKey).trim()
         : derivedListingId
-        ? `${String(setId).trim()}::${String(parallelId).trim()}::${derivedListingId}`
+        ? `${String(setId).trim()}::${String(parallelId).trim()}::${normalizedPlayerSeed || "NA"}::${derivedListingId}`
         : null;
 
       let reference: any;
@@ -204,11 +217,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         reference = await prisma.cardVariantReferenceImage.create({
           data: ({
             setId: String(setId).trim(),
+            cardNumber: normalizedCardNumber,
             parallelId: String(parallelId).trim(),
             refType: normalizedRefType,
             pairKey: normalizedPairKey,
             sourceListingId: derivedListingId,
-            playerSeed: playerSeed ? String(playerSeed).trim() : null,
+            playerSeed: normalizedPlayerSeed,
             storageKey: storageKey ? String(storageKey).trim() : null,
             qaStatus: "pending",
             ownedStatus: storageKey ? "owned" : "external",
@@ -222,7 +236,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           } as any),
         });
       } catch {
-        // Backward-compatible fallback when storageKey column/schema is not live.
+        // Backward-compatible fallback when storageKey/cardNumber columns are not live.
         reference = await prisma.cardVariantReferenceImage.create({
           data: ({
             setId: String(setId).trim(),
@@ -230,7 +244,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             refType: normalizedRefType,
             pairKey: normalizedPairKey,
             sourceListingId: derivedListingId,
-            playerSeed: playerSeed ? String(playerSeed).trim() : null,
+            playerSeed: normalizedPlayerSeed,
             rawImageUrl: String(rawImageUrl).trim(),
             sourceUrl: normalizedSourceUrl,
             cropUrls: Array.isArray(cropUrls)

@@ -341,6 +341,7 @@ async function upsertRows(prisma, rows, options) {
       const existing = await prisma.cardVariantReferenceImage.findFirst({
         where: {
           setId: row.setId,
+          cardNumber: row.cardNumber,
           parallelId: row.parallelId,
           rawImageUrl: row.rawImageUrl,
         },
@@ -352,6 +353,7 @@ async function upsertRows(prisma, rows, options) {
         await prisma.cardVariantReferenceImage.create({
           data: {
             setId: row.setId,
+            cardNumber: row.cardNumber,
             parallelId: row.parallelId,
             rawImageUrl: row.rawImageUrl,
             sourceUrl: row.sourceUrl ?? null,
