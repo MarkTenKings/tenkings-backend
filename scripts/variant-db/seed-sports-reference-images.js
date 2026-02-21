@@ -817,13 +817,13 @@ async function main() {
   const delayMs = Math.max(0, Number(args["delay-ms"] ?? 700) || 700);
   const setFilter = args["set-id"] ? String(args["set-id"]).trim() : "";
   const querySetOverride = args["query-set"] ? String(args["query-set"]).trim() : "";
+  const mode = String(args.mode || "exhaustive-player").trim().toLowerCase();
+  const exhaustivePlayerMode = mode === "exhaustive-player";
   const maxPlayerSeeds = Math.max(0, Number(args["max-player-seeds"] ?? 24) || 24);
   const defaultMaxQueries = exhaustivePlayerMode ? 8 : 80;
   const maxQueries = Math.max(1, Number(args["max-queries"] ?? defaultMaxQueries) || defaultMaxQueries);
   const pagesPerQuery = Math.max(1, Number(args["pages-per-query"] ?? 1) || 1);
   const resultsPerPage = Math.max(10, Math.min(240, Number(args["results-per-page"] ?? 100) || 100));
-  const mode = String(args.mode || "exhaustive-player").trim().toLowerCase();
-  const exhaustivePlayerMode = mode === "exhaustive-player";
   const includeKeywords = false;
   const legacyBroadMode = Boolean(args["legacy-broad-mode"]);
   const exactQuery = !legacyBroadMode;
