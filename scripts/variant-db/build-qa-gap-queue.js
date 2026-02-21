@@ -32,6 +32,28 @@ function parseArgs(argv) {
   return out;
 }
 
+function normalizeToken(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function isAllCardNumber(value) {
+  const token = String(value || "").trim().toUpperCase();
+  return !token || token === "ALL";
+}
+
+function filterLegacyAllVariants(variants) {
+  const specificBySetParallel = new Set();
+  for (const variant of variants) {
+    if (isAllCardNumber(variant.cardNumber)) continue;
+    specificBySetParallel.add(`${normalizeToken(variant.setId)}::${normalizeToken(variant.parallelId)}`);
+  }
+  return variants.filter((variant) => {
+    if (!isAllCardNumber(variant.cardNumber)) return true;
+    const key = `${normalizeToken(variant.setId)}::${normalizeToken(variant.parallelId)}`;
+    return !specificBySetParallel.has(key);
+  });
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const minRefs = Math.max(1, Number(args["min-refs"] ?? 2) || 2);
@@ -56,7 +78,8 @@ async function main() {
         keywords: true,
       },
     });
-    const pairs = variants.map((variant) => ({
+    const filteredVariants = filterLegacyAllVariants(variants);
+    const pairs = filteredVariants.map((variant) => ({
       setId: variant.setId,
       cardNumber: variant.cardNumber,
       parallelId: variant.parallelId,
@@ -83,9 +106,10 @@ async function main() {
         row._count._all,
       ])
     );
-    const queue = variants
+    const queue = filteredVariants
       .map((variant) => {
-        const refs = countByKey.get(`${variant.setId}::${variant.cardNumber}::${variant.parallelId}::${refType}`) ?? 0;
+        const refs =
+          countByKey.get(`${variant.setId}::${String(variant.cardNumber || "ALL")}::${variant.parallelId}::${refType}`) ?? 0;
         return {
           setId: variant.setId,
           parallelId: variant.parallelId,
