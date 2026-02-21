@@ -51,6 +51,22 @@ function keyForRef(setId: string, cardNumber: string | null | undefined, paralle
   return `${setId}::${card}::${parallelId}`;
 }
 
+function filterLegacyAllVariants(variants: any[]) {
+  const specificBySetParallel = new Set<string>();
+  for (const variant of variants) {
+    if (normalizeCardToken(variant.cardNumber) === "ALL") continue;
+    specificBySetParallel.add(
+      `${String(variant.setId || "").trim().toLowerCase()}::${String(variant.parallelId || "").trim().toLowerCase()}`
+    );
+  }
+  return variants.filter((variant) => {
+    const card = normalizeCardToken(variant.cardNumber);
+    if (card !== "ALL") return true;
+    const key = `${String(variant.setId || "").trim().toLowerCase()}::${String(variant.parallelId || "").trim().toLowerCase()}`;
+    return !specificBySetParallel.has(key);
+  });
+}
+
 function toRow(
   variant: any,
   extras?: {
@@ -97,7 +113,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         orderBy: [{ setId: "asc" }, { cardNumber: "asc" }, { parallelId: "asc" }],
         take,
       });
-      const keys = variants.map((variant) => ({
+      const filteredVariants = filterLegacyAllVariants(variants);
+      const keys = filteredVariants.map((variant) => ({
         setId: variant.setId,
         cardNumber: variant.cardNumber,
         parallelId: variant.parallelId,
@@ -172,15 +189,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         previewByKey.set(keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId), preview);
       }
 
-      const rows = variants.map((variant) => {
+      const rows = filteredVariants.map((variant) => {
         const candidateCards = dbCardValuesForVariant(variant.cardNumber);
-        const referenceCount = candidateCards.reduce((sum, card) => {
-          return sum + (countByKey.get(keyForRef(variant.setId, card, variant.parallelId)) ?? 0);
-        }, 0);
+        const exactCard = normalizeCardToken(variant.cardNumber);
+        const exactCount =
+          countByKey.get(keyForRef(variant.setId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)) ?? 0;
+        const legacyCount =
+          (countByKey.get(keyForRef(variant.setId, "ALL", variant.parallelId)) ?? 0) +
+          (countByKey.get(keyForRef(variant.setId, null, variant.parallelId)) ?? 0);
+        const referenceCount = exactCount > 0 ? exactCount : legacyCount;
         const previewImageUrl =
-          candidateCards
-            .map((card) => previewByKey.get(keyForRef(variant.setId, card, variant.parallelId)) || null)
-            .find(Boolean) ?? null;
+          previewByKey.get(
+            keyForRef(variant.setId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)
+          ) ||
+          candidateCards.map((card) => previewByKey.get(keyForRef(variant.setId, card, variant.parallelId)) || null).find(Boolean) ||
+          null;
         return toRow(variant, {
           referenceCount,
           previewImageUrl,

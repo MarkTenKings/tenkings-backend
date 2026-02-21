@@ -39,6 +39,29 @@ type ReferenceRow = {
 
 type StatusMessage = { type: "success" | "error"; message: string } | null;
 
+function decodeHtml(value: string) {
+  return value
+    .replace(/&#0*38;/g, "&")
+    .replace(/&amp;/g, "&")
+    .replace(/&#8211;/g, "-")
+    .replace(/&#8217;/g, "'")
+    .replace(/&#8220;|&#8221;/g, '"');
+}
+
+function displayParallelLabel(value: string) {
+  const decoded = decodeHtml(String(value || ""));
+  const trimmed = decoded.trim();
+  if (!trimmed.startsWith("{") || !trimmed.includes('"name"')) return trimmed;
+  try {
+    const parsed = JSON.parse(trimmed);
+    const names = Array.isArray(parsed?.name) ? parsed.name : [];
+    const joined = names.map((entry: unknown) => String(entry || "").trim()).filter(Boolean).join(" / ");
+    return joined || trimmed;
+  } catch {
+    return trimmed;
+  }
+}
+
 function fileFromBlob(blob: Blob, fallbackName: string) {
   const ext = blob.type === "image/png" ? "png" : blob.type === "image/webp" ? "webp" : "jpg";
   return new File([blob], `${fallbackName}.${ext}`, {
@@ -455,9 +478,9 @@ export default function VariantRefQaPage() {
                     key={variant.id}
                     className={`border-t border-white/5 ${active ? "bg-emerald-400/10 ring-1 ring-emerald-400/40" : ""}`}
                   >
-                    <td className="px-3 py-2">{variant.setId}</td>
+                    <td className="px-3 py-2">{decodeHtml(variant.setId)}</td>
                     <td className="px-3 py-2">{variant.cardNumber}</td>
-                    <td className="px-3 py-2">{variant.parallelId}</td>
+                    <td className="px-3 py-2">{displayParallelLabel(variant.parallelId)}</td>
                     <td className="px-3 py-2">
                       <button
                         type="button"
@@ -477,7 +500,7 @@ export default function VariantRefQaPage() {
                         <a href={variant.previewImageUrl} target="_blank" rel="noreferrer">
                           <img
                             src={variant.previewImageUrl}
-                            alt={`${variant.parallelId} thumb`}
+                            alt={`${displayParallelLabel(variant.parallelId)} thumb`}
                             className="h-10 w-10 rounded-md object-cover"
                           />
                         </a>
@@ -503,8 +526,8 @@ export default function VariantRefQaPage() {
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs uppercase tracking-[0.24em] text-slate-400">
-              Selected: <span className="text-slate-200">{selectedSetId || "—"}</span> ·{" "}
-              <span className="text-slate-200">{selectedParallelId || "—"}</span> ·{" "}
+              Selected: <span className="text-slate-200">{decodeHtml(selectedSetId) || "—"}</span> ·{" "}
+              <span className="text-slate-200">{displayParallelLabel(selectedParallelId) || "—"}</span> ·{" "}
               <span className="text-slate-200">#{selectedCardNumber || "—"}</span>
             </div>
             <div className="flex gap-2">
@@ -566,6 +589,7 @@ export default function VariantRefQaPage() {
             {refs.map((ref) => {
               const checked = selectedRefIds.includes(ref.id);
               const preview = ref.cropUrls?.[0] || ref.rawImageUrl;
+              const playerLabel = String(ref.playerSeed || "").trim().split("::")[0]?.trim() || null;
               return (
                 <article key={ref.id} className="rounded-xl border border-white/10 bg-night-800/60 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -599,6 +623,9 @@ export default function VariantRefQaPage() {
                     </p>
                     <p>
                       Card #: <span className="text-slate-300">{ref.cardNumber || "—"}</span>
+                    </p>
+                    <p>
+                      Player: <span className="text-slate-300">{playerLabel || "—"}</span>
                     </p>
                     <p>
                       QA:{" "}
