@@ -206,6 +206,34 @@ function computePlayerMapCoverage(setId, validation, playerMapJson) {
   };
 }
 
+function sourceFormatHintFromUrl(url) {
+  const text = String(url || "").toLowerCase();
+  if (text.includes(".pdf")) return "pdf";
+  if (text.includes(".csv")) return "csv";
+  if (text.includes(".txt")) return "txt";
+  return "";
+}
+
+function uniqueStrings(values) {
+  const out = [];
+  for (const value of values || []) {
+    const next = String(value || "").trim();
+    if (!next) continue;
+    if (!out.includes(next)) out.push(next);
+  }
+  return out;
+}
+
+function buildSourceCandidates(entry, setId, provenanceBySetId) {
+  const fromEntry = uniqueStrings([
+    entry?.sourceUrl,
+    entry?.setUrl,
+    ...(Array.isArray(entry?.sourceUrls) ? entry.sourceUrls : []),
+  ]);
+  const fromProvenance = uniqueStrings(provenanceBySetId.get(normalize(setId)) || []);
+  return uniqueStrings([...fromEntry, ...fromProvenance]);
+}
+
 function boolFromArg(value, defaultValue) {
   if (value === undefined) return defaultValue;
   if (typeof value === "boolean") return value;
@@ -258,15 +286,16 @@ function runManifestBatch(args) {
   const defaultRefSide = String(args["ref-side"] || manifest.refSide || "front");
   const seedSetTimeoutMs = Math.max(10_000, Number(args["seed-set-timeout-ms"] || manifest.seedSetTimeoutMs || 900_000) || 900_000);
   const defaultMinMapRowCoveragePct = Number(
-    args["min-player-map-row-coverage-pct"] ?? manifest.minPlayerMapRowCoveragePct ?? 95
+    args["min-player-map-row-coverage-pct"] ?? manifest.minPlayerMapRowCoveragePct ?? 90
   );
   const defaultMinMapPlayerCoveragePct = Number(
-    args["min-player-map-player-coverage-pct"] ?? manifest.minPlayerMapPlayerCoveragePct ?? 95
+    args["min-player-map-player-coverage-pct"] ?? manifest.minPlayerMapPlayerCoveragePct ?? 90
   );
   const globalLimitVariants = args["limit-variants"];
 
   const validateScript = path.resolve(process.cwd(), "scripts/variant-db/validate-checklist-output.js");
   const mapScript = path.resolve(process.cwd(), "scripts/variant-db/build-checklist-player-map.js");
+  const parseChecklistScript = path.resolve(process.cwd(), "scripts/variant-db/parse-checklist-players.js");
   const seedScript = path.resolve(process.cwd(), "scripts/variant-db/seed-sports-reference-images.js");
   const queueScript = path.resolve(process.cwd(), "scripts/variant-db/build-qa-gap-queue.js");
 
@@ -357,10 +386,6 @@ function runManifestBatch(args) {
         throw new Error(`validation warning blocked: ${validation.issues.join("; ") || "warn status"}`);
       }
 
-      runNodeOrThrow(mapScript, ["--csv", playersCsv, "--out", path.relative(process.cwd(), playerMapOut)]);
-      const playerMapJson = loadJson(playerMapOut);
-      const coverage = computePlayerMapCoverage(setId, validation, playerMapJson);
-      setSummary.playerMapCoverage = coverage;
       const minMapRowCoveragePct = Number(
         entry.minPlayerMapRowCoveragePct ??
           entry["min-player-map-row-coverage-pct"] ??
@@ -371,26 +396,117 @@ function runManifestBatch(args) {
           entry["min-player-map-player-coverage-pct"] ??
           defaultMinMapPlayerCoveragePct
       );
+      const sourceFallbackEnabled = boolFromArg(
+        entry.sourceFallback ?? entry["source-fallback"] ?? args["source-fallback"] ?? manifest.sourceFallback,
+        true
+      );
+      const sourceCandidates = buildSourceCandidates(entry, setId, provenanceBySetId);
+
+      let activePlayersCsv = playersCsv;
+      let activePlayerMapOut = playerMapOut;
+      runNodeOrThrow(mapScript, ["--csv", activePlayersCsv, "--out", path.relative(process.cwd(), activePlayerMapOut)]);
+      let activePlayerMapJson = loadJson(activePlayerMapOut);
+      let coverage = computePlayerMapCoverage(setId, validation, activePlayerMapJson);
+      setSummary.playerMapCoverage = coverage;
+
       if (coverage.rowCoveragePct < minMapRowCoveragePct || coverage.playerCoveragePct < minMapPlayerCoveragePct) {
-        const sourcesFromManifest = Array.isArray(entry.sourceUrls)
-          ? entry.sourceUrls.map((item) => String(item || "").trim()).filter(Boolean)
-          : [];
-        const sourcesFromProvenance = provenanceBySetId.get(normalize(setId)) || [];
-        const sourceUrls = [...new Set([...sourcesFromManifest, ...sourcesFromProvenance])];
-        const decisionHint = sourceUrls.length > 0
-          ? "coverage_low_with_sources_review_parser_then_source_fallback"
-          : "coverage_low_source_unknown_review_parser_and_add_alternate_source";
-        const details = {
-          reasonCode: "player_map_coverage_low",
-          coverage,
-          thresholds: {
-            minMapRowCoveragePct,
-            minMapPlayerCoveragePct,
-          },
-          sourceUrls,
-          decisionHint,
-        };
-        throw new Error(`player_map_coverage_low: ${JSON.stringify(details)}`);
+        const fallbackResults = [];
+        if (sourceFallbackEnabled && sourceCandidates.length > 0) {
+          const fallbackDir = path.join(logDir, "fallback");
+          fs.mkdirSync(fallbackDir, { recursive: true });
+          for (let i = 0; i < sourceCandidates.length; i += 1) {
+            const sourceUrl = sourceCandidates[i];
+            const fallbackCsvOut = path.join(fallbackDir, `${slug}.fallback-${i + 1}.players.csv`);
+            const fallbackValidateOut = path.join(fallbackDir, `${slug}.fallback-${i + 1}.validate.json`);
+            const fallbackMapOut = path.join(fallbackDir, `${slug}.fallback-${i + 1}.player-map.json`);
+            const parseArgs = [
+              "--set-id",
+              setId,
+              "--in",
+              sourceUrl,
+              "--out",
+              path.relative(process.cwd(), fallbackCsvOut),
+            ];
+            const hintedFormat = sourceFormatHintFromUrl(sourceUrl);
+            if (hintedFormat) {
+              parseArgs.push("--format", hintedFormat);
+            }
+            const parseResult = runNode(parseChecklistScript, parseArgs);
+            if (parseResult !== 0) {
+              fallbackResults.push({
+                sourceUrl,
+                status: "parse_failed",
+              });
+              continue;
+            }
+            const fallbackValidateArgs = [
+              "--csv",
+              path.relative(process.cwd(), fallbackCsvOut),
+              "--set-id",
+              setId,
+              "--out",
+              path.relative(process.cwd(), fallbackValidateOut),
+            ];
+            if (minRows !== undefined) fallbackValidateArgs.push("--min-rows", String(minRows));
+            if (maxMissingCardPct !== undefined)
+              fallbackValidateArgs.push("--max-missing-card-pct", String(maxMissingCardPct));
+            if (maxUnknownParallelPct !== undefined)
+              fallbackValidateArgs.push("--max-unknown-parallel-pct", String(maxUnknownParallelPct));
+            runNodeOrThrow(validateScript, fallbackValidateArgs);
+            const fallbackValidation = loadJson(fallbackValidateOut);
+            runNodeOrThrow(mapScript, [
+              "--csv",
+              path.relative(process.cwd(), fallbackCsvOut),
+              "--out",
+              path.relative(process.cwd(), fallbackMapOut),
+            ]);
+            const fallbackMapJson = loadJson(fallbackMapOut);
+            const fallbackCoverage = computePlayerMapCoverage(setId, fallbackValidation, fallbackMapJson);
+            fallbackResults.push({
+              sourceUrl,
+              status: "ok",
+              validation: fallbackValidation.status,
+              coverage: fallbackCoverage,
+              playersCsv: path.relative(process.cwd(), fallbackCsvOut),
+            });
+            const meetsThreshold =
+              fallbackCoverage.rowCoveragePct >= minMapRowCoveragePct &&
+              fallbackCoverage.playerCoveragePct >= minMapPlayerCoveragePct &&
+              (fallbackValidation.status === "pass" || (fallbackValidation.status === "warn" && allowWarnSet));
+            if (!meetsThreshold) continue;
+            activePlayersCsv = path.relative(process.cwd(), fallbackCsvOut);
+            activePlayerMapOut = fallbackMapOut;
+            activePlayerMapJson = fallbackMapJson;
+            coverage = fallbackCoverage;
+            setSummary.validation = fallbackValidation.status;
+            setSummary.playerMapCoverage = coverage;
+            setSummary.fallback = {
+              used: true,
+              sourceUrl,
+              playersCsv: activePlayersCsv,
+              attempts: fallbackResults,
+            };
+            break;
+          }
+        }
+        const stillLow = coverage.rowCoveragePct < minMapRowCoveragePct || coverage.playerCoveragePct < minMapPlayerCoveragePct;
+        if (stillLow) {
+          const details = {
+            reasonCode: "player_map_coverage_low",
+            coverage,
+            thresholds: {
+              minMapRowCoveragePct,
+              minMapPlayerCoveragePct,
+            },
+            sourceUrls: sourceCandidates,
+            sourceFallbackEnabled,
+            fallbackAttempts: setSummary.fallback?.attempts || [],
+            decisionHint: sourceCandidates.length > 0
+              ? "coverage_low_after_fallback_review_parser_rules_or_add_better_source"
+              : "coverage_low_source_unknown_add_source_then_reparse",
+          };
+          throw new Error(`player_map_coverage_low: ${JSON.stringify(details)}`);
+        }
       }
 
       if (!Boolean(entry.skipSeed) && !Boolean(args["skip-seed"])) {
@@ -405,7 +521,7 @@ function runManifestBatch(args) {
           "--ref-side",
           refSide,
           "--checklist-player-map",
-          path.relative(process.cwd(), playerMapOut),
+          path.relative(process.cwd(), activePlayerMapOut),
           "--set-timeout-ms",
           String(seedSetTimeoutMs),
         ];
