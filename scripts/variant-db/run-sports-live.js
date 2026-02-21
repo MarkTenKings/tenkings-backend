@@ -89,9 +89,9 @@ function classifyFailureReason(error) {
   if (normalized.includes("missing required env")) return "env_missing";
   if (normalized.includes("serpapi key is required")) return "env_missing";
   if (normalized.includes("environment variable not found database url")) return "env_missing";
-  if (normalized.includes("set_timeout")) return "set_timeout";
-  if (normalized.includes("player_timeout")) return "player_timeout";
-  if (normalized.includes("request_timeout")) return "request_timeout";
+  if (normalized.includes("set_timeout") || normalized.includes("set timeout")) return "set_timeout";
+  if (normalized.includes("player_timeout") || normalized.includes("player timeout")) return "player_timeout";
+  if (normalized.includes("request_timeout") || normalized.includes("request timeout")) return "request_timeout";
   if (normalized.includes("validation failed")) return "validation_failed";
   if (normalized.includes("validation warning blocked")) return "validation_warn_blocked";
   if (normalized.includes("timed out")) return "process_timeout";

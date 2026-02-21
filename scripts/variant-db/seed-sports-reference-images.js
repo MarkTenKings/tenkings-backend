@@ -728,6 +728,26 @@ async function loadExistingRefCounts(prisma, variants) {
   return countByKey;
 }
 
+async function loadExistingPlayerSeedCounts(prisma, variant, refType) {
+  const rows = await prisma.cardVariantReferenceImage.groupBy({
+    by: ["playerSeed"],
+    where: {
+      setId: variant.setId,
+      parallelId: variant.parallelId,
+      refType,
+      NOT: { playerSeed: null },
+    },
+    _count: { _all: true },
+  });
+  const counts = new Map();
+  for (const row of rows) {
+    const key = String(row.playerSeed || "").trim();
+    if (!key) continue;
+    counts.set(key, Number(row._count?._all || 0));
+  }
+  return counts;
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const dryRun = Boolean(args["dry-run"]);
@@ -814,6 +834,9 @@ async function main() {
     const setStartedAt = Date.now();
     const setDeadlineAtMs = setStartedAt + setTimeoutMs;
     let lastHeartbeatAt = 0;
+    const seenImageUrlsInRun = new Set();
+    const seenSourceUrlsInRun = new Set();
+    const seenListingIdsInRun = new Set();
 
     const maybeHeartbeat = (force = false) => {
       const now = Date.now();
@@ -846,41 +869,47 @@ async function main() {
           ? checklistEntries
           : [{ playerName: "", cardNumber: "" }]
         : [{ playerName: "", cardNumber: "" }];
-
-      const existing = await prisma.cardVariantReferenceImage.findMany({
-        where: {
+      const preloadStartedAt = Date.now();
+      const existingByPlayerSeed = exhaustivePlayerMode
+        ? await loadExistingPlayerSeedCounts(prisma, variant, refType)
+        : new Map();
+      const existingUrls = new Set();
+      const existingSourceUrls = new Set();
+      const existingListingIds = new Set();
+      if (!exhaustivePlayerMode) {
+        const existing = await prisma.cardVariantReferenceImage.findMany({
+          where: {
+            setId: variant.setId,
+            parallelId: variant.parallelId,
+            refType,
+          },
+          select: {
+            rawImageUrl: true,
+            sourceUrl: true,
+            sourceListingId: true,
+          },
+        });
+        for (const row of existing) {
+          const imageKey = canonicalizeUrl(row.rawImageUrl);
+          const sourceKey = canonicalizeUrl(row.sourceUrl);
+          const listingId = String(row.sourceListingId || "").trim();
+          if (imageKey) existingUrls.add(imageKey);
+          if (sourceKey) existingSourceUrls.add(sourceKey);
+          if (listingId) existingListingIds.add(listingId);
+        }
+      }
+      const preloadElapsedMs = Date.now() - preloadStartedAt;
+      console.log(
+        JSON.stringify({
+          progress: "variant_preload",
           setId: variant.setId,
           parallelId: variant.parallelId,
-          refType,
-        },
-        select: {
-          rawImageUrl: true,
-          sourceUrl: true,
-          sourceListingId: true,
-          playerSeed: true,
-        },
-      });
-      const existingUrls = new Set(
-        existing
-          .map((row) => canonicalizeUrl(row.rawImageUrl))
-          .filter(Boolean)
+          targets: targets.length,
+          existingPlayerSeeds: existingByPlayerSeed.size,
+          existingRefs: existingUrls.size,
+          elapsedMs: preloadElapsedMs,
+        })
       );
-      const existingSourceUrls = new Set(
-        existing
-          .map((row) => canonicalizeUrl(row.sourceUrl))
-          .filter(Boolean)
-      );
-      const existingListingIds = new Set(
-        existing
-          .map((row) => String(row.sourceListingId || "").trim())
-          .filter(Boolean)
-      );
-      const existingByPlayerSeed = new Map();
-      for (const row of existing) {
-        const key = String(row.playerSeed || "").trim();
-        if (!key) continue;
-        existingByPlayerSeed.set(key, (existingByPlayerSeed.get(key) || 0) + 1);
-      }
 
       let variantInsertedThisPass = 0;
       for (const target of targets) {
@@ -957,9 +986,10 @@ async function main() {
             const sourceKey = canonicalizeUrl(image.sourceUrl);
             if (
               !noDedupe &&
-              ((imageKey && existingUrls.has(imageKey)) ||
-                (sourceKey && existingSourceUrls.has(sourceKey)) ||
-                (image.sourceListingId && existingListingIds.has(image.sourceListingId)))
+              ((imageKey && (seenImageUrlsInRun.has(imageKey) || existingUrls.has(imageKey))) ||
+                (sourceKey && (seenSourceUrlsInRun.has(sourceKey) || existingSourceUrls.has(sourceKey))) ||
+                (image.sourceListingId &&
+                  (seenListingIdsInRun.has(image.sourceListingId) || existingListingIds.has(image.sourceListingId))))
             ) {
               referencesSkipped += 1;
               continue;
@@ -977,9 +1007,9 @@ async function main() {
               continue;
             }
             if (!noDedupe) {
-              if (imageKey) existingUrls.add(imageKey);
-              if (sourceKey) existingSourceUrls.add(sourceKey);
-              if (image.sourceListingId) existingListingIds.add(image.sourceListingId);
+              if (imageKey) seenImageUrlsInRun.add(imageKey);
+              if (sourceKey) seenSourceUrlsInRun.add(sourceKey);
+              if (image.sourceListingId) seenListingIdsInRun.add(image.sourceListingId);
             }
             const safeRawImageUrl = sanitizeText(image.rawImageUrl);
             if (!safeRawImageUrl) {
