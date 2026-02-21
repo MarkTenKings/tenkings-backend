@@ -400,16 +400,19 @@ function derivePlayerSeeds(setId, parallelId, querySetOverride, config, checklis
   return list.map((name) => sanitizeQueryToken(name, 96)).filter(Boolean).slice(0, Math.max(0, maxPlayers));
 }
 
-function deriveChecklistEntries(setId, parallelId, querySetOverride, checklistPlayersMap) {
+function deriveChecklistEntries(setId, parallelId, querySetOverride, checklistPlayersMap, variantCardNumber = "") {
   const key = normalize(querySetOverride || setId);
   const parallelKey = normalize(parallelId);
   const rows = checklistPlayersMap?.setParallelEntries?.[key]?.[parallelKey];
   if (!Array.isArray(rows)) return [];
+  const normalizedVariantCard = sanitizeCardNumberToken(variantCardNumber || "");
+  const enforceCardFilter = Boolean(normalizedVariantCard) && normalizedVariantCard.toUpperCase() !== "ALL";
   return rows
     .map((row) => ({
       playerName: sanitizeQueryToken(row?.playerName || "", 120),
       cardNumber: sanitizeCardNumberToken(row?.cardNumber || ""),
     }))
+    .filter((row) => (enforceCardFilter ? row.cardNumber === normalizedVariantCard : true))
     .filter((row) => row.playerName);
 }
 
@@ -947,7 +950,13 @@ async function main() {
       const variantCardNumber = String(variant.cardNumber || "ALL").trim() || "ALL";
       const variantKey = `${variant.setId}::${variantCardNumber}::${variant.parallelId}::${refType}`;
       const checklistEntries = exhaustivePlayerMode
-        ? deriveChecklistEntries(variant.setId, variant.parallelId, querySetOverride, checklistPlayersMap)
+        ? deriveChecklistEntries(
+            variant.setId,
+            variant.parallelId,
+            querySetOverride,
+            checklistPlayersMap,
+            variantCardNumber
+          )
         : [];
       const fullTargets = exhaustivePlayerMode
         ? checklistEntries.length > 0

@@ -303,6 +303,7 @@ function runManifestBatch(args) {
   const validateScript = path.resolve(process.cwd(), "scripts/variant-db/validate-checklist-output.js");
   const mapScript = path.resolve(process.cwd(), "scripts/variant-db/build-checklist-player-map.js");
   const parseChecklistScript = path.resolve(process.cwd(), "scripts/variant-db/parse-checklist-players.js");
+  const syncScript = path.resolve(process.cwd(), "scripts/variant-db/sync-variant-db.js");
   const seedScript = path.resolve(process.cwd(), "scripts/variant-db/seed-sports-reference-images.js");
   const queueScript = path.resolve(process.cwd(), "scripts/variant-db/build-qa-gap-queue.js");
 
@@ -360,6 +361,7 @@ function runManifestBatch(args) {
       queueCount: null,
       refsInserted: null,
       seedDiagnostics: null,
+      variantSync: null,
       playerMapCoverage: null,
       failedReason: null,
       reason: null,
@@ -513,6 +515,35 @@ function runManifestBatch(args) {
               : "coverage_low_source_unknown_add_source_then_reparse",
           };
           throw new Error(`player_map_coverage_low: ${JSON.stringify(details)}`);
+        }
+      }
+
+      const skipVariantSync = Boolean(entry.skipVariantSync) || Boolean(args["skip-variant-sync"]);
+      if (!skipVariantSync) {
+        ensureRequiredEnv(["DATABASE_URL"]);
+        const syncArgs = [
+          "--source",
+          "csv",
+          "--csv",
+          activePlayersCsv,
+        ];
+        if (dryRun) syncArgs.push("--dry-run");
+        const syncStdout = runNodeCaptureOrThrow(syncScript, syncArgs);
+        const syncSummary = tryParseLastJsonObject(syncStdout);
+        if (syncSummary && typeof syncSummary === "object") {
+          setSummary.variantSync = {
+            status: "ok",
+            source: activePlayersCsv,
+            variantsUpserted: Number(syncSummary.variantsUpserted || 0),
+            variantsSkipped: Number(syncSummary.variantsSkipped || 0),
+            referencesInserted: Number(syncSummary.referencesInserted || 0),
+            referencesSkipped: Number(syncSummary.referencesSkipped || 0),
+          };
+        } else {
+          setSummary.variantSync = {
+            status: "ok",
+            source: activePlayersCsv,
+          };
         }
       }
 
