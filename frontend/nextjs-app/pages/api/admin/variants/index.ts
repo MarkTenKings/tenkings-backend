@@ -33,6 +33,24 @@ function keyFromStoredImage(value: string | null | undefined) {
   return input;
 }
 
+function normalizeCardToken(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return "ALL";
+  if (raw.toUpperCase() === "ALL") return "ALL";
+  return raw;
+}
+
+function dbCardValuesForVariant(cardNumber: string) {
+  const normalized = normalizeCardToken(cardNumber);
+  if (normalized === "ALL") return ["ALL", null] as const;
+  return [normalized, "ALL", null] as const;
+}
+
+function keyForRef(setId: string, cardNumber: string | null | undefined, parallelId: string) {
+  const card = cardNumber == null ? "__NULL__" : normalizeCardToken(cardNumber);
+  return `${setId}::${card}::${parallelId}`;
+}
+
 function toRow(
   variant: any,
   extras?: {
@@ -84,18 +102,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         cardNumber: variant.cardNumber,
         parallelId: variant.parallelId,
       }));
-      const referenceCounts = keys.length
+      const countOr = keys.flatMap((key) =>
+        dbCardValuesForVariant(key.cardNumber).map((card) => ({
+          setId: key.setId,
+          cardNumber: card,
+          parallelId: key.parallelId,
+        }))
+      );
+      const referenceCounts = countOr.length
         ? await prisma.cardVariantReferenceImage.groupBy({
             by: ["setId", "cardNumber", "parallelId"],
-            where: { OR: keys },
+            where: { OR: countOr },
             _count: { _all: true },
           })
         : [];
       let latestRefs: any[] = [];
-      if (keys.length) {
+      if (countOr.length) {
         try {
           latestRefs = await prisma.cardVariantReferenceImage.findMany({
-            where: { OR: keys },
+            where: { OR: countOr },
             orderBy: [{ updatedAt: "desc" }],
             distinct: ["setId", "cardNumber", "parallelId"],
             select: ({
@@ -126,7 +151,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       const countByKey = new Map<string, number>();
       for (const row of referenceCounts) {
-        countByKey.set(`${row.setId}::${String((row as any).cardNumber || "ALL")}::${row.parallelId}`, row._count._all);
+        countByKey.set(keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId), row._count._all);
       }
       const previewByKey = new Map<string, string>();
       const mode = getStorageMode();
@@ -144,14 +169,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           }
         }
         if (!preview) continue;
-        previewByKey.set(`${row.setId}::${String((row as any).cardNumber || "ALL")}::${row.parallelId}`, preview);
+        previewByKey.set(keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId), preview);
       }
 
       const rows = variants.map((variant) => {
-        const key = `${variant.setId}::${variant.cardNumber}::${variant.parallelId}`;
+        const candidateCards = dbCardValuesForVariant(variant.cardNumber);
+        const referenceCount = candidateCards.reduce((sum, card) => {
+          return sum + (countByKey.get(keyForRef(variant.setId, card, variant.parallelId)) ?? 0);
+        }, 0);
+        const previewImageUrl =
+          candidateCards
+            .map((card) => previewByKey.get(keyForRef(variant.setId, card, variant.parallelId)) || null)
+            .find(Boolean) ?? null;
         return toRow(variant, {
-          referenceCount: countByKey.get(key) ?? 0,
-          previewImageUrl: previewByKey.get(key) ?? null,
+          referenceCount,
+          previewImageUrl,
         });
       });
       const filtered = gapOnly ? rows.filter((row) => row.referenceCount < minRefs) : rows;
