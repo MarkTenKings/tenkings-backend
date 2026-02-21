@@ -92,6 +92,7 @@ function classifyFailureReason(error) {
   if (normalized.includes("set_timeout") || normalized.includes("set timeout")) return "set_timeout";
   if (normalized.includes("player_timeout") || normalized.includes("player timeout")) return "player_timeout";
   if (normalized.includes("request_timeout") || normalized.includes("request timeout")) return "request_timeout";
+  if (normalized.includes("player_map_coverage_low")) return "player_map_coverage_low";
   if (normalized.includes("validation failed")) return "validation_failed";
   if (normalized.includes("validation warning blocked")) return "validation_warn_blocked";
   if (normalized.includes("timed out")) return "process_timeout";
@@ -126,6 +127,83 @@ function tryParseLastJsonObject(text) {
 
 function loadJson(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function parseCsvRow(line) {
+  const out = [];
+  let value = "";
+  let quoted = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"' && line[i + 1] === '"') {
+      value += '"';
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      quoted = !quoted;
+      continue;
+    }
+    if (ch === "," && !quoted) {
+      out.push(value.trim());
+      value = "";
+      continue;
+    }
+    value += ch;
+  }
+  out.push(value.trim());
+  return out;
+}
+
+function loadProvenanceBySetId() {
+  const target = path.resolve(process.cwd(), "data/variants/checklists/checklist-source-provenance.csv");
+  if (!fs.existsSync(target)) return new Map();
+  const raw = fs.readFileSync(target, "utf8");
+  const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0);
+  if (lines.length < 2) return new Map();
+  const headers = parseCsvRow(lines[0]).map((h) => normalize(h));
+  const setIdIndex = headers.findIndex((h) => h === "setid");
+  const urlIndex = headers.findIndex((h) => h === "sourceurl");
+  if (setIdIndex < 0 || urlIndex < 0) return new Map();
+  const bySet = new Map();
+  for (const line of lines.slice(1)) {
+    const cells = parseCsvRow(line);
+    const setId = String(cells[setIdIndex] || "").trim();
+    const url = String(cells[urlIndex] || "").trim();
+    if (!setId || !url) continue;
+    const key = normalize(setId);
+    const existing = bySet.get(key) || [];
+    if (!existing.includes(url)) existing.push(url);
+    bySet.set(key, existing);
+  }
+  return bySet;
+}
+
+function computePlayerMapCoverage(setId, validation, playerMapJson) {
+  const setKey = normalize(setId);
+  const entries = playerMapJson?.setParallelEntries?.[setKey] || {};
+  let mappedRows = 0;
+  const mappedPlayers = new Set();
+  for (const list of Object.values(entries)) {
+    if (!Array.isArray(list)) continue;
+    mappedRows += list.length;
+    for (const row of list) {
+      const name = normalize(row?.playerName || "");
+      if (name) mappedPlayers.add(name);
+    }
+  }
+  const totalRows = Number(validation?.metrics?.totalRows || 0);
+  const distinctPlayers = Number(validation?.metrics?.distinctPlayers || 0);
+  const rowCoveragePct = totalRows > 0 ? (mappedRows / totalRows) * 100 : 0;
+  const playerCoveragePct = distinctPlayers > 0 ? (mappedPlayers.size / distinctPlayers) * 100 : 0;
+  return {
+    totalRows,
+    distinctPlayers,
+    mappedRows,
+    mappedDistinctPlayers: mappedPlayers.size,
+    rowCoveragePct: Number(rowCoveragePct.toFixed(2)),
+    playerCoveragePct: Number(playerCoveragePct.toFixed(2)),
+  };
 }
 
 function boolFromArg(value, defaultValue) {
@@ -173,11 +251,18 @@ function runManifestBatch(args) {
   );
   const dryRun = Boolean(args["dry-run"]);
   const logDir = getLogDir(args);
+  const provenanceBySetId = loadProvenanceBySetId();
   const defaultImagesPerVariant = String(args["images-per-variant"] || manifest.imagesPerVariant || "2");
   const defaultDelayMs = String(args["delay-ms"] || manifest.delayMs || "100");
   const defaultMinRefs = String(args["min-refs"] || manifest.minRefs || defaultImagesPerVariant);
   const defaultRefSide = String(args["ref-side"] || manifest.refSide || "front");
   const seedSetTimeoutMs = Math.max(10_000, Number(args["seed-set-timeout-ms"] || manifest.seedSetTimeoutMs || 900_000) || 900_000);
+  const defaultMinMapRowCoveragePct = Number(
+    args["min-player-map-row-coverage-pct"] ?? manifest.minPlayerMapRowCoveragePct ?? 95
+  );
+  const defaultMinMapPlayerCoveragePct = Number(
+    args["min-player-map-player-coverage-pct"] ?? manifest.minPlayerMapPlayerCoveragePct ?? 95
+  );
   const globalLimitVariants = args["limit-variants"];
 
   const validateScript = path.resolve(process.cwd(), "scripts/variant-db/validate-checklist-output.js");
@@ -239,6 +324,7 @@ function runManifestBatch(args) {
       queueCount: null,
       refsInserted: null,
       seedDiagnostics: null,
+      playerMapCoverage: null,
       failedReason: null,
       reason: null,
     };
@@ -272,6 +358,40 @@ function runManifestBatch(args) {
       }
 
       runNodeOrThrow(mapScript, ["--csv", playersCsv, "--out", path.relative(process.cwd(), playerMapOut)]);
+      const playerMapJson = loadJson(playerMapOut);
+      const coverage = computePlayerMapCoverage(setId, validation, playerMapJson);
+      setSummary.playerMapCoverage = coverage;
+      const minMapRowCoveragePct = Number(
+        entry.minPlayerMapRowCoveragePct ??
+          entry["min-player-map-row-coverage-pct"] ??
+          defaultMinMapRowCoveragePct
+      );
+      const minMapPlayerCoveragePct = Number(
+        entry.minPlayerMapPlayerCoveragePct ??
+          entry["min-player-map-player-coverage-pct"] ??
+          defaultMinMapPlayerCoveragePct
+      );
+      if (coverage.rowCoveragePct < minMapRowCoveragePct || coverage.playerCoveragePct < minMapPlayerCoveragePct) {
+        const sourcesFromManifest = Array.isArray(entry.sourceUrls)
+          ? entry.sourceUrls.map((item) => String(item || "").trim()).filter(Boolean)
+          : [];
+        const sourcesFromProvenance = provenanceBySetId.get(normalize(setId)) || [];
+        const sourceUrls = [...new Set([...sourcesFromManifest, ...sourcesFromProvenance])];
+        const decisionHint = sourceUrls.length > 0
+          ? "coverage_low_with_sources_review_parser_then_source_fallback"
+          : "coverage_low_source_unknown_review_parser_and_add_alternate_source";
+        const details = {
+          reasonCode: "player_map_coverage_low",
+          coverage,
+          thresholds: {
+            minMapRowCoveragePct,
+            minMapPlayerCoveragePct,
+          },
+          sourceUrls,
+          decisionHint,
+        };
+        throw new Error(`player_map_coverage_low: ${JSON.stringify(details)}`);
+      }
 
       if (!Boolean(entry.skipSeed) && !Boolean(args["skip-seed"])) {
         ensureRequiredEnv(["SERPAPI_KEY", "DATABASE_URL"]);
