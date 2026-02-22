@@ -106,3 +106,4 @@ Build Set Ops UI flow with:
 - P0-B Ticket 12 complete in code: delete modal UI with dry-run impact preview + typed confirm enforcement + confirm action wiring.
 - Targeted lint check for delete UI update: pass.
 - P0-C Ticket 5 complete in code: ingestion queue API (`GET/POST /api/admin/set-ops/ingestion`) with raw payload/source/parser persistence and draft linkage.
+- P0-C Ticket 6 complete in code: draft normalization/build APIs + immutable draft version save/load endpoints.

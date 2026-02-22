@@ -177,3 +177,27 @@
 
 ### Validation Evidence
 - Targeted lint pass for new Set Ops API files (see later combined lint run entry in this session).
+
+## 2026-02-22 - Set Ops P0-C Ticket 6 (Draft Build + Validation API MVP)
+
+### Summary
+- Added draft normalization/validation helper library:
+  - row normalization (set/parallel/card/player/listing)
+  - duplicate key detection
+  - blocking/non-blocking issue tagging
+  - immutable version payload hashing
+  - draft diff summarization utilities
+- Added draft APIs:
+  - `POST /api/admin/set-ops/drafts/build`
+  - `GET /api/admin/set-ops/drafts`
+  - `POST /api/admin/set-ops/drafts/version`
+- `drafts/build` now converts ingestion payloads into normalized immutable draft versions and updates ingestion status to `REVIEW_REQUIRED`.
+
+### Files Added
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/drafts/build.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/drafts/index.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/drafts/version.ts`
+
+### Validation Evidence
+- Targeted lint pass for new Set Ops API/helper files (see later combined lint run entry in this session).
