@@ -132,3 +132,16 @@
 
 ### Validation Evidence
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx --file pages/admin/index.tsx` passed.
+
+## 2026-02-22 - Set Ops P0-B Ticket 11 (Archive Action UI)
+
+### Summary
+- Added archive/unarchive controls per set row on `/admin/set-ops`.
+- Wired controls to `POST /api/admin/set-ops/archive`.
+- Added inline action state handling (`Saving...`) and audit snippet feedback in UI.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx` passed.

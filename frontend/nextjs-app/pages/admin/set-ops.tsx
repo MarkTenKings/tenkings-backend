@@ -47,7 +47,9 @@ export default function SetOpsPage() {
   const [rows, setRows] = useState<SetSummaryRow[]>([]);
   const [total, setTotal] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [actionBusySetId, setActionBusySetId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [auditSnippet, setAuditSnippet] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadedRef = useRef(false);
@@ -59,6 +61,7 @@ export default function SetOpsPage() {
       setBusy(true);
       setError(null);
       setStatus(null);
+      setAuditSnippet(null);
       try {
         const params = new URLSearchParams({
           q: nextQuery,
@@ -101,6 +104,65 @@ export default function SetOpsPage() {
       void loadSets(nextQuery, includeArchived);
     },
     [includeArchived, loadSets, queryInput]
+  );
+
+  const updateArchiveState = useCallback(
+    async (row: SetSummaryRow, nextArchived: boolean) => {
+      if (!session?.token || !isAdmin) return;
+      setActionBusySetId(row.setId);
+      setError(null);
+      setStatus(null);
+      setAuditSnippet(null);
+      try {
+        const response = await fetch("/api/admin/set-ops/archive", {
+          method: "POST",
+          headers: {
+            ...adminHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            setId: row.setId,
+            archived: nextArchived,
+          }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+          draft?: {
+            status?: string;
+            archivedAt?: string | null;
+            updatedAt?: string | null;
+          };
+          audit?: { id?: string } | null;
+        };
+        if (!response.ok) {
+          throw new Error(payload.message ?? "Failed to update archive state");
+        }
+
+        setRows((prev) =>
+          prev.map((entry) => {
+            if (entry.setId !== row.setId) return entry;
+            const archived = Boolean(payload.draft?.archivedAt || payload.draft?.status === "ARCHIVED");
+            return {
+              ...entry,
+              archived,
+              draftStatus: payload.draft?.status ?? entry.draftStatus,
+              updatedAt: payload.draft?.updatedAt ?? entry.updatedAt,
+            };
+          })
+        );
+
+        const verb = nextArchived ? "Archived" : "Unarchived";
+        setStatus(`${verb} ${row.setId}.`);
+        if (payload.audit?.id) {
+          setAuditSnippet(`Audit event: ${payload.audit.id}`);
+        }
+      } catch (archiveError) {
+        setError(archiveError instanceof Error ? archiveError.message : "Failed to update archive state");
+      } finally {
+        setActionBusySetId(null);
+      }
+    },
+    [adminHeaders, isAdmin, session?.token]
   );
 
   const variantTotal = useMemo(
@@ -262,6 +324,7 @@ export default function SetOpsPage() {
           </form>
 
           {status && <p className="mb-3 text-xs text-emerald-300">{status}</p>}
+          {auditSnippet && <p className="mb-3 text-xs text-sky-300">{auditSnippet}</p>}
           {error && <p className="mb-3 text-xs text-rose-300">{error}</p>}
 
           <div className="overflow-x-auto">
@@ -274,6 +337,7 @@ export default function SetOpsPage() {
                   <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">Draft</th>
                   <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">Last Seed</th>
                   <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">Updated</th>
+                  <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">Archive</th>
                 </tr>
               </thead>
               <tbody>
@@ -296,11 +360,25 @@ export default function SetOpsPage() {
                       <p className="mt-1 text-xs text-slate-400">{formatDate(row.lastSeedAt)}</p>
                     </td>
                     <td className="border-b border-white/5 px-3 py-3 align-top text-xs text-slate-300">{formatDate(row.updatedAt)}</td>
+                    <td className="border-b border-white/5 px-3 py-3 align-top">
+                      <button
+                        type="button"
+                        onClick={() => void updateArchiveState(row, !row.archived)}
+                        disabled={busy || actionBusySetId === row.setId}
+                        className={`rounded-lg border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                          row.archived
+                            ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+                            : "border-amber-400/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
+                        }`}
+                      >
+                        {actionBusySetId === row.setId ? "Saving..." : row.archived ? "Unarchive" : "Archive"}
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {rows.length === 0 && !busy && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-400">
+                    <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-400">
                       No sets matched this query.
                     </td>
                   </tr>

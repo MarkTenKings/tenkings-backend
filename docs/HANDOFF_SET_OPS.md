@@ -101,3 +101,5 @@ Build Set Ops UI flow with:
 - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still fails under existing Prisma-client workspace linkage issue (broad pre-existing failure).
 - P0-B Ticket 10 complete in code: `/admin/set-ops` baseline UI (list/search/status/counts) and `/admin` navigation link.
 - Targeted lint check for new admin page files: pass.
+- P0-B Ticket 11 complete in code: archive/unarchive row actions with API wiring and audit id feedback snippet in UI.
+- Targeted lint check for archive UI update: pass.
