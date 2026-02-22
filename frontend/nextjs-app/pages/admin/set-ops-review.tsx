@@ -1711,7 +1711,7 @@ export default function SetOpsReviewPage() {
                 </tr>
               </thead>
               <tbody>
-                {editableRows.slice(0, 120).map((row, rowIndex) => (
+                {editableRows.map((row, rowIndex) => (
                   <tr key={`${row.duplicateKey}-${row.index}`}>
                     <td className="border-b border-white/5 px-2 py-2">{row.index + 1}</td>
                     <td className="border-b border-white/5 px-2 py-2">

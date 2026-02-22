@@ -118,7 +118,7 @@ export function normalizeDraftRows(params: {
       firstString(raw, ["cardNumber", "card_number", "cardNo", "number", "card"])
     );
     const parallel = normalizeParallelLabel(
-      firstString(raw, ["parallel", "parallelId", "parallel_id", "parallelName", "name"])
+      firstString(raw, ["parallel", "parallelId", "parallel_id", "parallelName"])
     );
     const playerSeed = normalizePlayerSeed(firstString(raw, ["playerSeed", "playerName", "player"]));
     const sourceUrl = firstString(raw, ["sourceUrl", "url", "source"]) || null;
@@ -153,10 +153,6 @@ export function normalizeDraftRows(params: {
 
     if (!cardNumber) {
       warnings.push("cardNumber missing or legacy NULL value");
-    }
-
-    if (!listingId) {
-      warnings.push("listingId missing");
     }
 
     const duplicateKey = buildSetOpsDuplicateKey({

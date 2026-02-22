@@ -784,6 +784,7 @@ function looksLikeChecklistSectionHeader(line: string) {
   if (value.length < 2 || value.length > 100) return false;
   if (/^\d+$/.test(value)) return false;
   if (/^page\s+\d+/i.test(value)) return false;
+  if (/^(rookie|rc)$/i.test(value)) return false;
   const firstToken = value.split(/\s+/)[0] || "";
   if (looksLikeChecklistCardIdToken(firstToken)) return false;
   if (TABLE_NEGATIVE_TOKEN_RE.test(value.toLowerCase())) return false;

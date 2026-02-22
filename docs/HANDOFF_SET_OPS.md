@@ -357,3 +357,18 @@ Build Set Ops UI flow with:
     - insert rows are assigned to the correct parallel family via prefix fallback.
 - Remaining uncertainty:
   - exact live Topps PDF behavior still needs production validation because this sandbox cannot fetch Shopify CDN PDF directly.
+
+## Topps PDF Parser Surgery (2026-02-22, Follow-up #3)
+- New production feedback after follow-up #2:
+  - major progress (many more valid rows), but `Rookie` was still appearing in `Parallel` for portions of inserts.
+  - reviewer UI appeared to stop at row `120` even when parser loaded `204` rows, causing confusion about data loss.
+- Fixes shipped:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+    - blocked standalone `Rookie` / `RC` from being treated as section headers in checklist parsing.
+  - `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+    - removed legacy `name` fallback from parallel extraction to avoid accidental field cross-mapping.
+    - removed default per-row `listingId missing` warning for checklist imports (listing IDs are optional and this warning created noisy false alarms).
+  - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+    - removed hardcoded UI render cap (`slice(0, 120)`) so full draft row set is visible/editable.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file lib/server/setOpsDrafts.ts --file pages/admin/set-ops-review.tsx` passed.

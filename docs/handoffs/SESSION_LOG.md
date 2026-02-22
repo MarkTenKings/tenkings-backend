@@ -673,3 +673,25 @@
 
 ### Notes
 - End-to-end validation still requires live production test against the Shopify-hosted Topps PDF.
+
+## 2026-02-22 - Topps PDF Parser Follow-up #3 (Rookie Section Guard + Draft Table Row Cap)
+
+### Summary
+- Addressed two production issues from latest test cycle:
+  - `Rookie` values intermittently overwrote `Parallel` for insert rows.
+  - draft review table displayed only first 120 rows despite larger parsed payload.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file lib/server/setOpsDrafts.ts --file pages/admin/set-ops-review.tsx` passed.
+
+### Notes
+- `looksLikeChecklistSectionHeader(...)` now explicitly rejects standalone `Rookie` / `RC` section tokens.
+- Draft review table no longer slices to 120 rows; full dataset renders for review/editing.
+- Removed non-actionable default warning for missing `listingId` on checklist rows.
