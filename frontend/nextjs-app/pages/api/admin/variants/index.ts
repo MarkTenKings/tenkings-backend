@@ -167,11 +167,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             _count: { _all: true },
           })
         : [];
-      let qaDoneRows: Array<{
-        setId: string;
-        cardNumber: string | null;
-        parallelId: string;
-      }> = [];
+      let qaDoneRows: any[] = [];
       if (countOr.length) {
         try {
           qaDoneRows = await prisma.cardVariantReferenceImage.findMany({
@@ -235,7 +231,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
       const qaDoneByKey = new Map<string, number>();
       for (const row of qaDoneRows) {
-        qaDoneByKey.set(keyForRef(row.setId, row.cardNumber ?? null, row.parallelId), 1);
+        const setId = String((row as any)?.setId || "").trim();
+        const parallelId = String((row as any)?.parallelId || "").trim();
+        if (!setId || !parallelId) continue;
+        qaDoneByKey.set(keyForRef(setId, (row as any)?.cardNumber ?? null, parallelId), 1);
       }
       const previewByKey = new Map<string, string>();
       const refPlayerByKey = new Map<string, string>();
