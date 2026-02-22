@@ -92,7 +92,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         cardNumber: normalizedCardNumber,
         parallelId: normalizedParallelId,
         rawImageUrl: {
-          in: rows.map((row) => row.rawImageUrl),
+          in: rows.map((row: { rawImageUrl: string }) => row.rawImageUrl),
         },
       },
       select: {
