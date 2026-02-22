@@ -61,3 +61,27 @@
 
 ### Notes
 - No deploy/restart/migration was executed against any runtime environment.
+
+## 2026-02-22 - Set Ops P0-A Ticket 2 (Normalizer + Tests)
+
+### Summary
+- Added shared Set Ops normalizer utilities in `@tenkings/shared` for:
+  - HTML entity decoding
+  - set label normalization
+  - JSON-like parallel label normalization
+  - card number normalization
+  - listing id normalization
+  - duplicate key generation (`setId + cardNumber + parallel + playerSeed + listingId`)
+- Added unit tests with dirty 2020 regression-style inputs.
+
+### Files Updated
+- `packages/shared/src/setOpsNormalizer.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/setOpsNormalizer.test.js`
+- `packages/shared/package.json`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared test` passed.
+
+### Notes
+- Normalizer is now reusable by admin APIs and UI modules for consistent read/write behavior.

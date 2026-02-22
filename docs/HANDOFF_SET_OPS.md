@@ -94,3 +94,5 @@ Build Set Ops UI flow with:
   - `generate`: pass
   - `schema validate`: pass (with dummy `DATABASE_URL`)
   - `@tenkings/database build`: currently failing due existing Prisma type/client mismatch in workspace environment.
+- P0-A Ticket 2 complete in code: shared set normalizer + unit tests for legacy dirty labels/card numbers/duplicate key behavior.
+- `pnpm --filter @tenkings/shared test`: pass.

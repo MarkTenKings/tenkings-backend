@@ -67,3 +67,13 @@ export {
   getCardAttributesFromClassification,
   getNormalizedClassification,
 } from "./classification";
+export type { SetOpsDuplicateKeyInput } from "./setOpsNormalizer";
+export {
+  decodeHtmlEntities,
+  normalizeSetLabel,
+  normalizeParallelLabel,
+  normalizeCardNumber,
+  normalizePlayerSeed,
+  normalizeListingId,
+  buildSetOpsDuplicateKey,
+} from "./setOpsNormalizer";
