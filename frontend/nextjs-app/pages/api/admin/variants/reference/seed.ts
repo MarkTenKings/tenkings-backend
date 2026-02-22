@@ -9,9 +9,123 @@ type ResponseBody =
 type SeedImageRow = {
   rawImageUrl: string;
   sourceUrl: string | null;
+  sourceListingId: string | null;
+  listingTitle: string | null;
+  score: number;
 };
 
 const SERPAPI_ENDPOINT = "https://serpapi.com/search.json";
+const EBAY_ENGINE = "ebay";
+const NOISE_TITLE_TOKENS = [
+  "box",
+  "blaster",
+  "hobby",
+  "case",
+  "break",
+  "pack",
+  "lot",
+  "mega box",
+  "hanger",
+];
+
+function normalizeText(value: string | null | undefined) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9#/\-\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function tokenize(value: string | null | undefined) {
+  return normalizeText(value)
+    .split(" ")
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
+}
+
+function parseEbayListingId(url: string | null | undefined) {
+  const value = String(url || "").trim();
+  if (!value) return null;
+  const pathMatch = value.match(/\/itm\/(?:[^/?#]+\/)?(\d{8,20})(?:[/?#]|$)/i);
+  if (pathMatch?.[1]) return pathMatch[1];
+  const queryMatch = value.match(/[?&](?:item|itemId|itm|itm_id)=(\d{8,20})(?:[&#]|$)/i);
+  if (queryMatch?.[1]) return queryMatch[1];
+  return null;
+}
+
+function canonicalEbayListingUrl(url: string | null | undefined) {
+  const listingId = parseEbayListingId(url);
+  if (!listingId) return null;
+  return `https://www.ebay.com/itm/${listingId}`;
+}
+
+function pickImageUrl(result: any) {
+  const candidates = [
+    result?.thumbnail,
+    result?.image,
+    result?.main_image,
+    result?.original_image,
+    result?.image_url,
+  ];
+  for (const candidate of candidates) {
+    const value = String(candidate || "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+function scoreListing(params: {
+  title: string;
+  setId: string;
+  parallelId: string;
+  cardNumber: string;
+  playerSeed: string;
+}) {
+  const title = normalizeText(params.title);
+  if (!title) return -100;
+  let score = 0;
+
+  const player = normalizeText(params.playerSeed);
+  if (player) {
+    if (title.includes(player)) {
+      score += 10;
+    } else {
+      const lastName = player.split(" ").filter(Boolean).slice(-1)[0] || "";
+      if (lastName && title.includes(lastName)) {
+        score += 5;
+      } else {
+        score -= 3;
+      }
+    }
+  }
+
+  const parallelTokens = tokenize(params.parallelId).slice(0, 5);
+  for (const token of parallelTokens) {
+    if (title.includes(token)) score += 2;
+  }
+
+  const setTokens = tokenize(params.setId).filter((token) =>
+    /topps|chrome|prizm|optic|select|basketball|football|baseball|hockey|soccer|wrestling|rookie|\d{2,4}/.test(token)
+  );
+  for (const token of setTokens.slice(0, 6)) {
+    if (title.includes(token)) score += 1;
+  }
+
+  const cardNumber = String(params.cardNumber || "").trim();
+  if (cardNumber && cardNumber.toUpperCase() !== "ALL") {
+    if (title.includes(`#${cardNumber.toLowerCase()}`)) {
+      score += 3;
+    } else if (new RegExp(`(^|\\s)${cardNumber.toLowerCase()}(\\s|$)`).test(title)) {
+      score += 2;
+    }
+  }
+
+  for (const token of NOISE_TITLE_TOKENS) {
+    if (title.includes(token)) score -= 4;
+  }
+
+  return score;
+}
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
   try {
@@ -22,7 +136,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(405).json({ message: "Method not allowed" });
     }
 
-    const { setId, cardNumber, parallelId, query, limit, tbs, gl, hl } = req.body ?? {};
+    const { setId, cardNumber, parallelId, playerSeed, query, limit, tbs, gl, hl } = req.body ?? {};
     if (!setId || !parallelId || !query) {
       return res.status(400).json({ message: "setId, parallelId, and query are required." });
     }
@@ -33,9 +147,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const safeLimit = Math.min(50, Math.max(1, Number(limit ?? 20) || 20));
+    const normalizedSetId = String(setId).trim();
+    const normalizedCardNumber = cardNumber ? String(cardNumber).trim() : "ALL";
+    const normalizedParallelId = String(parallelId).trim();
+    const normalizedPlayerSeed = String(playerSeed || "").trim();
+    const normalizedQuery = String(query).trim();
+
+    // Force eBay listing search (not Google image search).
     const params = new URLSearchParams({
-      engine: "google_images",
-      q: String(query).trim(),
+      engine: EBAY_ENGINE,
+      _nkw: normalizedQuery,
+      q: normalizedQuery,
+      _sop: "12",
+      _ipg: String(Math.max(30, Math.min(240, safeLimit * 3))),
       api_key: apiKey,
     });
     if (tbs) params.set("tbs", String(tbs).trim());
@@ -51,35 +175,64 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(502).json({ message: data?.search_metadata?.error ?? "SerpApi returned error." });
     }
 
-    const images = Array.isArray(data?.images_results) ? data.images_results : [];
-    const seen = new Set<string>();
+    const listings = Array.isArray(data?.organic_results)
+      ? data.organic_results
+      : Array.isArray(data?.search_results)
+      ? data.search_results
+      : Array.isArray(data?.items)
+      ? data.items
+      : [];
+    const seenListing = new Set<string>();
+    const seenImage = new Set<string>();
     const rows: Array<{
       setId: string;
       cardNumber: string;
       parallelId: string;
+      sourceListingId: string | null;
+      playerSeed: string | null;
+      listingTitle: string | null;
       rawImageUrl: string;
       sourceUrl: string | null;
-    }> = images
-      .map((image: any) => ({
-        rawImageUrl:
-          typeof image?.original === "string"
-            ? image.original.trim()
-            : typeof image?.thumbnail === "string"
-            ? image.thumbnail.trim()
-            : "",
-        sourceUrl: typeof image?.link === "string" ? image.link.trim() : null,
-      }))
-      .filter((row: SeedImageRow) => row.rawImageUrl)
+    }> = listings
+      .map((result: any) => {
+        const sourceUrl = canonicalEbayListingUrl(result?.link || result?.product_link || result?.url || null);
+        const sourceListingId = parseEbayListingId(sourceUrl);
+        const rawImageUrl = pickImageUrl(result);
+        const listingTitle =
+          typeof result?.title === "string" ? String(result.title).trim() : null;
+        const score = scoreListing({
+          title: listingTitle || "",
+          setId: normalizedSetId,
+          parallelId: normalizedParallelId,
+          cardNumber: normalizedCardNumber,
+          playerSeed: normalizedPlayerSeed,
+        });
+        return {
+          sourceUrl,
+          sourceListingId,
+          rawImageUrl,
+          listingTitle,
+          score,
+        } satisfies SeedImageRow;
+      })
+      .filter((row: SeedImageRow) => row.sourceUrl && row.sourceListingId && row.rawImageUrl)
+      .sort((a: SeedImageRow, b: SeedImageRow) => b.score - a.score)
       .filter((row: SeedImageRow) => {
-        if (seen.has(row.rawImageUrl)) return false;
-        seen.add(row.rawImageUrl);
+        // Prefer one row per listing, but allow fallback dedupe by image URL.
+        if (row.sourceListingId && seenListing.has(row.sourceListingId)) return false;
+        if (seenImage.has(row.rawImageUrl)) return false;
+        if (row.sourceListingId) seenListing.add(row.sourceListingId);
+        seenImage.add(row.rawImageUrl);
         return true;
       })
       .slice(0, safeLimit)
       .map((row: SeedImageRow) => ({
-        setId: String(setId).trim(),
-        cardNumber: cardNumber ? String(cardNumber).trim() : "ALL",
-        parallelId: String(parallelId).trim(),
+        setId: normalizedSetId,
+        cardNumber: normalizedCardNumber,
+        parallelId: normalizedParallelId,
+        sourceListingId: row.sourceListingId,
+        playerSeed: normalizedPlayerSeed || null,
+        listingTitle: row.listingTitle,
         rawImageUrl: row.rawImageUrl,
         sourceUrl: row.sourceUrl,
       }));
@@ -88,25 +241,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(200).json({ inserted: 0, skipped: 0 });
     }
 
-    const normalizedSetId = String(setId).trim();
-    const normalizedCardNumber = cardNumber ? String(cardNumber).trim() : "ALL";
-    const normalizedParallelId = String(parallelId).trim();
-
     const existingRows = await prisma.cardVariantReferenceImage.findMany({
       where: {
         setId: normalizedSetId,
         cardNumber: normalizedCardNumber,
         parallelId: normalizedParallelId,
-        rawImageUrl: {
-          in: rows.map((row: { rawImageUrl: string }) => row.rawImageUrl),
-        },
+        OR: [
+          {
+            sourceListingId: {
+              in: rows
+                .map((row: { sourceListingId: string | null }) => String(row.sourceListingId || "").trim())
+                .filter(Boolean),
+            },
+          },
+          {
+            rawImageUrl: {
+              in: rows.map((row: { rawImageUrl: string }) => row.rawImageUrl),
+            },
+          },
+        ],
       },
       select: {
+        sourceListingId: true,
         rawImageUrl: true,
       },
     });
     const existingUrls = new Set(existingRows.map((row: { rawImageUrl: string }) => row.rawImageUrl));
-    const rowsToInsert = rows.filter((row: { rawImageUrl: string }) => !existingUrls.has(row.rawImageUrl));
+    const existingListingIds = new Set(
+      existingRows
+        .map((row: { sourceListingId?: string | null }) => String(row.sourceListingId || "").trim())
+        .filter(Boolean)
+    );
+    const rowsToInsert = rows.filter((row: { rawImageUrl: string; sourceListingId: string | null }) => {
+      if (existingUrls.has(row.rawImageUrl)) return false;
+      const listingId = String(row.sourceListingId || "").trim();
+      if (listingId && existingListingIds.has(listingId)) return false;
+      return true;
+    });
 
     if (rowsToInsert.length > 0) {
       await prisma.cardVariantReferenceImage.createMany({ data: rowsToInsert });

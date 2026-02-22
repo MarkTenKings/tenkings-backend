@@ -817,3 +817,28 @@
 - Done-row collection now uses `findMany + distinct`.
 - Staging array normalized to `any[]` and extracted with safe string coercion before keying.
 - Queue behavior unchanged: done is still derived from `qaStatus=keep OR ownedStatus=owned`.
+
+## 2026-02-22 - Ref Seed Quality Follow-up #10 (SerpApi eBay-Only + Relevance Ranking)
+
+### Summary
+- Investigated poor reference quality in `/admin/variants` bulk seeding.
+- Confirmed root cause in code: seed endpoint was querying SerpApi `google_images`, not eBay engine.
+- Rewired ref seeding to use eBay listing search only and strengthened relevance filtering/ranking.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+- `frontend/nextjs-app/pages/admin/variants.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/seed.ts --file pages/admin/variants.tsx` passed.
+
+### Notes
+- Seed endpoint now:
+  - calls `engine=ebay` with `_nkw` query
+  - canonicalizes `sourceUrl` to `https://www.ebay.com/itm/{listingId}`
+  - stores listing metadata (`sourceListingId`, `listingTitle`, `playerSeed`)
+  - scores results for relevance and penalizes box/break/lot noise
+  - dedupes by listing ID and image URL
+- Set-level auto query now includes player label and anti-noise terms (`-box -blaster -hobby -case -break -pack -lot`) to reduce star-player drift and sealed-product noise.

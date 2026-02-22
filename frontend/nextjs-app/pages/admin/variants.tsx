@@ -12,6 +12,7 @@ type VariantRow = {
   cardNumber: string;
   parallelId: string;
   parallelFamily: string | null;
+  playerLabel?: string | null;
   keywords: string[];
   oddsInfo: string | null;
   createdAt: string;
@@ -122,11 +123,26 @@ export default function AdminVariants() {
     return rows;
   }, [references]);
 
-  const buildSeedQuery = (setId: string, cardNumber: string, parallelId: string) => {
+  const buildSeedQuery = (setId: string, cardNumber: string, parallelId: string, playerLabel?: string | null) => {
     const normalizedCardNumber = String(cardNumber || "").trim();
     const cardToken =
       normalizedCardNumber && normalizedCardNumber.toUpperCase() !== "ALL" ? `#${normalizedCardNumber}` : "";
-    return [setId.trim(), cardToken, parallelId.trim(), "trading card"].filter(Boolean).join(" ");
+    return [
+      playerLabel ? String(playerLabel).trim() : "",
+      setId.trim(),
+      cardToken,
+      parallelId.trim(),
+      "trading card",
+      "-box",
+      "-blaster",
+      "-hobby",
+      "-case",
+      "-break",
+      "-pack",
+      "-lot",
+    ]
+      .filter(Boolean)
+      .join(" ");
   };
 
   const fetchVariants = async (search?: string) => {
@@ -537,7 +553,7 @@ export default function AdminVariants() {
       });
 
       for (const variant of setVariants) {
-        const autoQuery = buildSeedQuery(targetSetId, variant.cardNumber, variant.parallelId);
+        const autoQuery = buildSeedQuery(targetSetId, variant.cardNumber, variant.parallelId, variant.playerLabel);
         try {
           const res = await fetch("/api/admin/variants/reference/seed", {
             method: "POST",
@@ -549,6 +565,7 @@ export default function AdminVariants() {
               setId: targetSetId,
               cardNumber: variant.cardNumber,
               parallelId: variant.parallelId,
+              playerSeed: variant.playerLabel ?? undefined,
               query: autoQuery,
               limit: normalizedLimit,
               tbs: seedForm.tbs.trim() || undefined,

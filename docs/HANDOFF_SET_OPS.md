@@ -470,3 +470,25 @@ Build Set Ops UI flow with:
     - preserved behavior (`qaStatus=keep` OR `ownedStatus=owned` marks variant as done for queue ordering).
 - Result:
   - build compiles successfully on Vercel after this patch while preserving QA queue behavior.
+
+## Ref Image Seeding Accuracy (2026-02-22, Follow-up #10)
+- New production feedback:
+  - seeded refs contained many non-card/box images and wrong-player cards.
+  - source links were often not direct eBay item pages.
+- Root cause found:
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts` was using `engine: "google_images"` (SerpApi image search), not eBay engine.
+  - image-search links (`images_results.link`) frequently point to arbitrary pages, not eBay item URLs.
+  - set-level query builder did not include player context, so star-player drift was common.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+    - switched to SerpApi `engine: "ebay"` with `_nkw` query.
+    - enforces canonical eBay item URL extraction (`https://www.ebay.com/itm/{id}`).
+    - extracts/stores `sourceListingId` + `listingTitle` + `playerSeed`.
+    - ranks listings by relevance (player/set/parallel/card number) and penalizes box/break/lot terms.
+    - dedupes by listing ID and image URL.
+  - `frontend/nextjs-app/pages/admin/variants.tsx`
+    - set-level auto query now includes player label + anti-noise terms (`-box -blaster -hobby -case -break -pack -lot`).
+    - sends `playerSeed` per variant to seed API for ranking.
+- Expected result:
+  - source links resolve to actual eBay listing pages.
+  - fewer box/lot hits and fewer wrong-player images during bulk set seeding.
