@@ -331,3 +331,29 @@ Build Set Ops UI flow with:
   - End-to-end production validation remains required.
 - Current step:
   - User committed on workstation and is waiting for Vercel build completion, then running live Topps PDF URL + upload tests.
+
+## Topps PDF Parser Surgery (2026-02-22, Follow-up #2)
+- New production feedback:
+  - parser returned only ~46 rows, with wrong card ID alignment and heavily fragmented player names (`LaMe l o`, `Mar cus`, etc.).
+  - many insert IDs were split and misread (`SI - 6` parsed as `6`, `PB - 1` parsed as `1`).
+- Additional root causes fixed:
+  - `TJ` array text reconstruction inserted artificial spacing between glyph chunks.
+  - split card IDs across token boundaries/newlines were not being reassembled before row detection.
+  - leaked section/id fragments (`Base Set`, trailing `SI -`) polluted `playerSeed`.
+- Code changes:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+  - `parsePdfArrayString(...)` now concatenates decoded array text directly (instead of chunk-join with forced spaces), with kerning-based soft-space fallback on large negative spacing values.
+  - Added token-level ID normalization for patterns like:
+    - `PB- 1` -> `PB-1`
+    - `PB - 1` -> `PB-1`
+    - `R R - 26` -> `RR-26`
+    - `CA - AC` -> `CA-AC`
+  - Tightened card-id detector to avoid one-letter false positives (`S-A`-style noise).
+  - Added player-seed cleanup for leaked header/id fragments and preserved insert parallel fallback from card prefix map (`FS`, `PB`, `RR`, `CA`, `FSA`, etc.) when section detection falls back to base.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts` passed.
+  - Local synthetic noisy-input smoke test confirms:
+    - card IDs are now reconstructed (`SI-6`, `PB-1`, `RR-26`, `CA-AC`, `FSA-AB`)
+    - insert rows are assigned to the correct parallel family via prefix fallback.
+- Remaining uncertainty:
+  - exact live Topps PDF behavior still needs production validation because this sandbox cannot fetch Shopify CDN PDF directly.

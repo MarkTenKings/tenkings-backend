@@ -648,3 +648,28 @@
 ### Notes
 - Live CDN fetch could not be validated in this sandbox due network DNS restriction (`cdn.shopify.com` unresolved).
 - User committed from workstation and is testing on Vercel production build.
+
+## 2026-02-22 - Topps PDF Parser Follow-up #2 (Split-ID Reassembly + Glyph-Spacing Fix)
+
+### Summary
+- Production feedback showed partial parse (~46 rows) with major misalignment:
+  - split insert IDs parsed as numeric base IDs (`SI - 6` => `6`, `PB - 1` => `1`)
+  - fragmented glyph spacing in player names
+  - trailing section/id fragments leaking into `playerSeed`
+- Implemented additional parser hardening in discovery PDF path:
+  - fixed `TJ` array reconstruction to stop forced spacing between string fragments
+  - added token-level checklist ID normalization (`PB - 1`, `R R - 26`, `CA - AC`, etc.)
+  - tightened card-id pattern to avoid one-letter false positives
+  - expanded player-seed cleanup and kept prefix-based parallel fallback
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts` passed.
+- Local noisy-input smoke run confirmed corrected ID reconstruction (`SI-6`, `PB-1`, `RR-26`, `CA-AC`, `FSA-AB`) and better insert parallel assignment.
+
+### Notes
+- End-to-end validation still requires live production test against the Shopify-hosted Topps PDF.

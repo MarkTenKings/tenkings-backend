@@ -602,15 +602,61 @@ function looksLikeChecklistCardIdToken(raw: string) {
   // Numeric / mixed IDs (ex: 148, SI-1, DNA-2, 114A)
   if (/\d/.test(token)) return true;
   // Letter-based insert/auto IDs (ex: CA-AB, FSA-BM)
-  if (/^[A-Za-z]{1,5}-[A-Za-z]{1,6}$/.test(token)) return true;
+  if (/^[A-Za-z]{2,5}-[A-Za-z]{2,6}$/.test(token)) return true;
   return false;
 }
 
 function normalizeChecklistLineForTokenization(raw: string) {
   return compactWhitespace(raw)
+    .replace(/\b([A-Za-z])\s+([A-Za-z])\s*-\s*(\d{1,4}[A-Za-z]?)\b/g, "$1$2-$3")
+    .replace(/\b([A-Za-z]{1,5})\s*-\s*(\d{1,4}[A-Za-z]?)\b/g, "$1-$2")
+    .replace(/\b([A-Za-z]{2,5})\s*-\s*([A-Za-z]{2,6})\b/g, "$1-$2")
     // Split letter+number collisions from copy/extract artifacts (e.g., Brooklyn49).
     .replace(/([A-Za-z])(\d{1,4})(?=\s+[A-Za-z])/g, "$1 $2")
     .replace(/(\d)([A-Za-z]{1,5}-[A-Za-z0-9]{1,6})(?=\s+[A-Za-z])/g, "$1 $2");
+}
+
+function isAlphabeticToken(value: string) {
+  return /^[A-Za-z]+$/.test(value);
+}
+
+function mergeFragmentedWordTokens(tokens: string[]) {
+  const merged: string[] = [];
+  let index = 0;
+
+  while (index < tokens.length) {
+    const token = tokens[index]!;
+    if (!isAlphabeticToken(token)) {
+      merged.push(token);
+      index += 1;
+      continue;
+    }
+
+    let combined = token;
+    let nextIndex = index + 1;
+    let appendedCount = 0;
+
+    while (nextIndex < tokens.length) {
+      const next = tokens[nextIndex]!;
+      if (!isAlphabeticToken(next)) break;
+      if (next.length !== 1) break;
+      combined += next;
+      nextIndex += 1;
+      appendedCount += 1;
+    }
+
+    // Avoid collapsing normal token boundaries unless we clearly see fragmented glyph runs.
+    if (appendedCount >= 2 || (appendedCount >= 1 && token.length <= 3)) {
+      merged.push(combined);
+      index = nextIndex;
+      continue;
+    }
+
+    merged.push(token);
+    index += 1;
+  }
+
+  return merged;
 }
 
 function trimTrailingChecklistHeaderNoise(tokens: string[]) {
@@ -645,10 +691,27 @@ function stripTeamSuffixFromTokens(tokens: string[]) {
 function extractPlayerSeedFromRecordTokens(rawTokens: string[]) {
   if (rawTokens.length === 0) return "";
   let tokens = [...rawTokens];
+  tokens = mergeFragmentedWordTokens(tokens);
   tokens = trimTrailingChecklistHeaderNoise(tokens);
+
+  while (tokens.length >= 2 && /^base$/i.test(tokens[0]!) && /^set$/i.test(tokens[1]!)) {
+    tokens.shift();
+    tokens.shift();
+  }
+  while (tokens.length > 0) {
+    const upper = tokens[0]!.replace(/[^A-Za-z]/g, "").toUpperCase();
+    if (!upper || !checklistSectionNoiseWords.has(upper)) break;
+    tokens.shift();
+  }
 
   // Rookie marker is usually in dedicated column/suffix.
   while (tokens.length > 0 && /^rookie$/i.test(tokens[tokens.length - 1]!)) {
+    tokens.pop();
+  }
+  while (tokens.length > 0 && /^-$/.test(tokens[tokens.length - 1]!)) {
+    tokens.pop();
+  }
+  while (tokens.length > 0 && /^[A-Z]{2,5}-?$/.test(tokens[tokens.length - 1]!)) {
     tokens.pop();
   }
 
@@ -657,6 +720,62 @@ function extractPlayerSeedFromRecordTokens(rawTokens: string[]) {
 
   const playerSeed = compactWhitespace(tokens.join(" "));
   return playerSeed;
+}
+
+const cardPrefixParallelMap: Record<string, string> = {
+  SI: "SUDDEN IMPACT",
+  FS: "FILM STUDY",
+  PB: "POWER BOOSTERS",
+  RR: "ROUNDBALL ROYALTY",
+  DNA: "DNA",
+  CA: "CERTIFIED AUTOGRAPHS",
+  FSA: "FUTURE STARS AUTOGRAPHS",
+};
+
+function inferParallelFromCardNumber(cardNumber: string) {
+  const normalized = normalizeChecklistCardToken(cardNumber).toUpperCase();
+  const prefix = normalized.split("-")[0] || "";
+  return cardPrefixParallelMap[prefix] || "";
+}
+
+function normalizeChecklistTokens(tokens: string[]) {
+  const normalized: string[] = [];
+
+  const pushCardToken = (prefix: string, suffix: string) => {
+    normalized.push(`${prefix.toUpperCase()}-${suffix.toUpperCase()}`);
+  };
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index]!;
+    const next = tokens[index + 1] || "";
+    const next2 = tokens[index + 2] || "";
+    const next3 = tokens[index + 3] || "";
+
+    // Ex: "PB-" "1" -> "PB-1"
+    if (/^[A-Z]{2,5}-$/.test(token) && /^[A-Za-z0-9]{1,6}$/.test(next)) {
+      pushCardToken(token.slice(0, -1), next);
+      index += 1;
+      continue;
+    }
+
+    // Ex: "PB" "-" "1" OR "CA" "-" "AC"
+    if (/^[A-Z]{2,5}$/.test(token) && next === "-" && /^[A-Za-z0-9]{1,6}$/.test(next2)) {
+      pushCardToken(token, next2);
+      index += 2;
+      continue;
+    }
+
+    // Ex: "R" "R" "-" "26" -> "RR-26"
+    if (/^[A-Z]$/.test(token) && /^[A-Z]$/.test(next) && next2 === "-" && /^[A-Za-z0-9]{1,6}$/.test(next3)) {
+      pushCardToken(`${token}${next}`, next3);
+      index += 3;
+      continue;
+    }
+
+    normalized.push(token);
+  }
+
+  return normalized;
 }
 
 function looksLikeChecklistSectionHeader(line: string) {
@@ -726,7 +845,7 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
     const blockSection = normalizeChecklistSectionName(block.section);
     const mergedText = compactWhitespace(block.lines.join(" "));
     if (!mergedText) continue;
-    const tokens = mergedText.split(/\s+/).filter(Boolean);
+    const tokens = normalizeChecklistTokens(mergedText.split(/\s+/).filter(Boolean));
     if (tokens.length < 2) continue;
 
     const startIndices: number[] = [];
@@ -746,16 +865,21 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
       const cardNumber = normalizeChecklistCardToken(tokens[start]!);
       const recordTokens = tokens.slice(start + 1, end);
       const playerSeed = extractPlayerSeedFromRecordTokens(recordTokens);
+      const inferredParallel = inferParallelFromCardNumber(cardNumber);
+      const resolvedParallel =
+        blockSection === "Base Set" && inferredParallel
+          ? inferredParallel
+          : blockSection;
 
       if (!cardNumber || !playerSeed) continue;
       if (!looksLikeLabelValue(playerSeed)) continue;
 
-      const duplicateKey = `${normalizeFieldKey(cardNumber)}::${normalizeFieldKey(blockSection)}::${normalizeFieldKey(playerSeed)}`;
+      const duplicateKey = `${normalizeFieldKey(cardNumber)}::${normalizeFieldKey(resolvedParallel)}::${normalizeFieldKey(playerSeed)}`;
       if (dedupe.has(duplicateKey)) continue;
       dedupe.add(duplicateKey);
       rows.push({
         cardNumber,
-        parallel: blockSection,
+        parallel: resolvedParallel,
         playerSeed,
         player: playerSeed,
       });
@@ -1014,22 +1138,31 @@ function parsePdfHexString(content: string, startIndex: number, context?: PdfDec
 function parsePdfArrayString(content: string, startIndex: number, context?: PdfDecodeContext): { value: string; nextIndex: number } {
   let index = startIndex + 1;
   let depth = 1;
-  const chunks: string[] = [];
+  let output = "";
 
   while (index < content.length && depth > 0) {
     const char = content[index]!;
     if (char === "(") {
       const parsed = parsePdfLiteralString(content, index);
-      const value = compactWhitespace(decodePdfLiteralWithContext(parsed.value, context));
-      if (value) chunks.push(value);
+      const value = decodePdfLiteralWithContext(parsed.value, context);
+      output += value;
       index = parsed.nextIndex;
       continue;
     }
     if (char === "<" && content[index + 1] !== "<") {
       const parsed = parsePdfHexString(content, index, context);
-      const value = compactWhitespace(parsed.value);
-      if (value) chunks.push(value);
+      output += parsed.value;
       index = parsed.nextIndex;
+      continue;
+    }
+    if (/[+\-.\d]/.test(char)) {
+      let end = index + 1;
+      while (end < content.length && /[+\-.\d]/.test(content[end]!)) end += 1;
+      const maybeNumber = Number.parseFloat(content.slice(index, end));
+      if (Number.isFinite(maybeNumber) && maybeNumber < -120 && output && !/\s$/.test(output)) {
+        output += " ";
+      }
+      index = end;
       continue;
     }
     if (char === "[") {
@@ -1045,7 +1178,7 @@ function parsePdfArrayString(content: string, startIndex: number, context?: PdfD
     index += 1;
   }
 
-  return { value: chunks.join(" "), nextIndex: index };
+  return { value: compactWhitespace(output), nextIndex: index };
 }
 
 function readPdfOperator(content: string, startIndex: number): { operator: string; nextIndex: number } {
