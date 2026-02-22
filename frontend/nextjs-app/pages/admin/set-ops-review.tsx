@@ -249,6 +249,22 @@ function estimateRowCount(value: unknown): number {
   return 0;
 }
 
+function buildSetIdFromDiscoveryInputs(params: {
+  year: string;
+  manufacturer: string;
+  sport: string;
+  query: string;
+}) {
+  const normalize = (value: string) => value.trim().replace(/\s+/g, " ");
+  const year = normalize(params.year);
+  const manufacturer = normalize(params.manufacturer);
+  const sport = normalize(params.sport);
+  const query = normalize(params.query);
+  const genericQuery = /^(cards?|trading cards?|checklist|set|sets)$/i.test(query);
+  const queryPart = query && !genericQuery ? query : "";
+  return [year, manufacturer, sport, queryPart].filter(Boolean).join(" ");
+}
+
 export default function SetOpsReviewPage() {
   const { session, loading, ensureSession, logout } = useSession();
   const isAdmin = useMemo(
@@ -272,6 +288,8 @@ export default function SetOpsReviewPage() {
   const [discoveryManufacturerInput, setDiscoveryManufacturerInput] = useState("");
   const [discoverySportInput, setDiscoverySportInput] = useState("");
   const [discoveryQueryInput, setDiscoveryQueryInput] = useState("");
+  const [discoverySetIdOverrideInput, setDiscoverySetIdOverrideInput] = useState("");
+  const [discoverySourceUrlInput, setDiscoverySourceUrlInput] = useState("");
   const [discoveryBusy, setDiscoveryBusy] = useState(false);
   const [discoveryResults, setDiscoveryResults] = useState<DiscoveryResult[]>([]);
   const [discoveryImportBusyId, setDiscoveryImportBusyId] = useState<string | null>(null);
@@ -299,6 +317,16 @@ export default function SetOpsReviewPage() {
   );
   const canReview = Boolean(permissions?.reviewer);
   const canApprove = Boolean(permissions?.approver);
+  const discoverySetIdSuggestion = useMemo(
+    () =>
+      buildSetIdFromDiscoveryInputs({
+        year: discoveryYearInput,
+        manufacturer: discoveryManufacturerInput,
+        sport: discoverySportInput,
+        query: discoveryQueryInput,
+      }),
+    [discoveryManufacturerInput, discoveryQueryInput, discoverySportInput, discoveryYearInput]
+  );
 
   const blockingErrorCount = useMemo(
     () => editableRows.flatMap((row) => row.errors).filter((issue) => issue.blocking).length,
@@ -340,8 +368,17 @@ export default function SetOpsReviewPage() {
     if (!response.ok) {
       throw new Error(payload.message ?? "Failed to load ingestion queue");
     }
-    setIngestionJobs(payload.jobs ?? []);
-  }, [adminHeaders, canReview, isAdmin, session?.token]);
+    const nextJobs = payload.jobs ?? [];
+    setIngestionJobs(nextJobs);
+    if (selectedJobId && !nextJobs.some((job) => job.id === selectedJobId)) {
+      setSelectedJobId("");
+      setSelectedSetId("");
+      setLatestVersion(null);
+      setVersions([]);
+      setEditableRows([]);
+      setSeedJobs([]);
+    }
+  }, [adminHeaders, canReview, isAdmin, selectedJobId, session?.token]);
 
   const fetchDraft = useCallback(
     async (setId: string, nextDatasetType: DatasetType) => {
@@ -573,6 +610,8 @@ export default function SetOpsReviewPage() {
 
         const nextResults = payload.results ?? [];
         setDiscoveryResults(nextResults);
+        setDiscoverySetIdOverrideInput(discoverySetIdSuggestion || nextResults[0]?.setIdGuess || "");
+        setDiscoverySourceUrlInput(nextResults[0]?.url || "");
         setStatus(`Found ${payload.total ?? nextResults.length} source candidates.`);
       } catch (searchError) {
         setDiscoveryResults([]);
@@ -586,6 +625,7 @@ export default function SetOpsReviewPage() {
       canReview,
       discoveryManufacturerInput,
       discoveryQueryInput,
+      discoverySetIdSuggestion,
       discoverySportInput,
       discoveryYearInput,
       isAdmin,
@@ -606,6 +646,8 @@ export default function SetOpsReviewPage() {
       setStatus(null);
 
       try {
+        const requestedSetId =
+          discoverySetIdOverrideInput.trim() || discoverySetIdSuggestion || result.setIdGuess || undefined;
         const response = await fetch("/api/admin/set-ops/discovery/import", {
           method: "POST",
           headers: {
@@ -613,7 +655,7 @@ export default function SetOpsReviewPage() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            setId: setIdInput.trim() || result.setIdGuess || undefined,
+            setId: requestedSetId,
             datasetType: datasetTypeForImport,
             sourceUrl: result.url,
             sourceProvider: result.provider,
@@ -642,6 +684,7 @@ export default function SetOpsReviewPage() {
         setDatasetType(payload.job.datasetType as DatasetType);
         setSetIdInput(payload.job.setId);
         setSourceUrlInput(payload.job.sourceUrl ?? result.url);
+        setDiscoverySourceUrlInput(payload.job.sourceUrl ?? result.url);
 
         const rowCount = payload.preview?.rowCount ?? 0;
         setStatus(
@@ -658,12 +701,101 @@ export default function SetOpsReviewPage() {
       canReview,
       discoveryManufacturerInput,
       discoveryQueryInput,
+      discoverySetIdOverrideInput,
+      discoverySetIdSuggestion,
       discoverySportInput,
       discoveryYearInput,
       fetchIngestionJobs,
       isAdmin,
       session?.token,
-      setIdInput,
+    ]
+  );
+
+  const importDirectSourceUrl = useCallback(
+    async (datasetTypeForImport: DatasetType) => {
+      if (!session?.token || !isAdmin) return;
+      if (!canReview) {
+        setError("Set Ops reviewer role required");
+        return;
+      }
+      const sourceUrl = discoverySourceUrlInput.trim();
+      if (!sourceUrl) {
+        setError("Paste a source URL before import.");
+        return;
+      }
+      if (!/^https?:\/\//i.test(sourceUrl)) {
+        setError("Source URL must start with http:// or https://");
+        return;
+      }
+
+      const busyId = `direct:${datasetTypeForImport}`;
+      setDiscoveryImportBusyId(busyId);
+      setError(null);
+      setStatus(null);
+
+      try {
+        const requestedSetId = discoverySetIdOverrideInput.trim() || discoverySetIdSuggestion || undefined;
+        const response = await fetch("/api/admin/set-ops/discovery/import", {
+          method: "POST",
+          headers: {
+            ...adminHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            setId: requestedSetId,
+            datasetType: datasetTypeForImport,
+            sourceUrl,
+            sourceProvider: "MANUAL_SOURCE_URL",
+            sourceTitle: requestedSetId || sourceUrl,
+            parserVersion: "source-discovery-v1",
+            discoveryQuery: {
+              year: discoveryYearInput.trim() || null,
+              manufacturer: discoveryManufacturerInput.trim() || null,
+              sport: discoverySportInput.trim() || null,
+              query: discoveryQueryInput.trim() || null,
+            },
+          }),
+        });
+
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+          job?: IngestionJob;
+          preview?: { rowCount?: number };
+        };
+        if (!response.ok || !payload.job) {
+          throw new Error(payload.message ?? "Failed to import source URL");
+        }
+
+        await fetchIngestionJobs();
+        setSelectedJobId(payload.job.id);
+        setSelectedSetId(payload.job.setId);
+        setDatasetType(payload.job.datasetType as DatasetType);
+        setSetIdInput(payload.job.setId);
+        setSourceUrlInput(payload.job.sourceUrl ?? sourceUrl);
+
+        const rowCount = payload.preview?.rowCount ?? 0;
+        setStatus(
+          `Imported ${rowCount.toLocaleString()} rows from direct URL and queued ingestion job ${payload.job.id}.`
+        );
+      } catch (importError) {
+        setError(importError instanceof Error ? importError.message : "Failed to import source URL");
+      } finally {
+        setDiscoveryImportBusyId(null);
+      }
+    },
+    [
+      adminHeaders,
+      canReview,
+      discoveryManufacturerInput,
+      discoveryQueryInput,
+      discoverySetIdOverrideInput,
+      discoverySetIdSuggestion,
+      discoverySourceUrlInput,
+      discoverySportInput,
+      discoveryYearInput,
+      fetchIngestionJobs,
+      isAdmin,
+      session?.token,
     ]
   );
 
@@ -1094,6 +1226,67 @@ export default function SetOpsReviewPage() {
             </button>
           </form>
 
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            <input
+              value={discoverySetIdOverrideInput}
+              onChange={(event) => setDiscoverySetIdOverrideInput(event.target.value)}
+              disabled={!canReview || discoveryBusy}
+              placeholder={
+                discoverySetIdSuggestion
+                  ? `Set ID override (optional). Suggested: ${discoverySetIdSuggestion}`
+                  : "Set ID override (optional)"
+              }
+              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70 md:col-span-2"
+            />
+            <input
+              value={discoverySourceUrlInput}
+              onChange={(event) => setDiscoverySourceUrlInput(event.target.value)}
+              disabled={!canReview || discoveryBusy}
+              placeholder="Paste exact checklist/source URL here for direct import"
+              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70 md:col-span-2"
+            />
+            <button
+              type="button"
+              disabled={busy || !canReview || discoveryImportBusyId === "direct:PARALLEL_DB" || !discoverySourceUrlInput.trim()}
+              onClick={() => void importDirectSourceUrl("PARALLEL_DB")}
+              className="h-11 rounded-xl border border-violet-400/50 bg-violet-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-violet-100 transition hover:bg-violet-500/30 disabled:opacity-60"
+            >
+              {discoveryImportBusyId === "direct:PARALLEL_DB" ? "Importing..." : "Import URL as parallel_db"}
+            </button>
+            <button
+              type="button"
+              disabled={
+                busy || !canReview || discoveryImportBusyId === "direct:PLAYER_WORKSHEET" || !discoverySourceUrlInput.trim()
+              }
+              onClick={() => void importDirectSourceUrl("PLAYER_WORKSHEET")}
+              className="h-11 rounded-xl border border-gold-500/50 bg-gold-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-gold-100 transition hover:bg-gold-500/30 disabled:opacity-60"
+            >
+              {discoveryImportBusyId === "direct:PLAYER_WORKSHEET" ? "Importing..." : "Import URL as player_worksheet"}
+            </button>
+            <button
+              type="button"
+              disabled={!canReview}
+              onClick={() => {
+                setDiscoverySetIdOverrideInput(discoverySetIdSuggestion);
+                setStatus(discoverySetIdSuggestion ? `Set ID override set to ${discoverySetIdSuggestion}.` : "Set ID override cleared.");
+              }}
+              className="h-11 rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
+            >
+              Use Suggested Set ID
+            </button>
+            <button
+              type="button"
+              disabled={!canReview}
+              onClick={() => {
+                setDiscoverySetIdOverrideInput("");
+                setDiscoverySourceUrlInput("");
+              }}
+              className="h-11 rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
+            >
+              Clear URL/Override
+            </button>
+          </div>
+
           <div className="mt-5 overflow-x-auto">
             <table className="min-w-full border-separate border-spacing-0 text-left text-sm text-slate-200">
               <thead>
@@ -1120,6 +1313,20 @@ export default function SetOpsReviewPage() {
                     </td>
                     <td className="border-b border-white/5 px-2 py-2">
                       <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={!canReview}
+                          onClick={() => {
+                            setDiscoverySourceUrlInput(result.url);
+                            if (!discoverySetIdOverrideInput.trim() && result.setIdGuess) {
+                              setDiscoverySetIdOverrideInput(result.setIdGuess);
+                            }
+                            setStatus("Loaded source URL into direct import box. You can edit it before importing.");
+                          }}
+                          className="rounded border border-white/30 bg-white/5 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-100 disabled:opacity-60"
+                        >
+                          Use URL
+                        </button>
                         <button
                           type="button"
                           disabled={busy || !canReview || discoveryImportBusyId === result.id}
@@ -1256,6 +1463,8 @@ export default function SetOpsReviewPage() {
                       setSelectedJobId(job.id);
                       setSelectedSetId(job.setId);
                       setDatasetType(job.datasetType as DatasetType);
+                      setSetIdInput(job.setId);
+                      setSourceUrlInput(job.sourceUrl ?? "");
                     }}
                   >
                     <td className="border-b border-white/5 px-2 py-2 font-mono text-xs">{job.id.slice(0, 8)}</td>
@@ -1278,6 +1487,23 @@ export default function SetOpsReviewPage() {
               className="h-10 rounded-xl border border-violet-400/50 bg-violet-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-violet-100 transition hover:bg-violet-500/30 disabled:opacity-60"
             >
               Build Draft From Selected Job
+            </button>
+            <button
+              type="button"
+              disabled={busy || !canReview || !selectedJobId}
+              onClick={() => {
+                setSelectedJobId("");
+                setSelectedSetId("");
+                setVersions([]);
+                setLatestVersion(null);
+                setLatestApprovedVersionId(null);
+                setEditableRows([]);
+                setSeedJobs([]);
+                setStatus("Cleared selected ingestion job.");
+              }}
+              className="h-10 rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
+            >
+              Clear Selected Job
             </button>
           </div>
         </section>

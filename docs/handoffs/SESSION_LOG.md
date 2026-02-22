@@ -506,3 +506,27 @@
 
 ### Notes
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-22 - Set Ops Discovery UX Fixes (Manual URL import + stale-set carryover)
+
+### Summary
+- Fixed stale set carryover across discovery searches/imports:
+  - discovery Set ID override now re-initializes per search from current query/result context.
+  - discovery import no longer reuses Step 1 ingestion form Set ID state.
+- Added direct source URL import UX to Step 0 (`/admin/set-ops-review`) so operators can paste the exact checklist page URL after navigating from a search result, then import without manual JSON.
+- Added "Use URL" action in discovery result rows to populate/edit direct URL import input.
+- Added "Clear Selected Job" action in ingestion queue to reset workspace selection when switching sets.
+- Added import guard against search-results URLs (e.g. `?s=`, `SearchText=`) so search pages cannot be ingested as checklist rows.
+- Tightened relevance filter further:
+  - removed URL querystring text from manufacturer/year/sport relevance checks (prevents false positives)
+  - stricter checklist signal requirement for non-preferred domains.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/search.ts --file pages/api/admin/set-ops/discovery/import.ts` passed.
+
+### Notes
+- No deploy/restart/migration was executed in this step.

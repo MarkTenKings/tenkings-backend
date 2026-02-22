@@ -180,3 +180,10 @@ Build Set Ops UI flow with:
 - Added site-scoped discovery variants (`site:tcdb.com`, `site:cardboardconnection.com`, `site:beckett.com`, `site:sportscardspro.com`) before broad web search.
 - Added preferred-domain scoring and blocked-domain filtering (ex: `weforum.org` and generic social/news domains).
 - Added query-alignment filtering (manufacturer/year/sport + trading-card/checklist signal) before results are shown.
+
+## Discovery UX + Import Guardrail Fixes (2026-02-22)
+- Added Step 0 direct URL import controls so operators can paste exact checklist page URLs and import immediately as `parallel_db` or `player_worksheet`.
+- Added discovery result row action `Use URL` to prefill direct import URL/edit box.
+- Fixed stale set carryover between searches by re-initializing discovery set override from current search context.
+- Added ingestion guardrail blocking search-results URLs (`SearchText`, `?s=`, `/search`) from import to prevent low-quality row extraction from search pages.
+- Added queue selection reset action (`Clear Selected Job`) to avoid sticky workspace context while switching sets.

@@ -150,6 +150,22 @@ function hasTradingCardSignal(text: string) {
   return /checklist|trading card|card set|set list|parallel|base set|rookie/i.test(text);
 }
 
+function hasChecklistSignal(text: string) {
+  return /checklist|set list|complete set|variation guide|parallels/i.test(text);
+}
+
+function isLikelySearchResultsUrl(url: string) {
+  const lower = String(url || "").toLowerCase();
+  return (
+    lower.includes("searchtext=") ||
+    lower.includes("?s=") ||
+    lower.includes("&s=") ||
+    lower.includes("/search?") ||
+    lower.includes("/search.cfm") ||
+    lower.includes("/search/")
+  );
+}
+
 function buildDiscoverySearchVariants(query: NormalizedDiscoveryQuery) {
   const baseText = buildDiscoverySearchText(query);
   const variants: DiscoverySearchVariant[] = [
@@ -187,7 +203,7 @@ function isRelevantDiscoveryResult(params: {
   requiredDomainSuffixes?: string[];
 }) {
   const domain = params.result.domain.toLowerCase();
-  const text = `${params.result.title} ${params.result.snippet} ${params.result.url}`.toLowerCase();
+  const text = `${params.result.title} ${params.result.snippet}`.toLowerCase();
   const manufacturer = params.query.manufacturer.toLowerCase().trim();
   const year = params.query.year ? String(params.query.year) : "";
   const sportWords = sportTokens(params.query.sport);
@@ -205,15 +221,17 @@ function isRelevantDiscoveryResult(params: {
   const hasYear = !year || text.includes(year);
   const hasSport = sportWords.length === 0 || includesAny(text, sportWords);
   const checklistSignal = hasTradingCardSignal(text);
+  const strictChecklistSignal = hasChecklistSignal(text);
 
   if (trustedDomain) {
     if (!checklistSignal && !hasManufacturer && !hasYear) return false;
+    if (!strictChecklistSignal && !hasManufacturer && !hasYear) return false;
     if (!hasManufacturer && manufacturer) return false;
     if (!hasSport && sportWords.length > 0 && !checklistSignal) return false;
     return true;
   }
 
-  if (!checklistSignal) return false;
+  if (!strictChecklistSignal) return false;
   if (!hasManufacturer && manufacturer) return false;
   if (!hasYear && year) return false;
   if (!hasSport && sportWords.length > 0) return false;
@@ -834,6 +852,11 @@ export async function importDiscoveredSource(params: {
   const sourceUrl = compactWhitespace(params.sourceUrl);
   if (!sourceUrl.startsWith("http://") && !sourceUrl.startsWith("https://")) {
     throw new Error("sourceUrl must be an absolute http(s) URL");
+  }
+  if (isLikelySearchResultsUrl(sourceUrl)) {
+    throw new Error(
+      "This URL looks like a search-results page. Open the exact checklist/set page and paste that direct URL before import."
+    );
   }
 
   let fetched: SourceFetchResult;
