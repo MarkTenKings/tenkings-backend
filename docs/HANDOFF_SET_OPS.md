@@ -299,3 +299,35 @@ Build Set Ops UI flow with:
 4. Confirm:
    - two ingestion jobs are queued from upload payload.
    - no zero-row parser error appears for that PDF.
+
+## Topps PDF Parser Surgery (2026-02-22, Follow-up)
+- Context:
+  - After shipping combined mode + CMap decode, user still saw zero-row failures in production.
+  - User provided full copied Topps checklist text confirming the PDF is highly structured (card number, player, team, rookie).
+- Additional root problems fixed:
+  - Parser still assumed too much row-per-line structure; real PDF extraction can merge/split rows and section text.
+  - Section-header detection could over-trigger on uppercase content and break record grouping.
+  - Some PDFs use filter chains (ex: `ASCII85Decode` + `FlateDecode`), while parser only handled `FlateDecode`.
+- Backend changes:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+  - Replaced checklist row extraction with tokenized record parsing per section block:
+    - detects card IDs like `1`, `SI-1`, `DNA-1`, `CA-AC`, `FSA-AB`
+    - handles merged text fragments and dedupes parsed records
+    - strips trailing team + `Rookie` marker to derive clean `playerSeed`
+  - Tightened section-header detection:
+    - uppercase short lines are accepted as sections only when they match section-noise vocabulary or section keywords
+    - prevents false section splits from uppercase player/content lines
+  - Added PDF filter-chain decode support:
+    - new `ASCII85Decode` stream decoding
+    - generic filter application pipeline (`ASCII85Decode`, `FlateDecode`) before text extraction
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/discovery/parse-upload.ts` passed.
+  - Local smoke tests (mocked deps) against Topps-style checklist text produced correct rows for:
+    - base cards
+    - insert IDs (`SI-*`, `RR-*`, `DNA-*`)
+    - autograph IDs (`CA-*`, `FSA-*`)
+- Environment note:
+  - Live Shopify PDF URL fetch could not be tested from this sandbox due DNS/network restriction (`Could not resolve host: cdn.shopify.com`).
+  - End-to-end production validation remains required.
+- Current step:
+  - User committed on workstation and is waiting for Vercel build completion, then running live Topps PDF URL + upload tests.

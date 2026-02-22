@@ -624,3 +624,27 @@
 
 ### Notes
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-22 - Topps PDF Parser Follow-up (Tokenized Records + PDF Filter Chain)
+
+### Summary
+- Continued Topps PDF parsing hardening after user still reported zero-row failures in production.
+- Reworked checklist parser to tokenized record extraction rather than strict line-based extraction.
+- Added support for PDF stream filter chains (`ASCII85Decode` + `FlateDecode`) to improve text extraction compatibility.
+- Tightened section-header detection to reduce false positives from uppercase non-header content.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/discovery/parse-upload.ts` passed.
+- Local smoke test (mocked deps) against Topps-style checklist text confirmed parsed rows for:
+  - base IDs (`1`, `148`)
+  - inserts (`SI-*`, `RR-*`, `DNA-*`)
+  - autographs (`CA-*`, `FSA-*`)
+
+### Notes
+- Live CDN fetch could not be validated in this sandbox due network DNS restriction (`cdn.shopify.com` unresolved).
+- User committed from workstation and is testing on Vercel production build.
