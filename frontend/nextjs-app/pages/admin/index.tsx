@@ -114,6 +114,12 @@ export default function AdminHome() {
           >
             Set Ops
           </Link>
+          <Link
+            href="/admin/set-ops-review"
+            className="inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400"
+          >
+            Set Ops Review
+          </Link>
         </section>
       </div>
     );

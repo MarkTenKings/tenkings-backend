@@ -224,3 +224,38 @@
 
 ### Validation Evidence
 - Targeted lint pass for new Set Ops API/helper files (see later combined lint run entry in this session).
+
+## 2026-02-22 - Set Ops P0-C Ticket 7 (Review UI MVP)
+
+### Summary
+- Added new admin workspace page: `/admin/set-ops-review`.
+- Added UI for:
+  - ingestion queue creation/listing/selection
+  - draft build from selected ingestion job
+  - editable draft grid (card/parallel/player/listing/source)
+  - immutable draft version save
+  - approval/reject actions with blocking-error gating in UI
+- Wired page links from `/admin/set-ops` and `/admin`.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+- `frontend/nextjs-app/pages/admin/index.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/admin/set-ops.tsx --file pages/admin/index.tsx` passed.
+
+## 2026-02-22 - Set Ops P0-C Ticket 9 (Seed Monitor UI MVP)
+
+### Summary
+- Added seed monitor panel to `/admin/set-ops-review` with:
+  - start seed action
+  - job list/status/progress/result/log preview
+  - cancel and retry controls per job (status-aware)
+  - manual refresh flow
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/admin/set-ops.tsx --file pages/admin/index.tsx` passed.

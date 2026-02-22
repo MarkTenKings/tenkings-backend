@@ -388,6 +388,12 @@ export default function SetOpsPage() {
           >
             ← Back to console
           </Link>
+          <Link
+            className="inline-flex text-xs uppercase tracking-[0.28em] text-violet-300 transition hover:text-violet-100"
+            href="/admin/set-ops-review"
+          >
+            Open Review Workspace →
+          </Link>
         </header>
 
         <section className="grid gap-4 sm:grid-cols-3">
