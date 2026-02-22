@@ -509,3 +509,27 @@ Build Set Ops UI flow with:
 - Expected result:
   - set-level progress reflects full checklist target count when draft rows are available (e.g., 204).
   - fewer one-off failed targets from transient SerpApi/network responses.
+
+## Ref Reset + Source Visibility (2026-02-22, Follow-up #12)
+- New production feedback:
+  - operators still saw legacy Amazon/Walmart rows in `/admin/variant-ref-qa` and could not tell if they were looking at old data or new eBay-only seeds.
+  - no one-click set-level reset existed to purge bad external refs before reseeding.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+    - added set-level delete mode:
+      - `DELETE /api/admin/variants/reference?setId=...`
+      - optional `parallelId`, `cardNumber`, `includeOwned=true`
+      - default behavior deletes external refs only (`ownedStatus != owned`) to protect manually promoted refs.
+  - `frontend/nextjs-app/pages/admin/variants.tsx`
+    - added `Clear External Refs (Set)` button in Seed section.
+    - set-level seeding now prefers `PLAYER_WORKSHEET` draft rows first, then `PARALLEL_DB`, then latest draft, then variant fallback.
+    - reference table now includes `Source` host to spot non-eBay rows quickly.
+  - `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+    - added `Clear External Refs (Set)` action on QA page for active set.
+    - added inline tip to purge legacy rows once after eBay-only switch, then reseed.
+    - reference cards now display `Source Host` with visual eBay/non-eBay indicator.
+- Operator workflow now:
+  1. select set
+  2. clear external refs for that set
+  3. reseed entire set
+  4. QA refs (source host should trend `ebay.com`)

@@ -78,6 +78,17 @@ function fileFromBlob(blob: Blob, fallbackName: string) {
   });
 }
 
+function sourceHostFromUrl(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const host = new URL(raw).hostname.trim().toLowerCase();
+    return host.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
 export default function VariantRefQaPage() {
   const { session, loading, ensureSession, logout } = useSession();
   const isAdmin = useMemo(
@@ -246,6 +257,55 @@ export default function VariantRefQaPage() {
       setBusy(false);
     }
   }, [adminHeaders, selectedCardNumber, selectedParallelId, selectedSetId, session?.token]);
+
+  const clearSetExternalRefs = useCallback(async () => {
+    if (!session?.token) return;
+    const setId = selectedSetFilter.trim();
+    if (!setId) {
+      setStatus({ type: "error", message: "Choose an active set first." });
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete external reference images for "${setId}"?\n\nThis does not delete the set or its variants. Owned/saved refs are kept.`
+    );
+    if (!confirmed) return;
+
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/variants/reference?setId=${encodeURIComponent(setId)}`, {
+        method: "DELETE",
+        headers: { ...adminHeaders },
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Failed to clear external references");
+      }
+      setSelectedRefIds([]);
+      if (selectedSetId && selectedSetId === setId && selectedParallelId) {
+        await loadRefs(selectedSetId, selectedParallelId, selectedCardNumber);
+      } else {
+        setRefs([]);
+      }
+      await loadVariants();
+      setStatus({
+        type: "success",
+        message: `Deleted ${Number(payload?.deleted ?? 0)} external refs for ${setId}. You can reseed now.`,
+      });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : "Failed to clear references" });
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    adminHeaders,
+    loadRefs,
+    loadVariants,
+    selectedCardNumber,
+    selectedParallelId,
+    selectedSetFilter,
+    selectedSetId,
+    session?.token,
+  ]);
 
   const chooseVariant = async (variant: VariantRow) => {
     setSelectedSetFilter(variant.setId);
@@ -607,6 +667,14 @@ export default function VariantRefQaPage() {
             >
               Load Variants
             </button>
+            <button
+              type="button"
+              onClick={() => void clearSetExternalRefs()}
+              disabled={busy || !selectedSetFilter}
+              className="rounded-full border border-rose-400/60 bg-rose-500/10 px-5 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-rose-200 disabled:opacity-60"
+            >
+              Clear External Refs (Set)
+            </button>
             <select
               value={variantTypeFilter}
               onChange={(event) => setVariantTypeFilter(event.target.value as "all" | "insert" | "parallel")}
@@ -643,6 +711,10 @@ export default function VariantRefQaPage() {
             </span>{" "}
             · <span className="text-slate-200">{queueStats.done} done</span> ·{" "}
             <span className="text-slate-200">{queueStats.total} total</span>
+          </p>
+          <p className="mt-2 text-[11px] uppercase tracking-[0.2em] text-slate-500">
+            Tip: after switching to eBay-only seeding, use <span className="text-rose-200">Clear External Refs (Set)</span>{" "}
+            once to purge old Google/Amazon/Walmart rows before reseeding.
           </p>
           <div className="mt-4 max-h-72 overflow-auto rounded-xl border border-white/10">
             <table className="w-full text-left text-xs text-slate-300">
@@ -814,6 +886,8 @@ export default function VariantRefQaPage() {
               const preview = ref.cropUrls?.[0] || ref.rawImageUrl;
               const playerLabelFromRef = String(ref.playerSeed || "").trim().split("::")[0]?.trim() || null;
               const playerLabel = playerLabelFromRef || selectedVariant?.playerLabel || null;
+              const sourceHost = sourceHostFromUrl(ref.sourceUrl);
+              const isEbaySource = sourceHost.endsWith("ebay.com");
               return (
                 <article key={ref.id} className="rounded-xl border border-white/10 bg-night-800/60 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -882,6 +956,12 @@ export default function VariantRefQaPage() {
                     </p>
                     <p>
                       Listing: <span className="font-mono text-slate-300">{ref.sourceListingId || "—"}</span>
+                    </p>
+                    <p>
+                      Source Host:{" "}
+                      <span className={isEbaySource ? "text-emerald-300" : "text-rose-300"}>
+                        {sourceHost || "—"}
+                      </span>
                     </p>
                     <p>ID: <span className="font-mono text-slate-300">{ref.id}</span></p>
                     <p>Quality: <span className="text-slate-300">{ref.qualityScore != null ? ref.qualityScore.toFixed(2) : "—"}</span></p>

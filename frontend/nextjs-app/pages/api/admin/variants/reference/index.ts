@@ -28,6 +28,7 @@ type ReferenceRow = {
 type ResponseBody =
   | { references: ReferenceRow[] }
   | { reference: ReferenceRow }
+  | { ok: true; deleted?: number }
   | { ok: true }
   | { message: string };
 
@@ -298,6 +299,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     if (req.method === "DELETE") {
+      const setId = typeof req.query.setId === "string" ? req.query.setId.trim() : "";
+      if (setId) {
+        const parallelId = typeof req.query.parallelId === "string" ? req.query.parallelId.trim() : "";
+        const cardNumber = typeof req.query.cardNumber === "string" ? req.query.cardNumber.trim() : "";
+        const includeOwned = String(req.query.includeOwned ?? "")
+          .trim()
+          .toLowerCase() === "true";
+
+        const where: Record<string, any> = {
+          setId,
+        };
+        if (parallelId) where.parallelId = parallelId;
+        if (cardNumber) where.cardNumber = cardNumber;
+        if (!includeOwned) {
+          where.ownedStatus = { not: "owned" };
+        }
+
+        let deleted = 0;
+        try {
+          const result = await prisma.cardVariantReferenceImage.deleteMany({
+            where: where as any,
+          });
+          deleted = Number(result?.count ?? 0);
+        } catch {
+          // Backward-compatible fallback if ownedStatus filtering is unavailable.
+          const fallbackWhere: Record<string, any> = {
+            setId,
+          };
+          if (parallelId) fallbackWhere.parallelId = parallelId;
+          if (cardNumber) fallbackWhere.cardNumber = cardNumber;
+          if (!includeOwned) {
+            fallbackWhere.qaStatus = { in: ["pending", "reject"] };
+          }
+          const result = await prisma.cardVariantReferenceImage.deleteMany({
+            where: fallbackWhere as any,
+          });
+          deleted = Number(result?.count ?? 0);
+        }
+
+        return res.status(200).json({ ok: true, deleted });
+      }
+
       const id = typeof req.query.id === "string" ? req.query.id : "";
       if (!id) {
         return res.status(400).json({ message: "Missing reference id." });

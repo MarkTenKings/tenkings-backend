@@ -863,3 +863,32 @@
 - Fallback remains to `cardVariant` rows when no draft rows are available.
 - Added per-target retry (2x) in UI batch runner and 3x retry in seed API for transient SerpApi failures.
 - Partial-failure status now includes example failed targets + reason strings for faster triage.
+
+## 2026-02-22 - Ref Seed Follow-up #12 (Set-Level External Ref Reset + Source Host Visibility)
+
+### Summary
+- Added a safe set-level reset path for legacy bad reference rows (Google/Amazon/Walmart era) without deleting set variants.
+- Added source-host visibility so operators can immediately confirm whether refs are truly eBay-based.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+- `frontend/nextjs-app/pages/admin/variants.tsx`
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/variants.tsx --file pages/admin/variant-ref-qa.tsx --file pages/api/admin/variants/reference/index.ts` passed (non-blocking `no-img-element` warnings only).
+
+### Notes
+- New API behavior:
+  - `DELETE /api/admin/variants/reference?setId=...` deletes external refs for a set.
+  - Optional `parallelId`, `cardNumber`, and `includeOwned=true`.
+  - Default protects owned/saved refs.
+- New UI actions:
+  - `/admin/variants`: `Clear External Refs (Set)` button.
+  - `/admin/variant-ref-qa`: `Clear External Refs (Set)` button in set controls.
+- Set-level seed target sourcing now prefers `PLAYER_WORKSHEET` draft rows first, then `PARALLEL_DB`, then latest draft, then variant fallback.
+- New visibility:
+  - `/admin/variants` reference table includes source host column.
+  - `/admin/variant-ref-qa` cards include source-host badge (eBay vs non-eBay).

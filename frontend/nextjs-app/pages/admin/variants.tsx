@@ -61,6 +61,17 @@ const SAMPLE_CSV = `setId,cardNumber,parallelId,parallelFamily,keywords,oddsInfo
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function sourceHostFromUrl(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  try {
+    const host = new URL(raw).hostname.trim().toLowerCase();
+    return host.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
 function extractSeedTargetsFromDraftRows(rows: unknown[], targetSetId: string): SeedTargetRow[] {
   const seen = new Set<string>();
   const targets: SeedTargetRow[] = [];
@@ -556,18 +567,36 @@ export default function AdminVariants() {
 
     try {
       let seedTargets: SeedTargetRow[] = [];
+      let targetSource = "variant rows";
 
       // First try set-ops approved rows so we can process full checklist cardinality (e.g., 204 rows).
       try {
-        const draftRes = await fetch(`/api/admin/set-ops/drafts?setId=${encodeURIComponent(targetSetId)}`, {
-          headers: {
-            ...adminHeaders,
-          },
-        });
-        const draftPayload = await draftRes.json().catch(() => ({}));
-        if (draftRes.ok) {
+        const draftSources: Array<{ datasetType?: "PLAYER_WORKSHEET" | "PARALLEL_DB"; label: string }> = [
+          { datasetType: "PLAYER_WORKSHEET", label: "set-ops player worksheet rows" },
+          { datasetType: "PARALLEL_DB", label: "set-ops parallel db rows" },
+          { label: "set-ops latest draft rows" },
+        ];
+
+        for (const source of draftSources) {
+          const params = new URLSearchParams({ setId: targetSetId });
+          if (source.datasetType) {
+            params.set("datasetType", source.datasetType);
+          }
+          const draftRes = await fetch(`/api/admin/set-ops/drafts?${params.toString()}`, {
+            headers: {
+              ...adminHeaders,
+            },
+          });
+          const draftPayload = await draftRes.json().catch(() => ({}));
+          if (!draftRes.ok) continue;
+
           const draftRows = Array.isArray(draftPayload?.latestVersion?.rows) ? draftPayload.latestVersion.rows : [];
-          seedTargets = extractSeedTargetsFromDraftRows(draftRows, targetSetId);
+          const extracted = extractSeedTargetsFromDraftRows(draftRows, targetSetId);
+          if (extracted.length > 0) {
+            seedTargets = extracted;
+            targetSource = source.label;
+            break;
+          }
         }
       } catch {
         // Fall back to variant table path below.
@@ -598,6 +627,9 @@ export default function AdminVariants() {
           parallelId: variant.parallelId,
           playerSeed: variant.playerLabel ?? null,
         }));
+        if (seedTargets.length > 0) {
+          targetSource = "variant rows";
+        }
       }
 
       if (seedTargets.length === 0) {
@@ -696,18 +728,58 @@ export default function AdminVariants() {
           type: "error",
           message: `Seeded set with partial failures: ${completed}/${seedTargets.length} targets processed, inserted ${inserted}, skipped ${skipped}, failed ${failed}.${
             failureMessages.length ? ` Examples: ${failureMessages.join(" | ")}` : ""
-          }`,
+          } Source: ${targetSource}.`,
         });
       } else {
         setStatus({
           type: "success",
-          message: `Seeded all targets for ${targetSetId}: ${seedTargets.length} processed, inserted ${inserted}, skipped ${skipped}.`,
+          message: `Seeded all targets for ${targetSetId}: ${seedTargets.length} processed, inserted ${inserted}, skipped ${skipped}. Source: ${targetSource}.`,
         });
       }
     } catch (error) {
       setStatus({
         type: "error",
         message: error instanceof Error ? error.message : "Failed to seed set images.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleClearSetExternalRefs = async () => {
+    const targetSetId = seedForm.setId.trim();
+    if (!targetSetId) {
+      setStatus({ type: "error", message: "Select a Set ID first." });
+      return;
+    }
+    const confirmed = window.confirm(
+      `Delete external reference images for "${targetSetId}"?\n\nThis keeps owned/saved refs and does not delete set variants.`
+    );
+    if (!confirmed) return;
+
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/admin/variants/reference?setId=${encodeURIComponent(targetSetId)}`, {
+        method: "DELETE",
+        headers: {
+          ...adminHeaders,
+        },
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Failed to clear external references for set.");
+      }
+
+      await fetchReferenceStatus();
+      await fetchReferences(targetSetId);
+      setStatus({
+        type: "success",
+        message: `Deleted ${Number(payload?.deleted ?? 0)} external refs for ${targetSetId}. You can now reseed cleanly.`,
+      });
+    } catch (error) {
+      setStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to clear external references for set.",
       });
     } finally {
       setBusy(false);
@@ -1015,6 +1087,14 @@ export default function AdminVariants() {
                 >
                   Seed Single Parallel
                 </button>
+                <button
+                  type="button"
+                  onClick={handleClearSetExternalRefs}
+                  disabled={busy || !seedForm.setId.trim()}
+                  className="rounded-full border border-rose-400/60 bg-rose-500/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-rose-200 disabled:opacity-60"
+                >
+                  Clear External Refs (Set)
+                </button>
               </div>
             </div>
           </div>
@@ -1178,6 +1258,7 @@ export default function AdminVariants() {
                   <th className="py-2">Card #</th>
                   <th className="py-2">Parallel</th>
                   <th className="py-2">Player</th>
+                  <th className="py-2">Source</th>
                   <th className="py-2">Image</th>
                   <th className="py-2">Quality</th>
                 </tr>
@@ -1190,6 +1271,9 @@ export default function AdminVariants() {
                     <td className="py-2 pr-4">{ref.parallelId}</td>
                     <td className="py-2 pr-4 text-slate-300">
                       {ref.displayLabel && ref.displayLabel !== ref.parallelId ? ref.displayLabel : "—"}
+                    </td>
+                    <td className="py-2 pr-4 text-slate-400">
+                      {sourceHostFromUrl(ref.sourceUrl) || "—"}
                     </td>
                     <td className="py-2 pr-4">
                       <a
@@ -1208,7 +1292,7 @@ export default function AdminVariants() {
                 ))}
                 {referenceVariantRows.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="py-6 text-center text-xs text-slate-500">
+                    <td colSpan={7} className="py-6 text-center text-xs text-slate-500">
                       No reference images yet. Upload one to get started.
                     </td>
                   </tr>
