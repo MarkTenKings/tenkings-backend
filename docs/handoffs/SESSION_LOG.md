@@ -695,3 +695,24 @@
 - `looksLikeChecklistSectionHeader(...)` now explicitly rejects standalone `Rookie` / `RC` section tokens.
 - Draft review table no longer slices to 120 rows; full dataset renders for review/editing.
 - Removed non-actionable default warning for missing `listingId` on checklist rows.
+
+## 2026-02-22 - Topps PDF Parser Follow-up #4 (Trailing Row Recovery + Manual Row Controls)
+
+### Summary
+- Addressed near-final production gap where one trailing checklist row could still be missed (203 vs 204 rows in Topps PDF run).
+- Added manual correction controls in draft review to unblock operator workflow when parser misses a rare edge row.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file lib/server/setOpsDrafts.ts --file pages/admin/set-ops-review.tsx` passed.
+
+### Notes
+- PDF parser now flushes dangling pending text at stream end and splits fused card-id/player tokens (`FSA-VWVictor` pattern).
+- Draft normalization now ignores effectively empty rows so blank manual rows do not trigger blocking validation.
+- Review UI now includes `Add Row` and per-row `Delete`.

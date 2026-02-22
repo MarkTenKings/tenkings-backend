@@ -347,6 +347,45 @@ export default function SetOpsReviewPage() {
     [editableRows]
   );
 
+  const addDraftRow = useCallback(() => {
+    if (!canReview) return;
+    setEditableRows((prev) => {
+      const maxIndex = prev.reduce((max, row) => Math.max(max, row.index), -1);
+      const nextSetId = selectedSetId || setIdInput || prev[0]?.setId || "";
+      const nextSourceUrl = sourceUrlInput.trim() || null;
+      return [
+        ...prev,
+        {
+          index: maxIndex + 1,
+          setId: nextSetId,
+          cardNumber: null,
+          parallel: "",
+          playerSeed: "",
+          listingId: null,
+          sourceUrl: nextSourceUrl,
+          duplicateKey: `manual-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+          errors: [],
+          warnings: [],
+        },
+      ];
+    });
+  }, [canReview, selectedSetId, setIdInput, sourceUrlInput]);
+
+  const removeDraftRow = useCallback(
+    (rowIndex: number) => {
+      if (!canReview) return;
+      setEditableRows((prev) =>
+        prev
+          .filter((_, index) => index !== rowIndex)
+          .map((row, index) => ({
+            ...row,
+            index,
+          }))
+      );
+    },
+    [canReview]
+  );
+
   const loadAccess = useCallback(async () => {
     if (!session?.token || !isAdmin) return null;
     setAccessBusy(true);
@@ -1675,6 +1714,14 @@ export default function SetOpsReviewPage() {
             </button>
             <button
               type="button"
+              disabled={busy || !canReview || !selectedSetId}
+              onClick={addDraftRow}
+              className="h-10 rounded-xl border border-sky-300/40 bg-sky-400/10 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-sky-100 transition hover:bg-sky-400/20 disabled:opacity-60"
+            >
+              Add Row
+            </button>
+            <button
+              type="button"
               disabled={busy || !canApprove || !selectedSetId || !latestVersion?.id || blockingErrorCount > 0}
               onClick={() => void applyApproval("APPROVED")}
               className="h-10 rounded-xl border border-emerald-400/50 bg-emerald-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-60"
@@ -1708,6 +1755,7 @@ export default function SetOpsReviewPage() {
                   <th className="border-b border-white/10 px-2 py-2">Listing ID</th>
                   <th className="border-b border-white/10 px-2 py-2">Source URL</th>
                   <th className="border-b border-white/10 px-2 py-2">Issues</th>
+                  <th className="border-b border-white/10 px-2 py-2">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -1796,11 +1844,21 @@ export default function SetOpsReviewPage() {
                       {row.warnings.length > 0 && <p className="text-amber-300">{row.warnings.length} warnings</p>}
                       {row.errors.length === 0 && row.warnings.length === 0 && <p className="text-emerald-300">OK</p>}
                     </td>
+                    <td className="border-b border-white/5 px-2 py-2">
+                      <button
+                        type="button"
+                        onClick={() => removeDraftRow(rowIndex)}
+                        disabled={!canReview}
+                        className="h-8 rounded border border-rose-300/30 bg-rose-500/10 px-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-200 transition hover:bg-rose-500/20 disabled:opacity-60"
+                      >
+                        Delete
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {editableRows.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-2 py-6 text-center text-sm text-slate-400">
+                    <td colSpan={8} className="px-2 py-6 text-center text-sm text-slate-400">
                       No draft rows loaded yet.
                     </td>
                   </tr>

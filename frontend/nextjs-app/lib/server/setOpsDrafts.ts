@@ -53,6 +53,36 @@ function firstString(record: Record<string, unknown>, keys: string[]) {
   return "";
 }
 
+const rowSignalFields = [
+  "cardNumber",
+  "card_number",
+  "cardNo",
+  "number",
+  "card",
+  "parallel",
+  "parallelId",
+  "parallel_id",
+  "parallelName",
+  "playerSeed",
+  "playerName",
+  "player",
+  "listingId",
+  "sourceListingId",
+  "source_listing_id",
+  "listing",
+  "sourceUrl",
+  "url",
+  "source",
+];
+
+function isEffectivelyEmptyDraftRow(record: Record<string, unknown>) {
+  return !rowSignalFields.some((field) => {
+    const value = record[field];
+    if (value == null) return false;
+    return String(value).trim() !== "";
+  });
+}
+
 function parseRawRows(rawPayload: unknown): Record<string, unknown>[] {
   let input = rawPayload;
   if (typeof input === "string") {
@@ -107,7 +137,7 @@ export function normalizeDraftRows(params: {
   rawPayload: unknown;
 }) {
   const fallbackSetId = normalizeSetLabel(params.fallbackSetId);
-  const rows = parseRawRows(params.rawPayload);
+  const rows = parseRawRows(params.rawPayload).filter((row) => !isEffectivelyEmptyDraftRow(row));
   const seenKeys = new Set<string>();
 
   const normalizedRows = rows.map((raw, index): SetOpsDraftRow => {

@@ -611,6 +611,8 @@ function normalizeChecklistLineForTokenization(raw: string) {
     .replace(/\b([A-Za-z])\s+([A-Za-z])\s*-\s*(\d{1,4}[A-Za-z]?)\b/g, "$1$2-$3")
     .replace(/\b([A-Za-z]{1,5})\s*-\s*(\d{1,4}[A-Za-z]?)\b/g, "$1-$2")
     .replace(/\b([A-Za-z]{2,5})\s*-\s*([A-Za-z]{2,6})\b/g, "$1-$2")
+    // Split fused card-id + player-start artifacts (ex: FSA-VWVictor).
+    .replace(/\b([A-Za-z]{2,5}-[A-Za-z0-9]{1,6})([A-Z][a-z])/g, "$1 $2")
     // Split letter+number collisions from copy/extract artifacts (e.g., Brooklyn49).
     .replace(/([A-Za-z])(\d{1,4})(?=\s+[A-Za-z])/g, "$1 $2")
     .replace(/(\d)([A-Za-z]{1,5}-[A-Za-z0-9]{1,6})(?=\s+[A-Za-z])/g, "$1 $2");
@@ -1263,6 +1265,11 @@ function extractLinesFromPdfContentStream(content: string, context?: PdfDecodeCo
     index += 1;
   }
 
+  // Some streams end with a text fragment that never receives a trailing operator.
+  if (pendingText) {
+    currentLine = appendPdfLineValue(currentLine, pendingText);
+    pendingText = "";
+  }
   flushLine();
   return lines;
 }

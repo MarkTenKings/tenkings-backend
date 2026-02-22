@@ -372,3 +372,20 @@ Build Set Ops UI flow with:
     - removed hardcoded UI render cap (`slice(0, 120)`) so full draft row set is visible/editable.
 - Validation executed:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file lib/server/setOpsDrafts.ts --file pages/admin/set-ops-review.tsx` passed.
+
+## Topps PDF Parser Surgery (2026-02-22, Follow-up #4)
+- New production feedback:
+  - parse quality now near-perfect but one trailing row was still missing in one run (`FSA-VW Victor Wembanyama ...`), yielding 203 vs expected 204.
+  - operators requested manual row add/remove controls in draft review to patch rare parser misses quickly.
+- Fixes shipped:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+    - added trailing pending-text flush in PDF content-stream extraction (`extractLinesFromPdfContentStream`) so end-of-stream text fragments are not dropped.
+    - added fused card-id split normalization (`FSA-VWVictor` -> `FSA-VW Victor`) to improve final-row detection.
+  - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+    - added `Add Row` action in draft workspace.
+    - added per-row `Delete` action.
+    - table now supports manual correction workflow without external JSON edits.
+  - `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+    - skips effectively empty rows during normalization (blank manual rows won't create blocking errors).
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file lib/server/setOpsDrafts.ts --file pages/admin/set-ops-review.tsx` passed.
