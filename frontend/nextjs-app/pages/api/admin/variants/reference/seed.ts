@@ -64,10 +64,14 @@ function canonicalEbayListingUrl(url: string | null | undefined) {
 function pickImageUrl(result: any) {
   const candidates = [
     result?.thumbnail,
+    Array.isArray(result?.thumbnails) ? result.thumbnails[0] : null,
+    Array.isArray(result?.thumbnail_images) ? result.thumbnail_images[0] : null,
     result?.image,
     result?.main_image,
     result?.original_image,
     result?.image_url,
+    result?.img,
+    result?.gallery_url,
   ];
   for (const candidate of candidates) {
     const value = String(candidate || "").trim();
@@ -184,6 +188,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         }
 
         const payload = await response.json();
+        const topLevelError = String(
+          payload?.error ||
+            payload?.message ||
+            payload?.errors?.[0]?.message ||
+            payload?.errors?.[0] ||
+            ""
+        ).trim();
+        if (topLevelError) {
+          requestError = topLevelError;
+          const retryable = /rate|limit|timeout|temporar|try again|busy|thrott|quota|capacity/i.test(requestError);
+          if (attempt < 3 && retryable) {
+            await wait(300 * attempt);
+            continue;
+          }
+          return res.status(502).json({ message: requestError });
+        }
+
         const metadataStatus = String(payload?.search_metadata?.status || "").trim();
         if (metadataStatus && metadataStatus !== "Success") {
           requestError = String(payload?.search_metadata?.error || "SerpApi returned error.").trim();
@@ -215,6 +236,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       ? data.organic_results
       : Array.isArray(data?.search_results)
       ? data.search_results
+      : Array.isArray(data?.results)
+      ? data.results
+      : Array.isArray(data?.items_results)
+      ? data.items_results
       : Array.isArray(data?.items)
       ? data.items
       : [];
@@ -231,7 +256,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       sourceUrl: string | null;
     }> = listings
       .map((result: any) => {
-        const sourceUrl = canonicalEbayListingUrl(result?.link || result?.product_link || result?.url || null);
+        const sourceUrl = canonicalEbayListingUrl(
+          result?.link ||
+            result?.product_link ||
+            result?.url ||
+            result?.item_url ||
+            result?.view_item_url ||
+            result?.item_web_url ||
+            result?.product?.link ||
+            null
+        );
         const sourceListingId = parseEbayListingId(sourceUrl);
         const rawImageUrl = pickImageUrl(result);
         const listingTitle =

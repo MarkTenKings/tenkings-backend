@@ -533,3 +533,18 @@ Build Set Ops UI flow with:
   2. clear external refs for that set
   3. reseed entire set
   4. QA refs (source host should trend `ebay.com`)
+
+## Silent Zero-Insert Guard (2026-02-22, Follow-up #13)
+- New production signal:
+  - set run showed `204/204` with `inserted 0 · skipped 0 · failed 0`.
+  - this indicates all calls returned no rows without surfacing upstream error.
+- Root cause:
+  - seed endpoint accepted SerpApi 200 payloads with top-level `error/message` as success and proceeded with empty listings.
+  - eBay payload field shape variance could also miss URL/image fields and collapse rows to zero.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+    - treat top-level SerpApi `error/message/errors` as real failures (with retry for retryable cases).
+    - broaden listing extraction keys (`results`, `items_results`) and URL/image field fallbacks.
+- Expected result:
+  - bad key/quota/account states now appear as explicit failed variants instead of silent `0 inserted`.
+  - more eBay payload variants map into usable listing/image rows.

@@ -892,3 +892,25 @@
 - New visibility:
   - `/admin/variants` reference table includes source host column.
   - `/admin/variant-ref-qa` cards include source-host badge (eBay vs non-eBay).
+
+## 2026-02-22 - Ref Seed Follow-up #13 (Silent Zero-Insert Guard + eBay Payload Field Expansion)
+
+### Summary
+- Investigated run with `204/204` and `inserted 0 / skipped 0 / failed 0`.
+- Patched seed endpoint so SerpApi account/quota/key errors cannot silently pass as empty-success.
+- Expanded result field mapping for eBay payload shape variants.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/seed.ts --file pages/admin/variants.tsx` passed.
+
+### Notes
+- New error handling now checks top-level payload fields: `error`, `message`, `errors`.
+- New listing/result fallbacks:
+  - result arrays: `organic_results`, `search_results`, `results`, `items_results`, `items`
+  - listing URL fields: `link`, `product_link`, `url`, `item_url`, `view_item_url`, `item_web_url`, `product.link`
+  - image fields: `thumbnail`, `thumbnails[0]`, `thumbnail_images[0]`, `image`, `main_image`, `original_image`, `image_url`, `img`, `gallery_url`
