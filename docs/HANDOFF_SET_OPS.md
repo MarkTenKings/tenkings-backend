@@ -136,3 +136,6 @@ Build Set Ops UI flow with:
   - `frontend/nextjs-app/pages/api/admin/set-ops/drafts/build.ts`
   - `frontend/nextjs-app/pages/api/admin/set-ops/drafts/version.ts`
 - `dataJson`/`validationJson` and related JSON fields are now explicitly cast to `Prisma.InputJsonValue` for compatibility with strict build type checks.
+
+## Vercel Build Hotfix 3 (2026-02-22)
+- Updated `frontend/nextjs-app/pages/api/admin/set-ops/drafts/version.ts` to use `z.record(z.string(), z.unknown())` for compatibility with current Zod signature used in CI/Vercel.

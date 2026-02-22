@@ -346,3 +346,17 @@
 
 ### Notes
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-22 - Vercel Hotfix 3 (Zod record signature)
+
+### Summary
+- Fixed Vercel compile error in `drafts/version` schema by updating Zod record usage to explicit key/value signature.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/drafts/version.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/drafts/version.ts` passed.
+
+### Notes
+- No deploy/restart/migration was executed in this step.

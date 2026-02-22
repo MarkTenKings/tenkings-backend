@@ -13,7 +13,7 @@ import { createDraftVersionPayload, normalizeDraftRows } from "../../../../../li
 const saveSchema = z.object({
   setId: z.string().min(1),
   datasetType: z.nativeEnum(SetDatasetType),
-  rows: z.array(z.record(z.unknown())),
+  rows: z.array(z.record(z.string(), z.unknown())),
 });
 
 type ResponseBody =
