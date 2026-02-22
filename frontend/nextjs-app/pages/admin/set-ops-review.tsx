@@ -59,6 +59,26 @@ type SeedJob = {
   logs: string[];
 };
 
+type SetOpsPermissions = {
+  reviewer: boolean;
+  approver: boolean;
+  delete: boolean;
+  admin: boolean;
+};
+
+type AccessResponse =
+  | {
+      permissions: SetOpsPermissions;
+      user: {
+        id: string;
+        phone: string | null;
+        displayName: string | null;
+      };
+    }
+  | {
+      message: string;
+    };
+
 function formatDate(value: string | null) {
   if (!value) return "-";
   const date = new Date(value);
@@ -102,21 +122,47 @@ export default function SetOpsReviewPage() {
   const [seedJobs, setSeedJobs] = useState<SeedJob[]>([]);
 
   const [busy, setBusy] = useState(false);
+  const [accessBusy, setAccessBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<SetOpsPermissions | null>(null);
 
   const selectedJob = useMemo(
     () => ingestionJobs.find((job) => job.id === selectedJobId) ?? null,
     [ingestionJobs, selectedJobId]
   );
+  const canReview = Boolean(permissions?.reviewer);
+  const canApprove = Boolean(permissions?.approver);
 
   const blockingErrorCount = useMemo(
     () => editableRows.flatMap((row) => row.errors).filter((issue) => issue.blocking).length,
     [editableRows]
   );
 
+  const loadAccess = useCallback(async () => {
+    if (!session?.token || !isAdmin) return null;
+    setAccessBusy(true);
+    try {
+      const response = await fetch("/api/admin/set-ops/access", {
+        headers: adminHeaders,
+      });
+      const payload = (await response.json().catch(() => ({}))) as AccessResponse;
+      if (!response.ok || !("permissions" in payload)) {
+        throw new Error("message" in payload ? payload.message : "Failed to load role permissions");
+      }
+      setPermissions(payload.permissions);
+      return payload.permissions;
+    } catch (accessError) {
+      setPermissions(null);
+      setError(accessError instanceof Error ? accessError.message : "Failed to load role permissions");
+      return null;
+    } finally {
+      setAccessBusy(false);
+    }
+  }, [adminHeaders, isAdmin, session?.token]);
+
   const fetchIngestionJobs = useCallback(async () => {
-    if (!session?.token || !isAdmin) return;
+    if (!session?.token || !isAdmin || !canReview) return;
     const params = new URLSearchParams({ limit: "120" });
     const response = await fetch(`/api/admin/set-ops/ingestion?${params.toString()}`, {
       headers: adminHeaders,
@@ -129,11 +175,11 @@ export default function SetOpsReviewPage() {
       throw new Error(payload.message ?? "Failed to load ingestion queue");
     }
     setIngestionJobs(payload.jobs ?? []);
-  }, [adminHeaders, isAdmin, session?.token]);
+  }, [adminHeaders, canReview, isAdmin, session?.token]);
 
   const fetchDraft = useCallback(
     async (setId: string, nextDatasetType: DatasetType) => {
-      if (!session?.token || !isAdmin || !setId) return;
+      if (!session?.token || !isAdmin || !canReview || !setId) return;
       const params = new URLSearchParams({
         setId,
         datasetType: nextDatasetType,
@@ -156,12 +202,12 @@ export default function SetOpsReviewPage() {
       setLatestApprovedVersionId(payload.latestApprovedVersionId ?? null);
       setEditableRows((payload.latestVersion?.rows ?? []) as DraftRow[]);
     },
-    [adminHeaders, isAdmin, session?.token]
+    [adminHeaders, canReview, isAdmin, session?.token]
   );
 
   const fetchSeedJobs = useCallback(
     async (setId: string) => {
-      if (!session?.token || !isAdmin || !setId) return;
+      if (!session?.token || !isAdmin || !canApprove || !setId) return;
       const params = new URLSearchParams({ setId, limit: "40" });
       const response = await fetch(`/api/admin/set-ops/seed/jobs?${params.toString()}`, {
         headers: adminHeaders,
@@ -175,7 +221,7 @@ export default function SetOpsReviewPage() {
       }
       setSeedJobs(payload.jobs ?? []);
     },
-    [adminHeaders, isAdmin, session?.token]
+    [adminHeaders, canApprove, isAdmin, session?.token]
   );
 
   useEffect(() => {
@@ -184,9 +230,25 @@ export default function SetOpsReviewPage() {
     autoLoadedRef.current = true;
     setBusy(true);
     setError(null);
-    void Promise.all([fetchIngestionJobs()])
-      .then(() => {
-        setStatus("Loaded ingestion queue.");
+    setStatus(null);
+    void loadAccess()
+      .then((nextPermissions) => {
+        if (!nextPermissions?.reviewer) {
+          setIngestionJobs([]);
+          setEditableRows([]);
+          setVersions([]);
+          setLatestVersion(null);
+          setLatestApprovedVersionId(null);
+          setSeedJobs([]);
+          setStatus("Set Ops reviewer role required for ingestion and draft workspace.");
+          return Promise.resolve();
+        }
+        return fetchIngestionJobs().then(() => {
+          if (!nextPermissions.approver) {
+            setSeedJobs([]);
+          }
+          setStatus("Loaded ingestion queue.");
+        });
       })
       .catch((loadError) => {
         setError(loadError instanceof Error ? loadError.message : "Failed to load data");
@@ -194,12 +256,16 @@ export default function SetOpsReviewPage() {
       .finally(() => {
         setBusy(false);
       });
-  }, [fetchIngestionJobs, isAdmin, session?.token]);
+  }, [fetchIngestionJobs, isAdmin, loadAccess, session?.token]);
 
   const createIngestionJob = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
       if (!session?.token || !isAdmin) return;
+      if (!canReview) {
+        setError("Set Ops reviewer role required");
+        return;
+      }
 
       setBusy(true);
       setError(null);
@@ -244,6 +310,7 @@ export default function SetOpsReviewPage() {
       adminHeaders,
       datasetType,
       fetchIngestionJobs,
+      canReview,
       isAdmin,
       parserVersionInput,
       rawPayloadInput,
@@ -255,6 +322,10 @@ export default function SetOpsReviewPage() {
 
   const buildDraftFromJob = useCallback(async () => {
     if (!session?.token || !isAdmin || !selectedJobId || !selectedJob) return;
+    if (!canReview) {
+      setError("Set Ops reviewer role required");
+      return;
+    }
 
     setBusy(true);
     setError(null);
@@ -279,7 +350,11 @@ export default function SetOpsReviewPage() {
 
       setSelectedSetId(selectedJob.setId);
       await fetchDraft(selectedJob.setId, selectedJob.datasetType as DatasetType);
-      await fetchSeedJobs(selectedJob.setId);
+      if (canApprove) {
+        await fetchSeedJobs(selectedJob.setId);
+      } else {
+        setSeedJobs([]);
+      }
       await fetchIngestionJobs();
       setStatus(
         `Built draft from ${selectedJobId} (${payload.summary?.rowCount ?? 0} rows, blocking=${payload.summary?.blockingErrorCount ?? 0}).`
@@ -294,6 +369,8 @@ export default function SetOpsReviewPage() {
     fetchDraft,
     fetchIngestionJobs,
     fetchSeedJobs,
+    canApprove,
+    canReview,
     isAdmin,
     selectedJob,
     selectedJobId,
@@ -302,6 +379,10 @@ export default function SetOpsReviewPage() {
 
   const saveDraftVersion = useCallback(async () => {
     if (!session?.token || !isAdmin || !selectedSetId) return;
+    if (!canReview) {
+      setError("Set Ops reviewer role required");
+      return;
+    }
 
     setBusy(true);
     setError(null);
@@ -344,11 +425,15 @@ export default function SetOpsReviewPage() {
     } finally {
       setBusy(false);
     }
-  }, [adminHeaders, datasetType, editableRows, fetchDraft, isAdmin, selectedSetId, session?.token]);
+  }, [adminHeaders, canReview, datasetType, editableRows, fetchDraft, isAdmin, selectedSetId, session?.token]);
 
   const applyApproval = useCallback(
     async (decision: "APPROVED" | "REJECTED") => {
       if (!session?.token || !isAdmin || !selectedSetId || !latestVersion?.id) return;
+      if (!canApprove) {
+        setError("Set Ops approver role required");
+        return;
+      }
 
       setBusy(true);
       setError(null);
@@ -387,11 +472,25 @@ export default function SetOpsReviewPage() {
         setBusy(false);
       }
     },
-    [adminHeaders, datasetType, fetchDraft, fetchIngestionJobs, isAdmin, latestVersion?.id, selectedSetId, session?.token]
+    [
+      adminHeaders,
+      canApprove,
+      datasetType,
+      fetchDraft,
+      fetchIngestionJobs,
+      isAdmin,
+      latestVersion?.id,
+      selectedSetId,
+      session?.token,
+    ]
   );
 
   const startSeedRun = useCallback(async () => {
     if (!session?.token || !isAdmin || !selectedSetId) return;
+    if (!canApprove) {
+      setError("Set Ops approver role required");
+      return;
+    }
 
     setBusy(true);
     setError(null);
@@ -424,11 +523,24 @@ export default function SetOpsReviewPage() {
     } finally {
       setBusy(false);
     }
-  }, [adminHeaders, fetchSeedJobs, isAdmin, latestApprovedVersionId, latestVersion?.id, selectedSetId, session?.token]);
+  }, [
+    adminHeaders,
+    canApprove,
+    fetchSeedJobs,
+    isAdmin,
+    latestApprovedVersionId,
+    latestVersion?.id,
+    selectedSetId,
+    session?.token,
+  ]);
 
   const runSeedAction = useCallback(
     async (jobId: string, action: "cancel" | "retry") => {
       if (!session?.token || !isAdmin || !selectedSetId) return;
+      if (!canApprove) {
+        setError("Set Ops approver role required");
+        return;
+      }
 
       setBusy(true);
       setError(null);
@@ -457,7 +569,7 @@ export default function SetOpsReviewPage() {
         setBusy(false);
       }
     },
-    [adminHeaders, fetchSeedJobs, isAdmin, selectedSetId, session?.token]
+    [adminHeaders, canApprove, fetchSeedJobs, isAdmin, selectedSetId, session?.token]
   );
 
   const showMissingConfig =
@@ -548,6 +660,15 @@ export default function SetOpsReviewPage() {
           <p className="max-w-3xl text-sm text-slate-300">
             Ingest datasets, build normalized draft versions, edit rows, approve/reject, and run monitored seed jobs from the UI.
           </p>
+          <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em]">
+            <span className={`rounded-full border px-2 py-1 ${canReview ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+              reviewer: {canReview ? "yes" : "no"}
+            </span>
+            <span className={`rounded-full border px-2 py-1 ${canApprove ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+              approver: {canApprove ? "yes" : "no"}
+            </span>
+            {accessBusy && <span className="text-slate-400">loading roles...</span>}
+          </div>
           <div className="flex flex-wrap gap-4">
             <Link
               className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
@@ -557,15 +678,15 @@ export default function SetOpsReviewPage() {
             </Link>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || accessBusy}
               onClick={() => {
                 setBusy(true);
                 setError(null);
                 setStatus(null);
                 void Promise.all([
-                  fetchIngestionJobs(),
-                  selectedSetId ? fetchDraft(selectedSetId, datasetType) : Promise.resolve(),
-                  selectedSetId ? fetchSeedJobs(selectedSetId) : Promise.resolve(),
+                  canReview ? fetchIngestionJobs() : Promise.resolve(),
+                  canReview && selectedSetId ? fetchDraft(selectedSetId, datasetType) : Promise.resolve(),
+                  canApprove && selectedSetId ? fetchSeedJobs(selectedSetId) : Promise.resolve(),
                 ])
                   .then(() => setStatus("Workspace refreshed."))
                   .catch((refreshError) =>
@@ -589,12 +710,14 @@ export default function SetOpsReviewPage() {
             <input
               value={setIdInput}
               onChange={(event) => setSetIdInput(event.target.value)}
+              disabled={!canReview}
               placeholder="Set ID"
               className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
             />
             <select
               value={datasetType}
               onChange={(event) => setDatasetType(event.target.value as DatasetType)}
+              disabled={!canReview}
               className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
             >
               <option value="PARALLEL_DB">parallel_db</option>
@@ -603,24 +726,27 @@ export default function SetOpsReviewPage() {
             <input
               value={sourceUrlInput}
               onChange={(event) => setSourceUrlInput(event.target.value)}
+              disabled={!canReview}
               placeholder="Source URL (optional)"
               className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
             />
             <input
               value={parserVersionInput}
               onChange={(event) => setParserVersionInput(event.target.value)}
+              disabled={!canReview}
               placeholder="Parser version"
               className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
             />
             <textarea
               value={rawPayloadInput}
               onChange={(event) => setRawPayloadInput(event.target.value)}
+              disabled={!canReview}
               rows={7}
               className="md:col-span-2 rounded-xl border border-white/15 bg-night-950/70 p-3 font-mono text-xs text-slate-100 outline-none focus:border-gold-500/70"
             />
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || !canReview}
               className="h-11 rounded-xl border border-gold-500/60 bg-gold-500 px-4 text-xs font-semibold uppercase tracking-[0.18em] text-night-900 transition hover:bg-gold-400 disabled:opacity-60"
             >
               Queue Ingestion
@@ -642,8 +768,9 @@ export default function SetOpsReviewPage() {
                 {ingestionJobs.map((job) => (
                   <tr
                     key={job.id}
-                    className={`cursor-pointer transition ${selectedJobId === job.id ? "bg-violet-500/10" : "hover:bg-white/5"}`}
+                    className={`${canReview ? "cursor-pointer transition" : ""} ${selectedJobId === job.id ? "bg-violet-500/10" : "hover:bg-white/5"}`}
                     onClick={() => {
+                      if (!canReview) return;
                       setSelectedJobId(job.id);
                       setSelectedSetId(job.setId);
                       setDatasetType(job.datasetType as DatasetType);
@@ -663,7 +790,7 @@ export default function SetOpsReviewPage() {
           <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
-              disabled={busy || !selectedJobId}
+              disabled={busy || !canReview || !selectedJobId}
               onClick={() => void buildDraftFromJob()}
               className="h-10 rounded-xl border border-violet-400/50 bg-violet-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-violet-100 transition hover:bg-violet-500/30 disabled:opacity-60"
             >
@@ -680,7 +807,7 @@ export default function SetOpsReviewPage() {
           <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
-              disabled={busy || !selectedSetId}
+              disabled={busy || !canReview || !selectedSetId}
               onClick={() => void fetchDraft(selectedSetId, datasetType)}
               className="h-10 rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
             >
@@ -688,7 +815,7 @@ export default function SetOpsReviewPage() {
             </button>
             <button
               type="button"
-              disabled={busy || !selectedSetId}
+              disabled={busy || !canReview || !selectedSetId}
               onClick={() => void saveDraftVersion()}
               className="h-10 rounded-xl border border-gold-500/60 bg-gold-500 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-night-900 transition hover:bg-gold-400 disabled:opacity-60"
             >
@@ -696,7 +823,7 @@ export default function SetOpsReviewPage() {
             </button>
             <button
               type="button"
-              disabled={busy || !selectedSetId || !latestVersion?.id || blockingErrorCount > 0}
+              disabled={busy || !canApprove || !selectedSetId || !latestVersion?.id || blockingErrorCount > 0}
               onClick={() => void applyApproval("APPROVED")}
               className="h-10 rounded-xl border border-emerald-400/50 bg-emerald-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-60"
             >
@@ -704,7 +831,7 @@ export default function SetOpsReviewPage() {
             </button>
             <button
               type="button"
-              disabled={busy || !selectedSetId || !latestVersion?.id}
+              disabled={busy || !canApprove || !selectedSetId || !latestVersion?.id}
               onClick={() => void applyApproval("REJECTED")}
               className="h-10 rounded-xl border border-rose-400/50 bg-rose-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-rose-100 transition hover:bg-rose-500/30 disabled:opacity-60"
             >
@@ -746,6 +873,7 @@ export default function SetOpsReviewPage() {
                             return copy;
                           });
                         }}
+                        disabled={!canReview}
                         className="h-8 w-24 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
                       />
                     </td>
@@ -760,6 +888,7 @@ export default function SetOpsReviewPage() {
                             return copy;
                           });
                         }}
+                        disabled={!canReview}
                         className="h-8 w-48 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
                       />
                     </td>
@@ -774,6 +903,7 @@ export default function SetOpsReviewPage() {
                             return copy;
                           });
                         }}
+                        disabled={!canReview}
                         className="h-8 w-40 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
                       />
                     </td>
@@ -788,6 +918,7 @@ export default function SetOpsReviewPage() {
                             return copy;
                           });
                         }}
+                        disabled={!canReview}
                         className="h-8 w-36 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
                       />
                     </td>
@@ -802,6 +933,7 @@ export default function SetOpsReviewPage() {
                             return copy;
                           });
                         }}
+                        disabled={!canReview}
                         className="h-8 w-56 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
                       />
                     </td>
@@ -831,7 +963,7 @@ export default function SetOpsReviewPage() {
           <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
-              disabled={busy || !selectedSetId}
+              disabled={busy || !canApprove || !selectedSetId}
               onClick={() => void startSeedRun()}
               className="h-10 rounded-xl border border-sky-400/50 bg-sky-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-sky-100 transition hover:bg-sky-500/30 disabled:opacity-60"
             >
@@ -839,7 +971,7 @@ export default function SetOpsReviewPage() {
             </button>
             <button
               type="button"
-              disabled={busy || !selectedSetId}
+              disabled={busy || !canApprove || !selectedSetId}
               onClick={() => void fetchSeedJobs(selectedSetId)}
               className="h-10 rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
             >
@@ -874,7 +1006,7 @@ export default function SetOpsReviewPage() {
                         {(job.status === "QUEUED" || job.status === "IN_PROGRESS") && (
                           <button
                             type="button"
-                            disabled={busy}
+                            disabled={busy || !canApprove}
                             onClick={() => void runSeedAction(job.id, "cancel")}
                             className="rounded border border-amber-400/50 bg-amber-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-amber-100 disabled:opacity-60"
                           >
@@ -884,7 +1016,7 @@ export default function SetOpsReviewPage() {
                         {(job.status === "FAILED" || job.status === "CANCELLED") && (
                           <button
                             type="button"
-                            disabled={busy}
+                            disabled={busy || !canApprove}
                             onClick={() => void runSeedAction(job.id, "retry")}
                             className="rounded border border-violet-400/50 bg-violet-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-violet-100 disabled:opacity-60"
                           >

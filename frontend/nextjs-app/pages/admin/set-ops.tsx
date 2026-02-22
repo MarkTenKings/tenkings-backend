@@ -42,6 +42,26 @@ type LoadResponse =
       message: string;
     };
 
+type SetOpsPermissions = {
+  reviewer: boolean;
+  approver: boolean;
+  delete: boolean;
+  admin: boolean;
+};
+
+type AccessResponse =
+  | {
+      permissions: SetOpsPermissions;
+      user: {
+        id: string;
+        phone: string | null;
+        displayName: string | null;
+      };
+    }
+  | {
+      message: string;
+    };
+
 function formatDate(value: string | null) {
   if (!value) return "-";
   const date = new Date(value);
@@ -62,6 +82,7 @@ export default function SetOpsPage() {
   const [rows, setRows] = useState<SetSummaryRow[]>([]);
   const [total, setTotal] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [accessBusy, setAccessBusy] = useState(false);
   const [actionBusySetId, setActionBusySetId] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [auditSnippet, setAuditSnippet] = useState<string | null>(null);
@@ -71,13 +92,39 @@ export default function SetOpsPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [permissions, setPermissions] = useState<SetOpsPermissions | null>(null);
 
   const loadedRef = useRef(false);
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
+  const canReview = Boolean(permissions?.reviewer);
+  const canArchive = Boolean(permissions?.admin);
+  const canDelete = Boolean(permissions?.delete);
+
+  const loadAccess = useCallback(async () => {
+    if (!session?.token || !isAdmin) return null;
+    setAccessBusy(true);
+    try {
+      const response = await fetch("/api/admin/set-ops/access", {
+        headers: adminHeaders,
+      });
+      const payload = (await response.json().catch(() => ({}))) as AccessResponse;
+      if (!response.ok || !("permissions" in payload)) {
+        throw new Error("message" in payload ? payload.message : "Failed to load role permissions");
+      }
+      setPermissions(payload.permissions);
+      return payload.permissions;
+    } catch (accessError) {
+      setPermissions(null);
+      setError(accessError instanceof Error ? accessError.message : "Failed to load role permissions");
+      return null;
+    } finally {
+      setAccessBusy(false);
+    }
+  }, [adminHeaders, isAdmin, session?.token]);
 
   const loadSets = useCallback(
-    async (nextQuery = query, nextIncludeArchived = includeArchived) => {
-      if (!session?.token || !isAdmin) return;
+    async (nextQuery = query, nextIncludeArchived = includeArchived, reviewerAllowed = canReview) => {
+      if (!session?.token || !isAdmin || !reviewerAllowed) return;
       setBusy(true);
       setError(null);
       setStatus(null);
@@ -106,29 +153,51 @@ export default function SetOpsPage() {
         setBusy(false);
       }
     },
-    [adminHeaders, includeArchived, isAdmin, query, session?.token]
+    [adminHeaders, canReview, includeArchived, isAdmin, query, session?.token]
   );
 
   useEffect(() => {
     if (!session?.token || !isAdmin) return;
     if (loadedRef.current) return;
     loadedRef.current = true;
-    void loadSets();
-  }, [isAdmin, loadSets, session?.token]);
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+    setAuditSnippet(null);
+    void loadAccess()
+      .then((nextPermissions) => {
+        if (!nextPermissions?.reviewer) {
+          setRows([]);
+          setTotal(0);
+          setStatus("Set Ops reviewer role required to list sets.");
+          return Promise.resolve();
+        }
+        return loadSets(query, includeArchived, true);
+      })
+      .finally(() => setBusy(false));
+  }, [includeArchived, isAdmin, loadAccess, loadSets, query, session?.token]);
 
   const onSearch = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
+      if (!canReview) {
+        setError("Set Ops reviewer role required");
+        return;
+      }
       const nextQuery = queryInput.trim();
       setQuery(nextQuery);
       void loadSets(nextQuery, includeArchived);
     },
-    [includeArchived, loadSets, queryInput]
+    [canReview, includeArchived, loadSets, queryInput]
   );
 
   const updateArchiveState = useCallback(
     async (row: SetSummaryRow, nextArchived: boolean) => {
       if (!session?.token || !isAdmin) return;
+      if (!canArchive) {
+        setError("Set Ops admin role required");
+        return;
+      }
       setActionBusySetId(row.setId);
       setError(null);
       setStatus(null);
@@ -182,12 +251,16 @@ export default function SetOpsPage() {
         setActionBusySetId(null);
       }
     },
-    [adminHeaders, isAdmin, session?.token]
+    [adminHeaders, canArchive, isAdmin, session?.token]
   );
 
   const requestDeleteImpact = useCallback(
     async (setId: string) => {
       if (!session?.token || !isAdmin) return;
+      if (!canDelete) {
+        setDeleteError("Set Ops delete role required");
+        return;
+      }
       setDeleteBusy(true);
       setDeleteError(null);
       try {
@@ -218,7 +291,7 @@ export default function SetOpsPage() {
         setDeleteBusy(false);
       }
     },
-    [adminHeaders, isAdmin, session?.token]
+    [adminHeaders, canDelete, isAdmin, session?.token]
   );
 
   const closeDeleteModal = useCallback(() => {
@@ -231,17 +304,25 @@ export default function SetOpsPage() {
 
   const openDeleteModal = useCallback(
     (row: SetSummaryRow) => {
+      if (!canDelete) {
+        setError("Set Ops delete role required");
+        return;
+      }
       setDeleteTarget(row);
       setDeleteImpact(null);
       setDeleteError(null);
       setDeleteConfirmation("");
       void requestDeleteImpact(row.setId);
     },
-    [requestDeleteImpact]
+    [canDelete, requestDeleteImpact]
   );
 
   const confirmDeleteSet = useCallback(async () => {
     if (!deleteTarget || !session?.token || !isAdmin) return;
+    if (!canDelete) {
+      setDeleteError("Set Ops delete role required");
+      return;
+    }
     setDeleteBusy(true);
     setDeleteError(null);
     setError(null);
@@ -283,7 +364,7 @@ export default function SetOpsPage() {
     } finally {
       setDeleteBusy(false);
     }
-  }, [adminHeaders, closeDeleteModal, deleteConfirmation, deleteTarget, isAdmin, session?.token]);
+  }, [adminHeaders, canDelete, closeDeleteModal, deleteConfirmation, deleteTarget, isAdmin, session?.token]);
 
   const variantTotal = useMemo(
     () => rows.reduce((sum, row) => sum + Math.max(0, row.variantCount || 0), 0),
@@ -382,6 +463,18 @@ export default function SetOpsPage() {
           <p className="max-w-3xl text-sm text-slate-300">
             Search active sets, inspect variant/reference footprint, and track the latest draft and seed state from production APIs.
           </p>
+          <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em]">
+            <span className={`rounded-full border px-2 py-1 ${canReview ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+              reviewer: {canReview ? "yes" : "no"}
+            </span>
+            <span className={`rounded-full border px-2 py-1 ${canArchive ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+              admin: {canArchive ? "yes" : "no"}
+            </span>
+            <span className={`rounded-full border px-2 py-1 ${canDelete ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+              delete: {canDelete ? "yes" : "no"}
+            </span>
+            {accessBusy && <span className="text-slate-400">loading roles...</span>}
+          </div>
           <Link
             className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
             href="/admin"
@@ -423,7 +516,12 @@ export default function SetOpsPage() {
               <input
                 type="checkbox"
                 checked={includeArchived}
+                disabled={!canReview}
                 onChange={(event) => {
+                  if (!canReview) {
+                    setError("Set Ops reviewer role required");
+                    return;
+                  }
                   const nextValue = event.target.checked;
                   setIncludeArchived(nextValue);
                   void loadSets(query, nextValue);
@@ -434,14 +532,14 @@ export default function SetOpsPage() {
             </label>
             <button
               type="submit"
-              disabled={busy}
+              disabled={busy || !canReview}
               className="h-11 rounded-xl border border-gold-500/60 bg-gold-500 px-5 text-xs font-semibold uppercase tracking-[0.2em] text-night-900 transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {busy ? "Loading..." : "Search"}
             </button>
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || !canReview}
               onClick={() => void loadSets(query, includeArchived)}
               className="h-11 rounded-xl border border-white/20 px-5 text-xs font-semibold uppercase tracking-[0.2em] text-slate-100 transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -488,28 +586,36 @@ export default function SetOpsPage() {
                     </td>
                     <td className="border-b border-white/5 px-3 py-3 align-top text-xs text-slate-300">{formatDate(row.updatedAt)}</td>
                     <td className="border-b border-white/5 px-3 py-3 align-top">
-                      <button
-                        type="button"
-                        onClick={() => void updateArchiveState(row, !row.archived)}
-                        disabled={busy || deleteBusy || actionBusySetId === row.setId}
-                        className={`rounded-lg border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                          row.archived
-                            ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
-                            : "border-amber-400/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
-                        }`}
-                      >
-                        {actionBusySetId === row.setId ? "Saving..." : row.archived ? "Unarchive" : "Archive"}
-                      </button>
+                      {canArchive ? (
+                        <button
+                          type="button"
+                          onClick={() => void updateArchiveState(row, !row.archived)}
+                          disabled={busy || deleteBusy || actionBusySetId === row.setId}
+                          className={`rounded-lg border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                            row.archived
+                              ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
+                              : "border-amber-400/40 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20"
+                          }`}
+                        >
+                          {actionBusySetId === row.setId ? "Saving..." : row.archived ? "Unarchive" : "Archive"}
+                        </button>
+                      ) : (
+                        <span className="text-xs uppercase tracking-[0.12em] text-slate-500">no access</span>
+                      )}
                     </td>
                     <td className="border-b border-white/5 px-3 py-3 align-top">
-                      <button
-                        type="button"
-                        onClick={() => openDeleteModal(row)}
-                        disabled={busy || deleteBusy || actionBusySetId === row.setId}
-                        className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        Delete
-                      </button>
+                      {canDelete ? (
+                        <button
+                          type="button"
+                          onClick={() => openDeleteModal(row)}
+                          disabled={busy || deleteBusy || actionBusySetId === row.setId}
+                          className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          Delete
+                        </button>
+                      ) : (
+                        <span className="text-xs uppercase tracking-[0.12em] text-slate-500">no access</span>
+                      )}
                     </td>
                   </tr>
                 ))}

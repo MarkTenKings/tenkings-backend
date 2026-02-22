@@ -110,3 +110,9 @@ Build Set Ops UI flow with:
 - P0-C Ticket 8 complete in code: approval endpoint plus seed job start/list/cancel/retry APIs with persisted progress/log/result payloads.
 - P0-C Ticket 7 complete in code: review workspace page (`/admin/set-ops-review`) with ingestion->build->edit->save->approve/reject flow.
 - P0-C Ticket 9 complete in code: seed monitor UI on review workspace (start/list/refresh/cancel/retry controls and progress display).
+
+## Permissions Hardening Update (2026-02-22)
+- Added Set Ops permission introspection endpoint: `GET /api/admin/set-ops/access`.
+- `/admin/set-ops` now displays resolved role capabilities and blocks archive/delete actions in UI when role requirements are not met.
+- `/admin/set-ops-review` now blocks ingestion/draft actions without reviewer role and approval/seed actions without approver role.
+- Server remains source of truth: API-level RBAC enforcement and denied-attempt audit events are unchanged and still mandatory.

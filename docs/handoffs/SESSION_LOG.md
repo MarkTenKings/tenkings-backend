@@ -259,3 +259,26 @@
 
 ### Validation Evidence
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/admin/set-ops.tsx --file pages/admin/index.tsx` passed.
+
+## 2026-02-22 - Set Ops P0-D Ticket 14 (Permissions + Guardrails Hardening)
+
+### Summary
+- Added role-access endpoint for Set Ops UI capability checks:
+  - `GET /api/admin/set-ops/access`
+- Hardened UI action gating on:
+  - `/admin/set-ops`
+  - `/admin/set-ops-review`
+- UI now fetches server-derived role permissions (`reviewer`, `approver`, `delete`, `admin`) and conditionally enables/disables protected actions.
+- Server-side RBAC and denied-attempt audit logging remain authoritative in API routes; this ticket adds a client-side guardrail layer to reduce invalid requests.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/access.ts`
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/access.ts` passed.
+
+### Notes
+- No deploy/restart/migration was executed.
+- No destructive DB operations were executed.
