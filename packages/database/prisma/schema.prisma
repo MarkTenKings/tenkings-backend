@@ -178,77 +178,125 @@ enum KioskSessionStatus {
   CANCELLED
 }
 
+enum SetDatasetType {
+  PARALLEL_DB
+  PLAYER_WORKSHEET
+}
+
+enum SetIngestionJobStatus {
+  QUEUED
+  PARSED
+  REVIEW_REQUIRED
+  APPROVED
+  REJECTED
+  FAILED
+}
+
+enum SetDraftStatus {
+  DRAFT
+  REVIEW_REQUIRED
+  APPROVED
+  REJECTED
+  ARCHIVED
+}
+
+enum SetApprovalDecision {
+  APPROVED
+  REJECTED
+}
+
+enum SetSeedJobStatus {
+  QUEUED
+  IN_PROGRESS
+  COMPLETE
+  FAILED
+  CANCELLED
+}
+
+enum SetAuditStatus {
+  SUCCESS
+  FAILURE
+  DENIED
+}
+
 model User {
-  id              String          @id @default(uuid())
-  email           String?         @unique
-  phone           String?         @unique
-  phoneVerifiedAt DateTime?
-  displayName     String?
-  avatarUrl       String?
-  createdAt       DateTime        @default(now())
-  wallet          Wallet?
-  items           Item[]
-  ownerships      ItemOwnership[]
-  listings        Listing[]       @relation("SellerListings")
-  shippingRequests ShippingRequest[]
-  packs           PackInstance[]
-  packedPacks     PackInstance[]  @relation("PackedByUser")
-  loadedPacks     PackInstance[]  @relation("LoadedByUser")
-  ingestions      IngestionTask[]
-  cardBatches     CardBatch[]
-  cardNotes       CardNote[]
-  reviewedCards   CardAsset[]     @relation("CardAssetHumanReviewer")
-  createdEvidenceItems CardEvidenceItem[] @relation("CardEvidenceCreatedBy")
-  createdPhotos        CardPhoto[]        @relation("CardPhotoCreatedBy")
-  inventoryBatchesCreated InventoryBatch[] @relation("InventoryBatchCreatedBy")
-  bytebotPlaybookRules BytebotPlaybookRule[]
-  sessions        Session[]
-  qrCodesCreated  QrCode[]        @relation("QrCodeCreatedBy")
-  qrCodesBound    QrCode[]        @relation("QrCodeBoundBy")
-  kioskClaims     KioskSession[]  @relation("KioskClaimedBy")
-  batchStageEvents BatchStageEvent[]
-  locationRestocks LocationRestock[]
+  id                      String                @id @default(uuid())
+  email                   String?               @unique
+  phone                   String?               @unique
+  phoneVerifiedAt         DateTime?
+  displayName             String?
+  avatarUrl               String?
+  createdAt               DateTime              @default(now())
+  wallet                  Wallet?
+  items                   Item[]
+  ownerships              ItemOwnership[]
+  listings                Listing[]             @relation("SellerListings")
+  shippingRequests        ShippingRequest[]
+  packs                   PackInstance[]
+  packedPacks             PackInstance[]        @relation("PackedByUser")
+  loadedPacks             PackInstance[]        @relation("LoadedByUser")
+  ingestions              IngestionTask[]
+  cardBatches             CardBatch[]
+  cardNotes               CardNote[]
+  reviewedCards           CardAsset[]           @relation("CardAssetHumanReviewer")
+  createdEvidenceItems    CardEvidenceItem[]    @relation("CardEvidenceCreatedBy")
+  createdPhotos           CardPhoto[]           @relation("CardPhotoCreatedBy")
+  inventoryBatchesCreated InventoryBatch[]      @relation("InventoryBatchCreatedBy")
+  bytebotPlaybookRules    BytebotPlaybookRule[]
+  sessions                Session[]
+  qrCodesCreated          QrCode[]              @relation("QrCodeCreatedBy")
+  qrCodesBound            QrCode[]              @relation("QrCodeBoundBy")
+  kioskClaims             KioskSession[]        @relation("KioskClaimedBy")
+  batchStageEvents        BatchStageEvent[]
+  locationRestocks        LocationRestock[]
+  setIngestionJobsCreated SetIngestionJob[]     @relation("SetIngestionJobCreatedBy")
+  setDraftsCreated        SetDraft[]            @relation("SetDraftCreatedBy")
+  setDraftsArchived       SetDraft[]            @relation("SetDraftArchivedBy")
+  setDraftVersionsCreated SetDraftVersion[]     @relation("SetDraftVersionCreatedBy")
+  setApprovals            SetApproval[]         @relation("SetApprovalApprovedBy")
+  setSeedJobsRequested    SetSeedJob[]          @relation("SetSeedJobRequestedBy")
+  setAuditEvents          SetAuditEvent[]       @relation("SetAuditEventActor")
 }
 
 model Location {
-  id          String   @id @default(uuid())
-  slug        String   @unique
-  name        String
-  description String?
-  address     String
-  mapsUrl     String?
-  mediaUrl    String?
-  recentRips  Json     @db.JsonB
-  muxStreamId   String?
-  muxStreamKey  String?
-  muxPlaybackId String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  liveRips      LiveRip[]
-  kioskSessions KioskSession[]
-  packInstances PackInstance[]
-  qrCodes      QrCode[]
-  packLabels   PackLabel[]
-  restocks     LocationRestock[]
+  id               String            @id @default(uuid())
+  slug             String            @unique
+  name             String
+  description      String?
+  address          String
+  mapsUrl          String?
+  mediaUrl         String?
+  recentRips       Json              @db.JsonB
+  muxStreamId      String?
+  muxStreamKey     String?
+  muxPlaybackId    String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  liveRips         LiveRip[]
+  kioskSessions    KioskSession[]
+  packInstances    PackInstance[]
+  qrCodes          QrCode[]
+  packLabels       PackLabel[]
+  restocks         LocationRestock[]
   inventoryBatches InventoryBatch[]
 }
 
 model LiveRip {
-  id           String    @id @default(uuid())
-  slug         String    @unique
-  title        String
-  description  String?
-  videoUrl     String
-  thumbnailUrl String?
-  locationId   String?
-  featured     Boolean   @default(false)
-  viewCount    Int?
-  muxAssetId   String?
-  muxPlaybackId String?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-  location     Location? @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  kioskSessionId String?  @unique
+  id             String        @id @default(uuid())
+  slug           String        @unique
+  title          String
+  description    String?
+  videoUrl       String
+  thumbnailUrl   String?
+  locationId     String?
+  featured       Boolean       @default(false)
+  viewCount      Int?
+  muxAssetId     String?
+  muxPlaybackId  String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  location       Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  kioskSessionId String?       @unique
   kioskSession   KioskSession? @relation("KioskSessionLiveRip", fields: [kioskSessionId], references: [id], onDelete: SetNull)
 }
 
@@ -275,31 +323,31 @@ model WalletTransaction {
 }
 
 model Item {
-  id             String          @id @default(uuid())
-  name           String
-  set            String
-  number         String?
-  language       String?
-  foil           Boolean         @default(false)
-  estimatedValue Int?
-  status         ItemStatus      @default(STORED)
-  vaultLocation  String?
-  imageUrl       String?
-  thumbnailUrl   String?
-  detailsJson    Json?
-  ownerId        String
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  owner          User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  listings       Listing?
-  ownerships     ItemOwnership[]
-  packSlots      PackSlot[]
-  ingestionTask  IngestionTask?
+  id              String           @id @default(uuid())
+  name            String
+  set             String
+  number          String?
+  language        String?
+  foil            Boolean          @default(false)
+  estimatedValue  Int?
+  status          ItemStatus       @default(STORED)
+  vaultLocation   String?
+  imageUrl        String?
+  thumbnailUrl    String?
+  detailsJson     Json?
+  ownerId         String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  owner           User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  listings        Listing?
+  ownerships      ItemOwnership[]
+  packSlots       PackSlot[]
+  ingestionTask   IngestionTask?
   shippingRequest ShippingRequest?
-  kioskReveals   KioskSession[]  @relation("KioskReveal")
-  cardQrCodeId   String?         @unique
-  cardQrCode     QrCode?         @relation("CardQrCode", fields: [cardQrCodeId], references: [id])
-  packLabels     PackLabel[]
+  kioskReveals    KioskSession[]   @relation("KioskReveal")
+  cardQrCodeId    String?          @unique
+  cardQrCode      QrCode?          @relation("CardQrCode", fields: [cardQrCodeId], references: [id])
+  packLabels      PackLabel[]
 }
 
 model AuthVerification {
@@ -342,28 +390,28 @@ model Listing {
 }
 
 model ShippingRequest {
-  id                String          @id @default(uuid())
-  itemId            String          @unique
-  userId            String
-  status            ShippingStatus  @default(PENDING)
-  recipientName     String
-  addressLine1      String
-  addressLine2      String?
-  city              String
-  state             String?
-  postalCode        String
-  country           String
-  phone             String?
-  email             String?
+  id                 String         @id @default(uuid())
+  itemId             String         @unique
+  userId             String
+  status             ShippingStatus @default(PENDING)
+  recipientName      String
+  addressLine1       String
+  addressLine2       String?
+  city               String
+  state              String?
+  postalCode         String
+  country            String
+  phone              String?
+  email              String?
   processingFeeMinor Int
-  shippingFeeMinor  Int
-  totalFeeMinor     Int
-  notes             String?
-  trackingNumber    String?
-  carrier           String?
-  fulfilledAt       DateTime?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  shippingFeeMinor   Int
+  totalFeeMinor      Int
+  notes              String?
+  trackingNumber     String?
+  carrier            String?
+  fulfilledAt        DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
 
   item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -386,30 +434,30 @@ model PackDefinition {
 }
 
 model PackInstance {
-  id               String         @id @default(uuid())
-  packDefinitionId String
-  ownerId          String?
-  status           PackStatus     @default(UNOPENED)
+  id                String                @id @default(uuid())
+  packDefinitionId  String
+  ownerId           String?
+  status            PackStatus            @default(UNOPENED)
   fulfillmentStatus PackFulfillmentStatus @default(ONLINE)
-  locationId       String?
-  sourceBatchId    String?
-  createdAt        DateTime       @default(now())
-  openedAt         DateTime?
-  packedAt         DateTime?
-  packedById       String?
-  loadedAt         DateTime?
-  loadedById       String?
-  packQrCodeId     String?        @unique
-  packDefinition   PackDefinition @relation(fields: [packDefinitionId], references: [id], onDelete: Cascade)
-  owner            User?          @relation(fields: [ownerId], references: [id])
-  slots            PackSlot[]
-  kioskSessions    KioskSession[]
-  location         Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  packedBy         User?          @relation("PackedByUser", fields: [packedById], references: [id])
-  loadedBy         User?          @relation("LoadedByUser", fields: [loadedById], references: [id])
-  packQrCode       QrCode?        @relation("PackQrCode", fields: [packQrCodeId], references: [id])
-  packLabels       PackLabel[]
-  sourceBatch      CardBatch?     @relation("PackInstanceSourceBatch", fields: [sourceBatchId], references: [id], onDelete: SetNull)
+  locationId        String?
+  sourceBatchId     String?
+  createdAt         DateTime              @default(now())
+  openedAt          DateTime?
+  packedAt          DateTime?
+  packedById        String?
+  loadedAt          DateTime?
+  loadedById        String?
+  packQrCodeId      String?               @unique
+  packDefinition    PackDefinition        @relation(fields: [packDefinitionId], references: [id], onDelete: Cascade)
+  owner             User?                 @relation(fields: [ownerId], references: [id])
+  slots             PackSlot[]
+  kioskSessions     KioskSession[]
+  location          Location?             @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  packedBy          User?                 @relation("PackedByUser", fields: [packedById], references: [id])
+  loadedBy          User?                 @relation("LoadedByUser", fields: [loadedById], references: [id])
+  packQrCode        QrCode?               @relation("PackQrCode", fields: [packQrCodeId], references: [id])
+  packLabels        PackLabel[]
+  sourceBatch       CardBatch?            @relation("PackInstanceSourceBatch", fields: [sourceBatchId], references: [id], onDelete: SetNull)
 }
 
 model KioskSession {
@@ -419,10 +467,10 @@ model KioskSession {
   packInstanceId     String?
   locationId         String?
   packQrCodeId       String?
-  packResetVersion   Int           @default(0)
+  packResetVersion   Int                @default(0)
   packQrCodeSerial   String?
   claimedById        String?
-  claimStatus        KioskClaimStatus  @default(UNCLAIMED)
+  claimStatus        KioskClaimStatus   @default(UNCLAIMED)
   status             KioskSessionStatus @default(COUNTDOWN)
   countdownSeconds   Int                @default(10)
   liveSeconds        Int                @default(30)
@@ -448,7 +496,7 @@ model KioskSession {
   packInstance PackInstance? @relation(fields: [packInstanceId], references: [id], onDelete: SetNull)
   location     Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
   revealItem   Item?         @relation("KioskReveal", fields: [revealItemId], references: [id], onDelete: SetNull)
-  liveRip      LiveRip?        @relation("KioskSessionLiveRip")
+  liveRip      LiveRip?      @relation("KioskSessionLiveRip")
   packQrCode   QrCode?       @relation("SessionPackQr", fields: [packQrCodeId], references: [id])
   claimedBy    User?         @relation("KioskClaimedBy", fields: [claimedById], references: [id])
 }
@@ -475,37 +523,194 @@ model IngestionTask {
   owner      User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
 }
 
+model SetDraft {
+  id              String         @id @default(uuid())
+  setId           String         @unique
+  normalizedLabel String?
+  status          SetDraftStatus @default(DRAFT)
+  archivedAt      DateTime?
+  createdById     String?
+  archivedById    String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  createdBy     User?             @relation("SetDraftCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  archivedBy    User?             @relation("SetDraftArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
+  ingestionJobs SetIngestionJob[]
+  versions      SetDraftVersion[]
+  approvals     SetApproval[]
+  seedJobs      SetSeedJob[]
+  auditEvents   SetAuditEvent[]
+
+  @@index([status])
+  @@index([archivedAt])
+}
+
+model SetIngestionJob {
+  id               String                @id @default(uuid())
+  setId            String
+  draftId          String?
+  datasetType      SetDatasetType
+  sourceUrl        String?
+  rawPayload       Json?
+  parserVersion    String
+  status           SetIngestionJobStatus @default(QUEUED)
+  parseSummaryJson Json?
+  errorMessage     String?
+  createdById      String?
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  parsedAt         DateTime?
+  reviewedAt       DateTime?
+
+  draft       SetDraft?       @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  createdBy   User?           @relation("SetIngestionJobCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  auditEvents SetAuditEvent[]
+
+  @@index([setId, status])
+  @@index([datasetType, status])
+  @@index([draftId])
+}
+
+model SetDraftVersion {
+  id                 String   @id @default(uuid())
+  draftId            String
+  version            Int
+  versionHash        String
+  dataJson           Json
+  validationJson     Json?
+  sourceLinksJson    Json?
+  rowCount           Int      @default(0)
+  errorCount         Int      @default(0)
+  blockingErrorCount Int      @default(0)
+  createdById        String?
+  createdAt          DateTime @default(now())
+
+  draft       SetDraft        @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  createdBy   User?           @relation("SetDraftVersionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  approvals   SetApproval[]
+  seedJobs    SetSeedJob[]
+  auditEvents SetAuditEvent[]
+
+  @@unique([draftId, version])
+  @@index([draftId, createdAt])
+  @@index([versionHash])
+}
+
+model SetApproval {
+  id              String              @id @default(uuid())
+  draftId         String
+  draftVersionId  String
+  decision        SetApprovalDecision
+  reason          String?
+  diffSummaryJson Json?
+  versionHash     String
+  approvedById    String?
+  createdAt       DateTime            @default(now())
+
+  draft        SetDraft        @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  draftVersion SetDraftVersion @relation(fields: [draftVersionId], references: [id], onDelete: Cascade)
+  approvedBy   User?           @relation("SetApprovalApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  auditEvents  SetAuditEvent[]
+
+  @@index([draftId, createdAt])
+  @@index([draftVersionId])
+  @@index([decision, createdAt])
+}
+
+model SetSeedJob {
+  id                String           @id @default(uuid())
+  draftId           String
+  draftVersionId    String?
+  status            SetSeedJobStatus @default(QUEUED)
+  runArgsJson       Json?
+  progressJson      Json?
+  resultJson        Json?
+  logsJson          Json?
+  queueCount        Int?
+  errorMessage      String?
+  requestedById     String?
+  retryOfId         String?
+  cancelRequestedAt DateTime?
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  draft        SetDraft         @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  draftVersion SetDraftVersion? @relation(fields: [draftVersionId], references: [id], onDelete: SetNull)
+  requestedBy  User?            @relation("SetSeedJobRequestedBy", fields: [requestedById], references: [id], onDelete: SetNull)
+  retryOf      SetSeedJob?      @relation("SetSeedJobRetries", fields: [retryOfId], references: [id], onDelete: SetNull)
+  retries      SetSeedJob[]     @relation("SetSeedJobRetries")
+  auditEvents  SetAuditEvent[]
+
+  @@index([draftId, status])
+  @@index([status, createdAt])
+  @@index([draftVersionId])
+}
+
+model SetAuditEvent {
+  id             String         @id @default(uuid())
+  setId          String?
+  draftId        String?
+  draftVersionId String?
+  ingestionJobId String?
+  approvalId     String?
+  seedJobId      String?
+  actorId        String?
+  action         String
+  status         SetAuditStatus @default(SUCCESS)
+  reason         String?
+  requestId      String?
+  ipAddress      String?
+  userAgent      String?
+  metadataJson   Json?
+  createdAt      DateTime       @default(now())
+
+  draft        SetDraft?        @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  draftVersion SetDraftVersion? @relation(fields: [draftVersionId], references: [id], onDelete: SetNull)
+  ingestionJob SetIngestionJob? @relation(fields: [ingestionJobId], references: [id], onDelete: SetNull)
+  approval     SetApproval?     @relation(fields: [approvalId], references: [id], onDelete: SetNull)
+  seedJob      SetSeedJob?      @relation(fields: [seedJobId], references: [id], onDelete: SetNull)
+  actor        User?            @relation("SetAuditEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([setId, createdAt])
+  @@index([draftId, createdAt])
+  @@index([action, createdAt])
+  @@index([status, createdAt])
+}
+
 model CardBatch {
-  id             String   @id @default(uuid())
+  id             String     @id @default(uuid())
   label          String?
   notes          String?
   uploadedById   String
-  totalCount     Int      @default(0)
-  processedCount Int      @default(0)
-  status         String   @default("UPLOADING")
+  totalCount     Int        @default(0)
+  processedCount Int        @default(0)
+  status         String     @default("UPLOADING")
   stage          BatchStage @default(INVENTORY_READY)
-  tags           String[] @default([])
-  stageChangedAt DateTime? @default(now())
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  tags           String[]   @default([])
+  stageChangedAt DateTime?  @default(now())
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
-  uploadedBy   User        @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
-  cards        CardAsset[]
-  packLabels   PackLabel[]
-  sourcePacks  PackInstance[] @relation("PackInstanceSourceBatch")
-  stageEvents  BatchStageEvent[]
+  uploadedBy  User              @relation(fields: [uploadedById], references: [id], onDelete: Cascade)
+  cards       CardAsset[]
+  packLabels  PackLabel[]
+  sourcePacks PackInstance[]    @relation("PackInstanceSourceBatch")
+  stageEvents BatchStageEvent[]
 }
 
 model BatchStageEvent {
-  id        String      @id @default(uuid())
+  id        String     @id @default(uuid())
   batchId   String
   stage     BatchStage
   note      String?
   actorId   String?
-  createdAt DateTime    @default(now())
+  createdAt DateTime   @default(now())
 
-  batch  CardBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  actor  User?      @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  batch CardBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  actor User?     @relation(fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([batchId])
   @@index([stage])
@@ -528,73 +733,73 @@ model LocationRestock {
 }
 
 model CardAsset {
-  id                      String          @id @default(uuid())
-  batchId                 String
-  storageKey              String
-  fileName                String
-  fileSize                Int
-  mimeType                String
-  imageUrl                String
-  thumbnailUrl            String?
-  status                  CardAssetStatus @default(UPLOADING)
-  ocrText                 String?
-  ocrJson                 Json?
-  ocrSuggestionJson       Json?
-  ocrSuggestionUpdatedAt  DateTime?
-  backgroundRemovedAt     DateTime?
-  patternSignatureJson    Json?
+  id                        String           @id @default(uuid())
+  batchId                   String
+  storageKey                String
+  fileName                  String
+  fileSize                  Int
+  mimeType                  String
+  imageUrl                  String
+  thumbnailUrl              String?
+  status                    CardAssetStatus  @default(UPLOADING)
+  ocrText                   String?
+  ocrJson                   Json?
+  ocrSuggestionJson         Json?
+  ocrSuggestionUpdatedAt    DateTime?
+  backgroundRemovedAt       DateTime?
+  patternSignatureJson      Json?
   patternSignatureUpdatedAt DateTime?
-  classificationJson      Json?
+  classificationJson        Json?
   classificationSourcesJson Json?
-  valuationMinor          Int?
-  valuationCurrency       String?         @default("USD")
-  valuationSource         String?
-  marketplaceUrl          String?
-  assignedDefinitionId    String?
-  assignedAt              DateTime?
-  errorMessage            String?
-  createdAt               DateTime        @default(now())
-  updatedAt               DateTime        @updatedAt
-  processingStartedAt     DateTime?
-  processingCompletedAt   DateTime?
-  customTitle             String?
-  customDetails           String?
-  ebaySoldUrl             String?
-  ebaySoldUrlVariant      String?
-  ebaySoldUrlHighGrade    String?
-  ebaySoldUrlPlayerComp   String?
-  ebaySoldUrlAiGrade      String?
-  humanReviewedAt         DateTime?
-  humanReviewedById       String?
-  sportsDbPlayerId        String?
-  sportsDbMatchConfidence Float?
-  resolvedPlayerName      String?
-  resolvedTeamName        String?
-  playerStatsSnapshot     Json?
-  aiGradingJson           Json?
-  aiGradeFinal            Float?
-  aiGradeLabel            String?
-  aiGradePsaEquivalent    Int?
-  aiGradeRangeLow         Int?
-  aiGradeRangeHigh        Int?
-  aiGradeGeneratedAt      DateTime?
-  reviewStage             CardReviewStage?
-  reviewStageUpdatedAt    DateTime?
-  inventoryBatchId        String?
-  inventoryAssignedAt     DateTime?
-  variantId               String?
-  variantConfidence       Float?
+  valuationMinor            Int?
+  valuationCurrency         String?          @default("USD")
+  valuationSource           String?
+  marketplaceUrl            String?
+  assignedDefinitionId      String?
+  assignedAt                DateTime?
+  errorMessage              String?
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
+  processingStartedAt       DateTime?
+  processingCompletedAt     DateTime?
+  customTitle               String?
+  customDetails             String?
+  ebaySoldUrl               String?
+  ebaySoldUrlVariant        String?
+  ebaySoldUrlHighGrade      String?
+  ebaySoldUrlPlayerComp     String?
+  ebaySoldUrlAiGrade        String?
+  humanReviewedAt           DateTime?
+  humanReviewedById         String?
+  sportsDbPlayerId          String?
+  sportsDbMatchConfidence   Float?
+  resolvedPlayerName        String?
+  resolvedTeamName          String?
+  playerStatsSnapshot       Json?
+  aiGradingJson             Json?
+  aiGradeFinal              Float?
+  aiGradeLabel              String?
+  aiGradePsaEquivalent      Int?
+  aiGradeRangeLow           Int?
+  aiGradeRangeHigh          Int?
+  aiGradeGeneratedAt        DateTime?
+  reviewStage               CardReviewStage?
+  reviewStageUpdatedAt      DateTime?
+  inventoryBatchId          String?
+  inventoryAssignedAt       DateTime?
+  variantId                 String?
+  variantConfidence         Float?
 
-  batch              CardBatch       @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  assignedDefinition PackDefinition? @relation(fields: [assignedDefinitionId], references: [id], onDelete: SetNull)
+  batch              CardBatch             @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  assignedDefinition PackDefinition?       @relation(fields: [assignedDefinitionId], references: [id], onDelete: SetNull)
   notes              CardNote[]
   jobs               ProcessingJob[]
   bytebotLiteJobs    BytebotLiteJob[]
   evidenceItems      CardEvidenceItem[]
   photos             CardPhoto[]
-  inventoryBatch     InventoryBatch? @relation(fields: [inventoryBatchId], references: [id], onDelete: SetNull)
-  humanReviewer      User?           @relation("CardAssetHumanReviewer", fields: [humanReviewedById], references: [id])
-  sportsDbPlayer     SportsDbPlayer? @relation(fields: [sportsDbPlayerId], references: [id], onDelete: SetNull)
+  inventoryBatch     InventoryBatch?       @relation(fields: [inventoryBatchId], references: [id], onDelete: SetNull)
+  humanReviewer      User?                 @relation("CardAssetHumanReviewer", fields: [humanReviewedById], references: [id])
+  sportsDbPlayer     SportsDbPlayer?       @relation(fields: [sportsDbPlayerId], references: [id], onDelete: SetNull)
   variantDecisions   CardVariantDecision[]
   ocrFeedbackEvents  OcrFeedbackEvent[]
 
@@ -613,34 +818,34 @@ model CardVariant {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  @@index([setId, cardNumber])
   @@unique([setId, cardNumber, parallelId])
+  @@index([setId, cardNumber])
 }
 
 model CardVariantReferenceImage {
-  id             String   @id @default(uuid())
-  setId          String
-  cardNumber     String?
-  parallelId     String
-  refType        String   @default("front")
-  pairKey        String?
-  sourceListingId String?
-  playerSeed     String?
-  storageKey     String?
-  qaStatus       String   @default("pending")
-  ownedStatus    String   @default("external")
-  promotedAt     DateTime?
-  sourceUrl      String?
-  listingTitle   String?
-  rawImageUrl    String
-  cropUrls       String[] @default([])
-  cropEmbeddings Json?
-  qualityScore   Float?
+  id                     String    @id @default(uuid())
+  setId                  String
+  cardNumber             String?
+  parallelId             String
+  refType                String    @default("front")
+  pairKey                String?
+  sourceListingId        String?
+  playerSeed             String?
+  storageKey             String?
+  qaStatus               String    @default("pending")
+  ownedStatus            String    @default("external")
+  promotedAt             DateTime?
+  sourceUrl              String?
+  listingTitle           String?
+  rawImageUrl            String
+  cropUrls               String[]  @default([])
+  cropEmbeddings         Json?
+  qualityScore           Float?
   qualityGateScore       Int?
   qualityGateStatus      String?
   qualityGateReasonsJson Json?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt              DateTime  @default(now())
+  updatedAt              DateTime  @updatedAt
 
   @@index([setId, parallelId])
   @@index([setId, cardNumber, parallelId])
@@ -702,9 +907,9 @@ model InventoryBatch {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  location  Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  createdBy User?     @relation("InventoryBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  cards      CardAsset[]
+  location  Location    @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  createdBy User?       @relation("InventoryBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  cards     CardAsset[]
 
   @@index([locationId])
   @@index([createdById])
@@ -732,18 +937,18 @@ model CardEvidenceItem {
 }
 
 model CardPhoto {
-  id           String        @id @default(uuid())
-  cardAssetId  String
-  kind         CardPhotoKind @default(FRONT)
-  storageKey   String
-  fileName     String
-  fileSize     Int
-  mimeType     String
-  imageUrl     String
-  thumbnailUrl String?
+  id                  String        @id @default(uuid())
+  cardAssetId         String
+  kind                CardPhotoKind @default(FRONT)
+  storageKey          String
+  fileName            String
+  fileSize            Int
+  mimeType            String
+  imageUrl            String
+  thumbnailUrl        String?
   backgroundRemovedAt DateTime?
-  createdById  String?
-  createdAt    DateTime      @default(now())
+  createdById         String?
+  createdAt           DateTime      @default(now())
 
   cardAsset CardAsset @relation(fields: [cardAssetId], references: [id], onDelete: Cascade)
   createdBy User?     @relation("CardPhotoCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
@@ -780,21 +985,21 @@ model ProcessingJob {
 }
 
 model BytebotLiteJob {
-  id          String              @id @default(uuid())
-  cardAssetId String?
-  status      BytebotLiteJobStatus @default(QUEUED)
-  searchQuery String
-  sources     String[]
-  maxComps    Int                 @default(5)
-  maxAgeDays  Int                 @default(730)
-  payload     Json?
-  result      Json?
+  id           String               @id @default(uuid())
+  cardAssetId  String?
+  status       BytebotLiteJobStatus @default(QUEUED)
+  searchQuery  String
+  sources      String[]
+  maxComps     Int                  @default(5)
+  maxAgeDays   Int                  @default(730)
+  payload      Json?
+  result       Json?
   errorMessage String?
-  attempts    Int                 @default(0)
-  lockedAt    DateTime?
-  completedAt DateTime?
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  attempts     Int                  @default(0)
+  lockedAt     DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
 
   cardAsset CardAsset? @relation(fields: [cardAssetId], references: [id], onDelete: SetNull)
 
@@ -883,44 +1088,44 @@ model SportsDbPlayerSeason {
 }
 
 model QrCode {
-  id          String      @id @default(uuid())
-  code        String      @unique
-  serial      String?     @unique
-  type        QrCodeType
-  state       QrCodeState @default(AVAILABLE)
-  payloadUrl  String?
-  metadata    Json?
-  locationId  String?
-  createdById String?
-  boundById   String?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  boundAt     DateTime?
-  retiredAt   DateTime?
-  resetVersion Int        @default(0)
+  id           String      @id @default(uuid())
+  code         String      @unique
+  serial       String?     @unique
+  type         QrCodeType
+  state        QrCodeState @default(AVAILABLE)
+  payloadUrl   String?
+  metadata     Json?
+  locationId   String?
+  createdById  String?
+  boundById    String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  boundAt      DateTime?
+  retiredAt    DateTime?
+  resetVersion Int         @default(0)
 
-  location    Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  createdBy   User?         @relation("QrCodeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  boundBy     User?         @relation("QrCodeBoundBy", fields: [boundById], references: [id], onDelete: SetNull)
-  item        Item?         @relation("CardQrCode")
-  packInstance PackInstance? @relation("PackQrCode")
+  location      Location?      @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  createdBy     User?          @relation("QrCodeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  boundBy       User?          @relation("QrCodeBoundBy", fields: [boundById], references: [id], onDelete: SetNull)
+  item          Item?          @relation("CardQrCode")
+  packInstance  PackInstance?  @relation("PackQrCode")
   kioskSessions KioskSession[] @relation("SessionPackQr")
-  packLabelCard PackLabel?   @relation("PackLabelCardQr")
-  packLabelPack PackLabel?   @relation("PackLabelPackQr")
+  packLabelCard PackLabel?     @relation("PackLabelCardQr")
+  packLabelPack PackLabel?     @relation("PackLabelPackQr")
 }
 
 model PackLabel {
-  id             String           @id @default(uuid())
-  pairId         String           @unique
-  cardQrCodeId   String           @unique
-  packQrCodeId   String           @unique
+  id             String          @id @default(uuid())
+  pairId         String          @unique
+  cardQrCodeId   String          @unique
+  packQrCodeId   String          @unique
   itemId         String?
-  packInstanceId String?          @unique
+  packInstanceId String?         @unique
   locationId     String?
   batchId        String?
-  status         PackLabelStatus  @default(RESERVED)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  status         PackLabelStatus @default(RESERVED)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
   printedAt      DateTime?
 
   cardQrCode   QrCode        @relation("PackLabelCardQr", fields: [cardQrCodeId], references: [id], onDelete: Cascade)

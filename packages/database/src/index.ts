@@ -22,6 +22,12 @@ export {
   KioskClaimStatus,
   KioskSessionStatus,
   BatchStage,
+  SetDatasetType,
+  SetIngestionJobStatus,
+  SetDraftStatus,
+  SetApprovalDecision,
+  SetSeedJobStatus,
+  SetAuditStatus,
 } from "@prisma/client";
 
 export * from "./processingJobs";
