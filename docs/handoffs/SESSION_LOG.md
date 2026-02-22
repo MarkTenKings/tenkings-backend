@@ -85,3 +85,32 @@
 
 ### Notes
 - Normalizer is now reusable by admin APIs and UI modules for consistent read/write behavior.
+
+## 2026-02-22 - Set Ops P0-A Ticket 3 (Set Admin APIs)
+
+### Summary
+- Added Set Ops backend helper module with:
+  - server-side role checks (`reviewer`, `approver`, `delete`, `admin`)
+  - audit-event writer for success/failure/denied flows
+  - delete dry-run impact calculator
+- Added Set Admin API routes:
+  - `GET /api/admin/set-ops/sets`
+  - `POST /api/admin/set-ops/archive`
+  - `POST /api/admin/set-ops/delete/dry-run`
+  - `POST /api/admin/set-ops/delete/confirm`
+- Delete confirm requires typed phrase `DELETE <setId>` and executes transactional deletes with audit record creation.
+
+### Files Added
+- `frontend/nextjs-app/lib/server/setOps.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/sets.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/archive.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/delete/dry-run.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/delete/confirm.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database generate` completed successfully.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` remains failing due existing workspace Prisma client linkage/type mismatch unrelated to this ticket (same broad failure class seen in prior baseline).
+
+### Notes
+- No deploy/restart/migration was executed.
+- Destructive delete behavior remains API-gated (RBAC + typed confirm + dry-run preview endpoint).

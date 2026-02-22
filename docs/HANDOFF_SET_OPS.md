@@ -96,3 +96,6 @@ Build Set Ops UI flow with:
   - `@tenkings/database build`: currently failing due existing Prisma type/client mismatch in workspace environment.
 - P0-A Ticket 2 complete in code: shared set normalizer + unit tests for legacy dirty labels/card numbers/duplicate key behavior.
 - `pnpm --filter @tenkings/shared test`: pass.
+- P0-A Ticket 3 complete in code: Set Admin APIs (`sets`, `archive`, `delete/dry-run`, `delete/confirm`) plus Set Ops RBAC helper and audit logging.
+- Delete confirm now enforces typed phrase `DELETE <setId>` and performs transactional delete path with audit event.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still fails under existing Prisma-client workspace linkage issue (broad pre-existing failure).
