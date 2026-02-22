@@ -167,3 +167,10 @@ Build Set Ops UI flow with:
 - Corrected discovery API relative import paths to `lib/server/*` to ensure strict build/type resolution succeeds.
 - Fixed strict nullability issue in HTML table parser (`selectedTable` after non-empty table guard).
 - Re-ran targeted lint and verified new discovery-related compile errors were cleared (remaining broad TypeScript failures in this workstation are pre-existing Prisma client/schema linkage issues).
+
+## Discovery 403 Fallback Hardening (2026-02-22)
+- Discovery search now degrades gracefully when upstream web search returns `HTTP 403`:
+  1. DuckDuckGo HTML search
+  2. Bing RSS search fallback
+  3. provider-search fallback links if both upstream providers fail
+- Source import now returns explicit fallback guidance for blocked fetches (`401/403`): use Step 1 CSV/JSON upload.

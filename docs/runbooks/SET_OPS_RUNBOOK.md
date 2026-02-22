@@ -43,6 +43,7 @@ Code checks:
 
 Manual staging flow:
 1. Run source discovery search (year/manufacturer/sport/query), import one discovered source as ingestion job, and confirm row count > 0.
+Note: if discovery/import reports source access blocked (`401/403`), use Step 1 file upload fallback (CSV/JSON) in `/admin/set-ops-review`.
 2. Queue ingestion (`parallel_db`) and build draft.
 3. Edit at least one draft row and save a new immutable version.
 4. Verify approval is blocked when blocking errors exist.

@@ -468,3 +468,22 @@
 
 ### Notes
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-22 - Set Ops Discovery 403 Fallback Hardening
+
+### Summary
+- Fixed Set Ops discovery search failure mode where upstream search providers can return HTTP 403 and block the workflow.
+- Added multi-provider discovery fallback chain:
+  - `duckduckgo-html` (existing)
+  - `bing-rss` (new fallback)
+  - static provider search fallback results when upstream providers are blocked
+- Added clearer import error for HTTP 401/403 source fetch blocks: user is instructed to use CSV/JSON upload fallback in review UI.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/search.ts --file pages/api/admin/set-ops/discovery/import.ts` passed.
+
+### Notes
+- No deploy/restart/migration was executed in this step.

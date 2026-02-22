@@ -29,6 +29,14 @@ type SourceFetchResult = {
   attempts: number;
 };
 
+type NormalizedDiscoveryQuery = {
+  year: number | null;
+  manufacturer: string;
+  sport: string;
+  query: string;
+  limit: number;
+};
+
 const hostLastRequestAt = new Map<string, number>();
 const nowYear = new Date().getFullYear();
 
@@ -89,6 +97,24 @@ function providerFromDomain(domain: string) {
   if (domain.includes("sportscollectorsdaily.com")) return "Sports Collectors Daily";
   if (domain.includes("ebay.com")) return "eBay";
   return domain;
+}
+
+function stripCdata(value: string) {
+  const match = String(value || "").match(/^<!\[CDATA\[([\s\S]*?)\]\]>$/i);
+  return match ? match[1] : value;
+}
+
+function extractXmlTag(block: string, tag: string) {
+  const match = block.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`, "i"));
+  return compactWhitespace(decodeHtmlEntities(stripCdata(match?.[1] || "")));
+}
+
+function parseStatusCodeFromError(error: unknown) {
+  if (!(error instanceof Error)) return null;
+  const match = error.message.match(/status\s+(\d{3})/i);
+  if (!match) return null;
+  const status = Number(match[1]);
+  return Number.isFinite(status) ? status : null;
 }
 
 function inferSetId(title: string, query: SetOpsDiscoveryQuery) {
@@ -439,19 +465,59 @@ async function fetchRowsFromSource(url: string): Promise<SourceFetchResult> {
   throw new Error("Could not parse rows from source URL. Supported sources: JSON, CSV, or HTML tables.");
 }
 
-export async function searchSetSources(query: SetOpsDiscoveryQuery): Promise<SetOpsDiscoveryResult[]> {
-  const year = query.year ? parsePositiveInt(query.year, nowYear, 1900, nowYear + 1) : null;
-  const manufacturer = compactWhitespace(String(query.manufacturer || ""));
-  const sport = compactWhitespace(String(query.sport || ""));
-  const freeQuery = compactWhitespace(String(query.query || ""));
-  const limit = parsePositiveInt(query.limit, 12, 1, 30);
+function buildDiscoverySearchText(query: NormalizedDiscoveryQuery) {
+  return [query.year ? String(query.year) : "", query.manufacturer, query.sport, query.query, "trading card checklist"]
+    .filter(Boolean)
+    .join(" ");
+}
 
-  const queryParts = [year ? String(year) : "", manufacturer, sport, freeQuery, "trading card checklist"].filter(Boolean);
-  if (queryParts.length === 0) {
-    throw new Error("Provide at least one search input (year, manufacturer, sport, or query).");
-  }
-  const searchText = queryParts.join(" ");
+function buildDiscoveryResult(params: {
+  title: string;
+  url: string;
+  snippet: string;
+  query: NormalizedDiscoveryQuery;
+}) {
+  const resolvedUrl = compactWhitespace(params.url);
+  if (!resolvedUrl.startsWith("http://") && !resolvedUrl.startsWith("https://")) return null;
+  const title = sanitizeTitle(params.title);
+  if (!title) return null;
+  const domain = extractDomain(resolvedUrl);
+  const snippet = compactWhitespace(params.snippet);
+  const provider = providerFromDomain(domain);
+  const setIdGuess = inferSetId(title, {
+    year: params.query.year,
+    manufacturer: params.query.manufacturer,
+    sport: params.query.sport,
+    query: params.query.query,
+    limit: params.query.limit,
+  });
+  const score = rankResult({
+    title,
+    snippet,
+    domain,
+    query: {
+      year: params.query.year,
+      manufacturer: params.query.manufacturer,
+      sport: params.query.sport,
+      query: params.query.query,
+      limit: params.query.limit,
+    },
+  });
 
+  return {
+    id: `${domain}::${Buffer.from(resolvedUrl).toString("base64").slice(0, 18)}`,
+    title,
+    url: resolvedUrl,
+    snippet,
+    provider,
+    domain,
+    setIdGuess,
+    score,
+    discoveredAt: new Date().toISOString(),
+  } satisfies SetOpsDiscoveryResult;
+}
+
+async function searchDuckDuckGo(query: NormalizedDiscoveryQuery, searchText: string) {
   const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(searchText)}`;
   const { response } = await fetchWithRetry(url, 3);
   const html = await response.text();
@@ -459,41 +525,138 @@ export async function searchSetSources(query: SetOpsDiscoveryQuery): Promise<Set
   const linkPattern = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
   const results: SetOpsDiscoveryResult[] = [];
   let match: RegExpExecArray | null = null;
-  while ((match = linkPattern.exec(html)) && results.length < limit * 3) {
+  while ((match = linkPattern.exec(html)) && results.length < query.limit * 3) {
     const rawUrl = compactWhitespace(match[1] || "");
     const resolvedUrl = decodeSearchResultUrl(rawUrl);
-    if (!resolvedUrl.startsWith("http://") && !resolvedUrl.startsWith("https://")) continue;
-    const title = sanitizeTitle(match[2] || "");
-    if (!title) continue;
-    const domain = extractDomain(resolvedUrl);
-    const snippet = "";
-    const provider = providerFromDomain(domain);
-    const setIdGuess = inferSetId(title, { year, manufacturer, sport, query: freeQuery, limit });
-    const score = rankResult({ title, snippet, domain, query: { year, manufacturer, sport, query: freeQuery } });
-
-    results.push({
-      id: `${domain}::${Buffer.from(resolvedUrl).toString("base64").slice(0, 18)}`,
-      title,
+    const mapped = buildDiscoveryResult({
+      title: match[2] || "",
       url: resolvedUrl,
-      snippet,
-      provider,
-      domain,
-      setIdGuess,
-      score,
-      discoveredAt: new Date().toISOString(),
+      snippet: "",
+      query,
     });
+    if (mapped) {
+      results.push(mapped);
+    }
   }
 
+  return results;
+}
+
+async function searchBingRss(query: NormalizedDiscoveryQuery, searchText: string) {
+  const url = `https://www.bing.com/search?q=${encodeURIComponent(searchText)}&format=rss`;
+  const { response } = await fetchWithRetry(url, 3);
+  const xml = await response.text();
+
+  const itemPattern = /<item>([\s\S]*?)<\/item>/gi;
+  const results: SetOpsDiscoveryResult[] = [];
+  let itemMatch: RegExpExecArray | null = null;
+
+  while ((itemMatch = itemPattern.exec(xml)) && results.length < query.limit * 3) {
+    const item = itemMatch[1] || "";
+    const mapped = buildDiscoveryResult({
+      title: extractXmlTag(item, "title"),
+      url: extractXmlTag(item, "link"),
+      snippet: extractXmlTag(item, "description"),
+      query,
+    });
+    if (mapped) {
+      results.push(mapped);
+    }
+  }
+
+  return results;
+}
+
+function buildFallbackDiscoveryResults(query: NormalizedDiscoveryQuery, searchText: string) {
+  const encoded = encodeURIComponent(searchText);
+  const candidates = [
+    {
+      title: `${searchText} - TCDB Search`,
+      url: `https://www.tcdb.com/Search.cfm?SearchText=${encoded}&s=All`,
+      snippet: "Fallback provider search (TCDB) because live web discovery endpoint blocked this request.",
+    },
+    {
+      title: `${searchText} - Cardboard Connection Search`,
+      url: `https://www.cardboardconnection.com/?s=${encoded}`,
+      snippet: "Fallback provider search (Cardboard Connection).",
+    },
+    {
+      title: `${searchText} - Beckett Search`,
+      url: `https://www.beckett.com/news/?s=${encoded}`,
+      snippet: "Fallback provider search (Beckett).",
+    },
+  ];
+
+  return candidates
+    .map((candidate) =>
+      buildDiscoveryResult({
+        title: candidate.title,
+        url: candidate.url,
+        snippet: candidate.snippet,
+        query,
+      })
+    )
+    .filter((entry): entry is SetOpsDiscoveryResult => Boolean(entry))
+    .slice(0, query.limit);
+}
+
+function dedupeDiscoveryResults(results: SetOpsDiscoveryResult[], limit: number) {
   const deduped = new Map<string, SetOpsDiscoveryResult>();
   for (const result of results) {
     if (!deduped.has(result.url)) {
       deduped.set(result.url, result);
     }
   }
-
   return Array.from(deduped.values())
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
+}
+
+export async function searchSetSources(query: SetOpsDiscoveryQuery): Promise<SetOpsDiscoveryResult[]> {
+  const normalized: NormalizedDiscoveryQuery = {
+    year: query.year ? parsePositiveInt(query.year, nowYear, 1900, nowYear + 1) : null,
+    manufacturer: compactWhitespace(String(query.manufacturer || "")),
+    sport: compactWhitespace(String(query.sport || "")),
+    query: compactWhitespace(String(query.query || "")),
+    limit: parsePositiveInt(query.limit, 12, 1, 30),
+  };
+
+  const searchText = buildDiscoverySearchText(normalized);
+  if (!searchText) {
+    throw new Error("Provide at least one search input (year, manufacturer, sport, or query).");
+  }
+
+  const attempts: Array<{ provider: string; error: string }> = [];
+  const providers: Array<{
+    name: string;
+    run: (nextQuery: NormalizedDiscoveryQuery, nextSearchText: string) => Promise<SetOpsDiscoveryResult[]>;
+  }> = [
+    { name: "duckduckgo-html", run: searchDuckDuckGo },
+    { name: "bing-rss", run: searchBingRss },
+  ];
+
+  for (const provider of providers) {
+    try {
+      const results = dedupeDiscoveryResults(await provider.run(normalized, searchText), normalized.limit);
+      if (results.length > 0) return results;
+      attempts.push({ provider: provider.name, error: "empty result set" });
+    } catch (error) {
+      const status = parseStatusCodeFromError(error);
+      const reason = error instanceof Error ? error.message : "Unknown error";
+      attempts.push({
+        provider: provider.name,
+        error: status ? `HTTP ${status}` : reason,
+      });
+    }
+  }
+
+  const fallbackResults = dedupeDiscoveryResults(buildFallbackDiscoveryResults(normalized, searchText), normalized.limit);
+  if (fallbackResults.length > 0) {
+    return fallbackResults;
+  }
+
+  const details = attempts.map((attempt) => `${attempt.provider}: ${attempt.error}`).join("; ");
+  throw new Error(`Discovery search failed. ${details || "No providers returned results."}`);
 }
 
 export async function importDiscoveredSource(params: {
@@ -511,7 +674,18 @@ export async function importDiscoveredSource(params: {
     throw new Error("sourceUrl must be an absolute http(s) URL");
   }
 
-  const fetched = await fetchRowsFromSource(sourceUrl);
+  let fetched: SourceFetchResult;
+  try {
+    fetched = await fetchRowsFromSource(sourceUrl);
+  } catch (error) {
+    const status = parseStatusCodeFromError(error);
+    if (status === 401 || status === 403) {
+      throw new Error(
+        "Source blocked automated fetch (HTTP 403/401). Open source in browser and use CSV/JSON upload in Step 1 as fallback."
+      );
+    }
+    throw error;
+  }
   const fallbackSetId = normalizeSetLabel(params.setId || inferSetId(params.sourceTitle || "", {}));
   const inferredSetId = guessSetIdFromRows(fetched.rows, fallbackSetId);
   if (!inferredSetId) {
