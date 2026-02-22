@@ -7,6 +7,12 @@ import {
   writeSetOpsAuditEvent,
 } from "../../../../../../../lib/server/setOps";
 
+const terminalStatuses = new Set<SetSeedJobStatus>([
+  SetSeedJobStatus.COMPLETE,
+  SetSeedJobStatus.FAILED,
+  SetSeedJobStatus.CANCELLED,
+]);
+
 type ResponseBody =
   | {
       job: {
@@ -59,7 +65,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(404).json({ message: "Seed job not found" });
     }
 
-    if ([SetSeedJobStatus.COMPLETE, SetSeedJobStatus.FAILED, SetSeedJobStatus.CANCELLED].includes(existing.status)) {
+    if (terminalStatuses.has(existing.status)) {
       return res.status(400).json({ message: `Cannot cancel job in status ${existing.status}` });
     }
 
