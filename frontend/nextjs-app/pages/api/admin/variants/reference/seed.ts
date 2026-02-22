@@ -196,6 +196,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             ""
         ).trim();
         if (topLevelError) {
+          const noResults = /hasn'?t returned any results|no results/i.test(topLevelError);
+          if (noResults) {
+            // Treat no-results as a soft outcome so one miss doesn't fail the whole set run.
+            data = { organic_results: [] };
+            break;
+          }
           requestError = topLevelError;
           const retryable = /rate|limit|timeout|temporar|try again|busy|thrott|quota|capacity/i.test(requestError);
           if (attempt < 3 && retryable) {
@@ -308,7 +314,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }));
 
     if (rows.length === 0) {
-      return res.status(200).json({ inserted: 0, skipped: 0 });
+      return res.status(200).json({ inserted: 0, skipped: 1 });
     }
 
     const existingRows = await prisma.cardVariantReferenceImage.findMany({

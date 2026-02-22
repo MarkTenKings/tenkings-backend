@@ -170,22 +170,15 @@ export default function AdminVariants() {
   }, [references]);
 
   const buildSeedQuery = (setId: string, cardNumber: string, parallelId: string, playerLabel?: string | null) => {
+    const cleanedSetId = setId.replace(/\bretail\b/gi, "").replace(/\s+/g, " ").trim();
     const normalizedCardNumber = String(cardNumber || "").trim();
     const cardToken =
       normalizedCardNumber && normalizedCardNumber.toUpperCase() !== "ALL" ? `#${normalizedCardNumber}` : "";
     return [
       playerLabel ? String(playerLabel).trim() : "",
-      setId.trim(),
+      cleanedSetId || setId.trim(),
       cardToken,
       parallelId.trim(),
-      "trading card",
-      "-box",
-      "-blaster",
-      "-hobby",
-      "-case",
-      "-break",
-      "-pack",
-      "-lot",
     ]
       .filter(Boolean)
       .join(" ");

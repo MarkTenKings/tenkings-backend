@@ -548,3 +548,18 @@ Build Set Ops UI flow with:
 - Expected result:
   - bad key/quota/account states now appear as explicit failed variants instead of silent `0 inserted`.
   - more eBay payload variants map into usable listing/image rows.
+
+## eBay Query Relaxation + No-Result Soft Handling (2026-02-22, Follow-up #14)
+- New production signal:
+  - set run returned `204 failed` with repeated SerpApi message: `eBay hasn't returned any results for this query.`
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/admin/variants.tsx`
+    - relaxed auto-query generation:
+      - strips `Retail` token from set label
+      - removes negative tokens (`-box`, `-blaster`, etc.) that may over-constrain eBay queries.
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+    - treats top-level “no results” response as soft skip (not hard failure) so set runs continue cleanly.
+    - returns `{ inserted: 0, skipped: 1 }` for no-result queries to improve set-level visibility.
+- Expected result:
+  - fewer all-fail runs from over-constrained query syntax.
+  - no-result variants show as skipped, while real account/key/quota issues still surface as failures.

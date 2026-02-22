@@ -914,3 +914,26 @@
   - result arrays: `organic_results`, `search_results`, `results`, `items_results`, `items`
   - listing URL fields: `link`, `product_link`, `url`, `item_url`, `view_item_url`, `item_web_url`, `product.link`
   - image fields: `thumbnail`, `thumbnails[0]`, `thumbnail_images[0]`, `image`, `main_image`, `original_image`, `image_url`, `img`, `gallery_url`
+
+## 2026-02-22 - Ref Seed Follow-up #14 (Query Relaxation + No-Result Soft Skip)
+
+### Summary
+- Production run failed all 204 targets with SerpApi top-level message: `eBay hasn't returned any results for this query.`
+- Reduced query strictness and changed no-result behavior from hard-fail to soft-skip.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/variants.tsx`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/variants.tsx --file pages/api/admin/variants/reference/seed.ts` passed.
+
+### Notes
+- Auto query now:
+  - strips `Retail` from set label
+  - omits negative terms (`-box -blaster -hobby -case -break -pack -lot`) to avoid over-constraining eBay `_nkw`.
+- Seed API now:
+  - interprets top-level no-result message as non-fatal skip.
+  - returns `inserted:0, skipped:1` for that target so set summary reflects misses without marking full run as failed.
