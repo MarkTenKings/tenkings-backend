@@ -395,3 +395,20 @@
 
 ### Notes
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-22 - Set Ops UX Improvement (Upload CSV/JSON, no manual paste)
+
+### Summary
+- Added file-upload ingestion UX on `/admin/set-ops-review` so operators can upload CSV/JSON data directly instead of manually pasting JSON payloads.
+- Added client-side parsers for JSON and CSV rows, automatic row count reporting, optional setId inference from uploaded rows, and user feedback on parsed row totals.
+- Kept raw payload editor as hidden advanced fallback (`Show Advanced JSON`) instead of default workflow.
+- Added ingest guardrail: queue action now blocks when parsed payload contains zero rows.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx` passed.
+
+### Notes
+- No deploy/restart/migration was executed in this step.

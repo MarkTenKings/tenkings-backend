@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
@@ -94,6 +94,146 @@ function toJsonPreview(value: unknown) {
   }
 }
 
+function normalizeObjectRows(value: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(value)) {
+    return value.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry));
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const nested =
+      (Array.isArray(record.rows) ? record.rows : null) ??
+      (Array.isArray(record.data) ? record.data : null) ??
+      (Array.isArray(record.items) ? record.items : null);
+    if (nested) {
+      return nested.filter(
+        (entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry)
+      );
+    }
+    return [record];
+  }
+  return [];
+}
+
+function parseCsvRows(csvText: string): Array<Record<string, string>> {
+  const text = csvText.replace(/^\uFEFF/, "");
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (inQuotes) {
+      if (char === '"') {
+        if (text[i + 1] === '"') {
+          cell += '"';
+          i += 1;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cell += char;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inQuotes = true;
+      continue;
+    }
+    if (char === ",") {
+      row.push(cell);
+      cell = "";
+      continue;
+    }
+    if (char === "\n") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+      continue;
+    }
+    if (char === "\r") {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = "";
+      if (text[i + 1] === "\n") {
+        i += 1;
+      }
+      continue;
+    }
+    cell += char;
+  }
+
+  if (cell.length > 0 || row.length > 0) {
+    row.push(cell);
+    rows.push(row);
+  }
+
+  const normalizedRows = rows.filter((entry) => entry.some((cellValue) => String(cellValue).trim() !== ""));
+  if (normalizedRows.length === 0) return [];
+
+  const headers = normalizedRows[0].map((header, index) => String(header || "").trim() || `column_${index + 1}`);
+  const data = normalizedRows.slice(1);
+  return data
+    .map((values) => {
+      const record: Record<string, string> = {};
+      headers.forEach((header, index) => {
+        record[header] = String(values[index] ?? "").trim();
+      });
+      return record;
+    })
+    .filter((entry) => Object.values(entry).some((value) => value !== ""));
+}
+
+function parseRowsFromFileContent(fileName: string, content: string): Array<Record<string, unknown>> {
+  const trimmed = content.trim();
+  if (!trimmed) return [];
+
+  const lowerName = fileName.toLowerCase();
+  const likelyJson = lowerName.endsWith(".json") || trimmed.startsWith("[") || trimmed.startsWith("{");
+
+  if (likelyJson) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const rows = normalizeObjectRows(parsed);
+      if (rows.length > 0) return rows;
+    } catch {
+      if (lowerName.endsWith(".json")) {
+        throw new Error("JSON file could not be parsed.");
+      }
+    }
+  }
+
+  const csvRows = parseCsvRows(content);
+  if (csvRows.length > 0) return csvRows;
+  throw new Error("No usable rows found. Upload a CSV with headers or a JSON row array.");
+}
+
+function inferSetIdFromRows(rows: Array<Record<string, unknown>>) {
+  for (const row of rows) {
+    const candidate =
+      String(row.setId ?? row.set ?? row.setName ?? row.set_name ?? "")
+        .trim()
+        .replace(/\s+/g, " ");
+    if (candidate) return candidate;
+  }
+  return "";
+}
+
+function estimateRowCount(value: unknown): number {
+  if (Array.isArray(value)) return value.length;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (Array.isArray(record.rows)) return record.rows.length;
+    if (Array.isArray(record.data)) return record.data.length;
+    if (Array.isArray(record.items)) return record.items.length;
+    return 1;
+  }
+  return 0;
+}
+
 export default function SetOpsReviewPage() {
   const { session, loading, ensureSession, logout } = useSession();
   const isAdmin = useMemo(
@@ -109,6 +249,10 @@ export default function SetOpsReviewPage() {
   const [sourceUrlInput, setSourceUrlInput] = useState("");
   const [parserVersionInput, setParserVersionInput] = useState("manual-v1");
   const [rawPayloadInput, setRawPayloadInput] = useState("[]");
+  const [showRawPayloadEditor, setShowRawPayloadEditor] = useState(false);
+  const [payloadFileName, setPayloadFileName] = useState<string | null>(null);
+  const [payloadRowCount, setPayloadRowCount] = useState<number>(0);
+  const [payloadLoading, setPayloadLoading] = useState(false);
 
   const [ingestionJobs, setIngestionJobs] = useState<IngestionJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string>("");
@@ -273,6 +417,11 @@ export default function SetOpsReviewPage() {
 
       try {
         const parsedPayload = JSON.parse(rawPayloadInput || "[]");
+        const rowCount = estimateRowCount(parsedPayload);
+        if (rowCount < 1) {
+          throw new Error("No ingestion rows found. Upload a CSV/JSON file first.");
+        }
+
         const response = await fetch("/api/admin/set-ops/ingestion", {
           method: "POST",
           headers: {
@@ -318,6 +467,46 @@ export default function SetOpsReviewPage() {
       setIdInput,
       sourceUrlInput,
     ]
+  );
+
+  const handlePayloadFileChange = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      if (!canReview) {
+        setError("Set Ops reviewer role required");
+        return;
+      }
+
+      setPayloadLoading(true);
+      setError(null);
+      setStatus(null);
+      try {
+        const text = await file.text();
+        const rows = parseRowsFromFileContent(file.name, text);
+        if (rows.length < 1) {
+          throw new Error("No rows found in uploaded file.");
+        }
+
+        const inferredSetId = inferSetIdFromRows(rows);
+        if (!setIdInput.trim() && inferredSetId) {
+          setSetIdInput(inferredSetId);
+        }
+
+        setRawPayloadInput(JSON.stringify(rows, null, 2));
+        setPayloadFileName(file.name);
+        setPayloadRowCount(rows.length);
+        setStatus(`Loaded ${rows.length} rows from ${file.name}.`);
+      } catch (parseError) {
+        setPayloadFileName(null);
+        setPayloadRowCount(0);
+        setError(parseError instanceof Error ? parseError.message : "Failed to parse uploaded file");
+      } finally {
+        setPayloadLoading(false);
+        event.target.value = "";
+      }
+    },
+    [canReview, setIdInput]
   );
 
   const buildDraftFromJob = useCallback(async () => {
@@ -737,19 +926,52 @@ export default function SetOpsReviewPage() {
               placeholder="Parser version"
               className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
             />
-            <textarea
-              value={rawPayloadInput}
-              onChange={(event) => setRawPayloadInput(event.target.value)}
-              disabled={!canReview}
-              rows={7}
-              className="md:col-span-2 rounded-xl border border-white/15 bg-night-950/70 p-3 font-mono text-xs text-slate-100 outline-none focus:border-gold-500/70"
-            />
+            <div className="md:col-span-2 rounded-xl border border-white/10 bg-night-950/40 p-3">
+              <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Upload Source File</p>
+              <p className="mt-1 text-xs text-slate-400">
+                Upload a CSV or JSON file with rows. No manual JSON editing required.
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                <input
+                  type="file"
+                  accept=".csv,.json,text/csv,application/json"
+                  disabled={!canReview || payloadLoading}
+                  onChange={(event) => void handlePayloadFileChange(event)}
+                  className="block text-xs text-slate-200 file:mr-3 file:rounded-lg file:border file:border-gold-500/40 file:bg-gold-500/10 file:px-3 file:py-2 file:text-xs file:font-semibold file:uppercase file:tracking-[0.16em] file:text-gold-100 hover:file:bg-gold-500/20"
+                />
+                {payloadLoading && <p className="text-xs text-slate-400">Parsing upload...</p>}
+                {payloadFileName && !payloadLoading && (
+                  <p className="text-xs text-emerald-300">
+                    Loaded {payloadRowCount.toLocaleString()} rows from {payloadFileName}
+                  </p>
+                )}
+              </div>
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => setShowRawPayloadEditor((prev) => !prev)}
+                  disabled={!canReview}
+                  className="rounded-lg border border-white/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-200 transition hover:border-white/40 disabled:opacity-60"
+                >
+                  {showRawPayloadEditor ? "Hide Advanced JSON" : "Show Advanced JSON"}
+                </button>
+              </div>
+              {showRawPayloadEditor && (
+                <textarea
+                  value={rawPayloadInput}
+                  onChange={(event) => setRawPayloadInput(event.target.value)}
+                  disabled={!canReview}
+                  rows={7}
+                  className="mt-3 w-full rounded-xl border border-white/15 bg-night-950/70 p-3 font-mono text-xs text-slate-100 outline-none focus:border-gold-500/70"
+                />
+              )}
+            </div>
             <button
               type="submit"
-              disabled={busy || !canReview}
+              disabled={busy || !canReview || payloadLoading}
               className="h-11 rounded-xl border border-gold-500/60 bg-gold-500 px-4 text-xs font-semibold uppercase tracking-[0.18em] text-night-900 transition hover:bg-gold-400 disabled:opacity-60"
             >
-              Queue Ingestion
+              {payloadLoading ? "Parsing..." : "Queue Ingestion"}
             </button>
           </form>
 

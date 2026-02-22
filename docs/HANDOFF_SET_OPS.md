@@ -146,3 +146,9 @@ Build Set Ops UI flow with:
 
 ## Vercel Build Hotfix 5 (2026-02-22)
 - Fixed seed cancel API status guard typing in `frontend/nextjs-app/pages/api/admin/set-ops/seed/jobs/[jobId]/cancel.ts` by using a typed status `Set` instead of array `.includes(...)`.
+
+## UX Upload Improvement (2026-02-22)
+- `/admin/set-ops-review` Ingestion Queue now supports direct CSV/JSON upload parsing in-browser.
+- Workflow no longer requires manual raw JSON paste for normal use.
+- Advanced raw JSON editor remains available behind toggle for edge/debug cases.
+- Queue action now validates non-empty payload row count before creating ingestion jobs.
