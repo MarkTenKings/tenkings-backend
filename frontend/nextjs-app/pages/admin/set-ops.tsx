@@ -144,9 +144,10 @@ export default function SetOpsPage() {
           throw new Error("message" in payload ? payload.message : "Failed to load set data");
         }
 
-        const nextRows = payload.sets ?? [];
+        const nextRows = "sets" in payload ? payload.sets ?? [] : [];
+        const nextTotal = "total" in payload ? payload.total ?? nextRows.length : nextRows.length;
         setRows(nextRows);
-        setTotal(payload.total ?? nextRows.length);
+        setTotal(nextTotal);
         setStatus(`Loaded ${nextRows.length} set rows.`);
       } catch (loadError) {
         setError(loadError instanceof Error ? loadError.message : "Failed to load set data");

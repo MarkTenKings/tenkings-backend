@@ -125,3 +125,7 @@ Build Set Ops UI flow with:
   - P0 UI workflow and API map
   - pre-release validation checklist
   - production rollout checklist emphasizing dry-run-first and explicit approval for destructive actions
+
+## Vercel Build Hotfix (2026-02-22)
+- Fixed `frontend/nextjs-app/pages/admin/set-ops.tsx` union narrowing bug that caused Vercel compile failure (`Property 'sets' does not exist on type 'LoadResponse'`).
+- Load response parsing now narrows payload before reading `sets` and `total`.

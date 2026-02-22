@@ -312,3 +312,19 @@
 ### Notes
 - No deploy/restart/migration was executed.
 - No destructive DB operations were executed.
+
+## 2026-02-22 - Vercel Hotfix (Set Ops Type Narrowing)
+
+### Summary
+- Fixed Vercel build failure in `/admin/set-ops` caused by union type access without narrowing.
+- Updated `LoadResponse` handling to guard `payload.sets`/`payload.total` behind `'sets' in payload` and `'total' in payload` checks.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx` passed.
+- Local `pnpm --filter @tenkings/nextjs-app build` still exits non-zero in this environment without printing additional compile diagnostics, but the original Vercel type error at `set-ops.tsx:147` is resolved in code.
+
+### Notes
+- No deploy/restart/migration was executed in this step.
