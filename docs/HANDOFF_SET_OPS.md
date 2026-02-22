@@ -99,3 +99,5 @@ Build Set Ops UI flow with:
 - P0-A Ticket 3 complete in code: Set Admin APIs (`sets`, `archive`, `delete/dry-run`, `delete/confirm`) plus Set Ops RBAC helper and audit logging.
 - Delete confirm now enforces typed phrase `DELETE <setId>` and performs transactional delete path with audit event.
 - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still fails under existing Prisma-client workspace linkage issue (broad pre-existing failure).
+- P0-B Ticket 10 complete in code: `/admin/set-ops` baseline UI (list/search/status/counts) and `/admin` navigation link.
+- Targeted lint check for new admin page files: pass.

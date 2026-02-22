@@ -114,3 +114,21 @@
 ### Notes
 - No deploy/restart/migration was executed.
 - Destructive delete behavior remains API-gated (RBAC + typed confirm + dry-run preview endpoint).
+
+## 2026-02-22 - Set Ops P0-B Ticket 10 (Set Admin Page Baseline)
+
+### Summary
+- Added new admin UI page at `/admin/set-ops` with:
+  - admin access gate
+  - set search/filter controls
+  - include-archived toggle
+  - set table showing variant/ref counts, draft status, last seed status, and updated timestamp
+  - summary cards for set rows / variant totals / reference totals
+- Linked page from `/admin` dashboard.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+- `frontend/nextjs-app/pages/admin/index.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx --file pages/admin/index.tsx` passed.
