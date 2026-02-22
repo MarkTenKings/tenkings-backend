@@ -161,3 +161,19 @@
 
 ### Validation Evidence
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx` passed.
+
+## 2026-02-22 - Set Ops P0-C Ticket 5 (Ingestion Job API MVP)
+
+### Summary
+- Added ingestion queue API at:
+  - `GET /api/admin/set-ops/ingestion`
+  - `POST /api/admin/set-ops/ingestion`
+- Supports dataset types `PARALLEL_DB` and `PLAYER_WORKSHEET`.
+- Persists source URL, parser version, raw payload, and ingestion status lifecycle records.
+- Creates/links `SetDraft` records during ingestion enqueue.
+
+### Files Added
+- `frontend/nextjs-app/pages/api/admin/set-ops/ingestion/index.ts`
+
+### Validation Evidence
+- Targeted lint pass for new Set Ops API files (see later combined lint run entry in this session).
