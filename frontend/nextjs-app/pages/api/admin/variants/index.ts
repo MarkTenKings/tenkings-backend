@@ -167,28 +167,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             _count: { _all: true },
           })
         : [];
-      let qaDoneCounts: Array<{
+      let qaDoneRows: Array<{
         setId: string;
         cardNumber: string | null;
         parallelId: string;
-        _count: { _all: number };
       }> = [];
       if (countOr.length) {
         try {
-          qaDoneCounts = await prisma.cardVariantReferenceImage.groupBy({
-            by: ["setId", "cardNumber", "parallelId"],
-            where: {
+          qaDoneRows = await prisma.cardVariantReferenceImage.findMany({
+            where: ({
               AND: [
                 { OR: countOr },
                 {
                   OR: [{ qaStatus: "keep" }, { ownedStatus: "owned" }],
                 },
               ],
-            },
-            _count: { _all: true },
+            } as any),
+            distinct: ["setId", "cardNumber", "parallelId"],
+            select: ({
+              setId: true,
+              cardNumber: true,
+              parallelId: true,
+            } as any),
           });
         } catch {
-          qaDoneCounts = [];
+          qaDoneRows = [];
         }
       }
       let latestRefs: any[] = [];
@@ -231,8 +234,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         countByKey.set(keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId), row._count._all);
       }
       const qaDoneByKey = new Map<string, number>();
-      for (const row of qaDoneCounts) {
-        qaDoneByKey.set(keyForRef(row.setId, row.cardNumber ?? null, row.parallelId), row._count._all);
+      for (const row of qaDoneRows) {
+        qaDoneByKey.set(keyForRef(row.setId, row.cardNumber ?? null, row.parallelId), 1);
       }
       const previewByKey = new Map<string, string>();
       const refPlayerByKey = new Map<string, string>();
