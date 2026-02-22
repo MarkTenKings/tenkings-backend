@@ -37,8 +37,35 @@ type NormalizedDiscoveryQuery = {
   limit: number;
 };
 
+type DiscoverySearchVariant = {
+  name: string;
+  searchText: string;
+  requiredDomainSuffixes?: string[];
+};
+
 const hostLastRequestAt = new Map<string, number>();
 const nowYear = new Date().getFullYear();
+const preferredDiscoveryDomains = [
+  "tcdb.com",
+  "tradingcarddb.com",
+  "cardboardconnection.com",
+  "beckett.com",
+  "sportscardspro.com",
+  "breakninja.com",
+  "baseballcardpedia.com",
+];
+const blockedDiscoveryDomains = [
+  "weforum.org",
+  "wikipedia.org",
+  "youtube.com",
+  "facebook.com",
+  "instagram.com",
+  "tiktok.com",
+  "x.com",
+  "twitter.com",
+  "linkedin.com",
+  "reddit.com",
+];
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -99,6 +126,115 @@ function providerFromDomain(domain: string) {
   return domain;
 }
 
+function domainMatchesSuffix(domain: string, suffix: string) {
+  return domain === suffix || domain.endsWith(`.${suffix}`);
+}
+
+function includesAny(text: string, values: string[]) {
+  return values.some((value) => text.includes(value.toLowerCase()));
+}
+
+function sportTokens(sport: string) {
+  const normalized = sport.toLowerCase().trim();
+  const aliases: Record<string, string[]> = {
+    basketball: ["basketball", "nba", "wnba", "hoops"],
+    baseball: ["baseball", "mlb"],
+    football: ["football", "nfl"],
+    hockey: ["hockey", "nhl"],
+    soccer: ["soccer", "futbol", "fifa"],
+  };
+  return aliases[normalized] ?? (normalized ? [normalized] : []);
+}
+
+function hasTradingCardSignal(text: string) {
+  return /checklist|trading card|card set|set list|parallel|base set|rookie/i.test(text);
+}
+
+function buildDiscoverySearchVariants(query: NormalizedDiscoveryQuery) {
+  const baseText = buildDiscoverySearchText(query);
+  const variants: DiscoverySearchVariant[] = [
+    {
+      name: "tcdb-site",
+      searchText: `site:tcdb.com ${baseText}`,
+      requiredDomainSuffixes: ["tcdb.com", "tradingcarddb.com"],
+    },
+    {
+      name: "cardboardconnection-site",
+      searchText: `site:cardboardconnection.com ${baseText}`,
+      requiredDomainSuffixes: ["cardboardconnection.com"],
+    },
+    {
+      name: "beckett-site",
+      searchText: `site:beckett.com ${baseText}`,
+      requiredDomainSuffixes: ["beckett.com"],
+    },
+    {
+      name: "sportscardspro-site",
+      searchText: `site:sportscardspro.com ${baseText}`,
+      requiredDomainSuffixes: ["sportscardspro.com"],
+    },
+    {
+      name: "broad-web",
+      searchText: baseText,
+    },
+  ];
+  return variants;
+}
+
+function isRelevantDiscoveryResult(params: {
+  result: SetOpsDiscoveryResult;
+  query: NormalizedDiscoveryQuery;
+  requiredDomainSuffixes?: string[];
+}) {
+  const domain = params.result.domain.toLowerCase();
+  const text = `${params.result.title} ${params.result.snippet} ${params.result.url}`.toLowerCase();
+  const manufacturer = params.query.manufacturer.toLowerCase().trim();
+  const year = params.query.year ? String(params.query.year) : "";
+  const sportWords = sportTokens(params.query.sport);
+
+  if (!domain) return false;
+  if (blockedDiscoveryDomains.some((suffix) => domainMatchesSuffix(domain, suffix))) return false;
+
+  if (params.requiredDomainSuffixes && params.requiredDomainSuffixes.length > 0) {
+    const matchesRequiredDomain = params.requiredDomainSuffixes.some((suffix) => domainMatchesSuffix(domain, suffix));
+    if (!matchesRequiredDomain) return false;
+  }
+
+  const trustedDomain = preferredDiscoveryDomains.some((suffix) => domainMatchesSuffix(domain, suffix));
+  const hasManufacturer = !manufacturer || text.includes(manufacturer);
+  const hasYear = !year || text.includes(year);
+  const hasSport = sportWords.length === 0 || includesAny(text, sportWords);
+  const checklistSignal = hasTradingCardSignal(text);
+
+  if (trustedDomain) {
+    if (!checklistSignal && !hasManufacturer && !hasYear) return false;
+    if (!hasManufacturer && manufacturer) return false;
+    if (!hasSport && sportWords.length > 0 && !checklistSignal) return false;
+    return true;
+  }
+
+  if (!checklistSignal) return false;
+  if (!hasManufacturer && manufacturer) return false;
+  if (!hasYear && year) return false;
+  if (!hasSport && sportWords.length > 0) return false;
+
+  return true;
+}
+
+function filterDiscoveryResults(params: {
+  results: SetOpsDiscoveryResult[];
+  query: NormalizedDiscoveryQuery;
+  requiredDomainSuffixes?: string[];
+}) {
+  return params.results.filter((result) =>
+    isRelevantDiscoveryResult({
+      result,
+      query: params.query,
+      requiredDomainSuffixes: params.requiredDomainSuffixes,
+    })
+  );
+}
+
 function stripCdata(value: string) {
   const match = String(value || "").match(/^<!\[CDATA\[([\s\S]*?)\]\]>$/i);
   return match ? match[1] : value;
@@ -141,15 +277,20 @@ function rankResult(input: { title: string; snippet: string; domain: string; que
   const freeQuery = String(input.query.query || "").toLowerCase().trim();
 
   let score = 0;
+  if (preferredDiscoveryDomains.some((suffix) => domainMatchesSuffix(domain, suffix))) score += 30;
+  if (blockedDiscoveryDomains.some((suffix) => domainMatchesSuffix(domain, suffix))) score -= 100;
   if (title.includes("checklist")) score += 25;
   if (snippet.includes("checklist")) score += 10;
   if (title.includes("trading card")) score += 8;
+  if (hasTradingCardSignal(`${title} ${snippet}`)) score += 10;
   if (year && (title.includes(year) || snippet.includes(year))) score += 12;
   if (manufacturer && (title.includes(manufacturer) || snippet.includes(manufacturer))) score += 12;
   if (sport && (title.includes(sport) || snippet.includes(sport))) score += 8;
   if (freeQuery && (title.includes(freeQuery) || snippet.includes(freeQuery))) score += 8;
   if (domain.includes("tcdb.com")) score += 14;
   if (domain.includes("cardboardconnection.com")) score += 8;
+  if (manufacturer && !title.includes(manufacturer) && !snippet.includes(manufacturer)) score -= 12;
+  if (sport && !title.includes(sport) && !snippet.includes(sport)) score -= 8;
   return score;
 }
 
@@ -626,7 +767,9 @@ export async function searchSetSources(query: SetOpsDiscoveryQuery): Promise<Set
     throw new Error("Provide at least one search input (year, manufacturer, sport, or query).");
   }
 
+  const variants = buildDiscoverySearchVariants(normalized);
   const attempts: Array<{ provider: string; error: string }> = [];
+  const collected: SetOpsDiscoveryResult[] = [];
   const providers: Array<{
     name: string;
     run: (nextQuery: NormalizedDiscoveryQuery, nextSearchText: string) => Promise<SetOpsDiscoveryResult[]>;
@@ -635,19 +778,38 @@ export async function searchSetSources(query: SetOpsDiscoveryQuery): Promise<Set
     { name: "bing-rss", run: searchBingRss },
   ];
 
-  for (const provider of providers) {
-    try {
-      const results = dedupeDiscoveryResults(await provider.run(normalized, searchText), normalized.limit);
-      if (results.length > 0) return results;
-      attempts.push({ provider: provider.name, error: "empty result set" });
-    } catch (error) {
-      const status = parseStatusCodeFromError(error);
-      const reason = error instanceof Error ? error.message : "Unknown error";
-      attempts.push({
-        provider: provider.name,
-        error: status ? `HTTP ${status}` : reason,
-      });
+  for (const variant of variants) {
+    for (const provider of providers) {
+      try {
+        const results = await provider.run(normalized, variant.searchText);
+        const filtered = filterDiscoveryResults({
+          results,
+          query: normalized,
+          requiredDomainSuffixes: variant.requiredDomainSuffixes,
+        });
+        if (filtered.length > 0) {
+          collected.push(...filtered);
+          const deduped = dedupeDiscoveryResults(collected, normalized.limit);
+          if (deduped.length >= normalized.limit) {
+            return deduped;
+          }
+        } else {
+          attempts.push({ provider: `${provider.name}:${variant.name}`, error: "empty/filtered result set" });
+        }
+      } catch (error) {
+        const status = parseStatusCodeFromError(error);
+        const reason = error instanceof Error ? error.message : "Unknown error";
+        attempts.push({
+          provider: `${provider.name}:${variant.name}`,
+          error: status ? `HTTP ${status}` : reason,
+        });
+      }
     }
+  }
+
+  const dedupedCollected = dedupeDiscoveryResults(collected, normalized.limit);
+  if (dedupedCollected.length > 0) {
+    return dedupedCollected;
   }
 
   const fallbackResults = dedupeDiscoveryResults(buildFallbackDiscoveryResults(normalized, searchText), normalized.limit);

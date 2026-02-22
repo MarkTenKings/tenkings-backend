@@ -487,3 +487,22 @@
 
 ### Notes
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-22 - Set Ops Discovery Relevance Filtering (Domain + Query Hardening)
+
+### Summary
+- Fixed poor discovery relevance where unrelated non-card domains could appear in search results.
+- Added domain policies:
+  - preferred set-data domains (TCDB/CardboardConnection/Beckett/etc) receive strong ranking boost
+  - blocked generic domains (ex: `weforum.org`, social/news domains) are excluded
+- Added site-scoped search variants (`site:tcdb.com`, `site:cardboardconnection.com`, `site:beckett.com`, `site:sportscardspro.com`) before broad-web fallback.
+- Added strict relevance filters requiring trading-card/checklist signals plus query alignment (manufacturer/year/sport) before returning results.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/search.ts --file pages/api/admin/set-ops/discovery/import.ts` passed.
+
+### Notes
+- No deploy/restart/migration was executed in this step.

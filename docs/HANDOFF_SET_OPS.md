@@ -174,3 +174,9 @@ Build Set Ops UI flow with:
   2. Bing RSS search fallback
   3. provider-search fallback links if both upstream providers fail
 - Source import now returns explicit fallback guidance for blocked fetches (`401/403`): use Step 1 CSV/JSON upload.
+
+## Discovery Relevance Hardening (2026-02-22)
+- Added strict source relevance controls so discovery focuses on trading-card set/checklist sources.
+- Added site-scoped discovery variants (`site:tcdb.com`, `site:cardboardconnection.com`, `site:beckett.com`, `site:sportscardspro.com`) before broad web search.
+- Added preferred-domain scoring and blocked-domain filtering (ex: `weforum.org` and generic social/news domains).
+- Added query-alignment filtering (manufacturer/year/sport + trading-card/checklist signal) before results are shown.
