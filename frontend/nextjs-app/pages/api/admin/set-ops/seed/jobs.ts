@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { z } from "zod";
-import { prisma, SetAuditStatus, SetApprovalDecision, SetSeedJobStatus } from "@tenkings/database";
+import { prisma, SetAuditStatus, SetApprovalDecision, SetSeedJobStatus, type Prisma } from "@tenkings/database";
 import { normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../../lib/server/admin";
 import {
@@ -213,7 +213,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           runArgsJson: {
             setId,
             draftVersionId: draftVersion.id,
-          },
+          } as Prisma.InputJsonValue,
           progressJson: {
             processed: 0,
             total: 0,
@@ -221,8 +221,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             updated: 0,
             failed: 0,
             skipped: 0,
-          },
-          logsJson: ["seed:queued"],
+          } as Prisma.InputJsonValue,
+          logsJson: ["seed:queued"] as Prisma.InputJsonValue,
         },
         select: {
           id: true,

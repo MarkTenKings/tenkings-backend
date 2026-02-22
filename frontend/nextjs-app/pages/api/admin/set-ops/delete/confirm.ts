@@ -90,7 +90,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             rowsDeleted: impact.rowsToDelete,
             totalRowsDeleted: impact.totalRowsToDelete,
             auditEventsForSet: impact.auditEventsForSet,
-          },
+          } as Prisma.InputJsonValue,
         },
         select: {
           id: true,

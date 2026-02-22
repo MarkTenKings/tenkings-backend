@@ -1,4 +1,4 @@
-import { prisma, SetSeedJobStatus } from "@tenkings/database";
+import { prisma, SetSeedJobStatus, type Prisma } from "@tenkings/database";
 import { normalizeSetLabel } from "@tenkings/shared";
 import { extractDraftRows } from "./setOpsDrafts";
 
@@ -70,8 +70,8 @@ export async function runSeedJob(params: {
     data: {
       status: SetSeedJobStatus.IN_PROGRESS,
       startedAt: new Date(),
-      progressJson: { processed: 0, total, inserted: 0, updated: 0, failed: 0, skipped: 0 },
-      logsJson: logs,
+      progressJson: { processed: 0, total, inserted: 0, updated: 0, failed: 0, skipped: 0 } as Prisma.InputJsonValue,
+      logsJson: logs as Prisma.InputJsonValue,
     },
   });
 
@@ -141,8 +141,8 @@ export async function runSeedJob(params: {
             updated,
             failed,
             skipped,
-          },
-          logsJson: logs.slice(-200),
+          } as Prisma.InputJsonValue,
+          logsJson: logs.slice(-200) as Prisma.InputJsonValue,
         },
       });
     }
@@ -172,7 +172,7 @@ export async function runSeedJob(params: {
         updated,
         failed,
         skipped,
-      },
+      } as Prisma.InputJsonValue,
       resultJson: {
         status,
         processed,
@@ -183,8 +183,8 @@ export async function runSeedJob(params: {
         skipped,
         queueCount,
         durationMs,
-      },
-      logsJson: logs.slice(-500),
+      } as Prisma.InputJsonValue,
+      logsJson: logs.slice(-500) as Prisma.InputJsonValue,
       errorMessage: failed > 0 ? `${failed} rows failed during seed run` : null,
     },
   });

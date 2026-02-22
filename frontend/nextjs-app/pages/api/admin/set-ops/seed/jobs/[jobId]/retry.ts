@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma, SetAuditStatus, SetSeedJobStatus } from "@tenkings/database";
+import { prisma, SetAuditStatus, SetSeedJobStatus, type Prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../../../../lib/server/admin";
 import {
   canPerformSetOpsRole,
@@ -89,7 +89,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         status: SetSeedJobStatus.QUEUED,
         requestedById: admin.user.id,
         retryOfId: existing.id,
-        runArgsJson: existing.runArgsJson,
+        runArgsJson: (existing.runArgsJson ?? {}) as Prisma.InputJsonValue,
         progressJson: {
           processed: 0,
           total: 0,
@@ -97,8 +97,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           updated: 0,
           failed: 0,
           skipped: 0,
-        },
-        logsJson: ["seed:retry_queued"],
+        } as Prisma.InputJsonValue,
+        logsJson: ["seed:retry_queued"] as Prisma.InputJsonValue,
       },
       select: {
         id: true,

@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { z } from "zod";
-import { prisma, SetApprovalDecision, SetAuditStatus, SetIngestionJobStatus } from "@tenkings/database";
+import { prisma, SetApprovalDecision, SetAuditStatus, SetIngestionJobStatus, type Prisma } from "@tenkings/database";
 import { normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../lib/server/admin";
 import {
@@ -146,7 +146,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         draftVersionId: draftVersion.id,
         decision: payload.decision,
         reason: payload.reason ?? null,
-        diffSummaryJson: diffSummary,
+        diffSummaryJson: diffSummary as Prisma.InputJsonValue,
         versionHash: draftVersion.versionHash,
         approvedById: admin.user.id,
       },

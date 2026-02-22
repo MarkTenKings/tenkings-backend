@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { z } from "zod";
-import { prisma, SetAuditStatus, SetDatasetType, SetIngestionJobStatus } from "@tenkings/database";
+import { prisma, SetAuditStatus, SetDatasetType, SetIngestionJobStatus, type Prisma } from "@tenkings/database";
 import { normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../../lib/server/admin";
 import {
@@ -163,7 +163,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           draftId: draft.id,
           datasetType: payload.datasetType,
           sourceUrl: payload.sourceUrl ? payload.sourceUrl.trim() : null,
-          rawPayload: payload.rawPayload,
+          rawPayload: payload.rawPayload as Prisma.InputJsonValue,
           parserVersion: payload.parserVersion,
           status: SetIngestionJobStatus.QUEUED,
           createdById: admin.user.id,

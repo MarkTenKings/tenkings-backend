@@ -360,3 +360,23 @@
 
 ### Notes
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-22 - Vercel Hotfix 4 (Set Ops JSON input typing hardening)
+
+### Summary
+- Fixed Vercel compile failure in ingestion create route by casting `rawPayload` to Prisma JSON input type.
+- Added proactive Prisma JSON input casts across Set Ops write paths to avoid repeated strict type failures in CI.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/ingestion/index.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/approval.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/delete/confirm.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/jobs.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/jobs/[jobId]/retry.ts`
+- `frontend/nextjs-app/lib/server/setOpsSeed.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/ingestion/index.ts --file pages/api/admin/set-ops/approval.ts --file pages/api/admin/set-ops/delete/confirm.ts --file pages/api/admin/set-ops/seed/jobs.ts --file pages/api/admin/set-ops/seed/jobs/[jobId]/retry.ts --file lib/server/setOpsSeed.ts` passed.
+
+### Notes
+- No deploy/restart/migration was executed in this step.

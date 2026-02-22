@@ -139,3 +139,7 @@ Build Set Ops UI flow with:
 
 ## Vercel Build Hotfix 3 (2026-02-22)
 - Updated `frontend/nextjs-app/pages/api/admin/set-ops/drafts/version.ts` to use `z.record(z.string(), z.unknown())` for compatibility with current Zod signature used in CI/Vercel.
+
+## Vercel Build Hotfix 4 (2026-02-22)
+- Fixed `rawPayload` typing in Set Ops ingestion create API for strict Prisma `InputJsonValue` compatibility.
+- Added explicit Prisma JSON input casts on additional Set Ops write paths (`approval`, `delete confirm`, `seed jobs`, `seed retry`, `setOpsSeed` runtime updates) to reduce CI/Vercel strict typing regressions.
