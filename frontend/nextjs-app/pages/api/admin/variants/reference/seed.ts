@@ -82,9 +82,34 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(200).json({ inserted: 0, skipped: 0 });
     }
 
-    await prisma.cardVariantReferenceImage.createMany({ data: rows });
+    const normalizedSetId = String(setId).trim();
+    const normalizedCardNumber = cardNumber ? String(cardNumber).trim() : "ALL";
+    const normalizedParallelId = String(parallelId).trim();
 
-    return res.status(200).json({ inserted: rows.length, skipped: Math.max(0, safeLimit - rows.length) });
+    const existingRows = await prisma.cardVariantReferenceImage.findMany({
+      where: {
+        setId: normalizedSetId,
+        cardNumber: normalizedCardNumber,
+        parallelId: normalizedParallelId,
+        rawImageUrl: {
+          in: rows.map((row) => row.rawImageUrl),
+        },
+      },
+      select: {
+        rawImageUrl: true,
+      },
+    });
+    const existingUrls = new Set(existingRows.map((row) => row.rawImageUrl));
+    const rowsToInsert = rows.filter((row) => !existingUrls.has(row.rawImageUrl));
+
+    if (rowsToInsert.length > 0) {
+      await prisma.cardVariantReferenceImage.createMany({ data: rowsToInsert });
+    }
+
+    const duplicateSkips = rows.length - rowsToInsert.length;
+    return res
+      .status(200)
+      .json({ inserted: rowsToInsert.length, skipped: Math.max(0, safeLimit - rows.length) + duplicateSkips });
   } catch (error) {
     const response = toErrorResponse(error);
     return res.status(response.status).json({ message: response.message });

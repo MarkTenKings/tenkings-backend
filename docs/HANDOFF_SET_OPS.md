@@ -389,3 +389,21 @@ Build Set Ops UI flow with:
     - skips effectively empty rows during normalization (blank manual rows won't create blocking errors).
 - Validation executed:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file lib/server/setOpsDrafts.ts --file pages/admin/set-ops-review.tsx` passed.
+
+## Variant Ref Seeding UX (2026-02-22, Follow-up #5)
+- New production feedback:
+  - Operators can complete set-ops seeding but image seeding UX on `/admin/variants` still required manual Set ID / Parallel ID typing, which is error-prone.
+  - Requested one-click flow: choose recent set and seed refs for all variants in that set.
+- Fixes shipped:
+  - Added new admin API endpoint:
+    - `frontend/nextjs-app/pages/api/admin/variants/sets.ts`
+    - returns recent seeded set IDs (from `SetSeedJob`) with variant counts and latest seed timestamp/status for dropdown population.
+  - Updated image seed API:
+    - `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+    - skips duplicate `rawImageUrl` rows for same set/card/parallel before insert.
+  - Updated `/admin/variants` UX:
+    - `frontend/nextjs-app/pages/admin/variants.tsx`
+    - recent-set dropdown at top of **Seed Images (SerpApi)** section
+    - one-click **Seed Entire Set** action that loops all variants for selected set and seeds refs per variant automatically
+    - live set-level progress stats (completed/total/inserted/skipped/failed)
+    - existing manual **Seed Single Parallel** path remains available.

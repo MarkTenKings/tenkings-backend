@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { useSession } from "../../hooks/useSession";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
@@ -28,6 +28,13 @@ type ReferenceRow = {
   qualityScore: number | null;
   createdAt: string;
   updatedAt: string;
+};
+
+type RecentSetRow = {
+  setId: string;
+  lastSeedStatus: string | null;
+  lastSeedAt: string | null;
+  variantCount: number;
 };
 
 type StatusMessage = { type: "success" | "error"; message: string } | null;
@@ -64,6 +71,14 @@ export default function AdminVariants() {
     limit: "20",
     tbs: "",
   });
+  const [recentSets, setRecentSets] = useState<RecentSetRow[]>([]);
+  const [seedSetProgress, setSeedSetProgress] = useState<{
+    total: number;
+    completed: number;
+    inserted: number;
+    skipped: number;
+    failed: number;
+  } | null>(null);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusMessage>(null);
   const [busy, setBusy] = useState(false);
@@ -86,6 +101,13 @@ export default function AdminVariants() {
   );
 
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
+
+  const buildSeedQuery = (setId: string, cardNumber: string, parallelId: string) => {
+    const normalizedCardNumber = String(cardNumber || "").trim();
+    const cardToken =
+      normalizedCardNumber && normalizedCardNumber.toUpperCase() !== "ALL" ? `#${normalizedCardNumber}` : "";
+    return [setId.trim(), cardToken, parallelId.trim(), "trading card"].filter(Boolean).join(" ");
+  };
 
   const fetchVariants = async (search?: string) => {
     if (!session) return;
@@ -154,6 +176,67 @@ export default function AdminVariants() {
       });
     }
   };
+
+  const fetchRecentSets = async () => {
+    if (!session) return;
+    try {
+      const res = await fetch(`/api/admin/variants/sets?limit=60`, {
+        headers: {
+          ...adminHeaders,
+        },
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Failed to load recent sets");
+      }
+      setRecentSets(payload.sets ?? []);
+    } catch (error) {
+      setStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to load recent sets",
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!session?.token || !isAdmin) return;
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const [setsRes, refStatusRes] = await Promise.all([
+          fetch(`/api/admin/variants/sets?limit=60`, {
+            headers: {
+              ...adminHeaders,
+            },
+          }),
+          fetch(`/api/admin/variants/reference/status`, {
+            headers: {
+              ...adminHeaders,
+            },
+          }),
+        ]);
+
+        const [setsPayload, refStatusPayload] = await Promise.all([setsRes.json(), refStatusRes.json()]);
+        if (cancelled) return;
+
+        if (setsRes.ok) {
+          setRecentSets(setsPayload.sets ?? []);
+        }
+
+        if (refStatusRes.ok) {
+          setReferenceStatus(refStatusPayload ?? null);
+        }
+      } catch {
+        // Non-blocking bootstrapping fetches.
+      }
+    };
+
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.token, isAdmin, adminHeaders]);
 
   const handleAdd = async () => {
     if (!form.setId || !form.cardNumber || !form.parallelId) {
@@ -353,6 +436,139 @@ export default function AdminVariants() {
       await fetchReferences();
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : "Seed failed" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleRecentSetSelect = (setId: string) => {
+    const nextSetId = setId.trim();
+    if (!nextSetId) return;
+    setSeedForm((prev) => ({
+      ...prev,
+      setId: nextSetId,
+      parallelId: "",
+      query: "",
+    }));
+    setRefForm((prev) => ({
+      ...prev,
+      setId: nextSetId,
+    }));
+    setForm((prev) => ({
+      ...prev,
+      setId: nextSetId,
+    }));
+    setQuery(nextSetId);
+  };
+
+  const handleSeedSetImages = async () => {
+    const targetSetId = seedForm.setId.trim();
+    if (!targetSetId) {
+      setStatus({ type: "error", message: "Select a Set ID first." });
+      return;
+    }
+
+    setBusy(true);
+    setSeedSetProgress({
+      total: 0,
+      completed: 0,
+      inserted: 0,
+      skipped: 0,
+      failed: 0,
+    });
+
+    try {
+      const variantRes = await fetch(`/api/admin/variants?q=${encodeURIComponent(targetSetId)}&limit=5000`, {
+        headers: {
+          ...adminHeaders,
+        },
+      });
+      const variantPayload = await variantRes.json();
+      if (!variantRes.ok) {
+        throw new Error(variantPayload?.message ?? "Failed to load variants for set.");
+      }
+
+      const allVariants = Array.isArray(variantPayload?.variants) ? (variantPayload.variants as VariantRow[]) : [];
+      const setVariants = allVariants.filter(
+        (variant) => String(variant.setId || "").trim().toLowerCase() === targetSetId.toLowerCase()
+      );
+      if (setVariants.length === 0) {
+        throw new Error("No variants were found for this set.");
+      }
+
+      const normalizedLimit = Math.min(50, Math.max(1, Number(seedForm.limit) || 20));
+      let completed = 0;
+      let inserted = 0;
+      let skipped = 0;
+      let failed = 0;
+
+      setSeedSetProgress({
+        total: setVariants.length,
+        completed: 0,
+        inserted: 0,
+        skipped: 0,
+        failed: 0,
+      });
+
+      for (const variant of setVariants) {
+        const autoQuery = buildSeedQuery(targetSetId, variant.cardNumber, variant.parallelId);
+        try {
+          const res = await fetch("/api/admin/variants/reference/seed", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...adminHeaders,
+            },
+            body: JSON.stringify({
+              setId: targetSetId,
+              cardNumber: variant.cardNumber,
+              parallelId: variant.parallelId,
+              query: autoQuery,
+              limit: normalizedLimit,
+              tbs: seedForm.tbs.trim() || undefined,
+            }),
+          });
+          const payload = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            failed += 1;
+          } else {
+            inserted += Number(payload?.inserted ?? 0);
+            skipped += Number(payload?.skipped ?? 0);
+          }
+        } catch {
+          failed += 1;
+        }
+
+        completed += 1;
+        setSeedSetProgress({
+          total: setVariants.length,
+          completed,
+          inserted,
+          skipped,
+          failed,
+        });
+      }
+
+      await fetchRecentSets();
+      await fetchReferenceStatus();
+      await fetchReferences();
+
+      if (failed > 0) {
+        setStatus({
+          type: "error",
+          message: `Seeded set with partial failures: ${completed}/${setVariants.length} variants processed, inserted ${inserted}, skipped ${skipped}, failed variants ${failed}.`,
+        });
+      } else {
+        setStatus({
+          type: "success",
+          message: `Seeded all variants for ${targetSetId}: ${setVariants.length} variants processed, inserted ${inserted}, skipped ${skipped}.`,
+        });
+      }
+    } catch (error) {
+      setStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to seed set images.",
+      });
     } finally {
       setBusy(false);
     }
@@ -577,9 +793,33 @@ export default function AdminVariants() {
           <div className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
             <h2 className="text-xs uppercase tracking-[0.3em] text-slate-400">Seed Images (SerpApi)</h2>
             <p className="mt-2 text-xs text-slate-400">
-              Pull Google Images results directly into the reference library. Use a tight query for the exact parallel.
+              Select a recent seeded set, then run one-click full-set image seeding or targeted single-parallel seeding.
             </p>
             <div className="mt-4 grid gap-3">
+              <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                <select
+                  value={seedForm.setId}
+                  onChange={(event) => handleRecentSetSelect(event.target.value)}
+                  className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                >
+                  <option value="">Select recent set…</option>
+                  {recentSets.map((set) => (
+                    <option key={set.setId} value={set.setId}>
+                      {set.setId}
+                      {set.lastSeedAt ? ` · ${new Date(set.lastSeedAt).toLocaleString()}` : ""}
+                      {set.variantCount ? ` · variants ${set.variantCount}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => void fetchRecentSets()}
+                  disabled={busy}
+                  className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-200 disabled:opacity-60"
+                >
+                  Refresh Sets
+                </button>
+              </div>
               <input
                 placeholder="Set ID"
                 value={seedForm.setId}
@@ -612,14 +852,30 @@ export default function AdminVariants() {
                   className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
                 />
               </div>
-              <button
-                type="button"
-                onClick={handleSeedImages}
-                disabled={busy}
-                className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-sky-200 disabled:opacity-60"
-              >
-                Seed Images
-              </button>
+              {seedSetProgress && (
+                <p className="text-xs uppercase tracking-[0.18em] text-emerald-200">
+                  Set progress: {seedSetProgress.completed}/{seedSetProgress.total} variants · inserted{" "}
+                  {seedSetProgress.inserted} · skipped {seedSetProgress.skipped} · failed {seedSetProgress.failed}
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleSeedSetImages}
+                  disabled={busy || !seedForm.setId.trim()}
+                  className="rounded-full border border-gold-400/60 bg-gold-500/20 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-gold-200 disabled:opacity-60"
+                >
+                  Seed Entire Set
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSeedImages}
+                  disabled={busy}
+                  className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-sky-200 disabled:opacity-60"
+                >
+                  Seed Single Parallel
+                </button>
+              </div>
             </div>
           </div>
         </section>

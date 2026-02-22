@@ -716,3 +716,23 @@
 - PDF parser now flushes dangling pending text at stream end and splits fused card-id/player tokens (`FSA-VWVictor` pattern).
 - Draft normalization now ignores effectively empty rows so blank manual rows do not trigger blocking validation.
 - Review UI now includes `Add Row` and per-row `Delete`.
+
+## 2026-02-22 - Variant Ref Seeding Follow-up #5 (Recent Set Dropdown + Seed Entire Set)
+
+### Summary
+- Added one-click set-level image seeding workflow on `/admin/variants` so operators do not need to manually type Set IDs and Parallel IDs.
+- Seed panel now loads recently seeded sets (from set-ops seed history), allows selecting a set, and supports bulk seeding all variants in that set.
+- Added duplicate URL guard in SerpAPI image seed endpoint to reduce duplicate reference inserts on re-runs.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/variants/sets.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+- `frontend/nextjs-app/pages/admin/variants.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- New seed panel actions:
+  - `Seed Entire Set` = loops all variants in selected set and seeds refs with auto query generation.
+  - `Seed Single Parallel` = existing targeted flow remains.
+- Recent set dropdown auto-populates Set ID and keeps manual override support.
