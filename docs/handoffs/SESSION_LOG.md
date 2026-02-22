@@ -800,3 +800,20 @@
 - New actions in QA panel:
   - `Mark Selected Done`
   - `Reopen Selected`
+
+## 2026-02-22 - Vercel Build Follow-up #9 (Prisma Typing Hardening)
+
+### Summary
+- Production build on Vercel failed in `pages/api/admin/variants/index.ts` while compiling the new `qaDoneCount` logic.
+- Root issue was Prisma TS inference instability for this query path (`groupBy` generic mismatch, then `findMany` inferred as `{}` rows under Vercel checker).
+- Hardened the endpoint query typing to be deployment-safe without changing behavior.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- Done-row collection now uses `findMany + distinct`.
+- Staging array normalized to `any[]` and extracted with safe string coercion before keying.
+- Queue behavior unchanged: done is still derived from `qaStatus=keep OR ownedStatus=owned`.

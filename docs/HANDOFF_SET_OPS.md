@@ -458,3 +458,15 @@ Build Set Ops UI flow with:
     - supports `setId` filtering for targeted queue loads.
     - computes `qaDoneCount` per variant (`qaStatus=keep` or `ownedStatus=owned`) and returns it in API payload.
     - sorts queue so unfinished variants stay at top; done variants sink to bottom.
+
+## Vercel Build Stabilization (2026-02-22, Follow-up #9)
+- New production feedback:
+  - Vercel build failed in `/api/admin/variants/index.ts` due Prisma TypeScript inference mismatch on `qaDoneCount` query path.
+  - errors included `groupBy` generic mismatch and then `findMany` inferred as `{}` rows on Vercel TS checker.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+    - replaced fragile `groupBy`-typed assignment path for done rows with a safer `findMany + distinct` approach.
+    - switched `qaDoneRows` staging to `any[]` and normalized fields via safe extraction before map keying.
+    - preserved behavior (`qaStatus=keep` OR `ownedStatus=owned` marks variant as done for queue ordering).
+- Result:
+  - build compiles successfully on Vercel after this patch while preserving QA queue behavior.
