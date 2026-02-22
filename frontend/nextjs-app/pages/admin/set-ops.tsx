@@ -18,6 +18,21 @@ type SetSummaryRow = {
   updatedAt: string | null;
 };
 
+type DeleteImpact = {
+  setId: string;
+  rowsToDelete: {
+    cardVariants: number;
+    referenceImages: number;
+    drafts: number;
+    draftVersions: number;
+    approvals: number;
+    ingestionJobs: number;
+    seedJobs: number;
+  };
+  totalRowsToDelete: number;
+  auditEventsForSet: number;
+};
+
 type LoadResponse =
   | {
       sets: SetSummaryRow[];
@@ -51,6 +66,11 @@ export default function SetOpsPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [auditSnippet, setAuditSnippet] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<SetSummaryRow | null>(null);
+  const [deleteImpact, setDeleteImpact] = useState<DeleteImpact | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState("");
 
   const loadedRef = useRef(false);
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
@@ -164,6 +184,106 @@ export default function SetOpsPage() {
     },
     [adminHeaders, isAdmin, session?.token]
   );
+
+  const requestDeleteImpact = useCallback(
+    async (setId: string) => {
+      if (!session?.token || !isAdmin) return;
+      setDeleteBusy(true);
+      setDeleteError(null);
+      try {
+        const response = await fetch("/api/admin/set-ops/delete/dry-run", {
+          method: "POST",
+          headers: {
+            ...adminHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ setId }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+          impact?: DeleteImpact;
+          audit?: { id?: string } | null;
+        };
+        if (!response.ok) {
+          throw new Error(payload.message ?? "Failed to load delete impact");
+        }
+        setDeleteImpact(payload.impact ?? null);
+        if (payload.audit?.id) {
+          setAuditSnippet(`Audit event: ${payload.audit.id}`);
+        }
+      } catch (impactError) {
+        setDeleteImpact(null);
+        setDeleteError(impactError instanceof Error ? impactError.message : "Failed to load delete impact");
+      } finally {
+        setDeleteBusy(false);
+      }
+    },
+    [adminHeaders, isAdmin, session?.token]
+  );
+
+  const closeDeleteModal = useCallback(() => {
+    setDeleteTarget(null);
+    setDeleteImpact(null);
+    setDeleteError(null);
+    setDeleteConfirmation("");
+    setDeleteBusy(false);
+  }, []);
+
+  const openDeleteModal = useCallback(
+    (row: SetSummaryRow) => {
+      setDeleteTarget(row);
+      setDeleteImpact(null);
+      setDeleteError(null);
+      setDeleteConfirmation("");
+      void requestDeleteImpact(row.setId);
+    },
+    [requestDeleteImpact]
+  );
+
+  const confirmDeleteSet = useCallback(async () => {
+    if (!deleteTarget || !session?.token || !isAdmin) return;
+    setDeleteBusy(true);
+    setDeleteError(null);
+    setError(null);
+    setStatus(null);
+    setAuditSnippet(null);
+    try {
+      const response = await fetch("/api/admin/set-ops/delete/confirm", {
+        method: "POST",
+        headers: {
+          ...adminHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          setId: deleteTarget.setId,
+          typedConfirmation: deleteConfirmation,
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        impact?: DeleteImpact;
+        audit?: { id?: string } | null;
+      };
+      if (!response.ok) {
+        throw new Error(payload.message ?? "Delete failed");
+      }
+
+      setRows((prev) => prev.filter((entry) => entry.setId !== deleteTarget.setId));
+      setTotal((prev) => Math.max(0, prev - 1));
+
+      const rowsDeleted = payload.impact?.totalRowsToDelete ?? 0;
+      setStatus(`Deleted ${deleteTarget.setId} (${rowsDeleted} rows).`);
+      if (payload.audit?.id) {
+        setAuditSnippet(`Audit event: ${payload.audit.id}`);
+      }
+
+      closeDeleteModal();
+    } catch (confirmError) {
+      setDeleteError(confirmError instanceof Error ? confirmError.message : "Delete failed");
+    } finally {
+      setDeleteBusy(false);
+    }
+  }, [adminHeaders, closeDeleteModal, deleteConfirmation, deleteTarget, isAdmin, session?.token]);
 
   const variantTotal = useMemo(
     () => rows.reduce((sum, row) => sum + Math.max(0, row.variantCount || 0), 0),
@@ -338,6 +458,7 @@ export default function SetOpsPage() {
                   <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">Last Seed</th>
                   <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">Updated</th>
                   <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">Archive</th>
+                  <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">Delete</th>
                 </tr>
               </thead>
               <tbody>
@@ -364,7 +485,7 @@ export default function SetOpsPage() {
                       <button
                         type="button"
                         onClick={() => void updateArchiveState(row, !row.archived)}
-                        disabled={busy || actionBusySetId === row.setId}
+                        disabled={busy || deleteBusy || actionBusySetId === row.setId}
                         className={`rounded-lg border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] transition disabled:cursor-not-allowed disabled:opacity-60 ${
                           row.archived
                             ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
@@ -374,11 +495,21 @@ export default function SetOpsPage() {
                         {actionBusySetId === row.setId ? "Saving..." : row.archived ? "Unarchive" : "Archive"}
                       </button>
                     </td>
+                    <td className="border-b border-white/5 px-3 py-3 align-top">
+                      <button
+                        type="button"
+                        onClick={() => openDeleteModal(row)}
+                        disabled={busy || deleteBusy || actionBusySetId === row.setId}
+                        className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Delete
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {rows.length === 0 && !busy && (
                   <tr>
-                    <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-400">
+                    <td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-400">
                       No sets matched this query.
                     </td>
                   </tr>
@@ -387,6 +518,73 @@ export default function SetOpsPage() {
             </table>
           </div>
         </section>
+
+        {deleteTarget && (
+          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 px-4 py-6">
+            <div className="w-full max-w-2xl rounded-2xl border border-rose-400/25 bg-night-950 p-5 shadow-2xl md:p-6">
+              <p className="text-xs uppercase tracking-[0.22em] text-rose-300">Danger Zone</p>
+              <h2 className="mt-2 text-2xl font-semibold text-white">Delete Set</h2>
+              <p className="mt-2 text-sm text-slate-300">
+                This permanently deletes variant/reference and Set Ops workflow rows for:
+              </p>
+              <p className="mt-2 break-all text-sm font-semibold text-rose-200">{deleteTarget.setId}</p>
+
+              <div className="mt-4 rounded-xl border border-white/10 bg-night-900/70 p-4">
+                {deleteBusy && !deleteImpact ? (
+                  <p className="text-sm text-slate-300">Loading dry-run impact…</p>
+                ) : (
+                  <>
+                    <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Dry-Run Impact</p>
+                    <div className="mt-2 grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
+                      <p>Card Variants: {deleteImpact?.rowsToDelete.cardVariants ?? 0}</p>
+                      <p>Reference Images: {deleteImpact?.rowsToDelete.referenceImages ?? 0}</p>
+                      <p>Set Drafts: {deleteImpact?.rowsToDelete.drafts ?? 0}</p>
+                      <p>Draft Versions: {deleteImpact?.rowsToDelete.draftVersions ?? 0}</p>
+                      <p>Approvals: {deleteImpact?.rowsToDelete.approvals ?? 0}</p>
+                      <p>Ingestion Jobs: {deleteImpact?.rowsToDelete.ingestionJobs ?? 0}</p>
+                      <p>Seed Jobs: {deleteImpact?.rowsToDelete.seedJobs ?? 0}</p>
+                      <p>Audit Events (retained): {deleteImpact?.auditEventsForSet ?? 0}</p>
+                    </div>
+                    <p className="mt-2 text-sm font-semibold text-rose-200">
+                      Total rows to delete: {deleteImpact?.totalRowsToDelete ?? 0}
+                    </p>
+                  </>
+                )}
+              </div>
+
+              <label className="mt-4 block text-xs uppercase tracking-[0.2em] text-slate-300">
+                Type exactly: <span className="text-rose-200">DELETE {deleteTarget.setId}</span>
+              </label>
+              <input
+                value={deleteConfirmation}
+                onChange={(event) => setDeleteConfirmation(event.target.value)}
+                placeholder={`DELETE ${deleteTarget.setId}`}
+                className="mt-2 h-11 w-full rounded-xl border border-white/15 bg-night-900/80 px-3 text-sm text-white outline-none transition focus:border-rose-400/70"
+              />
+
+              {deleteError && <p className="mt-3 text-sm text-rose-300">{deleteError}</p>}
+
+              <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  onClick={closeDeleteModal}
+                  disabled={deleteBusy}
+                  className="h-10 rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void confirmDeleteSet()}
+                  disabled={deleteBusy || deleteConfirmation.trim() !== `DELETE ${deleteTarget.setId}`}
+                  className="h-10 rounded-xl border border-rose-400/40 bg-rose-500/20 px-4 text-xs font-semibold uppercase tracking-[0.18em] text-rose-100 transition hover:bg-rose-500/30 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {deleteBusy ? "Deleting..." : "Confirm Delete"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AppShell>
   );

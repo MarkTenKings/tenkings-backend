@@ -145,3 +145,19 @@
 
 ### Validation Evidence
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx` passed.
+
+## 2026-02-22 - Set Ops P0-B Ticket 12 (Delete Action UI)
+
+### Summary
+- Added delete controls to `/admin/set-ops` rows.
+- Implemented destructive-action modal with:
+  - automatic dry-run impact preview (`/api/admin/set-ops/delete/dry-run`)
+  - required typed confirmation phrase (`DELETE <setId>`)
+  - confirm execution via `/api/admin/set-ops/delete/confirm`
+- Added success/error/audit feedback wiring to the Set Ops page state.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx` passed.

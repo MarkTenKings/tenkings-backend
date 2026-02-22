@@ -103,3 +103,5 @@ Build Set Ops UI flow with:
 - Targeted lint check for new admin page files: pass.
 - P0-B Ticket 11 complete in code: archive/unarchive row actions with API wiring and audit id feedback snippet in UI.
 - Targeted lint check for archive UI update: pass.
+- P0-B Ticket 12 complete in code: delete modal UI with dry-run impact preview + typed confirm enforcement + confirm action wiring.
+- Targeted lint check for delete UI update: pass.
