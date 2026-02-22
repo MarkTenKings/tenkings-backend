@@ -596,3 +596,31 @@
 
 ### Notes
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-22 - Set Ops PDF Decode Hardening + Combined Import Mode
+
+### Summary
+- Fixed follow-up parser failures where Topps checklist PDFs returned zero rows for both:
+  - direct source URL import
+  - PDF upload parse path
+- Root cause was shared PDF stream extraction weakness.
+- Added PDF decoding improvements in discovery parser:
+  - ToUnicode CMap parsing (`bfchar`/`bfrange`)
+  - mapped hex/literal decoding context
+  - loose text fallback extraction for sparse structured streams
+- Added combined dataset import UX in Set Ops review:
+  - direct URL: `Import URL as combined`
+  - discovered result rows: `Import combined`
+  - Step 1 ingestion dataset selector: `combined (parallel + player)` queues two jobs in one action.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/discovery/parse-upload.ts` passed.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still fails from pre-existing Prisma client/schema mismatch outside this scope.
+
+### Notes
+- No deploy/restart/migration was executed in this step.

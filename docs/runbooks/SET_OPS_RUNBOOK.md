@@ -44,8 +44,9 @@ Code checks:
 Manual staging flow:
 1. Run source discovery search (year/manufacturer/sport/query), import one discovered source as ingestion job, and confirm row count > 0.
 Note: if discovery/import reports source access blocked (`401/403`), use Step 1 file upload fallback (CSV/JSON/PDF) in `/admin/set-ops-review`.
-Note: if discovery result opens a listing/search page instead of exact checklist page, copy the exact URL and use Step 0 direct URL import controls (`Import URL as parallel_db` / `player_worksheet`).
+Note: if discovery result opens a listing/search page instead of exact checklist page, copy the exact URL and use Step 0 direct URL import controls (`Import URL as parallel_db` / `player_worksheet` / `combined`).
 2. Queue ingestion (`parallel_db`) and build draft.
+Note: for checklist sources that include both parallel and player rows in one file/source, choose combined mode to queue both datasets together.
 3. Edit at least one draft row and save a new immutable version.
 4. Verify approval is blocked when blocking errors exist.
 5. Approve clean draft and verify approval diff/metadata.

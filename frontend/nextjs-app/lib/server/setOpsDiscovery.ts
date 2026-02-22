@@ -617,6 +617,175 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
   return rows;
 }
 
+type PdfUnicodeMap = Map<string, string>;
+
+type PdfDecodeContext = {
+  unicodeMap: PdfUnicodeMap;
+  keySizes: number[];
+};
+
+const emptyPdfDecodeContext: PdfDecodeContext = { unicodeMap: new Map(), keySizes: [] };
+
+function normalizePdfHexToken(value: string) {
+  return String(value || "")
+    .replace(/[^0-9a-f]/gi, "")
+    .toUpperCase();
+}
+
+function decodePdfUnicodeHex(hexValue: string) {
+  const normalized = normalizePdfHexToken(hexValue);
+  if (!normalized) return "";
+  const padded = normalized.length % 2 === 0 ? normalized : `${normalized}0`;
+  const bytes = Buffer.from(padded, "hex");
+  if (bytes.length === 0) return "";
+  if (bytes.length % 2 === 1) {
+    return bytes.toString("latin1");
+  }
+  let output = "";
+  for (let index = 0; index < bytes.length; index += 2) {
+    output += String.fromCharCode(bytes.readUInt16BE(index));
+  }
+  return output;
+}
+
+function buildPdfDecodeContext(unicodeMap: PdfUnicodeMap): PdfDecodeContext {
+  const keySizes = Array.from(new Set(Array.from(unicodeMap.keys()).map((key) => key.length)))
+    .filter((size) => size > 0)
+    .sort((a, b) => b - a);
+  return { unicodeMap, keySizes };
+}
+
+function decodePdfHexWithContext(hexValue: string, context: PdfDecodeContext): string {
+  const normalized = normalizePdfHexToken(hexValue);
+  if (!normalized) return "";
+
+  if (context.keySizes.length === 0 || context.unicodeMap.size === 0) {
+    const padded = normalized.length % 2 === 0 ? normalized : `${normalized}0`;
+    let fallback = "";
+    for (let index = 0; index < padded.length; index += 2) {
+      const code = Number.parseInt(padded.slice(index, index + 2), 16);
+      if (!Number.isNaN(code)) fallback += String.fromCharCode(code);
+    }
+    return fallback;
+  }
+
+  let output = "";
+  let cursor = 0;
+  while (cursor < normalized.length) {
+    let matched = false;
+    for (const keySize of context.keySizes) {
+      if (cursor + keySize > normalized.length) continue;
+      const token = normalized.slice(cursor, cursor + keySize);
+      const mapped = context.unicodeMap.get(token);
+      if (!mapped) continue;
+      output += mapped;
+      cursor += keySize;
+      matched = true;
+      break;
+    }
+    if (matched) continue;
+
+    if (cursor + 2 <= normalized.length) {
+      const code = Number.parseInt(normalized.slice(cursor, cursor + 2), 16);
+      if (!Number.isNaN(code)) output += String.fromCharCode(code);
+      cursor += 2;
+      continue;
+    }
+
+    break;
+  }
+  return output;
+}
+
+function decodePdfLiteralWithContext(value: string, context?: PdfDecodeContext) {
+  if (!context || context.unicodeMap.size === 0) return value;
+  if (/^[\x20-\x7E\s]+$/.test(value) && /[A-Za-z]/.test(value)) {
+    return value;
+  }
+  const bytes = Buffer.from(value, "latin1");
+  const hex = bytes.toString("hex");
+  const decoded = decodePdfHexWithContext(hex, context);
+  return decoded || value;
+}
+
+function parsePdfToUnicodeMap(streamContent: string): PdfUnicodeMap {
+  const map: PdfUnicodeMap = new Map();
+  const content = String(streamContent || "");
+  if (!/(beginbfchar|beginbfrange)/i.test(content)) {
+    return map;
+  }
+
+  const addMapping = (srcHex: string, dstHex: string) => {
+    const sourceKey = normalizePdfHexToken(srcHex);
+    if (!sourceKey) return;
+    const decoded = decodePdfUnicodeHex(dstHex);
+    if (!decoded) return;
+    map.set(sourceKey, decoded);
+  };
+
+  const bfcharPattern = /beginbfchar([\s\S]*?)endbfchar/gi;
+  let bfcharMatch: RegExpExecArray | null = null;
+  while ((bfcharMatch = bfcharPattern.exec(content))) {
+    const block = bfcharMatch[1] || "";
+    const pairPattern = /<([0-9a-f]+)>\s*<([0-9a-f]+)>/gi;
+    let pairMatch: RegExpExecArray | null = null;
+    while ((pairMatch = pairPattern.exec(block))) {
+      addMapping(pairMatch[1] || "", pairMatch[2] || "");
+    }
+  }
+
+  const bfrangePattern = /beginbfrange([\s\S]*?)endbfrange/gi;
+  let bfrangeMatch: RegExpExecArray | null = null;
+  while ((bfrangeMatch = bfrangePattern.exec(content))) {
+    const block = bfrangeMatch[1] || "";
+    const lines = block
+      .split(/\r?\n/)
+      .map((line) => compactWhitespace(line))
+      .filter(Boolean);
+
+    for (const line of lines) {
+      const arrayMatch = line.match(/^<([0-9a-f]+)>\s*<([0-9a-f]+)>\s*\[(.+)\]$/i);
+      if (arrayMatch) {
+        const srcStart = normalizePdfHexToken(arrayMatch[1] || "");
+        const srcEnd = normalizePdfHexToken(arrayMatch[2] || "");
+        const destinations = Array.from((arrayMatch[3] || "").matchAll(/<([0-9a-f]+)>/gi)).map((entry) =>
+          normalizePdfHexToken(entry[1] || "")
+        );
+        const srcStartInt = Number.parseInt(srcStart, 16);
+        const srcEndInt = Number.parseInt(srcEnd, 16);
+        if (Number.isNaN(srcStartInt) || Number.isNaN(srcEndInt) || srcEndInt < srcStartInt) continue;
+        const count = Math.min(destinations.length, srcEndInt - srcStartInt + 1, 4096);
+        for (let offset = 0; offset < count; offset += 1) {
+          const sourceHex = (srcStartInt + offset).toString(16).toUpperCase().padStart(srcStart.length, "0");
+          addMapping(sourceHex, destinations[offset] || "");
+        }
+        continue;
+      }
+
+      const sequentialMatch = line.match(/^<([0-9a-f]+)>\s*<([0-9a-f]+)>\s*<([0-9a-f]+)>$/i);
+      if (sequentialMatch) {
+        const srcStart = normalizePdfHexToken(sequentialMatch[1] || "");
+        const srcEnd = normalizePdfHexToken(sequentialMatch[2] || "");
+        const dstStart = normalizePdfHexToken(sequentialMatch[3] || "");
+        const srcStartInt = Number.parseInt(srcStart, 16);
+        const srcEndInt = Number.parseInt(srcEnd, 16);
+        const dstStartInt = Number.parseInt(dstStart, 16);
+        if (Number.isNaN(srcStartInt) || Number.isNaN(srcEndInt) || Number.isNaN(dstStartInt) || srcEndInt < srcStartInt) {
+          continue;
+        }
+        const count = Math.min(srcEndInt - srcStartInt + 1, 4096);
+        for (let offset = 0; offset < count; offset += 1) {
+          const sourceHex = (srcStartInt + offset).toString(16).toUpperCase().padStart(srcStart.length, "0");
+          const destinationHex = (dstStartInt + offset).toString(16).toUpperCase().padStart(dstStart.length, "0");
+          addMapping(sourceHex, destinationHex);
+        }
+      }
+    }
+  }
+
+  return map;
+}
+
 function parsePdfLiteralString(content: string, startIndex: number): { value: string; nextIndex: number } {
   let index = startIndex + 1;
   let depth = 0;
@@ -686,22 +855,15 @@ function parsePdfLiteralString(content: string, startIndex: number): { value: st
   return { value: output, nextIndex: index };
 }
 
-function parsePdfHexString(content: string, startIndex: number): { value: string; nextIndex: number } {
+function parsePdfHexString(content: string, startIndex: number, context?: PdfDecodeContext): { value: string; nextIndex: number } {
   const end = content.indexOf(">", startIndex + 1);
   if (end < 0) return { value: "", nextIndex: content.length };
-  const hex = content
-    .slice(startIndex + 1, end)
-    .replace(/[^0-9a-f]/gi, "");
-  const padded = hex.length % 2 === 0 ? hex : `${hex}0`;
-  let output = "";
-  for (let index = 0; index < padded.length; index += 2) {
-    const code = Number.parseInt(padded.slice(index, index + 2), 16);
-    if (!Number.isNaN(code)) output += String.fromCharCode(code);
-  }
+  const hex = content.slice(startIndex + 1, end);
+  const output = decodePdfHexWithContext(hex, context ?? emptyPdfDecodeContext);
   return { value: output, nextIndex: end + 1 };
 }
 
-function parsePdfArrayString(content: string, startIndex: number): { value: string; nextIndex: number } {
+function parsePdfArrayString(content: string, startIndex: number, context?: PdfDecodeContext): { value: string; nextIndex: number } {
   let index = startIndex + 1;
   let depth = 1;
   const chunks: string[] = [];
@@ -710,13 +872,13 @@ function parsePdfArrayString(content: string, startIndex: number): { value: stri
     const char = content[index]!;
     if (char === "(") {
       const parsed = parsePdfLiteralString(content, index);
-      const value = compactWhitespace(parsed.value);
+      const value = compactWhitespace(decodePdfLiteralWithContext(parsed.value, context));
       if (value) chunks.push(value);
       index = parsed.nextIndex;
       continue;
     }
     if (char === "<" && content[index + 1] !== "<") {
-      const parsed = parsePdfHexString(content, index);
+      const parsed = parsePdfHexString(content, index, context);
       const value = compactWhitespace(parsed.value);
       if (value) chunks.push(value);
       index = parsed.nextIndex;
@@ -759,7 +921,7 @@ function appendPdfLineValue(currentLine: string, value: string) {
   return currentLine ? `${currentLine} ${cleaned}` : cleaned;
 }
 
-function extractLinesFromPdfContentStream(content: string): string[] {
+function extractLinesFromPdfContentStream(content: string, context?: PdfDecodeContext): string[] {
   const lines: string[] = [];
   let currentLine = "";
   let pendingText = "";
@@ -781,20 +943,20 @@ function extractLinesFromPdfContentStream(content: string): string[] {
 
     if (char === "(") {
       const parsed = parsePdfLiteralString(content, index);
-      pendingText = parsed.value;
+      pendingText = decodePdfLiteralWithContext(parsed.value, context);
       index = parsed.nextIndex;
       continue;
     }
 
     if (char === "<" && content[index + 1] !== "<") {
-      const parsed = parsePdfHexString(content, index);
+      const parsed = parsePdfHexString(content, index, context);
       pendingText = parsed.value;
       index = parsed.nextIndex;
       continue;
     }
 
     if (char === "[") {
-      const parsed = parsePdfArrayString(content, index);
+      const parsed = parsePdfArrayString(content, index, context);
       pendingText = parsed.value;
       index = parsed.nextIndex;
       continue;
@@ -823,9 +985,35 @@ function extractLinesFromPdfContentStream(content: string): string[] {
   return lines;
 }
 
+function extractLooseTextFromPdfContentStream(content: string, context?: PdfDecodeContext): string[] {
+  const fragments: string[] = [];
+  let index = 0;
+
+  while (index < content.length) {
+    const char = content[index]!;
+    if (char === "(") {
+      const parsed = parsePdfLiteralString(content, index);
+      const value = compactWhitespace(decodePdfLiteralWithContext(parsed.value, context));
+      if (value) fragments.push(value);
+      index = parsed.nextIndex;
+      continue;
+    }
+    if (char === "<" && content[index + 1] !== "<") {
+      const parsed = parsePdfHexString(content, index, context);
+      const value = compactWhitespace(parsed.value);
+      if (value) fragments.push(value);
+      index = parsed.nextIndex;
+      continue;
+    }
+    index += 1;
+  }
+
+  return fragments;
+}
+
 function extractChecklistTextFromPdfBuffer(buffer: Buffer): string {
   const pdf = buffer.toString("latin1");
-  const lines: string[] = [];
+  const decodedStreams: string[] = [];
   let cursor = 0;
 
   while (cursor < pdf.length) {
@@ -864,11 +1052,30 @@ function extractChecklistTextFromPdfBuffer(buffer: Buffer): string {
     }
 
     if (decoded && decoded.length > 0) {
-      const streamLines = extractLinesFromPdfContentStream(decoded.toString("latin1"));
-      lines.push(...streamLines);
+      decodedStreams.push(decoded.toString("latin1"));
     }
 
     cursor = streamEnd + "endstream".length;
+  }
+
+  const unicodeMap: PdfUnicodeMap = new Map();
+  for (const stream of decodedStreams) {
+    const parsedMap = parsePdfToUnicodeMap(stream);
+    for (const [source, target] of parsedMap.entries()) {
+      unicodeMap.set(source, target);
+    }
+  }
+  const decodeContext = buildPdfDecodeContext(unicodeMap);
+
+  const lines: string[] = [];
+  for (const stream of decodedStreams) {
+    lines.push(...extractLinesFromPdfContentStream(stream, decodeContext));
+  }
+
+  if (lines.length < 12) {
+    for (const stream of decodedStreams) {
+      lines.push(...extractLooseTextFromPdfContentStream(stream, decodeContext));
+    }
   }
 
   return lines

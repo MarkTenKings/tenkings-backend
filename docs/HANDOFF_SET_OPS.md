@@ -258,3 +258,44 @@ Build Set Ops UI flow with:
    - raw payload is populated with parsed rows
    - no manual JSON editing required.
 7. Build a draft version and confirm blocking validation still rejects markup-like noise if any slips through.
+
+## PDF Parser Hardening + Combined Import Mode (2026-02-22)
+- User-reported follow-up issue:
+  - Topps PDF direct URL import returned `Source parser returned zero rows.`
+  - Same PDF uploaded via Step 1 returned `No checklist rows were detected from this PDF...`.
+  - User requested combined import mode for sources that contain both parallel + player checklist content.
+- Root cause:
+  - URL import and PDF upload both depended on the same low-level PDF extractor path.
+  - That extractor failed on some font-encoded PDFs (especially when text required ToUnicode CMap translation), yielding zero parsed checklist rows.
+- Backend parser changes:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+  - Added PDF ToUnicode CMap parsing (`bfchar` / `bfrange`) and decode context support.
+  - Added mapped hex/literal decoding in PDF text stream parsing.
+  - Added loose text fragment fallback extraction from PDF streams when structured extraction yields too few lines.
+  - Kept existing PDF->checklist row normalization path; improved extraction quality feeding it.
+- UI workflow changes:
+  - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+  - Added combined mode (`COMBINED`) for Step 1 Ingestion Queue dataset selection:
+    - queues both `PARALLEL_DB` and `PLAYER_WORKSHEET` jobs from the same payload in one action.
+  - Added third direct URL action in Step 0:
+    - `Import URL as combined`.
+  - Added third discovered source row action:
+    - `Import combined`.
+  - Added clearer queue button label:
+    - `Queue parallel_db + player_worksheet` when combined mode is selected.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/discovery/parse-upload.ts` passed.
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still fails with existing repo-wide Prisma/client mismatch errors (pre-existing; unrelated to these file edits).
+
+## Production Test Focus (Latest Build)
+1. In `/admin/set-ops-review`, paste Topps PDF URL and run:
+   - `Import URL as combined`
+2. Confirm:
+   - two ingestion jobs are queued: one `PARALLEL_DB`, one `PLAYER_WORKSHEET`.
+   - row counts are non-zero.
+3. Upload the same PDF file via Step 1 and choose dataset mode:
+   - `combined (parallel + player)`
+   - click queue button.
+4. Confirm:
+   - two ingestion jobs are queued from upload payload.
+   - no zero-row parser error appears for that PDF.

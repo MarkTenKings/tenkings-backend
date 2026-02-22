@@ -7,6 +7,7 @@ import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 
 type DatasetType = "PARALLEL_DB" | "PLAYER_WORKSHEET";
+type CombinedDatasetMode = DatasetType | "COMBINED";
 
 type IngestionJob = {
   id: string;
@@ -265,6 +266,18 @@ function buildSetIdFromDiscoveryInputs(params: {
   return [year, manufacturer, sport, queryPart].filter(Boolean).join(" ");
 }
 
+const combinedDatasetImportOrder: DatasetType[] = ["PARALLEL_DB", "PLAYER_WORKSHEET"];
+
+function expandDatasetMode(mode: CombinedDatasetMode): DatasetType[] {
+  if (mode === "COMBINED") return combinedDatasetImportOrder;
+  return [mode];
+}
+
+function formatDatasetMode(mode: CombinedDatasetMode) {
+  if (mode === "COMBINED") return "parallel_db + player_worksheet";
+  return mode === "PARALLEL_DB" ? "parallel_db" : "player_worksheet";
+}
+
 export default function SetOpsReviewPage() {
   const { session, loading, ensureSession, logout } = useSession();
   const isAdmin = useMemo(
@@ -276,6 +289,7 @@ export default function SetOpsReviewPage() {
   const autoLoadedRef = useRef(false);
 
   const [datasetType, setDatasetType] = useState<DatasetType>("PARALLEL_DB");
+  const [queueDatasetMode, setQueueDatasetMode] = useState<CombinedDatasetMode>("PARALLEL_DB");
   const [setIdInput, setSetIdInput] = useState("");
   const [sourceUrlInput, setSourceUrlInput] = useState("");
   const [parserVersionInput, setParserVersionInput] = useState("manual-v1");
@@ -482,37 +496,64 @@ export default function SetOpsReviewPage() {
         }
         const sourceProvider = payloadFileName ? "FILE_UPLOAD" : "MANUAL_JSON";
 
-        const response = await fetch("/api/admin/set-ops/ingestion", {
-          method: "POST",
-          headers: {
-            ...adminHeaders,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            setId: setIdInput,
-            datasetType,
-            sourceUrl: sourceUrlInput || null,
-            parserVersion: parserVersionInput || "manual-v1",
-            sourceProvider,
-            sourceFetchMeta: {
-              rowCount,
-              fileName: payloadFileName || null,
-              importedAt: new Date().toISOString(),
+        const datasetPlan = expandDatasetMode(queueDatasetMode);
+        const createdJobs: IngestionJob[] = [];
+
+        for (const datasetTypeForImport of datasetPlan) {
+          const response = await fetch("/api/admin/set-ops/ingestion", {
+            method: "POST",
+            headers: {
+              ...adminHeaders,
+              "Content-Type": "application/json",
             },
-            rawPayload: parsedPayload,
-          }),
-        });
-        const payload = (await response.json().catch(() => ({}))) as {
-          message?: string;
-          job?: IngestionJob;
-        };
-        if (!response.ok) {
-          throw new Error(payload.message ?? "Failed to enqueue ingestion job");
+            body: JSON.stringify({
+              setId: setIdInput,
+              datasetType: datasetTypeForImport,
+              sourceUrl: sourceUrlInput || null,
+              parserVersion: parserVersionInput || "manual-v1",
+              sourceProvider,
+              sourceFetchMeta: {
+                rowCount,
+                fileName: payloadFileName || null,
+                importedAt: new Date().toISOString(),
+                datasetMode: queueDatasetMode,
+              },
+              rawPayload: parsedPayload,
+            }),
+          });
+          const payload = (await response.json().catch(() => ({}))) as {
+            message?: string;
+            job?: IngestionJob;
+          };
+          if (!response.ok || !payload.job) {
+            if (createdJobs.length > 0) {
+              setStatus(
+                `Queued ${createdJobs.length} of ${datasetPlan.length} ingestion jobs before failure (${createdJobs
+                  .map((job) => `${job.datasetType}:${job.id.slice(0, 8)}`)
+                  .join(", ")}).`
+              );
+            }
+            throw new Error(payload.message ?? "Failed to enqueue ingestion job");
+          }
+          createdJobs.push(payload.job);
         }
 
-        setStatus(`Queued ingestion job ${payload.job?.id ?? ""}.`);
-        if (payload.job?.id) {
-          setSelectedJobId(payload.job.id);
+        const latestJob = createdJobs[createdJobs.length - 1];
+        if (latestJob?.id) {
+          setSelectedJobId(latestJob.id);
+          setDatasetType(latestJob.datasetType as DatasetType);
+          setQueueDatasetMode(latestJob.datasetType as CombinedDatasetMode);
+          setSetIdInput(latestJob.setId);
+          setSourceUrlInput(latestJob.sourceUrl ?? sourceUrlInput);
+        }
+        if (createdJobs.length === 1) {
+          setStatus(`Queued ingestion job ${createdJobs[0]?.id ?? ""}.`);
+        } else {
+          setStatus(
+            `Queued ${createdJobs.length} ingestion jobs (${createdJobs
+              .map((job) => `${job.datasetType}:${job.id.slice(0, 8)}`)
+              .join(", ")}).`
+          );
         }
         await fetchIngestionJobs();
       } catch (createError) {
@@ -523,12 +564,12 @@ export default function SetOpsReviewPage() {
     },
     [
       adminHeaders,
-      datasetType,
       fetchIngestionJobs,
       canReview,
       isAdmin,
       parserVersionInput,
       payloadFileName,
+      queueDatasetMode,
       rawPayloadInput,
       session?.token,
       setIdInput,
@@ -666,7 +707,7 @@ export default function SetOpsReviewPage() {
   );
 
   const importDiscoveredResult = useCallback(
-    async (result: DiscoveryResult, datasetTypeForImport: DatasetType) => {
+    async (result: DiscoveryResult, datasetMode: CombinedDatasetMode) => {
       if (!session?.token || !isAdmin) return;
       if (!canReview) {
         setError("Set Ops reviewer role required");
@@ -678,50 +719,77 @@ export default function SetOpsReviewPage() {
       setStatus(null);
 
       try {
+        const datasetPlan = expandDatasetMode(datasetMode);
         const requestedSetId =
           discoverySetIdOverrideInput.trim() || discoverySetIdSuggestion || result.setIdGuess || undefined;
-        const response = await fetch("/api/admin/set-ops/discovery/import", {
-          method: "POST",
-          headers: {
-            ...adminHeaders,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            setId: requestedSetId,
-            datasetType: datasetTypeForImport,
-            sourceUrl: result.url,
-            sourceProvider: result.provider,
-            sourceTitle: result.title,
-            parserVersion: `source-discovery-v1`,
-            discoveryQuery: {
-              year: discoveryYearInput.trim() || null,
-              manufacturer: discoveryManufacturerInput.trim() || null,
-              sport: discoverySportInput.trim() || null,
-              query: discoveryQueryInput.trim() || null,
+        const importedJobs: IngestionJob[] = [];
+        let totalRows = 0;
+
+        for (const datasetTypeForImport of datasetPlan) {
+          const response = await fetch("/api/admin/set-ops/discovery/import", {
+            method: "POST",
+            headers: {
+              ...adminHeaders,
+              "Content-Type": "application/json",
             },
-          }),
-        });
-        const payload = (await response.json().catch(() => ({}))) as {
-          message?: string;
-          job?: IngestionJob;
-          preview?: { rowCount?: number; setId?: string };
-        };
-        if (!response.ok || !payload.job) {
-          throw new Error(payload.message ?? "Failed to import discovered source");
+            body: JSON.stringify({
+              setId: requestedSetId,
+              datasetType: datasetTypeForImport,
+              sourceUrl: result.url,
+              sourceProvider: result.provider,
+              sourceTitle: result.title,
+              parserVersion: `source-discovery-v1`,
+              discoveryQuery: {
+                year: discoveryYearInput.trim() || null,
+                manufacturer: discoveryManufacturerInput.trim() || null,
+                sport: discoverySportInput.trim() || null,
+                query: discoveryQueryInput.trim() || null,
+                datasetMode,
+              },
+            }),
+          });
+          const payload = (await response.json().catch(() => ({}))) as {
+            message?: string;
+            job?: IngestionJob;
+            preview?: { rowCount?: number; setId?: string };
+          };
+          if (!response.ok || !payload.job) {
+            if (importedJobs.length > 0) {
+              setStatus(
+                `Imported ${importedJobs.length} of ${datasetPlan.length} datasets before failure (${importedJobs
+                  .map((job) => `${job.datasetType}:${job.id.slice(0, 8)}`)
+                  .join(", ")}).`
+              );
+            }
+            throw new Error(payload.message ?? "Failed to import discovered source");
+          }
+          importedJobs.push(payload.job);
+          totalRows += Number(payload.preview?.rowCount ?? 0);
         }
 
         await fetchIngestionJobs();
-        setSelectedJobId(payload.job.id);
-        setSelectedSetId(payload.job.setId);
-        setDatasetType(payload.job.datasetType as DatasetType);
-        setSetIdInput(payload.job.setId);
-        setSourceUrlInput(payload.job.sourceUrl ?? result.url);
-        setDiscoverySourceUrlInput(payload.job.sourceUrl ?? result.url);
+        const latestJob = importedJobs[importedJobs.length - 1];
+        if (latestJob) {
+          setSelectedJobId(latestJob.id);
+          setSelectedSetId(latestJob.setId);
+          setDatasetType(latestJob.datasetType as DatasetType);
+          setQueueDatasetMode(latestJob.datasetType as CombinedDatasetMode);
+          setSetIdInput(latestJob.setId);
+          setSourceUrlInput(latestJob.sourceUrl ?? result.url);
+          setDiscoverySourceUrlInput(latestJob.sourceUrl ?? result.url);
+        }
 
-        const rowCount = payload.preview?.rowCount ?? 0;
-        setStatus(
-          `Imported ${rowCount.toLocaleString()} rows from ${result.provider} and queued ingestion job ${payload.job.id}.`
-        );
+        if (importedJobs.length === 1) {
+          setStatus(
+            `Imported ${totalRows.toLocaleString()} rows from ${result.provider} and queued ingestion job ${importedJobs[0]?.id}.`
+          );
+        } else {
+          setStatus(
+            `Imported ${totalRows.toLocaleString()} rows from ${result.provider} and queued ${importedJobs.length} jobs (${importedJobs
+              .map((job) => `${job.datasetType}:${job.id.slice(0, 8)}`)
+              .join(", ")}).`
+          );
+        }
       } catch (importError) {
         setError(importError instanceof Error ? importError.message : "Failed to import discovered source");
       } finally {
@@ -744,7 +812,7 @@ export default function SetOpsReviewPage() {
   );
 
   const importDirectSourceUrl = useCallback(
-    async (datasetTypeForImport: DatasetType) => {
+    async (datasetMode: CombinedDatasetMode) => {
       if (!session?.token || !isAdmin) return;
       if (!canReview) {
         setError("Set Ops reviewer role required");
@@ -760,55 +828,82 @@ export default function SetOpsReviewPage() {
         return;
       }
 
-      const busyId = `direct:${datasetTypeForImport}`;
+      const busyId = `direct:${datasetMode}`;
       setDiscoveryImportBusyId(busyId);
       setError(null);
       setStatus(null);
 
       try {
+        const datasetPlan = expandDatasetMode(datasetMode);
         const requestedSetId = discoverySetIdOverrideInput.trim() || discoverySetIdSuggestion || undefined;
-        const response = await fetch("/api/admin/set-ops/discovery/import", {
-          method: "POST",
-          headers: {
-            ...adminHeaders,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            setId: requestedSetId,
-            datasetType: datasetTypeForImport,
-            sourceUrl,
-            sourceProvider: "MANUAL_SOURCE_URL",
-            sourceTitle: requestedSetId || sourceUrl,
-            parserVersion: "source-discovery-v1",
-            discoveryQuery: {
-              year: discoveryYearInput.trim() || null,
-              manufacturer: discoveryManufacturerInput.trim() || null,
-              sport: discoverySportInput.trim() || null,
-              query: discoveryQueryInput.trim() || null,
-            },
-          }),
-        });
+        const importedJobs: IngestionJob[] = [];
+        let totalRows = 0;
 
-        const payload = (await response.json().catch(() => ({}))) as {
-          message?: string;
-          job?: IngestionJob;
-          preview?: { rowCount?: number };
-        };
-        if (!response.ok || !payload.job) {
-          throw new Error(payload.message ?? "Failed to import source URL");
+        for (const datasetTypeForImport of datasetPlan) {
+          const response = await fetch("/api/admin/set-ops/discovery/import", {
+            method: "POST",
+            headers: {
+              ...adminHeaders,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              setId: requestedSetId,
+              datasetType: datasetTypeForImport,
+              sourceUrl,
+              sourceProvider: "MANUAL_SOURCE_URL",
+              sourceTitle: requestedSetId || sourceUrl,
+              parserVersion: "source-discovery-v1",
+              discoveryQuery: {
+                year: discoveryYearInput.trim() || null,
+                manufacturer: discoveryManufacturerInput.trim() || null,
+                sport: discoverySportInput.trim() || null,
+                query: discoveryQueryInput.trim() || null,
+                datasetMode,
+              },
+            }),
+          });
+
+          const payload = (await response.json().catch(() => ({}))) as {
+            message?: string;
+            job?: IngestionJob;
+            preview?: { rowCount?: number };
+          };
+          if (!response.ok || !payload.job) {
+            if (importedJobs.length > 0) {
+              setStatus(
+                `Imported ${importedJobs.length} of ${datasetPlan.length} datasets before failure (${importedJobs
+                  .map((job) => `${job.datasetType}:${job.id.slice(0, 8)}`)
+                  .join(", ")}).`
+              );
+            }
+            throw new Error(payload.message ?? "Failed to import source URL");
+          }
+          importedJobs.push(payload.job);
+          totalRows += Number(payload.preview?.rowCount ?? 0);
         }
 
         await fetchIngestionJobs();
-        setSelectedJobId(payload.job.id);
-        setSelectedSetId(payload.job.setId);
-        setDatasetType(payload.job.datasetType as DatasetType);
-        setSetIdInput(payload.job.setId);
-        setSourceUrlInput(payload.job.sourceUrl ?? sourceUrl);
+        const latestJob = importedJobs[importedJobs.length - 1];
+        if (latestJob) {
+          setSelectedJobId(latestJob.id);
+          setSelectedSetId(latestJob.setId);
+          setDatasetType(latestJob.datasetType as DatasetType);
+          setQueueDatasetMode(latestJob.datasetType as CombinedDatasetMode);
+          setSetIdInput(latestJob.setId);
+          setSourceUrlInput(latestJob.sourceUrl ?? sourceUrl);
+        }
 
-        const rowCount = payload.preview?.rowCount ?? 0;
-        setStatus(
-          `Imported ${rowCount.toLocaleString()} rows from direct URL and queued ingestion job ${payload.job.id}.`
-        );
+        if (importedJobs.length === 1) {
+          setStatus(
+            `Imported ${totalRows.toLocaleString()} rows from direct URL and queued ingestion job ${importedJobs[0]?.id}.`
+          );
+        } else {
+          setStatus(
+            `Imported ${totalRows.toLocaleString()} rows from direct URL and queued ${importedJobs.length} jobs (${importedJobs
+              .map((job) => `${job.datasetType}:${job.id.slice(0, 8)}`)
+              .join(", ")}).`
+          );
+        }
       } catch (importError) {
         setError(importError instanceof Error ? importError.message : "Failed to import source URL");
       } finally {
@@ -1279,7 +1374,7 @@ export default function SetOpsReviewPage() {
             />
             <button
               type="button"
-              disabled={busy || !canReview || discoveryImportBusyId === "direct:PARALLEL_DB" || !discoverySourceUrlInput.trim()}
+              disabled={busy || !canReview || Boolean(discoveryImportBusyId?.startsWith("direct:")) || !discoverySourceUrlInput.trim()}
               onClick={() => void importDirectSourceUrl("PARALLEL_DB")}
               className="h-11 rounded-xl border border-violet-400/50 bg-violet-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-violet-100 transition hover:bg-violet-500/30 disabled:opacity-60"
             >
@@ -1287,13 +1382,19 @@ export default function SetOpsReviewPage() {
             </button>
             <button
               type="button"
-              disabled={
-                busy || !canReview || discoveryImportBusyId === "direct:PLAYER_WORKSHEET" || !discoverySourceUrlInput.trim()
-              }
+              disabled={busy || !canReview || Boolean(discoveryImportBusyId?.startsWith("direct:")) || !discoverySourceUrlInput.trim()}
               onClick={() => void importDirectSourceUrl("PLAYER_WORKSHEET")}
               className="h-11 rounded-xl border border-gold-500/50 bg-gold-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-gold-100 transition hover:bg-gold-500/30 disabled:opacity-60"
             >
               {discoveryImportBusyId === "direct:PLAYER_WORKSHEET" ? "Importing..." : "Import URL as player_worksheet"}
+            </button>
+            <button
+              type="button"
+              disabled={busy || !canReview || Boolean(discoveryImportBusyId?.startsWith("direct:")) || !discoverySourceUrlInput.trim()}
+              onClick={() => void importDirectSourceUrl("COMBINED")}
+              className="h-11 rounded-xl border border-emerald-500/50 bg-emerald-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-60"
+            >
+              {discoveryImportBusyId === "direct:COMBINED" ? "Importing..." : "Import URL as combined"}
             </button>
             <button
               type="button"
@@ -1375,6 +1476,14 @@ export default function SetOpsReviewPage() {
                         >
                           {discoveryImportBusyId === result.id ? "Importing..." : "Import player_worksheet"}
                         </button>
+                        <button
+                          type="button"
+                          disabled={busy || !canReview || discoveryImportBusyId === result.id}
+                          onClick={() => void importDiscoveredResult(result, "COMBINED")}
+                          className="rounded border border-emerald-500/50 bg-emerald-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100 disabled:opacity-60"
+                        >
+                          {discoveryImportBusyId === result.id ? "Importing..." : "Import combined"}
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -1402,13 +1511,14 @@ export default function SetOpsReviewPage() {
               className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
             />
             <select
-              value={datasetType}
-              onChange={(event) => setDatasetType(event.target.value as DatasetType)}
+              value={queueDatasetMode}
+              onChange={(event) => setQueueDatasetMode(event.target.value as CombinedDatasetMode)}
               disabled={!canReview}
               className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
             >
               <option value="PARALLEL_DB">parallel_db</option>
               <option value="PLAYER_WORKSHEET">player_worksheet</option>
+              <option value="COMBINED">combined (parallel + player)</option>
             </select>
             <input
               value={sourceUrlInput}
@@ -1469,7 +1579,7 @@ export default function SetOpsReviewPage() {
               disabled={busy || !canReview || payloadLoading}
               className="h-11 rounded-xl border border-gold-500/60 bg-gold-500 px-4 text-xs font-semibold uppercase tracking-[0.18em] text-night-900 transition hover:bg-gold-400 disabled:opacity-60"
             >
-              {payloadLoading ? "Parsing..." : "Queue Ingestion"}
+              {payloadLoading ? "Parsing..." : `Queue ${formatDatasetMode(queueDatasetMode)}`}
             </button>
           </form>
 
@@ -1495,6 +1605,7 @@ export default function SetOpsReviewPage() {
                       setSelectedJobId(job.id);
                       setSelectedSetId(job.setId);
                       setDatasetType(job.datasetType as DatasetType);
+                      setQueueDatasetMode(job.datasetType as CombinedDatasetMode);
                       setSetIdInput(job.setId);
                       setSourceUrlInput(job.sourceUrl ?? "");
                     }}
