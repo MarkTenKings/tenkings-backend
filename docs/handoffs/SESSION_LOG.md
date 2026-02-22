@@ -328,3 +328,21 @@
 
 ### Notes
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-22 - Vercel Hotfix 2 (Prisma JSON typing for draft versions)
+
+### Summary
+- Fixed Vercel type-check failure in Set Ops draft build flow:
+  - `pages/api/admin/set-ops/drafts/build.ts`
+- Added explicit Prisma JSON typing casts for draft payload writes in both draft version endpoints to satisfy Prisma `InputJsonValue` requirements under strict type checking.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/drafts/build.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/drafts/version.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/drafts/build.ts --file pages/api/admin/set-ops/drafts/version.ts` passed.
+- Local focused TypeScript check no longer reports errors for these Set Ops draft files; workspace still has broad pre-existing Prisma-client linkage/type issues unrelated to this hotfix.
+
+### Notes
+- No deploy/restart/migration was executed in this step.

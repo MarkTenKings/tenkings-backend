@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { z } from "zod";
-import { prisma, SetAuditStatus, SetIngestionJobStatus } from "@tenkings/database";
+import { prisma, SetAuditStatus, SetIngestionJobStatus, type Prisma } from "@tenkings/database";
 import { normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../../lib/server/admin";
 import {
@@ -120,12 +120,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         draftId,
         version: nextVersion,
         versionHash: versionPayload.versionHash,
-        dataJson: versionPayload.dataJson,
-        validationJson: versionPayload.validationJson,
+        dataJson: versionPayload.dataJson as Prisma.InputJsonValue,
+        validationJson: versionPayload.validationJson as Prisma.InputJsonValue,
         sourceLinksJson: {
           sourceUrl: job.sourceUrl ?? null,
           ingestionJobId: job.id,
-        },
+        } as Prisma.InputJsonValue,
         rowCount: versionPayload.rowCount,
         errorCount: versionPayload.errorCount,
         blockingErrorCount: versionPayload.blockingErrorCount,
@@ -162,7 +162,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           errorCount: versionPayload.errorCount,
           blockingErrorCount: versionPayload.blockingErrorCount,
           draftVersionId: version.id,
-        },
+        } as Prisma.InputJsonValue,
       },
     });
 

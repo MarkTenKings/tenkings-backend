@@ -129,3 +129,10 @@ Build Set Ops UI flow with:
 ## Vercel Build Hotfix (2026-02-22)
 - Fixed `frontend/nextjs-app/pages/admin/set-ops.tsx` union narrowing bug that caused Vercel compile failure (`Property 'sets' does not exist on type 'LoadResponse'`).
 - Load response parsing now narrows payload before reading `sets` and `total`.
+
+## Vercel Build Hotfix 2 (2026-02-22)
+- Fixed Prisma JSON typing errors on Set Ops draft version writes.
+- Updated:
+  - `frontend/nextjs-app/pages/api/admin/set-ops/drafts/build.ts`
+  - `frontend/nextjs-app/pages/api/admin/set-ops/drafts/version.ts`
+- `dataJson`/`validationJson` and related JSON fields are now explicitly cast to `Prisma.InputJsonValue` for compatibility with strict build type checks.

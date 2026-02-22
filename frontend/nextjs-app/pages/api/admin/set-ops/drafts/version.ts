@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { z } from "zod";
-import { prisma, SetAuditStatus, SetDatasetType } from "@tenkings/database";
+import { prisma, SetAuditStatus, SetDatasetType, type Prisma } from "@tenkings/database";
 import { normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../../lib/server/admin";
 import {
@@ -105,8 +105,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         draftId: draft.id,
         version: (latestVersion?.version ?? 0) + 1,
         versionHash: versionPayload.versionHash,
-        dataJson: versionPayload.dataJson,
-        validationJson: versionPayload.validationJson,
+        dataJson: versionPayload.dataJson as Prisma.InputJsonValue,
+        validationJson: versionPayload.validationJson as Prisma.InputJsonValue,
         rowCount: versionPayload.rowCount,
         errorCount: versionPayload.errorCount,
         blockingErrorCount: versionPayload.blockingErrorCount,
