@@ -53,7 +53,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const images = Array.isArray(data?.images_results) ? data.images_results : [];
     const seen = new Set<string>();
-    const rows = images
+    const rows: Array<{
+      setId: string;
+      cardNumber: string;
+      parallelId: string;
+      rawImageUrl: string;
+      sourceUrl: string | null;
+    }> = images
       .map((image: any) => ({
         rawImageUrl:
           typeof image?.original === "string"
@@ -99,8 +105,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         rawImageUrl: true,
       },
     });
-    const existingUrls = new Set(existingRows.map((row) => row.rawImageUrl));
-    const rowsToInsert = rows.filter((row) => !existingUrls.has(row.rawImageUrl));
+    const existingUrls = new Set(existingRows.map((row: { rawImageUrl: string }) => row.rawImageUrl));
+    const rowsToInsert = rows.filter((row: { rawImageUrl: string }) => !existingUrls.has(row.rawImageUrl));
 
     if (rowsToInsert.length > 0) {
       await prisma.cardVariantReferenceImage.createMany({ data: rowsToInsert });
