@@ -334,7 +334,7 @@ async function fetchWithRetry(url: string, attempts = 3): Promise<{ response: Re
         method: "GET",
         headers: {
           "User-Agent": "Mozilla/5.0 (compatible; TenKingsSetOps/1.0; +https://collect.tenkings.co)",
-          Accept: "text/html,application/json,text/csv;q=0.9,*/*;q=0.8",
+          Accept: "text/markdown,application/json,text/csv,text/html;q=0.9,*/*;q=0.8",
         },
       });
 
@@ -430,6 +430,98 @@ function parseCsvRows(csvText: string): Array<Record<string, unknown>> {
     .filter((record) => Object.values(record).some((value) => compactWhitespace(String(value)) !== ""));
 }
 
+function splitMarkdownRow(row: string) {
+  const trimmed = row.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").map((cell) => compactWhitespace(cell));
+}
+
+function parseMarkdownTableRows(markdown: string): Array<Record<string, unknown>> {
+  const lines = String(markdown || "").replace(/\r/g, "").split("\n");
+  const records: Array<Record<string, unknown>> = [];
+
+  for (let index = 0; index < lines.length - 2; index += 1) {
+    const headerLine = lines[index] || "";
+    const separatorLine = lines[index + 1] || "";
+    if (!headerLine.includes("|")) continue;
+    if (!/^\s*\|?\s*:?-{2,}:?(\s*\|\s*:?-{2,}:?)+\s*\|?\s*$/.test(separatorLine)) continue;
+
+    const headers = splitMarkdownRow(headerLine).map((header, headerIndex) => header || `column_${headerIndex + 1}`);
+    let rowIndex = index + 2;
+    let addedRows = 0;
+    for (; rowIndex < lines.length; rowIndex += 1) {
+      const line = lines[rowIndex] || "";
+      if (!line.includes("|")) break;
+      if (/^\s*\|?\s*:?-{2,}/.test(line)) break;
+      const values = splitMarkdownRow(line);
+      if (!values.some((value) => value !== "")) continue;
+      const record: Record<string, unknown> = {};
+      headers.forEach((header, headerPosition) => {
+        record[header] = compactWhitespace(values[headerPosition] ?? "");
+      });
+      records.push(record);
+      addedRows += 1;
+    }
+    if (addedRows > 0) {
+      index = rowIndex - 1;
+    }
+  }
+
+  return records;
+}
+
+function parseMarkdownChecklistRows(markdown: string): Array<Record<string, unknown>> {
+  const lines = String(markdown || "").replace(/\r/g, "").split("\n");
+  const records: Array<Record<string, unknown>> = [];
+  let currentHeading = "";
+
+  for (const line of lines) {
+    const headingMatch = line.match(/^\s{0,3}#{1,6}\s+(.+)$/);
+    if (headingMatch) {
+      currentHeading = compactWhitespace(headingMatch[1] || "");
+      continue;
+    }
+
+    const listMatch = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (!listMatch) continue;
+    const item = compactWhitespace(listMatch[1] || "");
+    if (!item) continue;
+    if (isLikelySearchResultsUrl(item)) continue;
+    if (isLikelyNoiseCellValue(item)) continue;
+    if ((item.match(/https?:\/\//gi) ?? []).length >= 1) continue;
+
+    const section = currentHeading.toLowerCase();
+    const sectionLooksRelevant = /checklist|parallel|variation|base set|insert/i.test(section);
+    const itemLooksRelevant = TABLE_POSITIVE_TOKEN_RE.test(item.toLowerCase());
+    if (!sectionLooksRelevant && !itemLooksRelevant) continue;
+
+    const cardMatch = item.match(/^#?([A-Za-z0-9]+(?:[-./][A-Za-z0-9]+){0,2})\s+(.+)$/);
+    if (cardMatch && looksLikeCardNumberValue(cardMatch[1] || "") && looksLikeLabelValue(cardMatch[2] || "")) {
+      records.push({
+        cardNumber: cardMatch[1],
+        player: compactWhitespace(cardMatch[2] || ""),
+      });
+      continue;
+    }
+
+    const parallelMatch = item.match(/^([^:]{2,90}):\s*(.+)$/);
+    if (parallelMatch && looksLikeLabelValue(parallelMatch[1] || "")) {
+      records.push({
+        parallel: compactWhitespace(parallelMatch[1] || ""),
+        detail: compactWhitespace(parallelMatch[2] || ""),
+      });
+      continue;
+    }
+  }
+
+  return records;
+}
+
+function parseMarkdownRows(markdown: string): Array<Record<string, unknown>> {
+  const tableRows = parseMarkdownTableRows(markdown);
+  if (tableRows.length > 0) return tableRows;
+  return parseMarkdownChecklistRows(markdown);
+}
+
 function stripHtml(html: string) {
   return compactWhitespace(
     decodeHtmlEntities(
@@ -440,40 +532,221 @@ function stripHtml(html: string) {
   );
 }
 
-function parseHtmlTableRows(html: string): Array<Record<string, unknown>> {
-  const tables = String(html || "").match(/<table[\s\S]*?<\/table>/gi) ?? [];
-  if (tables.length === 0) return [];
+const TABLE_HEADER_TOKEN_RE = /\b(card(?:\s*#| number)?|player|parallel|variation|set|checklist|team|name|no\.?)\b/i;
+const TABLE_POSITIVE_TOKEN_RE = /\b(checklist|parallel|variation|refractor|rookie|auto(?:graph)?|insert)\b/i;
+const TABLE_NEGATIVE_TOKEN_RE =
+  /\b(ebay|buy now|auction|shipping|affiliate|sponsor|advertis|navbar|menu-item|dropdown|paszone|wppas)\b/i;
+const HTML_NOISE_TOKEN_RE =
+  /\b(googletagmanager|gtm\.js|dataLayer|menu-item|navbar|dropdown|paszone|wppas|cookie|min\.js)\b/i;
+const HTML_ATTR_RE = /\b(class|href|src|style|data-[a-z-]+)\s*=/i;
 
-  let selectedTable = tables[0]!;
-  let selectedRowCount = 0;
+function sanitizeHtmlForExtraction(html: string) {
+  let sanitized = String(html || "");
+  sanitized = sanitized.replace(/<!--[\s\S]*?-->/g, " ");
+  sanitized = sanitized.replace(/<(script|style|noscript|template|svg|iframe|canvas|object)\b[\s\S]*?<\/\1>/gi, " ");
+  sanitized = sanitized.replace(/<(header|footer|nav|aside|form)\b[\s\S]*?<\/\1>/gi, " ");
+  return sanitized;
+}
 
-  for (const table of tables) {
-    const rowCount = (table.match(/<tr[\s\S]*?<\/tr>/gi) ?? []).length;
-    if (rowCount > selectedRowCount) {
-      selectedTable = table;
-      selectedRowCount = rowCount;
+function extractLikelyContentHtml(html: string) {
+  const sanitized = sanitizeHtmlForExtraction(html);
+  const bodyMatch = sanitized.match(/<body\b[^>]*>([\s\S]*?)<\/body>/i);
+  const body = bodyMatch ? bodyMatch[1] : sanitized;
+
+  const candidates: string[] = [];
+  candidates.push(...(body.match(/<article\b[\s\S]*?<\/article>/gi) ?? []));
+  candidates.push(...(body.match(/<main\b[\s\S]*?<\/main>/gi) ?? []));
+  candidates.push(
+    ...(body.match(
+      /<(div|section)\b[^>]*class=["'][^"']*(entry-content|post-content|article-content|single-content|content-area)[^"']*["'][\s\S]*?<\/\1>/gi
+    ) ?? [])
+  );
+
+  if (candidates.length === 0) {
+    return body;
+  }
+
+  let selected = candidates[0]!;
+  let bestScore = -Infinity;
+
+  for (const candidate of candidates) {
+    const text = stripHtml(candidate).toLowerCase();
+    let score = Math.min(40, Math.floor(text.length / 500));
+    if (TABLE_POSITIVE_TOKEN_RE.test(text)) score += 25;
+    if (text.includes("checklist")) score += 20;
+    if (text.includes("<table")) score += 8;
+    if (TABLE_NEGATIVE_TOKEN_RE.test(text)) score -= 20;
+    if (score > bestScore) {
+      bestScore = score;
+      selected = candidate;
     }
   }
 
-  const rowMatches = selectedTable.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
-  if (rowMatches.length <= 1) return [];
+  return selected;
+}
 
-  const rows = rowMatches.map((rowHtml) => {
-    const cells = rowHtml.match(/<t[hd][^>]*>[\s\S]*?<\/t[hd]>/gi) ?? [];
-    return cells.map((cellHtml) => stripHtml(cellHtml));
-  });
+function isLikelyNoiseCellValue(value: string) {
+  const text = compactWhitespace(value);
+  if (!text) return false;
+  if (text.length > 260) return true;
+  const lower = text.toLowerCase();
+  if (text.includes("<") || text.includes(">")) return true;
+  if (HTML_NOISE_TOKEN_RE.test(lower)) return true;
+  if (HTML_ATTR_RE.test(lower)) return true;
+  if ((text.match(/https?:\/\//gi) ?? []).length >= 2) return true;
+  return false;
+}
 
-  const headerRow = rows[0] ?? [];
-  const hasHeader = headerRow.some((header) => /card|player|parallel|number|name|variation/i.test(header));
-  const headers = (hasHeader ? headerRow : headerRow.map((_, index) => `column_${index + 1}`)).map((header, index) =>
-    compactWhitespace(header) || `column_${index + 1}`
-  );
-  const dataRows = hasHeader ? rows.slice(1) : rows;
+function looksLikeCardNumberValue(value: string) {
+  const text = compactWhitespace(value).replace(/^#/, "");
+  if (!text || text.length > 16) return false;
+  if (!/[0-9]/.test(text)) return false;
+  return /^[A-Za-z0-9]+(?:[-./][A-Za-z0-9]+){0,2}$/.test(text);
+}
 
-  return dataRows
+function looksLikeLabelValue(value: string) {
+  const text = compactWhitespace(value);
+  if (!text || text.length > 120) return false;
+  if (!/[A-Za-z]/.test(text)) return false;
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length > 16) return false;
+  if (TABLE_NEGATIVE_TOKEN_RE.test(text.toLowerCase())) return false;
+  if (isLikelyNoiseCellValue(text)) return false;
+  return true;
+}
+
+function tokenizeHeaderStrength(cells: string[]) {
+  let score = 0;
+  for (const cell of cells) {
+    const cleaned = compactWhitespace(cell).toLowerCase();
+    if (!cleaned) continue;
+    if (/card\s*#|card number|card no|number|no\.?/.test(cleaned)) score += 3;
+    if (/player|athlete|name/.test(cleaned)) score += 2;
+    if (/parallel|variation|variant|refractor/.test(cleaned)) score += 3;
+    if (/set|checklist|team/.test(cleaned)) score += 1;
+  }
+  return score;
+}
+
+type ParsedTableCandidate = {
+  headers: string[];
+  dataRows: string[][];
+  score: number;
+};
+
+function parseTableCandidate(tableHtml: string): ParsedTableCandidate | null {
+  const rowMatches = tableHtml.match(/<tr[\s\S]*?<\/tr>/gi) ?? [];
+  if (rowMatches.length === 0) return null;
+
+  const rawRows = rowMatches
+    .map((rowHtml) => {
+      const cells = rowHtml.match(/<t[hd][^>]*>[\s\S]*?<\/t[hd]>/gi) ?? [];
+      const parsed = cells.map((cellHtml) => stripHtml(cellHtml));
+      return parsed.filter((cell) => compactWhitespace(cell) !== "");
+    })
+    .filter((cells) => cells.length > 0);
+
+  if (rawRows.length === 0) return null;
+
+  let headerIndex = -1;
+  let headerStrength = 0;
+  for (let index = 0; index < Math.min(3, rawRows.length); index += 1) {
+    const score = tokenizeHeaderStrength(rawRows[index] ?? []);
+    if (score > headerStrength) {
+      headerStrength = score;
+      headerIndex = index;
+    }
+  }
+  if (headerStrength < 2) {
+    headerIndex = -1;
+  }
+
+  const headerRow = headerIndex >= 0 ? rawRows[headerIndex] ?? [] : [];
+  const widestRowLength = rawRows.reduce((max, row) => Math.max(max, row.length), 0);
+  const headers =
+    headerRow.length > 0
+      ? headerRow.map((value, index) => {
+          const header = compactWhitespace(value);
+          return header || `column_${index + 1}`;
+        })
+      : Array.from({ length: Math.max(1, widestRowLength) }, (_, index) => `column_${index + 1}`);
+  const dataRows =
+    headerIndex >= 0
+      ? rawRows.filter((_, index) => index !== headerIndex)
+      : rawRows;
+
+  if (dataRows.length === 0) return null;
+
+  let rowPatternHits = 0;
+  let parallelKeywordHits = 0;
+  let noiseCells = 0;
+  let totalCells = 0;
+  let urlCells = 0;
+
+  for (const row of dataRows.slice(0, 80)) {
+    const hasCardNumber = row.some((cell) => looksLikeCardNumberValue(cell));
+    const hasLabel = row.some((cell) => looksLikeLabelValue(cell));
+    if (hasCardNumber && hasLabel) {
+      rowPatternHits += 1;
+    }
+
+    if (row.some((cell) => TABLE_POSITIVE_TOKEN_RE.test(cell.toLowerCase()))) {
+      parallelKeywordHits += 1;
+    }
+
+    for (const cell of row) {
+      totalCells += 1;
+      if (isLikelyNoiseCellValue(cell)) noiseCells += 1;
+      if (/https?:\/\//i.test(cell)) urlCells += 1;
+    }
+  }
+
+  const tableText = stripHtml(tableHtml).toLowerCase();
+  const rowCount = dataRows.length;
+  const rowPatternRatio = rowPatternHits / Math.max(1, Math.min(80, rowCount));
+  const parallelRatio = parallelKeywordHits / Math.max(1, Math.min(80, rowCount));
+  const noiseRatio = noiseCells / Math.max(1, totalCells);
+
+  let score = 0;
+  score += Math.min(20, rowCount * 1.5);
+  score += headerStrength * 6;
+  score += rowPatternRatio >= 0.25 ? 24 : rowPatternRatio >= 0.12 ? 12 : 0;
+  score += parallelRatio >= 0.2 ? 12 : parallelRatio >= 0.1 ? 6 : 0;
+  if (TABLE_HEADER_TOKEN_RE.test(headers.join(" "))) score += 8;
+  if (TABLE_NEGATIVE_TOKEN_RE.test(tableText)) score -= 55;
+  if (HTML_NOISE_TOKEN_RE.test(tableText)) score -= 35;
+  if (noiseRatio > 0.3) score -= 45;
+  if (noiseRatio > 0.15) score -= 20;
+  if (urlCells > rowCount * 2) score -= 15;
+
+  return {
+    headers,
+    dataRows,
+    score,
+  };
+}
+
+function parseHtmlTableRows(html: string): Array<Record<string, unknown>> {
+  const contentHtml = extractLikelyContentHtml(html);
+  const tables = String(contentHtml || "").match(/<table[\s\S]*?<\/table>/gi) ?? [];
+  if (tables.length === 0) return [];
+
+  const candidates = tables
+    .map((tableHtml) => parseTableCandidate(tableHtml))
+    .filter((candidate): candidate is ParsedTableCandidate => Boolean(candidate))
+    .sort((a, b) => b.score - a.score);
+
+  if (candidates.length === 0) return [];
+
+  const selected = candidates[0]!;
+  if (selected.score < 20) {
+    return [];
+  }
+
+  return selected.dataRows
     .map((values) => {
       const record: Record<string, unknown> = {};
-      headers.forEach((header, index) => {
+      selected.headers.forEach((header, index) => {
         record[header] = compactWhitespace(values[index] ?? "");
       });
       return record;
@@ -511,6 +784,27 @@ function guessSetIdFromRows(rows: Array<Record<string, unknown>>, fallback = "")
   return normalizeSetLabel(fallback);
 }
 
+function normalizeFieldKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function isSafeFieldName(field: string) {
+  const trimmed = compactWhitespace(field);
+  if (!trimmed) return false;
+  if (trimmed.length > 80) return false;
+  if (/[<>=]/.test(trimmed)) return false;
+  return true;
+}
+
+function fieldMatchesKey(field: string, key: string) {
+  const normalizedField = normalizeFieldKey(field);
+  const normalizedKey = normalizeFieldKey(key);
+  if (!normalizedField || !normalizedKey) return false;
+  if (normalizedField === normalizedKey) return true;
+  if (normalizedKey.length < 4) return false;
+  return normalizedField.startsWith(normalizedKey) || normalizedField.endsWith(normalizedKey);
+}
+
 function findField(row: Record<string, unknown>, keys: string[]) {
   const entries = Object.entries(row);
   for (const key of keys) {
@@ -519,15 +813,16 @@ function findField(row: Record<string, unknown>, keys: string[]) {
   }
 
   for (const [field, value] of entries) {
-    const lower = field.toLowerCase();
-    if (keys.some((key) => lower === key.toLowerCase()) && value != null && compactWhitespace(String(value))) {
+    if (!isSafeFieldName(field)) continue;
+    const normalized = normalizeFieldKey(field);
+    if (keys.some((key) => normalized === normalizeFieldKey(key)) && value != null && compactWhitespace(String(value))) {
       return compactWhitespace(String(value));
     }
   }
 
   for (const [field, value] of entries) {
-    const lower = field.toLowerCase();
-    if (keys.some((key) => lower.includes(key.toLowerCase())) && value != null && compactWhitespace(String(value))) {
+    if (!isSafeFieldName(field)) continue;
+    if (keys.some((key) => fieldMatchesKey(field, key)) && value != null && compactWhitespace(String(value))) {
       return compactWhitespace(String(value));
     }
   }
@@ -544,12 +839,12 @@ function normalizeRowsForIngestion(params: {
     const setId = normalizeSetLabel(findField(row, ["setId", "set", "setName", "set_name"]) || params.setId);
     const cardNumber = findField(row, ["cardNumber", "card_number", "cardNo", "number", "card"]) || null;
     const parallel =
-      findField(row, ["parallel", "parallelId", "parallel_id", "variation", "variant", "name"]) ||
+      findField(row, ["parallel", "parallelId", "parallel_id", "parallelName", "variation", "variant", "refractor"]) ||
       (params.datasetType === SetDatasetType.PARALLEL_DB ? "" : "");
     const playerSeed =
-      findField(row, ["playerSeed", "playerName", "player", "name"]) ||
+      findField(row, ["playerSeed", "playerName", "player", "athlete", "subject"]) ||
       (params.datasetType === SetDatasetType.PLAYER_WORKSHEET ? "" : "");
-    const listingId = findField(row, ["listingId", "sourceListingId", "listing", "itemId", "item"]) || null;
+    const listingId = findField(row, ["listingId", "sourceListingId", "listing", "itemId", "itemNumber"]) || null;
     const sourceUrl = findField(row, ["sourceUrl", "url", "source"]) || params.sourceUrl;
 
     return {
@@ -565,17 +860,154 @@ function normalizeRowsForIngestion(params: {
   });
 }
 
+function isLikelyHttpUrl(value: string) {
+  return /^https?:\/\/[^\s]+$/i.test(compactWhitespace(value));
+}
+
+function isLikelyRowNoiseValue(value: unknown) {
+  const text = compactWhitespace(String(value ?? ""));
+  if (!text) return false;
+  if (text.length > 180) return true;
+  if (isLikelyNoiseCellValue(text)) return true;
+  const lower = text.toLowerCase();
+  if (TABLE_NEGATIVE_TOKEN_RE.test(lower)) return true;
+  if (lower.includes("buy this product now on ebay")) return true;
+  if (lower.includes("when you click on links to various merchants")) return true;
+  return false;
+}
+
+function countWords(value: string) {
+  return compactWhitespace(value).split(/\s+/).filter(Boolean).length;
+}
+
+function filterRowsForIngestion(rows: Array<Record<string, unknown>>, datasetType: SetDatasetType) {
+  const accepted: Array<Record<string, unknown>> = [];
+  const rejectionReasons: Record<string, number> = {};
+
+  const addReason = (reason: string) => {
+    rejectionReasons[reason] = (rejectionReasons[reason] ?? 0) + 1;
+  };
+
+  for (const row of rows) {
+    const cardNumber = compactWhitespace(String(row.cardNumber ?? ""));
+    const parallel = compactWhitespace(String(row.parallel ?? ""));
+    const playerSeed = compactWhitespace(String(row.playerSeed ?? ""));
+    const sourceUrl = compactWhitespace(String(row.sourceUrl ?? ""));
+
+    if ([cardNumber, parallel, playerSeed].some((value) => isLikelyRowNoiseValue(value))) {
+      addReason("html_or_navigation_noise");
+      continue;
+    }
+
+    if (datasetType === SetDatasetType.PARALLEL_DB) {
+      if (!parallel) {
+        addReason("missing_parallel");
+        continue;
+      }
+      if (countWords(parallel) > 18) {
+        addReason("parallel_too_long");
+        continue;
+      }
+      if (/^\$?\d+(?:\.\d+)?$/.test(parallel)) {
+        addReason("parallel_looks_like_price");
+        continue;
+      }
+    }
+
+    if (datasetType === SetDatasetType.PLAYER_WORKSHEET) {
+      if (!playerSeed) {
+        addReason("missing_player");
+        continue;
+      }
+      if (countWords(playerSeed) > 12) {
+        addReason("player_name_too_long");
+        continue;
+      }
+    }
+
+    if (sourceUrl && !isLikelyHttpUrl(sourceUrl)) {
+      addReason("invalid_source_url");
+      continue;
+    }
+
+    accepted.push(row);
+  }
+
+  return {
+    accepted,
+    rejected: rows.length - accepted.length,
+    rejectionReasons,
+  };
+}
+
 function toJsonInput(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value ?? null)) as Prisma.InputJsonValue;
 }
 
-async function fetchRowsFromSource(url: string): Promise<SourceFetchResult> {
-  const { response, attemptsUsed } = await fetchWithRetry(url, 3);
+function resolveRelativeUrl(baseUrl: string, candidate: string) {
+  try {
+    return new URL(candidate, baseUrl).toString();
+  } catch {
+    return "";
+  }
+}
+
+function baseDomainGroup(url: string) {
+  const domain = extractDomain(url);
+  const segments = domain.split(".").filter(Boolean);
+  if (segments.length < 2) return domain;
+  return segments.slice(-2).join(".");
+}
+
+function extractChecklistCandidateUrls(html: string, baseUrl: string) {
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  const baseGroup = baseDomainGroup(baseUrl);
+
+  const anchorPattern = /<a\b[^>]*href=(["']?)([^"'>\s]+)\1[^>]*>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null = null;
+
+  while ((match = anchorPattern.exec(String(html || "")))) {
+    const href = compactWhitespace(decodeHtmlEntities(match[2] || ""));
+    const text = stripHtml(match[3] || "").toLowerCase();
+    const hrefLower = href.toLowerCase();
+    if (!href || hrefLower.startsWith("#")) continue;
+    if (hrefLower.startsWith("javascript:") || hrefLower.startsWith("mailto:")) continue;
+    if (!/(checklist|set-list|setlist|full-list)/i.test(`${text} ${hrefLower}`)) continue;
+    if (/(ebay|affiliate|forum|search|signin|signup|login|register)/i.test(hrefLower)) continue;
+
+    const resolved = resolveRelativeUrl(baseUrl, href);
+    if (!resolved) continue;
+    if (isLikelySearchResultsUrl(resolved)) continue;
+    const resolvedGroup = baseDomainGroup(resolved);
+    if (baseGroup && resolvedGroup && baseGroup !== resolvedGroup) continue;
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    candidates.push(resolved);
+  }
+
+  return candidates.slice(0, 5);
+}
+
+async function fetchRowsFromSource(
+  url: string,
+  context: { depth: number; visited: Set<string> } = { depth: 0, visited: new Set<string>() }
+): Promise<SourceFetchResult> {
+  const normalizedUrl = compactWhitespace(url);
+  if (!normalizedUrl) {
+    throw new Error("Source URL is empty.");
+  }
+  if (context.visited.has(normalizedUrl)) {
+    throw new Error("Checklist source loop detected.");
+  }
+  context.visited.add(normalizedUrl);
+
+  const { response, attemptsUsed } = await fetchWithRetry(normalizedUrl, 3);
   const contentType = response.headers.get("content-type");
   const content = await response.text();
   const trimmed = content.trim();
   const lowerContentType = String(contentType || "").toLowerCase();
-  const lowerUrl = url.toLowerCase();
+  const lowerUrl = normalizedUrl.toLowerCase();
 
   if (lowerContentType.includes("application/json") || lowerUrl.endsWith(".json") || trimmed.startsWith("[") || trimmed.startsWith("{")) {
     const parsed = JSON.parse(trimmed || "[]");
@@ -599,6 +1031,19 @@ async function fetchRowsFromSource(url: string): Promise<SourceFetchResult> {
     };
   }
 
+  if (lowerContentType.includes("text/markdown") || lowerContentType.includes("text/x-markdown") || lowerUrl.endsWith(".md")) {
+    const markdownRows = parseMarkdownRows(content);
+    if (markdownRows.length > 0) {
+      return {
+        rows: markdownRows,
+        parserName: "markdown-v1",
+        contentType,
+        fetchedAt: new Date().toISOString(),
+        attempts: attemptsUsed,
+      };
+    }
+  }
+
   const htmlRows = parseHtmlTableRows(content);
   if (htmlRows.length > 0) {
     return {
@@ -608,6 +1053,27 @@ async function fetchRowsFromSource(url: string): Promise<SourceFetchResult> {
       fetchedAt: new Date().toISOString(),
       attempts: attemptsUsed,
     };
+  }
+
+  if (context.depth < 1) {
+    const checklistUrls = extractChecklistCandidateUrls(content, normalizedUrl);
+    for (const checklistUrl of checklistUrls) {
+      try {
+        const nested = await fetchRowsFromSource(checklistUrl, {
+          depth: context.depth + 1,
+          visited: context.visited,
+        });
+        return {
+          rows: nested.rows,
+          parserName: `${nested.parserName}+checklist-link-v1`,
+          contentType: nested.contentType || contentType,
+          fetchedAt: nested.fetchedAt,
+          attempts: nested.attempts,
+        };
+      } catch {
+        // Continue trying candidate checklist links until one parses.
+      }
+    }
   }
 
   const csvRows = parseCsvRows(content);
@@ -621,7 +1087,7 @@ async function fetchRowsFromSource(url: string): Promise<SourceFetchResult> {
     };
   }
 
-  throw new Error("Could not parse rows from source URL. Supported sources: JSON, CSV, or HTML tables.");
+  throw new Error("Could not parse rows from source URL. Supported sources: JSON, CSV, or checklist tables.");
 }
 
 function buildDiscoverySearchText(query: NormalizedDiscoveryQuery) {
@@ -888,6 +1354,18 @@ export async function importDiscoveredSource(params: {
     throw new Error("Source parser returned zero rows.");
   }
 
+  const rowQuality = filterRowsForIngestion(normalizedRows, params.datasetType);
+  if (rowQuality.accepted.length < 1) {
+    throw new Error(
+      "No checklist rows were detected from this source URL. The page appears to be navigation/article/ads content, not a structured checklist table."
+    );
+  }
+  if (normalizedRows.length >= 20 && rowQuality.accepted.length < Math.max(3, Math.floor(normalizedRows.length * 0.1))) {
+    throw new Error(
+      "Parsed rows are mostly non-checklist content. Use the exact checklist URL (or CSV/JSON upload) instead of an article/search page."
+    );
+  }
+
   const draft = await prisma.setDraft.upsert({
     where: { setId: inferredSetId },
     update: {
@@ -912,7 +1390,7 @@ export async function importDiscoveredSource(params: {
       draftId: draft.id,
       datasetType: params.datasetType,
       sourceUrl,
-      rawPayload: toJsonInput(normalizedRows),
+      rawPayload: toJsonInput(rowQuality.accepted),
       parserVersion,
       status: SetIngestionJobStatus.QUEUED,
       parseSummaryJson: toJsonInput({
@@ -923,7 +1401,9 @@ export async function importDiscoveredSource(params: {
         contentType: fetched.contentType,
         fetchedAt: fetched.fetchedAt,
         fetchAttempts: fetched.attempts,
-        rowCount: normalizedRows.length,
+        rowCount: rowQuality.accepted.length,
+        droppedRowCount: rowQuality.rejected,
+        rejectionReasons: rowQuality.rejectionReasons,
       }),
       createdById: params.createdById ?? null,
     },
@@ -947,13 +1427,13 @@ export async function importDiscoveredSource(params: {
     job,
     preview: {
       setId: inferredSetId,
-      rowCount: normalizedRows.length,
+      rowCount: rowQuality.accepted.length,
       parserName: fetched.parserName,
       sourceProvider: provider,
       sourceUrl,
       fetchedAt: fetched.fetchedAt,
       fetchAttempts: fetched.attempts,
-      sampleRows: normalizedRows.slice(0, 5),
+      sampleRows: rowQuality.accepted.slice(0, 5),
     },
   };
 }

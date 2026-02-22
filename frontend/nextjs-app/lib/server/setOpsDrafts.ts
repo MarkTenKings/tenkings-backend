@@ -90,6 +90,17 @@ function countErrors(rows: SetOpsDraftRow[]) {
   };
 }
 
+function looksLikeMarkupNoise(value: string | null | undefined) {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  if (text.length > 180) return true;
+  if (/<[^>]+>/.test(text)) return true;
+  if (/\b(class|href|src|style|data-[a-z-]+)\s*=/i.test(text)) return true;
+  if (/(googletagmanager|gtm\.js|menu-item|navbar|dropdown|paszone|wppas|buy-it-now|affiliate)/i.test(text)) return true;
+  if ((text.match(/https?:\/\//gi) ?? []).length >= 2) return true;
+  return false;
+}
+
 export function normalizeDraftRows(params: {
   datasetType: SetDatasetType;
   fallbackSetId: string;
@@ -128,6 +139,16 @@ export function normalizeDraftRows(params: {
 
     if (params.datasetType === SetDatasetType.PLAYER_WORKSHEET && !playerSeed) {
       errors.push({ field: "playerSeed", message: "playerSeed is required for player_worksheet rows", blocking: true });
+    }
+
+    if (looksLikeMarkupNoise(cardNumber)) {
+      errors.push({ field: "cardNumber", message: "cardNumber appears to contain HTML/navigation/script content", blocking: true });
+    }
+    if (looksLikeMarkupNoise(parallel)) {
+      errors.push({ field: "parallel", message: "parallel appears to contain HTML/navigation/script content", blocking: true });
+    }
+    if (looksLikeMarkupNoise(playerSeed)) {
+      errors.push({ field: "playerSeed", message: "playerSeed appears to contain HTML/navigation/script content", blocking: true });
     }
 
     if (!cardNumber) {
