@@ -223,7 +223,7 @@ function parseRowsFromFileContent(fileName: string, content: string): Array<Reco
 
   const csvRows = parseCsvRows(content);
   if (csvRows.length > 0) return csvRows;
-  throw new Error("No usable rows found. Upload a CSV with headers or a JSON row array.");
+  throw new Error("No usable rows found. Upload a CSV with headers, JSON row array, or a checklist PDF.");
 }
 
 function inferSetIdFromRows(rows: Array<Record<string, unknown>>) {
@@ -549,8 +549,36 @@ export default function SetOpsReviewPage() {
       setError(null);
       setStatus(null);
       try {
-        const text = await file.text();
-        const rows = parseRowsFromFileContent(file.name, text);
+        const lowerName = file.name.toLowerCase();
+        const isPdf = file.type.toLowerCase().includes("pdf") || lowerName.endsWith(".pdf");
+        let rows: Array<Record<string, unknown>> = [];
+        let parserName = "";
+
+        if (isPdf) {
+          const response = await fetch(`/api/admin/set-ops/discovery/parse-upload?fileName=${encodeURIComponent(file.name)}`, {
+            method: "POST",
+            headers: {
+              ...adminHeaders,
+              "Content-Type": "application/octet-stream",
+              "X-File-Name": encodeURIComponent(file.name),
+            },
+            body: await file.arrayBuffer(),
+          });
+          const payload = (await response.json().catch(() => ({}))) as {
+            message?: string;
+            rows?: Array<Record<string, unknown>>;
+            parserName?: string;
+          };
+          if (!response.ok) {
+            throw new Error(payload.message ?? "Failed to parse uploaded PDF.");
+          }
+          rows = Array.isArray(payload.rows) ? payload.rows : [];
+          parserName = String(payload.parserName || "");
+        } else {
+          const text = await file.text();
+          rows = parseRowsFromFileContent(file.name, text);
+        }
+
         if (rows.length < 1) {
           throw new Error("No rows found in uploaded file.");
         }
@@ -563,7 +591,11 @@ export default function SetOpsReviewPage() {
         setRawPayloadInput(JSON.stringify(rows, null, 2));
         setPayloadFileName(file.name);
         setPayloadRowCount(rows.length);
-        setStatus(`Loaded ${rows.length} rows from ${file.name}.`);
+        if (parserName) {
+          setStatus(`Loaded ${rows.length} rows from ${file.name} via ${parserName}.`);
+        } else {
+          setStatus(`Loaded ${rows.length} rows from ${file.name}.`);
+        }
       } catch (parseError) {
         setPayloadFileName(null);
         setPayloadRowCount(0);
@@ -573,7 +605,7 @@ export default function SetOpsReviewPage() {
         event.target.value = "";
       }
     },
-    [canReview, setIdInput]
+    [adminHeaders, canReview, setIdInput]
   );
 
   const runDiscoverySearch = useCallback(
@@ -1395,12 +1427,12 @@ export default function SetOpsReviewPage() {
             <div className="md:col-span-2 rounded-xl border border-white/10 bg-night-950/40 p-3">
               <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Upload Source File</p>
               <p className="mt-1 text-xs text-slate-400">
-                Upload a CSV or JSON file with rows. No manual JSON editing required.
+                Upload CSV/JSON/PDF checklist files. No manual JSON editing required.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <input
                   type="file"
-                  accept=".csv,.json,text/csv,application/json"
+                  accept=".csv,.json,.pdf,text/csv,application/json,application/pdf"
                   disabled={!canReview || payloadLoading}
                   onChange={(event) => void handlePayloadFileChange(event)}
                   className="block text-xs text-slate-200 file:mr-3 file:rounded-lg file:border file:border-gold-500/40 file:bg-gold-500/10 file:px-3 file:py-2 file:text-xs file:font-semibold file:uppercase file:tracking-[0.16em] file:text-gold-100 hover:file:bg-gold-500/20"

@@ -329,6 +329,33 @@
 ### Notes
 - No deploy/restart/migration was executed in this step.
 
+## 2026-02-22 - Set Ops PDF Checklist Import + Upload Support
+
+### Summary
+- Fixed Set Ops import failures for official checklist PDFs and non-table checklist pages.
+- Added PDF parsing path to source URL import (`setOpsDiscovery`) and enabled off-domain PDF checklist link following.
+- Added checklist-text fallback parser for HTML pages that do not expose checklist data in `<table>` format.
+- Added new admin API for binary file parsing uploads:
+  - `POST /api/admin/set-ops/discovery/parse-upload`
+- Updated `/admin/set-ops-review` Step 1 upload flow:
+  - accepts `.pdf` in file picker
+  - sends PDF binary to parse-upload API
+  - populates ingestion payload directly from parsed rows.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/discovery/parse-upload.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/parse-upload.ts --file pages/admin/set-ops-review.tsx` passed.
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` still fails in this workspace due pre-existing Prisma/client schema mismatch across unrelated modules.
+
+### Notes
+- No deploy/restart/migration was executed in this step.
+
 ## 2026-02-22 - Set Ops Parser Hardening (CardboardConnection garbage-row fix)
 
 ### Summary

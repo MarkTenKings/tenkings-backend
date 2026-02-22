@@ -1,7 +1,7 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-02-22` (parser hardening + production handoff sync)
+- Last reviewed: `2026-02-22` (parser hardening + PDF checklist ingestion support)
 - Branch: `main`
 - Latest commits:
   - `6e3f20c` fix(set-ops): harden checklist parsing and block html/noise rows
@@ -215,15 +215,46 @@ Build Set Ops UI flow with:
   - Commit is present on `origin/main`.
   - No deploy/restart/migration evidence was captured in this coding session after push.
 
+## PDF Checklist Support + Import Recovery (2026-02-22)
+- Root issue from production QA:
+  - Direct PDF checklist URLs were treated as generic text/HTML and failed with "No checklist rows were detected..."
+  - Step 1 upload accepted only CSV/JSON, so official checklist PDFs could not be used as fallback.
+  - Some source pages linked to off-domain checklist PDFs (ex: Topps page -> `cdn.shopify.com`), but checklist-link follow logic was same-domain only and skipped those links.
+- Backend changes:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+  - Added PDF content negotiation (`Accept: application/pdf,...`) and PDF parsing path for source imports.
+  - Added text-stream PDF extraction + checklist-line parser (card number + player + section/parallel inference).
+  - Added HTML checklist-text parser fallback (for article pages that are not structured `<table>` checklists).
+  - Relaxed checklist-link follower to allow off-domain PDF checklist links.
+  - Added reusable upload parser export: `parseUploadedSourceFile(...)` for CSV/JSON/PDF.
+- API/UI changes:
+  - Added API route: `frontend/nextjs-app/pages/api/admin/set-ops/discovery/parse-upload.ts`
+    - reviewer-role protected
+    - raw binary upload parsing for PDF/CSV/JSON files
+  - Updated file upload UX:
+    - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+    - Upload accept now includes `.pdf`
+    - PDF file uploads are parsed server-side and loaded directly into ingestion raw payload.
+  - Updated runbook fallback wording:
+    - `docs/runbooks/SET_OPS_RUNBOOK.md` now documents CSV/JSON/PDF fallback.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/parse-upload.ts --file pages/admin/set-ops-review.tsx` passed.
+  - Workspace-wide TypeScript still fails from existing Prisma/client mismatch unrelated to these files.
+
 ## What To Test In Production (Current Step)
-1. In `/admin/set-ops-review`, import this exact URL as `parallel_db`:
+1. In `/admin/set-ops-review`, import this article URL as `parallel_db`:
    - `https://www.cardboardconnection.com/2024-25-topps-chrome-basketball-review-and-checklist`
-2. Expected:
-   - No rows containing GTM/script/nav/eBay HTML junk.
-   - If checklist rows cannot be parsed, import should fail with clear message instead of creating garbage draft rows.
-3. Verify queue row `parseSummaryJson` (if exposed in UI/API) includes:
-   - `rowCount`
-   - `droppedRowCount`
-   - `rejectionReasons`
-4. Repeat with at least one known-good structured checklist URL to confirm legitimate rows still import.
-5. Build a draft version and confirm blocking errors now appear for any row that still contains markup-like payloads.
+2. Expected for article import:
+   - no GTM/script/nav/eBay HTML junk rows
+   - either meaningful checklist rows or clear parse failure (no garbage draft rows).
+3. Import this direct PDF URL as `parallel_db`:
+   - `https://cdn.shopify.com/s/files/1/0662/9749/5709/files/NBA2402-24TCBKRetailChecklist.pdf`
+4. Expected for PDF URL import:
+   - ingestion job is created with non-zero row count
+   - parser metadata indicates PDF parser path in `parseSummaryJson`.
+5. Upload the same PDF through Step 1 file picker.
+6. Expected for PDF file upload:
+   - UI accepts `.pdf`
+   - raw payload is populated with parsed rows
+   - no manual JSON editing required.
+7. Build a draft version and confirm blocking validation still rejects markup-like noise if any slips through.

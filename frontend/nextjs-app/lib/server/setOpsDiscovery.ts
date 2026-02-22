@@ -1,5 +1,6 @@
 import { SetDatasetType, SetIngestionJobStatus, prisma, type Prisma } from "@tenkings/database";
 import { decodeHtmlEntities, normalizeSetLabel } from "@tenkings/shared";
+import { inflateSync } from "node:zlib";
 
 export type SetOpsDiscoveryQuery = {
   year?: number | null;
@@ -334,7 +335,7 @@ async function fetchWithRetry(url: string, attempts = 3): Promise<{ response: Re
         method: "GET",
         headers: {
           "User-Agent": "Mozilla/5.0 (compatible; TenKingsSetOps/1.0; +https://collect.tenkings.co)",
-          Accept: "text/markdown,application/json,text/csv,text/html;q=0.9,*/*;q=0.8",
+          Accept: "application/pdf,text/markdown,application/json,text/csv,text/html;q=0.9,*/*;q=0.8",
         },
       });
 
@@ -522,6 +523,360 @@ function parseMarkdownRows(markdown: string): Array<Record<string, unknown>> {
   return parseMarkdownChecklistRows(markdown);
 }
 
+function normalizeChecklistSectionName(raw: string) {
+  const value = compactWhitespace(raw);
+  if (!value) return "Base Set";
+  return value
+    .replace(/^\d+\.\s*/, "")
+    .replace(/\s*checklist$/i, "")
+    .trim();
+}
+
+function looksLikeChecklistSectionHeader(line: string) {
+  const value = compactWhitespace(line);
+  if (!value) return false;
+  if (value.length < 3 || value.length > 100) return false;
+  if (/^\d+$/.test(value)) return false;
+  if (/^page\s+\d+/i.test(value)) return false;
+  if (/^[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})+\s+[A-Za-z]/.test(value)) return false;
+  const hasKeyword =
+    /(insert|parallel|autograph|autos|relic|patch|variation|fo[i1]l|holo|mojo|ballers|topps|rookie|court|gems|kings|school|limit|chrome|rainbow|base|dribble|stardom|mvp)/i.test(
+      value
+    );
+  if (!hasKeyword) return false;
+  if (TABLE_NEGATIVE_TOKEN_RE.test(value.toLowerCase())) return false;
+  return true;
+}
+
+type ChecklistCardEntry = {
+  cardNumber: string;
+  playerSeed: string;
+};
+
+function parseCardEntriesFromChecklistLine(line: string): ChecklistCardEntry[] {
+  const compact = line.replace(/\s+/g, " ").trim();
+  if (!compact) return [];
+
+  const entries: ChecklistCardEntry[] = [];
+  const pattern =
+    /(?:^|\s)#?([A-Za-z0-9]+(?:[-./][A-Za-z0-9]+){0,2})\s+([A-Za-z][A-Za-z'.\- ]{1,90}?)(?=(?:\s+#?[A-Za-z0-9]+(?:[-./][A-Za-z0-9]+){0,2}\s+[A-Za-z])|$)/g;
+  let match: RegExpExecArray | null = null;
+
+  while ((match = pattern.exec(compact))) {
+    const cardNumber = compactWhitespace(match[1] || "");
+    const playerSeed = compactWhitespace((match[2] || "").replace(/\s+(RC|Rookie Card|SP|SSP)$/i, ""));
+    if (!looksLikeCardNumberValue(cardNumber)) continue;
+    if (!looksLikeLabelValue(playerSeed)) continue;
+    entries.push({ cardNumber, playerSeed });
+  }
+
+  if (entries.length > 0) return entries;
+
+  const bits = compact.split(" ");
+  const maybeCard = compactWhitespace(bits[0] || "");
+  if (!looksLikeCardNumberValue(maybeCard)) return [];
+  const maybePlayer = compactWhitespace(bits.slice(1).join(" "));
+  if (!looksLikeLabelValue(maybePlayer)) return [];
+  return [{ cardNumber: maybeCard, playerSeed: maybePlayer }];
+}
+
+function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>> {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => compactWhitespace(line.replace(/\u00A0/g, " ")))
+    .filter(Boolean);
+
+  const rows: Array<Record<string, unknown>> = [];
+  const dedupe = new Set<string>();
+  let currentSection = "Base Set";
+
+  for (const line of lines) {
+    if (looksLikeChecklistSectionHeader(line)) {
+      currentSection = normalizeChecklistSectionName(line);
+      continue;
+    }
+
+    const entries = parseCardEntriesFromChecklistLine(line);
+    if (entries.length === 0) continue;
+
+    for (const entry of entries) {
+      const duplicateKey = `${normalizeFieldKey(entry.cardNumber)}::${normalizeFieldKey(currentSection)}::${normalizeFieldKey(
+        entry.playerSeed
+      )}`;
+      if (dedupe.has(duplicateKey)) continue;
+      dedupe.add(duplicateKey);
+      rows.push({
+        cardNumber: entry.cardNumber,
+        parallel: currentSection,
+        playerSeed: entry.playerSeed,
+        player: entry.playerSeed,
+      });
+    }
+  }
+
+  return rows;
+}
+
+function parsePdfLiteralString(content: string, startIndex: number): { value: string; nextIndex: number } {
+  let index = startIndex + 1;
+  let depth = 0;
+  let output = "";
+
+  while (index < content.length) {
+    const char = content[index]!;
+
+    if (char === "\\") {
+      const next = content[index + 1];
+      if (!next) {
+        index += 1;
+        continue;
+      }
+
+      if (/[0-7]/.test(next)) {
+        let octal = next;
+        if (/[0-7]/.test(content[index + 2] || "")) octal += content[index + 2];
+        if (/[0-7]/.test(content[index + 3] || "")) octal += content[index + 3];
+        output += String.fromCharCode(parseInt(octal, 8));
+        index += octal.length + 1;
+        continue;
+      }
+
+      if (next === "\r" || next === "\n") {
+        index += 2;
+        if (next === "\r" && content[index] === "\n") index += 1;
+        continue;
+      }
+
+      const escapeMap: Record<string, string> = {
+        n: "\n",
+        r: "\r",
+        t: "\t",
+        b: "\b",
+        f: "\f",
+        "\\": "\\",
+        "(": "(",
+        ")": ")",
+      };
+      output += escapeMap[next] ?? next;
+      index += 2;
+      continue;
+    }
+
+    if (char === "(") {
+      depth += 1;
+      output += char;
+      index += 1;
+      continue;
+    }
+
+    if (char === ")") {
+      if (depth === 0) {
+        return { value: output, nextIndex: index + 1 };
+      }
+      depth -= 1;
+      output += char;
+      index += 1;
+      continue;
+    }
+
+    output += char;
+    index += 1;
+  }
+
+  return { value: output, nextIndex: index };
+}
+
+function parsePdfHexString(content: string, startIndex: number): { value: string; nextIndex: number } {
+  const end = content.indexOf(">", startIndex + 1);
+  if (end < 0) return { value: "", nextIndex: content.length };
+  const hex = content
+    .slice(startIndex + 1, end)
+    .replace(/[^0-9a-f]/gi, "");
+  const padded = hex.length % 2 === 0 ? hex : `${hex}0`;
+  let output = "";
+  for (let index = 0; index < padded.length; index += 2) {
+    const code = Number.parseInt(padded.slice(index, index + 2), 16);
+    if (!Number.isNaN(code)) output += String.fromCharCode(code);
+  }
+  return { value: output, nextIndex: end + 1 };
+}
+
+function parsePdfArrayString(content: string, startIndex: number): { value: string; nextIndex: number } {
+  let index = startIndex + 1;
+  let depth = 1;
+  const chunks: string[] = [];
+
+  while (index < content.length && depth > 0) {
+    const char = content[index]!;
+    if (char === "(") {
+      const parsed = parsePdfLiteralString(content, index);
+      const value = compactWhitespace(parsed.value);
+      if (value) chunks.push(value);
+      index = parsed.nextIndex;
+      continue;
+    }
+    if (char === "<" && content[index + 1] !== "<") {
+      const parsed = parsePdfHexString(content, index);
+      const value = compactWhitespace(parsed.value);
+      if (value) chunks.push(value);
+      index = parsed.nextIndex;
+      continue;
+    }
+    if (char === "[") {
+      depth += 1;
+      index += 1;
+      continue;
+    }
+    if (char === "]") {
+      depth -= 1;
+      index += 1;
+      continue;
+    }
+    index += 1;
+  }
+
+  return { value: chunks.join(" "), nextIndex: index };
+}
+
+function readPdfOperator(content: string, startIndex: number): { operator: string; nextIndex: number } {
+  const first = content[startIndex]!;
+  if (first === "'" || first === '"') {
+    return { operator: first, nextIndex: startIndex + 1 };
+  }
+  let index = startIndex;
+  while (index < content.length && /[A-Za-z*]/.test(content[index]!)) {
+    index += 1;
+  }
+  return {
+    operator: content.slice(startIndex, index),
+    nextIndex: index,
+  };
+}
+
+function appendPdfLineValue(currentLine: string, value: string) {
+  const cleaned = compactWhitespace(value);
+  if (!cleaned) return currentLine;
+  return currentLine ? `${currentLine} ${cleaned}` : cleaned;
+}
+
+function extractLinesFromPdfContentStream(content: string): string[] {
+  const lines: string[] = [];
+  let currentLine = "";
+  let pendingText = "";
+  let index = 0;
+
+  const flushLine = () => {
+    const cleaned = compactWhitespace(currentLine);
+    if (cleaned) lines.push(cleaned);
+    currentLine = "";
+  };
+
+  while (index < content.length) {
+    const char = content[index]!;
+
+    if (char === "%") {
+      while (index < content.length && content[index] !== "\n") index += 1;
+      continue;
+    }
+
+    if (char === "(") {
+      const parsed = parsePdfLiteralString(content, index);
+      pendingText = parsed.value;
+      index = parsed.nextIndex;
+      continue;
+    }
+
+    if (char === "<" && content[index + 1] !== "<") {
+      const parsed = parsePdfHexString(content, index);
+      pendingText = parsed.value;
+      index = parsed.nextIndex;
+      continue;
+    }
+
+    if (char === "[") {
+      const parsed = parsePdfArrayString(content, index);
+      pendingText = parsed.value;
+      index = parsed.nextIndex;
+      continue;
+    }
+
+    if (char === "'" || char === '"' || /[A-Za-z]/.test(char)) {
+      const parsed = readPdfOperator(content, index);
+      const operator = parsed.operator;
+
+      if (operator === "Tj" || operator === "TJ" || operator === "'" || operator === '"') {
+        currentLine = appendPdfLineValue(currentLine, pendingText);
+        pendingText = "";
+        if (operator === "'" || operator === '"') flushLine();
+      } else if (operator === "T*" || operator === "Td" || operator === "TD" || operator === "ET") {
+        flushLine();
+      }
+
+      index = parsed.nextIndex;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  flushLine();
+  return lines;
+}
+
+function extractChecklistTextFromPdfBuffer(buffer: Buffer): string {
+  const pdf = buffer.toString("latin1");
+  const lines: string[] = [];
+  let cursor = 0;
+
+  while (cursor < pdf.length) {
+    const streamIndex = pdf.indexOf("stream", cursor);
+    if (streamIndex < 0) break;
+
+    let dataStart = streamIndex + 6;
+    if (pdf[dataStart] === "\r" && pdf[dataStart + 1] === "\n") {
+      dataStart += 2;
+    } else if (pdf[dataStart] === "\n" || pdf[dataStart] === "\r") {
+      dataStart += 1;
+    }
+
+    const streamEnd = pdf.indexOf("endstream", dataStart);
+    if (streamEnd < 0) break;
+
+    const dictionaryStart = pdf.lastIndexOf("<<", streamIndex);
+    const dictionaryEnd = dictionaryStart >= 0 ? pdf.indexOf(">>", dictionaryStart) : -1;
+    const dictionary =
+      dictionaryStart >= 0 && dictionaryEnd >= 0 && dictionaryEnd < streamIndex
+        ? pdf.slice(dictionaryStart, dictionaryEnd + 2)
+        : pdf.slice(Math.max(0, streamIndex - 220), streamIndex);
+
+    let chunk = buffer.subarray(dataStart, streamEnd);
+    while (chunk.length > 0 && (chunk[chunk.length - 1] === 0x0a || chunk[chunk.length - 1] === 0x0d)) {
+      chunk = chunk.subarray(0, chunk.length - 1);
+    }
+
+    let decoded: Buffer | null = chunk;
+    if (/\/FlateDecode/i.test(dictionary)) {
+      try {
+        decoded = inflateSync(chunk);
+      } catch {
+        decoded = null;
+      }
+    }
+
+    if (decoded && decoded.length > 0) {
+      const streamLines = extractLinesFromPdfContentStream(decoded.toString("latin1"));
+      lines.push(...streamLines);
+    }
+
+    cursor = streamEnd + "endstream".length;
+  }
+
+  return lines
+    .map((line) => compactWhitespace(line))
+    .filter((line) => line && !/^\d+$/.test(line))
+    .join("\n");
+}
+
 function stripHtml(html: string) {
   return compactWhitespace(
     decodeHtmlEntities(
@@ -583,6 +938,20 @@ function extractLikelyContentHtml(html: string) {
   }
 
   return selected;
+}
+
+function extractChecklistTextFromHtml(html: string) {
+  const contentHtml = extractLikelyContentHtml(html);
+  return decodeHtmlEntities(
+    String(contentHtml || "")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(p|div|li|tr|h[1-6]|section|article)>/gi, "\n")
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\u00A0/g, " ")
+      .replace(/\r/g, "\n")
+      .replace(/\n{2,}/g, "\n")
+      .trim()
+  );
 }
 
 function isLikelyNoiseCellValue(value: string) {
@@ -971,16 +1340,18 @@ function extractChecklistCandidateUrls(html: string, baseUrl: string) {
     const href = compactWhitespace(decodeHtmlEntities(match[2] || ""));
     const text = stripHtml(match[3] || "").toLowerCase();
     const hrefLower = href.toLowerCase();
+    const looksLikePdf = /\.pdf(?:$|\?)/i.test(hrefLower);
+    const hasChecklistSignal = /(checklist|set-list|setlist|full-list|parallel)/i.test(`${text} ${hrefLower}`);
     if (!href || hrefLower.startsWith("#")) continue;
     if (hrefLower.startsWith("javascript:") || hrefLower.startsWith("mailto:")) continue;
-    if (!/(checklist|set-list|setlist|full-list)/i.test(`${text} ${hrefLower}`)) continue;
+    if (!hasChecklistSignal && !looksLikePdf) continue;
     if (/(ebay|affiliate|forum|search|signin|signup|login|register)/i.test(hrefLower)) continue;
 
     const resolved = resolveRelativeUrl(baseUrl, href);
     if (!resolved) continue;
     if (isLikelySearchResultsUrl(resolved)) continue;
     const resolvedGroup = baseDomainGroup(resolved);
-    if (baseGroup && resolvedGroup && baseGroup !== resolvedGroup) continue;
+    if (baseGroup && resolvedGroup && baseGroup !== resolvedGroup && !looksLikePdf) continue;
     if (seen.has(resolved)) continue;
     seen.add(resolved);
     candidates.push(resolved);
@@ -1004,10 +1375,25 @@ async function fetchRowsFromSource(
 
   const { response, attemptsUsed } = await fetchWithRetry(normalizedUrl, 3);
   const contentType = response.headers.get("content-type");
-  const content = await response.text();
-  const trimmed = content.trim();
   const lowerContentType = String(contentType || "").toLowerCase();
   const lowerUrl = normalizedUrl.toLowerCase();
+  const isPdfSource = lowerContentType.includes("application/pdf") || /\.pdf(?:$|\?)/i.test(lowerUrl);
+
+  if (isPdfSource) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const checklistText = extractChecklistTextFromPdfBuffer(buffer);
+    const rows = parseChecklistRowsFromText(checklistText);
+    return {
+      rows,
+      parserName: "pdf-checklist-v1",
+      contentType,
+      fetchedAt: new Date().toISOString(),
+      attempts: attemptsUsed,
+    };
+  }
+
+  const content = await response.text();
+  const trimmed = content.trim();
 
   if (lowerContentType.includes("application/json") || lowerUrl.endsWith(".json") || trimmed.startsWith("[") || trimmed.startsWith("{")) {
     const parsed = JSON.parse(trimmed || "[]");
@@ -1055,6 +1441,17 @@ async function fetchRowsFromSource(
     };
   }
 
+  const htmlChecklistRows = parseChecklistRowsFromText(extractChecklistTextFromHtml(content));
+  if (htmlChecklistRows.length > 0) {
+    return {
+      rows: htmlChecklistRows,
+      parserName: "html-checklist-text-v1",
+      contentType,
+      fetchedAt: new Date().toISOString(),
+      attempts: attemptsUsed,
+    };
+  }
+
   if (context.depth < 1) {
     const checklistUrls = extractChecklistCandidateUrls(content, normalizedUrl);
     for (const checklistUrl of checklistUrls) {
@@ -1087,7 +1484,86 @@ async function fetchRowsFromSource(
     };
   }
 
-  throw new Error("Could not parse rows from source URL. Supported sources: JSON, CSV, or checklist tables.");
+  throw new Error("Could not parse rows from source URL. Supported sources: JSON, CSV, PDF checklists, or checklist tables.");
+}
+
+export function parseUploadedSourceFile(params: {
+  fileName: string;
+  fileBuffer: Buffer;
+  contentType?: string | null;
+}): { rows: Array<Record<string, unknown>>; parserName: string } {
+  const fileName = compactWhitespace(params.fileName);
+  if (!fileName) {
+    throw new Error("Upload file name is required.");
+  }
+  if (!params.fileBuffer || params.fileBuffer.length < 1) {
+    throw new Error("Uploaded file is empty.");
+  }
+
+  const lowerName = fileName.toLowerCase();
+  const lowerContentType = String(params.contentType || "").toLowerCase();
+  const isPdf = lowerContentType.includes("application/pdf") || lowerName.endsWith(".pdf");
+
+  if (isPdf) {
+    const checklistText = extractChecklistTextFromPdfBuffer(params.fileBuffer);
+    const rows = parseChecklistRowsFromText(checklistText);
+    if (rows.length < 1) {
+      throw new Error(
+        "No checklist rows were detected from this PDF. Use an official text-based checklist PDF (not a scanned image PDF)."
+      );
+    }
+    return { rows, parserName: "upload-pdf-checklist-v1" };
+  }
+
+  const text = params.fileBuffer.toString("utf8");
+  const trimmed = text.trim();
+  if (!trimmed) {
+    throw new Error("Uploaded file is empty.");
+  }
+
+  if (lowerName.endsWith(".json") || trimmed.startsWith("[") || trimmed.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const rows = normalizeObjectRows(parsed);
+      if (rows.length > 0) {
+        return { rows, parserName: "upload-json-v1" };
+      }
+    } catch {
+      if (lowerName.endsWith(".json")) {
+        throw new Error("JSON file could not be parsed.");
+      }
+    }
+  }
+
+  if (lowerName.endsWith(".csv") || lowerContentType.includes("text/csv")) {
+    const rows = parseCsvRows(text);
+    if (rows.length > 0) {
+      return { rows, parserName: "upload-csv-v1" };
+    }
+  }
+
+  const markdownRows = parseMarkdownRows(text);
+  if (markdownRows.length > 0) {
+    return { rows: markdownRows, parserName: "upload-markdown-v1" };
+  }
+
+  if (lowerName.endsWith(".html") || lowerName.endsWith(".htm") || /<table|<html|<body|<article/i.test(text)) {
+    const htmlTableRows = parseHtmlTableRows(text);
+    if (htmlTableRows.length > 0) {
+      return { rows: htmlTableRows, parserName: "upload-html-table-v1" };
+    }
+    const htmlChecklistRows = parseChecklistRowsFromText(extractChecklistTextFromHtml(text));
+    if (htmlChecklistRows.length > 0) {
+      return { rows: htmlChecklistRows, parserName: "upload-html-checklist-v1" };
+    }
+  }
+
+  const checklistRows = parseChecklistRowsFromText(text);
+  if (checklistRows.length > 0) {
+    return { rows: checklistRows, parserName: "upload-text-checklist-v1" };
+  }
+
+  throw new Error("No usable checklist rows found. Upload CSV/JSON/PDF checklist sources.");
 }
 
 function buildDiscoverySearchText(query: NormalizedDiscoveryQuery) {
@@ -1332,7 +1808,7 @@ export async function importDiscoveredSource(params: {
     const status = parseStatusCodeFromError(error);
     if (status === 401 || status === 403) {
       throw new Error(
-        "Source blocked automated fetch (HTTP 403/401). Open source in browser and use CSV/JSON upload in Step 1 as fallback."
+        "Source blocked automated fetch (HTTP 403/401). Open source in browser and use CSV/JSON/PDF upload in Step 1 as fallback."
       );
     }
     throw error;
