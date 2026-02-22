@@ -23,3 +23,4 @@ frontend/nextjs-app/tsconfig.tsbuildinfo
 
 # Generated variant pipeline artifact
 data/variants/sports.auto.csv
+.env*.local

@@ -412,3 +412,59 @@
 
 ### Notes
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-22 - Set Ops Source Discovery + Import Module
+
+### Summary
+- Added online source discovery and direct-import workflow for Set Ops review UI.
+- New backend discovery/search + source-import APIs:
+  - `GET /api/admin/set-ops/discovery/search`
+  - `POST /api/admin/set-ops/discovery/import`
+- New server module `setOpsDiscovery` adds:
+  - web discovery query builder
+  - ranked source candidate extraction
+  - URL fetch with retries and per-host rate limiting
+  - source parsing connectors for JSON / CSV / HTML table inputs
+  - normalized row mapping into ingestion job payloads
+- Updated ingestion API to persist provenance metadata per job (`sourceProvider`, `sourceQuery`, `sourceFetchMeta`) inside `parseSummaryJson`.
+- Updated review UI to include Source Discovery section with:
+  - year/manufacturer/sport/query search
+  - one-click import as `parallel_db` or `player_worksheet`
+  - ingestion queue provider visibility
+- Maintained no-paste upload flow from prior step (CSV/JSON upload + optional advanced JSON editor).
+
+### Files Updated
+- `.gitignore`
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/discovery/search.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/discovery/import.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/ingestion/index.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/search.ts --file pages/api/admin/set-ops/discovery/import.ts --file pages/api/admin/set-ops/ingestion/index.ts --file pages/admin/set-ops-review.tsx` passed.
+
+### Notes
+- No deploy/restart/migration was executed in this step.
+
+## 2026-02-22 - Set Ops Discovery Build Safety Fixes
+
+### Summary
+- Fixed relative import paths in discovery APIs so the new routes resolve server helpers correctly in strict type checking:
+  - `pages/api/admin/set-ops/discovery/search.ts`
+  - `pages/api/admin/set-ops/discovery/import.ts`
+- Fixed strict nullability warning in `lib/server/setOpsDiscovery.ts` by asserting first table selection after explicit empty-check.
+- Re-validated new module after fixes.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/discovery/search.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/discovery/import.ts`
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/search.ts --file pages/api/admin/set-ops/discovery/import.ts --file pages/api/admin/set-ops/ingestion/index.ts --file pages/admin/set-ops-review.tsx` passed.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false` still fails in this workstation due existing Prisma client/schema mismatch, but discovery-path module resolution and `selectedTable` nullability errors are resolved.
+
+### Notes
+- No deploy/restart/migration was executed in this step.

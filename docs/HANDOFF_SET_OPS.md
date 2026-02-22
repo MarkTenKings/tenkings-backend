@@ -152,3 +152,18 @@ Build Set Ops UI flow with:
 - Workflow no longer requires manual raw JSON paste for normal use.
 - Advanced raw JSON editor remains available behind toggle for edge/debug cases.
 - Queue action now validates non-empty payload row count before creating ingestion jobs.
+
+## Source Discovery + Import Update (2026-02-22)
+- Added online source discovery endpoints and UI workflow for year/manufacturer/sport/query search.
+- Added import-from-source flow that fetches URL content with retry/rate-limit and parses JSON/CSV/HTML-table rows into ingestion jobs.
+- Added provenance tracking per ingestion job via `parseSummaryJson` (`sourceProvider`, `sourceQuery`, `sourceFetchMeta`).
+- `/admin/set-ops-review` now supports:
+  - source search
+  - one-click import as `parallel_db` / `player_worksheet`
+  - provider visibility in ingestion queue rows
+  - no-paste CSV/JSON upload path for manual files
+
+## Discovery Build Safety Fixes (2026-02-22)
+- Corrected discovery API relative import paths to `lib/server/*` to ensure strict build/type resolution succeeds.
+- Fixed strict nullability issue in HTML table parser (`selectedTable` after non-empty table guard).
+- Re-ran targeted lint and verified new discovery-related compile errors were cleared (remaining broad TypeScript failures in this workstation are pre-existing Prisma client/schema linkage issues).

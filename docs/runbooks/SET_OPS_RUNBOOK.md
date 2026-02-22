@@ -20,6 +20,8 @@ Role capabilities (server-enforced):
 - `admin`: archive/unarchive
 
 Primary APIs:
+- `GET /api/admin/set-ops/discovery/search`
+- `POST /api/admin/set-ops/discovery/import`
 - `GET /api/admin/set-ops/access`
 - `GET /api/admin/set-ops/sets`
 - `POST /api/admin/set-ops/archive`
@@ -37,17 +39,18 @@ Primary APIs:
 ## Pre-Release Validation Checklist
 Code checks:
 - `pnpm --filter @tenkings/shared test`
-- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/access.ts --file pages/api/admin/set-ops/delete/confirm.ts`
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/access.ts --file pages/api/admin/set-ops/delete/confirm.ts --file pages/api/admin/set-ops/discovery/search.ts --file pages/api/admin/set-ops/discovery/import.ts --file lib/server/setOpsDiscovery.ts`
 
 Manual staging flow:
-1. Queue ingestion (`parallel_db`) and build draft.
-2. Edit at least one draft row and save a new immutable version.
-3. Verify approval is blocked when blocking errors exist.
-4. Approve clean draft and verify approval diff/metadata.
-5. Start seed run; verify monitor updates, then retry/cancel paths as applicable.
-6. From `/admin/set-ops`, run archive and unarchive.
-7. Run delete dry-run and verify impact counts/audit snippet.
-8. Only in non-prod/staging: run delete confirm with typed phrase and verify transaction + audit event.
+1. Run source discovery search (year/manufacturer/sport/query), import one discovered source as ingestion job, and confirm row count > 0.
+2. Queue ingestion (`parallel_db`) and build draft.
+3. Edit at least one draft row and save a new immutable version.
+4. Verify approval is blocked when blocking errors exist.
+5. Approve clean draft and verify approval diff/metadata.
+6. Start seed run; verify monitor updates, then retry/cancel paths as applicable.
+7. From `/admin/set-ops`, run archive and unarchive.
+8. Run delete dry-run and verify impact counts/audit snippet.
+9. Only in non-prod/staging: run delete confirm with typed phrase and verify transaction + audit event.
 
 ## Production Rollout Checklist
 1. Deploy code and verify serving commit hash.

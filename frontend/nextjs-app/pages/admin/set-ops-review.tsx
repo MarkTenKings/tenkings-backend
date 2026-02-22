@@ -20,6 +20,9 @@ type IngestionJob = {
   updatedAt: string;
   parsedAt: string | null;
   reviewedAt: string | null;
+  sourceProvider: string | null;
+  sourceQuery: Record<string, unknown> | null;
+  sourceFetchMeta: Record<string, unknown> | null;
 };
 
 type DraftRow = {
@@ -78,6 +81,18 @@ type AccessResponse =
   | {
       message: string;
     };
+
+type DiscoveryResult = {
+  id: string;
+  title: string;
+  url: string;
+  snippet: string;
+  provider: string;
+  domain: string;
+  setIdGuess: string;
+  score: number;
+  discoveredAt: string;
+};
 
 function formatDate(value: string | null) {
   if (!value) return "-";
@@ -253,6 +268,13 @@ export default function SetOpsReviewPage() {
   const [payloadFileName, setPayloadFileName] = useState<string | null>(null);
   const [payloadRowCount, setPayloadRowCount] = useState<number>(0);
   const [payloadLoading, setPayloadLoading] = useState(false);
+  const [discoveryYearInput, setDiscoveryYearInput] = useState(String(new Date().getFullYear()));
+  const [discoveryManufacturerInput, setDiscoveryManufacturerInput] = useState("");
+  const [discoverySportInput, setDiscoverySportInput] = useState("");
+  const [discoveryQueryInput, setDiscoveryQueryInput] = useState("");
+  const [discoveryBusy, setDiscoveryBusy] = useState(false);
+  const [discoveryResults, setDiscoveryResults] = useState<DiscoveryResult[]>([]);
+  const [discoveryImportBusyId, setDiscoveryImportBusyId] = useState<string | null>(null);
 
   const [ingestionJobs, setIngestionJobs] = useState<IngestionJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string>("");
@@ -421,6 +443,7 @@ export default function SetOpsReviewPage() {
         if (rowCount < 1) {
           throw new Error("No ingestion rows found. Upload a CSV/JSON file first.");
         }
+        const sourceProvider = payloadFileName ? "FILE_UPLOAD" : "MANUAL_JSON";
 
         const response = await fetch("/api/admin/set-ops/ingestion", {
           method: "POST",
@@ -433,6 +456,12 @@ export default function SetOpsReviewPage() {
             datasetType,
             sourceUrl: sourceUrlInput || null,
             parserVersion: parserVersionInput || "manual-v1",
+            sourceProvider,
+            sourceFetchMeta: {
+              rowCount,
+              fileName: payloadFileName || null,
+              importedAt: new Date().toISOString(),
+            },
             rawPayload: parsedPayload,
           }),
         });
@@ -462,6 +491,7 @@ export default function SetOpsReviewPage() {
       canReview,
       isAdmin,
       parserVersionInput,
+      payloadFileName,
       rawPayloadInput,
       session?.token,
       setIdInput,
@@ -507,6 +537,134 @@ export default function SetOpsReviewPage() {
       }
     },
     [canReview, setIdInput]
+  );
+
+  const runDiscoverySearch = useCallback(
+    async (event?: FormEvent<HTMLFormElement>) => {
+      event?.preventDefault();
+      if (!session?.token || !isAdmin) return;
+      if (!canReview) {
+        setError("Set Ops reviewer role required");
+        return;
+      }
+
+      setDiscoveryBusy(true);
+      setError(null);
+      setStatus(null);
+
+      try {
+        const params = new URLSearchParams({ limit: "20" });
+        if (discoveryYearInput.trim()) params.set("year", discoveryYearInput.trim());
+        if (discoveryManufacturerInput.trim()) params.set("manufacturer", discoveryManufacturerInput.trim());
+        if (discoverySportInput.trim()) params.set("sport", discoverySportInput.trim());
+        if (discoveryQueryInput.trim()) params.set("q", discoveryQueryInput.trim());
+
+        const response = await fetch(`/api/admin/set-ops/discovery/search?${params.toString()}`, {
+          headers: adminHeaders,
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+          results?: DiscoveryResult[];
+          total?: number;
+        };
+        if (!response.ok) {
+          throw new Error(payload.message ?? "Failed to search online set sources");
+        }
+
+        const nextResults = payload.results ?? [];
+        setDiscoveryResults(nextResults);
+        setStatus(`Found ${payload.total ?? nextResults.length} source candidates.`);
+      } catch (searchError) {
+        setDiscoveryResults([]);
+        setError(searchError instanceof Error ? searchError.message : "Failed to search online set sources");
+      } finally {
+        setDiscoveryBusy(false);
+      }
+    },
+    [
+      adminHeaders,
+      canReview,
+      discoveryManufacturerInput,
+      discoveryQueryInput,
+      discoverySportInput,
+      discoveryYearInput,
+      isAdmin,
+      session?.token,
+    ]
+  );
+
+  const importDiscoveredResult = useCallback(
+    async (result: DiscoveryResult, datasetTypeForImport: DatasetType) => {
+      if (!session?.token || !isAdmin) return;
+      if (!canReview) {
+        setError("Set Ops reviewer role required");
+        return;
+      }
+
+      setDiscoveryImportBusyId(result.id);
+      setError(null);
+      setStatus(null);
+
+      try {
+        const response = await fetch("/api/admin/set-ops/discovery/import", {
+          method: "POST",
+          headers: {
+            ...adminHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            setId: setIdInput.trim() || result.setIdGuess || undefined,
+            datasetType: datasetTypeForImport,
+            sourceUrl: result.url,
+            sourceProvider: result.provider,
+            sourceTitle: result.title,
+            parserVersion: `source-discovery-v1`,
+            discoveryQuery: {
+              year: discoveryYearInput.trim() || null,
+              manufacturer: discoveryManufacturerInput.trim() || null,
+              sport: discoverySportInput.trim() || null,
+              query: discoveryQueryInput.trim() || null,
+            },
+          }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+          job?: IngestionJob;
+          preview?: { rowCount?: number; setId?: string };
+        };
+        if (!response.ok || !payload.job) {
+          throw new Error(payload.message ?? "Failed to import discovered source");
+        }
+
+        await fetchIngestionJobs();
+        setSelectedJobId(payload.job.id);
+        setSelectedSetId(payload.job.setId);
+        setDatasetType(payload.job.datasetType as DatasetType);
+        setSetIdInput(payload.job.setId);
+        setSourceUrlInput(payload.job.sourceUrl ?? result.url);
+
+        const rowCount = payload.preview?.rowCount ?? 0;
+        setStatus(
+          `Imported ${rowCount.toLocaleString()} rows from ${result.provider} and queued ingestion job ${payload.job.id}.`
+        );
+      } catch (importError) {
+        setError(importError instanceof Error ? importError.message : "Failed to import discovered source");
+      } finally {
+        setDiscoveryImportBusyId(null);
+      }
+    },
+    [
+      adminHeaders,
+      canReview,
+      discoveryManufacturerInput,
+      discoveryQueryInput,
+      discoverySportInput,
+      discoveryYearInput,
+      fetchIngestionJobs,
+      isAdmin,
+      session?.token,
+      setIdInput,
+    ]
   );
 
   const buildDraftFromJob = useCallback(async () => {
@@ -894,6 +1052,107 @@ export default function SetOpsReviewPage() {
         {error && <p className="text-xs text-rose-300">{error}</p>}
 
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
+          <h2 className="text-lg font-semibold text-white">0. Discover Sources (Online)</h2>
+          <p className="mt-1 text-xs text-slate-400">
+            Search the web by year/manufacturer/sport, then import a discovered source directly into ingestion queue.
+          </p>
+          <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={runDiscoverySearch}>
+            <input
+              value={discoveryYearInput}
+              onChange={(event) => setDiscoveryYearInput(event.target.value)}
+              disabled={!canReview || discoveryBusy}
+              placeholder="Year (ex: 2020)"
+              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
+            />
+            <input
+              value={discoveryManufacturerInput}
+              onChange={(event) => setDiscoveryManufacturerInput(event.target.value)}
+              disabled={!canReview || discoveryBusy}
+              placeholder="Manufacturer (ex: Panini)"
+              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
+            />
+            <input
+              value={discoverySportInput}
+              onChange={(event) => setDiscoverySportInput(event.target.value)}
+              disabled={!canReview || discoveryBusy}
+              placeholder="Sport (ex: Baseball)"
+              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
+            />
+            <input
+              value={discoveryQueryInput}
+              onChange={(event) => setDiscoveryQueryInput(event.target.value)}
+              disabled={!canReview || discoveryBusy}
+              placeholder="Extra query (optional)"
+              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
+            />
+            <button
+              type="submit"
+              disabled={!canReview || discoveryBusy}
+              className="h-11 rounded-xl border border-sky-400/60 bg-sky-500/20 px-4 text-xs font-semibold uppercase tracking-[0.18em] text-sky-100 transition hover:bg-sky-500/30 disabled:opacity-60"
+            >
+              {discoveryBusy ? "Searching..." : "Search Sources"}
+            </button>
+          </form>
+
+          <div className="mt-5 overflow-x-auto">
+            <table className="min-w-full border-separate border-spacing-0 text-left text-sm text-slate-200">
+              <thead>
+                <tr>
+                  <th className="border-b border-white/10 px-2 py-2 text-slate-300">Provider</th>
+                  <th className="border-b border-white/10 px-2 py-2 text-slate-300">Title</th>
+                  <th className="border-b border-white/10 px-2 py-2 text-slate-300">Set Guess</th>
+                  <th className="border-b border-white/10 px-2 py-2 text-slate-300">Source</th>
+                  <th className="border-b border-white/10 px-2 py-2 text-slate-300">Import</th>
+                </tr>
+              </thead>
+              <tbody>
+                {discoveryResults.map((result) => (
+                  <tr key={result.id}>
+                    <td className="border-b border-white/5 px-2 py-2 text-xs">{result.provider}</td>
+                    <td className="border-b border-white/5 px-2 py-2">
+                      <p className="font-medium text-white">{result.title}</p>
+                    </td>
+                    <td className="border-b border-white/5 px-2 py-2 text-xs">{result.setIdGuess || "-"}</td>
+                    <td className="border-b border-white/5 px-2 py-2 text-xs">
+                      <a href={result.url} target="_blank" rel="noreferrer" className="text-sky-300 hover:text-sky-200">
+                        Open Source
+                      </a>
+                    </td>
+                    <td className="border-b border-white/5 px-2 py-2">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={busy || !canReview || discoveryImportBusyId === result.id}
+                          onClick={() => void importDiscoveredResult(result, "PARALLEL_DB")}
+                          className="rounded border border-violet-400/50 bg-violet-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-violet-100 disabled:opacity-60"
+                        >
+                          {discoveryImportBusyId === result.id ? "Importing..." : "Import parallel_db"}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={busy || !canReview || discoveryImportBusyId === result.id}
+                          onClick={() => void importDiscoveredResult(result, "PLAYER_WORKSHEET")}
+                          className="rounded border border-gold-500/50 bg-gold-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gold-100 disabled:opacity-60"
+                        >
+                          {discoveryImportBusyId === result.id ? "Importing..." : "Import player_worksheet"}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {discoveryResults.length === 0 && !discoveryBusy && (
+                  <tr>
+                    <td colSpan={5} className="px-2 py-6 text-center text-sm text-slate-400">
+                      No source candidates yet. Run a discovery search above.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
           <h2 className="text-lg font-semibold text-white">1. Ingestion Queue</h2>
           <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={createIngestionJob}>
             <input
@@ -982,6 +1241,7 @@ export default function SetOpsReviewPage() {
                   <th className="border-b border-white/10 px-2 py-2 text-slate-300">Job</th>
                   <th className="border-b border-white/10 px-2 py-2 text-slate-300">Set</th>
                   <th className="border-b border-white/10 px-2 py-2 text-slate-300">Type</th>
+                  <th className="border-b border-white/10 px-2 py-2 text-slate-300">Provider</th>
                   <th className="border-b border-white/10 px-2 py-2 text-slate-300">Status</th>
                   <th className="border-b border-white/10 px-2 py-2 text-slate-300">Created</th>
                 </tr>
@@ -1001,6 +1261,7 @@ export default function SetOpsReviewPage() {
                     <td className="border-b border-white/5 px-2 py-2 font-mono text-xs">{job.id.slice(0, 8)}</td>
                     <td className="border-b border-white/5 px-2 py-2">{job.setId}</td>
                     <td className="border-b border-white/5 px-2 py-2">{job.datasetType}</td>
+                    <td className="border-b border-white/5 px-2 py-2 text-xs">{job.sourceProvider ?? "-"}</td>
                     <td className="border-b border-white/5 px-2 py-2">{job.status}</td>
                     <td className="border-b border-white/5 px-2 py-2 text-xs text-slate-400">{formatDate(job.createdAt)}</td>
                   </tr>

@@ -14,6 +14,9 @@ const createJobSchema = z.object({
   datasetType: z.nativeEnum(SetDatasetType),
   sourceUrl: z.string().trim().url().optional().nullable(),
   parserVersion: z.string().trim().min(1).max(120).default("manual-v1"),
+  sourceProvider: z.string().trim().max(120).optional(),
+  sourceQuery: z.record(z.string(), z.unknown()).optional(),
+  sourceFetchMeta: z.record(z.string(), z.unknown()).optional(),
   rawPayload: z.unknown(),
 });
 
@@ -29,6 +32,9 @@ type JobRow = {
   updatedAt: string;
   parsedAt: string | null;
   reviewedAt: string | null;
+  sourceProvider: string | null;
+  sourceQuery: Record<string, unknown> | null;
+  sourceFetchMeta: Record<string, unknown> | null;
 };
 
 type ResponseBody =
@@ -54,7 +60,22 @@ function toJobRow(job: {
   updatedAt: Date;
   parsedAt: Date | null;
   reviewedAt: Date | null;
+  parseSummaryJson: unknown;
 }): JobRow {
+  const summary =
+    job.parseSummaryJson && typeof job.parseSummaryJson === "object" && !Array.isArray(job.parseSummaryJson)
+      ? (job.parseSummaryJson as Record<string, unknown>)
+      : null;
+  const sourceProvider = summary && typeof summary.sourceProvider === "string" ? summary.sourceProvider : null;
+  const sourceQuery =
+    summary && summary.sourceQuery && typeof summary.sourceQuery === "object" && !Array.isArray(summary.sourceQuery)
+      ? (summary.sourceQuery as Record<string, unknown>)
+      : null;
+  const sourceFetchMeta =
+    summary && summary.sourceFetchMeta && typeof summary.sourceFetchMeta === "object" && !Array.isArray(summary.sourceFetchMeta)
+      ? (summary.sourceFetchMeta as Record<string, unknown>)
+      : null;
+
   return {
     id: job.id,
     setId: job.setId,
@@ -67,6 +88,9 @@ function toJobRow(job: {
     updatedAt: job.updatedAt.toISOString(),
     parsedAt: job.parsedAt ? job.parsedAt.toISOString() : null,
     reviewedAt: job.reviewedAt ? job.reviewedAt.toISOString() : null,
+    sourceProvider,
+    sourceQuery,
+    sourceFetchMeta,
   };
 }
 
@@ -127,6 +151,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           updatedAt: true,
           parsedAt: true,
           reviewedAt: true,
+          parseSummaryJson: true,
         },
       });
 
@@ -166,6 +191,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           rawPayload: payload.rawPayload as Prisma.InputJsonValue,
           parserVersion: payload.parserVersion,
           status: SetIngestionJobStatus.QUEUED,
+          parseSummaryJson: {
+            sourceProvider: payload.sourceProvider || "MANUAL_UPLOAD",
+            sourceQuery: payload.sourceQuery ?? null,
+            sourceFetchMeta: payload.sourceFetchMeta ?? null,
+          } as Prisma.InputJsonValue,
           createdById: admin.user.id,
         },
         select: {
@@ -180,6 +210,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           updatedAt: true,
           parsedAt: true,
           reviewedAt: true,
+          parseSummaryJson: true,
         },
       });
 
@@ -195,6 +226,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           datasetType: payload.datasetType,
           parserVersion: payload.parserVersion,
           hasSourceUrl: Boolean(payload.sourceUrl),
+          sourceProvider: payload.sourceProvider || "MANUAL_UPLOAD",
         },
       });
 
