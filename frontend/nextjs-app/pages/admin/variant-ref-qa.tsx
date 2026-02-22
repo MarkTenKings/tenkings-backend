@@ -1,10 +1,17 @@
 import Head from "next/head";
 import Link from "next/link";
-import { ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
+
+type SetRow = {
+  setId: string;
+  lastSeedStatus: string | null;
+  lastSeedAt: string | null;
+  variantCount: number;
+};
 
 type VariantRow = {
   id: string;
@@ -14,6 +21,7 @@ type VariantRow = {
   parallelFamily: string | null;
   playerLabel: string | null;
   referenceCount: number;
+  qaDoneCount: number;
   previewImageUrl: string | null;
 };
 
@@ -77,8 +85,11 @@ export default function VariantRefQaPage() {
     [session?.user.id, session?.user.phone]
   );
 
+  const [setSearch, setSetSearch] = useState("");
+  const [setRows, setSetRows] = useState<SetRow[]>([]);
+  const [selectedSetFilter, setSelectedSetFilter] = useState("");
   const [query, setQuery] = useState("");
-  const [gapOnly, setGapOnly] = useState(true);
+  const [gapOnly, setGapOnly] = useState(false);
   const [minRefs, setMinRefs] = useState(2);
   const [variantTypeFilter, setVariantTypeFilter] = useState<"all" | "insert" | "parallel">("all");
   const [variants, setVariants] = useState<VariantRow[]>([]);
@@ -91,9 +102,39 @@ export default function VariantRefQaPage() {
   const [sourceUrl, setSourceUrl] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<StatusMessage>(null);
-  const autoLoadedRef = useRef(false);
 
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
+
+  const loadSetRows = useCallback(async (search = "") => {
+    if (!session?.token) return;
+    try {
+      const params = new URLSearchParams({
+        limit: "120",
+      });
+      if (search.trim()) {
+        params.set("q", search.trim());
+      }
+      const res = await fetch(`/api/admin/variants/sets?${params.toString()}`, {
+        headers: { ...adminHeaders },
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Failed to load sets");
+      }
+      const rows = (payload.sets ?? []) as SetRow[];
+      setSetRows(rows);
+      if (!rows.length) {
+        setSelectedSetFilter("");
+        return;
+      }
+      const selectedExists = rows.some((row) => row.setId === selectedSetFilter);
+      if (!selectedSetFilter || !selectedExists) {
+        setSelectedSetFilter(rows[0]?.setId || "");
+      }
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : "Failed to load sets" });
+    }
+  }, [adminHeaders, selectedSetFilter, session?.token]);
 
   const loadVariants = useCallback(async () => {
     if (!session?.token) return;
@@ -105,6 +146,9 @@ export default function VariantRefQaPage() {
         gapOnly: gapOnly ? "true" : "false",
         minRefs: String(Math.max(1, minRefs || 1)),
       });
+      if (selectedSetFilter.trim()) {
+        params.set("setId", selectedSetFilter.trim());
+      }
       const res = await fetch(`/api/admin/variants?${params.toString()}`, {
         headers: { ...adminHeaders },
       });
@@ -120,7 +164,7 @@ export default function VariantRefQaPage() {
     } finally {
       setBusy(false);
     }
-  }, [adminHeaders, gapOnly, minRefs, query, session?.token]);
+  }, [adminHeaders, gapOnly, minRefs, query, selectedSetFilter, session?.token]);
 
   const displayedVariants = useMemo(() => {
     if (variantTypeFilter === "all") return variants;
@@ -130,6 +174,13 @@ export default function VariantRefQaPage() {
       return variantTypeFilter === "insert" ? isInsert : !isInsert;
     });
   }, [variantTypeFilter, variants]);
+
+  const queueStats = useMemo(() => {
+    const total = displayedVariants.length;
+    const done = displayedVariants.filter((variant) => (variant.qaDoneCount || 0) > 0).length;
+    const remaining = Math.max(0, total - done);
+    return { total, done, remaining };
+  }, [displayedVariants]);
 
   const selectedVariant = useMemo(() => {
     if (!selectedSetId || !selectedParallelId) return null;
@@ -145,10 +196,24 @@ export default function VariantRefQaPage() {
 
   useEffect(() => {
     if (!session?.token) return;
-    if (autoLoadedRef.current) return;
-    autoLoadedRef.current = true;
+    void loadSetRows();
+  }, [loadSetRows, session?.token]);
+
+  useEffect(() => {
+    if (!session?.token || !selectedSetFilter) return;
     void loadVariants();
-  }, [loadVariants, session?.token]);
+  }, [loadVariants, selectedSetFilter, session?.token]);
+
+  useEffect(() => {
+    if (!selectedSetFilter) return;
+    if (!selectedSetId) return;
+    if (selectedSetId === selectedSetFilter) return;
+    setSelectedSetId("");
+    setSelectedCardNumber("");
+    setSelectedParallelId("");
+    setRefs([]);
+    setSelectedRefIds([]);
+  }, [selectedSetFilter, selectedSetId]);
 
   const loadRefs = useCallback(async (setId?: string, parallelId?: string, cardNumber?: string) => {
     if (!session?.token) return;
@@ -183,6 +248,7 @@ export default function VariantRefQaPage() {
   }, [adminHeaders, selectedCardNumber, selectedParallelId, selectedSetId, session?.token]);
 
   const chooseVariant = async (variant: VariantRow) => {
+    setSelectedSetFilter(variant.setId);
     setSelectedSetId(variant.setId);
     setSelectedCardNumber(variant.cardNumber);
     setSelectedParallelId(variant.parallelId);
@@ -205,6 +271,40 @@ export default function VariantRefQaPage() {
       setSelectedRefIds((prev) => prev.filter((refId) => refId !== id));
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : "Failed to delete reference" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateSelectedQaStatus = async (qaStatus: "keep" | "pending" | "reject") => {
+    if (!selectedRefIds.length) {
+      setStatus({ type: "error", message: "Select at least one reference image." });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/variants/reference", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+        body: JSON.stringify({ ids: selectedRefIds, qaStatus }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Failed to update QA status");
+      }
+      await loadRefs();
+      await loadVariants();
+      setStatus({
+        type: "success",
+        message:
+          qaStatus === "keep"
+            ? "Marked selected images as done."
+            : qaStatus === "reject"
+            ? "Marked selected images as rejected."
+            : "Re-opened selected images to pending.",
+      });
+    } catch (error) {
+      setStatus({ type: "error", message: error instanceof Error ? error.message : "Failed to update QA status" });
     } finally {
       setBusy(false);
     }
@@ -438,19 +538,71 @@ export default function VariantRefQaPage() {
 
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
           <div className="flex flex-wrap items-end gap-2">
+            <label className="flex min-w-[260px] flex-1 flex-col gap-2 text-xs uppercase tracking-[0.22em] text-slate-400">
+              Set Search
+              <input
+                value={setSearch}
+                onChange={(event) => setSetSearch(event.target.value)}
+                placeholder="Search seeded sets..."
+                className="rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => void loadSetRows(setSearch)}
+              disabled={busy}
+              className="rounded-full border border-white/20 px-5 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-slate-100 disabled:opacity-60"
+            >
+              Find Sets
+            </button>
+            <label className="flex min-w-[300px] flex-1 flex-col gap-2 text-xs uppercase tracking-[0.22em] text-slate-400">
+              Active Set
+              <select
+                value={selectedSetFilter}
+                onChange={(event) => setSelectedSetFilter(event.target.value)}
+                className="rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+              >
+                {setRows.map((row) => (
+                  <option key={row.setId} value={row.setId}>
+                    {decodeHtml(row.setId)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {setRows.slice(0, 20).map((row) => {
+              const active = row.setId === selectedSetFilter;
+              return (
+                <button
+                  key={row.setId}
+                  type="button"
+                  onClick={() => setSelectedSetFilter(row.setId)}
+                  className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] ${
+                    active
+                      ? "border-emerald-400/70 bg-emerald-500/20 text-emerald-100"
+                      : "border-white/15 text-slate-300"
+                  }`}
+                >
+                  {decodeHtml(row.setId)}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-4 flex flex-wrap items-end gap-2">
             <label className="flex min-w-[320px] flex-1 flex-col gap-2 text-xs uppercase tracking-[0.22em] text-slate-400">
-              Variant search
+              Variant Search (inside selected set)
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Leave blank to load across all sets, or search by set/card/parallel"
+                placeholder="Player, card #, or parallel"
                 className="rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
               />
             </label>
             <button
               type="button"
               onClick={() => void loadVariants()}
-              disabled={busy}
+              disabled={busy || !selectedSetFilter}
               className="rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-night-900 disabled:opacity-60"
             >
               Load Variants
@@ -471,7 +623,7 @@ export default function VariantRefQaPage() {
                 onChange={(event) => setGapOnly(event.target.checked)}
                 className="h-4 w-4 accent-gold-400"
               />
-              Gap Queue
+              Gap Queue (&lt; Min Refs)
             </label>
             <label className="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-2 text-[11px] uppercase tracking-[0.22em] text-slate-200">
               Min Refs
@@ -484,6 +636,14 @@ export default function VariantRefQaPage() {
               />
             </label>
           </div>
+          <p className="mt-3 text-xs uppercase tracking-[0.22em] text-slate-400">
+            Queue:{" "}
+            <span className="text-emerald-200">
+              {queueStats.remaining} remaining
+            </span>{" "}
+            · <span className="text-slate-200">{queueStats.done} done</span> ·{" "}
+            <span className="text-slate-200">{queueStats.total} total</span>
+          </p>
           <div className="mt-4 max-h-72 overflow-auto rounded-xl border border-white/10">
             <table className="w-full text-left text-xs text-slate-300">
               <thead className="bg-night-800/80 text-[10px] uppercase tracking-[0.26em] text-slate-500">
@@ -492,6 +652,7 @@ export default function VariantRefQaPage() {
                   <th className="px-3 py-2">Card #</th>
                   <th className="px-3 py-2">Parallel</th>
                   <th className="px-3 py-2">Player</th>
+                  <th className="px-3 py-2">Status</th>
                   <th className="px-3 py-2">Action</th>
                   <th className="px-3 py-2">Photos</th>
                   <th className="px-3 py-2">Image</th>
@@ -499,16 +660,33 @@ export default function VariantRefQaPage() {
               </thead>
               <tbody>
                 {displayedVariants.map((variant) => {
-                  const active = variant.setId === selectedSetId && variant.parallelId === selectedParallelId;
+                  const active =
+                    variant.setId === selectedSetId &&
+                    variant.parallelId === selectedParallelId &&
+                    variant.cardNumber === selectedCardNumber;
+                  const done = (variant.qaDoneCount || 0) > 0;
                   return (
                   <tr
                     key={variant.id}
-                    className={`border-t border-white/5 ${active ? "bg-emerald-400/10 ring-1 ring-emerald-400/40" : ""}`}
+                    className={`border-t border-white/5 ${done ? "bg-white/[0.03]" : ""} ${
+                      active ? "bg-emerald-400/10 ring-1 ring-emerald-400/40" : ""
+                    }`}
                   >
                     <td className="px-3 py-2">{decodeHtml(variant.setId)}</td>
                     <td className="px-3 py-2">{variant.cardNumber}</td>
                     <td className="px-3 py-2">{displayParallelLabel(variant.parallelId)}</td>
                     <td className="px-3 py-2 text-slate-300">{variant.playerLabel || "—"}</td>
+                    <td className="px-3 py-2">
+                      <span
+                        className={`rounded-full border px-2 py-1 text-[10px] uppercase tracking-[0.18em] ${
+                          done
+                            ? "border-emerald-400/60 bg-emerald-500/15 text-emerald-200"
+                            : "border-amber-400/50 bg-amber-500/10 text-amber-200"
+                        }`}
+                      >
+                        {done ? "Done" : "Queue"}
+                      </span>
+                    </td>
                     <td className="px-3 py-2">
                       <button
                         type="button"
@@ -541,8 +719,8 @@ export default function VariantRefQaPage() {
                 })}
                 {displayedVariants.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-xs text-slate-500">
-                      Load variants to start QA.
+                    <td colSpan={8} className="px-3 py-6 text-center text-xs text-slate-500">
+                      No rows for this filter yet. Pick a set and click Load Variants.
                     </td>
                   </tr>
                 )}
@@ -556,9 +734,10 @@ export default function VariantRefQaPage() {
             <div className="text-xs uppercase tracking-[0.24em] text-slate-400">
               Selected: <span className="text-slate-200">{decodeHtml(selectedSetId) || "—"}</span> ·{" "}
               <span className="text-slate-200">{displayParallelLabel(selectedParallelId) || "—"}</span> ·{" "}
-              <span className="text-slate-200">#{selectedCardNumber || "—"}</span>
+              <span className="text-slate-200">#{selectedCardNumber || "—"}</span> ·{" "}
+              <span className="text-slate-200">{selectedVariant?.playerLabel || "—"}</span>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => void loadRefs()}
@@ -574,6 +753,22 @@ export default function VariantRefQaPage() {
                 className="rounded-full border border-violet-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-violet-200 disabled:opacity-60"
               >
                 Save Image
+              </button>
+              <button
+                type="button"
+                onClick={() => void updateSelectedQaStatus("keep")}
+                disabled={busy || selectedRefIds.length === 0}
+                className="rounded-full border border-emerald-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-emerald-200 disabled:opacity-60"
+              >
+                Mark Selected Done
+              </button>
+              <button
+                type="button"
+                onClick={() => void updateSelectedQaStatus("pending")}
+                disabled={busy || selectedRefIds.length === 0}
+                className="rounded-full border border-amber-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-amber-200 disabled:opacity-60"
+              >
+                Reopen Selected
               </button>
               <button
                 type="button"

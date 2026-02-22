@@ -438,3 +438,23 @@ Build Set Ops UI flow with:
     - replacement upload now persists `cardNumber` and `playerSeed` from selected variant where available.
     - Label/Card#/Player lines increased to larger bold text for easier QA scanning.
     - preview frame switched to portrait-friendly container (`aspect-[9/16]` + `object-contain`) to avoid top/bottom clipping.
+
+## Variant Ref QA Workflow UX (2026-02-22, Follow-up #8)
+- New production feedback:
+  - operators wanted a set-first queue experience (recent sets visible first) instead of starting from a blank variant table.
+  - active-row highlight in QA table was too broad and highlighted many rows at once.
+  - QA completion workflow needed explicit per-variant done tracking so reviewed rows sink to the bottom.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+    - added seeded-set discovery controls (set search + active set selector + quick set chips).
+    - variant queue now defaults to a selected set and shows queue summary (`remaining / done / total`).
+    - fixed active-row highlight to match full key (`setId + cardNumber + parallelId`) rather than set+parallel only.
+    - changed default `Gap Queue` filter to OFF and relabeled it (`Gap Queue (< Min Refs)`).
+    - added QA actions:
+      - `Mark Selected Done` (sets selected refs to `qaStatus=keep`)
+      - `Reopen Selected` (sets selected refs back to `qaStatus=pending`)
+    - selected-variant header now includes player label for better context.
+  - `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+    - supports `setId` filtering for targeted queue loads.
+    - computes `qaDoneCount` per variant (`qaStatus=keep` or `ownedStatus=owned`) and returns it in API payload.
+    - sorts queue so unfinished variants stay at top; done variants sink to bottom.

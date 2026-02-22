@@ -16,6 +16,7 @@ type VariantRow = {
   keywords: string[];
   oddsInfo: string | null;
   referenceCount: number;
+  qaDoneCount: number;
   previewImageUrl: string | null;
   createdAt: string;
   updatedAt: string;
@@ -89,6 +90,7 @@ function toRow(
   variant: any,
   extras?: {
     referenceCount?: number;
+    qaDoneCount?: number;
     previewImageUrl?: string | null;
     playerLabel?: string | null;
   }
@@ -103,6 +105,7 @@ function toRow(
     keywords: Array.isArray(variant.keywords) ? variant.keywords : [],
     oddsInfo: variant.oddsInfo ?? null,
     referenceCount: Math.max(0, Number(extras?.referenceCount ?? 0) || 0),
+    qaDoneCount: Math.max(0, Number(extras?.qaDoneCount ?? 0) || 0),
     previewImageUrl: extras?.previewImageUrl ?? null,
     createdAt: variant.createdAt?.toISOString?.() ?? String(variant.createdAt),
     updatedAt: variant.updatedAt?.toISOString?.() ?? String(variant.updatedAt),
@@ -115,18 +118,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     if (req.method === "GET") {
       const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+      const setIdFilter = typeof req.query.setId === "string" ? req.query.setId.trim() : "";
       const take = Math.min(2000, Math.max(1, Number(req.query.limit ?? 1000) || 1000));
       const gapOnly = String(req.query.gapOnly || "").trim().toLowerCase() === "true";
       const minRefs = Math.max(1, Number(req.query.minRefs ?? 2) || 2);
-      const where = q
-        ? {
-            OR: [
-              { setId: { contains: q, mode: Prisma.QueryMode.insensitive } },
-              { cardNumber: { contains: q, mode: Prisma.QueryMode.insensitive } },
-              { parallelId: { contains: q, mode: Prisma.QueryMode.insensitive } },
-            ],
-          }
-        : {};
+      const whereClauses: Prisma.CardVariantWhereInput[] = [];
+      if (setIdFilter) {
+        whereClauses.push({ setId: setIdFilter });
+      }
+      if (q) {
+        whereClauses.push({
+          OR: [
+            { setId: { contains: q, mode: Prisma.QueryMode.insensitive } },
+            { cardNumber: { contains: q, mode: Prisma.QueryMode.insensitive } },
+            { parallelId: { contains: q, mode: Prisma.QueryMode.insensitive } },
+          ],
+        });
+      }
+      const where =
+        whereClauses.length === 0
+          ? {}
+          : whereClauses.length === 1
+          ? whereClauses[0]
+          : { AND: whereClauses };
 
       const variants = await prisma.cardVariant.findMany({
         where,
@@ -153,6 +167,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             _count: { _all: true },
           })
         : [];
+      let qaDoneCounts: Array<{
+        setId: string;
+        cardNumber: string | null;
+        parallelId: string;
+        _count: { _all: number };
+      }> = [];
+      if (countOr.length) {
+        try {
+          qaDoneCounts = await prisma.cardVariantReferenceImage.groupBy({
+            by: ["setId", "cardNumber", "parallelId"],
+            where: {
+              AND: [
+                { OR: countOr },
+                {
+                  OR: [{ qaStatus: "keep" }, { ownedStatus: "owned" }],
+                },
+              ],
+            },
+            _count: { _all: true },
+          });
+        } catch {
+          qaDoneCounts = [];
+        }
+      }
       let latestRefs: any[] = [];
       if (countOr.length) {
         try {
@@ -191,6 +229,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const countByKey = new Map<string, number>();
       for (const row of referenceCounts) {
         countByKey.set(keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId), row._count._all);
+      }
+      const qaDoneByKey = new Map<string, number>();
+      for (const row of qaDoneCounts) {
+        qaDoneByKey.set(keyForRef(row.setId, row.cardNumber ?? null, row.parallelId), row._count._all);
       }
       const previewByKey = new Map<string, string>();
       const refPlayerByKey = new Map<string, string>();
@@ -312,6 +354,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           (countByKey.get(keyForRef(variant.setId, "ALL", variant.parallelId)) ?? 0) +
           (countByKey.get(keyForRef(variant.setId, null, variant.parallelId)) ?? 0);
         const referenceCount = exactCount > 0 ? exactCount : legacyCount;
+        const exactDoneCount =
+          qaDoneByKey.get(keyForRef(variant.setId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)) ?? 0;
+        const legacyDoneCount =
+          (qaDoneByKey.get(keyForRef(variant.setId, "ALL", variant.parallelId)) ?? 0) +
+          (qaDoneByKey.get(keyForRef(variant.setId, null, variant.parallelId)) ?? 0);
+        const qaDoneCount = exactDoneCount > 0 ? exactDoneCount : legacyDoneCount;
         const previewImageUrl =
           previewByKey.get(
             keyForRef(variant.setId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)
@@ -330,12 +378,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           null;
         return toRow(variant, {
           referenceCount,
+          qaDoneCount,
           previewImageUrl,
           playerLabel,
         });
       });
       const filtered = gapOnly ? rows.filter((row) => row.referenceCount < minRefs) : rows;
       filtered.sort((a, b) => {
+        const aDone = a.qaDoneCount > 0;
+        const bDone = b.qaDoneCount > 0;
+        if (aDone !== bDone) return aDone ? 1 : -1;
         const diff = a.referenceCount - b.referenceCount;
         if (diff !== 0) return diff;
         return (

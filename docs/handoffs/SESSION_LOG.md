@@ -775,3 +775,28 @@
 - Replacement-upload payload now includes selected `cardNumber` and `playerSeed`.
 - Metadata lines (`Label`, `Card #`, `Player`) are larger/bold.
 - Reference image preview now uses portrait ratio (`9:16`) with `object-contain` to prevent top/bottom truncation.
+
+## 2026-02-22 - Variant Ref QA Workflow Follow-up #8 (Set-First Queue + Done Tracking)
+
+### Summary
+- Implemented set-first QA queue UX so operators land on recent seeded sets instead of an ambiguous empty table.
+- Fixed row highlight keying bug so only one selected row is highlighted.
+- Added explicit QA completion actions and queue ordering so completed variants sink below remaining variants.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+- `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/variant-ref-qa.tsx --file pages/api/admin/variants/index.ts` passed (non-blocking `no-img-element` warnings only).
+
+### Notes
+- New set controls: `Set Search`, `Active Set` selector, quick set chips.
+- Queue summary now shown: `remaining / done / total`.
+- API now accepts `setId` query param and returns `qaDoneCount`.
+- Done logic is currently derived from refs where `qaStatus=keep` OR `ownedStatus=owned`.
+- New actions in QA panel:
+  - `Mark Selected Done`
+  - `Reopen Selected`
