@@ -201,3 +201,26 @@
 
 ### Validation Evidence
 - Targeted lint pass for new Set Ops API/helper files (see later combined lint run entry in this session).
+
+## 2026-02-22 - Set Ops P0-C Ticket 8 (Approval + Seed APIs MVP)
+
+### Summary
+- Added approval API:
+  - `POST /api/admin/set-ops/approval`
+  - Blocks approval when blocking validation errors exist.
+  - Persists diff summary and approval metadata.
+- Added seed execution helper and APIs:
+  - `GET/POST /api/admin/set-ops/seed/jobs`
+  - `POST /api/admin/set-ops/seed/jobs/[jobId]/cancel`
+  - `POST /api/admin/set-ops/seed/jobs/[jobId]/retry`
+- Seed runs now execute from approved draft data without shell commands, persist progress/result/log fields, and emit audit events.
+
+### Files Added
+- `frontend/nextjs-app/lib/server/setOpsSeed.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/approval.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/jobs.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/jobs/[jobId]/cancel.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/jobs/[jobId]/retry.ts`
+
+### Validation Evidence
+- Targeted lint pass for new Set Ops API/helper files (see later combined lint run entry in this session).
