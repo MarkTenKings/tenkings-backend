@@ -524,92 +524,240 @@ function parseMarkdownRows(markdown: string): Array<Record<string, unknown>> {
 }
 
 function normalizeChecklistSectionName(raw: string) {
-  const value = compactWhitespace(raw);
+  const value = compactWhitespace(raw)
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/\s*:\s*$/, "");
   if (!value) return "Base Set";
+  if (/^base$/i.test(value)) return "Base Set";
   return value
     .replace(/^\d+\.\s*/, "")
     .replace(/\s*checklist$/i, "")
     .trim();
 }
 
+const checklistSectionNoiseWords = new Set([
+  "BASE",
+  "SUDDEN",
+  "IMPACT",
+  "FILM",
+  "STUDY",
+  "POWER",
+  "BOOSTERS",
+  "ROUNDBALL",
+  "ROYALTY",
+  "DNA",
+  "CERTIFIED",
+  "AUTOGRAPHS",
+  "FUTURE",
+  "STARS",
+]);
+
+const nbaTeamSuffixes: string[][] = [
+  ["oklahoma", "city"],
+  ["san", "antonio"],
+  ["san", "francisco"],
+  ["new", "orleans"],
+  ["new", "york"],
+  ["new", "jersey"],
+  ["los", "angeles"],
+  ["golden", "state"],
+  ["atlanta"],
+  ["boston"],
+  ["brooklyn"],
+  ["charlotte"],
+  ["chicago"],
+  ["cleveland"],
+  ["dallas"],
+  ["denver"],
+  ["detroit"],
+  ["houston"],
+  ["indiana"],
+  ["memphis"],
+  ["miami"],
+  ["milwaukee"],
+  ["minnesota"],
+  ["orlando"],
+  ["philadelphia"],
+  ["phoenix"],
+  ["portland"],
+  ["sacramento"],
+  ["seattle"],
+  ["toronto"],
+  ["utah"],
+  ["washington"],
+];
+
+function normalizeChecklistCardToken(raw: string) {
+  return compactWhitespace(raw)
+    .replace(/^#/, "")
+    .replace(/[.,;:]+$/, "");
+}
+
+function looksLikeChecklistCardIdToken(raw: string) {
+  const token = normalizeChecklistCardToken(raw);
+  if (!token || token.length > 16) return false;
+  if (/^\d{4}[-/]\d{2,4}$/.test(token)) return false;
+  if (!/^[A-Za-z0-9]+(?:[-./][A-Za-z0-9]+){0,3}$/.test(token)) return false;
+
+  // Numeric / mixed IDs (ex: 148, SI-1, DNA-2, 114A)
+  if (/\d/.test(token)) return true;
+  // Letter-based insert/auto IDs (ex: CA-AB, FSA-BM)
+  if (/^[A-Za-z]{1,5}-[A-Za-z]{1,6}$/.test(token)) return true;
+  return false;
+}
+
+function normalizeChecklistLineForTokenization(raw: string) {
+  return compactWhitespace(raw)
+    // Split letter+number collisions from copy/extract artifacts (e.g., Brooklyn49).
+    .replace(/([A-Za-z])(\d{1,4})(?=\s+[A-Za-z])/g, "$1 $2")
+    .replace(/(\d)([A-Za-z]{1,5}-[A-Za-z0-9]{1,6})(?=\s+[A-Za-z])/g, "$1 $2");
+}
+
+function trimTrailingChecklistHeaderNoise(tokens: string[]) {
+  const next = [...tokens];
+  while (next.length > 0) {
+    const upper = next[next.length - 1]!.replace(/[^A-Za-z]/g, "").toUpperCase();
+    if (!upper || !checklistSectionNoiseWords.has(upper)) break;
+    next.pop();
+  }
+  return next;
+}
+
+function stripTeamSuffixFromTokens(tokens: string[]) {
+  if (tokens.length < 2) return tokens;
+  const lower = tokens.map((token) => token.toLowerCase());
+  for (const team of nbaTeamSuffixes) {
+    if (team.length > tokens.length) continue;
+    let matched = true;
+    for (let index = 0; index < team.length; index += 1) {
+      if (lower[lower.length - team.length + index] !== team[index]) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) {
+      return tokens.slice(0, tokens.length - team.length);
+    }
+  }
+  return tokens;
+}
+
+function extractPlayerSeedFromRecordTokens(rawTokens: string[]) {
+  if (rawTokens.length === 0) return "";
+  let tokens = [...rawTokens];
+  tokens = trimTrailingChecklistHeaderNoise(tokens);
+
+  // Rookie marker is usually in dedicated column/suffix.
+  while (tokens.length > 0 && /^rookie$/i.test(tokens[tokens.length - 1]!)) {
+    tokens.pop();
+  }
+
+  tokens = stripTeamSuffixFromTokens(tokens);
+  tokens = trimTrailingChecklistHeaderNoise(tokens);
+
+  const playerSeed = compactWhitespace(tokens.join(" "));
+  return playerSeed;
+}
+
 function looksLikeChecklistSectionHeader(line: string) {
   const value = compactWhitespace(line);
   if (!value) return false;
-  if (value.length < 3 || value.length > 100) return false;
+  if (value.length < 2 || value.length > 100) return false;
   if (/^\d+$/.test(value)) return false;
   if (/^page\s+\d+/i.test(value)) return false;
+  const firstToken = value.split(/\s+/)[0] || "";
+  if (looksLikeChecklistCardIdToken(firstToken)) return false;
+  if (TABLE_NEGATIVE_TOKEN_RE.test(value.toLowerCase())) return false;
+
+  const isAllCaps = value === value.toUpperCase() && /[A-Z]/.test(value);
+  const words = value.split(/\s+/).filter(Boolean);
+  const wordCount = words.length;
+  if (isAllCaps && wordCount <= 8) {
+    const normalizedWords = words.map((word) => word.replace(/[^A-Za-z]/g, "").toUpperCase()).filter(Boolean);
+    const allNoiseWords = normalizedWords.length > 0 && normalizedWords.every((word) => checklistSectionNoiseWords.has(word));
+    const hasSectionKeyword = /(base|checklist|autograph|autos|insert|parallel|impact|study|booster|royalty|dna)/i.test(value);
+    if (allNoiseWords || hasSectionKeyword) return true;
+  }
+
   if (/^[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})+\s+[A-Za-z]/.test(value)) return false;
   const hasKeyword =
     /(insert|parallel|autograph|autos|relic|patch|variation|fo[i1]l|holo|mojo|ballers|topps|rookie|court|gems|kings|school|limit|chrome|rainbow|base|dribble|stardom|mvp)/i.test(
       value
     );
   if (!hasKeyword) return false;
-  if (TABLE_NEGATIVE_TOKEN_RE.test(value.toLowerCase())) return false;
   return true;
-}
-
-type ChecklistCardEntry = {
-  cardNumber: string;
-  playerSeed: string;
-};
-
-function parseCardEntriesFromChecklistLine(line: string): ChecklistCardEntry[] {
-  const compact = line.replace(/\s+/g, " ").trim();
-  if (!compact) return [];
-
-  const entries: ChecklistCardEntry[] = [];
-  const pattern =
-    /(?:^|\s)#?([A-Za-z0-9]+(?:[-./][A-Za-z0-9]+){0,2})\s+([A-Za-z][A-Za-z'.\- ]{1,90}?)(?=(?:\s+#?[A-Za-z0-9]+(?:[-./][A-Za-z0-9]+){0,2}\s+[A-Za-z])|$)/g;
-  let match: RegExpExecArray | null = null;
-
-  while ((match = pattern.exec(compact))) {
-    const cardNumber = compactWhitespace(match[1] || "");
-    const playerSeed = compactWhitespace((match[2] || "").replace(/\s+(RC|Rookie Card|SP|SSP)$/i, ""));
-    if (!looksLikeCardNumberValue(cardNumber)) continue;
-    if (!looksLikeLabelValue(playerSeed)) continue;
-    entries.push({ cardNumber, playerSeed });
-  }
-
-  if (entries.length > 0) return entries;
-
-  const bits = compact.split(" ");
-  const maybeCard = compactWhitespace(bits[0] || "");
-  if (!looksLikeCardNumberValue(maybeCard)) return [];
-  const maybePlayer = compactWhitespace(bits.slice(1).join(" "));
-  if (!looksLikeLabelValue(maybePlayer)) return [];
-  return [{ cardNumber: maybeCard, playerSeed: maybePlayer }];
 }
 
 function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>> {
   const lines = String(text || "")
     .split(/\r?\n/)
-    .map((line) => compactWhitespace(line.replace(/\u00A0/g, " ")))
+    .map((line) => normalizeChecklistLineForTokenization(line.replace(/\u00A0/g, " ")))
     .filter(Boolean);
 
-  const rows: Array<Record<string, unknown>> = [];
-  const dedupe = new Set<string>();
-  let currentSection = "Base Set";
+  type ChecklistSectionBlock = { section: string; lines: string[] };
+  const blocks: ChecklistSectionBlock[] = [];
+  let activeSection = "Base Set";
+  let activeLines: string[] = [];
+
+  const flushActive = () => {
+    if (activeLines.length < 1) return;
+    blocks.push({ section: activeSection, lines: [...activeLines] });
+    activeLines = [];
+  };
 
   for (const line of lines) {
     if (looksLikeChecklistSectionHeader(line)) {
-      currentSection = normalizeChecklistSectionName(line);
+      flushActive();
+      activeSection = normalizeChecklistSectionName(line);
       continue;
     }
+    activeLines.push(line);
+  }
+  flushActive();
 
-    const entries = parseCardEntriesFromChecklistLine(line);
-    if (entries.length === 0) continue;
+  if (blocks.length < 1) {
+    blocks.push({ section: "Base Set", lines: lines });
+  }
 
-    for (const entry of entries) {
-      const duplicateKey = `${normalizeFieldKey(entry.cardNumber)}::${normalizeFieldKey(currentSection)}::${normalizeFieldKey(
-        entry.playerSeed
-      )}`;
+  const rows: Array<Record<string, unknown>> = [];
+  const dedupe = new Set<string>();
+
+  for (const block of blocks) {
+    const blockSection = normalizeChecklistSectionName(block.section);
+    const mergedText = compactWhitespace(block.lines.join(" "));
+    if (!mergedText) continue;
+    const tokens = mergedText.split(/\s+/).filter(Boolean);
+    if (tokens.length < 2) continue;
+
+    const startIndices: number[] = [];
+    for (let index = 0; index < tokens.length - 1; index += 1) {
+      const token = tokens[index]!;
+      const nextToken = tokens[index + 1]!;
+      if (!looksLikeChecklistCardIdToken(token)) continue;
+      if (!/^[A-Za-z]/.test(nextToken)) continue;
+      startIndices.push(index);
+    }
+
+    if (startIndices.length < 1) continue;
+
+    for (let index = 0; index < startIndices.length; index += 1) {
+      const start = startIndices[index]!;
+      const end = startIndices[index + 1] ?? tokens.length;
+      const cardNumber = normalizeChecklistCardToken(tokens[start]!);
+      const recordTokens = tokens.slice(start + 1, end);
+      const playerSeed = extractPlayerSeedFromRecordTokens(recordTokens);
+
+      if (!cardNumber || !playerSeed) continue;
+      if (!looksLikeLabelValue(playerSeed)) continue;
+
+      const duplicateKey = `${normalizeFieldKey(cardNumber)}::${normalizeFieldKey(blockSection)}::${normalizeFieldKey(playerSeed)}`;
       if (dedupe.has(duplicateKey)) continue;
       dedupe.add(duplicateKey);
       rows.push({
-        cardNumber: entry.cardNumber,
-        parallel: currentSection,
-        playerSeed: entry.playerSeed,
-        player: entry.playerSeed,
+        cardNumber,
+        parallel: blockSection,
+        playerSeed,
+        player: playerSeed,
       });
     }
   }
@@ -1011,6 +1159,78 @@ function extractLooseTextFromPdfContentStream(content: string, context?: PdfDeco
   return fragments;
 }
 
+function decodeAscii85Stream(chunk: Buffer): Buffer | null {
+  const content = chunk
+    .toString("latin1")
+    .replace(/[\x00\t\n\f\r ]+/g, "")
+    .replace(/^<~/, "")
+    .replace(/~>$/, "");
+
+  if (!content) return Buffer.alloc(0);
+
+  const output: number[] = [];
+  const tuple: number[] = [];
+
+  const flushTuple = (count: number) => {
+    let value = 0;
+    for (let index = 0; index < 5; index += 1) {
+      value = value * 85 + tuple[index]!;
+    }
+    const bytes = [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
+    for (let index = 0; index < count - 1; index += 1) {
+      output.push(bytes[index]!);
+    }
+    tuple.length = 0;
+  };
+
+  for (const char of content) {
+    if (char === "z") {
+      if (tuple.length !== 0) return null;
+      output.push(0, 0, 0, 0);
+      continue;
+    }
+    const code = char.charCodeAt(0);
+    if (code < 33 || code > 117) continue;
+    tuple.push(code - 33);
+    if (tuple.length === 5) {
+      flushTuple(5);
+    }
+  }
+
+  if (tuple.length > 0) {
+    const count = tuple.length;
+    while (tuple.length < 5) tuple.push(84);
+    flushTuple(count);
+  }
+
+  return Buffer.from(output);
+}
+
+function decodePdfStreamByFilters(chunk: Buffer, dictionary: string): Buffer | null {
+  const filters = Array.from(String(dictionary || "").matchAll(/\/(FlateDecode|ASCII85Decode)/gi)).map(
+    (match) => (match[1] || "").toLowerCase()
+  );
+
+  if (filters.length < 1) {
+    return chunk;
+  }
+
+  let current: Buffer | null = chunk;
+  for (const filter of filters) {
+    if (!current) return null;
+    try {
+      if (filter === "ascii85decode") {
+        current = decodeAscii85Stream(current);
+      } else if (filter === "flatedecode") {
+        current = inflateSync(current);
+      }
+    } catch {
+      return null;
+    }
+  }
+  return current;
+}
+
 function extractChecklistTextFromPdfBuffer(buffer: Buffer): string {
   const pdf = buffer.toString("latin1");
   const decodedStreams: string[] = [];
@@ -1042,14 +1262,7 @@ function extractChecklistTextFromPdfBuffer(buffer: Buffer): string {
       chunk = chunk.subarray(0, chunk.length - 1);
     }
 
-    let decoded: Buffer | null = chunk;
-    if (/\/FlateDecode/i.test(dictionary)) {
-      try {
-        decoded = inflateSync(chunk);
-      } catch {
-        decoded = null;
-      }
-    }
+    const decoded = decodePdfStreamByFilters(chunk, dictionary);
 
     if (decoded && decoded.length > 0) {
       decodedStreams.push(decoded.toString("latin1"));
