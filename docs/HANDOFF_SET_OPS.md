@@ -116,3 +116,12 @@ Build Set Ops UI flow with:
 - `/admin/set-ops` now displays resolved role capabilities and blocks archive/delete actions in UI when role requirements are not met.
 - `/admin/set-ops-review` now blocks ingestion/draft actions without reviewer role and approval/seed actions without approver role.
 - Server remains source of truth: API-level RBAC enforcement and denied-attempt audit events are unchanged and still mandatory.
+
+## QA + Rollout Hardening Update (2026-02-22)
+- Added shared delete confirmation helpers and tests to enforce consistent typed confirm behavior across UI/API.
+- `DELETE <setId>` phrase generation now uses shared normalization logic to reduce dirty-label mismatch risk.
+- Extended regression coverage for dirty 2020 entity-encoded set labels in delete-confirmation path.
+- Updated `docs/runbooks/SET_OPS_RUNBOOK.md` with:
+  - P0 UI workflow and API map
+  - pre-release validation checklist
+  - production rollout checklist emphasizing dry-run-first and explicit approval for destructive actions

@@ -76,4 +76,6 @@ export {
   normalizePlayerSeed,
   normalizeListingId,
   buildSetOpsDuplicateKey,
+  buildSetDeleteConfirmationPhrase,
+  isSetDeleteConfirmationValid,
 } from "./setOpsNormalizer";

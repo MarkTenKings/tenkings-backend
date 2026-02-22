@@ -6,6 +6,56 @@ owner: Mark
 ## Rules
 - Never trust UI-only symptoms; validate via API + DB
 - Log every run in `docs/handoffs/SESSION_LOG.md`
+- No destructive production delete confirms without explicit approval
+
+## P0 UI Workflow (No Terminal)
+Admin pages:
+- `/admin/set-ops` (set list, archive/unarchive, delete dry-run/confirm)
+- `/admin/set-ops-review` (ingestion queue, draft review/edit, approval, seed monitor)
+
+Role capabilities (server-enforced):
+- `reviewer`: list sets, ingestion queue, draft build/load/save
+- `approver`: approve/reject draft, start/retry/cancel seed jobs
+- `delete`: delete dry-run + confirm
+- `admin`: archive/unarchive
+
+Primary APIs:
+- `GET /api/admin/set-ops/access`
+- `GET /api/admin/set-ops/sets`
+- `POST /api/admin/set-ops/archive`
+- `POST /api/admin/set-ops/delete/dry-run`
+- `POST /api/admin/set-ops/delete/confirm`
+- `GET/POST /api/admin/set-ops/ingestion`
+- `POST /api/admin/set-ops/drafts/build`
+- `GET /api/admin/set-ops/drafts`
+- `POST /api/admin/set-ops/drafts/version`
+- `POST /api/admin/set-ops/approval`
+- `GET/POST /api/admin/set-ops/seed/jobs`
+- `POST /api/admin/set-ops/seed/jobs/:jobId/cancel`
+- `POST /api/admin/set-ops/seed/jobs/:jobId/retry`
+
+## Pre-Release Validation Checklist
+Code checks:
+- `pnpm --filter @tenkings/shared test`
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/access.ts --file pages/api/admin/set-ops/delete/confirm.ts`
+
+Manual staging flow:
+1. Queue ingestion (`parallel_db`) and build draft.
+2. Edit at least one draft row and save a new immutable version.
+3. Verify approval is blocked when blocking errors exist.
+4. Approve clean draft and verify approval diff/metadata.
+5. Start seed run; verify monitor updates, then retry/cancel paths as applicable.
+6. From `/admin/set-ops`, run archive and unarchive.
+7. Run delete dry-run and verify impact counts/audit snippet.
+8. Only in non-prod/staging: run delete confirm with typed phrase and verify transaction + audit event.
+
+## Production Rollout Checklist
+1. Deploy code and verify serving commit hash.
+2. Verify role access endpoint (`/api/admin/set-ops/access`) for admin accounts.
+3. Smoke test `/admin/set-ops` list/search and `/admin/set-ops-review` queue view.
+4. Run archive/unarchive on a safe test set and verify audit event presence.
+5. Run delete dry-run only in production unless explicit delete approval is provided.
+6. Capture evidence (API response snippets + UI screenshots) in `docs/handoffs/SESSION_LOG.md`.
 
 ## Find Manifest Containing a Set (No ripgrep required)
 ```bash

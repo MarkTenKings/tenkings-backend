@@ -1,6 +1,7 @@
 import Head from "next/head";
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { buildSetDeleteConfirmationPhrase } from "@tenkings/shared";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
@@ -665,12 +666,12 @@ export default function SetOpsPage() {
               </div>
 
               <label className="mt-4 block text-xs uppercase tracking-[0.2em] text-slate-300">
-                Type exactly: <span className="text-rose-200">DELETE {deleteTarget.setId}</span>
+                Type exactly: <span className="text-rose-200">{buildSetDeleteConfirmationPhrase(deleteTarget.setId)}</span>
               </label>
               <input
                 value={deleteConfirmation}
                 onChange={(event) => setDeleteConfirmation(event.target.value)}
-                placeholder={`DELETE ${deleteTarget.setId}`}
+                placeholder={buildSetDeleteConfirmationPhrase(deleteTarget.setId)}
                 className="mt-2 h-11 w-full rounded-xl border border-white/15 bg-night-900/80 px-3 text-sm text-white outline-none transition focus:border-rose-400/70"
               />
 
@@ -688,7 +689,7 @@ export default function SetOpsPage() {
                 <button
                   type="button"
                   onClick={() => void confirmDeleteSet()}
-                  disabled={deleteBusy || deleteConfirmation.trim() !== `DELETE ${deleteTarget.setId}`}
+                  disabled={deleteBusy || deleteConfirmation.trim() !== buildSetDeleteConfirmationPhrase(deleteTarget.setId)}
                   className="h-10 rounded-xl border border-rose-400/40 bg-rose-500/20 px-4 text-xs font-semibold uppercase tracking-[0.18em] text-rose-100 transition hover:bg-rose-500/30 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {deleteBusy ? "Deleting..." : "Confirm Delete"}

@@ -2,7 +2,9 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   buildSetOpsDuplicateKey,
+  buildSetDeleteConfirmationPhrase,
   decodeHtmlEntities,
+  isSetDeleteConfirmationValid,
   normalizeCardNumber,
   normalizeParallelLabel,
   normalizeSetLabel,
@@ -65,4 +67,24 @@ test("buildSetOpsDuplicateKey is stable between dirty and clean inputs", () => {
 test("decodeHtmlEntities decodes numeric entities and collapses whitespace", () => {
   assert.equal(decodeHtmlEntities("A&#038;B &#8211; C"), "A&B - C");
   assert.equal(decodeHtmlEntities("  A   B  "), "A B");
+});
+
+test("buildSetDeleteConfirmationPhrase normalizes dirty set labels", () => {
+  assert.equal(
+    buildSetDeleteConfirmationPhrase("2020 Panini Stars &#038; Stripes USA Baseball Cards"),
+    "DELETE 2020 Panini Stars & Stripes USA Baseball Cards"
+  );
+  assert.equal(buildSetDeleteConfirmationPhrase(""), "DELETE");
+});
+
+test("isSetDeleteConfirmationValid enforces exact typed confirmation phrase", () => {
+  const setId = "2020 Panini Stars &#038; Stripes USA Baseball Cards";
+  assert.equal(
+    isSetDeleteConfirmationValid(setId, "DELETE 2020 Panini Stars & Stripes USA Baseball Cards"),
+    true
+  );
+  assert.equal(
+    isSetDeleteConfirmationValid(setId, " delete 2020 Panini Stars & Stripes USA Baseball Cards "),
+    false
+  );
 });

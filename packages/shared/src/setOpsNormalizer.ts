@@ -135,3 +135,17 @@ export function buildSetOpsDuplicateKey(input: SetOpsDuplicateKeyInput): string 
   const listingId = (normalizeListingId(input.listingId ?? null) ?? "none").toLowerCase();
   return [setId, cardNumber, parallel, playerSeed, listingId].join("::");
 }
+
+export function buildSetDeleteConfirmationPhrase(setId: string | null | undefined): string {
+  const normalizedSetId = normalizeSetLabel(setId);
+  if (!normalizedSetId) return "DELETE";
+  return `DELETE ${normalizedSetId}`;
+}
+
+export function isSetDeleteConfirmationValid(
+  setId: string | null | undefined,
+  typedConfirmation: string | null | undefined
+): boolean {
+  const expectedPhrase = buildSetDeleteConfirmationPhrase(setId);
+  return String(typedConfirmation ?? "").trim() === expectedPhrase;
+}

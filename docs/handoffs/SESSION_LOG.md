@@ -282,3 +282,33 @@
 ### Notes
 - No deploy/restart/migration was executed.
 - No destructive DB operations were executed.
+
+## 2026-02-22 - Set Ops P0-D Ticket 15 (Regression Tests + Rollout Checklist)
+
+### Summary
+- Added shared delete-confirmation helpers to centralize destructive phrase validation logic:
+  - `buildSetDeleteConfirmationPhrase`
+  - `isSetDeleteConfirmationValid`
+- Wired helper usage into:
+  - `/api/admin/set-ops/delete/confirm`
+  - `/admin/set-ops` delete modal placeholder/label/enable state
+- Extended shared regression tests to cover:
+  - dirty 2020 set delete confirmation phrase normalization
+  - exact typed-confirmation validation behavior
+- Updated Set Ops runbook with P0 UI workflow, API map, pre-release validation checklist, and production rollout checklist.
+
+### Files Updated
+- `packages/shared/src/setOpsNormalizer.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/setOpsNormalizer.test.js`
+- `frontend/nextjs-app/pages/api/admin/set-ops/delete/confirm.ts`
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared test` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx --file pages/api/admin/set-ops/delete/confirm.ts` passed.
+
+### Notes
+- No deploy/restart/migration was executed.
+- No destructive DB operations were executed.

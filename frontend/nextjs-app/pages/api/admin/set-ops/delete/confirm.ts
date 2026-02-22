@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { z } from "zod";
 import { prisma, SetAuditStatus, type Prisma } from "@tenkings/database";
-import { normalizeSetLabel } from "@tenkings/shared";
+import { buildSetDeleteConfirmationPhrase, isSetDeleteConfirmationValid, normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../../lib/server/admin";
 import {
   canPerformSetOpsRole,
@@ -55,8 +55,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(400).json({ message: "setId is required" });
     }
 
-    const expectedPhrase = `DELETE ${setId}`;
-    if (payload.typedConfirmation.trim() !== expectedPhrase) {
+    const expectedPhrase = buildSetDeleteConfirmationPhrase(setId);
+    if (!isSetDeleteConfirmationValid(setId, payload.typedConfirmation)) {
       await writeSetOpsAuditEvent({
         req,
         admin,
