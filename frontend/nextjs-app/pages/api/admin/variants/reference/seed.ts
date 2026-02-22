@@ -28,6 +28,8 @@ const NOISE_TITLE_TOKENS = [
   "hanger",
 ];
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function normalizeText(value: string | null | undefined) {
   return String(value || "")
     .toLowerCase()
@@ -166,13 +168,47 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (gl) params.set("gl", String(gl).trim());
     if (hl) params.set("hl", String(hl).trim());
 
-    const response = await fetch(`${SERPAPI_ENDPOINT}?${params.toString()}`);
-    if (!response.ok) {
-      return res.status(502).json({ message: `SerpApi request failed (${response.status}).` });
+    let data: any = null;
+    let requestError = "";
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const response = await fetch(`${SERPAPI_ENDPOINT}?${params.toString()}`);
+        if (!response.ok) {
+          const bodyText = await response.text().catch(() => "");
+          requestError = `SerpApi request failed (${response.status})${bodyText ? `: ${bodyText.slice(0, 180)}` : ""}`;
+          if (attempt < 3 && (response.status === 429 || response.status >= 500)) {
+            await wait(300 * attempt);
+            continue;
+          }
+          return res.status(502).json({ message: requestError });
+        }
+
+        const payload = await response.json();
+        const metadataStatus = String(payload?.search_metadata?.status || "").trim();
+        if (metadataStatus && metadataStatus !== "Success") {
+          requestError = String(payload?.search_metadata?.error || "SerpApi returned error.").trim();
+          const retryable = /rate|limit|timeout|temporar|try again|busy|thrott/i.test(requestError);
+          if (attempt < 3 && retryable) {
+            await wait(300 * attempt);
+            continue;
+          }
+          return res.status(502).json({ message: requestError || "SerpApi returned error." });
+        }
+
+        data = payload;
+        break;
+      } catch (error) {
+        requestError = error instanceof Error ? error.message : "SerpApi request failed.";
+        if (attempt < 3) {
+          await wait(300 * attempt);
+          continue;
+        }
+        return res.status(502).json({ message: requestError });
+      }
     }
-    const data = await response.json();
-    if (data?.search_metadata?.status && data.search_metadata.status !== "Success") {
-      return res.status(502).json({ message: data?.search_metadata?.error ?? "SerpApi returned error." });
+
+    if (!data) {
+      return res.status(502).json({ message: requestError || "SerpApi request failed." });
     }
 
     const listings = Array.isArray(data?.organic_results)

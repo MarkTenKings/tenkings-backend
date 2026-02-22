@@ -40,6 +40,12 @@ type RecentSetRow = {
   variantCount: number;
 };
 
+type SeedTargetRow = {
+  cardNumber: string;
+  parallelId: string;
+  playerSeed: string | null;
+};
+
 type StatusMessage = { type: "success" | "error"; message: string } | null;
 
 const parseKeywords = (value: string) =>
@@ -52,6 +58,35 @@ const SAMPLE_CSV = `setId,cardNumber,parallelId,parallelFamily,keywords,oddsInfo
 2025 Panini Prizm Basketball,188,Silver,Refractor,Silver|Prizm,odds hobby 1:11|blaster 1:11
 2025 Panini Prizm Basketball,188,Cracked Ice,Cracked Ice,Cracked Ice|Ice,odds hobby 1:69|blaster 1:396
 `;
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function extractSeedTargetsFromDraftRows(rows: unknown[], targetSetId: string): SeedTargetRow[] {
+  const seen = new Set<string>();
+  const targets: SeedTargetRow[] = [];
+  const normalizedSet = String(targetSetId || "").trim().toLowerCase();
+
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const row = raw as Record<string, unknown>;
+    const rowSetId = String(row.setId || "").trim().toLowerCase();
+    if (!rowSetId || rowSetId !== normalizedSet) continue;
+
+    const parallelId = String(row.parallel ?? row.parallelId ?? "").trim();
+    if (!parallelId) continue;
+
+    const cardNumber = String(row.cardNumber ?? "ALL").trim() || "ALL";
+    const playerRaw = String(row.playerSeed ?? row.player ?? "").trim();
+    const playerSeed = (playerRaw.split("::")[0]?.trim() || playerRaw || null) as string | null;
+
+    const key = `${cardNumber.toUpperCase()}::${parallelId.toLowerCase()}::${String(playerSeed || "").toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    targets.push({ cardNumber, parallelId, playerSeed });
+  }
+
+  return targets;
+}
 
 export default function AdminVariants() {
   const { session, loading, ensureSession, logout } = useSession();
@@ -520,22 +555,53 @@ export default function AdminVariants() {
     });
 
     try {
-      const variantRes = await fetch(`/api/admin/variants?q=${encodeURIComponent(targetSetId)}&limit=5000`, {
-        headers: {
-          ...adminHeaders,
-        },
-      });
-      const variantPayload = await variantRes.json();
-      if (!variantRes.ok) {
-        throw new Error(variantPayload?.message ?? "Failed to load variants for set.");
+      let seedTargets: SeedTargetRow[] = [];
+
+      // First try set-ops approved rows so we can process full checklist cardinality (e.g., 204 rows).
+      try {
+        const draftRes = await fetch(`/api/admin/set-ops/drafts?setId=${encodeURIComponent(targetSetId)}`, {
+          headers: {
+            ...adminHeaders,
+          },
+        });
+        const draftPayload = await draftRes.json().catch(() => ({}));
+        if (draftRes.ok) {
+          const draftRows = Array.isArray(draftPayload?.latestVersion?.rows) ? draftPayload.latestVersion.rows : [];
+          seedTargets = extractSeedTargetsFromDraftRows(draftRows, targetSetId);
+        }
+      } catch {
+        // Fall back to variant table path below.
       }
 
-      const allVariants = Array.isArray(variantPayload?.variants) ? (variantPayload.variants as VariantRow[]) : [];
-      const setVariants = allVariants.filter(
-        (variant) => String(variant.setId || "").trim().toLowerCase() === targetSetId.toLowerCase()
-      );
-      if (setVariants.length === 0) {
-        throw new Error("No variants were found for this set.");
+      // Fallback for sets without draft rows.
+      if (seedTargets.length === 0) {
+        const variantRes = await fetch(
+          `/api/admin/variants?setId=${encodeURIComponent(targetSetId)}&limit=5000`,
+          {
+            headers: {
+              ...adminHeaders,
+            },
+          }
+        );
+        const variantPayload = await variantRes.json();
+        if (!variantRes.ok) {
+          throw new Error(variantPayload?.message ?? "Failed to load variants for set.");
+        }
+
+        const setVariants = Array.isArray(variantPayload?.variants)
+          ? (variantPayload.variants as VariantRow[]).filter(
+              (variant) => String(variant.setId || "").trim().toLowerCase() === targetSetId.toLowerCase()
+            )
+          : [];
+        seedTargets = setVariants.map((variant) => ({
+          cardNumber: variant.cardNumber,
+          parallelId: variant.parallelId,
+          playerSeed: variant.playerLabel ?? null,
+        }));
+      }
+
+      if (seedTargets.length === 0) {
+        throw new Error("No seed targets were found for this set.");
       }
 
       const normalizedLimit = Math.min(50, Math.max(1, Number(seedForm.limit) || 20));
@@ -543,48 +609,77 @@ export default function AdminVariants() {
       let inserted = 0;
       let skipped = 0;
       let failed = 0;
+      const failureMessages: string[] = [];
 
       setSeedSetProgress({
-        total: setVariants.length,
+        total: seedTargets.length,
         completed: 0,
         inserted: 0,
         skipped: 0,
         failed: 0,
       });
 
-      for (const variant of setVariants) {
-        const autoQuery = buildSeedQuery(targetSetId, variant.cardNumber, variant.parallelId, variant.playerLabel);
-        try {
-          const res = await fetch("/api/admin/variants/reference/seed", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              ...adminHeaders,
-            },
-            body: JSON.stringify({
-              setId: targetSetId,
-              cardNumber: variant.cardNumber,
-              parallelId: variant.parallelId,
-              playerSeed: variant.playerLabel ?? undefined,
-              query: autoQuery,
-              limit: normalizedLimit,
-              tbs: seedForm.tbs.trim() || undefined,
-            }),
-          });
-          const payload = await res.json().catch(() => ({}));
-          if (!res.ok) {
-            failed += 1;
-          } else {
+      for (const target of seedTargets) {
+        const autoQuery = buildSeedQuery(targetSetId, target.cardNumber, target.parallelId, target.playerSeed);
+        let success = false;
+        let lastFailureMessage = "";
+
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          try {
+            const res = await fetch("/api/admin/variants/reference/seed", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...adminHeaders,
+              },
+              body: JSON.stringify({
+                setId: targetSetId,
+                cardNumber: target.cardNumber,
+                parallelId: target.parallelId,
+                playerSeed: target.playerSeed ?? undefined,
+                query: autoQuery,
+                limit: normalizedLimit,
+                tbs: seedForm.tbs.trim() || undefined,
+              }),
+            });
+            const payload = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              lastFailureMessage = String(payload?.message || `HTTP ${res.status}`).trim();
+              if (attempt < 2 && (res.status === 429 || res.status >= 500)) {
+                await wait(250 * attempt);
+                continue;
+              }
+              break;
+            }
+
             inserted += Number(payload?.inserted ?? 0);
             skipped += Number(payload?.skipped ?? 0);
+            success = true;
+            break;
+          } catch (error) {
+            lastFailureMessage = error instanceof Error ? error.message : "Unknown seed failure";
+            if (attempt < 2) {
+              await wait(250 * attempt);
+              continue;
+            }
+            break;
           }
-        } catch {
+        }
+
+        if (!success) {
           failed += 1;
+          if (failureMessages.length < 6) {
+            failureMessages.push(
+              `${target.cardNumber} ${target.parallelId}${target.playerSeed ? ` (${target.playerSeed})` : ""}: ${
+                lastFailureMessage || "unknown error"
+              }`
+            );
+          }
         }
 
         completed += 1;
         setSeedSetProgress({
-          total: setVariants.length,
+          total: seedTargets.length,
           completed,
           inserted,
           skipped,
@@ -599,12 +694,14 @@ export default function AdminVariants() {
       if (failed > 0) {
         setStatus({
           type: "error",
-          message: `Seeded set with partial failures: ${completed}/${setVariants.length} variants processed, inserted ${inserted}, skipped ${skipped}, failed variants ${failed}.`,
+          message: `Seeded set with partial failures: ${completed}/${seedTargets.length} targets processed, inserted ${inserted}, skipped ${skipped}, failed ${failed}.${
+            failureMessages.length ? ` Examples: ${failureMessages.join(" | ")}` : ""
+          }`,
         });
       } else {
         setStatus({
           type: "success",
-          message: `Seeded all variants for ${targetSetId}: ${setVariants.length} variants processed, inserted ${inserted}, skipped ${skipped}.`,
+          message: `Seeded all targets for ${targetSetId}: ${seedTargets.length} processed, inserted ${inserted}, skipped ${skipped}.`,
         });
       }
     } catch (error) {

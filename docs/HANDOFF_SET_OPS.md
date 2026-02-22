@@ -492,3 +492,20 @@ Build Set Ops UI flow with:
 - Expected result:
   - source links resolve to actual eBay listing pages.
   - fewer box/lot hits and fewer wrong-player images during bulk set seeding.
+
+## Set-Level Ref Seeding Reliability + Full Target Count (2026-02-22, Follow-up #11)
+- New production feedback:
+  - set-level ref seed reported `199/199` with one failure; operator expects full checklist cardinality (204) when source draft has 204 rows.
+  - needed better visibility on which rows fail during bulk set seed.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/admin/variants.tsx`
+    - bulk set seeding now pulls targets from latest set-ops draft rows first (`/api/admin/set-ops/drafts?setId=...`), so duplicate card+parallel rows with different players are preserved in target count.
+    - fallback to `/api/admin/variants` remains for sets without draft rows.
+    - per-target retry (2 attempts) added for transient seed failures.
+    - error message now includes sample failed targets and reasons.
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+    - SerpApi request retry loop added (up to 3 attempts) for rate-limit/transient failures.
+    - returns clearer upstream error messages on final failure.
+- Expected result:
+  - set-level progress reflects full checklist target count when draft rows are available (e.g., 204).
+  - fewer one-off failed targets from transient SerpApi/network responses.

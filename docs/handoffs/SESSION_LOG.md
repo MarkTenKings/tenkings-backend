@@ -842,3 +842,24 @@
   - scores results for relevance and penalizes box/break/lot noise
   - dedupes by listing ID and image URL
 - Set-level auto query now includes player label and anti-noise terms (`-box -blaster -hobby -case -break -pack -lot`) to reduce star-player drift and sealed-product noise.
+
+## 2026-02-22 - Ref Seed Follow-up #11 (204 Target Count + Retryable Failures)
+
+### Summary
+- Addressed bulk set-seed gap where only 199 targets were processed when checklist had 204 rows.
+- Added resilient retry and richer failure diagnostics for set-level seeding runs.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/variants.tsx`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/variants.tsx --file pages/api/admin/variants/reference/seed.ts` passed.
+
+### Notes
+- Set seeding now uses latest set-ops draft rows as primary seed targets (`/api/admin/set-ops/drafts?setId=...`), preserving player-distinct rows.
+- Fallback remains to `cardVariant` rows when no draft rows are available.
+- Added per-target retry (2x) in UI batch runner and 3x retry in seed API for transient SerpApi failures.
+- Partial-failure status now includes example failed targets + reason strings for faster triage.
