@@ -407,3 +407,34 @@ Build Set Ops UI flow with:
     - one-click **Seed Entire Set** action that loops all variants for selected set and seeds refs per variant automatically
     - live set-level progress stats (completed/total/inserted/skipped/failed)
     - existing manual **Seed Single Parallel** path remains available.
+
+## Variant Ref UX Fixes (2026-02-22, Follow-up #6)
+- New production feedback:
+  - `/admin/variants` "Reference Images" table appeared to show only one parallel (e.g., repeated `SUDDEN IMPACT`) after full-set seeding.
+  - `/admin/variant-ref-qa` variant list needed a player column for easier QA decisions.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/admin/variants.tsx`
+    - "Load References" now uses selected `Set ID` filter.
+    - table now dedupes to one row per variant key (`setId + cardNumber + parallelId`) instead of rendering raw newest image rows.
+    - added table summary: "Showing X variants from Y image rows".
+    - table includes card number + player display metadata.
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+    - increased max `limit` from `500` to `5000` for larger set-level loads.
+  - `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+    - exposes `playerLabel` on variant rows by deriving from latest approved set-ops draft rows (fallback to reference `playerSeed` when available).
+  - `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+    - added `Player` column in variant table.
+
+## Variant Ref QA Card UX (2026-02-22, Follow-up #7)
+- New production feedback:
+  - In `/admin/variant-ref-qa`, per-reference detail cards showed `Player: —` for seeded refs.
+  - Card metadata text (Label/Card#/Player) needed higher visual prominence.
+  - Preview image frame cropped portrait cards (`object-cover`) and needed portrait-safe layout.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+    - per-reference `Player` now resolves from:
+      1) ref `playerSeed` when present
+      2) selected variant `playerLabel` fallback
+    - replacement upload now persists `cardNumber` and `playerSeed` from selected variant where available.
+    - Label/Card#/Player lines increased to larger bold text for easier QA scanning.
+    - preview frame switched to portrait-friendly container (`aspect-[9/16]` + `object-contain`) to avoid top/bottom clipping.

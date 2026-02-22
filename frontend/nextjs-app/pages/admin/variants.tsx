@@ -21,7 +21,9 @@ type VariantRow = {
 type ReferenceRow = {
   id: string;
   setId: string;
+  cardNumber: string | null;
   parallelId: string;
+  displayLabel: string;
   sourceUrl: string | null;
   rawImageUrl: string;
   cropUrls: string[];
@@ -101,6 +103,24 @@ export default function AdminVariants() {
   );
 
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
+  const referenceVariantRows = useMemo(() => {
+    const byVariant = new Map<string, ReferenceRow>();
+    for (const ref of references) {
+      const key = `${ref.setId}::${ref.cardNumber ?? "ALL"}::${ref.parallelId}`;
+      if (!byVariant.has(key)) {
+        byVariant.set(key, ref);
+      }
+    }
+    const rows = Array.from(byVariant.values());
+    rows.sort((a, b) => {
+      const setCmp = a.setId.localeCompare(b.setId);
+      if (setCmp !== 0) return setCmp;
+      const parallelCmp = a.parallelId.localeCompare(b.parallelId);
+      if (parallelCmp !== 0) return parallelCmp;
+      return (a.cardNumber ?? "ALL").localeCompare(b.cardNumber ?? "ALL");
+    });
+    return rows;
+  }, [references]);
 
   const buildSeedQuery = (setId: string, cardNumber: string, parallelId: string) => {
     const normalizedCardNumber = String(cardNumber || "").trim();
@@ -132,11 +152,17 @@ export default function AdminVariants() {
     }
   };
 
-  const fetchReferences = async () => {
+  const fetchReferences = async (setId?: string) => {
     if (!session) return;
     setBusy(true);
     try {
-      const res = await fetch(`/api/admin/variants/reference?limit=200`, {
+      const params = new URLSearchParams();
+      params.set("limit", setId?.trim() ? "5000" : "500");
+      if (setId?.trim()) {
+        params.set("setId", setId.trim());
+      }
+
+      const res = await fetch(`/api/admin/variants/reference?${params.toString()}`, {
         headers: {
           ...adminHeaders,
         },
@@ -433,7 +459,7 @@ export default function AdminVariants() {
         type: "success",
         message: `Seeded ${payload.inserted} images (skipped ${payload.skipped}).`,
       });
-      await fetchReferences();
+      await fetchReferences(seedForm.setId.trim() || undefined);
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : "Seed failed" });
     } finally {
@@ -551,7 +577,7 @@ export default function AdminVariants() {
 
       await fetchRecentSets();
       await fetchReferenceStatus();
-      await fetchReferences();
+      await fetchReferences(targetSetId);
 
       if (failed > 0) {
         setStatus({
@@ -1018,7 +1044,7 @@ export default function AdminVariants() {
               </button>
               <button
                 type="button"
-                onClick={() => fetchReferences()}
+                onClick={() => fetchReferences(seedForm.setId.trim() || undefined)}
                 disabled={busy}
                 className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-200 disabled:opacity-60"
               >
@@ -1026,21 +1052,31 @@ export default function AdminVariants() {
               </button>
             </div>
           </div>
+          <p className="mt-3 text-[11px] uppercase tracking-[0.2em] text-slate-500">
+            Showing {referenceVariantRows.length} variants from {references.length} image rows
+            {seedForm.setId.trim() ? ` · filtered to ${seedForm.setId.trim()}` : ""}
+          </p>
           <div className="mt-4 overflow-x-auto">
             <table className="w-full text-left text-xs text-slate-300">
               <thead className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
                 <tr>
                   <th className="py-2">Set</th>
+                  <th className="py-2">Card #</th>
                   <th className="py-2">Parallel</th>
+                  <th className="py-2">Player</th>
                   <th className="py-2">Image</th>
                   <th className="py-2">Quality</th>
                 </tr>
               </thead>
               <tbody>
-                {references.map((ref) => (
+                {referenceVariantRows.map((ref) => (
                   <tr key={ref.id} className="border-t border-white/5">
                     <td className="py-2 pr-4 text-white">{ref.setId}</td>
+                    <td className="py-2 pr-4">{ref.cardNumber ?? "ALL"}</td>
                     <td className="py-2 pr-4">{ref.parallelId}</td>
+                    <td className="py-2 pr-4 text-slate-300">
+                      {ref.displayLabel && ref.displayLabel !== ref.parallelId ? ref.displayLabel : "—"}
+                    </td>
                     <td className="py-2 pr-4">
                       <a
                         href={ref.rawImageUrl}
@@ -1056,9 +1092,9 @@ export default function AdminVariants() {
                     </td>
                   </tr>
                 ))}
-                {references.length === 0 && (
+                {referenceVariantRows.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="py-6 text-center text-xs text-slate-500">
+                    <td colSpan={6} className="py-6 text-center text-xs text-slate-500">
                       No reference images yet. Upload one to get started.
                     </td>
                   </tr>

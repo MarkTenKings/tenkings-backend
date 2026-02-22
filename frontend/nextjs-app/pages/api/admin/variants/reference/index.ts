@@ -86,7 +86,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const parallelId = typeof req.query.parallelId === "string" ? req.query.parallelId.trim() : "";
       const cardNumber = typeof req.query.cardNumber === "string" ? req.query.cardNumber.trim() : "";
       const refType = typeof req.query.refType === "string" ? req.query.refType.trim().toLowerCase() : "";
-      const take = Math.min(500, Math.max(1, Number(req.query.limit ?? 200) || 200));
+      const take = Math.min(5000, Math.max(1, Number(req.query.limit ?? 200) || 200));
 
       const where: Record<string, any> = {};
       if (setId) where.setId = setId;

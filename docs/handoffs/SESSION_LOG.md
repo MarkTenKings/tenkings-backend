@@ -736,3 +736,42 @@
   - `Seed Entire Set` = loops all variants in selected set and seeds refs with auto query generation.
   - `Seed Single Parallel` = existing targeted flow remains.
 - Recent set dropdown auto-populates Set ID and keeps manual override support.
+
+## 2026-02-22 - Variant Ref UX Follow-up #6 (Variant-Level Reference Table + QA Player Column)
+
+### Summary
+- Fixed misleading `/admin/variants` reference table behavior that appeared to show one repeated parallel after full-set seeding.
+- Added player-name visibility to `/admin/variant-ref-qa` variant queue table.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/variants.tsx`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- `/admin/variants` now:
+  - filters `Load References` by selected set
+  - dedupes to one row per variant key (`setId + cardNumber + parallelId`)
+  - shows summary count: variant rows vs raw image rows
+- `/api/admin/variants` now includes `playerLabel` derived from latest approved set-ops draft rows (fallback from reference `playerSeed` where available).
+- `/admin/variant-ref-qa` variant table now includes a `Player` column.
+
+## 2026-02-22 - Variant Ref QA Card UX Follow-up #7 (Player Fallback + Portrait Preview)
+
+### Summary
+- Enhanced the reference-card panel on `/admin/variant-ref-qa` to show player name consistently and improve readability.
+- Fixed portrait image clipping by switching preview framing from crop-first to contain-first.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- Card detail player field now falls back to selected variant `playerLabel` when reference `playerSeed` is empty.
+- Replacement-upload payload now includes selected `cardNumber` and `playerSeed`.
+- Metadata lines (`Label`, `Card #`, `Player`) are larger/bold.
+- Reference image preview now uses portrait ratio (`9:16`) with `object-contain` to prevent top/bottom truncation.

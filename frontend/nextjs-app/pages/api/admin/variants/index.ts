@@ -1,8 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma } from "@tenkings/database";
+import { prisma, SetApprovalDecision } from "@tenkings/database";
 import { Prisma } from "@prisma/client";
+import { normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../../../lib/server/storage";
+import { extractDraftRows } from "../../../../lib/server/setOpsDrafts";
 
 type VariantRow = {
   id: string;
@@ -10,6 +12,7 @@ type VariantRow = {
   cardNumber: string;
   parallelId: string;
   parallelFamily: string | null;
+  playerLabel: string | null;
   keywords: string[];
   oddsInfo: string | null;
   referenceCount: number;
@@ -51,6 +54,21 @@ function keyForRef(setId: string, cardNumber: string | null | undefined, paralle
   return `${setId}::${card}::${parallelId}`;
 }
 
+function normalizePlayerLabel(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const direct = raw.split("::")[0]?.trim() ?? "";
+  return direct;
+}
+
+function joinPlayerLabels(labels: Set<string>) {
+  return Array.from(labels)
+    .map((label) => String(label || "").trim())
+    .filter(Boolean)
+    .slice(0, 4)
+    .join(" / ");
+}
+
 function filterLegacyAllVariants(variants: any[]) {
   const specificBySetParallel = new Set<string>();
   for (const variant of variants) {
@@ -72,6 +90,7 @@ function toRow(
   extras?: {
     referenceCount?: number;
     previewImageUrl?: string | null;
+    playerLabel?: string | null;
   }
 ): VariantRow {
   return {
@@ -80,6 +99,7 @@ function toRow(
     cardNumber: variant.cardNumber,
     parallelId: variant.parallelId,
     parallelFamily: variant.parallelFamily ?? null,
+    playerLabel: extras?.playerLabel ?? null,
     keywords: Array.isArray(variant.keywords) ? variant.keywords : [],
     oddsInfo: variant.oddsInfo ?? null,
     referenceCount: Math.max(0, Number(extras?.referenceCount ?? 0) || 0),
@@ -144,6 +164,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
               setId: true,
               cardNumber: true,
               parallelId: true,
+              playerSeed: true,
               storageKey: true,
               cropUrls: true,
               rawImageUrl: true,
@@ -159,6 +180,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
               setId: true,
               cardNumber: true,
               parallelId: true,
+              playerSeed: true,
               cropUrls: true,
               rawImageUrl: true,
             } as any),
@@ -171,6 +193,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         countByKey.set(keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId), row._count._all);
       }
       const previewByKey = new Map<string, string>();
+      const refPlayerByKey = new Map<string, string>();
       const mode = getStorageMode();
       for (const row of latestRefs) {
         const cropUrls = Array.isArray((row as any).cropUrls) ? ((row as any).cropUrls as string[]) : [];
@@ -186,7 +209,98 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           }
         }
         if (!preview) continue;
-        previewByKey.set(keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId), preview);
+        const key = keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId);
+        previewByKey.set(key, preview);
+        const refPlayerLabel = normalizePlayerLabel((row as any).playerSeed);
+        if (refPlayerLabel) {
+          refPlayerByKey.set(key, refPlayerLabel);
+        }
+      }
+
+      const draftPlayerByKey = new Map<string, string>();
+      const setIds = Array.from(new Set(filteredVariants.map((variant) => normalizeSetLabel(variant.setId))));
+      if (setIds.length > 0) {
+        const drafts = await prisma.setDraft.findMany({
+          where: {
+            setId: {
+              in: setIds,
+            },
+          },
+          select: {
+            id: true,
+            setId: true,
+          },
+        });
+        const draftIds = drafts.map((draft) => draft.id);
+
+        if (draftIds.length > 0) {
+          const approvals = await prisma.setApproval.findMany({
+            where: {
+              draftId: {
+                in: draftIds,
+              },
+              decision: SetApprovalDecision.APPROVED,
+            },
+            orderBy: [{ createdAt: "desc" }],
+            select: {
+              draftId: true,
+              draftVersionId: true,
+            },
+          });
+
+          const latestVersionByDraftId = new Map<string, string>();
+          for (const approval of approvals) {
+            if (!latestVersionByDraftId.has(approval.draftId)) {
+              latestVersionByDraftId.set(approval.draftId, approval.draftVersionId);
+            }
+          }
+
+          const versionIds = Array.from(new Set(Array.from(latestVersionByDraftId.values())));
+          const versions =
+            versionIds.length > 0
+              ? await prisma.setDraftVersion.findMany({
+                  where: {
+                    id: {
+                      in: versionIds,
+                    },
+                  },
+                  select: {
+                    id: true,
+                    dataJson: true,
+                  },
+                })
+              : [];
+
+          const versionById = new Map(versions.map((version) => [version.id, version]));
+          const playersByVariantKey = new Map<string, Set<string>>();
+
+          for (const draft of drafts) {
+            const versionId = latestVersionByDraftId.get(draft.id);
+            if (!versionId) continue;
+            const version = versionById.get(versionId);
+            if (!version) continue;
+
+            const normalizedSetId = normalizeSetLabel(draft.setId);
+            const rows = extractDraftRows(version.dataJson);
+            for (const row of rows) {
+              if (normalizeSetLabel(row.setId) !== normalizedSetId) continue;
+              const playerLabel = normalizePlayerLabel(row.playerSeed);
+              if (!playerLabel) continue;
+              const key = keyForRef(normalizedSetId, row.cardNumber, row.parallel);
+              if (!playersByVariantKey.has(key)) {
+                playersByVariantKey.set(key, new Set<string>());
+              }
+              playersByVariantKey.get(key)?.add(playerLabel);
+            }
+          }
+
+          for (const [key, labels] of playersByVariantKey.entries()) {
+            const joined = joinPlayerLabels(labels);
+            if (joined) {
+              draftPlayerByKey.set(key, joined);
+            }
+          }
+        }
       }
 
       const rows = filteredVariants.map((variant) => {
@@ -204,9 +318,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           ) ||
           candidateCards.map((card) => previewByKey.get(keyForRef(variant.setId, card, variant.parallelId)) || null).find(Boolean) ||
           null;
+        const playerLabel =
+          draftPlayerByKey.get(keyForRef(variant.setId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)) ||
+          candidateCards
+            .map((card) => draftPlayerByKey.get(keyForRef(variant.setId, card, variant.parallelId)) || null)
+            .find(Boolean) ||
+          refPlayerByKey.get(keyForRef(variant.setId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)) ||
+          candidateCards
+            .map((card) => refPlayerByKey.get(keyForRef(variant.setId, card, variant.parallelId)) || null)
+            .find(Boolean) ||
+          null;
         return toRow(variant, {
           referenceCount,
           previewImageUrl,
+          playerLabel,
         });
       });
       const filtered = gapOnly ? rows.filter((row) => row.referenceCount < minRefs) : rows;

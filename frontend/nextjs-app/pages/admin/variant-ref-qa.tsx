@@ -12,6 +12,7 @@ type VariantRow = {
   cardNumber: string;
   parallelId: string;
   parallelFamily: string | null;
+  playerLabel: string | null;
   referenceCount: number;
   previewImageUrl: string | null;
 };
@@ -129,6 +130,18 @@ export default function VariantRefQaPage() {
       return variantTypeFilter === "insert" ? isInsert : !isInsert;
     });
   }, [variantTypeFilter, variants]);
+
+  const selectedVariant = useMemo(() => {
+    if (!selectedSetId || !selectedParallelId) return null;
+    return (
+      variants.find(
+        (variant) =>
+          variant.setId === selectedSetId &&
+          variant.parallelId === selectedParallelId &&
+          variant.cardNumber === selectedCardNumber
+      ) ?? null
+    );
+  }, [selectedCardNumber, selectedParallelId, selectedSetId, variants]);
 
   useEffect(() => {
     if (!session?.token) return;
@@ -298,6 +311,8 @@ export default function VariantRefQaPage() {
         body: JSON.stringify({
           setId: selectedSetId.trim(),
           parallelId: selectedParallelId.trim(),
+          cardNumber: selectedCardNumber.trim() || "ALL",
+          playerSeed: selectedVariant?.playerLabel || null,
           refType: newRefType,
           storageKey: presignPayload.storageKey,
           rawImageUrl: presignPayload.publicUrl,
@@ -316,7 +331,18 @@ export default function VariantRefQaPage() {
     } finally {
       setBusy(false);
     }
-  }, [adminHeaders, loadRefs, loadVariants, newRefType, selectedParallelId, selectedSetId, session?.token, sourceUrl]);
+  }, [
+    adminHeaders,
+    loadRefs,
+    loadVariants,
+    newRefType,
+    selectedCardNumber,
+    selectedParallelId,
+    selectedSetId,
+    selectedVariant?.playerLabel,
+    session?.token,
+    sourceUrl,
+  ]);
 
   const handleReplacementFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -465,6 +491,7 @@ export default function VariantRefQaPage() {
                   <th className="px-3 py-2">Set</th>
                   <th className="px-3 py-2">Card #</th>
                   <th className="px-3 py-2">Parallel</th>
+                  <th className="px-3 py-2">Player</th>
                   <th className="px-3 py-2">Action</th>
                   <th className="px-3 py-2">Photos</th>
                   <th className="px-3 py-2">Image</th>
@@ -481,6 +508,7 @@ export default function VariantRefQaPage() {
                     <td className="px-3 py-2">{decodeHtml(variant.setId)}</td>
                     <td className="px-3 py-2">{variant.cardNumber}</td>
                     <td className="px-3 py-2">{displayParallelLabel(variant.parallelId)}</td>
+                    <td className="px-3 py-2 text-slate-300">{variant.playerLabel || "—"}</td>
                     <td className="px-3 py-2">
                       <button
                         type="button"
@@ -513,7 +541,7 @@ export default function VariantRefQaPage() {
                 })}
                 {displayedVariants.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="px-3 py-6 text-center text-xs text-slate-500">
+                    <td colSpan={7} className="px-3 py-6 text-center text-xs text-slate-500">
                       Load variants to start QA.
                     </td>
                   </tr>
@@ -589,7 +617,8 @@ export default function VariantRefQaPage() {
             {refs.map((ref) => {
               const checked = selectedRefIds.includes(ref.id);
               const preview = ref.cropUrls?.[0] || ref.rawImageUrl;
-              const playerLabel = String(ref.playerSeed || "").trim().split("::")[0]?.trim() || null;
+              const playerLabelFromRef = String(ref.playerSeed || "").trim().split("::")[0]?.trim() || null;
+              const playerLabel = playerLabelFromRef || selectedVariant?.playerLabel || null;
               return (
                 <article key={ref.id} className="rounded-xl border border-white/10 bg-night-800/60 p-3">
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -614,18 +643,24 @@ export default function VariantRefQaPage() {
                       Remove
                     </button>
                   </div>
-                  <a href={preview} target="_blank" rel="noreferrer">
-                    <img src={preview} alt={`${ref.displayLabel || ref.parallelId} ref`} className="h-52 w-full rounded-lg object-cover" />
+                  <a href={preview} target="_blank" rel="noreferrer" className="block">
+                    <div className="relative aspect-[9/16] w-full overflow-hidden rounded-lg bg-night-900/70">
+                      <img
+                        src={preview}
+                        alt={`${ref.displayLabel || ref.parallelId} ref`}
+                        className="h-full w-full object-contain"
+                      />
+                    </div>
                   </a>
-                  <div className="mt-2 space-y-1 text-[11px] text-slate-400">
-                    <p>
-                      Label: <span className="text-slate-200">{ref.displayLabel || ref.parallelId}</span>
+                  <div className="mt-3 space-y-2 text-[11px] text-slate-400">
+                    <p className="text-sm font-semibold text-white">
+                      Label: <span className="text-white">{ref.displayLabel || ref.parallelId}</span>
                     </p>
-                    <p>
-                      Card #: <span className="text-slate-300">{ref.cardNumber || "—"}</span>
+                    <p className="text-sm font-semibold text-white">
+                      Card #: <span className="text-white">{ref.cardNumber || "—"}</span>
                     </p>
-                    <p>
-                      Player: <span className="text-slate-300">{playerLabel || "—"}</span>
+                    <p className="text-sm font-semibold text-white">
+                      Player: <span className="text-white">{playerLabel || "—"}</span>
                     </p>
                     <p>
                       QA:{" "}
