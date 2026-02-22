@@ -329,6 +329,45 @@
 ### Notes
 - No deploy/restart/migration was executed in this step.
 
+## 2026-02-22 - Set Ops Parser Hardening (CardboardConnection garbage-row fix)
+
+### Summary
+- User reported production draft rows filled with GTM/script/nav/eBay HTML text when importing:
+  - `https://www.cardboardconnection.com/2024-25-topps-chrome-basketball-review-and-checklist`
+- Root causes identified in parser pipeline:
+  - largest-table-wins selection in HTML parser
+  - loose field-name matching by substring
+  - no ingestion quality gate for html/noise rows
+  - draft validator allowed markup-like payload fields
+- Implemented extraction hardening and safety gates:
+  - HTML sanitization + content-section focus before table parse
+  - checklist-oriented table scoring (positive/negative signals)
+  - stricter safe field-key matching
+  - removed broad `name` fallback from parallel/player mapping
+  - markdown negotiation + markdown parser path (`Accept: text/markdown`)
+  - checklist-link fallback crawl from article pages (depth-limited)
+  - row-quality filtering before ingestion job creation with hard-fail when mostly noise
+  - blocking draft validation for markup/script-like card fields
+- Generated production push commit:
+  - `6e3f20c fix(set-ops): harden checklist parsing and block html/noise rows`
+  - local `HEAD` == `origin/main` at session end.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file lib/server/setOpsDrafts.ts` passed.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still fails in workspace due broad pre-existing Prisma/client typing mismatch unrelated to Set Ops parser files.
+
+### Current Step / Production Test Target
+- User shipped latest build and is testing that source import now:
+  1. no longer produces GTM/script/nav/eBay garbage rows,
+  2. fails fast with clear error if checklist rows cannot be extracted,
+  3. still imports valid structured checklist sources.
+
 ## 2026-02-22 - Vercel Hotfix 2 (Prisma JSON typing for draft versions)
 
 ### Summary

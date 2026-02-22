@@ -1,17 +1,16 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-02-22` (docs-only sync; no runtime/deploy changes in this session)
-- Branch: `chore/seed-timeout-hardening`
+- Last reviewed: `2026-02-22` (parser hardening + production handoff sync)
+- Branch: `main`
 - Latest commits:
-  - `b1166dd` fix(admin-qa): correct legacy ref fallback counts and clean QA labels/player display
-  - `f6baadc` fix(admin-variants): count/show legacy ALL/NULL refs for card-scoped rows
-  - `cb42d9b` fix(admin-refs): include legacy NULL/ALL refs when filtering by card number
-  - `08a4ce2` fix(qa-queue): ignore legacy ALL card variants when card-level rows exist
-  - `0e7fc5c` fix(variant-seed): ignore legacy ALL variants when card-level rows exist
-  - `d096ce3` fix(variant-seed): card-number scoped checklist seeding and manifest variant sync
-  - `8a14194` Phase 1+2 refs fix: player-aware labels/pairing + cardNumber-backed reference model
-- Environments touched: workstation, droplet, production UI/API
+  - `6e3f20c` fix(set-ops): harden checklist parsing and block html/noise rows
+  - `a3a7aa9` fix(set-ops): add direct source-url import and state reset
+  - `01a191f` fix(set-ops): filter discovery results to card-set sources
+  - `f683c0c` fix(set-ops): harden discovery against blocked source search
+  - `9b7ffcf` feat(set-ops): add source discovery import workflow
+  - `fbe2c0b` feat(set-ops): add csv/json upload flow for ingestion queue
+- Environments touched: workstation, repository main branch
 - 2020 run status: full pass completed with `queueCount: 0`
 
 ## What Works
@@ -187,3 +186,44 @@ Build Set Ops UI flow with:
 - Fixed stale set carryover between searches by re-initializing discovery set override from current search context.
 - Added ingestion guardrail blocking search-results URLs (`SearchText`, `?s=`, `/search`) from import to prevent low-quality row extraction from search pages.
 - Added queue selection reset action (`Clear Selected Job`) to avoid sticky workspace context while switching sets.
+
+## Parser + Quality Hardening (2026-02-22)
+- Commit: `6e3f20c` (`main`, `origin/main`).
+- User-reported issue reproduced: CardboardConnection article URL import generated garbage rows containing GTM/script/nav/eBay HTML fragments.
+- Root problems identified:
+  - HTML parser selected the largest table on page instead of checklist-like table.
+  - Field matching used loose `includes` behavior, causing malformed headers to map into card fields.
+  - No ingestion quality gate to reject HTML/navigation noise rows.
+  - Draft validator did not block markup/script payloads.
+- Backend extraction changes:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+  - Added HTML sanitization and content-scope selection before table parsing.
+  - Added table scoring heuristics (checklist/card signals positive; nav/eBay/ad/script signals negative).
+  - Tightened field-key matching with normalized key rules and unsafe-field rejection.
+  - Removed overly broad `name` fallback from parallel/player mapping.
+  - Added markdown negotiation support (`Accept: text/markdown`) and markdown table/list parser path.
+  - Added checklist-link fallback crawl (follow checklist-like links from article pages, same domain group, depth-limited).
+  - Added row-quality filtering before job creation and hard-fail behavior when output is mostly/noise-only.
+  - Added parse summary metadata for dropped rows and rejection reasons.
+- Draft validation hardening:
+  - `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+  - Added blocking validation when `cardNumber`, `parallel`, or `playerSeed` appear to contain HTML/script/navigation payloads.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file lib/server/setOpsDrafts.ts` passed.
+  - Repo-wide TypeScript still fails in this workspace from existing Prisma/client mismatch unrelated to these two files.
+- Deployment status:
+  - Commit is present on `origin/main`.
+  - No deploy/restart/migration evidence was captured in this coding session after push.
+
+## What To Test In Production (Current Step)
+1. In `/admin/set-ops-review`, import this exact URL as `parallel_db`:
+   - `https://www.cardboardconnection.com/2024-25-topps-chrome-basketball-review-and-checklist`
+2. Expected:
+   - No rows containing GTM/script/nav/eBay HTML junk.
+   - If checklist rows cannot be parsed, import should fail with clear message instead of creating garbage draft rows.
+3. Verify queue row `parseSummaryJson` (if exposed in UI/API) includes:
+   - `rowCount`
+   - `droppedRowCount`
+   - `rejectionReasons`
+4. Repeat with at least one known-good structured checklist URL to confirm legitimate rows still import.
+5. Build a draft version and confirm blocking errors now appear for any row that still contains markup-like payloads.
