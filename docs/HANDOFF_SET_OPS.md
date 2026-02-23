@@ -725,3 +725,41 @@ Build Set Ops UI flow with:
   - result: pass (existing `uploads.tsx` no-img warnings unchanged).
 - Deployment status:
   - No deploy/restart/migration executed in this coding session.
+
+## Set Delete Encoded-ID Fix (2026-02-23, Follow-up #21)
+- New production signal:
+  - a subset of old sets would not delete from `/admin/set-ops` even though most sets deleted normally.
+  - non-deleting rows had HTML-entity encoded set IDs (`&#038;`, `&#8211;`, `&#8217;`) in table output.
+- Root cause:
+  - delete dry-run/confirm paths normalized `setId` first and then performed exact `setId` deletes.
+  - encoded stored IDs did not equal the normalized label, so impact/delete missed those rows.
+- Fixes shipped:
+  - `frontend/nextjs-app/lib/server/setOps.ts`
+    - `computeSetDeleteImpact` now computes counts across both raw + normalized `setId` candidates.
+  - `frontend/nextjs-app/pages/api/admin/set-ops/delete/dry-run.ts`
+    - uses raw payload `setId` for impact; audits canonical `setId` for readability.
+  - `frontend/nextjs-app/pages/api/admin/set-ops/delete/confirm.ts`
+    - computes/deletes across both raw + normalized `setId` candidates.
+    - keeps typed confirmation phrase canonicalized but deletion target candidate-aware.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/delete/confirm.ts --file pages/api/admin/set-ops/delete/dry-run.ts --file lib/server/setOps.ts` passed.
+- Deployment status:
+  - No deploy/restart/migration executed in this coding session.
+
+## Session Update (2026-02-23, Docs Sync)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Confirmed git state at check time:
+  - branch `main` tracking `origin/main`
+  - working tree already had pre-existing local modifications in:
+    - `docs/HANDOFF_SET_OPS.md`
+    - `docs/handoffs/SESSION_LOG.md`
+    - `frontend/nextjs-app/lib/server/setOps.ts`
+    - `frontend/nextjs-app/pages/api/admin/set-ops/delete/confirm.ts`
+    - `frontend/nextjs-app/pages/api/admin/set-ops/delete/dry-run.ts`
+- No code/runtime changes, deploys, restarts, migrations, tests, or DB operations were executed in this session.
+- Existing `Next Actions (Ordered)` remain unchanged.

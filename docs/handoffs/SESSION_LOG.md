@@ -1158,3 +1158,58 @@
 
 ### Notes
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-23 - Set Delete Encoded-ID Mismatch (Follow-up #21)
+
+### Summary
+- User reported that some legacy sets would not delete from `/admin/set-ops` while most others deleted successfully.
+- Non-deleting rows showed HTML-entity encoded set IDs in table text (`&#038;`, `&#8211;`, `&#8217;`), indicating stored/raw ID mismatch.
+
+### Root Cause
+- Set delete dry-run/confirm endpoints normalized `setId` before impact/delete operations.
+- Deletion queries then used exact `setId` match, which missed rows whose stored ID remained encoded/raw.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOps.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/delete/dry-run.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/delete/confirm.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `computeSetDeleteImpact` now evaluates counts across `setId` candidates: raw payload value + normalized label.
+- Dry-run now computes impact from raw `setId` (still auditing canonicalized label for readability).
+- Confirm delete now deletes rows using candidate-aware `where: { setId: { in: [...] } }` for:
+  - `cardVariantReferenceImage`
+  - `cardVariant`
+  - `setDraft`
+- Typed confirmation phrase remains canonicalized, but deletion target is resilient to encoded/raw storage variants.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/delete/confirm.ts --file pages/api/admin/set-ops/delete/dry-run.ts --file lib/server/setOps.ts` passed.
+
+### Notes
+- No deploy/restart/migration was executed in this step.
+
+## 2026-02-23 - Agent Context Sync (Docs-Only Handoff Refresh)
+
+### Summary
+- Re-read mandatory startup docs listed in `AGENTS.md`.
+- Confirmed active branch is `main` tracking `origin/main`.
+- Confirmed the working tree already contained pre-existing local modifications before this update.
+- Applied docs-only handoff refresh with no code, runtime, deploy, restart, migration, or DB operations.
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- Existing Set Ops next actions and production test focus remain unchanged.
+- No new runtime/API/DB evidence was collected in this session.

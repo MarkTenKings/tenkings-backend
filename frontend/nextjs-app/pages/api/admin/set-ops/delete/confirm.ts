@@ -32,7 +32,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   let admin: AdminSession | null = null;
-  const attemptedSetId = normalizeSetLabel(String(req.body?.setId ?? ""));
+  const attemptedRawSetId = String(req.body?.setId ?? "").trim();
+  const attemptedSetId = normalizeSetLabel(attemptedRawSetId);
 
   try {
     admin = await requireAdminSession(req);
@@ -50,19 +51,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const payload = confirmSchema.parse(req.body ?? {});
-    const setId = normalizeSetLabel(payload.setId);
-    if (!setId) {
+    const rawSetId = String(payload.setId || "").trim();
+    const setId = normalizeSetLabel(rawSetId);
+    const confirmationSetId = setId || rawSetId;
+    if (!rawSetId) {
       return res.status(400).json({ message: "setId is required" });
     }
+    const setIdCandidates = Array.from(new Set([rawSetId, setId].filter(Boolean)));
 
-    const expectedPhrase = buildSetDeleteConfirmationPhrase(setId);
-    if (!isSetDeleteConfirmationValid(setId, payload.typedConfirmation)) {
+    const expectedPhrase = buildSetDeleteConfirmationPhrase(confirmationSetId);
+    if (!isSetDeleteConfirmationValid(confirmationSetId, payload.typedConfirmation)) {
       await writeSetOpsAuditEvent({
         req,
         admin,
         action: "set_ops.delete.confirm",
         status: SetAuditStatus.DENIED,
-        setId,
+        setId: confirmationSetId,
         reason: "typed_confirmation_mismatch",
         metadata: {
           expectedPhrase,
@@ -73,20 +77,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const impact = await computeSetDeleteImpact(tx as unknown as Parameters<typeof computeSetDeleteImpact>[0], setId);
+      const impact = await computeSetDeleteImpact(tx as unknown as Parameters<typeof computeSetDeleteImpact>[0], rawSetId);
 
-      await tx.cardVariantReferenceImage.deleteMany({ where: { setId } });
-      await tx.cardVariant.deleteMany({ where: { setId } });
-      await tx.setDraft.deleteMany({ where: { setId } });
+      await tx.cardVariantReferenceImage.deleteMany({
+        where: {
+          setId: { in: setIdCandidates },
+        },
+      });
+      await tx.cardVariant.deleteMany({
+        where: {
+          setId: { in: setIdCandidates },
+        },
+      });
+      await tx.setDraft.deleteMany({
+        where: {
+          setId: { in: setIdCandidates },
+        },
+      });
 
       const audit = await tx.setAuditEvent.create({
         data: {
           actorId: admin?.user.id ?? null,
           action: "set_ops.delete.confirm",
           status: SetAuditStatus.SUCCESS,
-          setId,
+          setId: confirmationSetId,
           reason: payload.reason || null,
           metadataJson: {
+            setIdCandidates,
             rowsDeleted: impact.rowsToDelete,
             totalRowsDeleted: impact.totalRowsToDelete,
             auditEventsForSet: impact.auditEventsForSet,
@@ -105,7 +122,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     return res.status(200).json({
       ok: true,
-      setId,
+      setId: confirmationSetId,
       impact: result.impact,
       audit: {
         id: result.audit.id,

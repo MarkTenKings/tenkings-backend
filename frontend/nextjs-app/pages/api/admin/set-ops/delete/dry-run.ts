@@ -28,7 +28,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   let admin: AdminSession | null = null;
-  const attemptedSetId = normalizeSetLabel(String(req.body?.setId ?? ""));
+  const attemptedRawSetId = String(req.body?.setId ?? "").trim();
+  const attemptedSetId = normalizeSetLabel(attemptedRawSetId);
 
   try {
     admin = await requireAdminSession(req);
@@ -46,19 +47,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const payload = dryRunSchema.parse(req.body ?? {});
-    const setId = normalizeSetLabel(payload.setId);
-    if (!setId) {
+    const rawSetId = String(payload.setId || "").trim();
+    const setId = normalizeSetLabel(rawSetId);
+    if (!rawSetId) {
       return res.status(400).json({ message: "setId is required" });
     }
 
-    const impact = await computeSetDeleteImpact(prisma, setId);
+    const impact = await computeSetDeleteImpact(prisma, rawSetId);
+    const auditSetId = setId || rawSetId;
 
     const audit = await writeSetOpsAuditEvent({
       req,
       admin,
       action: "set_ops.delete.dry_run",
       status: SetAuditStatus.SUCCESS,
-      setId,
+      setId: auditSetId,
       metadata: {
         totalRowsToDelete: impact.totalRowsToDelete,
         rowsToDelete: impact.rowsToDelete,

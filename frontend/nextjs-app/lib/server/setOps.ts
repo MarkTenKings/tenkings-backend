@@ -1,5 +1,6 @@
 import type { NextApiRequest } from "next";
 import { prisma, SetAuditStatus, type Prisma } from "@tenkings/database";
+import { normalizeSetLabel } from "@tenkings/shared";
 import type { AdminSession } from "./admin";
 
 export type SetOpsRole = "reviewer" | "approver" | "delete" | "admin";
@@ -159,8 +160,28 @@ export async function writeSetOpsAuditEvent(input: SetOpsAuditEventInput) {
 }
 
 export async function computeSetDeleteImpact(db: SetOpsDbClient, setId: string): Promise<SetDeleteImpact> {
+  const normalizedSetId = normalizeSetLabel(setId);
+  const rawSetId = String(setId || "").trim();
+  const setIdCandidates = Array.from(new Set([rawSetId, normalizedSetId].filter(Boolean)));
+  if (setIdCandidates.length < 1) {
+    return {
+      setId: normalizedSetId || rawSetId,
+      rowsToDelete: {
+        cardVariants: 0,
+        referenceImages: 0,
+        drafts: 0,
+        draftVersions: 0,
+        approvals: 0,
+        ingestionJobs: 0,
+        seedJobs: 0,
+      },
+      totalRowsToDelete: 0,
+      auditEventsForSet: 0,
+    };
+  }
+
   const drafts = await db.setDraft.findMany({
-    where: { setId },
+    where: { setId: { in: setIdCandidates } },
     select: { id: true },
   });
   const draftIds = drafts.map((draft) => draft.id);
@@ -168,14 +189,14 @@ export async function computeSetDeleteImpact(db: SetOpsDbClient, setId: string):
 
   const [cardVariants, referenceImages, draftCount, draftVersions, approvals, ingestionJobs, seedJobs, auditEventsForSet] =
     await Promise.all([
-      db.cardVariant.count({ where: { setId } }),
-      db.cardVariantReferenceImage.count({ where: { setId } }),
-      db.setDraft.count({ where: { setId } }),
+      db.cardVariant.count({ where: { setId: { in: setIdCandidates } } }),
+      db.cardVariantReferenceImage.count({ where: { setId: { in: setIdCandidates } } }),
+      db.setDraft.count({ where: { setId: { in: setIdCandidates } } }),
       draftFilter ? db.setDraftVersion.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
       draftFilter ? db.setApproval.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
       draftFilter ? db.setIngestionJob.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
       draftFilter ? db.setSeedJob.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
-      db.setAuditEvent.count({ where: { setId } }),
+      db.setAuditEvent.count({ where: { setId: { in: setIdCandidates } } }),
     ]);
 
   const rowsToDelete: SetDeleteImpactCounts = {
@@ -189,7 +210,7 @@ export async function computeSetDeleteImpact(db: SetOpsDbClient, setId: string):
   };
   const totalRowsToDelete = Object.values(rowsToDelete).reduce((sum, count) => sum + count, 0);
   return {
-    setId,
+    setId: normalizedSetId || rawSetId,
     rowsToDelete,
     totalRowsToDelete,
     auditEventsForSet,
