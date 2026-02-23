@@ -663,3 +663,38 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/variants.tsx --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/seed.ts` passed.
 - Deployment status:
   - No deploy/restart/migration executed in this coding session.
+
+## Production Validation Milestone (2026-02-23)
+- User reported post-deploy production reseed status for `2023-24 Topps Chrome Basketball Retail`:
+  - `Set progress: 204/204 variants · inserted 1816 · skipped 20 · failed 0`
+- Manual table checks from user-provided production payloads:
+  - `/admin/variants` set reference table contained `199` variant rows for this set.
+  - `/admin/variant-ref-qa` table contained `199` variant rows for this set.
+  - No `Photos=0` rows remained in provided QA output (first clean run observed by user).
+- Interpretation:
+  - Canonical key alignment between seed writes and QA/read joins appears restored.
+  - Remaining `skipped` values can occur even when all variant rows have images (per-target listing/query limits and soft-skip behavior), so `skipped > 0` is not by itself a QA gap signal.
+- Next operator goal:
+  - User plans to reset `2025-26 Topps Basketball` and re-ingest from scratch via Set Ops flow.
+
+## PDF Ingestion Header/Team Drift Hardening (2026-02-23, Follow-up #19)
+- New production signal on fresh `2025-26 Topps Basketball` ingest from PDF:
+  - draft rows in `/admin/set-ops-review` showed repeated `parallel = Sacramento Kings`.
+  - card ids and player seeds were corrupted in some rows (`76ERS` as card number, split `Kareem / ABDUL-JABBAR` rows, trailing section labels in player field).
+- Root-cause class:
+  - PDF text parser could classify team-only lines as section headers.
+  - card-id detector was overly permissive (`76ERS`-style tokens treated as card ids).
+  - team suffix trimming expected city-only tails and missed full team names (`Sacramento Kings`, `Los Angeles Lakers`, etc.).
+  - label validation allowed low-signal symbol garbage to pass.
+- Fixes shipped:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+    - expanded checklist heading noise vocabulary for this checklist style (`ARRIVALS`, `FIRST`, `FINISHERS`, `HEADLINERS`, `MUSE`, `AURA`, `MASTERS`, `ELECTRIFYING`, `COLOSSAL`, etc.).
+    - replaced team suffix matcher with full NBA team-name matching (including OCR variants like `Philadelpia`, `LosAngeles`, `Trailblazers`).
+    - added guard: known team-name lines cannot be treated as section headers.
+    - tightened card-id recognition to reject team-like numeric tokens (`76ERS`) and long letter-pair tokens (`ABDUL-JABBAR`-style false ids).
+    - strengthened player-label validation to reject low-letter/high-symbol OCR garbage.
+    - added ingest quality gate rejecting `parallel` values that look like team names (`parallel_looks_like_team_name`).
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts` passed.
+- Deployment status:
+  - No deploy/restart/migration executed in this coding session.

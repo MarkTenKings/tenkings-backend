@@ -1063,3 +1063,58 @@
 - Compatibility matching was added so existing `Rookie` rows are still queryable/countable until purge + reseed.
 - Count aggregation now sums canonicalized duplicate buckets instead of last-write overwrite.
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-23 - Production Validation Milestone (204 Processed, No QA Zero-Photo Rows)
+
+### Summary
+- User completed production deploy/reseed validation for `2023-24 Topps Chrome Basketball Retail`.
+- Reported final set-run status:
+  - `Set progress: 204/204 variants · inserted 1816 · skipped 20 · failed 0`
+- User-provided table payloads for both pages were counted and matched:
+  - `/admin/variants` table rows: `199`
+  - `/admin/variant-ref-qa` table rows: `199`
+- No `Photos=0` rows remained in provided `/admin/variant-ref-qa` output.
+
+### Interpretation Notes
+- Current behavior indicates the prior key-join mismatch class is resolved for this set in production.
+- `skipped` can remain non-zero while QA still has full image coverage, due to soft-skip/no-result behavior at per-target listing level.
+
+### Next Operator Step
+- User intends to reset `2025-26 Topps Basketball` and run full fresh ingestion/seed from Set Ops workflow.
+
+## 2026-02-23 - Set Ops PDF Ingestion Follow-up #19 (Section Header Drift + Team/ID Parsing Guardrails)
+
+### Summary
+- User tested fresh `2025-26 Topps Basketball` PDF ingestion and provided draft table evidence from `/admin/set-ops-review`.
+- Reported failures matched parser drift patterns:
+  - `parallel` became team names (`Sacramento Kings`) for long stretches.
+  - malformed card numbers (`76ERS`) appeared.
+  - some player rows retained trailing section labels or split into orphan rows.
+
+### Root Cause
+- `parseChecklistRowsFromText` section-header detection accepted team-only lines as headers.
+- Card-id token matcher was too permissive for mixed number/letter team tokens.
+- Team suffix trimming expected city-only tails and missed full team names.
+- Label quality checks allowed some symbol-heavy OCR noise values.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Expanded checklist noise/header vocabulary for this PDF style (`ARRIVALS`, `FIRST`, `FINISHERS`, `HEADLINERS`, `MUSE`, `AURA`, `MASTERS`, `ELECTRIFYING`, `COLOSSAL`, etc.).
+- Replaced team suffix list with full NBA team-name matching (plus common OCR variants like `Philadelpia`, `LosAngeles`, `Trailblazers`).
+- Added explicit guard so known team-name lines cannot be classified as section headers.
+- Tightened card-id recognition:
+  - reject `76ERS`-style tokens (`^\\d{1,4}[A-Za-z]{2,}$`)
+  - restrict letter-only hyphen IDs to short checklist patterns.
+- Hardened label validity by rejecting low-letter/high-symbol OCR artifacts.
+- Added parallel quality gate to reject team-name parallels (`parallel_looks_like_team_name`).
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts` passed.
+
+### Notes
+- Attempted local smoke parse with `tsx` was not possible in this environment (`Command \"tsx\" not found`), so verification is via static logic + lint.
+- No deploy/restart/migration was executed in this step.

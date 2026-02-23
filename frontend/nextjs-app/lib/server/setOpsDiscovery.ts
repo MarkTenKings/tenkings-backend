@@ -537,6 +537,27 @@ function normalizeChecklistSectionName(raw: string) {
 
 const checklistSectionNoiseWords = new Set([
   "BASE",
+  "COMMON",
+  "UNCOMMON",
+  "RARE",
+  "INSERT",
+  "ARRIVALS",
+  "FIRST",
+  "FINISHERS",
+  "PULSE",
+  "HEADLINERS",
+  "MUSE",
+  "AURA",
+  "THE",
+  "MAN",
+  "AUTOGRAPH",
+  "CARDS",
+  "BASELINE",
+  "MASTERS",
+  "ELECTRIFYING",
+  "SIGNATURES",
+  "COLOSSAL",
+  "SHOTS",
   "SUDDEN",
   "IMPACT",
   "FILM",
@@ -550,42 +571,75 @@ const checklistSectionNoiseWords = new Set([
   "AUTOGRAPHS",
   "FUTURE",
   "STARS",
+  "ROOKIE",
 ]);
 
 const nbaTeamSuffixes: string[][] = [
-  ["oklahoma", "city"],
-  ["san", "antonio"],
-  ["san", "francisco"],
-  ["new", "orleans"],
-  ["new", "york"],
-  ["new", "jersey"],
-  ["los", "angeles"],
-  ["golden", "state"],
-  ["atlanta"],
-  ["boston"],
-  ["brooklyn"],
-  ["charlotte"],
-  ["chicago"],
-  ["cleveland"],
-  ["dallas"],
-  ["denver"],
-  ["detroit"],
-  ["houston"],
-  ["indiana"],
-  ["memphis"],
-  ["miami"],
-  ["milwaukee"],
-  ["minnesota"],
-  ["orlando"],
-  ["philadelphia"],
-  ["phoenix"],
-  ["portland"],
-  ["sacramento"],
-  ["seattle"],
-  ["toronto"],
-  ["utah"],
-  ["washington"],
+  ["atlanta", "hawks"],
+  ["boston", "celtics"],
+  ["brooklyn", "nets"],
+  ["charlotte", "hornets"],
+  ["chicago", "bulls"],
+  ["cleveland", "cavaliers"],
+  ["dallas", "mavericks"],
+  ["denver", "nuggets"],
+  ["detroit", "pistons"],
+  ["golden", "state", "warriors"],
+  ["houston", "rockets"],
+  ["indiana", "pacers"],
+  ["los", "angeles", "clippers"],
+  ["los", "angeles", "lakers"],
+  ["losangeles", "clippers"],
+  ["losangeles", "lakers"],
+  ["memphis", "grizzlies"],
+  ["miami", "heat"],
+  ["milwaukee", "bucks"],
+  ["minnesota", "timberwolves"],
+  ["new", "orleans", "pelicans"],
+  ["new", "york", "knicks"],
+  ["new", "jersey", "nets"],
+  ["oklahoma", "city", "thunder"],
+  ["orlando", "magic"],
+  ["philadelphia", "76ers"],
+  ["philadelpia", "76ers"],
+  ["phoenix", "suns"],
+  ["portland", "trail", "blazers"],
+  ["portland", "trailblazers"],
+  ["sacramento", "kings"],
+  ["san", "antonio", "spurs"],
+  ["seattle", "supersonics"],
+  ["toronto", "raptors"],
+  ["utah", "jazz"],
+  ["washington", "wizards"],
 ];
+
+function normalizeTeamToken(value: string) {
+  return compactWhitespace(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function isKnownNbaTeamNameTokens(tokens: string[]) {
+  if (tokens.length < 2) return false;
+  for (const team of nbaTeamSuffixes) {
+    if (team.length !== tokens.length) continue;
+    let matched = true;
+    for (let index = 0; index < team.length; index += 1) {
+      if (tokens[index] !== normalizeTeamToken(team[index] || "")) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return true;
+  }
+  return false;
+}
+
+function isKnownNbaTeamName(value: string) {
+  const tokens = compactWhitespace(value)
+    .split(/\s+/)
+    .map((token) => normalizeTeamToken(token))
+    .filter(Boolean);
+  return isKnownNbaTeamNameTokens(tokens);
+}
 
 function normalizeChecklistCardToken(raw: string) {
   return compactWhitespace(raw)
@@ -599,10 +653,13 @@ function looksLikeChecklistCardIdToken(raw: string) {
   if (/^\d{4}[-/]\d{2,4}$/.test(token)) return false;
   if (!/^[A-Za-z0-9]+(?:[-./][A-Za-z0-9]+){0,3}$/.test(token)) return false;
 
+  // Reject team-like tokens that include a number prefix and long trailing letters (ex: 76ERS).
+  if (/^\d{1,4}[A-Za-z]{2,}$/.test(token)) return false;
+
   // Numeric / mixed IDs (ex: 148, SI-1, DNA-2, 114A)
   if (/\d/.test(token)) return true;
-  // Letter-based insert/auto IDs (ex: CA-AB, FSA-BM)
-  if (/^[A-Za-z]{2,5}-[A-Za-z]{2,6}$/.test(token)) return true;
+  // Letter-only insert/auto IDs (ex: CA-AB, FSA-BM, RFA-CMB)
+  if (/^[A-Za-z]{1,5}-[A-Za-z0-9]{1,4}$/.test(token)) return true;
   return false;
 }
 
@@ -673,12 +730,13 @@ function trimTrailingChecklistHeaderNoise(tokens: string[]) {
 
 function stripTeamSuffixFromTokens(tokens: string[]) {
   if (tokens.length < 2) return tokens;
-  const lower = tokens.map((token) => token.toLowerCase());
+  const lower = tokens.map((token) => normalizeTeamToken(token));
   for (const team of nbaTeamSuffixes) {
     if (team.length > tokens.length) continue;
+    const normalizedTeam = team.map((entry) => normalizeTeamToken(entry));
     let matched = true;
     for (let index = 0; index < team.length; index += 1) {
-      if (lower[lower.length - team.length + index] !== team[index]) {
+      if (lower[lower.length - team.length + index] !== normalizedTeam[index]) {
         matched = false;
         break;
       }
@@ -787,8 +845,11 @@ function looksLikeChecklistSectionHeader(line: string) {
   if (/^\d+$/.test(value)) return false;
   if (/^page\s+\d+/i.test(value)) return false;
   if (/^(rookie|rc)$/i.test(value)) return false;
-  const firstToken = value.split(/\s+/)[0] || "";
+  if (isKnownNbaTeamName(value)) return false;
+  const valueTokens = value.split(/\s+/).filter(Boolean);
+  const firstToken = valueTokens[0] || "";
   if (looksLikeChecklistCardIdToken(firstToken)) return false;
+  if (valueTokens.slice(1).some((token) => looksLikeChecklistCardIdToken(token))) return false;
   if (TABLE_NEGATIVE_TOKEN_RE.test(value.toLowerCase())) return false;
 
   const isAllCaps = value === value.toUpperCase() && /[A-Z]/.test(value);
@@ -803,7 +864,7 @@ function looksLikeChecklistSectionHeader(line: string) {
 
   if (/^[A-Z0-9]{1,8}(?:-[A-Z0-9]{1,8})+\s+[A-Za-z]/.test(value)) return false;
   const hasKeyword =
-    /(insert|parallel|autograph|autos|relic|patch|variation|fo[i1]l|holo|mojo|ballers|topps|rookie|court|gems|kings|school|limit|chrome|rainbow|base|dribble|stardom|mvp)/i.test(
+    /(insert|parallel|autograph|autos|relic|patch|variation|fo[i1]l|holo|mojo|rookie|chrome|rainbow|base|checklist|arrivals|first|finishers|headliners|muse|aura|pulse|masters|signatures|shots|the man)/i.test(
       value
     );
   if (!hasKeyword) return false;
@@ -1537,9 +1598,13 @@ function looksLikeCardNumberValue(value: string) {
 function looksLikeLabelValue(value: string) {
   const text = compactWhitespace(value);
   if (!text || text.length > 120) return false;
-  if (!/[A-Za-z]/.test(text)) return false;
+  if (!/\p{L}/u.test(text)) return false;
   const words = text.split(/\s+/).filter(Boolean);
   if (words.length > 16) return false;
+  const letters = (text.match(/\p{L}/gu) ?? []).length;
+  const oddSymbols = (text.match(/[^\p{L}\p{N}\s.'\-&/]/gu) ?? []).length;
+  if (letters < 2) return false;
+  if (oddSymbols > 0 && oddSymbols >= Math.ceil(letters / 2)) return false;
   if (TABLE_NEGATIVE_TOKEN_RE.test(text.toLowerCase())) return false;
   if (isLikelyNoiseCellValue(text)) return false;
   return true;
@@ -1832,6 +1897,10 @@ function filterRowsForIngestion(rows: Array<Record<string, unknown>>, datasetTyp
     if (datasetType === SetDatasetType.PARALLEL_DB) {
       if (!parallel) {
         addReason("missing_parallel");
+        continue;
+      }
+      if (isKnownNbaTeamName(parallel)) {
+        addReason("parallel_looks_like_team_name");
         continue;
       }
       if (countWords(parallel) > 18) {
