@@ -585,3 +585,20 @@ Build Set Ops UI flow with:
 - Expected result:
   - better hit-rate on SI/FS/RR/FSA style inserts and dual-player rows.
   - less operator confusion after navigation, with set context + refs reloaded automatically.
+
+## Seed-Key Normalization Alignment (2026-02-22, Follow-up #16)
+- New production signal:
+  - set run reported relatively low skips, but QA queue still showed many `Photos=0` variants.
+- Root cause identified:
+  - seed writes used raw `cardNumber/parallel/player` strings from draft targets; some rows can include spacing variants (`FS - 14`, etc.).
+  - variants API keys by normalized variant values, so non-normalized stored refs can miss join/count and appear as zero-photo.
+- Fix shipped:
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+    - now normalizes before write using shared normalizers:
+      - `normalizeSetLabel`
+      - `normalizeCardNumber` (fallback `ALL`)
+      - `normalizeParallelLabel`
+      - `normalizePlayerSeed`
+- Expected result:
+  - reference rows align with variant keys more reliably.
+  - QA `Photos` count should match seed inserts after clearing external refs and reseeding.

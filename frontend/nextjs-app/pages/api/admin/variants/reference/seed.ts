@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
+import { normalizeCardNumber, normalizeParallelLabel, normalizePlayerSeed, normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 
 type ResponseBody =
@@ -222,11 +223,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const safeLimit = Math.min(50, Math.max(1, Number(limit ?? 20) || 20));
-    const normalizedSetId = String(setId).trim();
-    const normalizedCardNumber = cardNumber ? String(cardNumber).trim() : "ALL";
-    const normalizedParallelId = String(parallelId).trim();
-    const normalizedPlayerSeed = String(playerSeed || "").trim();
+    const normalizedSetId = normalizeSetLabel(String(setId || "").trim());
+    const normalizedCardNumber = normalizeCardNumber(String(cardNumber ?? "")) || "ALL";
+    const normalizedParallelId = normalizeParallelLabel(String(parallelId || "").trim());
+    const normalizedPlayerSeed = normalizePlayerSeed(String(playerSeed || "").trim());
     const normalizedQuery = String(query).trim();
+
+    if (!normalizedSetId || !normalizedParallelId) {
+      return res.status(400).json({ message: "setId and parallelId must normalize to non-empty values." });
+    }
 
     // Force eBay listing search (not Google image search).
     let data: any = null;

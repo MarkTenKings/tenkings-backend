@@ -964,3 +964,25 @@
   - primary-player normalization in auto query builder.
   - persists last selected set (`localStorage`) and auto-loads refs for that set on return.
   - warns on browser unload while set seeding is still in progress.
+
+## 2026-02-22 - Ref Seed Follow-up #16 (Seed Write Normalization for Card/Parallel/Player Keys)
+
+### Summary
+- QA queue still showed many zero-photo variants despite lower seed skip counts.
+- Aligned seed write keys to shared normalizers so inserted refs match variant counting keys.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/seed.ts` passed.
+
+### Notes
+- Seed endpoint now normalizes:
+  - `setId` via `normalizeSetLabel`
+  - `cardNumber` via `normalizeCardNumber` (fallback `ALL`)
+  - `parallelId` via `normalizeParallelLabel`
+  - `playerSeed` via `normalizePlayerSeed`
+- This should remove key mismatches like spaced card IDs (`FS - 14` vs `FS-14`) when QA counts refs.
