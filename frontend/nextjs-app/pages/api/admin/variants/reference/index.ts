@@ -42,6 +42,16 @@ const PARALLEL_ALIAS_TO_CANONICAL: Record<string, string> = {
   PB: "POWER BOOSTERS",
   DNA: "DNA",
 };
+const CARD_PREFIX_PARALLEL_MAP: Record<string, string> = {
+  SI: "SUDDEN IMPACT",
+  FS: "FILM STUDY",
+  RR: "ROUNDBALL ROYALTY",
+  FSA: "FUTURE STARS AUTOGRAPHS",
+  CA: "CERTIFIED AUTOGRAPHS",
+  PB: "POWER BOOSTERS",
+  DNA: "DNA",
+};
+const ROOKIE_PARALLEL_RE = /^(rookie|rc)(?:\s+cards?)?$/i;
 
 const PARALLEL_CANONICAL_TO_ALIAS: Record<string, string> = Object.entries(PARALLEL_ALIAS_TO_CANONICAL).reduce(
   (acc, [alias, canonical]) => {
@@ -66,9 +76,20 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   return output;
 }
 
-function canonicalParallelLabel(value: string | null | undefined) {
+function inferParallelFromCardNumber(cardNumber: string | null | undefined) {
+  const raw = String(cardNumber || "").trim().toUpperCase();
+  if (!raw || raw === "ALL") return "";
+  const compact = raw.replace(/\s+/g, "");
+  const prefix = compact.split("-")[0] || "";
+  return CARD_PREFIX_PARALLEL_MAP[prefix] || "";
+}
+
+function canonicalParallelLabel(value: string | null | undefined, cardNumber?: string | null | undefined) {
   const normalized = normalizeParallelLabel(value);
-  if (!normalized) return "";
+  const inferred = inferParallelFromCardNumber(cardNumber);
+  if (!normalized || ROOKIE_PARALLEL_RE.test(normalized)) {
+    return inferred || "";
+  }
   return PARALLEL_ALIAS_TO_CANONICAL[normalized.toUpperCase()] || normalized;
 }
 
@@ -78,12 +99,15 @@ function setIdCandidates(value: string | null | undefined) {
   return uniqueStrings([raw, normalized]);
 }
 
-function parallelCandidates(value: string | null | undefined) {
+function parallelCandidates(value: string | null | undefined, cardNumber?: string | null | undefined) {
   const raw = String(value || "").trim();
   const normalized = normalizeParallelLabel(raw);
-  const canonical = canonicalParallelLabel(raw);
+  const canonical = canonicalParallelLabel(raw, cardNumber);
   const alias = canonical ? PARALLEL_CANONICAL_TO_ALIAS[canonical.toUpperCase()] || "" : "";
-  return uniqueStrings([raw, normalized, canonical, alias]);
+  const inferred = inferParallelFromCardNumber(cardNumber);
+  const rookieFallbacks =
+    inferred && canonical && inferred.toLowerCase() === canonical.toLowerCase() ? ["Rookie", "RC"] : [];
+  return uniqueStrings([raw, normalized, canonical, alias, ...rookieFallbacks]);
 }
 
 function cardCandidates(value: string | null | undefined, options?: { includeLegacy?: boolean }) {
@@ -123,12 +147,15 @@ function cardCandidates(value: string | null | undefined, options?: { includeLeg
 function toRow(reference: any): ReferenceRow {
   const rawPlayerSeed = String(reference.playerSeed || "").trim();
   const playerLabel = rawPlayerSeed ? rawPlayerSeed.split("::")[0]?.trim() || "" : "";
-  const displayLabel = playerLabel || String(reference.parallelId || "");
+  const resolvedParallelId =
+    canonicalParallelLabel(reference.parallelId, reference.cardNumber) ||
+    String(reference.parallelId || "").trim();
+  const displayLabel = playerLabel || resolvedParallelId;
   return {
     id: reference.id,
     setId: reference.setId,
     cardNumber: reference.cardNumber != null ? String(reference.cardNumber) : null,
-    parallelId: reference.parallelId,
+    parallelId: resolvedParallelId,
     displayLabel,
     refType: String(reference.refType || "front"),
     pairKey: reference.pairKey ?? null,
@@ -187,7 +214,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         }
       }
       if (parallelId) {
-        const parallels = parallelCandidates(parallelId);
+        const parallels = parallelCandidates(parallelId, cardNumber || undefined);
         if (parallels.length === 1) {
           andClauses.push({ parallelId: parallels[0] });
         } else if (parallels.length > 1) {
@@ -423,7 +450,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           where.setId = setId;
         }
         if (parallelId) {
-          const parallels = parallelCandidates(parallelId);
+          const parallels = parallelCandidates(parallelId, cardNumber || undefined);
           if (parallels.length === 1) {
             where.parallelId = parallels[0];
           } else if (parallels.length > 1) {

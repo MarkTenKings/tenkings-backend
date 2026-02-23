@@ -37,6 +37,16 @@ const PARALLEL_ALIAS_TO_CANONICAL: Record<string, string> = {
   PB: "POWER BOOSTERS",
   DNA: "DNA",
 };
+const CARD_PREFIX_PARALLEL_MAP: Record<string, string> = {
+  SI: "SUDDEN IMPACT",
+  FS: "FILM STUDY",
+  RR: "ROUNDBALL ROYALTY",
+  FSA: "FUTURE STARS AUTOGRAPHS",
+  CA: "CERTIFIED AUTOGRAPHS",
+  PB: "POWER BOOSTERS",
+  DNA: "DNA",
+};
+const ROOKIE_PARALLEL_RE = /^(rookie|rc)(?:\s+cards?)?$/i;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -120,9 +130,20 @@ function primaryPlayerLabel(value: string) {
   return slashSplit.replace(/\s+/g, " ").trim();
 }
 
-function canonicalParallelId(value: string | null | undefined) {
+function inferParallelFromCardNumber(cardNumber: string | null | undefined) {
+  const raw = String(cardNumber || "").trim().toUpperCase();
+  if (!raw || raw === "ALL") return "";
+  const compact = raw.replace(/\s+/g, "");
+  const prefix = compact.split("-")[0] || "";
+  return CARD_PREFIX_PARALLEL_MAP[prefix] || "";
+}
+
+function canonicalParallelId(value: string | null | undefined, cardNumber: string | null | undefined) {
   const normalized = normalizeParallelLabel(value);
-  if (!normalized) return "";
+  const inferred = inferParallelFromCardNumber(cardNumber);
+  if (!normalized || ROOKIE_PARALLEL_RE.test(normalized)) {
+    return inferred || "";
+  }
   const alias = PARALLEL_ALIAS_TO_CANONICAL[normalized.toUpperCase()];
   return alias || normalized;
 }
@@ -241,7 +262,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const safeLimit = Math.min(50, Math.max(1, Number(limit ?? 20) || 20));
     const normalizedSetId = normalizeSetLabel(String(setId || "").trim());
     const normalizedCardNumber = normalizeCardNumber(String(cardNumber ?? "")) || "ALL";
-    const normalizedParallelId = canonicalParallelId(String(parallelId || "").trim());
+    const normalizedParallelId = canonicalParallelId(String(parallelId || "").trim(), normalizedCardNumber);
     const normalizedPlayerSeed = normalizePlayerSeed(String(playerSeed || "").trim());
     const normalizedQuery = String(query).trim();
 

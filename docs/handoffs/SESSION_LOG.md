@@ -1033,3 +1033,33 @@
 - Variants API read paths now key/match on normalized set/card/parallel and query across raw + normalized + alias candidates.
 - Variants reference API GET/DELETE filters now support normalized/alias candidate matching for set/parallel/card.
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-23 - Ref Seed Follow-up #18 (Rookie Parallel Guard + Card-Prefix Recovery)
+
+### Summary
+- Production retest after Follow-up #17 still showed split behavior:
+  - set seed reported success (`204 processed`, `1815 inserted`, `21 skipped`).
+  - `/admin/variants` reference table showed many rows with `parallelId=Rookie` on `FS-*`, `SI-*`, `RR-*`, `FSA-*`, `DNA-*`.
+  - `/admin/variant-ref-qa` still showed corresponding canonical variants at `Photos=0`.
+- Root cause confirmed:
+  - seed target extraction path was still trusting draft `row.parallel` markers (including `Rookie`) as final parallel IDs.
+  - this created orphan reference rows keyed to `Rookie`, which do not align with canonical variant keys.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/variants.tsx`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/variants.tsx --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/seed.ts` passed.
+
+### Notes
+- New guardrails:
+  - `Rookie/RC` is no longer accepted as a final seed parallel for insert/autograph families.
+  - canonical parallel is inferred from card prefix (`FS/SI/RR/FSA/CA/PB/DNA`) when parallel is missing/noise.
+- Compatibility matching was added so existing `Rookie` rows are still queryable/countable until purge + reseed.
+- Count aggregation now sums canonicalized duplicate buckets instead of last-write overwrite.
+- No deploy/restart/migration was executed in this step.

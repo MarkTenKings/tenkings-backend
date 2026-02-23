@@ -61,6 +61,46 @@ const SAMPLE_CSV = `setId,cardNumber,parallelId,parallelFamily,keywords,oddsInfo
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const LAST_VARIANT_SET_STORAGE_KEY = "tk.variants.lastSetId";
+const PARALLEL_ALIAS_TO_CANONICAL: Record<string, string> = {
+  SI: "SUDDEN IMPACT",
+  FS: "FILM STUDY",
+  RR: "ROUNDBALL ROYALTY",
+  FSA: "FUTURE STARS AUTOGRAPHS",
+  CA: "CERTIFIED AUTOGRAPHS",
+  PB: "POWER BOOSTERS",
+  DNA: "DNA",
+};
+const CARD_PREFIX_PARALLEL_MAP: Record<string, string> = {
+  SI: "SUDDEN IMPACT",
+  FS: "FILM STUDY",
+  RR: "ROUNDBALL ROYALTY",
+  FSA: "FUTURE STARS AUTOGRAPHS",
+  CA: "CERTIFIED AUTOGRAPHS",
+  PB: "POWER BOOSTERS",
+  DNA: "DNA",
+};
+const ROOKIE_PARALLEL_RE = /^(rookie|rc)(?:\s+cards?)?$/i;
+
+function inferParallelFromCardNumber(cardNumber: string | null | undefined) {
+  const raw = String(cardNumber || "").trim().toUpperCase();
+  if (!raw || raw === "ALL") return "";
+  const compact = raw.replace(/\s+/g, "");
+  const prefix = compact.split("-")[0] || "";
+  return CARD_PREFIX_PARALLEL_MAP[prefix] || "";
+}
+
+function canonicalSeedParallel(parallelValue: string | null | undefined, cardNumber: string | null | undefined) {
+  const raw = String(parallelValue || "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const inferred = inferParallelFromCardNumber(cardNumber);
+  if (!raw || ROOKIE_PARALLEL_RE.test(raw)) {
+    return inferred || "";
+  }
+  const alias = PARALLEL_ALIAS_TO_CANONICAL[raw.toUpperCase()];
+  if (alias) return alias;
+  return raw;
+}
 
 function sourceHostFromUrl(value: string | null | undefined) {
   const raw = String(value || "").trim();
@@ -91,10 +131,10 @@ function extractSeedTargetsFromDraftRows(rows: unknown[], targetSetId: string): 
     const rowSetId = String(row.setId || "").trim().toLowerCase();
     if (!rowSetId || rowSetId !== normalizedSet) continue;
 
-    const parallelId = String(row.parallel ?? row.parallelId ?? "").trim();
+    const cardNumber = String(row.cardNumber ?? "ALL").trim() || "ALL";
+    const parallelId = canonicalSeedParallel(String(row.parallel ?? row.parallelId ?? "").trim(), cardNumber);
     if (!parallelId) continue;
 
-    const cardNumber = String(row.cardNumber ?? "ALL").trim() || "ALL";
     const playerRaw = String(row.playerSeed ?? row.player ?? "").trim();
     const playerSeed = (playerRaw.split("::")[0]?.trim() || playerRaw || null) as string | null;
 

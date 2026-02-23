@@ -37,6 +37,16 @@ const PARALLEL_ALIAS_TO_CANONICAL: Record<string, string> = {
   PB: "POWER BOOSTERS",
   DNA: "DNA",
 };
+const CARD_PREFIX_PARALLEL_MAP: Record<string, string> = {
+  SI: "SUDDEN IMPACT",
+  FS: "FILM STUDY",
+  RR: "ROUNDBALL ROYALTY",
+  FSA: "FUTURE STARS AUTOGRAPHS",
+  CA: "CERTIFIED AUTOGRAPHS",
+  PB: "POWER BOOSTERS",
+  DNA: "DNA",
+};
+const ROOKIE_PARALLEL_RE = /^(rookie|rc)(?:\s+cards?)?$/i;
 
 const PARALLEL_CANONICAL_TO_ALIAS: Record<string, string> = Object.entries(PARALLEL_ALIAS_TO_CANONICAL).reduce(
   (acc, [alias, canonical]) => {
@@ -70,18 +80,32 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   return output;
 }
 
-function canonicalParallelLabel(value: string | null | undefined) {
+function inferParallelFromCardNumber(cardNumber: string | null | undefined) {
+  const raw = String(cardNumber || "").trim().toUpperCase();
+  if (!raw || raw === "ALL") return "";
+  const compact = raw.replace(/\s+/g, "");
+  const prefix = compact.split("-")[0] || "";
+  return CARD_PREFIX_PARALLEL_MAP[prefix] || "";
+}
+
+function canonicalParallelLabel(value: string | null | undefined, cardNumber?: string | null | undefined) {
   const normalized = normalizeParallelLabel(value);
-  if (!normalized) return "";
+  const inferred = inferParallelFromCardNumber(cardNumber);
+  if (!normalized || ROOKIE_PARALLEL_RE.test(normalized)) {
+    return inferred || "";
+  }
   return PARALLEL_ALIAS_TO_CANONICAL[normalized.toUpperCase()] || normalized;
 }
 
-function parallelCandidates(value: string | null | undefined) {
+function parallelCandidates(value: string | null | undefined, cardNumber?: string | null | undefined) {
   const raw = String(value || "").trim();
   const normalized = normalizeParallelLabel(raw);
-  const canonical = canonicalParallelLabel(raw);
+  const canonical = canonicalParallelLabel(raw, cardNumber);
   const alias = canonical ? PARALLEL_CANONICAL_TO_ALIAS[canonical.toUpperCase()] || "" : "";
-  return uniqueStrings([raw, normalized, canonical, alias]);
+  const inferred = inferParallelFromCardNumber(cardNumber);
+  const rookieFallbacks =
+    inferred && canonical && inferred.toLowerCase() === canonical.toLowerCase() ? ["Rookie", "RC"] : [];
+  return uniqueStrings([raw, normalized, canonical, alias, ...rookieFallbacks]);
 }
 
 function setIdCandidates(value: string | null | undefined) {
@@ -121,7 +145,9 @@ function dbCardValuesForVariant(cardNumber: string | null | undefined) {
 function keyForRef(setId: string, cardNumber: string | null | undefined, parallelId: string) {
   const normalizedSet = normalizeSetLabel(setId) || String(setId || "").trim();
   const normalizedParallel =
-    canonicalParallelLabel(parallelId) || normalizeParallelLabel(parallelId) || String(parallelId || "").trim();
+    canonicalParallelLabel(parallelId, cardNumber) ||
+    normalizeParallelLabel(parallelId) ||
+    String(parallelId || "").trim();
   const card = cardNumber == null ? "__NULL__" : normalizeCardToken(cardNumber);
   return `${normalizedSet}::${card}::${normalizedParallel}`;
 }
@@ -147,7 +173,7 @@ function filterLegacyAllVariants(variants: any[]) {
     if (normalizeCardToken(variant.cardNumber) === "ALL") continue;
     const setKey = (normalizeSetLabel(variant.setId) || String(variant.setId || "").trim()).toLowerCase();
     const parallelKey =
-      (canonicalParallelLabel(variant.parallelId) ||
+      (canonicalParallelLabel(variant.parallelId, variant.cardNumber) ||
         normalizeParallelLabel(variant.parallelId) ||
         String(variant.parallelId || "").trim()).toLowerCase();
     specificBySetParallel.add(`${setKey}::${parallelKey}`);
@@ -157,7 +183,7 @@ function filterLegacyAllVariants(variants: any[]) {
     if (card !== "ALL") return true;
     const setKey = (normalizeSetLabel(variant.setId) || String(variant.setId || "").trim()).toLowerCase();
     const parallelKey =
-      (canonicalParallelLabel(variant.parallelId) ||
+      (canonicalParallelLabel(variant.parallelId, variant.cardNumber) ||
         normalizeParallelLabel(variant.parallelId) ||
         String(variant.parallelId || "").trim()).toLowerCase();
     const key = `${setKey}::${parallelKey}`;
@@ -235,7 +261,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const countOrMap = new Map<string, { setId: string; cardNumber: string | null; parallelId: string }>();
       for (const key of keys) {
         const setIds = setIdCandidates(key.setId);
-        const parallels = parallelCandidates(key.parallelId);
+        const parallels = parallelCandidates(key.parallelId, key.cardNumber);
         const cards = dbCardValuesForVariant(key.cardNumber);
         for (const setId of setIds) {
           for (const parallelId of parallels) {
@@ -320,7 +346,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       const countByKey = new Map<string, number>();
       for (const row of referenceCounts) {
-        countByKey.set(keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId), row._count._all);
+        const key = keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId);
+        const current = countByKey.get(key) ?? 0;
+        countByKey.set(key, current + row._count._all);
       }
       const qaDoneByKey = new Map<string, number>();
       for (const row of qaDoneRows) {

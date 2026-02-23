@@ -1,7 +1,7 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-02-23` (variant ref key-match hardening for insert/autograph photo counts)
+- Last reviewed: `2026-02-23` (rookie-parallel guard + seed/read fallback alignment)
 - Branch: `main`
 - Latest commits:
   - `6e3f20c` fix(set-ops): harden checklist parsing and block html/noise rows
@@ -633,5 +633,33 @@ Build Set Ops UI flow with:
     - set-level DELETE path now uses normalized/alias-aware filters so purge/reseed operations hit both legacy and canonical key variants.
 - Validation executed:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/seed.ts` passed.
+- Deployment status:
+  - No deploy/restart/migration executed in this coding session.
+
+## Rookie Parallel Regression Guard + Orphan-Key Recovery (2026-02-23, Follow-up #18)
+- New production signal after reseed:
+  - set run reported `204 processed, inserted 1815, skipped 21` with player-worksheet source.
+  - `/admin/variants` reference table showed many rows with `parallelId = Rookie` on insert/autograph card numbers (`FS-*`, `SI-*`, `RR-*`, `FSA-*`, `DNA-*`).
+  - `/admin/variant-ref-qa` still showed those same variants at `Photos=0`.
+- Root cause identified:
+  - seed target extraction trusted draft `row.parallel` values directly; `Rookie` marker values were treated as actual parallel IDs.
+  - those writes created orphan ref keys (`card + Rookie`) that do not align with canonical variant parallels (`FILM STUDY`, `SUDDEN IMPACT`, etc.).
+  - two pages surfaced different views:
+    - `/admin/variants` shows raw reference rows by set.
+    - `/admin/variant-ref-qa` counts by variant-key join.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/admin/variants.tsx`
+    - seed target extraction now canonicalizes parallel IDs and ignores `Rookie/RC` markers.
+    - when parallel is missing/noise (`Rookie`), it infers canonical parallel from card prefix (`FS/SI/RR/FSA/CA/PB/DNA`).
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+    - seed write path now refuses `Rookie/RC` as final parallel and infers canonical parallel from card prefix before insert.
+  - `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+    - count/join paths now include controlled `Rookie/RC` compatibility candidates (when card-prefix implies known insert family) so existing bad rows can still be matched/read until reseeded.
+    - fixed count aggregation to sum duplicate canonicalized key buckets instead of overwrite.
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+    - GET/DELETE filters now include same card-aware `Rookie/RC` compatibility matching.
+    - response rows normalize display parallel to canonical value for consistency.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/variants.tsx --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/seed.ts` passed.
 - Deployment status:
   - No deploy/restart/migration executed in this coding session.
