@@ -1,6 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
-import { Prisma } from "@prisma/client";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 type VariantCatalogRow = {
@@ -41,6 +40,12 @@ type ResponseBody =
     }
   | { message: string };
 
+type SetScopeRule = {
+  requireYear: boolean;
+  requireManufacturer: boolean;
+  requireSport: boolean;
+};
+
 const sanitize = (value: unknown): string => String(value ?? "").trim();
 
 const tokenize = (value: string): string[] =>
@@ -49,6 +54,129 @@ const tokenize = (value: string): string[] =>
     .split(/[^a-z0-9]+/g)
     .map((token) => token.trim())
     .filter(Boolean);
+
+const MANUFACTURER_STOP_WORDS = new Set(["trading", "card", "cards", "company", "co", "inc", "the"]);
+
+const SPORT_ALIASES: Record<string, string[]> = {
+  basketball: ["basketball", "nba"],
+  nba: ["basketball", "nba"],
+  football: ["football", "nfl"],
+  nfl: ["football", "nfl"],
+  baseball: ["baseball", "mlb"],
+  mlb: ["baseball", "mlb"],
+  hockey: ["hockey", "nhl"],
+  nhl: ["hockey", "nhl"],
+  soccer: ["soccer", "futbol", "fifa"],
+  futbol: ["soccer", "futbol", "fifa"],
+  fifa: ["soccer", "futbol", "fifa"],
+};
+
+function buildYearHints(value: string): string[] {
+  const normalized = sanitize(value).toLowerCase();
+  if (!normalized) {
+    return [];
+  }
+  const hints = new Set<string>();
+  const compact = normalized.replace(/\s+/g, "");
+  const season = compact.match(/(19|20)\d{2}(?:[-/](\d{2,4}))?/);
+  if (season?.[0]) {
+    const full = season[0];
+    hints.add(full);
+    hints.add(full.replace("/", "-"));
+    hints.add(full.slice(0, 4));
+  }
+  tokenize(normalized).forEach((token) => {
+    if (/^(19|20)\d{2}$/.test(token) || /^(19|20)\d{2}[-/]\d{2,4}$/.test(token)) {
+      hints.add(token);
+      hints.add(token.replace("/", "-"));
+      hints.add(token.slice(0, 4));
+    }
+  });
+  return Array.from(hints).filter(Boolean);
+}
+
+function buildManufacturerHints(value: string): string[] {
+  return tokenize(value).filter((token) => token.length >= 3 && !MANUFACTURER_STOP_WORDS.has(token));
+}
+
+function buildSportHints(value: string | null): string[] {
+  const hints = new Set<string>();
+  tokenize(sanitize(value)).forEach((token) => {
+    hints.add(token);
+    (SPORT_ALIASES[token] ?? []).forEach((alias) => hints.add(alias));
+  });
+  return Array.from(hints).filter(Boolean);
+}
+
+function setMatchesYear(setId: string, yearHints: string[], required: boolean): boolean {
+  if (!required) {
+    return true;
+  }
+  if (yearHints.length < 1) {
+    return false;
+  }
+  const lowerSet = setId.toLowerCase();
+  return yearHints.some((hint) => {
+    const normalizedHint = hint.toLowerCase();
+    if (!normalizedHint) {
+      return false;
+    }
+    if (lowerSet.includes(normalizedHint)) {
+      return true;
+    }
+    if (/^(19|20)\d{2}$/.test(normalizedHint)) {
+      return new RegExp(`${normalizedHint}\\s*[-/]\\s*\\d{2,4}`).test(lowerSet);
+    }
+    return false;
+  });
+}
+
+function setMatchesAnyToken(setId: string, hints: string[], required: boolean): boolean {
+  if (!required) {
+    return true;
+  }
+  if (hints.length < 1) {
+    return false;
+  }
+  const setTokens = new Set(tokenize(setId));
+  return hints.some((hint) => setTokens.has(hint));
+}
+
+function filterScopedSetIds(params: {
+  approvedSetIds: string[];
+  yearHints: string[];
+  manufacturerHints: string[];
+  sportHints: string[];
+}): string[] {
+  const { approvedSetIds, yearHints, manufacturerHints, sportHints } = params;
+  const rules: SetScopeRule[] = [
+    { requireYear: true, requireManufacturer: true, requireSport: sportHints.length > 0 },
+    { requireYear: true, requireManufacturer: true, requireSport: false },
+    { requireYear: true, requireManufacturer: false, requireSport: sportHints.length > 0 },
+    { requireYear: true, requireManufacturer: false, requireSport: false },
+    { requireYear: false, requireManufacturer: true, requireSport: sportHints.length > 0 },
+  ];
+
+  for (const rule of rules) {
+    const matched = approvedSetIds.filter((setId) => {
+      if (!setMatchesYear(setId, yearHints, rule.requireYear)) {
+        return false;
+      }
+      if (!setMatchesAnyToken(setId, manufacturerHints, rule.requireManufacturer)) {
+        return false;
+      }
+      if (!setMatchesAnyToken(setId, sportHints, rule.requireSport)) {
+        return false;
+      }
+      return true;
+    });
+    if (matched.length > 0) {
+      return matched;
+    }
+  }
+
+  return approvedSetIds;
+}
 
 const scoreSet = (setId: string, hints: string[]) => {
   if (!setId.trim() || hints.length === 0) {
@@ -95,54 +223,6 @@ const isInsertLikeRow = (row: VariantCatalogRow): boolean => {
   );
 };
 
-function buildWhere(params: {
-  approvedSetIds: string[];
-  year?: string;
-  manufacturer?: string;
-  sport?: string;
-}) {
-  const andClauses: Prisma.CardVariantWhereInput[] = [
-    {
-      setId: {
-        in: params.approvedSetIds,
-      },
-    },
-  ];
-  const year = sanitize(params.year);
-  const manufacturer = sanitize(params.manufacturer);
-  const sport = sanitize(params.sport);
-  if (year) {
-    andClauses.push({
-      setId: {
-        contains: year,
-        mode: Prisma.QueryMode.insensitive,
-      },
-    });
-  }
-  if (manufacturer) {
-    andClauses.push({
-      setId: {
-        contains: manufacturer,
-        mode: Prisma.QueryMode.insensitive,
-      },
-    });
-  }
-  if (sport) {
-    andClauses.push({
-      setId: {
-        contains: sport,
-        mode: Prisma.QueryMode.insensitive,
-      },
-    });
-  }
-  if (andClauses.length === 1) {
-    return andClauses[0];
-  }
-  return {
-    AND: andClauses,
-  };
-}
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
   try {
     await requireAdminSession(req);
@@ -156,7 +236,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const manufacturer = sanitize(req.query.manufacturer);
     const sport = sanitize(req.query.sport) || null;
     const productLine = sanitize(req.query.productLine) || null;
-    const take = Math.min(6000, Math.max(500, Number(req.query.limit ?? 4000) || 4000));
 
     if (!year || !manufacturer) {
       return res.status(200).json({
@@ -184,13 +263,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         setId: true,
       },
     });
-    const approvedSetIds = Array.from(
-      new Set(
-        approvedRows
-          .map((row) => sanitize(row.setId))
-          .filter(Boolean)
-      )
-    );
+
+    const approvedSetIds = Array.from(new Set(approvedRows.map((row) => sanitize(row.setId)).filter(Boolean)));
 
     if (approvedSetIds.length < 1) {
       return res.status(200).json({
@@ -209,52 +283,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
-    const select = {
-      setId: true,
-      cardNumber: true,
-      parallelId: true,
-      parallelFamily: true,
-    } as const;
+    const yearHints = buildYearHints(year);
+    const manufacturerHints = buildManufacturerHints(manufacturer);
+    const sportHints = buildSportHints(sport);
 
-    let variants = await prisma.cardVariant.findMany({
-      where: buildWhere({ approvedSetIds, year, manufacturer, sport: sport ?? undefined }),
-      select,
-      orderBy: [{ setId: "asc" }, { cardNumber: "asc" }, { parallelId: "asc" }],
-      take,
+    const scopedSetIds = filterScopedSetIds({
+      approvedSetIds,
+      yearHints,
+      manufacturerHints,
+      sportHints,
     });
 
-    if (variants.length < 1 && sport) {
-      variants = await prisma.cardVariant.findMany({
-        where: buildWhere({ approvedSetIds, year, manufacturer }),
-        select,
-        orderBy: [{ setId: "asc" }, { cardNumber: "asc" }, { parallelId: "asc" }],
-        take,
-      });
-    }
-
-    const dedupedMap = new Map<string, VariantCatalogRow>();
-    variants.forEach((row) => {
-      const setId = sanitize(row.setId);
-      const cardNumber = sanitize(row.cardNumber);
-      const parallelId = sanitize(row.parallelId);
-      if (!setId || !parallelId) {
-        return;
-      }
-      const key = `${setId.toLowerCase()}::${cardNumber.toLowerCase()}::${parallelId.toLowerCase()}`;
-      if (!dedupedMap.has(key)) {
-        dedupedMap.set(key, {
-          setId,
-          cardNumber,
-          parallelId,
-          parallelFamily: sanitize(row.parallelFamily) || null,
-        });
-      }
+    const groupedRows = await prisma.cardVariant.groupBy({
+      by: ["setId", "parallelId", "parallelFamily"],
+      where: {
+        setId: {
+          in: scopedSetIds,
+        },
+      },
+      _count: {
+        _all: true,
+      },
+      orderBy: [{ setId: "asc" }, { parallelId: "asc" }],
     });
-    const dedupedVariants = Array.from(dedupedMap.values());
+
+    const dedupedVariants: VariantCatalogRow[] = groupedRows
+      .map((row) => ({
+        setId: sanitize(row.setId),
+        cardNumber: "ALL",
+        parallelId: sanitize(row.parallelId),
+        parallelFamily: sanitize(row.parallelFamily) || null,
+      }))
+      .filter((row) => Boolean(row.setId && row.parallelId));
+
+    const variantCount = groupedRows.reduce((sum, row) => sum + (row._count?._all ?? 0), 0);
 
     const setCounts = new Map<string, number>();
-    dedupedVariants.forEach((row) => {
-      setCounts.set(row.setId, (setCounts.get(row.setId) ?? 0) + 1);
+    groupedRows.forEach((row) => {
+      const setId = sanitize(row.setId);
+      if (!setId) {
+        return;
+      }
+      setCounts.set(setId, (setCounts.get(setId) ?? 0) + (row._count?._all ?? 0));
     });
 
     const setHints = [
@@ -281,23 +351,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     };
 
     const optionMap = new Map<string, OptionAccumulator>();
-    dedupedVariants.forEach((row) => {
+    groupedRows.forEach((row) => {
+      const setId = sanitize(row.setId);
       const label = sanitize(row.parallelId);
-      if (!label) {
+      if (!setId || !label) {
         return;
       }
-      const kind: "insert" | "parallel" = isInsertLikeRow(row) ? "insert" : "parallel";
+      const variantLike: VariantCatalogRow = {
+        setId,
+        cardNumber: "ALL",
+        parallelId: label,
+        parallelFamily: sanitize(row.parallelFamily) || null,
+      };
+      const kind: "insert" | "parallel" = isInsertLikeRow(variantLike) ? "insert" : "parallel";
       const key = `${kind}::${label.toLowerCase()}`;
       const existing = optionMap.get(key);
       if (existing) {
-        existing.count += 1;
-        existing.setIds.add(row.setId);
+        existing.count += row._count?._all ?? 0;
+        existing.setIds.add(setId);
       } else {
         optionMap.set(key, {
           label,
           kind,
-          count: 1,
-          setIds: new Set([row.setId]),
+          count: row._count?._all ?? 0,
+          setIds: new Set([setId]),
         });
       }
     });
@@ -335,7 +412,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         sport,
         productLine,
         approvedSetCount: approvedSetIds.length,
-        variantCount: dedupedVariants.length,
+        variantCount,
       },
     });
   } catch (error) {

@@ -539,6 +539,10 @@ async function applyFeedbackMemoryHints(params: {
     if (!FIELD_KEYS.includes(field)) {
       return;
     }
+    // Do not memory-overwrite set selection globally; this caused cross-card set drift.
+    if (field === "setName") {
+      return;
+    }
     const humanValue = coerceNullableString(row.humanValue);
     if (!humanValue) {
       return;
@@ -560,6 +564,18 @@ async function applyFeedbackMemoryHints(params: {
     const ctxSport = toMemoryToken(context.sport);
     const ctxCardNumber = toMemoryToken(context.cardNumber);
     const ctxNumbered = toMemoryToken(context.numbered);
+
+    if (field === "parallel" || field === "insertSet") {
+      if (!ctxSet && !ctxCardNumber) {
+        return;
+      }
+      if (ctxSet && rowSet && rowSet !== ctxSet) {
+        return;
+      }
+      if (ctxCardNumber && rowCardNumber && rowCardNumber !== ctxCardNumber) {
+        return;
+      }
+    }
 
     if (ctxSet && rowSet === ctxSet) score += 2.2;
     if (ctxCardNumber && rowCardNumber === ctxCardNumber) score += 1.5;

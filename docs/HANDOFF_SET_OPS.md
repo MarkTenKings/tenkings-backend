@@ -944,3 +944,26 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/ai-ops.tsx --file pages/admin/index.tsx --file pages/api/admin/ai-ops/overview.ts` passed clean.
 - Deployment status:
   - No deploy/restart/migration executed in this coding step.
+
+## Add Cards Variant Option Coverage + Set Drift Fix (2026-02-23)
+- Trigger:
+  - Prod test cards in Add Cards were missing expected insert/parallel options (e.g., No Limit, Daily Dribble, Rise To Stardom, The Stars of NBA, Holo/Refractor) and product-line selection was over-biasing to Topps Finest.
+- Root causes addressed:
+  - `/api/admin/variants/options` used row-limited variant scans and strict substring filters, which could drop valid option labels in larger year/manufacturer scopes.
+  - OCR teach-memory replay could over-apply `setName` across cards with only broad year/manufacturer/sport overlap.
+  - Add Cards auto product-line selection accepted weak hints too aggressively.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/api/admin/variants/options.ts`
+    - switched to grouped option aggregation (`setId + parallelId + parallelFamily`) over scoped approved sets.
+    - added staged token-based set scope fallback (year/manufacturer/sport) to improve coverage when naming is inconsistent.
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - disabled memory replay writes for `setName`.
+    - required stronger context before replaying `parallel`/`insertSet` memory hints.
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - blocked weak single-token product-line auto-hints.
+    - removed generic manufacturer+sport product-line default.
+    - only auto-picks product line when blank and candidate match is stronger.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/options.ts --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts` passed (existing `no-img-element` warnings only).
+- Deployment status:
+  - No deploy/restart/migration executed in this coding step.

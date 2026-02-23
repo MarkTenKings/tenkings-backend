@@ -1558,3 +1558,36 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-23 - Add Cards Variant Option Coverage + Set Auto-Select Hardening
+
+### Summary
+- Fixed Add Cards variant option pool under-coverage by changing `/api/admin/variants/options` from row-limited `CardVariant.findMany` scans to grouped set+parallel aggregation over scoped approved sets.
+- Hardened set scoping fallback logic so option pools still resolve when set labels are inconsistent (e.g., sport/manufacturer tokens not exact substring matches).
+- Stopped broad teach-memory set drift from auto-overwriting `setName` in OCR memory replay.
+- Tightened Add Cards product-line auto-selection to avoid forcing a generic/weak hint (e.g., `Finest`) into a specific set.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/variants/options.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+
+### Implementation Notes
+- `variants/options`:
+  - uses approved set IDs + tokenized year/manufacturer/sport matching with staged fallback rules.
+  - computes option pool from `groupBy(setId, parallelId, parallelFamily)` to avoid truncating valid insert/parallel labels from high-row sets.
+  - preserves insert/parallel classification and set-scored ordering for picker UX.
+- `ocr-suggest`:
+  - memory replay now skips `setName` field to prevent cross-card set bleed.
+  - memory replay for `parallel` / `insertSet` now requires stronger context (`setId` or `cardNumber`) before applying.
+- `uploads`:
+  - product-line auto-fill now ignores weak single-token hints.
+  - removed generic manufacturer+sport default set fill.
+  - auto-pick from option list only runs when product line is blank and match confidence threshold is higher.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/options.ts --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - Result: pass with existing `@next/next/no-img-element` warnings in uploads only.
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this step.

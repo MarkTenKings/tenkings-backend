@@ -185,12 +185,48 @@ const tokenize = (value: string): string[] =>
     .filter(Boolean);
 
 const VARIANT_LABEL_STOP_WORDS = new Set(["the"]);
+const GENERIC_PRODUCT_LINE_HINT_TOKENS = new Set([
+  "topps",
+  "panini",
+  "bowman",
+  "upper",
+  "deck",
+  "chrome",
+  "finest",
+  "prizm",
+  "select",
+  "mosaic",
+  "optic",
+  "donruss",
+  "certified",
+  "elite",
+  "contenders",
+  "origins",
+  "revolution",
+  "spectra",
+  "status",
+]);
 
 const normalizeVariantLabelKey = (value: string): string =>
   tokenize(value)
     .filter((token) => !VARIANT_LABEL_STOP_WORDS.has(token))
     .join(" ")
     .trim();
+
+const isActionableProductLineHint = (value: string): boolean => {
+  const tokens = tokenize(value);
+  if (tokens.length >= 2) {
+    return true;
+  }
+  const token = tokens[0] ?? "";
+  if (!token) {
+    return false;
+  }
+  if (/^(19|20)\d{2}(?:[-/]\d{2,4})?$/.test(token)) {
+    return true;
+  }
+  return !GENERIC_PRODUCT_LINE_HINT_TOKENS.has(token);
+};
 
 const scoreOption = (option: string, hints: string[]): number => {
   if (!option.trim() || hints.length === 0) {
@@ -1465,8 +1501,9 @@ export default function AdminUploads() {
       setIntakeBackPhotoId(backPhoto?.id ?? null);
       setIntakeTiltPhotoId(tiltPhoto?.id ?? null);
 
-      const nextProductLine = sanitizeNullableText(normalized.setName ?? ocrFields.setName ?? "");
-      const inferredSport = inferSportFromProductLine(nextProductLine);
+      const nextProductLineRaw = sanitizeNullableText(normalized.setName ?? ocrFields.setName ?? "");
+      const nextProductLine = isActionableProductLineHint(nextProductLineRaw) ? nextProductLineRaw : "";
+      const inferredSport = inferSportFromProductLine(nextProductLineRaw);
       setIntakeRequired({
         category: categoryType,
         playerName:
@@ -1601,27 +1638,6 @@ export default function AdminUploads() {
   }, [intakeOptional.productLine, intakeRequired.category, intakeRequired.sport]);
 
   useEffect(() => {
-    if (intakeRequired.category !== "sport") {
-      return;
-    }
-    if (intakeOptionalTouched.productLine || intakeOptional.productLine.trim()) {
-      return;
-    }
-    const manufacturer = intakeRequired.manufacturer.trim();
-    const sport = intakeRequired.sport.trim();
-    if (!manufacturer || !sport) {
-      return;
-    }
-    setIntakeOptional((prev) => ({ ...prev, productLine: `${manufacturer} ${sport}`.trim() }));
-  }, [
-    intakeOptional.productLine,
-    intakeOptionalTouched.productLine,
-    intakeRequired.category,
-    intakeRequired.manufacturer,
-    intakeRequired.sport,
-  ]);
-
-  useEffect(() => {
     if (intakeRequired.category !== "sport" || productLineOptions.length === 0) {
       return;
     }
@@ -1629,19 +1645,19 @@ export default function AdminUploads() {
     if (current && productLineOptions.some((option) => option.toLowerCase() === current.toLowerCase())) {
       return;
     }
+    if (current) {
+      return;
+    }
+    const suggestedSetName = sanitizeNullableText(intakeSuggested.setName);
+    const actionableSuggestedSetName = isActionableProductLineHint(suggestedSetName) ? suggestedSetName : "";
     const candidate = pickBestCandidate(productLineOptions, [
-      sanitizeNullableText(intakeSuggested.setName),
-      sanitizeNullableText(intakeOptional.productLine),
+      actionableSuggestedSetName,
       `${sanitizeNullableText(intakeRequired.year)} ${sanitizeNullableText(intakeRequired.manufacturer)} ${sanitizeNullableText(
         intakeRequired.sport
       )}`.trim(),
-    ]);
+    ], 1.1);
     if (candidate) {
       setIntakeOptional((prev) => ({ ...prev, productLine: candidate }));
-      return;
-    }
-    if (current) {
-      setIntakeOptional((prev) => ({ ...prev, productLine: "" }));
     }
   }, [
     intakeOptional.productLine,
@@ -1692,7 +1708,10 @@ export default function AdminUploads() {
       });
       setIntakeOptional((prev) => {
         const next = { ...prev };
-        const suggestedProductLine = sanitizeNullableText(suggestions.setName);
+        const rawSuggestedProductLine = sanitizeNullableText(suggestions.setName);
+        const suggestedProductLine = isActionableProductLineHint(rawSuggestedProductLine)
+          ? rawSuggestedProductLine
+          : "";
         const suggestedInsertSet = sanitizeNullableText(suggestions.insertSet);
         const suggestedParallel = sanitizeNullableText(suggestions.parallel);
         const constrainedProductLine =
@@ -1702,7 +1721,7 @@ export default function AdminUploads() {
                 `${sanitizeNullableText(intakeRequired.year)} ${sanitizeNullableText(intakeRequired.manufacturer)} ${sanitizeNullableText(
                   intakeRequired.sport
                 )}`.trim(),
-              ])
+              ], 1.1)
             : suggestedProductLine || null;
         if (constrainedProductLine && !intakeOptionalTouched.productLine && !prev.productLine.trim()) {
           next.productLine = constrainedProductLine;
