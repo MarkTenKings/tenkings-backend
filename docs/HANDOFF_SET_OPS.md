@@ -563,3 +563,25 @@ Build Set Ops UI flow with:
 - Expected result:
   - fewer all-fail runs from over-constrained query syntax.
   - no-result variants show as skipped, while real account/key/quota issues still surface as failures.
+
+## Variant Gap Coverage + Page Persistence UX (2026-02-22, Follow-up #15)
+- New production signal:
+  - seeding quality improved significantly, but coverage stopped around ~163/204 with many insert/autograph rows at zero refs.
+  - leaving `/admin/variants` made context appear cleared and interrupted operator confidence.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+    - added query fallback ladder per target:
+      - base query
+      - player+set+card+parallel variants
+      - player+set+parallel
+      - set+card+parallel
+    - card tokens now try multiple forms (`#FS-14`, `FS-14`, `FS14`, `FS 14`).
+    - player token normalization now uses primary player for slash rows (`A / B` => `A`) to improve dual-player insert matching.
+  - `frontend/nextjs-app/pages/admin/variants.tsx`
+    - query builder now uses normalized primary player label.
+    - persists last active set ID in browser storage and auto-reloads references for that set on return.
+    - adds unload warning while set-seed run is in-flight.
+    - adds explicit UI note: set seeding is browser-driven and tab should stay open until complete.
+- Expected result:
+  - better hit-rate on SI/FS/RR/FSA style inserts and dual-player rows.
+  - less operator confusion after navigation, with set context + refs reloaded automatically.

@@ -937,3 +937,30 @@
 - Seed API now:
   - interprets top-level no-result message as non-fatal skip.
   - returns `inserted:0, skipped:1` for that target so set summary reflects misses without marking full run as failed.
+
+## 2026-02-22 - Ref Seed Follow-up #15 (Fallback Query Ladder + Variants Page Persistence)
+
+### Summary
+- Coverage still under target (~163/204) after query relaxation.
+- Added multi-query fallback per target and better player/card token normalization for insert/autograph rows.
+- Improved variants page UX persistence to reduce confusion after navigation.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+- `frontend/nextjs-app/pages/admin/variants.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/seed.ts --file pages/admin/variants.tsx` passed.
+
+### Notes
+- Seed API additions:
+  - new `extractListings(...)` normalization helper.
+  - query candidate ladder with dedupe and cap.
+  - card token permutations (`#XX-1`, `XX-1`, `XX1`, `XX 1`).
+  - slash-player normalization (`A / B` uses `A` primary).
+- Variants page additions:
+  - primary-player normalization in auto query builder.
+  - persists last selected set (`localStorage`) and auto-loads refs for that set on return.
+  - warns on browser unload while set seeding is still in progress.

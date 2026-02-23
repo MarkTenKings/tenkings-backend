@@ -60,6 +60,7 @@ const SAMPLE_CSV = `setId,cardNumber,parallelId,parallelFamily,keywords,oddsInfo
 `;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const LAST_VARIANT_SET_STORAGE_KEY = "tk.variants.lastSetId";
 
 function sourceHostFromUrl(value: string | null | undefined) {
   const raw = String(value || "").trim();
@@ -70,6 +71,13 @@ function sourceHostFromUrl(value: string | null | undefined) {
   } catch {
     return "";
   }
+}
+
+function primaryPlayerLabel(value: string | null | undefined) {
+  const raw = String(value || "").split("::")[0]?.trim() || "";
+  if (!raw) return "";
+  const slashSplit = raw.split("/")[0]?.trim() || raw;
+  return slashSplit.replace(/\s+/g, " ").trim();
 }
 
 function extractSeedTargetsFromDraftRows(rows: unknown[], targetSetId: string): SeedTargetRow[] {
@@ -143,6 +151,7 @@ export default function AdminVariants() {
   const [csvMode, setCsvMode] = useState("upsert");
   const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
   const [bulkZipFile, setBulkZipFile] = useState<File | null>(null);
+  const [savedSetHydrated, setSavedSetHydrated] = useState(false);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -171,11 +180,12 @@ export default function AdminVariants() {
 
   const buildSeedQuery = (setId: string, cardNumber: string, parallelId: string, playerLabel?: string | null) => {
     const cleanedSetId = setId.replace(/\bretail\b/gi, "").replace(/\s+/g, " ").trim();
+    const cleanedPlayer = primaryPlayerLabel(playerLabel);
     const normalizedCardNumber = String(cardNumber || "").trim();
     const cardToken =
       normalizedCardNumber && normalizedCardNumber.toUpperCase() !== "ALL" ? `#${normalizedCardNumber}` : "";
     return [
-      playerLabel ? String(playerLabel).trim() : "",
+      cleanedPlayer,
       cleanedSetId || setId.trim(),
       cardToken,
       parallelId.trim(),
@@ -207,77 +217,126 @@ export default function AdminVariants() {
     }
   };
 
-  const fetchReferences = async (setId?: string) => {
-    if (!session) return;
-    setBusy(true);
-    try {
-      const params = new URLSearchParams();
-      params.set("limit", setId?.trim() ? "5000" : "500");
-      if (setId?.trim()) {
-        params.set("setId", setId.trim());
-      }
+  const fetchReferences = useMemo(
+    () =>
+      async (setId?: string) => {
+        if (!session) return;
+        setBusy(true);
+        try {
+          const params = new URLSearchParams();
+          params.set("limit", setId?.trim() ? "5000" : "500");
+          if (setId?.trim()) {
+            params.set("setId", setId.trim());
+          }
 
-      const res = await fetch(`/api/admin/variants/reference?${params.toString()}`, {
-        headers: {
-          ...adminHeaders,
-        },
-      });
-      const payload = await res.json();
-      if (!res.ok) {
-        throw new Error(payload?.message ?? "Failed to load references");
-      }
-      setReferences(payload.references ?? []);
-    } catch (error) {
-      setStatus({
-        type: "error",
-        message: error instanceof Error ? error.message : "Failed to load references",
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
+          const res = await fetch(`/api/admin/variants/reference?${params.toString()}`, {
+            headers: {
+              ...adminHeaders,
+            },
+          });
+          const payload = await res.json();
+          if (!res.ok) {
+            throw new Error(payload?.message ?? "Failed to load references");
+          }
+          setReferences(payload.references ?? []);
+        } catch (error) {
+          setStatus({
+            type: "error",
+            message: error instanceof Error ? error.message : "Failed to load references",
+          });
+        } finally {
+          setBusy(false);
+        }
+      },
+    [adminHeaders, session]
+  );
 
-  const fetchReferenceStatus = async () => {
-    if (!session) return;
-    try {
-      const res = await fetch(`/api/admin/variants/reference/status`, {
-        headers: {
-          ...adminHeaders,
-        },
-      });
-      const payload = await res.json();
-      if (!res.ok) {
-        throw new Error(payload?.message ?? "Failed to load reference status");
-      }
-      setReferenceStatus(payload);
-    } catch (error) {
-      setStatus({
-        type: "error",
-        message: error instanceof Error ? error.message : "Failed to load reference status",
-      });
-    }
-  };
+  const fetchReferenceStatus = useMemo(
+    () =>
+      async () => {
+        if (!session) return;
+        try {
+          const res = await fetch(`/api/admin/variants/reference/status`, {
+            headers: {
+              ...adminHeaders,
+            },
+          });
+          const payload = await res.json();
+          if (!res.ok) {
+            throw new Error(payload?.message ?? "Failed to load reference status");
+          }
+          setReferenceStatus(payload);
+        } catch (error) {
+          setStatus({
+            type: "error",
+            message: error instanceof Error ? error.message : "Failed to load reference status",
+          });
+        }
+      },
+    [adminHeaders, session]
+  );
 
-  const fetchRecentSets = async () => {
-    if (!session) return;
-    try {
-      const res = await fetch(`/api/admin/variants/sets?limit=60`, {
-        headers: {
-          ...adminHeaders,
-        },
-      });
-      const payload = await res.json();
-      if (!res.ok) {
-        throw new Error(payload?.message ?? "Failed to load recent sets");
-      }
-      setRecentSets(payload.sets ?? []);
-    } catch (error) {
-      setStatus({
-        type: "error",
-        message: error instanceof Error ? error.message : "Failed to load recent sets",
-      });
+  const fetchRecentSets = useMemo(
+    () =>
+      async () => {
+        if (!session) return;
+        try {
+          const res = await fetch(`/api/admin/variants/sets?limit=60`, {
+            headers: {
+              ...adminHeaders,
+            },
+          });
+          const payload = await res.json();
+          if (!res.ok) {
+            throw new Error(payload?.message ?? "Failed to load recent sets");
+          }
+          setRecentSets(payload.sets ?? []);
+        } catch (error) {
+          setStatus({
+            type: "error",
+            message: error instanceof Error ? error.message : "Failed to load recent sets",
+          });
+        }
+      },
+    [adminHeaders, session]
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const savedSetId = window.localStorage.getItem(LAST_VARIANT_SET_STORAGE_KEY) || "";
+    const normalized = savedSetId.trim();
+    if (normalized) {
+      setSeedForm((prev) => ({ ...prev, setId: prev.setId || normalized }));
+      setRefForm((prev) => ({ ...prev, setId: prev.setId || normalized }));
+      setForm((prev) => ({ ...prev, setId: prev.setId || normalized }));
+      setQuery((prev) => prev || normalized);
     }
-  };
+    setSavedSetHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!savedSetHydrated || typeof window === "undefined") return;
+    const setId = seedForm.setId.trim();
+    if (!setId) return;
+    window.localStorage.setItem(LAST_VARIANT_SET_STORAGE_KEY, setId);
+    void fetchReferences(setId);
+  }, [fetchReferences, savedSetHydrated, seedForm.setId]);
+
+  const seedRunInFlight = Boolean(
+    seedSetProgress && seedSetProgress.total > 0 && seedSetProgress.completed < seedSetProgress.total
+  );
+
+  useEffect(() => {
+    if (!seedRunInFlight || typeof window === "undefined") return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [seedRunInFlight]);
 
   useEffect(() => {
     if (!session?.token || !isAdmin) return;
@@ -1058,10 +1117,17 @@ export default function AdminVariants() {
                 />
               </div>
               {seedSetProgress && (
-                <p className="text-xs uppercase tracking-[0.18em] text-emerald-200">
-                  Set progress: {seedSetProgress.completed}/{seedSetProgress.total} variants · inserted{" "}
-                  {seedSetProgress.inserted} · skipped {seedSetProgress.skipped} · failed {seedSetProgress.failed}
-                </p>
+                <div className="space-y-1">
+                  <p className="text-xs uppercase tracking-[0.18em] text-emerald-200">
+                    Set progress: {seedSetProgress.completed}/{seedSetProgress.total} variants · inserted{" "}
+                    {seedSetProgress.inserted} · skipped {seedSetProgress.skipped} · failed {seedSetProgress.failed}
+                  </p>
+                  {seedRunInFlight && (
+                    <p className="text-[11px] uppercase tracking-[0.2em] text-amber-200">
+                      Seed run is browser-driven. Keep this tab open until it finishes.
+                    </p>
+                  )}
+                </div>
               )}
               <div className="flex flex-wrap gap-2">
                 <button

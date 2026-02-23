@@ -80,6 +80,75 @@ function pickImageUrl(result: any) {
   return "";
 }
 
+function extractListings(data: any) {
+  if (Array.isArray(data?.organic_results)) return data.organic_results;
+  if (Array.isArray(data?.search_results)) return data.search_results;
+  if (Array.isArray(data?.results)) return data.results;
+  if (Array.isArray(data?.items_results)) return data.items_results;
+  if (Array.isArray(data?.items)) return data.items;
+  return [];
+}
+
+function dedupeQueries(values: string[]) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const normalized = String(value || "").replace(/\s+/g, " ").trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(normalized);
+  }
+  return output;
+}
+
+function primaryPlayerLabel(value: string) {
+  const raw = String(value || "").split("::")[0]?.trim() || "";
+  if (!raw) return "";
+  const slashSplit = raw.split("/")[0]?.trim() || raw;
+  return slashSplit.replace(/\s+/g, " ").trim();
+}
+
+function buildSearchQueries(params: {
+  query: string;
+  setId: string;
+  cardNumber: string;
+  parallelId: string;
+  playerSeed: string;
+}) {
+  const baseQuery = String(params.query || "").replace(/\s+/g, " ").trim();
+  const setClean = String(params.setId || "")
+    .replace(/\bretail\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const player = primaryPlayerLabel(params.playerSeed);
+  const parallel = String(params.parallelId || "").trim();
+  const card = String(params.cardNumber || "").trim().toUpperCase();
+  const cardCompact = card ? card.replace(/[^A-Z0-9]/g, "") : "";
+  const cardSpaced = card ? card.replace(/[-_]+/g, " ") : "";
+  const cardHash = card && card !== "ALL" ? `#${card}` : "";
+  const cardTokens = [cardHash, card, cardCompact, cardSpaced].filter((token) => token && token !== "ALL");
+  const mk = (...parts: Array<string | null | undefined>) =>
+    parts
+      .map((part) => String(part || "").trim())
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const candidates = dedupeQueries([
+    baseQuery,
+    mk(player, setClean, cardHash, parallel),
+    mk(player, setClean, cardCompact, parallel),
+    mk(player, setClean, parallel),
+    mk(setClean, cardHash, parallel),
+    mk(setClean, cardCompact, parallel),
+  ]);
+
+  return candidates.slice(0, 6);
+}
+
 function scoreListing(params: {
   title: string;
   setId: string;
@@ -160,95 +229,108 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const normalizedQuery = String(query).trim();
 
     // Force eBay listing search (not Google image search).
-    const params = new URLSearchParams({
-      engine: EBAY_ENGINE,
-      _nkw: normalizedQuery,
-      q: normalizedQuery,
-      _sop: "12",
-      _ipg: String(Math.max(30, Math.min(240, safeLimit * 3))),
-      api_key: apiKey,
-    });
-    if (tbs) params.set("tbs", String(tbs).trim());
-    if (gl) params.set("gl", String(gl).trim());
-    if (hl) params.set("hl", String(hl).trim());
-
     let data: any = null;
     let requestError = "";
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      try {
-        const response = await fetch(`${SERPAPI_ENDPOINT}?${params.toString()}`);
-        if (!response.ok) {
-          const bodyText = await response.text().catch(() => "");
-          requestError = `SerpApi request failed (${response.status})${bodyText ? `: ${bodyText.slice(0, 180)}` : ""}`;
-          if (attempt < 3 && (response.status === 429 || response.status >= 500)) {
-            await wait(300 * attempt);
+    const searchQueries = buildSearchQueries({
+      query: normalizedQuery,
+      setId: normalizedSetId,
+      cardNumber: normalizedCardNumber,
+      parallelId: normalizedParallelId,
+      playerSeed: normalizedPlayerSeed,
+    });
+
+    for (const searchQuery of searchQueries) {
+      const params = new URLSearchParams({
+        engine: EBAY_ENGINE,
+        _nkw: searchQuery,
+        q: searchQuery,
+        _sop: "12",
+        _ipg: String(Math.max(30, Math.min(240, safeLimit * 3))),
+        api_key: apiKey,
+      });
+      if (tbs) params.set("tbs", String(tbs).trim());
+      if (gl) params.set("gl", String(gl).trim());
+      if (hl) params.set("hl", String(hl).trim());
+
+      let queryData: any = null;
+      let queryNoResults = false;
+
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const response = await fetch(`${SERPAPI_ENDPOINT}?${params.toString()}`);
+          if (!response.ok) {
+            const bodyText = await response.text().catch(() => "");
+            requestError = `SerpApi request failed (${response.status})${bodyText ? `: ${bodyText.slice(0, 180)}` : ""}`;
+            if (attempt < 3 && (response.status === 429 || response.status >= 500)) {
+              await wait(300 * attempt);
+              continue;
+            }
+            return res.status(502).json({ message: requestError });
+          }
+
+          const payload = await response.json();
+          const topLevelError = String(
+            payload?.error ||
+              payload?.message ||
+              payload?.errors?.[0]?.message ||
+              payload?.errors?.[0] ||
+              ""
+          ).trim();
+          if (topLevelError) {
+            const noResults = /hasn'?t returned any results|no results/i.test(topLevelError);
+            if (noResults) {
+              // Try next query candidate before failing this target.
+              queryNoResults = true;
+              queryData = { organic_results: [] };
+              break;
+            }
+            requestError = topLevelError;
+            const retryable = /rate|limit|timeout|temporar|try again|busy|thrott|quota|capacity/i.test(requestError);
+            if (attempt < 3 && retryable) {
+              await wait(300 * attempt);
+              continue;
+            }
+            return res.status(502).json({ message: requestError });
+          }
+
+          const metadataStatus = String(payload?.search_metadata?.status || "").trim();
+          if (metadataStatus && metadataStatus !== "Success") {
+            requestError = String(payload?.search_metadata?.error || "SerpApi returned error.").trim();
+            const retryable = /rate|limit|timeout|temporar|try again|busy|thrott/i.test(requestError);
+            if (attempt < 3 && retryable) {
+              await wait(300 * attempt);
+              continue;
+            }
+            return res.status(502).json({ message: requestError || "SerpApi returned error." });
+          }
+
+          queryData = payload;
+          break;
+        } catch (error) {
+          requestError = error instanceof Error ? error.message : "SerpApi request failed.";
+          if (attempt < 3) {
             continue;
           }
           return res.status(502).json({ message: requestError });
         }
+      }
 
-        const payload = await response.json();
-        const topLevelError = String(
-          payload?.error ||
-            payload?.message ||
-            payload?.errors?.[0]?.message ||
-            payload?.errors?.[0] ||
-            ""
-        ).trim();
-        if (topLevelError) {
-          const noResults = /hasn'?t returned any results|no results/i.test(topLevelError);
-          if (noResults) {
-            // Treat no-results as a soft outcome so one miss doesn't fail the whole set run.
-            data = { organic_results: [] };
-            break;
-          }
-          requestError = topLevelError;
-          const retryable = /rate|limit|timeout|temporar|try again|busy|thrott|quota|capacity/i.test(requestError);
-          if (attempt < 3 && retryable) {
-            await wait(300 * attempt);
-            continue;
-          }
-          return res.status(502).json({ message: requestError });
-        }
-
-        const metadataStatus = String(payload?.search_metadata?.status || "").trim();
-        if (metadataStatus && metadataStatus !== "Success") {
-          requestError = String(payload?.search_metadata?.error || "SerpApi returned error.").trim();
-          const retryable = /rate|limit|timeout|temporar|try again|busy|thrott/i.test(requestError);
-          if (attempt < 3 && retryable) {
-            await wait(300 * attempt);
-            continue;
-          }
-          return res.status(502).json({ message: requestError || "SerpApi returned error." });
-        }
-
-        data = payload;
+      if (!queryData) continue;
+      const queryListings = extractListings(queryData);
+      if (queryListings.length > 0) {
+        data = queryData;
         break;
-      } catch (error) {
-        requestError = error instanceof Error ? error.message : "SerpApi request failed.";
-        if (attempt < 3) {
-          await wait(300 * attempt);
-          continue;
-        }
-        return res.status(502).json({ message: requestError });
+      }
+      if (queryNoResults) {
+        continue;
       }
     }
 
     if (!data) {
-      return res.status(502).json({ message: requestError || "SerpApi request failed." });
+      return res.status(200).json({ inserted: 0, skipped: 1 });
     }
 
-    const listings = Array.isArray(data?.organic_results)
-      ? data.organic_results
-      : Array.isArray(data?.search_results)
-      ? data.search_results
-      : Array.isArray(data?.results)
-      ? data.results
-      : Array.isArray(data?.items_results)
-      ? data.items_results
-      : Array.isArray(data?.items)
-      ? data.items
-      : [];
+    const listings = extractListings(data);
     const seenListing = new Set<string>();
     const seenImage = new Set<string>();
     const rows: Array<{
