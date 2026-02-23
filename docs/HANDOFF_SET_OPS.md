@@ -698,3 +698,30 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts` passed.
 - Deployment status:
   - No deploy/restart/migration executed in this coding session.
+
+## Approved-Only Variant Flow + Set Ops Bulk Delete UX (2026-02-23, Follow-up #20)
+- New operator requirement:
+  - In Add Cards -> OCR/LLM/variant flow, only approved sets should be considered.
+  - Need fast cleanup UX to delete many old/test sets from production without one-by-one modals.
+- Root-cause class:
+  - Add Cards product-line + variant option fetches used broad `/api/admin/variants?q=...` queries over the full variant corpus.
+  - OCR auto variant matcher accepted fuzzy set candidates from `CardVariant` without an approval/archival gate.
+  - `/admin/set-ops` supported only single-set delete at a time.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+    - added `approvedOnly=true` query support on GET.
+    - when enabled, variants are restricted to `SetDraft.status = APPROVED` and `archivedAt IS NULL`.
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - Add Cards variant/product-line lookups now call `/api/admin/variants` with `approvedOnly=true`.
+  - `frontend/nextjs-app/lib/server/variantMatcher.ts`
+    - matcher now filters resolved set candidates through approved, non-archived set drafts before matching.
+    - if none qualify, returns explicit `No approved variant set found...`.
+  - `frontend/nextjs-app/pages/admin/set-ops.tsx`
+    - added multi-select table checkboxes.
+    - added bulk action bar with `Delete Selected`.
+    - bulk flow runs per-set dry-runs, shows aggregate confirm prompt, requires typed batch phrase, then executes safe per-set confirm deletes.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file lib/server/variantMatcher.ts --file pages/admin/uploads.tsx --file pages/admin/set-ops.tsx`
+  - result: pass (existing `uploads.tsx` no-img warnings unchanged).
+- Deployment status:
+  - No deploy/restart/migration executed in this coding session.

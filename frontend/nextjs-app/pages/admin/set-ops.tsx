@@ -93,6 +93,8 @@ export default function SetOpsPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState("");
+  const [selectedSetIds, setSelectedSetIds] = useState<string[]>([]);
+  const [bulkDeleteBusy, setBulkDeleteBusy] = useState(false);
   const [permissions, setPermissions] = useState<SetOpsPermissions | null>(null);
 
   const loadedRef = useRef(false);
@@ -100,6 +102,21 @@ export default function SetOpsPage() {
   const canReview = Boolean(permissions?.reviewer);
   const canArchive = Boolean(permissions?.admin);
   const canDelete = Boolean(permissions?.delete);
+  const selectedSetIdSet = useMemo(() => new Set(selectedSetIds), [selectedSetIds]);
+  const visibleSetIds = useMemo(() => rows.map((row) => row.setId), [rows]);
+  const allVisibleSelected = useMemo(
+    () => visibleSetIds.length > 0 && visibleSetIds.every((setId) => selectedSetIdSet.has(setId)),
+    [selectedSetIdSet, visibleSetIds]
+  );
+  const selectedRows = useMemo(
+    () => rows.filter((row) => selectedSetIdSet.has(row.setId)),
+    [rows, selectedSetIdSet]
+  );
+
+  useEffect(() => {
+    const visible = new Set(rows.map((row) => row.setId));
+    setSelectedSetIds((prev) => prev.filter((setId) => visible.has(setId)));
+  }, [rows]);
 
   const loadAccess = useCallback(async () => {
     if (!session?.token || !isAdmin) return null;
@@ -303,6 +320,146 @@ export default function SetOpsPage() {
     setDeleteConfirmation("");
     setDeleteBusy(false);
   }, []);
+
+  const toggleSetSelection = useCallback((setId: string, checked: boolean) => {
+    setSelectedSetIds((prev) => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(setId);
+      } else {
+        next.delete(setId);
+      }
+      return Array.from(next);
+    });
+  }, []);
+
+  const toggleSelectAllVisible = useCallback(
+    (checked: boolean) => {
+      setSelectedSetIds((prev) => {
+        const next = new Set(prev);
+        if (checked) {
+          visibleSetIds.forEach((setId) => next.add(setId));
+        } else {
+          visibleSetIds.forEach((setId) => next.delete(setId));
+        }
+        return Array.from(next);
+      });
+    },
+    [visibleSetIds]
+  );
+
+  const bulkDeleteSelectedSets = useCallback(async () => {
+    if (!session?.token || !isAdmin) return;
+    if (!canDelete) {
+      setError("Set Ops delete role required");
+      return;
+    }
+    if (selectedRows.length < 1) {
+      setError("Select at least one set.");
+      return;
+    }
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    setBulkDeleteBusy(true);
+    setError(null);
+    setStatus(null);
+    setAuditSnippet(null);
+
+    try {
+      const dryRuns = await Promise.all(
+        selectedRows.map(async (row) => {
+          const response = await fetch("/api/admin/set-ops/delete/dry-run", {
+            method: "POST",
+            headers: {
+              ...adminHeaders,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ setId: row.setId }),
+          });
+          const payload = (await response.json().catch(() => ({}))) as {
+            message?: string;
+            impact?: DeleteImpact;
+          };
+          if (!response.ok) {
+            throw new Error(payload.message ?? `Failed dry-run for ${row.setId}`);
+          }
+          return {
+            setId: row.setId,
+            impact: payload.impact ?? null,
+          };
+        })
+      );
+
+      const totalRows = dryRuns.reduce((sum, entry) => sum + Math.max(0, entry.impact?.totalRowsToDelete ?? 0), 0);
+      const setNames = selectedRows.map((row) => row.setId).join("\n");
+      const confirmed = window.confirm(
+        `Delete ${selectedRows.length} selected set(s)?\n\nTotal rows to delete: ${totalRows}\n\n${setNames}`
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      const bulkPhrase = `DELETE ${selectedRows.length} SETS`;
+      const typed = window.prompt(`Type exactly to continue:\n${bulkPhrase}`, "") ?? "";
+      if (typed.trim() !== bulkPhrase) {
+        throw new Error(`Typed confirmation must exactly match: ${bulkPhrase}`);
+      }
+
+      const deletedSetIds = new Set<string>();
+      let deletedRows = 0;
+      const failures: string[] = [];
+
+      for (const row of selectedRows) {
+        const response = await fetch("/api/admin/set-ops/delete/confirm", {
+          method: "POST",
+          headers: {
+            ...adminHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            setId: row.setId,
+            typedConfirmation: buildSetDeleteConfirmationPhrase(row.setId),
+          }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+          impact?: DeleteImpact;
+          audit?: { id?: string } | null;
+        };
+
+        if (!response.ok) {
+          failures.push(`${row.setId}: ${payload.message ?? "Delete failed"}`);
+          continue;
+        }
+
+        deletedSetIds.add(row.setId);
+        deletedRows += Math.max(0, payload.impact?.totalRowsToDelete ?? 0);
+        if (payload.audit?.id) {
+          setAuditSnippet(`Last audit event: ${payload.audit.id}`);
+        }
+      }
+
+      if (deletedSetIds.size > 0) {
+        setRows((prev) => prev.filter((row) => !deletedSetIds.has(row.setId)));
+        setTotal((prev) => Math.max(0, prev - deletedSetIds.size));
+        setSelectedSetIds((prev) => prev.filter((setId) => !deletedSetIds.has(setId)));
+      }
+
+      if (failures.length > 0) {
+        setStatus(`Deleted ${deletedSetIds.size}/${selectedRows.length} sets (${deletedRows} rows).`);
+        setError(failures.slice(0, 5).join(" | "));
+        return;
+      }
+
+      setStatus(`Deleted ${deletedSetIds.size} set(s) (${deletedRows} rows).`);
+    } catch (bulkError) {
+      setError(bulkError instanceof Error ? bulkError.message : "Failed to bulk delete selected sets");
+    } finally {
+      setBulkDeleteBusy(false);
+    }
+  }, [adminHeaders, canDelete, isAdmin, selectedRows, session?.token]);
 
   const openDeleteModal = useCallback(
     (row: SetSummaryRow) => {
@@ -534,14 +691,14 @@ export default function SetOpsPage() {
             </label>
             <button
               type="submit"
-              disabled={busy || !canReview}
+              disabled={busy || bulkDeleteBusy || !canReview}
               className="h-11 rounded-xl border border-gold-500/60 bg-gold-500 px-5 text-xs font-semibold uppercase tracking-[0.2em] text-night-900 transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {busy ? "Loading..." : "Search"}
             </button>
             <button
               type="button"
-              disabled={busy || !canReview}
+              disabled={busy || bulkDeleteBusy || !canReview}
               onClick={() => void loadSets(query, includeArchived)}
               className="h-11 rounded-xl border border-white/20 px-5 text-xs font-semibold uppercase tracking-[0.2em] text-slate-100 transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-60"
             >
@@ -552,11 +709,45 @@ export default function SetOpsPage() {
           {status && <p className="mb-3 text-xs text-emerald-300">{status}</p>}
           {auditSnippet && <p className="mb-3 text-xs text-sky-300">{auditSnippet}</p>}
           {error && <p className="mb-3 text-xs text-rose-300">{error}</p>}
+          {canDelete && (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-night-950/60 px-3 py-2">
+              <p className="text-xs uppercase tracking-[0.18em] text-slate-300">
+                Selected: <span className="text-white">{selectedSetIds.length}</span>
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedSetIds([])}
+                  disabled={bulkDeleteBusy || selectedSetIds.length < 1}
+                  className="rounded-lg border border-white/20 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-100 transition hover:border-white/40 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Clear Selection
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void bulkDeleteSelectedSets()}
+                  disabled={busy || deleteBusy || bulkDeleteBusy || selectedSetIds.length < 1}
+                  className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {bulkDeleteBusy ? "Deleting..." : `Delete Selected (${selectedSetIds.length})`}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="overflow-x-auto">
             <table className="min-w-full border-separate border-spacing-0 text-left text-sm text-slate-200">
               <thead>
                 <tr>
+                  <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      disabled={!canDelete || rows.length < 1 || bulkDeleteBusy}
+                      onChange={(event) => toggleSelectAllVisible(event.target.checked)}
+                      className="h-4 w-4 rounded border-white/20"
+                    />
+                  </th>
                   <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">Set</th>
                   <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">Variants</th>
                   <th className="border-b border-white/10 px-3 py-2 font-medium text-slate-300">Refs</th>
@@ -570,6 +761,15 @@ export default function SetOpsPage() {
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.setId}>
+                    <td className="border-b border-white/5 px-3 py-3 align-top">
+                      <input
+                        type="checkbox"
+                        checked={selectedSetIdSet.has(row.setId)}
+                        disabled={!canDelete || bulkDeleteBusy}
+                        onChange={(event) => toggleSetSelection(row.setId, event.target.checked)}
+                        className="h-4 w-4 rounded border-white/20"
+                      />
+                    </td>
                     <td className="border-b border-white/5 px-3 py-3 align-top">
                       <p className="font-medium text-white">{row.label || row.setId}</p>
                       <p className="mt-1 text-xs text-slate-400">{row.setId}</p>
@@ -592,7 +792,7 @@ export default function SetOpsPage() {
                         <button
                           type="button"
                           onClick={() => void updateArchiveState(row, !row.archived)}
-                          disabled={busy || deleteBusy || actionBusySetId === row.setId}
+                          disabled={busy || deleteBusy || bulkDeleteBusy || actionBusySetId === row.setId}
                           className={`rounded-lg border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] transition disabled:cursor-not-allowed disabled:opacity-60 ${
                             row.archived
                               ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20"
@@ -610,7 +810,7 @@ export default function SetOpsPage() {
                         <button
                           type="button"
                           onClick={() => openDeleteModal(row)}
-                          disabled={busy || deleteBusy || actionBusySetId === row.setId}
+                          disabled={busy || deleteBusy || bulkDeleteBusy || actionBusySetId === row.setId}
                           className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           Delete
@@ -623,7 +823,7 @@ export default function SetOpsPage() {
                 ))}
                 {rows.length === 0 && !busy && (
                   <tr>
-                    <td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-400">
+                    <td colSpan={9} className="px-3 py-8 text-center text-sm text-slate-400">
                       No sets matched this query.
                     </td>
                   </tr>

@@ -226,8 +226,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const setIdFilter = typeof req.query.setId === "string" ? req.query.setId.trim() : "";
       const take = Math.min(2000, Math.max(1, Number(req.query.limit ?? 1000) || 1000));
       const gapOnly = String(req.query.gapOnly || "").trim().toLowerCase() === "true";
+      const approvedOnly = String(req.query.approvedOnly || "").trim().toLowerCase() === "true";
       const minRefs = Math.max(1, Number(req.query.minRefs ?? 2) || 2);
       const whereClauses: Prisma.CardVariantWhereInput[] = [];
+      if (approvedOnly) {
+        const approvedSetRows = await prisma.setDraft.findMany({
+          where: {
+            status: "APPROVED",
+            archivedAt: null,
+          },
+          select: {
+            setId: true,
+          },
+        });
+        const approvedSetIds = Array.from(
+          new Set(
+            approvedSetRows
+              .map((row) => String(row.setId || "").trim())
+              .filter(Boolean)
+          )
+        );
+        if (approvedSetIds.length < 1) {
+          return res.status(200).json({ variants: [] });
+        }
+        whereClauses.push({
+          setId: {
+            in: approvedSetIds,
+          },
+        });
+      }
       if (setIdFilter) {
         whereClauses.push({ setId: setIdFilter });
       }

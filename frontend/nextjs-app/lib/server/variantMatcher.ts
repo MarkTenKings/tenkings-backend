@@ -100,6 +100,24 @@ async function resolveSetIdCandidates(inputSetId: string) {
   return [];
 }
 
+async function filterApprovedSetCandidates(setIds: string[]) {
+  const uniqueSetIds = Array.from(new Set(setIds.map((entry) => String(entry || "").trim()).filter(Boolean)));
+  if (uniqueSetIds.length < 1) return [];
+
+  const approvedRows = await prisma.setDraft.findMany({
+    where: {
+      setId: { in: uniqueSetIds },
+      status: "APPROVED",
+      archivedAt: null,
+    },
+    select: {
+      setId: true,
+    },
+  });
+  const approvedSetIds = new Set(approvedRows.map((row) => String(row.setId || "").trim()).filter(Boolean));
+  return uniqueSetIds.filter((setId) => approvedSetIds.has(setId));
+}
+
 async function findVariants(params: { setId: string; cardNumber?: string | null }) {
   const setId = params.setId.trim();
   const cardNumber = params.cardNumber?.trim() || "";
@@ -175,6 +193,10 @@ export async function runVariantMatch(params: {
   if (setCandidates.length === 0) {
     return { ok: false, message: "No variant set found for supplied set name" };
   }
+  const approvedSetCandidates = await filterApprovedSetCandidates(setCandidates);
+  if (approvedSetCandidates.length === 0) {
+    return { ok: false, message: "No approved variant set found for supplied set name" };
+  }
 
   let matchedSetId = "";
   let variants: Array<{
@@ -184,7 +206,7 @@ export async function runVariantMatch(params: {
     keywords: string[];
     oddsInfo: string | null;
   }> = [];
-  for (const setId of setCandidates) {
+  for (const setId of approvedSetCandidates) {
     const rows = await findVariants({ setId, cardNumber: cardNumberInput === "ALL" ? "" : cardNumberInput });
     if (rows.length > 0) {
       matchedSetId = setId;

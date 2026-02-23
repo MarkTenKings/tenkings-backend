@@ -1573,7 +1573,7 @@ export default function AdminUploads() {
     const controller = new AbortController();
     const sportToken = sanitizeNullableText(intakeRequired.sport).toLowerCase();
     const query = `${year} ${manufacturer}`.trim();
-    fetch(`/api/admin/variants?q=${encodeURIComponent(query)}&limit=500`, {
+    fetch(`/api/admin/variants?q=${encodeURIComponent(query)}&limit=500&approvedOnly=true`, {
       headers: buildAdminHeaders(session.token),
       signal: controller.signal,
     })
@@ -2218,7 +2218,7 @@ export default function AdminUploads() {
     const controller = new AbortController();
     const tokenHeaders = buildAdminHeaders(session.token);
     const runFetch = async (query: string) => {
-      const res = await fetch(`/api/admin/variants?q=${encodeURIComponent(query)}&limit=500`, {
+      const res = await fetch(`/api/admin/variants?q=${encodeURIComponent(query)}&limit=500&approvedOnly=true`, {
         headers: tokenHeaders,
         signal: controller.signal,
       });

@@ -1118,3 +1118,43 @@
 ### Notes
 - Attempted local smoke parse with `tsx` was not possible in this environment (`Command \"tsx\" not found`), so verification is via static logic + lint.
 - No deploy/restart/migration was executed in this step.
+
+## 2026-02-23 - Variant Approval Gate + Set Ops Bulk Delete (Follow-up #20)
+
+### Summary
+- Implemented two operator-requested changes:
+  1. Add Cards/KingsReview variant workflow now only uses approved, non-archived sets.
+  2. `/admin/set-ops` now supports multi-select bulk delete for fast cleanup of old/test sets.
+
+### Root Cause
+- Variant lookups in Add Cards were broad text searches over all `CardVariant` rows.
+- OCR auto variant match used fuzzy set candidate resolution with no approval/archival gating.
+- Set Ops delete UX required one-by-one modal deletes.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/lib/server/variantMatcher.ts`
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added `approvedOnly=true` support to `GET /api/admin/variants`; when enabled, rows are filtered to:
+  - `SetDraft.status = APPROVED`
+  - `SetDraft.archivedAt IS NULL`
+- Updated Add Cards page variant fetches to request `approvedOnly=true`.
+- Updated matcher to filter fuzzy-resolved set candidates to approved/non-archived sets before similarity scoring.
+- Added multi-select delete UX in Set Ops:
+  - row checkboxes + select-all-visible
+  - bulk action bar
+  - per-set dry-run aggregation
+  - typed batch confirmation prompt
+  - safe sequential per-set confirms using existing delete-confirm API.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file lib/server/variantMatcher.ts --file pages/admin/uploads.tsx --file pages/admin/set-ops.tsx`
+- Result: pass (existing `uploads.tsx` `@next/next/no-img-element` warnings unchanged).
+
+### Notes
+- No deploy/restart/migration was executed in this step.
