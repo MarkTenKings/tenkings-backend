@@ -79,3 +79,15 @@ export {
   buildSetDeleteConfirmationPhrase,
   isSetDeleteConfirmationValid,
 } from "./setOpsNormalizer";
+export type {
+  OcrLlmAttemptFormat,
+  OcrLlmAttempt,
+  OcrLlmAttemptResult,
+  ResolveOcrLlmAttemptInput,
+  ResolveOcrLlmAttemptOutput,
+} from "./ocrLlmFallback";
+export {
+  isStructuredOutputUnsupported,
+  buildOcrLlmAttemptPlan,
+  resolveOcrLlmAttempt,
+} from "./ocrLlmFallback";

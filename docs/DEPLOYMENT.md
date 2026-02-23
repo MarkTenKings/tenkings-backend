@@ -47,7 +47,7 @@ Each service ships with a template `.env.docker` holding container-friendly defa
    - set `OPERATOR_API_KEY` for the wallet service and mirror the value as `NEXT_PUBLIC_OPERATOR_KEY` in the frontend so operator tooling can authenticate administrative ledger adjustments
    - provision Mux credentials (`MUX_TOKEN_ID`, `MUX_TOKEN_SECRET`) plus a signing secret (`MUX_WEBHOOK_SECRET`) so kiosk sessions can open live streams and consume webhooks
    - optionally set `MUX_SIMULCAST_TARGETS` with a JSON array of `{ "url": "rtmp://…", "streamKey": "..." }` entries to push each live rip to YouTube, TikTok, etc.
-   - configure local OCR by setting `OCR_SERVICE_URL` (e.g. `https://ocr.api.tenkings.co/ocr`) and `OCR_SERVICE_TOKEN` in the Next.js environment, and set the same token in `env/ocr-service.env`
+   - configure OCR/LLM in Next.js with `GOOGLE_VISION_API_KEY`, `OPENAI_API_KEY`, `OCR_LLM_MODEL` (recommended `gpt-5`), and optional `OCR_LLM_FALLBACK_MODEL` (recommended `gpt-5-mini`)
    - add any cloud secrets (Stripe, Supabase) when those integrations are enabled
 3. On the host, store the env files somewhere safe (e.g., `/opt/tenkings/config/...`) and reference them when running compose:
    ```bash

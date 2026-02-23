@@ -184,11 +184,20 @@ const tokenize = (value: string): string[] =>
     .map((token) => token.trim())
     .filter(Boolean);
 
+const VARIANT_LABEL_STOP_WORDS = new Set(["the"]);
+
+const normalizeVariantLabelKey = (value: string): string =>
+  tokenize(value)
+    .filter((token) => !VARIANT_LABEL_STOP_WORDS.has(token))
+    .join(" ")
+    .trim();
+
 const scoreOption = (option: string, hints: string[]): number => {
   if (!option.trim() || hints.length === 0) {
     return 0;
   }
   const optionTokens = new Set(tokenize(option));
+  const optionKey = normalizeVariantLabelKey(option);
   if (optionTokens.size === 0) {
     return 0;
   }
@@ -200,8 +209,11 @@ const scoreOption = (option: string, hints: string[]): number => {
     }
     const hintLower = cleanedHint.toLowerCase();
     const optionLower = option.toLowerCase();
+    const hintKey = normalizeVariantLabelKey(cleanedHint);
     if (hintLower === optionLower) {
       score += 1.5;
+    } else if (optionKey && hintKey && optionKey === hintKey) {
+      score += 1.2;
     } else if (optionLower.includes(hintLower) || hintLower.includes(optionLower)) {
       score += 0.9;
     }
@@ -302,7 +314,6 @@ export default function AdminUploads() {
   const [intakePhotoBusy, setIntakePhotoBusy] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
   const [intakeCaptureTarget, setIntakeCaptureTarget] = useState<null | "front" | "back" | "tilt">(null);
-  const [intakeTiltSkipped, setIntakeTiltSkipped] = useState(false);
   const [pendingBackBlob, setPendingBackBlob] = useState<Blob | null>(null);
   const [pendingTiltBlob, setPendingTiltBlob] = useState<Blob | null>(null);
   const [flashActive, setFlashActive] = useState(false);
@@ -986,7 +997,6 @@ export default function AdminUploads() {
     setIntakeTiltPreview(null);
     setIntakeError(null);
     setIntakeCaptureTarget(null);
-    setIntakeTiltSkipped(false);
     setPendingBackBlob(null);
     setPendingTiltBlob(null);
     setIntakePhotoBusy(false);
@@ -1141,7 +1151,7 @@ export default function AdminUploads() {
         throw new Error("Your session expired. Sign in again and retry.");
       }
 
-      const optimizedFile = await compressImage(file);
+      const optimizedFile = file;
       const presignRes = await fetch(resolveApiUrl("/api/admin/uploads/presign"), {
         method: "POST",
         mode: isRemoteApi ? "cors" : "same-origin",
@@ -1238,7 +1248,7 @@ export default function AdminUploads() {
         throw new Error("Card asset not found. Capture the front image first.");
       }
 
-      const optimizedFile = await compressImage(file);
+      const optimizedFile = file;
       const presignRes = await fetch(resolveApiUrl("/api/admin/kingsreview/photos/presign"), {
         method: "POST",
         mode: isRemoteApi ? "cors" : "same-origin",
@@ -1541,6 +1551,10 @@ export default function AdminUploads() {
     if (!hasBackCapture) {
       return "Capture the back of the card before continuing.";
     }
+    const hasTiltCapture = Boolean(intakeTiltPhotoId || intakeTiltPreview || pendingTiltBlob);
+    if (!hasTiltCapture) {
+      return "Capture the tilt photo before continuing.";
+    }
     if (intakeRequired.category === "sport") {
       if (!intakeRequired.playerName.trim()) {
         return "Player name is required.";
@@ -1563,7 +1577,17 @@ export default function AdminUploads() {
       return "Year is required.";
     }
     return null;
-  }, [intakeBackPhotoId, intakeBackPreview, intakeCardId, intakeOptional.productLine, intakeRequired, pendingBackBlob]);
+  }, [
+    intakeBackPhotoId,
+    intakeBackPreview,
+    intakeCardId,
+    intakeOptional.productLine,
+    intakeRequired,
+    intakeTiltPhotoId,
+    intakeTiltPreview,
+    pendingBackBlob,
+    pendingTiltBlob,
+  ]);
 
   useEffect(() => {
     if (intakeRequired.category !== "sport") {
@@ -1902,14 +1926,14 @@ export default function AdminUploads() {
         setIntakePhotoBusy(false);
         if (intakeCardId) {
           setTimeout(() => {
-            if (ocrCardIdRef.current === intakeCardId) {
-              void fetchOcrSuggestions(intakeCardId);
+            if (ocrCardIdRef.current === null || ocrCardIdRef.current === intakeCardId) {
+              startOcrForCard(intakeCardId);
             }
           }, 300);
         }
       }
     },
-    [fetchOcrSuggestions, intakeCardId, uploadCardPhoto]
+    [intakeCardId, startOcrForCard, uploadCardPhoto]
   );
 
   useEffect(() => {
@@ -1943,13 +1967,11 @@ export default function AdminUploads() {
           setIntakeFrontPreview(URL.createObjectURL(blob));
           setIntakeStep("back");
           setIntakeCaptureTarget("back");
-          setIntakeTiltSkipped(false);
           void (async () => {
             try {
               const presign = await uploadCardAsset(file);
               setIntakeCardId(presign.assetId);
               setIntakeBatchId(presign.batchId);
-              startOcrForCard(presign.assetId);
             } catch (error) {
               const message = error instanceof Error ? error.message : "Failed to capture photo.";
               setIntakeError(message);
@@ -1992,7 +2014,7 @@ export default function AdminUploads() {
         }
       }
     },
-    [clearActiveIntakeState, closeCamera, intakeCardId, openIntakeCapture, startOcrForCard, uploadCardAsset, uploadQueuedPhoto]
+    [clearActiveIntakeState, closeCamera, intakeCardId, openIntakeCapture, uploadCardAsset, uploadQueuedPhoto]
   );
 
   const handleCapture = useCallback(async () => {
@@ -2286,7 +2308,7 @@ export default function AdminUploads() {
   const optionSetIdMap = useMemo(() => {
     const map = new Map<string, string>();
     variantOptionItems.forEach((item) => {
-      const label = sanitizeNullableText(item.label).toLowerCase();
+      const label = normalizeVariantLabelKey(sanitizeNullableText(item.label));
       const primarySetId = sanitizeNullableText(item.primarySetId ?? item.setIds?.[0] ?? "");
       if (!label || !primarySetId || map.has(label)) {
         return;
@@ -2294,7 +2316,7 @@ export default function AdminUploads() {
       map.set(label, primarySetId);
     });
     variantCatalog.forEach((row) => {
-      const option = sanitizeNullableText(row.parallelId).toLowerCase();
+      const option = normalizeVariantLabelKey(sanitizeNullableText(row.parallelId));
       const setId = sanitizeNullableText(row.setId);
       if (!option || !setId || map.has(option)) {
         return;
@@ -2328,7 +2350,8 @@ export default function AdminUploads() {
     (async () => {
       const results = await Promise.all(
         pending.map(async (option) => {
-          const setId = optionSetIdMap.get(option.toLowerCase()) ?? sanitizeNullableText(variantCatalog[0]?.setId);
+          const setId =
+            optionSetIdMap.get(normalizeVariantLabelKey(option)) ?? sanitizeNullableText(variantCatalog[0]?.setId);
           if (!setId) {
             return [option, ""] as const;
           }
@@ -2383,7 +2406,7 @@ export default function AdminUploads() {
   const optionDetailByLabel = useMemo(() => {
     const map = new Map<string, VariantOptionItem>();
     variantOptionItems.forEach((item) => {
-      const key = sanitizeNullableText(item.label).toLowerCase();
+      const key = normalizeVariantLabelKey(sanitizeNullableText(item.label));
       if (!key || map.has(key)) {
         return;
       }
@@ -2440,7 +2463,7 @@ export default function AdminUploads() {
       typeof ocrConfidence.insertSet === "number" ? Math.round(ocrConfidence.insertSet * 100) : null;
 
     if (parallelSuggestion) {
-      const optionMeta = optionDetailByLabel.get(parallelSuggestion.toLowerCase());
+      const optionMeta = optionDetailByLabel.get(normalizeVariantLabelKey(parallelSuggestion));
       lines.push(
         `OCR parallel suggestion: ${parallelSuggestion}${parallelConfidence != null ? ` (${parallelConfidence}%)` : ""}`
       );
@@ -2496,7 +2519,8 @@ export default function AdminUploads() {
     if (!suggested) {
       return options;
     }
-    const idx = options.findIndex((value) => value.toLowerCase() === suggested.toLowerCase());
+    const suggestedKey = normalizeVariantLabelKey(suggested);
+    const idx = options.findIndex((value) => normalizeVariantLabelKey(value) === suggestedKey);
     if (idx <= 0) {
       return idx === 0 ? options : [suggested, ...options];
     }
@@ -2510,7 +2534,8 @@ export default function AdminUploads() {
     if (!suggested) {
       return options;
     }
-    const idx = options.findIndex((value) => value.toLowerCase() === suggested.toLowerCase());
+    const suggestedKey = normalizeVariantLabelKey(suggested);
+    const idx = options.findIndex((value) => normalizeVariantLabelKey(value) === suggestedKey);
     if (idx <= 0) {
       return idx === 0 ? options : [suggested, ...options];
     }
@@ -2652,7 +2677,7 @@ export default function AdminUploads() {
       const { file, index } = entry;
       try {
         updateResult(index, { status: "compressing", message: undefined });
-        const optimizedFile = await compressImage(file);
+        const optimizedFile = file;
 
         updateResult(index, { status: "presigning" });
         const presignBody: {
@@ -3029,7 +3054,7 @@ export default function AdminUploads() {
             <div className="grid gap-4 md:grid-cols-[240px,1fr]">
               <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-300">
                 <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Step 3</p>
-                <p className="mt-2">Optional: capture a tilt photo to reveal refractor patterns.</p>
+                <p className="mt-2">Capture a tilt photo (required) before OCR/LLM analysis runs.</p>
                 <div className="mt-4 flex flex-wrap gap-2">
                   <button
                     type="button"
@@ -3038,24 +3063,6 @@ export default function AdminUploads() {
                     className="inline-flex items-center justify-center rounded-full border border-sky-400/60 bg-sky-400/20 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-sky-200 transition hover:bg-sky-400/30 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     Capture tilt
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIntakeTiltSkipped(true);
-                      setIntakeCaptureTarget(null);
-                      if (intakeCardId) {
-                        setQueuedReviewCardIds((prev) =>
-                          prev.includes(intakeCardId) ? prev : [...prev, intakeCardId]
-                        );
-                      }
-                      clearActiveIntakeState();
-                      closeCamera();
-                      void openIntakeCapture("front");
-                    }}
-                    className="inline-flex items-center justify-center rounded-full border border-white/20 px-4 py-2 text-xs uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
-                  >
-                    Skip tilt
                   </button>
                 </div>
               </div>
@@ -3488,7 +3495,7 @@ export default function AdminUploads() {
                 <ul className="mt-3 space-y-2 text-sm text-slate-300">
                   <li>Front: {intakeFrontPreview ? "Captured" : "Missing"}</li>
                   <li>Back: {intakeBackPreview ? "Captured" : "Missing"}</li>
-                  <li>Tilt: {intakeTiltPreview ? "Captured" : "Optional"}</li>
+                  <li>Tilt: {intakeTiltPreview ? "Captured" : "Missing"}</li>
                   <li>Category: {intakeRequired.category === "sport" ? "Sports" : "TCG"}</li>
                   <li>Manufacturer: {intakeRequired.manufacturer || "—"}</li>
                   <li>Year: {intakeRequired.year || "—"}</li>
@@ -3522,7 +3529,8 @@ export default function AdminUploads() {
                   "__NONE__",
                   ...(pickerModalField === "insertSet" ? rankedInsertSetOptions : rankedParallelOptions),
                 ].map((option) => {
-                  const optionMeta = option === "__NONE__" ? null : optionDetailByLabel.get(option.toLowerCase());
+                  const optionMeta =
+                    option === "__NONE__" ? null : optionDetailByLabel.get(normalizeVariantLabelKey(option));
                   return (
                     <button
                       key={`${pickerModalField}-${option}`}
@@ -3816,9 +3824,7 @@ export default function AdminUploads() {
                 {[
                   { key: "front", label: "Front", preview: intakeFrontPreview, done: Boolean(intakeFrontPreview) },
                   { key: "back", label: "Back", preview: intakeBackPreview, done: Boolean(intakeBackPreview) },
-                  ...(intakeTiltSkipped && !intakeTiltPreview
-                    ? []
-                    : [{ key: "tilt", label: "Tilt", preview: intakeTiltPreview, done: Boolean(intakeTiltPreview) }]),
+                  { key: "tilt", label: "Tilt", preview: intakeTiltPreview, done: Boolean(intakeTiltPreview) },
                 ].map((entry) => (
                   <div
                     key={entry.key}
@@ -3890,83 +3896,4 @@ export default function AdminUploads() {
       )}
     </AppShell>
   );
-}
-
-async function compressImage(file: File): Promise<File> {
-  const MIN_BYTES_FOR_COMPRESSION = 1_200_000; // ~1.2 MB
-  const MAX_DIMENSION = 2000;
-
-  if (!file.type.startsWith("image/") || file.size <= MIN_BYTES_FOR_COMPRESSION) {
-    return file;
-  }
-
-  if (typeof window === "undefined") {
-    return file;
-  }
-
-  const drawToCanvas = async (
-    dimensions: { width: number; height: number },
-    draw: (ctx: CanvasRenderingContext2D, width: number, height: number) => void
-  ) => {
-    const scale = Math.min(1, MAX_DIMENSION / Math.max(dimensions.width, dimensions.height));
-    const targetWidth = Math.max(1, Math.round(dimensions.width * scale));
-    const targetHeight = Math.max(1, Math.round(dimensions.height * scale));
-    const canvas = document.createElement("canvas");
-    canvas.width = targetWidth;
-    canvas.height = targetHeight;
-    const context = canvas.getContext("2d");
-    if (!context) {
-      throw new Error("Canvas not supported");
-    }
-    draw(context, targetWidth, targetHeight);
-    const blob: Blob | null = await new Promise((resolve) =>
-      canvas.toBlob(resolve, "image/webp", 0.82)
-    );
-    if (!blob || blob.size >= file.size) {
-      return file;
-    }
-    const newName = file.name.replace(/\.[^.]+$/, "") + ".webp";
-    return new File([blob], newName, { type: "image/webp", lastModified: Date.now() });
-  };
-
-  try {
-    if (typeof createImageBitmap === "function") {
-      const bitmap = await createImageBitmap(file);
-      const optimized = await drawToCanvas(
-        { width: bitmap.width, height: bitmap.height },
-        (ctx, width, height) => ctx.drawImage(bitmap, 0, 0, width, height)
-      );
-      bitmap.close();
-      return optimized;
-    }
-  } catch (error) {
-    // fall through to HTMLImageElement path
-  }
-
-  try {
-    const optimized = await new Promise<File>((resolve, reject) => {
-      const url = URL.createObjectURL(file);
-      const image = new Image();
-      image.onload = async () => {
-        URL.revokeObjectURL(url);
-        try {
-          const result = await drawToCanvas(
-            { width: image.width, height: image.height },
-            (ctx, width, height) => ctx.drawImage(image, 0, 0, width, height)
-          );
-          resolve(result);
-        } catch (canvasError) {
-          reject(canvasError);
-        }
-      };
-      image.onerror = (event) => {
-        URL.revokeObjectURL(url);
-        reject(event);
-      };
-      image.src = url;
-    });
-    return optimized;
-  } catch (error) {
-    return file;
-  }
 }

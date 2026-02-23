@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p .",
     "dev": "tsc -w",
-    "test": "pnpm run build && node --test tests/setOpsNormalizer.test.js"
+    "test": "pnpm run build && node --test tests/*.test.js"
   },
   "devDependencies": {
     "typescript": "^5.5.4"

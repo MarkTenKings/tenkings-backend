@@ -815,3 +815,132 @@ Build Set Ops UI flow with:
   - attempted app-only Next build; local run exited non-zero with warnings output only and did not reproduce the prior `kingsreview.tsx` type error.
 - Operational status:
   - no deploy/restart/migration/DB operation executed in this follow-up.
+
+## KingsReview Query + Inventory Ready Detail Upgrade (2026-02-23)
+- Scope completed:
+  - normalized KingsReview SerpApi/eBay query construction to remove duplicate year/manufacturer/set noise and canonicalize autograph descriptor tokens.
+  - added Inventory Ready inline valuation editing (`valuationMinor` PATCH path).
+  - added Inventory Ready comp-detail rendering from latest KingsReview job results (image + listing link + search link).
+- Files changed:
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+  - `frontend/nextjs-app/pages/admin/inventory-ready.tsx`
+- Behavioral notes:
+  - query builder now derives cleaner terms from classification payload (`year`, `brand`, `setName`, `setCode`, `player`, `cardNumber`) with descriptor normalization (`AUTOGRAPH CARDS` -> `AUTOGRAPH`).
+  - Inventory Ready selected-card panel now includes latest sold comps from `/api/admin/kingsreview/jobs?cardAssetId=...`.
+  - valuation edits in Inventory Ready persist immediately via `PATCH /api/admin/cards/[cardId]` and update the local card grid values/totals.
+- Validation run:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/kingsreview/enqueue.ts --file pages/admin/inventory-ready.tsx`
+  - Result: pass with existing warnings only (`no-img-element`).
+- Deploy/runtime status:
+  - no deploy/restart/migration executed in this coding step.
+
+## OCR Provider Reset + Intake Readiness Tightening (2026-02-23, Follow-up #23)
+- New operator requirements addressed:
+  - return OCR provider to Google Vision.
+  - wait for all three intake photos before OCR/LLM parse starts.
+  - stop using compressed upload images for OCR/LLM/variant workflows.
+  - tolerate label stop-word drift (e.g., missing `"the"`) in variant/parallel option matching.
+- Fixes shipped:
+  - `frontend/nextjs-app/lib/server/googleVisionOcr.ts` (new)
+    - adds Google Vision OCR client (`images:annotate`, `DOCUMENT_TEXT_DETECTION`) mapped into existing OCR response/token structure.
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - switched OCR execution from local OCR to Google Vision helper.
+    - required photo readiness now `FRONT/BACK/TILT` before OCR call; returns `pending` readiness audit otherwise.
+    - OCR LLM default fallback model updated to `gpt-5.2`.
+    - audit source/model labels updated to `google-vision` / `google-vision+llm`.
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - removed client compression path; uploads now send original file payload.
+    - tilt photo is now required in intake flow (skip path removed).
+    - OCR kickoff now re-checks readiness after queued photo uploads and relies on server-side required-photo gate.
+    - variant option ranking/lookup now canonicalizes labels with stop-word tolerance (`the` ignored) to reduce false misses.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/googleVisionOcr.ts --file pages/api/admin/kingsreview/enqueue.ts --file pages/admin/inventory-ready.tsx`
+  - result: pass with existing warnings only (`no-img-element` class).
+  - local `pnpm -w run vercel:build` still fails pre-compile in this workstation due `Prisma engines directory not found` (known local environment gap, not new lint failure).
+- Deployment status:
+  - No deploy/restart/migration executed in this coding session.
+
+## OCR LLM Responses API Migration (2026-02-23, Follow-up #24)
+- New operator requirement:
+  - move OCR parse from Chat Completions to Responses API and target top pro-model path explicitly.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - migrated OCR LLM request to `POST /v1/responses`.
+    - default model target now `gpt-5.2-pro`.
+    - added `OCR_LLM_FALLBACK_MODEL` default `gpt-5-pro`.
+    - added compatibility attempt ladder:
+      1) primary + `json_schema`
+      2) primary + `json_object`
+      3) fallback + `json_schema`
+      4) fallback + `json_object`
+    - detects structured-output unsupported errors and auto-continues to next compatible attempt.
+    - added Responses payload text extraction (`output_text` + `output[].content[]`) and tolerant JSON unwrapping.
+    - persisted selected LLM metadata to OCR audit (`audit.llm`) and resolved audit model labeling.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - result: pass (`No ESLint warnings or errors`).
+- Deployment status:
+  - No deploy/restart/migration executed in this coding session.
+
+## OCR LLM Default Alignment to GPT-5 IDs (2026-02-23, Follow-up #25)
+- Operator preference:
+  - ensure OCR parse defaults use canonical GPT-5 family model IDs and request model explicitly every call.
+- Fix shipped:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - default `OCR_LLM_MODEL` changed to `gpt-5`.
+    - default `OCR_LLM_FALLBACK_MODEL` changed to `gpt-5-mini`.
+    - per-request model selection remains explicit in Responses API call path.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - result: pass (`No ESLint warnings or errors`).
+- Deployment status:
+  - No deploy/restart/migration executed in this coding session.
+
+## OCR Fallback Regression Coverage + Legacy OCR Wire Cleanup (2026-02-23, Follow-up #26)
+- Operator requests addressed:
+  - complete item #5 (remove old OCR wires/path confusion).
+  - implement item #1 (automated regression coverage for Responses fallback path).
+- Fixes shipped:
+  - `packages/shared/src/ocrLlmFallback.ts` (new):
+    - shared fallback planner + resolver for OCR Responses calls.
+    - structured-output unsupported detector for `json_schema` fallback decisions.
+  - `packages/shared/tests/ocrLlmFallback.test.js` (new):
+    - validates fallback sequence and failure behavior.
+  - `packages/shared/src/index.ts`, `packages/shared/package.json`:
+    - exports new helper and includes new test in shared test run.
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`:
+    - now uses shared fallback resolver instead of local fallback loop.
+  - `frontend/nextjs-app/lib/server/localOcr.ts`:
+    - deleted (legacy OCR service client removed from active app path).
+  - `frontend/nextjs-app/lib/server/googleVisionOcr.ts`:
+    - now owns OCR input/output/token type definitions directly.
+  - `docs/DEPLOYMENT.md`:
+    - removed `OCR_SERVICE_URL`/`OCR_SERVICE_TOKEN` guidance; replaced with Google Vision + OpenAI OCR env guidance.
+- Validation executed:
+  - `pnpm --filter @tenkings/shared test` passed.
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/googleVisionOcr.ts --file pages/admin/uploads.tsx --file pages/admin/inventory-ready.tsx` passed (existing `no-img-element` warnings only).
+- Deployment status:
+  - No deploy/restart/migration executed in this coding session.
+
+## AI Ops Dashboard Phase 1 (2026-02-23)
+- Scope completed:
+  - Added `/admin/ai-ops` as the Phase 1 OCR/LLM operations dashboard.
+  - Added `/api/admin/ai-ops/overview` aggregation endpoint for OCR/LLM health and teach-memory metrics.
+  - Added `AI Ops` shortcut tile on `/admin`.
+  - Added quick action to rerun OCR for flagged cards directly from the dashboard.
+- Files changed:
+  - `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts` (new)
+  - `frontend/nextjs-app/pages/admin/ai-ops.tsx` (new)
+  - `frontend/nextjs-app/pages/admin/index.tsx`
+- Dashboard sections now shipped:
+  - Live pipeline health (24h vs 7d parse/fallback/match/readiness/latency)
+  - Teach/Train impact (lessons, corrections, accuracy trend, top corrected fields)
+  - Model behavior (model + response-format distribution)
+  - Recent human correction feed
+  - Attention queue with `Retry OCR` action
+- Validation run:
+  - `pnpm --filter @tenkings/shared test` passed.
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/ai-ops.tsx --file pages/api/admin/ai-ops/overview.ts --file pages/admin/index.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/googleVisionOcr.ts --file pages/admin/uploads.tsx --file pages/admin/inventory-ready.tsx --file pages/api/admin/kingsreview/enqueue.ts` passed (existing `no-img-element` warnings only in pre-existing pages).
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/ai-ops.tsx --file pages/admin/index.tsx --file pages/api/admin/ai-ops/overview.ts` passed clean.
+- Deployment status:
+  - No deploy/restart/migration executed in this coding step.

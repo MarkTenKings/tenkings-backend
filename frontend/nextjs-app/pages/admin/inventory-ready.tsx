@@ -26,6 +26,8 @@ type InventoryCardDetail = {
   customTitle: string | null;
   customDetails: string | null;
   ocrText: string | null;
+  valuationMinor: number | null;
+  valuationCurrency: string;
   classificationNormalized?: { [key: string]: unknown } | null;
   classification?: { [key: string]: unknown } | null;
   photos?: Array<{ id: string; kind: string; imageUrl: string }>;
@@ -46,12 +48,51 @@ type LocationSummary = {
   slug: string;
 };
 
+type JobResultComp = {
+  title: string | null;
+  url: string;
+  price: string | null;
+  soldDate: string | null;
+  screenshotUrl: string | null;
+  listingImageUrl: string | null;
+};
+
 const formatMoney = (minor: number, currency: string) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
     maximumFractionDigits: 2,
   }).format(minor / 100);
+
+const formatMinorToDollarInput = (minor: number | null | undefined): string => {
+  if (minor == null || !Number.isFinite(minor)) {
+    return "";
+  }
+  return (minor / 100).toFixed(2);
+};
+
+const parseDollarInputToMinor = (input: string): number | null | undefined => {
+  const normalized = input.replace(/[$,\s]/g, "").trim();
+  if (!normalized) {
+    return null;
+  }
+  if (!/^\d*(?:\.\d{0,2})?$/.test(normalized) || normalized === ".") {
+    return undefined;
+  }
+  const [dollarsRaw, centsRaw = ""] = normalized.split(".");
+  const dollars = dollarsRaw ? Number(dollarsRaw) : 0;
+  if (!Number.isFinite(dollars)) {
+    return undefined;
+  }
+  const cents = Number((centsRaw + "00").slice(0, 2));
+  if (!Number.isFinite(cents)) {
+    return undefined;
+  }
+  return Math.round(dollars * 100 + cents);
+};
+
+const normalizeNullableText = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() ? value.trim() : null;
 
 export default function InventoryReady() {
   const { session, loading, ensureSession, logout } = useSession();
@@ -61,6 +102,12 @@ export default function InventoryReady() {
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   const [activeCardDetail, setActiveCardDetail] = useState<InventoryCardDetail | null>(null);
   const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
+  const [jobComps, setJobComps] = useState<JobResultComp[]>([]);
+  const [jobSearchUrl, setJobSearchUrl] = useState<string | null>(null);
+  const [valuationInput, setValuationInput] = useState("");
+  const [valuationSaving, setValuationSaving] = useState(false);
+  const [valuationError, setValuationError] = useState<string | null>(null);
+  const [valuationNotice, setValuationNotice] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const dragModeRef = useRef<"select" | "deselect" | null>(null);
   const draggingRef = useRef(false);
@@ -192,18 +239,29 @@ export default function InventoryReady() {
     if (!activeCardId || !session || !isAdmin) {
       setActiveCardDetail(null);
       setEvidenceItems([]);
+      setJobComps([]);
+      setJobSearchUrl(null);
+      setValuationInput("");
+      setValuationError(null);
+      setValuationNotice(null);
       return;
     }
 
     const loadDetails = async () => {
       try {
-        const [cardRes, evidenceRes] = await Promise.all([
+        const [cardRes, evidenceRes, jobRes] = await Promise.all([
           fetch(`/api/admin/cards/${activeCardId}`, { headers: adminHeaders() }),
           fetch(`/api/admin/kingsreview/evidence?cardAssetId=${activeCardId}`, { headers: adminHeaders() }),
+          fetch(`/api/admin/kingsreview/jobs?cardAssetId=${activeCardId}`, { headers: adminHeaders() }),
         ]);
         if (cardRes.ok) {
           const data = await cardRes.json();
           const card = data.card ?? data;
+          const nextValuationMinor = typeof card.valuationMinor === "number" ? card.valuationMinor : null;
+          const nextValuationCurrency =
+            typeof card.valuationCurrency === "string" && card.valuationCurrency.trim()
+              ? card.valuationCurrency
+              : "USD";
           setActiveCardDetail({
             id: card.id,
             fileName: card.fileName,
@@ -212,14 +270,51 @@ export default function InventoryReady() {
             customTitle: card.customTitle ?? null,
             customDetails: card.customDetails ?? null,
             ocrText: card.ocrText ?? null,
+            valuationMinor: nextValuationMinor,
+            valuationCurrency: nextValuationCurrency,
             classificationNormalized: card.classificationNormalized ?? null,
             classification: card.classification ?? null,
             photos: Array.isArray(card.photos) ? card.photos : [],
           });
+          setValuationInput(formatMinorToDollarInput(nextValuationMinor));
+          setValuationError(null);
+          setValuationNotice(null);
         }
         if (evidenceRes.ok) {
           const data = await evidenceRes.json();
           setEvidenceItems(data.items ?? []);
+        } else {
+          setEvidenceItems([]);
+        }
+        if (jobRes.ok) {
+          const data = await jobRes.json().catch(() => null);
+          const sources = Array.isArray(data?.job?.result?.sources) ? data.job.result.sources : [];
+          const ebaySource =
+            sources.find((source: any) => String(source?.source ?? "").toLowerCase() === "ebay_sold") ??
+            sources[0] ??
+            null;
+          const compsRaw = Array.isArray(ebaySource?.comps) ? ebaySource.comps : [];
+          const parsedComps = compsRaw
+            .map((comp: any) => {
+              const url = normalizeNullableText(comp?.url);
+              if (!url) {
+                return null;
+              }
+              return {
+                title: normalizeNullableText(comp?.title),
+                url,
+                price: normalizeNullableText(comp?.price),
+                soldDate: normalizeNullableText(comp?.soldDate),
+                screenshotUrl: normalizeNullableText(comp?.screenshotUrl),
+                listingImageUrl: normalizeNullableText(comp?.listingImageUrl),
+              } as JobResultComp;
+            })
+            .filter((comp: JobResultComp | null): comp is JobResultComp => Boolean(comp));
+          setJobComps(parsedComps);
+          setJobSearchUrl(normalizeNullableText(ebaySource?.searchUrl));
+        } else {
+          setJobComps([]);
+          setJobSearchUrl(null);
         }
       } catch {
         // ignore
@@ -261,6 +356,53 @@ export default function InventoryReady() {
     }
     updateSelection(id, dragModeRef.current);
   };
+
+  const saveActiveValuation = useCallback(async () => {
+    if (!activeCardDetail) {
+      return;
+    }
+    const parsed = parseDollarInputToMinor(valuationInput);
+    if (parsed === undefined) {
+      setValuationError("Enter a valid dollar value (example: 13.00).");
+      return;
+    }
+    setValuationSaving(true);
+    setValuationError(null);
+    setValuationNotice(null);
+    try {
+      const res = await fetch(`/api/admin/cards/${activeCardDetail.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...adminHeaders(),
+        },
+        body: JSON.stringify({ valuationMinor: parsed }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to save valuation");
+      }
+      const nextCurrency = activeCardDetail.valuationCurrency || "USD";
+      setActiveCardDetail((prev) => (prev ? { ...prev, valuationMinor: parsed } : prev));
+      setCards((prev) =>
+        prev.map((card) =>
+          card.id === activeCardDetail.id
+            ? {
+                ...card,
+                valuationMinor: parsed,
+                valuationCurrency: nextCurrency,
+              }
+            : card
+        )
+      );
+      setValuationInput(formatMinorToDollarInput(parsed));
+      setValuationNotice("Price valuation saved.");
+    } catch (err) {
+      setValuationError(err instanceof Error ? err.message : "Failed to save valuation");
+    } finally {
+      setValuationSaving(false);
+    }
+  }, [activeCardDetail, adminHeaders, valuationInput]);
 
   const handleAssign = async () => {
     if (!locationId || selectedIds.size === 0) {
@@ -583,6 +725,7 @@ export default function InventoryReady() {
                   type="button"
                   onMouseDown={handleCardMouseDown(card.id)}
                   onMouseEnter={() => handleCardMouseEnter(card.id)}
+                  onClick={() => setActiveCardId(card.id)}
                   className={`group flex select-none flex-col gap-3 rounded-3xl border p-3 text-left transition ${
                     selected
                       ? "border-gold-400/80 bg-gold-500/10 shadow-glow"
@@ -665,6 +808,44 @@ export default function InventoryReady() {
                       {activeCardDetail.customTitle ?? activeCardDetail.fileName}
                     </p>
                   </div>
+                  <div className="rounded-2xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-3">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-emerald-200">Price Valuation (USD)</p>
+                    <div className="mt-2 flex items-center gap-2 rounded-xl border border-white/10 bg-night-950/60 px-3 py-2">
+                      <span className="text-sm text-emerald-200">$</span>
+                      <input
+                        inputMode="decimal"
+                        value={valuationInput}
+                        onChange={(event) => {
+                          setValuationInput(event.target.value);
+                          setValuationError(null);
+                          setValuationNotice(null);
+                        }}
+                        onBlur={() => void saveActiveValuation()}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void saveActiveValuation();
+                          }
+                        }}
+                        placeholder="13.00"
+                        className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-slate-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void saveActiveValuation()}
+                        disabled={valuationSaving}
+                        className="rounded-full border border-emerald-400/50 bg-emerald-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-60"
+                      >
+                        {valuationSaving ? "Saving" : "Save"}
+                      </button>
+                    </div>
+                    <p className={`mt-2 text-[10px] ${valuationError ? "text-rose-300" : "text-slate-400"}`}>
+                      {valuationError ??
+                        (valuationNotice
+                          ? valuationNotice
+                          : "Edit value here to update this card directly in Inventory Ready.")}
+                    </p>
+                  </div>
                   <div>
                     <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">OCR Text</p>
                     <div className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] text-slate-200">
@@ -730,6 +911,65 @@ export default function InventoryReady() {
                       ))}
                       {evidenceItems.length === 0 && (
                         <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">No evidence attached.</p>
+                      )}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">eBay Sold Comps</p>
+                      {jobSearchUrl && (
+                        <a
+                          href={jobSearchUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center rounded-full border border-sky-400/70 bg-sky-500/20 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-100 transition hover:bg-sky-500/30"
+                        >
+                          Open eBay Search
+                        </a>
+                      )}
+                    </div>
+                    <div className="mt-2 max-h-72 space-y-2 overflow-y-auto pr-1">
+                      {jobComps.map((comp, index) => (
+                        <div
+                          key={`${comp.url}-${index}`}
+                          className="rounded-2xl border border-white/10 bg-night-900/60 p-2"
+                        >
+                          <div className="flex items-start gap-3">
+                            <div className="h-20 w-16 overflow-hidden rounded-lg border border-white/10 bg-night-900">
+                              {(comp.listingImageUrl || comp.screenshotUrl) ? (
+                                <img
+                                  src={comp.listingImageUrl ?? comp.screenshotUrl ?? ""}
+                                  alt={comp.title ?? "Comp"}
+                                  className="h-full w-full object-contain"
+                                  loading="lazy"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : null}
+                            </div>
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <div className="text-xs font-semibold text-emerald-200">
+                                {comp.price ?? "—"}{" "}
+                                {comp.soldDate ? (
+                                  <span className="font-normal text-slate-400">· Sold {comp.soldDate}</span>
+                                ) : null}
+                              </div>
+                              <p className="line-clamp-2 text-xs text-slate-200">{comp.title ?? comp.url}</p>
+                              <a
+                                href={comp.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-slate-200 transition hover:border-white/40 hover:text-white"
+                              >
+                                Open Listing
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {jobComps.length === 0 && (
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                          No comps found from latest KingsReview job.
+                        </p>
                       )}
                     </div>
                   </div>

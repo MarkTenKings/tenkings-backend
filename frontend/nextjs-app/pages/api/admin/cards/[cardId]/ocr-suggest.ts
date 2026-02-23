@@ -3,8 +3,8 @@ import crypto from "node:crypto";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { normalizeStorageUrl } from "../../../../../lib/server/storage";
-import { runLocalOcr } from "../../../../../lib/server/localOcr";
-import { extractCardAttributes } from "@tenkings/shared";
+import { runGoogleVisionOcr } from "../../../../../lib/server/googleVisionOcr";
+import { extractCardAttributes, resolveOcrLlmAttempt } from "@tenkings/shared";
 import { runVariantMatch } from "../../../../../lib/server/variantMatcher";
 
 type SuggestResponse =
@@ -38,7 +38,8 @@ type SuggestionFields = {
 type SuggestionConfidence = Record<keyof SuggestionFields, number | null>;
 
 const DEFAULT_THRESHOLD = 0.7;
-const OCR_LLM_MODEL = (process.env.OCR_LLM_MODEL ?? "gpt-4o-mini").trim();
+const OCR_LLM_MODEL = (process.env.OCR_LLM_MODEL ?? "gpt-5").trim();
+const OCR_LLM_FALLBACK_MODEL = (process.env.OCR_LLM_FALLBACK_MODEL ?? "gpt-5-mini").trim();
 const TCG_KEYWORDS = [
   "pokemon",
   "magic",
@@ -71,6 +72,19 @@ const FIELD_KEYS: (keyof SuggestionFields)[] = [
 ];
 
 type LlmParseResponse = {
+  meta: LlmParseMeta;
+  fields: SuggestionFields;
+  confidence: SuggestionConfidence;
+};
+
+type LlmParseMeta = {
+  endpoint: "responses";
+  model: string;
+  format: "json_schema" | "json_object";
+  fallbackUsed: boolean;
+};
+
+type LlmParsedPayload = {
   fields: SuggestionFields;
   confidence: SuggestionConfidence;
 };
@@ -108,7 +122,7 @@ type MemoryApplyEntry = {
 };
 
 const OCR_PHOTO_IDS: OcrPhotoId[] = ["FRONT", "BACK", "TILT"];
-const REQUIRED_OCR_PHOTO_IDS: OcrPhotoId[] = ["FRONT", "BACK"];
+const REQUIRED_OCR_PHOTO_IDS: OcrPhotoId[] = ["FRONT", "BACK", "TILT"];
 const TRUE_STRINGS = new Set(["true", "yes", "1"]);
 const BOOLEAN_MEMORY_FIELDS = new Set<keyof SuggestionFields>(["autograph", "memorabilia", "graded"]);
 
@@ -130,28 +144,92 @@ function coerceConfidence(value: unknown): number | null {
   return value;
 }
 
-function parseLlmJsonPayload(raw: string): LlmParseResponse | null {
-  try {
-    const parsed = JSON.parse(raw) as {
-      fields?: Record<string, unknown>;
-      confidence?: Record<string, unknown>;
-    };
-    if (!parsed || typeof parsed !== "object") {
-      return null;
+function parseLlmJsonPayload(raw: string): LlmParsedPayload | null {
+  const candidates = [raw.trim()];
+  const unwrappedFence = raw
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+  if (unwrappedFence && unwrappedFence !== candidates[0]) {
+    candidates.push(unwrappedFence);
+  }
+  const firstBrace = raw.indexOf("{");
+  const lastBrace = raw.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    const sliced = raw.slice(firstBrace, lastBrace + 1).trim();
+    if (sliced && !candidates.includes(sliced)) {
+      candidates.push(sliced);
     }
+  }
 
-    const fields = {} as SuggestionFields;
-    const confidence = {} as SuggestionConfidence;
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as {
+        fields?: Record<string, unknown>;
+        confidence?: Record<string, unknown>;
+      };
+      if (!parsed || typeof parsed !== "object") {
+        continue;
+      }
 
-    FIELD_KEYS.forEach((key) => {
-      fields[key] = coerceNullableString(parsed.fields?.[key]);
-      confidence[key] = coerceConfidence(parsed.confidence?.[key]);
-    });
+      const fields = {} as SuggestionFields;
+      const confidence = {} as SuggestionConfidence;
 
-    return { fields, confidence };
-  } catch {
+      FIELD_KEYS.forEach((key) => {
+        fields[key] = coerceNullableString(parsed.fields?.[key]);
+        confidence[key] = coerceConfidence(parsed.confidence?.[key]);
+      });
+
+      return { fields, confidence };
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function extractResponsesOutputText(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") {
     return null;
   }
+  const typed = payload as {
+    output_text?: unknown;
+    output?: Array<{ content?: unknown }>;
+  };
+  if (typeof typed.output_text === "string" && typed.output_text.trim()) {
+    return typed.output_text.trim();
+  }
+  if (Array.isArray(typed.output_text)) {
+    const direct = typed.output_text
+      .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+    if (direct) {
+      return direct;
+    }
+  }
+  if (!Array.isArray(typed.output)) {
+    return null;
+  }
+  const chunks: string[] = [];
+  typed.output.forEach((entry) => {
+    const content = Array.isArray(entry?.content) ? entry.content : [];
+    content.forEach((part: any) => {
+      if (typeof part?.text === "string" && part.text.trim()) {
+        chunks.push(part.text.trim());
+      }
+      if (typeof part?.output_text === "string" && part.output_text.trim()) {
+        chunks.push(part.output_text.trim());
+      }
+    });
+  });
+  if (!chunks.length) {
+    return null;
+  }
+  return chunks.join("\n").trim();
 }
 
 async function parseWithLlm(
@@ -180,69 +258,130 @@ async function parseWithLlm(
       ? imageSections.map((section) => `[${section.id}]\n${section.text}`).join("\n\n")
       : "No per-image OCR sections provided.";
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: OCR_LLM_MODEL,
-      temperature: 0,
-      messages: [
-        {
-          role: "system",
-          content:
-            "Extract card metadata from OCR text. Return only JSON that matches the schema. Use null for unknown fields.",
-        },
-        {
-          role: "user",
-          content: `OCR combined text:\n${ocrText}\n\nOCR by photo:\n${labeledSections}`,
-        },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "card_ocr_parse",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            required: ["fields", "confidence"],
-            properties: {
-              fields: {
-                type: "object",
-                additionalProperties: false,
-                required: FIELD_KEYS,
-                properties: schemaProperties,
-              },
-              confidence: {
-                type: "object",
-                additionalProperties: false,
-                required: FIELD_KEYS,
-                properties: confidenceProperties,
-              },
-            },
-          },
-        },
+  const systemInstruction =
+    "Extract card metadata from OCR text. Return only JSON that matches the schema. Use null for unknown fields.";
+  const userPrompt = `OCR combined text:\n${ocrText}\n\nOCR by photo:\n${labeledSections}`;
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["fields", "confidence"],
+    properties: {
+      fields: {
+        type: "object",
+        additionalProperties: false,
+        required: FIELD_KEYS,
+        properties: schemaProperties,
       },
-    }),
+      confidence: {
+        type: "object",
+        additionalProperties: false,
+        required: FIELD_KEYS,
+        properties: confidenceProperties,
+      },
+    },
+  };
+
+  const callResponses = async (params: {
+    model: string;
+    format: "json_schema" | "json_object";
+  }): Promise<{
+    ok: boolean;
+    status: number;
+    bodyText: string;
+    parsed: LlmParsedPayload | null;
+  }> => {
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: params.model,
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: systemInstruction }],
+          },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: userPrompt }],
+          },
+        ],
+        text:
+          params.format === "json_schema"
+            ? {
+                format: {
+                  type: "json_schema",
+                  name: "card_ocr_parse",
+                  strict: true,
+                  schema,
+                },
+              }
+            : {
+                format: {
+                  type: "json_object",
+                },
+              },
+      }),
+    });
+
+    const bodyText = await response.text().catch(() => "");
+    if (!response.ok) {
+      return {
+        ok: false,
+        status: response.status,
+        bodyText,
+        parsed: null,
+      };
+    }
+
+    let payload: unknown = null;
+    try {
+      payload = bodyText ? JSON.parse(bodyText) : null;
+    } catch {
+      payload = null;
+    }
+    const content = extractResponsesOutputText(payload);
+    if (!content) {
+      return {
+        ok: true,
+        status: response.status,
+        bodyText,
+        parsed: null,
+      };
+    }
+    return {
+      ok: true,
+      status: response.status,
+      bodyText,
+      parsed: parseLlmJsonPayload(content),
+    };
+  };
+
+  const resolved = await resolveOcrLlmAttempt<LlmParsedPayload>({
+    primaryModel: OCR_LLM_MODEL,
+    fallbackModel: OCR_LLM_FALLBACK_MODEL,
+    execute: callResponses,
   });
 
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`OpenAI parse failed (${response.status}): ${body}`);
-  }
-
-  const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string | null } }>;
-  };
-  const content = payload.choices?.[0]?.message?.content;
-  if (!content) {
+  if (!resolved) {
+    console.warn("OCR LLM parse returned no usable JSON", {
+      primaryModel: OCR_LLM_MODEL,
+      fallbackModel: OCR_LLM_FALLBACK_MODEL,
+    });
     return null;
   }
 
-  return parseLlmJsonPayload(content);
+  return {
+    ...resolved.parsed,
+    meta: {
+      endpoint: "responses",
+      model: resolved.attempt.model,
+      format: resolved.attempt.format,
+      fallbackUsed: resolved.fallbackUsed,
+    },
+  };
 }
 
 function normalizeImageLabel(value: string | null | undefined): string {
@@ -305,7 +444,7 @@ function buildPhotoOcrState(params: {
     return acc;
   }, {} as Record<OcrPhotoId, PhotoOcrState>);
 
-  const missingRequired = REQUIRED_OCR_PHOTO_IDS.filter((id) => byId[id].status !== "ok");
+  const missingRequired = REQUIRED_OCR_PHOTO_IDS.filter((id) => !byId[id].hasImage);
   const readiness =
     missingRequired.length > 0
       ? "missing_required"
@@ -574,8 +713,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         suggestions: {},
         threshold: DEFAULT_THRESHOLD,
         audit: {
-          source: "local-ocr",
-          model: "paddleocr",
+          source: "google-vision",
+          model: "google-vision",
           createdAt: new Date().toISOString(),
           fields: {},
           confidence: {},
@@ -597,8 +736,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         suggestions: {},
         threshold: DEFAULT_THRESHOLD,
         audit: {
-          source: "local-ocr",
-          model: "paddleocr",
+          source: "google-vision",
+          model: "google-vision",
           createdAt: new Date().toISOString(),
           fields: {},
           confidence: {},
@@ -609,7 +748,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
-    const ocrResponse = await runLocalOcr(images);
+    if (pendingPhotoState.readiness.status === "missing_required") {
+      return res.status(200).json({
+        suggestions: {},
+        threshold: DEFAULT_THRESHOLD,
+        audit: {
+          source: "google-vision",
+          model: "google-vision",
+          createdAt: new Date().toISOString(),
+          fields: {},
+          confidence: {},
+          photoOcr: pendingPhotoState.byId,
+          readiness: pendingPhotoState.readiness,
+          note: "Waiting for all required intake photos before OCR.",
+        },
+        status: "pending",
+      });
+    }
+
+    const ocrResponse = await runGoogleVisionOcr(images);
     const photoState = buildPhotoOcrState({
       frontImageUrl: frontImageUrl ?? null,
       backImageUrl: backImageUrl ?? null,
@@ -810,9 +967,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     }
 
+    let llmMeta: LlmParseMeta | null = null;
     try {
       const llmResult = await parseWithLlm(combinedTextRaw, imageSections);
       if (llmResult) {
+        llmMeta = llmResult.meta;
         FIELD_KEYS.forEach((key) => {
           if (llmResult.fields[key]) {
             fields[key] = llmResult.fields[key];
@@ -934,12 +1093,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     });
 
     const audit = {
-      source: "local-ocr+llm",
-      model: `paddleocr|${OCR_LLM_MODEL}`,
+      source: "google-vision+llm",
+      model: `google-vision|${llmMeta?.model ?? OCR_LLM_MODEL}`,
       threshold: DEFAULT_THRESHOLD,
       createdAt: new Date().toISOString(),
       fields,
       confidence,
+      llm: llmMeta,
       tokens: ocrTokens,
       photoOcr: photoState.byId,
       readiness: photoState.readiness,

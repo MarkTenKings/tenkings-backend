@@ -2,6 +2,156 @@ import { NextApiRequest, NextApiResponse } from "next";
 import { CardPhotoKind, CardReviewStage, enqueueBytebotLiteJob, prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
+const normalizeWhitespace = (value: unknown): string =>
+  typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+
+const normalizeTokenKey = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const toTitleCase = (value: string): string =>
+  value
+    .toLowerCase()
+    .replace(/\b[a-z]/g, (char) => char.toUpperCase())
+    .trim();
+
+const stripLeadingSeasonToken = (value: string): string =>
+  value.replace(/^\s*(?:19|20)\d{2}(?:-\d{2,4})?\s+/, "").trim();
+
+const normalizeSetForQuery = (rawSetName: string, year: string, manufacturer: string): string => {
+  let next = normalizeWhitespace(rawSetName);
+  if (!next) {
+    return "";
+  }
+  next = stripLeadingSeasonToken(next);
+  const normalizedManufacturer = normalizeWhitespace(manufacturer);
+  if (normalizedManufacturer) {
+    next = next.replace(new RegExp(`^${escapeRegex(normalizedManufacturer)}\\b\\s*`, "i"), "").trim();
+  }
+  if (year) {
+    next = next.replace(new RegExp(`^${escapeRegex(year)}\\b\\s*`, "i"), "").trim();
+  }
+  return next;
+};
+
+const normalizeDescriptor = (value: string): string => {
+  const cleaned = normalizeWhitespace(value);
+  if (!cleaned) {
+    return "";
+  }
+  const upper = cleaned.toUpperCase();
+  if (
+    /\bAUTOGRAPH(?:S)?\b/.test(upper) ||
+    /\bAUTO(?:GRAPH)?\b/.test(upper)
+  ) {
+    return "AUTOGRAPH";
+  }
+  if (upper.endsWith(" CARDS")) {
+    return toTitleCase(cleaned.replace(/\s+cards?$/i, ""));
+  }
+  return cleaned;
+};
+
+const pushUniqueToken = (target: string[], value: string) => {
+  const token = normalizeWhitespace(value);
+  if (!token) {
+    return;
+  }
+  const key = normalizeTokenKey(token);
+  if (!key) {
+    return;
+  }
+  const exists = target.some((entry) => normalizeTokenKey(entry) === key);
+  if (!exists) {
+    target.push(token);
+  }
+};
+
+const buildCompSearchQuery = (card: {
+  customTitle: string | null;
+  ocrText: string | null;
+  resolvedPlayerName: string | null;
+  classificationJson: unknown;
+  variantId: string | null;
+}) => {
+  const normalized =
+    typeof card.classificationJson === "object" && card.classificationJson
+      ? ((card.classificationJson as any).normalized ?? null)
+      : null;
+  const attributes =
+    typeof card.classificationJson === "object" && card.classificationJson
+      ? ((card.classificationJson as any).attributes ?? null)
+      : null;
+
+  const year = normalizeWhitespace(normalized?.year ?? attributes?.year);
+  const manufacturerRaw = normalizeWhitespace(attributes?.brand ?? normalized?.company);
+  const manufacturer = manufacturerRaw ? toTitleCase(manufacturerRaw) : "";
+  const setNameRaw = normalizeWhitespace(normalized?.setName);
+  const setName = normalizeSetForQuery(setNameRaw, year, manufacturerRaw);
+  const playerName = normalizeWhitespace(card.resolvedPlayerName ?? attributes?.playerName);
+  const cardNumber = normalizeWhitespace(normalized?.cardNumber ?? attributes?.cardNumber);
+  const numbered = normalizeWhitespace(attributes?.numbered);
+
+  const setCode = normalizeDescriptor(normalized?.setCode ?? attributes?.setName ?? "");
+  const parallel = normalizeDescriptor(
+    normalized?.parallelName ??
+      attributes?.parallel ??
+      (Array.isArray(attributes?.variantKeywords) ? attributes.variantKeywords[0] : "") ??
+      card.variantId ??
+      ""
+  );
+
+  const descriptorCandidates = [setCode, parallel]
+    .map((entry) => normalizeWhitespace(entry))
+    .filter(Boolean);
+
+  const autoDescriptor =
+    descriptorCandidates.find((entry) => normalizeTokenKey(entry) === normalizeTokenKey("AUTOGRAPH")) ?? null;
+  const nonAutoDescriptor =
+    descriptorCandidates.find((entry) => normalizeTokenKey(entry) !== normalizeTokenKey("AUTOGRAPH")) ?? null;
+
+  const textPool = `${card.customTitle ?? ""} ${card.ocrText ?? ""}`;
+  const rookieFlag =
+    /\b(rookie|rc)\b/i.test(textPool) ||
+    Boolean((attributes?.rookie as boolean | undefined) ?? false);
+
+  const gradeMatch = textPool.match(/\b(PSA|BGS|SGC|CGC)\s*\d{1,2}\b/i);
+  const grade = gradeMatch ? gradeMatch[0].toUpperCase().replace(/\s+/g, " ") : "";
+  const memorabiliaFlag =
+    /\b(patch|relic|rpa)\b/i.test(textPool) ||
+    Boolean((attributes?.memorabilia as boolean | undefined) ?? false);
+  const autographFlag =
+    /\b(auto|autograph)\b/i.test(textPool) ||
+    Boolean((attributes?.autograph as boolean | undefined) ?? false);
+
+  const tokens: string[] = [];
+  pushUniqueToken(tokens, year);
+  pushUniqueToken(tokens, manufacturer);
+  pushUniqueToken(tokens, setName);
+  if (autoDescriptor || autographFlag) {
+    pushUniqueToken(tokens, "AUTOGRAPH");
+  }
+  pushUniqueToken(tokens, playerName);
+  pushUniqueToken(tokens, cardNumber);
+  pushUniqueToken(tokens, numbered);
+  if (nonAutoDescriptor) {
+    pushUniqueToken(tokens, nonAutoDescriptor);
+  }
+  if (rookieFlag && !nonAutoDescriptor) {
+    pushUniqueToken(tokens, "Rookie");
+  }
+  pushUniqueToken(tokens, grade);
+  if (memorabiliaFlag) {
+    pushUniqueToken(tokens, "Patch");
+  }
+
+  return tokens.join(" ").replace(/\s+/g, " ").trim();
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     const admin = await requireAdminSession(req);
@@ -32,52 +182,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         },
       });
       if (card) {
-        const normalized =
-          typeof card.classificationJson === "object" && card.classificationJson
-            ? ((card.classificationJson as any).normalized ?? null)
-            : null;
-        const attributes =
-          typeof card.classificationJson === "object" && card.classificationJson
-            ? ((card.classificationJson as any).attributes ?? null)
-            : null;
-        const textPool = `${card.customTitle ?? ""} ${card.ocrText ?? ""}`;
-        const serialMatch = textPool.match(/\/\s*\d{1,3}/);
-        const serial = serialMatch ? serialMatch[0].replace(/\s+/g, "") : null;
-        const gradeMatch = textPool.match(/\b(PSA|BGS|SGC|CGC)\s*\d{1,2}\b/i);
-        const grade = gradeMatch ? gradeMatch[0].toUpperCase().replace(/\s+/g, " ") : null;
-        const flags = [];
-        if (/\b(auto|autograph)\b/i.test(textPool)) flags.push("Auto");
-        if (/\b(patch|relic|rpa)\b/i.test(textPool)) flags.push("Patch");
-        if (/\b(rookie|rc)\b/i.test(textPool)) flags.push("Rookie");
-
-        const candidateTokens = [
-          normalized?.year ?? attributes?.year,
-          attributes?.brand ?? normalized?.company,
-          normalized?.setName,
-          normalized?.setCode ?? attributes?.setName,
-          card.resolvedPlayerName ?? attributes?.playerName,
-          attributes?.teamName,
-          normalized?.cardNumber ?? attributes?.cardNumber,
-          attributes?.numbered,
-          normalized?.parallelName ?? attributes?.parallel,
-          ...(Array.isArray(attributes?.variantKeywords) ? attributes?.variantKeywords : []),
-          card.variantId,
-          serial,
-          grade,
-          attributes?.gradeCompany,
-          attributes?.gradeValue,
-          ...flags,
-        ];
-        const tokenSet = new Set<string>();
-        candidateTokens.forEach((entry) => {
-          if (typeof entry !== "string") return;
-          const trimmed = entry.trim();
-          if (!trimmed) return;
-          tokenSet.add(trimmed);
-        });
-        const tokens = Array.from(tokenSet);
-        if (tokens.length) {
-          query = tokens.join(" ");
+        const generated = buildCompSearchQuery(card);
+        if (generated) {
+          query = generated;
         }
       }
     }
