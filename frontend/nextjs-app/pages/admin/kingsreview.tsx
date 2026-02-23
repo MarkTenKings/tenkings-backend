@@ -45,7 +45,15 @@ type CardDetail = CardSummary & {
   ocrText?: string | null;
   classification?: Record<string, unknown> | null;
   customDetails: string | null;
-  classificationNormalized?: { categoryType?: string | null } | null;
+  classificationNormalized?:
+    | {
+        categoryType?: string | null;
+        setName?: string | null;
+        setCode?: string | null;
+        cardNumber?: string | null;
+        [key: string]: unknown;
+      }
+    | null;
   photos?: Array<{ id: string; kind: string; imageUrl: string; thumbnailUrl?: string | null }>;
   variantId?: string | null;
   variantConfidence?: number | null;

@@ -2066,8 +2066,8 @@ export default function AdminUploads() {
 
   const buildSuggestionsFromAudit = useCallback(
     (threshold: number) => {
-      const fields = typedOcrAudit?.fields ?? {};
-      const confidence = typedOcrAudit?.confidence ?? {};
+      const fields = (ocrAudit as OcrAuditPayload | null)?.fields ?? {};
+      const confidence = (ocrAudit as OcrAuditPayload | null)?.confidence ?? {};
       return Object.keys(fields).reduce<Record<string, string>>((acc, key) => {
         const value = fields[key];
         const score = confidence[key];
@@ -2077,7 +2077,7 @@ export default function AdminUploads() {
         return acc;
       }, {});
     },
-    [typedOcrAudit]
+    [ocrAudit]
   );
 
   const toggleOcrSuggestions = useCallback(() => {

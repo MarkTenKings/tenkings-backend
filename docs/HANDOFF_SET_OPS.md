@@ -790,3 +790,28 @@ Build Set Ops UI flow with:
   - Result: pass with existing warnings only (`no-img-element`, pre-existing hook-deps warning in KingsReview).
 - Deploy/runtime status:
   - No deploy/restart/migration executed in this coding session.
+
+## Build Fix Follow-up (2026-02-23, Vercel compile unblock)
+- Context:
+  - Vercel build failed on `pages/admin/kingsreview.tsx` with strict type error at autosave merge path (`classificationNormalized.setName` not allowed by local type).
+- Fixes applied:
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+    - widened local `classificationNormalized` type to include `setName`, `setCode`, `cardNumber` (and index signature).
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - removed forward-reference to `typedOcrAudit` in callback to avoid declaration-order TS compile issues.
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - aligned OCR section id typing (`OcrPhotoId`) so strict type predicate checks pass.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts` passed (existing warnings only).
+- Deploy status:
+  - no deploy/restart/migration executed in this coding step.
+
+## Build Triage Verification (2026-02-23, Vercel failure follow-up)
+- Context:
+  - user provided Vercel failure log for `kingsreview.tsx` strict type mismatch (`classificationNormalized.setName` unsupported in local type).
+- Verification completed:
+  - re-ran targeted lint for touched files and confirmed pass with existing warnings only.
+  - attempted workspace `vercel:build`; local failure occurred before app compile due workstation Prisma artifact gap (`Prisma engines directory not found`), not the reported TS issue.
+  - attempted app-only Next build; local run exited non-zero with warnings output only and did not reproduce the prior `kingsreview.tsx` type error.
+- Operational status:
+  - no deploy/restart/migration/DB operation executed in this follow-up.

@@ -1303,3 +1303,46 @@
 
 ### Notes
 - No deploy/restart/migration or destructive DB operation was executed in this step.
+
+## 2026-02-23 - Vercel Build Fix (KingsReview type regression)
+
+### Summary
+- Fixed Vercel build failure from commit `aec5eeb` caused by a too-narrow `classificationNormalized` type in KingsReview autosave update path.
+- Added follow-up compile-safety fixes in related files to prevent immediate re-fail on next deploy.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+
+### Implementation Notes
+- `kingsreview.tsx`:
+  - widened `CardDetail.classificationNormalized` type to include `setName`, `setCode`, and `cardNumber` (plus index signature), matching autosave usage.
+- `uploads.tsx`:
+  - removed forward-reference to `typedOcrAudit` inside `buildSuggestionsFromAudit` callback to avoid declaration-order TS error in strict type-check builds.
+- `ocr-suggest.ts`:
+  - tightened `OcrImageSection.id` to `OcrPhotoId` so the `filter` type predicate is assignable and strict TS compilation succeeds.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- Result: pass with existing warnings only (`no-img-element` + one existing hook dependency warning in KingsReview).
+
+### Notes
+- No deploy/restart/migration executed in this step.
+
+## 2026-02-23 - Vercel Build Failure Triage Verification (post-fix)
+
+### Summary
+- Re-validated the reported Vercel compile blocker and confirmed the prior type fix covers the failing line class in `kingsreview.tsx`.
+- Re-ran local validation on touched files and captured build-attempt outcomes for handoff traceability.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - Result: pass (existing warnings only).
+- `pnpm -w run vercel:build`
+  - Result: failed locally before Next build due workstation Prisma artifact issue (`Prisma engines directory not found` in `scripts/vercel-build.sh`), not due the reported TS type error.
+- `pnpm --filter @tenkings/nextjs-app build`
+  - Result: exited non-zero locally with warnings output only; no recurrence of the prior `classificationNormalized.setName` type error from Vercel log.
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this verification step.

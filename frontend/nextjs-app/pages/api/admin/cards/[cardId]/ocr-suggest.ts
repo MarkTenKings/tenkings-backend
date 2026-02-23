@@ -76,7 +76,7 @@ type LlmParseResponse = {
 };
 
 type OcrImageSection = {
-  id: string;
+  id: OcrPhotoId;
   text: string;
 };
 
