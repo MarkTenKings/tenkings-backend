@@ -28,6 +28,15 @@ const NOISE_TITLE_TOKENS = [
   "mega box",
   "hanger",
 ];
+const PARALLEL_ALIAS_TO_CANONICAL: Record<string, string> = {
+  SI: "SUDDEN IMPACT",
+  FS: "FILM STUDY",
+  RR: "ROUNDBALL ROYALTY",
+  FSA: "FUTURE STARS AUTOGRAPHS",
+  CA: "CERTIFIED AUTOGRAPHS",
+  PB: "POWER BOOSTERS",
+  DNA: "DNA",
+};
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -109,6 +118,13 @@ function primaryPlayerLabel(value: string) {
   if (!raw) return "";
   const slashSplit = raw.split("/")[0]?.trim() || raw;
   return slashSplit.replace(/\s+/g, " ").trim();
+}
+
+function canonicalParallelId(value: string | null | undefined) {
+  const normalized = normalizeParallelLabel(value);
+  if (!normalized) return "";
+  const alias = PARALLEL_ALIAS_TO_CANONICAL[normalized.toUpperCase()];
+  return alias || normalized;
 }
 
 function buildSearchQueries(params: {
@@ -225,7 +241,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const safeLimit = Math.min(50, Math.max(1, Number(limit ?? 20) || 20));
     const normalizedSetId = normalizeSetLabel(String(setId || "").trim());
     const normalizedCardNumber = normalizeCardNumber(String(cardNumber ?? "")) || "ALL";
-    const normalizedParallelId = normalizeParallelLabel(String(parallelId || "").trim());
+    const normalizedParallelId = canonicalParallelId(String(parallelId || "").trim());
     const normalizedPlayerSeed = normalizePlayerSeed(String(playerSeed || "").trim());
     const normalizedQuery = String(query).trim();
 

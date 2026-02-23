@@ -986,3 +986,50 @@
   - `parallelId` via `normalizeParallelLabel`
   - `playerSeed` via `normalizePlayerSeed`
 - This should remove key mismatches like spaced card IDs (`FS - 14` vs `FS-14`) when QA counts refs.
+
+## 2026-02-23 - Agent Context Sync (Docs-Only)
+
+### Summary
+- Re-read mandatory startup docs per `AGENTS.md`.
+- Confirmed active branch remains `main` (tracking `origin/main`) before documentation updates.
+- No code changes, deploys, restarts, migrations, or DB operations were executed.
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- No runtime/API/DB evidence was collected in this session.
+- Existing Set Ops `Next Actions (Ordered)` in `docs/HANDOFF_SET_OPS.md` remain unchanged.
+
+## 2026-02-23 - Ref Seed Follow-up #17 (Canonical Parallel + Alias-Aware Matching for QA Photos)
+
+### Summary
+- Production validation signal:
+  - set run status reported:
+    - `Seeded all targets for 2023-24 Topps Chrome Basketball Retail: 204 processed, inserted 1813, skipped 23. Source: set-ops player worksheet rows.`
+  - `/admin/variant-ref-qa` still showed many SI/FS/RR/FSA/DNA rows with `Photos=0`.
+- Implemented normalization/canonical matching hardening so read-side joins align with seeded write keys.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/seed.ts` passed.
+
+### Notes
+- Seed endpoint now canonicalizes known insert/autograph aliases on write (`SI`, `FS`, `RR`, `FSA`, `CA`, `PB`, `DNA`) to canonical parallel labels.
+- Variants API read paths now key/match on normalized set/card/parallel and query across raw + normalized + alias candidates.
+- Variants reference API GET/DELETE filters now support normalized/alias candidate matching for set/parallel/card.
+- No deploy/restart/migration was executed in this step.

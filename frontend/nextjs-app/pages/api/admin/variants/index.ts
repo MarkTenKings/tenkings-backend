@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, SetApprovalDecision } from "@tenkings/database";
 import { Prisma } from "@prisma/client";
-import { normalizeSetLabel } from "@tenkings/shared";
+import { normalizeCardNumber, normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../../../lib/server/storage";
 import { extractDraftRows } from "../../../../lib/server/setOpsDrafts";
@@ -28,6 +28,25 @@ type ResponseBody =
   | { ok: true }
   | { message: string };
 
+const PARALLEL_ALIAS_TO_CANONICAL: Record<string, string> = {
+  SI: "SUDDEN IMPACT",
+  FS: "FILM STUDY",
+  RR: "ROUNDBALL ROYALTY",
+  FSA: "FUTURE STARS AUTOGRAPHS",
+  CA: "CERTIFIED AUTOGRAPHS",
+  PB: "POWER BOOSTERS",
+  DNA: "DNA",
+};
+
+const PARALLEL_CANONICAL_TO_ALIAS: Record<string, string> = Object.entries(PARALLEL_ALIAS_TO_CANONICAL).reduce(
+  (acc, [alias, canonical]) => {
+    const key = canonical.toUpperCase();
+    if (!acc[key]) acc[key] = alias;
+    return acc;
+  },
+  {} as Record<string, string>
+);
+
 function keyFromStoredImage(value: string | null | undefined) {
   const input = String(value || "").trim();
   if (!input) return null;
@@ -37,22 +56,74 @@ function keyFromStoredImage(value: string | null | undefined) {
   return input;
 }
 
-function normalizeCardToken(value: string | null | undefined) {
-  const raw = String(value || "").trim();
-  if (!raw) return "ALL";
-  if (raw.toUpperCase() === "ALL") return "ALL";
-  return raw;
+function uniqueStrings(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const normalized = String(value || "").trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(normalized);
+  }
+  return output;
 }
 
-function dbCardValuesForVariant(cardNumber: string) {
+function canonicalParallelLabel(value: string | null | undefined) {
+  const normalized = normalizeParallelLabel(value);
+  if (!normalized) return "";
+  return PARALLEL_ALIAS_TO_CANONICAL[normalized.toUpperCase()] || normalized;
+}
+
+function parallelCandidates(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  const normalized = normalizeParallelLabel(raw);
+  const canonical = canonicalParallelLabel(raw);
+  const alias = canonical ? PARALLEL_CANONICAL_TO_ALIAS[canonical.toUpperCase()] || "" : "";
+  return uniqueStrings([raw, normalized, canonical, alias]);
+}
+
+function setIdCandidates(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  const normalized = normalizeSetLabel(raw);
+  return uniqueStrings([raw, normalized]);
+}
+
+function normalizeCardToken(value: string | null | undefined) {
+  const normalized = normalizeCardNumber(value);
+  return normalized || "ALL";
+}
+
+function dbCardValuesForVariant(cardNumber: string | null | undefined) {
   const normalized = normalizeCardToken(cardNumber);
-  if (normalized === "ALL") return ["ALL", null] as const;
-  return [normalized, "ALL", null] as const;
+  const raw = String(cardNumber || "").trim();
+  const values: Array<string | null> = [];
+  if (normalized !== "ALL") {
+    values.push(normalized);
+  }
+  if (raw && raw.toUpperCase() !== "ALL") {
+    values.push(raw);
+  }
+  values.push("ALL", null);
+
+  const seen = new Set<string>();
+  const output: Array<string | null> = [];
+  for (const value of values) {
+    const key = value == null ? "__NULL__" : value.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(value);
+  }
+  return output;
 }
 
 function keyForRef(setId: string, cardNumber: string | null | undefined, parallelId: string) {
+  const normalizedSet = normalizeSetLabel(setId) || String(setId || "").trim();
+  const normalizedParallel =
+    canonicalParallelLabel(parallelId) || normalizeParallelLabel(parallelId) || String(parallelId || "").trim();
   const card = cardNumber == null ? "__NULL__" : normalizeCardToken(cardNumber);
-  return `${setId}::${card}::${parallelId}`;
+  return `${normalizedSet}::${card}::${normalizedParallel}`;
 }
 
 function normalizePlayerLabel(value: string | null | undefined) {
@@ -74,14 +145,22 @@ function filterLegacyAllVariants(variants: any[]) {
   const specificBySetParallel = new Set<string>();
   for (const variant of variants) {
     if (normalizeCardToken(variant.cardNumber) === "ALL") continue;
-    specificBySetParallel.add(
-      `${String(variant.setId || "").trim().toLowerCase()}::${String(variant.parallelId || "").trim().toLowerCase()}`
-    );
+    const setKey = (normalizeSetLabel(variant.setId) || String(variant.setId || "").trim()).toLowerCase();
+    const parallelKey =
+      (canonicalParallelLabel(variant.parallelId) ||
+        normalizeParallelLabel(variant.parallelId) ||
+        String(variant.parallelId || "").trim()).toLowerCase();
+    specificBySetParallel.add(`${setKey}::${parallelKey}`);
   }
   return variants.filter((variant) => {
     const card = normalizeCardToken(variant.cardNumber);
     if (card !== "ALL") return true;
-    const key = `${String(variant.setId || "").trim().toLowerCase()}::${String(variant.parallelId || "").trim().toLowerCase()}`;
+    const setKey = (normalizeSetLabel(variant.setId) || String(variant.setId || "").trim()).toLowerCase();
+    const parallelKey =
+      (canonicalParallelLabel(variant.parallelId) ||
+        normalizeParallelLabel(variant.parallelId) ||
+        String(variant.parallelId || "").trim()).toLowerCase();
+    const key = `${setKey}::${parallelKey}`;
     return !specificBySetParallel.has(key);
   });
 }
@@ -153,13 +232,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         cardNumber: variant.cardNumber,
         parallelId: variant.parallelId,
       }));
-      const countOr = keys.flatMap((key) =>
-        dbCardValuesForVariant(key.cardNumber).map((card) => ({
-          setId: key.setId,
-          cardNumber: card,
-          parallelId: key.parallelId,
-        }))
-      );
+      const countOrMap = new Map<string, { setId: string; cardNumber: string | null; parallelId: string }>();
+      for (const key of keys) {
+        const setIds = setIdCandidates(key.setId);
+        const parallels = parallelCandidates(key.parallelId);
+        const cards = dbCardValuesForVariant(key.cardNumber);
+        for (const setId of setIds) {
+          for (const parallelId of parallels) {
+            for (const cardNumber of cards) {
+              const rowKey = `${setId.toLowerCase()}::${cardNumber == null ? "__NULL__" : String(cardNumber).toLowerCase()}::${parallelId.toLowerCase()}`;
+              if (!countOrMap.has(rowKey)) {
+                countOrMap.set(rowKey, {
+                  setId,
+                  cardNumber: cardNumber == null ? null : String(cardNumber),
+                  parallelId,
+                });
+              }
+            }
+          }
+        }
+      }
+      const countOr = Array.from(countOrMap.values());
       const referenceCounts = countOr.length
         ? await prisma.cardVariantReferenceImage.groupBy({
             by: ["setId", "cardNumber", "parallelId"],
@@ -210,7 +303,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         } catch {
           // Backward-compatible fallback when storageKey column/schema is not live.
           latestRefs = await prisma.cardVariantReferenceImage.findMany({
-            where: { OR: keys },
+            where: { OR: countOr },
             orderBy: [{ updatedAt: "desc" }],
             distinct: ["setId", "cardNumber", "parallelId"],
             select: ({

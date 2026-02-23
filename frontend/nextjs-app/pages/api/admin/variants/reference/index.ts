@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
+import { normalizeCardNumber, normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../../../../lib/server/storage";
 
@@ -31,6 +32,93 @@ type ResponseBody =
   | { ok: true; deleted?: number }
   | { ok: true }
   | { message: string };
+
+const PARALLEL_ALIAS_TO_CANONICAL: Record<string, string> = {
+  SI: "SUDDEN IMPACT",
+  FS: "FILM STUDY",
+  RR: "ROUNDBALL ROYALTY",
+  FSA: "FUTURE STARS AUTOGRAPHS",
+  CA: "CERTIFIED AUTOGRAPHS",
+  PB: "POWER BOOSTERS",
+  DNA: "DNA",
+};
+
+const PARALLEL_CANONICAL_TO_ALIAS: Record<string, string> = Object.entries(PARALLEL_ALIAS_TO_CANONICAL).reduce(
+  (acc, [alias, canonical]) => {
+    const key = canonical.toUpperCase();
+    if (!acc[key]) acc[key] = alias;
+    return acc;
+  },
+  {} as Record<string, string>
+);
+
+function uniqueStrings(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const normalized = String(value || "").trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(normalized);
+  }
+  return output;
+}
+
+function canonicalParallelLabel(value: string | null | undefined) {
+  const normalized = normalizeParallelLabel(value);
+  if (!normalized) return "";
+  return PARALLEL_ALIAS_TO_CANONICAL[normalized.toUpperCase()] || normalized;
+}
+
+function setIdCandidates(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  const normalized = normalizeSetLabel(raw);
+  return uniqueStrings([raw, normalized]);
+}
+
+function parallelCandidates(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  const normalized = normalizeParallelLabel(raw);
+  const canonical = canonicalParallelLabel(raw);
+  const alias = canonical ? PARALLEL_CANONICAL_TO_ALIAS[canonical.toUpperCase()] || "" : "";
+  return uniqueStrings([raw, normalized, canonical, alias]);
+}
+
+function cardCandidates(value: string | null | undefined, options?: { includeLegacy?: boolean }) {
+  const includeLegacy = options?.includeLegacy !== false;
+  const raw = String(value || "").trim();
+  const normalized = normalizeCardNumber(raw);
+  const normalizedRawUpper = raw.toUpperCase();
+  const values: Array<string | null> = [];
+
+  if (normalized && normalized !== "ALL") {
+    values.push(normalized);
+  } else if (raw && normalizedRawUpper !== "ALL") {
+    values.push(raw);
+  }
+  if (raw && normalizedRawUpper !== "ALL") {
+    values.push(raw);
+  }
+
+  if (normalizedRawUpper === "ALL" || normalized === "ALL") {
+    values.push("ALL");
+    if (includeLegacy) values.push(null);
+  } else if (includeLegacy) {
+    values.push("ALL", null);
+  }
+
+  const seen = new Set<string>();
+  const output: Array<string | null> = [];
+  for (const entry of values) {
+    const key = entry == null ? "__NULL__" : entry.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(entry);
+  }
+  return output;
+}
 
 function toRow(reference: any): ReferenceRow {
   const rawPlayerSeed = String(reference.playerSeed || "").trim();
@@ -89,18 +177,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const refType = typeof req.query.refType === "string" ? req.query.refType.trim().toLowerCase() : "";
       const take = Math.min(5000, Math.max(1, Number(req.query.limit ?? 200) || 200));
 
-      const where: Record<string, any> = {};
-      if (setId) where.setId = setId;
-      if (cardNumber) {
-        const normalizedCard = cardNumber.toUpperCase();
-        if (normalizedCard === "ALL") {
-          where.OR = [{ cardNumber: "ALL" }, { cardNumber: null }];
-        } else {
-          where.OR = [{ cardNumber }, { cardNumber: "ALL" }, { cardNumber: null }];
+      const andClauses: Record<string, any>[] = [];
+      if (setId) {
+        const setIds = setIdCandidates(setId);
+        if (setIds.length === 1) {
+          andClauses.push({ setId: setIds[0] });
+        } else if (setIds.length > 1) {
+          andClauses.push({ setId: { in: setIds } });
         }
       }
-      if (parallelId) where.parallelId = parallelId;
-      if (refType === "front" || refType === "back") where.refType = refType;
+      if (parallelId) {
+        const parallels = parallelCandidates(parallelId);
+        if (parallels.length === 1) {
+          andClauses.push({ parallelId: parallels[0] });
+        } else if (parallels.length > 1) {
+          andClauses.push({ parallelId: { in: parallels } });
+        }
+      }
+      if (cardNumber) {
+        const cards = cardCandidates(cardNumber, { includeLegacy: true });
+        if (cards.length > 0) {
+          andClauses.push({
+            OR: cards.map((card) => (card == null ? { cardNumber: null } : { cardNumber: card })),
+          });
+        }
+      }
+      if (refType === "front" || refType === "back") {
+        andClauses.push({ refType });
+      }
+      const where: Record<string, any> =
+        andClauses.length === 0 ? {} : andClauses.length === 1 ? andClauses[0] : { AND: andClauses };
 
       let references: any[] = [];
       try {
@@ -307,11 +413,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           .trim()
           .toLowerCase() === "true";
 
-        const where: Record<string, any> = {
-          setId,
-        };
-        if (parallelId) where.parallelId = parallelId;
-        if (cardNumber) where.cardNumber = cardNumber;
+        const setIds = setIdCandidates(setId);
+        const where: Record<string, any> = {};
+        if (setIds.length === 1) {
+          where.setId = setIds[0];
+        } else if (setIds.length > 1) {
+          where.setId = { in: setIds };
+        } else {
+          where.setId = setId;
+        }
+        if (parallelId) {
+          const parallels = parallelCandidates(parallelId);
+          if (parallels.length === 1) {
+            where.parallelId = parallels[0];
+          } else if (parallels.length > 1) {
+            where.parallelId = { in: parallels };
+          } else {
+            where.parallelId = parallelId;
+          }
+        }
+        if (cardNumber) {
+          const cards = cardCandidates(cardNumber, { includeLegacy: false });
+          if (cards.length === 1) {
+            where.cardNumber = cards[0];
+          } else if (cards.length > 1) {
+            where.cardNumber = { in: cards.filter((value): value is string => value != null) };
+          } else {
+            where.cardNumber = cardNumber;
+          }
+        }
         if (!includeOwned) {
           where.ownedStatus = { not: "owned" };
         }
@@ -325,10 +455,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         } catch {
           // Backward-compatible fallback if ownedStatus filtering is unavailable.
           const fallbackWhere: Record<string, any> = {
-            setId,
+            setId: where.setId,
           };
-          if (parallelId) fallbackWhere.parallelId = parallelId;
-          if (cardNumber) fallbackWhere.cardNumber = cardNumber;
+          if (where.parallelId !== undefined) fallbackWhere.parallelId = where.parallelId;
+          if (where.cardNumber !== undefined) fallbackWhere.cardNumber = where.cardNumber;
           if (!includeOwned) {
             fallbackWhere.qaStatus = { in: ["pending", "reject"] };
           }

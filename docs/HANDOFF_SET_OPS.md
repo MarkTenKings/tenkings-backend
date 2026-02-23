@@ -1,7 +1,7 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-02-22` (parser hardening + PDF checklist ingestion support)
+- Last reviewed: `2026-02-23` (variant ref key-match hardening for insert/autograph photo counts)
 - Branch: `main`
 - Latest commits:
   - `6e3f20c` fix(set-ops): harden checklist parsing and block html/noise rows
@@ -85,6 +85,17 @@ Build Set Ops UI flow with:
 - Mandatory context/runbook/handoff docs were re-read per `AGENTS.md`.
 - No deploy/restart/migration commands were run in this session.
 - No runtime or DB evidence was newly collected; existing `Next Actions (Ordered)` remains unchanged.
+
+## Session Update (2026-02-23)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Confirmed active branch remains `main` (`git status -sb` showed `## main...origin/main` before doc updates).
+- No code/runtime changes, deploys, restarts, migrations, or DB operations were executed.
+- Existing `Next Actions (Ordered)` remains unchanged.
 
 ## Implementation Progress (2026-02-22)
 - P0-A Ticket 1 complete in code: Set Ops Prisma foundation models/enums + migration scaffold added.
@@ -602,3 +613,25 @@ Build Set Ops UI flow with:
 - Expected result:
   - reference rows align with variant keys more reliably.
   - QA `Photos` count should match seed inserts after clearing external refs and reseeding.
+
+## Variant Ref Key-Match Hardening (2026-02-23, Follow-up #17)
+- New production signal:
+  - production set run reported:
+    - `Seeded all targets for 2023-24 Topps Chrome Basketball Retail: 204 processed, inserted 1813, skipped 23. Source: set-ops player worksheet rows.`
+  - `/admin/variant-ref-qa` still showed many insert/autograph rows with `Photos=0` (SI/FS/RR/FSA/DNA style rows).
+- Root-cause class:
+  - read-side matching in variant/ref APIs was still exact-string based for `setId + cardNumber + parallelId`.
+  - seed writes were normalized/canonicalized, so any dirty/alias variant keys (whitespace/entity/alias like `SI`) could miss joins and appear as zero-photo.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/seed.ts`
+    - canonicalizes parallel aliases on write (`SI` -> `SUDDEN IMPACT`, `FS` -> `FILM STUDY`, `RR` -> `ROUNDBALL ROYALTY`, `FSA` -> `FUTURE STARS AUTOGRAPHS`, etc.).
+  - `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+    - keying now normalizes set/card/parallel before join/count.
+    - count/done/preview fetch paths now query across raw + normalized + alias candidates to catch legacy key drift.
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+    - GET filter path now resolves set/parallel/card candidate keys (raw/normalized/alias) to return matching refs for QA drill-down.
+    - set-level DELETE path now uses normalized/alias-aware filters so purge/reseed operations hit both legacy and canonical key variants.
+- Validation executed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/seed.ts` passed.
+- Deployment status:
+  - No deploy/restart/migration executed in this coding session.
