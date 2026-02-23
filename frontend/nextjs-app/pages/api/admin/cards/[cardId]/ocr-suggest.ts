@@ -75,6 +75,43 @@ type LlmParseResponse = {
   confidence: SuggestionConfidence;
 };
 
+type OcrImageSection = {
+  id: string;
+  text: string;
+};
+
+type OcrPhotoId = "FRONT" | "BACK" | "TILT";
+
+type PhotoOcrState = {
+  id: OcrPhotoId;
+  hasImage: boolean;
+  status: "missing_image" | "empty_text" | "ok";
+  ocrText: string;
+  tokenCount: number;
+  sourceImageId: string | null;
+};
+
+type MemoryContext = {
+  setId: string | null;
+  year: string | null;
+  manufacturer: string | null;
+  sport: string | null;
+  cardNumber: string | null;
+  numbered: string | null;
+};
+
+type MemoryApplyEntry = {
+  field: keyof SuggestionFields;
+  value: string;
+  confidence: number;
+  support: number;
+};
+
+const OCR_PHOTO_IDS: OcrPhotoId[] = ["FRONT", "BACK", "TILT"];
+const REQUIRED_OCR_PHOTO_IDS: OcrPhotoId[] = ["FRONT", "BACK"];
+const TRUE_STRINGS = new Set(["true", "yes", "1"]);
+const BOOLEAN_MEMORY_FIELDS = new Set<keyof SuggestionFields>(["autograph", "memorabilia", "graded"]);
+
 function coerceNullableString(value: unknown): string | null {
   if (typeof value !== "string") {
     return null;
@@ -117,7 +154,10 @@ function parseLlmJsonPayload(raw: string): LlmParseResponse | null {
   }
 }
 
-async function parseWithLlm(ocrText: string): Promise<LlmParseResponse | null> {
+async function parseWithLlm(
+  ocrText: string,
+  imageSections: OcrImageSection[]
+): Promise<LlmParseResponse | null> {
   const apiKey = (process.env.OPENAI_API_KEY ?? "").trim();
   if (!apiKey) {
     return null;
@@ -134,6 +174,11 @@ async function parseWithLlm(ocrText: string): Promise<LlmParseResponse | null> {
   FIELD_KEYS.forEach((key) => {
     confidenceProperties[key] = { type: ["number", "null"], minimum: 0, maximum: 1 };
   });
+
+  const labeledSections =
+    imageSections.length > 0
+      ? imageSections.map((section) => `[${section.id}]\n${section.text}`).join("\n\n")
+      : "No per-image OCR sections provided.";
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -152,7 +197,7 @@ async function parseWithLlm(ocrText: string): Promise<LlmParseResponse | null> {
         },
         {
           role: "user",
-          content: `OCR text:\n${ocrText}`,
+          content: `OCR combined text:\n${ocrText}\n\nOCR by photo:\n${labeledSections}`,
         },
       ],
       response_format: {
@@ -198,6 +243,246 @@ async function parseWithLlm(ocrText: string): Promise<LlmParseResponse | null> {
   }
 
   return parseLlmJsonPayload(content);
+}
+
+function normalizeImageLabel(value: string | null | undefined): string {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) {
+    return "UNKNOWN";
+  }
+  if (normalized === "front" || normalized === "back" || normalized === "tilt") {
+    return normalized.toUpperCase();
+  }
+  return normalized.toUpperCase();
+}
+
+function toMemoryToken(value: string | null | undefined): string | null {
+  const normalized = String(value || "").trim().toLowerCase();
+  return normalized || null;
+}
+
+function isTruthyString(value: string | null | undefined): boolean {
+  const normalized = String(value || "").trim().toLowerCase();
+  return TRUE_STRINGS.has(normalized);
+}
+
+function buildPhotoOcrState(params: {
+  frontImageUrl: string | null;
+  backImageUrl: string | null;
+  tiltImageUrl: string | null;
+  results: Array<{ id: string | null; text: string; tokenCount: number }>;
+}) {
+  const resultById = new Map<OcrPhotoId, { text: string; tokenCount: number; sourceImageId: string | null }>();
+  params.results.forEach((result) => {
+    const normalizedId = normalizeImageLabel(result.id);
+    if (normalizedId !== "FRONT" && normalizedId !== "BACK" && normalizedId !== "TILT") {
+      return;
+    }
+    resultById.set(normalizedId, {
+      text: result.text.trim(),
+      tokenCount: result.tokenCount,
+      sourceImageId: result.id,
+    });
+  });
+
+  const byId = OCR_PHOTO_IDS.reduce<Record<OcrPhotoId, PhotoOcrState>>((acc, id) => {
+    const hasImage =
+      id === "FRONT"
+        ? Boolean(params.frontImageUrl)
+        : id === "BACK"
+        ? Boolean(params.backImageUrl)
+        : Boolean(params.tiltImageUrl);
+    const result = resultById.get(id);
+    const text = result?.text ?? "";
+    acc[id] = {
+      id,
+      hasImage,
+      status: !hasImage ? "missing_image" : text ? "ok" : "empty_text",
+      ocrText: text,
+      tokenCount: result?.tokenCount ?? 0,
+      sourceImageId: result?.sourceImageId ?? null,
+    };
+    return acc;
+  }, {} as Record<OcrPhotoId, PhotoOcrState>);
+
+  const missingRequired = REQUIRED_OCR_PHOTO_IDS.filter((id) => byId[id].status !== "ok");
+  const readiness =
+    missingRequired.length > 0
+      ? "missing_required"
+      : OCR_PHOTO_IDS.every((id) => byId[id].status === "ok")
+      ? "ready"
+      : "partial";
+
+  return {
+    byId,
+    readiness: {
+      status: readiness,
+      required: REQUIRED_OCR_PHOTO_IDS,
+      missingRequired,
+      processedCount: OCR_PHOTO_IDS.filter((id) => byId[id].status === "ok").length,
+      capturedCount: OCR_PHOTO_IDS.filter((id) => byId[id].hasImage).length,
+    },
+  };
+}
+
+async function applyFeedbackMemoryHints(params: {
+  fields: SuggestionFields;
+  confidence: SuggestionConfidence;
+}) {
+  const { fields, confidence } = params;
+  const context: MemoryContext = {
+    setId: coerceNullableString(fields.setName),
+    year: coerceNullableString(fields.year),
+    manufacturer: coerceNullableString(fields.manufacturer),
+    sport: coerceNullableString(fields.sport),
+    cardNumber: coerceNullableString(fields.cardNumber),
+    numbered: coerceNullableString(fields.numbered),
+  };
+
+  const orClauses: Record<string, string>[] = [];
+  if (context.setId) orClauses.push({ setId: context.setId });
+  if (context.cardNumber) orClauses.push({ cardNumber: context.cardNumber });
+  if (context.year) orClauses.push({ year: context.year });
+  if (context.manufacturer) orClauses.push({ manufacturer: context.manufacturer });
+  if (context.sport) orClauses.push({ sport: context.sport });
+  if (orClauses.length === 0) {
+    return {
+      context,
+      consideredRows: 0,
+      applied: [] as MemoryApplyEntry[],
+    };
+  }
+
+  const rows = (await (prisma as any).ocrFeedbackEvent.findMany({
+    where: {
+      fieldName: { in: FIELD_KEYS },
+      humanValue: { not: null },
+      OR: orClauses,
+    },
+    orderBy: [{ createdAt: "desc" }],
+    take: 500,
+    select: {
+      fieldName: true,
+      humanValue: true,
+      wasCorrect: true,
+      setId: true,
+      year: true,
+      manufacturer: true,
+      sport: true,
+      cardNumber: true,
+      numbered: true,
+      createdAt: true,
+    },
+  })) as Array<{
+    fieldName: string;
+    humanValue: string | null;
+    wasCorrect: boolean;
+    setId: string | null;
+    year: string | null;
+    manufacturer: string | null;
+    sport: string | null;
+    cardNumber: string | null;
+    numbered: string | null;
+    createdAt: Date;
+  }>;
+
+  type CandidateAggregate = {
+    field: keyof SuggestionFields;
+    value: string;
+    score: number;
+    support: number;
+  };
+
+  const aggregateByFieldValue = new Map<string, CandidateAggregate>();
+  const nowMs = Date.now();
+  rows.forEach((row) => {
+    const field = row.fieldName as keyof SuggestionFields;
+    if (!FIELD_KEYS.includes(field)) {
+      return;
+    }
+    const humanValue = coerceNullableString(row.humanValue);
+    if (!humanValue) {
+      return;
+    }
+    if (BOOLEAN_MEMORY_FIELDS.has(field) && !isTruthyString(humanValue)) {
+      return;
+    }
+
+    let score = 0.2;
+    const rowSet = toMemoryToken(row.setId);
+    const rowYear = toMemoryToken(row.year);
+    const rowManufacturer = toMemoryToken(row.manufacturer);
+    const rowSport = toMemoryToken(row.sport);
+    const rowCardNumber = toMemoryToken(row.cardNumber);
+    const rowNumbered = toMemoryToken(row.numbered);
+    const ctxSet = toMemoryToken(context.setId);
+    const ctxYear = toMemoryToken(context.year);
+    const ctxManufacturer = toMemoryToken(context.manufacturer);
+    const ctxSport = toMemoryToken(context.sport);
+    const ctxCardNumber = toMemoryToken(context.cardNumber);
+    const ctxNumbered = toMemoryToken(context.numbered);
+
+    if (ctxSet && rowSet === ctxSet) score += 2.2;
+    if (ctxCardNumber && rowCardNumber === ctxCardNumber) score += 1.5;
+    if (ctxYear && rowYear === ctxYear) score += 0.8;
+    if (ctxManufacturer && rowManufacturer === ctxManufacturer) score += 0.9;
+    if (ctxSport && rowSport === ctxSport) score += 0.9;
+    if (ctxNumbered && rowNumbered === ctxNumbered) score += 0.6;
+    score += row.wasCorrect ? 0.15 : 0.35;
+
+    const ageDays = Math.max(0, (nowMs - new Date(row.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+    const recencyMultiplier = Math.max(0.2, 1 - Math.min(1, ageDays / 180));
+    score *= recencyMultiplier;
+
+    const aggregateKey = `${field}::${humanValue.toLowerCase()}`;
+    const current = aggregateByFieldValue.get(aggregateKey);
+    if (current) {
+      current.score += score;
+      current.support += 1;
+    } else {
+      aggregateByFieldValue.set(aggregateKey, {
+        field,
+        value: humanValue,
+        score,
+        support: 1,
+      });
+    }
+  });
+
+  const topByField = new Map<keyof SuggestionFields, CandidateAggregate>();
+  aggregateByFieldValue.forEach((entry) => {
+    const current = topByField.get(entry.field);
+    if (!current || entry.score > current.score || (entry.score === current.score && entry.support > current.support)) {
+      topByField.set(entry.field, entry);
+    }
+  });
+
+  const applied: MemoryApplyEntry[] = [];
+  FIELD_KEYS.forEach((field) => {
+    const top = topByField.get(field);
+    if (!top || top.score < 1.2) {
+      return;
+    }
+    const learnedConfidence = Math.min(0.98, 0.55 + Math.min(0.4, top.score / 5));
+    const currentConfidence = confidence[field] ?? 0;
+    const currentValue = fields[field];
+    if (!currentValue || currentConfidence < learnedConfidence || currentValue.trim().toLowerCase() === top.value.toLowerCase()) {
+      fields[field] = top.value;
+      confidence[field] = Math.max(currentConfidence, learnedConfidence);
+      applied.push({
+        field,
+        value: top.value,
+        confidence: Number(learnedConfidence.toFixed(3)),
+        support: top.support,
+      });
+    }
+  });
+
+  return {
+    context,
+    consideredRows: rows.length,
+    applied,
+  };
 }
 
 function buildProxyUrl(req: NextApiRequest, targetUrl: string): string | null {
@@ -277,11 +562,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const backProxyUrl = backImageUrl ? buildProxyUrl(req, backImageUrl) : null;
     const tiltProxyUrl = tiltImageUrl ? buildProxyUrl(req, tiltImageUrl) : null;
 
+    const pendingPhotoState = buildPhotoOcrState({
+      frontImageUrl: frontImageUrl ?? null,
+      backImageUrl: backImageUrl ?? null,
+      tiltImageUrl: tiltImageUrl ?? null,
+      results: [],
+    });
+
     if ((!card.ocrText || !card.ocrText.trim()) && !frontProxyUrl && !backProxyUrl && !tiltProxyUrl) {
       return res.status(200).json({
         suggestions: {},
         threshold: DEFAULT_THRESHOLD,
-        audit: { source: "local-ocr", model: "paddleocr", createdAt: new Date().toISOString(), fields: {}, confidence: {} },
+        audit: {
+          source: "local-ocr",
+          model: "paddleocr",
+          createdAt: new Date().toISOString(),
+          fields: {},
+          confidence: {},
+          photoOcr: pendingPhotoState.byId,
+          readiness: pendingPhotoState.readiness,
+        },
         status: "pending",
       });
     }
@@ -296,12 +596,30 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(200).json({
         suggestions: {},
         threshold: DEFAULT_THRESHOLD,
-        audit: { source: "local-ocr", model: "paddleocr", createdAt: new Date().toISOString(), fields: {}, confidence: {} },
+        audit: {
+          source: "local-ocr",
+          model: "paddleocr",
+          createdAt: new Date().toISOString(),
+          fields: {},
+          confidence: {},
+          photoOcr: pendingPhotoState.byId,
+          readiness: pendingPhotoState.readiness,
+        },
         status: "pending",
       });
     }
 
     const ocrResponse = await runLocalOcr(images);
+    const photoState = buildPhotoOcrState({
+      frontImageUrl: frontImageUrl ?? null,
+      backImageUrl: backImageUrl ?? null,
+      tiltImageUrl: tiltImageUrl ?? null,
+      results: ocrResponse.results.map((result) => ({
+        id: typeof result?.id === "string" ? result.id : null,
+        text: typeof result?.text === "string" ? result.text : "",
+        tokenCount: Array.isArray(result?.tokens) ? result.tokens.length : 0,
+      })),
+    });
     const ocrTokens = ocrResponse.results.flatMap((result) => {
       const tokens = Array.isArray(result.tokens) ? result.tokens : [];
       return tokens.map((token) => ({
@@ -319,9 +637,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
               }))
               .slice(0, 8)
           : [],
-      }));
+        }));
     });
-    const combinedTextRaw = ocrResponse.combined_text ?? "";
+    const imageSections: OcrImageSection[] = OCR_PHOTO_IDS.map((photoId) => {
+      const state = photoState.byId[photoId];
+      if (!state?.ocrText) {
+        return null;
+      }
+      return {
+        id: photoId,
+        text: state.ocrText,
+      };
+    }).filter((entry): entry is OcrImageSection => Boolean(entry));
+    const combinedTextRaw =
+      (typeof ocrResponse.combined_text === "string" ? ocrResponse.combined_text.trim() : "") ||
+      imageSections.map((section) => section.text).join("\n\n");
     const combinedText = combinedTextRaw.toLowerCase();
     const normalizedNumberedText = normalizeForNumbered(combinedTextRaw);
 
@@ -481,7 +811,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     try {
-      const llmResult = await parseWithLlm(combinedTextRaw);
+      const llmResult = await parseWithLlm(combinedTextRaw, imageSections);
       if (llmResult) {
         FIELD_KEYS.forEach((key) => {
           if (llmResult.fields[key]) {
@@ -496,6 +826,102 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     } catch (error) {
       console.warn("LLM OCR parse failed; using heuristic suggestions", error);
+    }
+
+    let memoryAudit: {
+      context: MemoryContext;
+      consideredRows: number;
+      applied: MemoryApplyEntry[];
+      error?: string;
+    } = {
+      context: {
+        setId: coerceNullableString(fields.setName),
+        year: coerceNullableString(fields.year),
+        manufacturer: coerceNullableString(fields.manufacturer),
+        sport: coerceNullableString(fields.sport),
+        cardNumber: coerceNullableString(fields.cardNumber),
+        numbered: coerceNullableString(fields.numbered),
+      },
+      consideredRows: 0,
+      applied: [],
+    };
+    try {
+      memoryAudit = await applyFeedbackMemoryHints({ fields, confidence });
+    } catch (error) {
+      console.warn("OCR feedback memory apply failed", error);
+      memoryAudit = {
+        ...memoryAudit,
+        error: error instanceof Error ? error.message : "memory_apply_failed",
+      };
+    }
+
+    let variantMatchAudit:
+      | {
+          ok: boolean;
+          message?: string;
+          matchedSetId?: string;
+          matchedCardNumber?: string;
+          candidates?: Array<{ parallelId: string; confidence: number; reason: string }>;
+          topCandidate?: { parallelId: string; confidence: number; reason: string } | null;
+        }
+      | null = null;
+
+    const suggestedSetId = fields.setName?.trim() || null;
+    const suggestedCardNumber = fields.cardNumber?.trim() || null;
+    const suggestedNumbered = fields.numbered?.trim() || null;
+    if (suggestedSetId) {
+      try {
+        const matchResult = await runVariantMatch({
+          cardAssetId: cardId,
+          setId: suggestedSetId,
+          cardNumber: suggestedCardNumber,
+          numbered: suggestedNumbered,
+        });
+        if (matchResult.ok) {
+          const topCandidate = matchResult.candidates[0] ?? null;
+          variantMatchAudit = {
+            ok: true,
+            matchedSetId: matchResult.matchedSetId,
+            matchedCardNumber: matchResult.matchedCardNumber,
+            candidates: matchResult.candidates,
+            topCandidate,
+          };
+          if (!fields.setName) {
+            fields.setName = matchResult.matchedSetId;
+            confidence.setName = Math.max(confidence.setName ?? 0, 0.86);
+          }
+          if (
+            (!fields.cardNumber || fields.cardNumber.toUpperCase() === "ALL") &&
+            matchResult.matchedCardNumber &&
+            matchResult.matchedCardNumber.toUpperCase() !== "ALL"
+          ) {
+            fields.cardNumber = matchResult.matchedCardNumber;
+            confidence.cardNumber = Math.max(confidence.cardNumber ?? 0, 0.82);
+          }
+          if (topCandidate) {
+            const boostedConfidence = Math.min(0.95, Math.max(0.72, topCandidate.confidence));
+            if (!fields.parallel || (confidence.parallel ?? 0) < boostedConfidence) {
+              fields.parallel = topCandidate.parallelId;
+              confidence.parallel = boostedConfidence;
+            }
+          }
+        } else {
+          variantMatchAudit = {
+            ok: false,
+            message: matchResult.message,
+            matchedSetId: matchResult.matchedSetId,
+            matchedCardNumber: matchResult.matchedCardNumber,
+            candidates: matchResult.candidates,
+            topCandidate: matchResult.candidates?.[0] ?? null,
+          };
+        }
+      } catch (error) {
+        console.warn("Auto variant match failed after OCR", error);
+        variantMatchAudit = {
+          ok: false,
+          message: error instanceof Error ? error.message : "variant_match_failed",
+        };
+      }
     }
 
     const suggestions: Record<string, string> = {};
@@ -515,15 +941,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       fields,
       confidence,
       tokens: ocrTokens,
+      photoOcr: photoState.byId,
+      readiness: photoState.readiness,
+      memory: memoryAudit,
+      variantMatch: variantMatchAudit,
     };
-
-    await prisma.cardAsset.update({
-      where: { id: cardId },
-      data: {
-        ocrSuggestionJson: audit,
-        ocrSuggestionUpdatedAt: new Date(),
-      },
-    });
 
     await prisma.cardAsset.update({
       where: { id: cardId },
@@ -533,22 +955,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ocrSuggestionUpdatedAt: new Date(),
       },
     });
-
-    const suggestedSetId = fields.setName?.trim() || null;
-    const suggestedCardNumber = fields.cardNumber?.trim() || null;
-    const suggestedNumbered = fields.numbered?.trim() || null;
-    if (suggestedSetId) {
-      try {
-        await runVariantMatch({
-          cardAssetId: cardId,
-          setId: suggestedSetId,
-          cardNumber: suggestedCardNumber,
-          numbered: suggestedNumbered,
-        });
-      } catch (error) {
-        console.warn("Auto variant match failed after OCR", error);
-      }
-    }
 
     return res.status(200).json({
       suggestions,

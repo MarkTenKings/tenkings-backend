@@ -22,6 +22,7 @@ const AI_STATUS_MESSAGES = [
   "Organizing results",
 ] as const;
 const PHOTO_CAROUSEL_ORDER = ["FRONT", "BACK", "TILT"] as const;
+const PRICE_REQUIRED_MESSAGE = "Price valuation field must be complete before moving a card to inventory ready.";
 
 type CardSummary = {
   id: string;
@@ -156,6 +157,56 @@ const queueStatusMeta = (card: CardSummary) => {
   return { label: "", className: "" };
 };
 
+function formatMinorToDollarInput(minor: number | null | undefined): string {
+  if (minor == null || !Number.isFinite(minor)) {
+    return "";
+  }
+  return (minor / 100).toFixed(2);
+}
+
+function parseDollarInputToMinor(input: string): number | null | undefined {
+  const normalized = input.replace(/[$,\s]/g, "").trim();
+  if (!normalized) {
+    return null;
+  }
+  if (!/^\d*(?:\.\d{0,2})?$/.test(normalized) || normalized === ".") {
+    return undefined;
+  }
+  const [dollarsRaw, centsRaw = ""] = normalized.split(".");
+  const dollars = dollarsRaw ? Number(dollarsRaw) : 0;
+  if (!Number.isFinite(dollars)) {
+    return undefined;
+  }
+  const cents = Number((centsRaw + "00").slice(0, 2));
+  if (!Number.isFinite(cents)) {
+    return undefined;
+  }
+  return Math.round(dollars * 100 + cents);
+}
+
+type ReviewDraftSnapshot = {
+  query: string;
+  variantNotes: string;
+  variantSetId: string;
+  variantCardNumber: string;
+};
+
+const normalizeDraftSnapshot = (snapshot: ReviewDraftSnapshot): ReviewDraftSnapshot => ({
+  query: snapshot.query.trim(),
+  variantNotes: snapshot.variantNotes.trim(),
+  variantSetId: snapshot.variantSetId.trim(),
+  variantCardNumber: snapshot.variantCardNumber.trim(),
+});
+
+const areDraftSnapshotsEqual = (a: ReviewDraftSnapshot | null | undefined, b: ReviewDraftSnapshot) =>
+  Boolean(
+    a &&
+      a.query === b.query &&
+      a.variantNotes === b.variantNotes &&
+      a.variantSetId === b.variantSetId &&
+      a.variantCardNumber === b.variantCardNumber
+  );
+
 type JobResultSource = {
   source: string;
   searchUrl: string;
@@ -205,6 +256,12 @@ export default function KingsReview() {
   const [query, setQuery] = useState<string>("");
   const [queryTouched, setQueryTouched] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [autosavingValuation, setAutosavingValuation] = useState(false);
+  const [autosavingDraft, setAutosavingDraft] = useState(false);
+  const [draftSaveStatus, setDraftSaveStatus] = useState<"idle" | "saved" | "error">("idle");
+  const [draftSavedAt, setDraftSavedAt] = useState<number | null>(null);
+  const [valuationInput, setValuationInput] = useState("");
+  const [valuationError, setValuationError] = useState<string | null>(null);
   const [variantNotes, setVariantNotes] = useState("");
   const [variantSetId, setVariantSetId] = useState("");
   const [variantCardNumber, setVariantCardNumber] = useState("");
@@ -226,6 +283,11 @@ export default function KingsReview() {
   const cardDetailCacheRef = useRef<Map<string, CardDetail>>(new Map());
   const inflightCardRef = useRef<Map<string, Promise<CardDetail | null>>>(new Map());
   const imagePreloadRef = useRef<Set<string>>(new Set());
+  const lastSavedValuationRef = useRef<Map<string, number | null>>(new Map());
+  const lastSavedDraftRef = useRef<Map<string, ReviewDraftSnapshot>>(new Map());
+  const valuationInputRef = useRef<HTMLInputElement | null>(null);
+  const valuationCardSyncRef = useRef<string | null>(null);
+  const draftCardSyncRef = useRef<string | null>(null);
   const [teachForm, setTeachForm] = useState({
     source: "ebay_sold",
     action: "click",
@@ -380,6 +442,18 @@ export default function KingsReview() {
         : null;
   const aiMessage = job?.status === "IN_PROGRESS" ? AI_STATUS_MESSAGES[aiMessageIndex] : null;
   const activePhotoIndex = Math.max(0, PHOTO_CAROUSEL_ORDER.indexOf(activePhotoKind));
+  const draftAutosaveLabel = useMemo(() => {
+    if (autosavingDraft) {
+      return "Auto-saving review fields...";
+    }
+    if (draftSaveStatus === "error") {
+      return "Auto-save failed. Changes stay local until retry.";
+    }
+    if (draftSaveStatus === "saved" && draftSavedAt) {
+      return `Saved ${new Date(draftSavedAt).toLocaleTimeString()}`;
+    }
+    return null;
+  }, [autosavingDraft, draftSaveStatus, draftSavedAt]);
 
   useEffect(() => {
     const previousHtmlOverflow = document.documentElement.style.overflow;
@@ -732,15 +806,30 @@ export default function KingsReview() {
             }
             return "FRONT";
           });
-          setVariantSetId(
+          const nextVariantSetId =
             (nextCard.classificationNormalized as any)?.setName ??
-              (nextCard.classificationNormalized as any)?.setCode ??
-              ""
+            (nextCard.classificationNormalized as any)?.setCode ??
+            "";
+          const nextVariantCardNumber = (nextCard.classificationNormalized as any)?.cardNumber ?? "";
+          const nextVariantNotes = nextCard.variantDecision?.humanNotes ?? nextCard.customDetails ?? "";
+          const nextQuery = nextCard.customTitle ?? nextCard.fileName ?? "";
+          setVariantSetId(nextVariantSetId);
+          setVariantCardNumber(nextVariantCardNumber);
+          setVariantNotes(nextVariantNotes);
+          setQuery(nextQuery);
+          setQueryTouched(false);
+          draftCardSyncRef.current = nextCard.id;
+          lastSavedDraftRef.current.set(
+            nextCard.id,
+            normalizeDraftSnapshot({
+              query: nextQuery,
+              variantNotes: nextVariantNotes,
+              variantSetId: nextVariantSetId,
+              variantCardNumber: nextVariantCardNumber,
+            })
           );
-          setVariantCardNumber((nextCard.classificationNormalized as any)?.cardNumber ?? "");
-          if (!queryTouched) {
-            setQuery(nextCard.customTitle ?? nextCard.fileName ?? "");
-          }
+          setDraftSaveStatus("idle");
+          setDraftSavedAt(null);
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to load card");
@@ -861,9 +950,260 @@ export default function KingsReview() {
     }
   }, [activeCard, activePhotoKind, activePhotoThumbs, activePhotos]);
 
-  const handleSave = async () => {
+  useEffect(() => {
+    if (!activeCard?.id) {
+      valuationCardSyncRef.current = null;
+      setValuationInput("");
+      setValuationError(null);
+      return;
+    }
+    if (valuationCardSyncRef.current === activeCard.id) {
+      return;
+    }
+    valuationCardSyncRef.current = activeCard.id;
+    const savedMinor = activeCard.valuationMinor ?? null;
+    lastSavedValuationRef.current.set(activeCard.id, savedMinor);
+    setValuationInput(formatMinorToDollarInput(savedMinor));
+    setValuationError(null);
+  }, [activeCard?.id, activeCard?.valuationMinor]);
+
+  useEffect(() => {
+    if (activeCard?.id) {
+      return;
+    }
+    draftCardSyncRef.current = null;
+    setVariantNotes("");
+    setVariantSetId("");
+    setVariantCardNumber("");
+    setQuery("");
+    setQueryTouched(false);
+    setDraftSaveStatus("idle");
+    setDraftSavedAt(null);
+  }, [activeCard?.id]);
+
+  useEffect(() => {
+    if (!activeCard?.id || saving) {
+      return;
+    }
+    const cardId = activeCard.id;
+    const parsedMinor = parseDollarInputToMinor(valuationInput);
+    if (parsedMinor === undefined) {
+      return;
+    }
+    const lastSavedMinor = lastSavedValuationRef.current.get(cardId);
+    if (lastSavedMinor === parsedMinor) {
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        setAutosavingValuation(true);
+        try {
+          const res = await fetch(`/api/admin/cards/${cardId}`, {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              ...adminHeaders(),
+            },
+            body: JSON.stringify({
+              valuationMinor: parsedMinor,
+              valuationCurrency: activeCard.valuationCurrency ?? "USD",
+            }),
+          });
+          if (!res.ok) {
+            const payload = await res.json().catch(() => ({}));
+            throw new Error(payload?.message ?? "Failed to auto-save valuation");
+          }
+          const payload = await res.json().catch(() => null);
+          const updated = (payload?.card ?? payload ?? {}) as Partial<CardDetail>;
+          const nextMinor =
+            typeof updated.valuationMinor === "number" || updated.valuationMinor === null
+              ? updated.valuationMinor
+              : parsedMinor;
+          const nextCurrency =
+            typeof updated.valuationCurrency === "string" && updated.valuationCurrency
+              ? updated.valuationCurrency
+              : activeCard.valuationCurrency ?? "USD";
+          lastSavedValuationRef.current.set(cardId, nextMinor ?? null);
+          if (!cancelled) {
+            setCards((prev) =>
+              prev.map((card) =>
+                card.id === cardId
+                  ? {
+                      ...card,
+                      valuationMinor: nextMinor ?? null,
+                      valuationCurrency: nextCurrency,
+                    }
+                  : card
+              )
+            );
+            setActiveCard((prev) =>
+              prev && prev.id === cardId
+                ? {
+                    ...prev,
+                    valuationMinor: nextMinor ?? null,
+                    valuationCurrency: nextCurrency,
+                  }
+                : prev
+            );
+          }
+        } catch (err) {
+          if (!cancelled) {
+            setError(err instanceof Error ? err.message : "Failed to auto-save valuation");
+          }
+        } finally {
+          if (!cancelled) {
+            setAutosavingValuation(false);
+          }
+        }
+      })();
+    }, 650);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeCard?.id, activeCard?.valuationCurrency, adminHeaders, saving, valuationInput]);
+
+  useEffect(() => {
+    if (!activeCard?.id || saving) {
+      return;
+    }
+    const cardId = activeCard.id;
+    const nextSnapshot = normalizeDraftSnapshot({
+      query,
+      variantNotes,
+      variantSetId,
+      variantCardNumber,
+    });
+    const lastSavedSnapshot = lastSavedDraftRef.current.get(cardId);
+    if (areDraftSnapshotsEqual(lastSavedSnapshot, nextSnapshot)) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        setAutosavingDraft(true);
+        setDraftSaveStatus("idle");
+        try {
+          const res = await fetch(`/api/admin/cards/${cardId}`, {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              ...adminHeaders(),
+            },
+            body: JSON.stringify({
+              customTitle: nextSnapshot.query || null,
+              customDetails: nextSnapshot.variantNotes || null,
+              classificationUpdates: {
+                normalized: {
+                  setName: nextSnapshot.variantSetId || null,
+                  cardNumber: nextSnapshot.variantCardNumber || null,
+                },
+              },
+            }),
+          });
+          if (!res.ok) {
+            const payload = await res.json().catch(() => ({}));
+            throw new Error(payload?.message ?? "Failed to auto-save review fields");
+          }
+          const payload = await res.json().catch(() => null);
+          const updated = (payload?.card ?? payload ?? {}) as Partial<CardDetail>;
+          const resolvedTitle =
+            typeof updated.customTitle === "string" || updated.customTitle === null
+              ? updated.customTitle
+              : nextSnapshot.query || null;
+          const resolvedDetails =
+            typeof updated.customDetails === "string" || updated.customDetails === null
+              ? updated.customDetails
+              : nextSnapshot.variantNotes || null;
+
+          lastSavedDraftRef.current.set(cardId, nextSnapshot);
+          if (cancelled) {
+            return;
+          }
+
+          setCards((prev) =>
+            prev.map((card) =>
+              card.id === cardId
+                ? {
+                    ...card,
+                    customTitle: resolvedTitle,
+                  }
+                : card
+            )
+          );
+          setActiveCard((prev) =>
+            prev && prev.id === cardId
+              ? {
+                  ...prev,
+                  customTitle: resolvedTitle,
+                  customDetails: resolvedDetails,
+                  classificationNormalized:
+                    prev.classificationNormalized && typeof prev.classificationNormalized === "object"
+                      ? {
+                          ...prev.classificationNormalized,
+                          setName: nextSnapshot.variantSetId || null,
+                          cardNumber: nextSnapshot.variantCardNumber || null,
+                        }
+                      : prev.classificationNormalized,
+                }
+              : prev
+          );
+          const cached = cardDetailCacheRef.current.get(cardId);
+          if (cached) {
+            cardDetailCacheRef.current.set(cardId, {
+              ...cached,
+              customTitle: resolvedTitle,
+              customDetails: resolvedDetails,
+              classificationNormalized:
+                cached.classificationNormalized && typeof cached.classificationNormalized === "object"
+                  ? {
+                      ...cached.classificationNormalized,
+                      setName: nextSnapshot.variantSetId || null,
+                      cardNumber: nextSnapshot.variantCardNumber || null,
+                    }
+                  : cached.classificationNormalized,
+            });
+          }
+
+          setDraftSaveStatus("saved");
+          setDraftSavedAt(Date.now());
+        } catch {
+          if (!cancelled) {
+            setDraftSaveStatus("error");
+          }
+        } finally {
+          if (!cancelled) {
+            setAutosavingDraft(false);
+          }
+        }
+      })();
+    }, 700);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeCard?.id, adminHeaders, query, saving, variantCardNumber, variantNotes, variantSetId]);
+
+  const handleStageUpdate = async (nextStage: string) => {
     if (!activeCard) {
       return;
+    }
+    let valuationMinorForUpdate: number | null | undefined;
+    if (nextStage === "INVENTORY_READY_FOR_SALE") {
+      const parsed = parseDollarInputToMinor(valuationInput);
+      if (parsed == null || parsed <= 0) {
+        setValuationError(PRICE_REQUIRED_MESSAGE);
+        setTimeout(() => {
+          valuationInputRef.current?.focus();
+          valuationInputRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+        }, 0);
+        return;
+      }
+      valuationMinorForUpdate = parsed;
+      setValuationError(null);
     }
     setSaving(true);
     setError(null);
@@ -875,39 +1215,20 @@ export default function KingsReview() {
           ...adminHeaders(),
         },
         body: JSON.stringify({
-          customTitle: activeCard.customTitle,
-          customDetails: activeCard.customDetails,
-          valuationMinor: activeCard.valuationMinor,
-          valuationCurrency: activeCard.valuationCurrency,
+          reviewStage: nextStage,
+          ...(valuationMinorForUpdate !== undefined
+            ? {
+                valuationMinor: valuationMinorForUpdate,
+                valuationCurrency: activeCard.valuationCurrency ?? "USD",
+              }
+            : {}),
         }),
       });
       if (!res.ok) {
-        throw new Error("Failed to save changes");
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save changes");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleStageUpdate = async (nextStage: string) => {
-    if (!activeCard) {
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await fetch(`/api/admin/cards/${activeCard.id}`, {
-        method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          ...adminHeaders(),
-        },
-        body: JSON.stringify({ reviewStage: nextStage }),
-      });
-      if (!res.ok) {
         throw new Error("Failed to update stage");
+      }
+      if (valuationMinorForUpdate !== undefined) {
+        lastSavedValuationRef.current.set(activeCard.id, valuationMinorForUpdate);
       }
       if (STAGES.some((entry) => entry.id === nextStage)) {
         setStage(nextStage);
@@ -1414,6 +1735,9 @@ export default function KingsReview() {
                   Attach Search
                 </button>
               )}
+              {draftAutosaveLabel && (
+                <span className="text-[10px] uppercase tracking-[0.24em] text-slate-400">{draftAutosaveLabel}</span>
+              )}
             </div>
             <button
               type="button"
@@ -1856,20 +2180,56 @@ export default function KingsReview() {
                       </div>
                     )}
                     <label className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Price Valuation</span>
-                      <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-night-800 px-3 py-2">
-                        <span className="text-sm text-slate-400">$</span>
+                      <span className="text-[10px] uppercase tracking-[0.3em] text-rose-300">Price Valuation (USD)</span>
+                      <div
+                        className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
+                          valuationError || !valuationInput.trim()
+                            ? "border-rose-400/70 bg-rose-500/10"
+                            : "border-emerald-400/60 bg-emerald-500/10"
+                        }`}
+                      >
+                        <span className="text-sm text-rose-200">$</span>
                         <input
-                          value={activeCard.valuationMinor ?? ""}
-                          onChange={(event) =>
-                            setActiveCard((prev) =>
-                              prev ? { ...prev, valuationMinor: Number(event.target.value) || null } : prev
-                            )
-                          }
-                          className="flex-1 bg-transparent text-sm text-white outline-none"
+                          ref={valuationInputRef}
+                          inputMode="decimal"
+                          placeholder="13.00"
+                          value={valuationInput}
+                          onChange={(event) => {
+                            const nextInput = event.target.value;
+                            setValuationInput(nextInput);
+                            setValuationError(null);
+                            const parsed = parseDollarInputToMinor(nextInput);
+                            if (parsed !== undefined) {
+                              setActiveCard((prev) => (prev ? { ...prev, valuationMinor: parsed } : prev));
+                            }
+                          }}
+                          onBlur={() => {
+                            const parsed = parseDollarInputToMinor(valuationInput);
+                            if (parsed === undefined) {
+                              setValuationError("Enter a valid dollar amount (example: 13.00).");
+                            } else if (valuationError && parsed != null && parsed > 0) {
+                              setValuationError(null);
+                            }
+                          }}
+                          className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-rose-200/60"
                         />
                       </div>
+                      <span className={`text-[10px] ${valuationError ? "text-rose-300" : "text-slate-500"}`}>
+                        {valuationError
+                          ? valuationError
+                          : autosavingValuation
+                          ? "Auto-saving valuation..."
+                          : "Valuation auto-saves as you type."}
+                      </span>
                     </label>
+                    <button
+                      type="button"
+                      onClick={() => handleStageUpdate("INVENTORY_READY_FOR_SALE")}
+                      disabled={saving}
+                      className="rounded-full border border-gold-500/80 bg-gold-500 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-night-900 transition hover:bg-gold-400 disabled:opacity-60"
+                    >
+                      Move To Inventory Ready
+                    </button>
                     <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
                       <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Attached Evidence</p>
                       <div className="mt-3 space-y-2">
@@ -1930,7 +2290,7 @@ export default function KingsReview() {
                         Advanced Controls
                       </summary>
                       <div className="mt-3 space-y-3 text-xs text-slate-300">
-                        <div className="rounded-2xl border border-white/10 bg-night-900/60 px-3 py-3 text-[11px] uppercase tracking-[0.28em] text-slate-400">
+                        <div className="rounded-2xl border border-white/10 bg-night-900/60 px-3 py-3 text-[11px] text-slate-300">
                           <div className="mb-2 text-[9px] tracking-[0.24em] text-slate-500">
                             {activeCard.variantDecision?.selectedParallelId || activeCard.variantId
                               ? "Status: Matched"
@@ -1964,20 +2324,23 @@ export default function KingsReview() {
                               value={variantNotes}
                               onChange={(event) => setVariantNotes(event.target.value)}
                               placeholder="Variant notes / reason"
-                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
+                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] text-white"
                             />
+                            {draftAutosaveLabel && (
+                              <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">{draftAutosaveLabel}</p>
+                            )}
                             <div className="grid gap-2 md:grid-cols-2">
                               <input
                                 value={variantSetId}
                                 onChange={(event) => setVariantSetId(event.target.value)}
                                 placeholder="Set ID"
-                                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
+                                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] text-white"
                               />
                               <input
                                 value={variantCardNumber}
                                 onChange={(event) => setVariantCardNumber(event.target.value)}
                                 placeholder="Card #"
-                                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.2em] text-white"
+                                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] text-white"
                               />
                             </div>
                             <div className="flex flex-wrap gap-2">
@@ -2027,22 +2390,6 @@ export default function KingsReview() {
                               <option value="INVENTORY_READY_FOR_SALE">Inventory Ready</option>
                             </select>
                           </label>
-                          <button
-                            type="button"
-                            onClick={handleSave}
-                            disabled={saving}
-                            className="rounded-full border border-gold-400/60 bg-gold-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-gold-200 transition hover:border-gold-300 disabled:opacity-60"
-                          >
-                            {saving ? "Saving…" : "Save Card"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleStageUpdate("INVENTORY_READY_FOR_SALE")}
-                            disabled={saving}
-                            className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-300 disabled:opacity-60"
-                          >
-                            Move to Inventory Ready
-                          </button>
                           <button
                             type="button"
                             onClick={() => handleStageUpdate("ESCALATED_REVIEW")}
@@ -2112,13 +2459,14 @@ export default function KingsReview() {
                               </label>
                               <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
                                 Selector (Playwright)
-                                <input
+                                <textarea
                                   value={teachForm.selector}
                                   onChange={(event) =>
                                     setTeachForm((prev) => ({ ...prev, selector: event.target.value }))
                                   }
                                   placeholder="text=Sports or a[href*='sports']"
-                                  className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                                  rows={2}
+                                  className="resize-y rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
                                 />
                               </label>
                               <div className="grid gap-2 sm:grid-cols-2">
@@ -2180,7 +2528,7 @@ export default function KingsReview() {
                                     <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
                                       {rule.action} · {rule.source}
                                     </div>
-                                    <div className="line-clamp-1">{rule.selector}</div>
+                                    <div className="break-words whitespace-normal">{rule.selector}</div>
                                   </div>
                                   <button
                                     type="button"
@@ -2219,9 +2567,9 @@ export default function KingsReview() {
                   href={activeSourceData.searchUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-[10px] uppercase tracking-[0.3em] text-sky-300"
+                  className="inline-flex items-center rounded-full border border-sky-400/70 bg-sky-500/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-sky-100 transition hover:bg-sky-500/30"
                 >
-                  Open Search
+                  OPEN EBAY SEARCH
                 </a>
               )}
             </div>

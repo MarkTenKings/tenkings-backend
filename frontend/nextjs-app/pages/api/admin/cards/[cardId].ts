@@ -80,6 +80,9 @@ type OcrTokenRef = {
   bbox: Array<{ x: number; y: number }>;
 };
 
+const PRICE_REQUIRED_MESSAGE =
+  "Price valuation field must be complete before moving a card to inventory ready.";
+
 const FEEDBACK_FIELD_KEYS = [
   "playerName",
   "year",
@@ -963,6 +966,7 @@ export default async function handler(
           aiGradeRangeHigh: true,
           aiGradeGeneratedAt: true,
           reviewStage: true,
+          valuationMinor: true,
         },
       });
 
@@ -1028,6 +1032,26 @@ export default async function handler(
       if (Object.prototype.hasOwnProperty.call(body, "valuationMinor")) {
         updateData.valuationMinor = body.valuationMinor === null ? null : body.valuationMinor ?? null;
         touched = true;
+      }
+
+      const movingToInventoryReady =
+        Object.prototype.hasOwnProperty.call(body, "reviewStage") &&
+        body.reviewStage === "INVENTORY_READY_FOR_SALE" &&
+        card.reviewStage !== "INVENTORY_READY_FOR_SALE";
+
+      if (movingToInventoryReady) {
+        const nextValuationMinor = Object.prototype.hasOwnProperty.call(body, "valuationMinor")
+          ? body.valuationMinor == null
+            ? null
+            : Number(body.valuationMinor)
+          : card.valuationMinor ?? null;
+        if (
+          nextValuationMinor == null ||
+          !Number.isFinite(nextValuationMinor) ||
+          nextValuationMinor <= 0
+        ) {
+          return res.status(400).json({ message: PRICE_REQUIRED_MESSAGE });
+        }
       }
 
       if (Object.prototype.hasOwnProperty.call(body, "valuationCurrency")) {

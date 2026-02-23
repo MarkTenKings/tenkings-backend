@@ -1213,3 +1213,93 @@
 ### Notes
 - Existing Set Ops next actions and production test focus remain unchanged.
 - No new runtime/API/DB evidence was collected in this session.
+
+## 2026-02-23 - Uploads/KingsReview Workflow Polish (OCR context + valuation UX + option coverage)
+
+### Summary
+- Implemented workflow polish for Add Cards (`/admin/uploads`) and KingsReview (`/admin/kingsreview`) based on operator UX/test feedback.
+- Expanded variant option sourcing in Add Cards so manual dropdown choices are not constrained to only exact set-name matches.
+- Updated OCR suggest pipeline so LLM parsing receives photo-labeled OCR context (`FRONT/BACK/TILT`) in addition to combined OCR text.
+- Updated KingsReview valuation flow to use dollar-decimal input UX with required-price guard before Inventory Ready transitions.
+- Removed dependency on manual "Save Card" action for pricing by adding valuation auto-save behavior.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+
+### Implementation Notes
+- Add Cards variant option source behavior:
+  - `uploads.tsx` now merges approved variant rows across multiple query scopes (`productLine`, `year+manufacturer+sport`, `year+manufacturer`, `manufacturer+sport`, `manufacturer`) with dedupe.
+  - Sport-token filtering is still applied when it yields matches.
+  - Result: broader insert/parallel/manual fallback options while retaining approved-only gating.
+- OCR/LLM context behavior:
+  - `ocr-suggest.ts` now builds `imageSections` from OCR results and labels them by image id.
+  - LLM prompt includes:
+    - combined OCR text
+    - per-photo labeled OCR blocks
+- KingsReview pricing/transition behavior:
+  - valuation input switched to dollar-decimal UX (`13.00`) mapped to minor units for persistence.
+  - added validation guard for `INVENTORY_READY_FOR_SALE`:
+    - blocks transition when valuation is empty/invalid/non-positive.
+    - raises inline error message and focuses valuation field.
+  - valuation auto-save added (debounced PATCH) so reviewers no longer need explicit save clicks for valuation edits.
+  - moved primary `Move To Inventory Ready` action to directly below valuation field and styled as gold CTA.
+  - replaced Comp Detail header link with larger blue `OPEN EBAY SEARCH` button.
+  - improved advanced-controls readability (less forced uppercase in edit fields, multiline selector input, rule text wrapping).
+
+### Validation Evidence
+- Ran targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/admin/kingsreview.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- Result: pass with existing warning class only (`no-img-element` and one pre-existing hook-deps warning in KingsReview file).
+
+### Notes
+- No deploy/restart/migration or destructive DB operations were executed in this step.
+
+## 2026-02-23 - Uploads/KingsReview Hardening Pass (items 1,2,3,4,5,6,8)
+
+### Summary
+- Completed requested hardening pass for Add Cards + KingsReview workflow polish:
+  1. Server-enforced valuation requirement before inventory-ready transition.
+  2. Immediate OCR “teach/train” memory application from human feedback rows.
+  3. Explicit per-photo OCR status surfaced in OCR audit payload.
+  4. Per-photo OCR text persisted in audit payload (`photoOcr`).
+  5. New approved-set variant options endpoint + uploads integration.
+  6. Variant suggestion explainability surfaced in uploads UI.
+  8. KingsReview autosave expanded beyond valuation (query + variant notes + set/card context).
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/options.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added backend transition guard in card PATCH API:
+  - moving to `INVENTORY_READY_FOR_SALE` now requires positive valuation (`valuationMinor > 0`).
+- OCR suggest API enhancements:
+  - collects/stores `photoOcr` audit object for `FRONT/BACK/TILT` with status (`ok`, `empty_text`, `missing_image`) + OCR text.
+  - stores readiness summary (`ready` / `partial` / `missing_required`).
+  - loads `OcrFeedbackEvent` history and applies weighted memory hints to low-confidence/missing OCR fields.
+  - writes applied memory metadata into audit (`memory.context`, `memory.applied`, `memory.consideredRows`).
+  - captures variant matcher evidence in audit (`variantMatch`, top candidate reason/confidence).
+- Added new API route:
+  - `GET /api/admin/variants/options`
+  - returns approved-set scoped set options + grouped insert/parallel options + variant catalog rows.
+- Uploads page changes:
+  - now fetches variant options from `/api/admin/variants/options` instead of ad-hoc multi-query `/api/admin/variants` fan-out.
+  - displays OCR-by-photo summary and variant explainability lines (OCR confidence, option-pool match, image matcher reason).
+  - option picker modal now shows per-option set coverage + variant counts.
+- KingsReview autosave expansion:
+  - debounced autosave for `query` (`customTitle`), `variantNotes` (`customDetails`), and manual set/card context (`classificationUpdates.normalized`).
+  - saved-state indicator shown in header and advanced controls.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId].ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/variants/options.ts --file pages/admin/uploads.tsx --file pages/admin/kingsreview.tsx`
+- Result: pass with existing warnings only (`@next/next/no-img-element`, one pre-existing hook dependency warning in `kingsreview.tsx`).
+
+### Notes
+- No deploy/restart/migration or destructive DB operation was executed in this step.

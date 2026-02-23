@@ -763,3 +763,30 @@ Build Set Ops UI flow with:
     - `frontend/nextjs-app/pages/api/admin/set-ops/delete/dry-run.ts`
 - No code/runtime changes, deploys, restarts, migrations, tests, or DB operations were executed in this session.
 - Existing `Next Actions (Ordered)` remain unchanged.
+
+## Uploads/KingsReview Hardening (2026-02-23, Follow-up #22)
+- Scope completed in this coding session:
+  - backend valuation enforcement on inventory-ready transition
+  - OCR teach-memory feedback loop using `OcrFeedbackEvent`
+  - per-photo OCR state + text persistence in OCR audit payload
+  - dedicated approved-set variant options API for Add Cards
+  - uploads-side variant explainability rendering
+  - KingsReview autosave expansion (query + variant notes + set/card manual context)
+- Files changed:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - `frontend/nextjs-app/pages/api/admin/variants/options.ts`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- Behavioral notes:
+  - API now blocks transition to `INVENTORY_READY_FOR_SALE` without positive `valuationMinor` even if caller bypasses UI.
+  - OCR audit now includes `photoOcr` (`FRONT/BACK/TILT`) with per-photo status + OCR text, and `readiness` summary.
+  - OCR suggestion now applies immediate memory hints from prior human-corrected feedback rows and records applied hints in `audit.memory`.
+  - OCR pipeline now stores variant matcher evidence in audit (`audit.variantMatch`) for UI explainability.
+  - Add Cards variant choices now come from `/api/admin/variants/options` (approved, non-archived sets) scoped by year/manufacturer/sport with grouped set/insert/parallel options.
+  - KingsReview now autosaves reviewer draft context (query, variant notes, variant set/card context) and shows saved state indicator.
+- Validation run:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId].ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/variants/options.ts --file pages/admin/uploads.tsx --file pages/admin/kingsreview.tsx`
+  - Result: pass with existing warnings only (`no-img-element`, pre-existing hook-deps warning in KingsReview).
+- Deploy/runtime status:
+  - No deploy/restart/migration executed in this coding session.

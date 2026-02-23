@@ -100,6 +100,54 @@ type VariantApiRow = {
   parallelFamily?: string | null;
 };
 
+type VariantOptionItem = {
+  label: string;
+  kind: "insert" | "parallel";
+  count: number;
+  setIds: string[];
+  primarySetId: string | null;
+};
+
+type OcrPhotoAudit = {
+  id: "FRONT" | "BACK" | "TILT";
+  hasImage: boolean;
+  status: "missing_image" | "empty_text" | "ok";
+  ocrText: string;
+  tokenCount: number;
+  sourceImageId: string | null;
+};
+
+type OcrAuditPayload = {
+  fields?: Record<string, string | null>;
+  confidence?: Record<string, number | null>;
+  photoOcr?: Record<string, OcrPhotoAudit>;
+  readiness?: {
+    status?: string;
+    required?: string[];
+    missingRequired?: string[];
+    processedCount?: number;
+    capturedCount?: number;
+  };
+  memory?: {
+    context?: Record<string, string | null>;
+    consideredRows?: number;
+    applied?: Array<{
+      field?: string;
+      value?: string;
+      confidence?: number;
+      support?: number;
+    }>;
+    error?: string;
+  };
+  variantMatch?: {
+    ok?: boolean;
+    message?: string;
+    matchedSetId?: string;
+    matchedCardNumber?: string;
+    topCandidate?: { parallelId?: string; confidence?: number; reason?: string | null } | null;
+  };
+};
+
 const CATEGORY_LABELS: Record<string, string> = {
   SPORTS: "Sports",
   POKEMON: "Pokémon",
@@ -177,23 +225,6 @@ const pickBestCandidate = (options: string[], hints: string[], minScore = 0.8): 
     }
   });
   return bestScore >= minScore ? best : null;
-};
-
-const isInsertLikeRow = (row: VariantApiRow): boolean => {
-  const family = sanitizeNullableText(row.parallelFamily).toLowerCase();
-  const parallel = sanitizeNullableText(row.parallelId).toLowerCase();
-  const marker = `${family} ${parallel}`;
-  if (!marker.trim()) {
-    return false;
-  }
-  return (
-    marker.includes("insert") ||
-    marker.includes("autograph") ||
-    marker.includes("auto") ||
-    marker.includes("relic") ||
-    marker.includes("patch") ||
-    marker.includes("memorabilia")
-  );
 };
 
 const inferSportFromProductLine = (value: string): string => {
@@ -282,6 +313,11 @@ export default function AdminUploads() {
   const [productLineOptions, setProductLineOptions] = useState<string[]>([]);
   const [insertSetOptions, setInsertSetOptions] = useState<string[]>([]);
   const [parallelOptions, setParallelOptions] = useState<string[]>([]);
+  const [variantOptionItems, setVariantOptionItems] = useState<VariantOptionItem[]>([]);
+  const [variantScopeSummary, setVariantScopeSummary] = useState<{
+    approvedSetCount: number;
+    variantCount: number;
+  } | null>(null);
   const [selectedQueueCardId, setSelectedQueueCardId] = useState<string | null>(null);
   const [variantCatalog, setVariantCatalog] = useState<VariantApiRow[]>([]);
   const [optionPreviewUrls, setOptionPreviewUrls] = useState<Record<string, string>>({});
@@ -961,6 +997,8 @@ export default function AdminUploads() {
     setProductLineOptions([]);
     setInsertSetOptions([]);
     setParallelOptions([]);
+    setVariantOptionItems([]);
+    setVariantScopeSummary(null);
     setVariantCatalog([]);
     setOptionPreviewUrls({});
     resetOcrState();
@@ -1560,51 +1598,6 @@ export default function AdminUploads() {
   ]);
 
   useEffect(() => {
-    if (!session?.token || intakeRequired.category !== "sport") {
-      setProductLineOptions([]);
-      return;
-    }
-    const year = sanitizeNullableText(intakeRequired.year);
-    const manufacturer = sanitizeNullableText(intakeRequired.manufacturer);
-    if (!year || !manufacturer) {
-      setProductLineOptions([]);
-      return;
-    }
-    const controller = new AbortController();
-    const sportToken = sanitizeNullableText(intakeRequired.sport).toLowerCase();
-    const query = `${year} ${manufacturer}`.trim();
-    fetch(`/api/admin/variants?q=${encodeURIComponent(query)}&limit=500&approvedOnly=true`, {
-      headers: buildAdminHeaders(session.token),
-      signal: controller.signal,
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((payload) => {
-        if (!payload?.variants || !Array.isArray(payload.variants)) {
-          setProductLineOptions([]);
-          return;
-        }
-        const allSetIds = payload.variants
-          .map((row: { setId?: string }) => sanitizeNullableText(row?.setId))
-          .filter(Boolean);
-        const filteredSetIds = sportToken
-          ? allSetIds.filter((setId: string) => setId.toLowerCase().includes(sportToken))
-          : allSetIds;
-        const options = Array.from(new Set((filteredSetIds.length > 0 ? filteredSetIds : allSetIds) as string[])).sort(
-          (a, b) => a.localeCompare(b)
-        );
-        setProductLineOptions(options);
-      })
-      .catch(() => setProductLineOptions([]));
-    return () => controller.abort();
-  }, [
-    intakeRequired.category,
-    intakeRequired.manufacturer,
-    intakeRequired.sport,
-    intakeRequired.year,
-    session?.token,
-  ]);
-
-  useEffect(() => {
     if (intakeRequired.category !== "sport" || productLineOptions.length === 0) {
       return;
     }
@@ -2073,8 +2066,8 @@ export default function AdminUploads() {
 
   const buildSuggestionsFromAudit = useCallback(
     (threshold: number) => {
-      const fields = (ocrAudit as { fields?: Record<string, string | null> } | null)?.fields ?? {};
-      const confidence = (ocrAudit as { confidence?: Record<string, number | null> } | null)?.confidence ?? {};
+      const fields = typedOcrAudit?.fields ?? {};
+      const confidence = typedOcrAudit?.confidence ?? {};
       return Object.keys(fields).reduce<Record<string, string>>((acc, key) => {
         const value = fields[key];
         const score = confidence[key];
@@ -2084,7 +2077,7 @@ export default function AdminUploads() {
         return acc;
       }, {});
     },
-    [ocrAudit]
+    [typedOcrAudit]
   );
 
   const toggleOcrSuggestions = useCallback(() => {
@@ -2202,81 +2195,106 @@ export default function AdminUploads() {
   useEffect(() => {
     if (!session?.token || intakeRequired.category !== "sport") {
       setVariantCatalog([]);
+      setProductLineOptions([]);
       setInsertSetOptions([]);
       setParallelOptions([]);
+      setVariantOptionItems([]);
+      setVariantScopeSummary(null);
       return;
     }
-    const qParts = [intakeOptional.productLine, `${intakeRequired.year} ${intakeRequired.manufacturer}`]
-      .map((entry) => entry.trim())
-      .filter(Boolean);
-    if (qParts.length < 2) {
+    const year = sanitizeNullableText(intakeRequired.year);
+    const manufacturer = sanitizeNullableText(intakeRequired.manufacturer);
+    if (!year || !manufacturer) {
       setVariantCatalog([]);
+      setProductLineOptions([]);
       setInsertSetOptions([]);
       setParallelOptions([]);
+      setVariantOptionItems([]);
+      setVariantScopeSummary(null);
       return;
     }
+    const sport = sanitizeNullableText(intakeRequired.sport);
+    const productLine = sanitizeNullableText(intakeOptional.productLine);
     const controller = new AbortController();
-    const tokenHeaders = buildAdminHeaders(session.token);
-    const runFetch = async (query: string) => {
-      const res = await fetch(`/api/admin/variants?q=${encodeURIComponent(query)}&limit=500&approvedOnly=true`, {
-        headers: tokenHeaders,
+    (async () => {
+      const params = new URLSearchParams({
+        year,
+        manufacturer,
+      });
+      if (sport) {
+        params.set("sport", sport);
+      }
+      if (productLine) {
+        params.set("productLine", productLine);
+      }
+      params.set("limit", "5000");
+      const res = await fetch(`/api/admin/variants/options?${params.toString()}`, {
+        headers: buildAdminHeaders(session.token),
         signal: controller.signal,
       });
       if (!res.ok) {
-        return [];
+        throw new Error("Failed to load variant options");
       }
       const payload = await res.json().catch(() => null);
-      if (!payload?.variants || !Array.isArray(payload.variants)) {
-        return [];
-      }
-      return payload.variants as VariantApiRow[];
-    };
-    (async () => {
-      const primaryQuery = qParts[0];
-      const fallbackQuery = `${intakeRequired.year.trim()} ${intakeRequired.manufacturer.trim()}`.trim();
-      const broadQuery = intakeRequired.manufacturer.trim();
+      const variants = Array.isArray(payload?.variants) ? (payload.variants as VariantApiRow[]) : [];
+      const sets = Array.isArray(payload?.sets)
+        ? payload.sets
+            .map((entry: { setId?: string }) => sanitizeNullableText(entry?.setId))
+            .filter(Boolean)
+        : [];
+      const insertItems = Array.isArray(payload?.insertOptions)
+        ? (payload.insertOptions as VariantOptionItem[])
+        : [];
+      const parallelItems = Array.isArray(payload?.parallelOptions)
+        ? (payload.parallelOptions as VariantOptionItem[])
+        : [];
+      const insertLabels = insertItems
+        .map((entry) => sanitizeNullableText(entry.label))
+        .filter(Boolean);
+      const parallelLabels = parallelItems
+        .map((entry) => sanitizeNullableText(entry.label))
+        .filter(Boolean);
 
-      let variants: VariantApiRow[] = await runFetch(primaryQuery);
-      if (variants.length === 0 && fallbackQuery && fallbackQuery.toLowerCase() !== primaryQuery.toLowerCase()) {
-        variants = await runFetch(fallbackQuery);
-      }
-      if (variants.length === 0 && broadQuery && broadQuery.toLowerCase() !== primaryQuery.toLowerCase()) {
-        variants = await runFetch(broadQuery);
-      }
       setVariantCatalog(variants);
-
-      const insertOptions = Array.from(
-        new Set<string>(
-          variants
-            .filter((row) => isInsertLikeRow(row))
-            .map((row) => sanitizeNullableText(row.parallelId))
-            .filter(Boolean)
-        )
-      ).sort((a, b) => a.localeCompare(b));
-
-      const parallelOptionsOnly = Array.from(
-        new Set<string>(
-          variants
-            .filter((row) => !isInsertLikeRow(row))
-            .map((row) => sanitizeNullableText(row.parallelId))
-            .filter(Boolean)
-        )
-      ).sort((a, b) => a.localeCompare(b));
-
-      setInsertSetOptions(insertOptions);
-      setParallelOptions(parallelOptionsOnly.length > 0 ? parallelOptionsOnly : insertOptions);
+      setProductLineOptions(sets);
+      setInsertSetOptions(insertLabels);
+      setParallelOptions(parallelLabels.length > 0 ? parallelLabels : insertLabels);
+      setVariantOptionItems([...insertItems, ...parallelItems]);
+      setVariantScopeSummary({
+        approvedSetCount:
+          typeof payload?.scope?.approvedSetCount === "number" ? payload.scope.approvedSetCount : 0,
+        variantCount: typeof payload?.scope?.variantCount === "number" ? payload.scope.variantCount : variants.length,
+      });
     })().catch(() => {
       setVariantCatalog([]);
+      setProductLineOptions([]);
       setInsertSetOptions([]);
       setParallelOptions([]);
+      setVariantOptionItems([]);
+      setVariantScopeSummary(null);
     });
     return () => controller.abort();
-  }, [intakeOptional.productLine, intakeRequired.category, intakeRequired.manufacturer, intakeRequired.year, session?.token]);
+  }, [
+    intakeOptional.productLine,
+    intakeRequired.category,
+    intakeRequired.manufacturer,
+    intakeRequired.sport,
+    intakeRequired.year,
+    session?.token,
+  ]);
 
   const optionSetIdMap = useMemo(() => {
     const map = new Map<string, string>();
+    variantOptionItems.forEach((item) => {
+      const label = sanitizeNullableText(item.label).toLowerCase();
+      const primarySetId = sanitizeNullableText(item.primarySetId ?? item.setIds?.[0] ?? "");
+      if (!label || !primarySetId || map.has(label)) {
+        return;
+      }
+      map.set(label, primarySetId);
+    });
     variantCatalog.forEach((row) => {
-      const option = sanitizeNullableText(row.parallelId);
+      const option = sanitizeNullableText(row.parallelId).toLowerCase();
       const setId = sanitizeNullableText(row.setId);
       if (!option || !setId || map.has(option)) {
         return;
@@ -2284,7 +2302,7 @@ export default function AdminUploads() {
       map.set(option, setId);
     });
     return map;
-  }, [variantCatalog]);
+  }, [variantCatalog, variantOptionItems]);
 
   useEffect(() => {
     if (!session?.token || intakeRequired.category !== "sport") {
@@ -2310,7 +2328,7 @@ export default function AdminUploads() {
     (async () => {
       const results = await Promise.all(
         pending.map(async (option) => {
-          const setId = optionSetIdMap.get(option) ?? sanitizeNullableText(variantCatalog[0]?.setId);
+          const setId = optionSetIdMap.get(option.toLowerCase()) ?? sanitizeNullableText(variantCatalog[0]?.setId);
           if (!setId) {
             return [option, ""] as const;
           }
@@ -2360,8 +2378,22 @@ export default function AdminUploads() {
     }
   }, [intakeCardId, resetOcrState]);
 
+  const typedOcrAudit = useMemo(() => (ocrAudit as OcrAuditPayload | null) ?? null, [ocrAudit]);
+
+  const optionDetailByLabel = useMemo(() => {
+    const map = new Map<string, VariantOptionItem>();
+    variantOptionItems.forEach((item) => {
+      const key = sanitizeNullableText(item.label).toLowerCase();
+      if (!key || map.has(key)) {
+        return;
+      }
+      map.set(key, item);
+    });
+    return map;
+  }, [variantOptionItems]);
+
   const ocrSummary = useMemo(() => {
-    const confidence = (ocrAudit as { confidence?: Record<string, number | null> } | null)?.confidence ?? null;
+    const confidence = typedOcrAudit?.confidence ?? null;
     if (!confidence) {
       return null;
     }
@@ -2371,7 +2403,92 @@ export default function AdminUploads() {
       .slice(0, 2)
       .map(([key, value]) => `${key} ${Math.round((value as number) * 100)}%`);
     return entries.length ? `Top OCR: ${entries.join(", ")}` : null;
-  }, [ocrAudit]);
+  }, [typedOcrAudit]);
+
+  const ocrPhotoSummary = useMemo(() => {
+    const photoOcr = typedOcrAudit?.photoOcr ?? null;
+    if (!photoOcr || typeof photoOcr !== "object") {
+      return [];
+    }
+    const order = ["FRONT", "BACK", "TILT"] as const;
+    return order
+      .map((key) => {
+        const row = photoOcr[key];
+        if (!row) {
+          return null;
+        }
+        const textSize = sanitizeNullableText(row.ocrText).length;
+        const statusLabel =
+          row.status === "ok"
+            ? "OCR ok"
+            : row.status === "empty_text"
+            ? "No readable text"
+            : "No image";
+        return `${key}: ${statusLabel}${textSize > 0 ? ` (${Math.min(120, textSize)} chars)` : ""}`;
+      })
+      .filter((value): value is string => Boolean(value));
+  }, [typedOcrAudit]);
+
+  const variantExplainability = useMemo(() => {
+    const lines: string[] = [];
+    const parallelSuggestion = sanitizeNullableText(intakeSuggested.parallel);
+    const insertSuggestion = sanitizeNullableText(intakeSuggested.insertSet);
+    const ocrConfidence = typedOcrAudit?.confidence ?? {};
+    const parallelConfidence =
+      typeof ocrConfidence.parallel === "number" ? Math.round(ocrConfidence.parallel * 100) : null;
+    const insertConfidence =
+      typeof ocrConfidence.insertSet === "number" ? Math.round(ocrConfidence.insertSet * 100) : null;
+
+    if (parallelSuggestion) {
+      const optionMeta = optionDetailByLabel.get(parallelSuggestion.toLowerCase());
+      lines.push(
+        `OCR parallel suggestion: ${parallelSuggestion}${parallelConfidence != null ? ` (${parallelConfidence}%)` : ""}`
+      );
+      if (optionMeta) {
+        lines.push(
+          `Option pool match: found in ${optionMeta.setIds.length} approved set${optionMeta.setIds.length === 1 ? "" : "s"}`
+        );
+      } else {
+        lines.push("Option pool match: OCR parallel is not in current approved set option pool.");
+      }
+    }
+
+    if (insertSuggestion) {
+      lines.push(
+        `OCR insert suggestion: ${insertSuggestion}${insertConfidence != null ? ` (${insertConfidence}%)` : ""}`
+      );
+    }
+
+    const variantMatch = typedOcrAudit?.variantMatch;
+    if (variantMatch?.ok && variantMatch.topCandidate?.parallelId) {
+      const confidenceLabel =
+        typeof variantMatch.topCandidate.confidence === "number"
+          ? ` (${Math.round(variantMatch.topCandidate.confidence * 100)}%)`
+          : "";
+      lines.push(`Image matcher top candidate: ${variantMatch.topCandidate.parallelId}${confidenceLabel}`);
+      if (variantMatch.topCandidate.reason) {
+        lines.push(`Matcher reason: ${variantMatch.topCandidate.reason}`);
+      }
+      if (variantMatch.matchedSetId) {
+        lines.push(`Matched set: ${variantMatch.matchedSetId}`);
+      }
+    } else if (variantMatch && !variantMatch.ok && variantMatch.message) {
+      lines.push(`Image matcher status: ${variantMatch.message}`);
+    }
+
+    if (variantScopeSummary && variantScopeSummary.variantCount > 0) {
+      lines.push(
+        `Available option pool: ${variantScopeSummary.variantCount} variants across ${variantScopeSummary.approvedSetCount} approved sets`
+      );
+    }
+
+    return lines;
+  }, [intakeSuggested.insertSet, intakeSuggested.parallel, optionDetailByLabel, typedOcrAudit, variantScopeSummary]);
+
+  const memoryAppliedCount = useMemo(() => {
+    const applied = typedOcrAudit?.memory?.applied;
+    return Array.isArray(applied) ? applied.length : 0;
+  }, [typedOcrAudit]);
 
   const rankedInsertSetOptions = useMemo(() => {
     const options = [...insertSetOptions];
@@ -3085,6 +3202,36 @@ export default function AdminUploads() {
                     </span>
                   ) : null}
                 </div>
+                {ocrPhotoSummary.length > 0 && (
+                  <div className="rounded-2xl border border-white/10 bg-night-900/70 p-3 text-[10px] text-slate-300">
+                    <p className="uppercase tracking-[0.26em] text-slate-500">OCR By Photo</p>
+                    <div className="mt-2 space-y-1">
+                      {ocrPhotoSummary.map((line) => (
+                        <p key={line} className="leading-relaxed">
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {variantExplainability.length > 0 && (
+                  <div className="rounded-2xl border border-sky-400/20 bg-sky-500/5 p-3 text-[10px] text-sky-100">
+                    <p className="uppercase tracking-[0.26em] text-sky-300">Variant Explainability</p>
+                    <div className="mt-2 space-y-1">
+                      {variantExplainability.map((line) => (
+                        <p key={line} className="leading-relaxed">
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                    {memoryAppliedCount > 0 && (
+                      <p className="mt-2 text-[10px] text-emerald-200">
+                        Teach memory applied {memoryAppliedCount} learned field
+                        {memoryAppliedCount === 1 ? "" : "s"} from prior human-confirmed cards.
+                      </p>
+                    )}
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() => void handleIntakeRequiredContinue()}
@@ -3374,36 +3521,46 @@ export default function AdminUploads() {
                 {[
                   "__NONE__",
                   ...(pickerModalField === "insertSet" ? rankedInsertSetOptions : rankedParallelOptions),
-                ].map((option) => (
-                  <button
-                    key={`${pickerModalField}-${option}`}
-                    type="button"
-                    onClick={() => {
-                      if (pickerModalField === "insertSet") {
-                        setIntakeOptionalTouched((prev) => ({ ...prev, insertSet: true }));
-                        setIntakeOptional((prev) => ({ ...prev, insertSet: option === "__NONE__" ? "" : option }));
-                      } else {
-                        setIntakeOptionalTouched((prev) => ({ ...prev, parallel: true }));
-                        setIntakeOptional((prev) => ({ ...prev, parallel: option === "__NONE__" ? "" : option }));
-                      }
-                      setPickerModalField(null);
-                    }}
-                    className="flex items-center gap-3 rounded-xl border border-white/10 bg-night-800/70 p-2 text-left hover:border-gold-400/40"
-                  >
-                    {option === "__NONE__" ? (
-                      <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-white/10 text-[10px] uppercase tracking-[0.2em] text-slate-300">
-                        None
+                ].map((option) => {
+                  const optionMeta = option === "__NONE__" ? null : optionDetailByLabel.get(option.toLowerCase());
+                  return (
+                    <button
+                      key={`${pickerModalField}-${option}`}
+                      type="button"
+                      onClick={() => {
+                        if (pickerModalField === "insertSet") {
+                          setIntakeOptionalTouched((prev) => ({ ...prev, insertSet: true }));
+                          setIntakeOptional((prev) => ({ ...prev, insertSet: option === "__NONE__" ? "" : option }));
+                        } else {
+                          setIntakeOptionalTouched((prev) => ({ ...prev, parallel: true }));
+                          setIntakeOptional((prev) => ({ ...prev, parallel: option === "__NONE__" ? "" : option }));
+                        }
+                        setPickerModalField(null);
+                      }}
+                      className="flex items-center gap-3 rounded-xl border border-white/10 bg-night-800/70 p-2 text-left hover:border-gold-400/40"
+                    >
+                      {option === "__NONE__" ? (
+                        <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-white/10 text-[10px] uppercase tracking-[0.2em] text-slate-300">
+                          None
+                        </div>
+                      ) : optionPreviewUrls[option] ? (
+                        <img src={optionPreviewUrls[option]} alt={`${option} example`} className="h-16 w-16 rounded-lg object-cover" />
+                      ) : (
+                        <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-white/10 text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                          No Img
+                        </div>
+                      )}
+                      <div>
+                        <div className="text-sm text-slate-200">{option === "__NONE__" ? "None" : option}</div>
+                        {optionMeta && (
+                          <div className="text-[10px] uppercase tracking-[0.22em] text-slate-500">
+                            {optionMeta.setIds.length} set{optionMeta.setIds.length === 1 ? "" : "s"} · {optionMeta.count} variants
+                          </div>
+                        )}
                       </div>
-                    ) : optionPreviewUrls[option] ? (
-                      <img src={optionPreviewUrls[option]} alt={`${option} example`} className="h-16 w-16 rounded-lg object-cover" />
-                    ) : (
-                      <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-white/10 text-[10px] uppercase tracking-[0.2em] text-slate-500">
-                        No Img
-                      </div>
-                    )}
-                    <div className="text-sm text-slate-200">{option === "__NONE__" ? "None" : option}</div>
-                  </button>
-                ))}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
