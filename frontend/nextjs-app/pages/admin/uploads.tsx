@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
-import { ChangeEvent, FormEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
@@ -172,6 +172,9 @@ type TeachRegionRect = {
   width: number;
   height: number;
   label: string;
+  targetField: string;
+  targetValue: string;
+  note: string;
 };
 
 type TeachRegionsBySide = Record<TeachRegionSide, TeachRegionRect[]>;
@@ -182,6 +185,40 @@ type TeachRegionDraft = {
   startY: number;
   currentX: number;
   currentY: number;
+  pointerId: number;
+};
+
+type TeachRegionBindingField =
+  | "playerName"
+  | "sport"
+  | "manufacturer"
+  | "year"
+  | "cardName"
+  | "game"
+  | "teamName"
+  | "setName"
+  | "insertSet"
+  | "parallel"
+  | "cardNumber"
+  | "numbered"
+  | "autograph"
+  | "memorabilia"
+  | "graded"
+  | "gradeCompany"
+  | "gradeValue";
+
+type TeachRegionBindingOption = {
+  key: TeachRegionBindingField;
+  label: string;
+  value: string;
+};
+
+type TeachRegionBindDraft = {
+  side: TeachRegionSide;
+  region: Pick<TeachRegionRect, "id" | "x" | "y" | "width" | "height">;
+  targetField: TeachRegionBindingField;
+  targetValue: string;
+  note: string;
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -258,6 +295,9 @@ const coerceTeachRegionsBySide = (raw: unknown): TeachRegionsBySide => {
           width,
           height,
           label: typeof region.label === "string" ? region.label : "",
+          targetField: typeof region.targetField === "string" ? region.targetField.trim() : "",
+          targetValue: typeof region.targetValue === "string" ? region.targetValue.trim() : "",
+          note: typeof region.note === "string" ? region.note.trim() : "",
         } as TeachRegionRect;
       })
       .filter((entry): entry is TeachRegionRect => Boolean(entry))
@@ -481,6 +521,7 @@ export default function AdminUploads() {
   const [teachRegionBusy, setTeachRegionBusy] = useState(false);
   const [teachRegionFeedback, setTeachRegionFeedback] = useState<string | null>(null);
   const [teachRegionDrawEnabled, setTeachRegionDrawEnabled] = useState(true);
+  const [teachRegionBindDraft, setTeachRegionBindDraft] = useState<TeachRegionBindDraft | null>(null);
   const [productLineOptions, setProductLineOptions] = useState<string[]>([]);
   const [insertSetOptions, setInsertSetOptions] = useState<string[]>([]);
   const [parallelOptions, setParallelOptions] = useState<string[]>([]);
@@ -1170,6 +1211,7 @@ export default function AdminUploads() {
     setTeachRegionSide("FRONT");
     setTeachRegionsBySide(buildEmptyTeachRegionsBySide());
     setTeachRegionDraft(null);
+    setTeachRegionBindDraft(null);
     setTeachRegionLoading(false);
     setTeachRegionBusy(false);
     setTeachRegionFeedback(null);
@@ -1688,11 +1730,12 @@ export default function AdminUploads() {
       } else if (nextAutograph) {
         setTeachLayoutClass("autograph");
       } else {
-        setTeachLayoutClass("base");
+      setTeachLayoutClass("base");
       }
       setTeachRegionSide("FRONT");
       setTeachRegionsBySide(buildEmptyTeachRegionsBySide());
       setTeachRegionDraft(null);
+      setTeachRegionBindDraft(null);
       setTeachRegionFeedback(null);
 
       setIntakeSuggested(
@@ -2838,6 +2881,37 @@ export default function AdminUploads() {
     return [hit, ...options];
   }, [intakeSuggested.parallel, parallelOptions]);
 
+  const teachRegionBindingOptions = useMemo<TeachRegionBindingOption[]>(
+    () => [
+      { key: "playerName", label: "Player Name", value: sanitizeNullableText(intakeRequired.playerName) },
+      { key: "sport", label: "Sport", value: sanitizeNullableText(intakeRequired.sport) },
+      { key: "manufacturer", label: "Manufacturer", value: sanitizeNullableText(intakeRequired.manufacturer) },
+      { key: "year", label: "Year", value: sanitizeNullableText(intakeRequired.year) },
+      { key: "cardName", label: "Card Name", value: sanitizeNullableText(intakeRequired.cardName) },
+      { key: "game", label: "Game", value: sanitizeNullableText(intakeRequired.game) },
+      { key: "teamName", label: "Team Name", value: sanitizeNullableText(intakeOptional.teamName) },
+      { key: "setName", label: "Product Set", value: sanitizeNullableText(intakeOptional.productLine) },
+      { key: "insertSet", label: "Insert Set", value: sanitizeNullableText(intakeOptional.insertSet) },
+      { key: "parallel", label: "Parallel", value: sanitizeNullableText(intakeOptional.parallel) },
+      { key: "cardNumber", label: "Card Number", value: sanitizeNullableText(intakeOptional.cardNumber) },
+      { key: "numbered", label: "Numbered", value: sanitizeNullableText(intakeOptional.numbered) },
+      { key: "autograph", label: "Autographed", value: intakeOptional.autograph ? "true" : "" },
+      { key: "memorabilia", label: "Memorabilia", value: intakeOptional.memorabilia ? "true" : "" },
+      { key: "graded", label: "Graded", value: intakeOptional.graded ? "true" : "" },
+      { key: "gradeCompany", label: "Grade Company", value: sanitizeNullableText(intakeOptional.gradeCompany) },
+      { key: "gradeValue", label: "Grade Value", value: sanitizeNullableText(intakeOptional.gradeValue) },
+    ],
+    [intakeOptional, intakeRequired]
+  );
+
+  const teachRegionBindingOptionMap = useMemo(() => {
+    const map = new Map<TeachRegionBindingField, TeachRegionBindingOption>();
+    teachRegionBindingOptions.forEach((option) => {
+      map.set(option.key, option);
+    });
+    return map;
+  }, [teachRegionBindingOptions]);
+
   const teachRegionPreviewBySide = useMemo<Record<TeachRegionSide, string | null>>(
     () => ({
       FRONT: intakeFrontPreview,
@@ -2849,33 +2923,70 @@ export default function AdminUploads() {
 
   const activeTeachRegionPreview = teachRegionPreviewBySide[teachRegionSide] ?? null;
   const activeTeachRegions = teachRegionsBySide[teachRegionSide] ?? [];
-
-  const handleTeachRegionMouseDown = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
-      if (!teachRegionDrawEnabled || event.button !== 0 || !activeTeachRegionPreview) {
-        return;
-      }
-      const rect = event.currentTarget.getBoundingClientRect();
+  const beginTeachRegionDraft = useCallback(
+    (container: HTMLDivElement, clientX: number, clientY: number, pointerId: number) => {
+      const rect = container.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) {
         return;
       }
-      const x = clampFraction((event.clientX - rect.left) / rect.width);
-      const y = clampFraction((event.clientY - rect.top) / rect.height);
+      const x = clampFraction((clientX - rect.left) / rect.width);
+      const y = clampFraction((clientY - rect.top) / rect.height);
       setTeachRegionDraft({
         side: teachRegionSide,
         startX: x,
         startY: y,
         currentX: x,
         currentY: y,
+        pointerId,
       });
-      event.preventDefault();
     },
-    [activeTeachRegionPreview, teachRegionDrawEnabled, teachRegionSide]
+    [teachRegionSide]
   );
 
-  const handleTeachRegionMouseMove = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+  const openTeachRegionBindDraft = useCallback(
+    (side: TeachRegionSide, region: Pick<TeachRegionRect, "id" | "x" | "y" | "width" | "height">) => {
+      const preferredOrder: TeachRegionBindingField[] = ["insertSet", "parallel", "setName", "cardNumber", "playerName"];
+      const selectedOption =
+        preferredOrder
+          .map((key) => teachRegionBindingOptionMap.get(key))
+          .find((entry) => Boolean(entry?.value)) ||
+        teachRegionBindingOptions.find((entry) => Boolean(entry.value)) ||
+        teachRegionBindingOptions[0];
+      if (!selectedOption) {
+        setIntakeError("No card detail fields available to link this teach region.");
+        return;
+      }
+      setTeachRegionBindDraft({
+        side,
+        region,
+        targetField: selectedOption.key,
+        targetValue: selectedOption.value,
+        note: "",
+      });
+    },
+    [teachRegionBindingOptionMap, teachRegionBindingOptions]
+  );
+
+  const handleTeachRegionPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!teachRegionDrawEnabled || !activeTeachRegionPreview) {
+        return;
+      }
+      if (event.pointerType === "mouse" && event.button !== 0) {
+        return;
+      }
+      beginTeachRegionDraft(event.currentTarget, event.clientX, event.clientY, event.pointerId);
+      setTeachRegionFeedback(null);
+      setTeachRegionBindDraft(null);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    },
+    [activeTeachRegionPreview, beginTeachRegionDraft, teachRegionDrawEnabled]
+  );
+
+  const handleTeachRegionPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     setTeachRegionDraft((prev) => {
-      if (!prev) {
+      if (!prev || prev.pointerId !== event.pointerId) {
         return prev;
       }
       const rect = event.currentTarget.getBoundingClientRect();
@@ -2892,37 +3003,104 @@ export default function AdminUploads() {
     });
   }, []);
 
-  const finishTeachRegionDraft = useCallback(() => {
-    if (!teachRegionDraft) {
+  const finishTeachRegionDraft = useCallback(
+    (pointerId?: number) => {
+      if (!teachRegionDraft) {
+        return;
+      }
+      if (typeof pointerId === "number" && teachRegionDraft.pointerId !== pointerId) {
+        return;
+      }
+      const x = clampFraction(Math.min(teachRegionDraft.startX, teachRegionDraft.currentX));
+      const y = clampFraction(Math.min(teachRegionDraft.startY, teachRegionDraft.currentY));
+      const width = clampFraction(Math.abs(teachRegionDraft.currentX - teachRegionDraft.startX));
+      const height = clampFraction(Math.abs(teachRegionDraft.currentY - teachRegionDraft.startY));
+      if (width >= 0.01 && height >= 0.01) {
+        openTeachRegionBindDraft(teachRegionDraft.side, {
+          id: `region-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          x,
+          y,
+          width,
+          height,
+        });
+        setTeachRegionFeedback("Region captured. Link it to a card detail field to finish the teach step.");
+      }
+      setTeachRegionDraft(null);
+    },
+    [openTeachRegionBindDraft, teachRegionDraft]
+  );
+
+  const handleTeachRegionPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      finishTeachRegionDraft(event.pointerId);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    },
+    [finishTeachRegionDraft]
+  );
+
+  const handleTeachRegionPointerCancel = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      finishTeachRegionDraft(event.pointerId);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    },
+    [finishTeachRegionDraft]
+  );
+
+  const handleUndoTeachRegion = useCallback(() => {
+    if (teachRegionDraft) {
+      setTeachRegionDraft(null);
       return;
     }
-    const x = clampFraction(Math.min(teachRegionDraft.startX, teachRegionDraft.currentX));
-    const y = clampFraction(Math.min(teachRegionDraft.startY, teachRegionDraft.currentY));
-    const width = clampFraction(Math.abs(teachRegionDraft.currentX - teachRegionDraft.startX));
-    const height = clampFraction(Math.abs(teachRegionDraft.currentY - teachRegionDraft.startY));
-    if (width >= 0.01 && height >= 0.01) {
-      const side = teachRegionDraft.side;
-      const region: TeachRegionRect = {
-        id: `region-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        x,
-        y,
-        width,
-        height,
-        label: "",
-      };
-      setTeachRegionsBySide((prev) => ({
-        ...prev,
-        [side]: [...prev[side], region].slice(0, 24),
-      }));
+    setTeachRegionsBySide((prev) => ({
+      ...prev,
+      [teachRegionSide]: prev[teachRegionSide].slice(0, -1),
+    }));
+    setTeachRegionFeedback(null);
+  }, [teachRegionDraft, teachRegionSide]);
+
+  const handleSaveTeachRegionBinding = useCallback(() => {
+    if (!teachRegionBindDraft) {
+      return;
     }
-    setTeachRegionDraft(null);
-  }, [teachRegionDraft]);
+    const targetValue = sanitizeNullableText(teachRegionBindDraft.targetValue);
+    if (!targetValue) {
+      setIntakeError("Pick a card detail field/value before saving this teach region.");
+      return;
+    }
+    const option = teachRegionBindingOptionMap.get(teachRegionBindDraft.targetField);
+    const targetFieldLabel = option?.label ?? teachRegionBindDraft.targetField;
+    const note = sanitizeNullableText(teachRegionBindDraft.note);
+    const linkedRegion: TeachRegionRect = {
+      ...teachRegionBindDraft.region,
+      targetField: teachRegionBindDraft.targetField,
+      targetValue,
+      note,
+      label: `${targetFieldLabel}: ${targetValue}`.slice(0, 120),
+    };
+    setTeachRegionsBySide((prev) => ({
+      ...prev,
+      [teachRegionBindDraft.side]: [...prev[teachRegionBindDraft.side], linkedRegion].slice(0, 24),
+    }));
+    setTeachRegionBindDraft(null);
+    setTeachRegionFeedback(`Teach region linked to ${targetFieldLabel}.`);
+    setIntakeError(null);
+  }, [teachRegionBindDraft, teachRegionBindingOptionMap]);
+
+  const handleCancelTeachRegionBinding = useCallback(() => {
+    setTeachRegionBindDraft(null);
+    setTeachRegionFeedback("Teach region draft canceled.");
+  }, []);
 
   const handleClearTeachRegionsForSide = useCallback((side: TeachRegionSide) => {
     setTeachRegionsBySide((prev) => ({
       ...prev,
       [side]: [],
     }));
+    setTeachRegionBindDraft((prev) => (prev && prev.side === side ? null : prev));
     setTeachRegionFeedback(null);
   }, []);
 
@@ -2978,6 +3156,7 @@ export default function AdminUploads() {
   useEffect(() => {
     void loadTeachRegionTemplates();
     setTeachRegionDraft(null);
+    setTeachRegionBindDraft(null);
   }, [loadTeachRegionTemplates]);
 
   useEffect(() => {
@@ -3027,6 +3206,9 @@ export default function AdminUploads() {
         width: region.width,
         height: region.height,
         label: region.label || undefined,
+        targetField: region.targetField || undefined,
+        targetValue: region.targetValue || undefined,
+        note: region.note || undefined,
       })),
     })).filter((entry) => entry.regions.length > 0);
     if (!templates.length) {
@@ -3489,7 +3671,6 @@ export default function AdminUploads() {
               KingsReview →
             </Link>
           </div>
-          <h1 className="text-center font-heading text-4xl uppercase tracking-[0.18em] text-white">Add Cards</h1>
         </header>
 
         <section className="flex flex-col gap-4 rounded-3xl border border-white/10 bg-night-900/70 p-4">
@@ -4108,6 +4289,7 @@ export default function AdminUploads() {
                           onClick={() => {
                             setTeachRegionSide(side);
                             setTeachRegionDraft(null);
+                            setTeachRegionBindDraft(null);
                           }}
                           className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] ${
                             teachRegionSide === side
@@ -4121,16 +4303,17 @@ export default function AdminUploads() {
                     </div>
                   </div>
                   <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
-                    1) Draw Mode On 2) Click and drag on image 3) Save Region Teach
+                    1) Draw Mode On 2) Drag finger/mouse on image 3) Link region to field 4) Save Region Teach
                   </p>
                   <div
                     className={`relative overflow-hidden rounded-xl border border-white/10 bg-night-800/70 select-none touch-none ${
                       teachRegionDrawEnabled ? "cursor-crosshair" : "cursor-default"
                     }`}
-                    onMouseDown={handleTeachRegionMouseDown}
-                    onMouseMove={handleTeachRegionMouseMove}
-                    onMouseUp={finishTeachRegionDraft}
-                    onMouseLeave={finishTeachRegionDraft}
+                    style={{ touchAction: "none" }}
+                    onPointerDown={handleTeachRegionPointerDown}
+                    onPointerMove={handleTeachRegionPointerMove}
+                    onPointerUp={handleTeachRegionPointerUp}
+                    onPointerCancel={handleTeachRegionPointerCancel}
                   >
                     {activeTeachRegionPreview ? (
                       <>
@@ -4143,7 +4326,7 @@ export default function AdminUploads() {
                         {activeTeachRegions.map((region) => (
                           <div
                             key={region.id}
-                            className="pointer-events-none absolute border-2 border-emerald-300/80 bg-emerald-400/15"
+                            className="pointer-events-none absolute border-2 border-rose-300/95 bg-rose-400/30"
                             style={{
                               left: `${region.x * 100}%`,
                               top: `${region.y * 100}%`,
@@ -4154,7 +4337,7 @@ export default function AdminUploads() {
                         ))}
                         {teachRegionDraft && teachRegionDraft.side === teachRegionSide ? (
                           <div
-                            className="pointer-events-none absolute border-2 border-gold-300/80 bg-gold-400/15"
+                            className="pointer-events-none absolute border-2 border-rose-300/95 bg-rose-400/30"
                             style={{
                               left: `${Math.min(teachRegionDraft.startX, teachRegionDraft.currentX) * 100}%`,
                               top: `${Math.min(teachRegionDraft.startY, teachRegionDraft.currentY) * 100}%`,
@@ -4171,6 +4354,14 @@ export default function AdminUploads() {
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleUndoTeachRegion}
+                      disabled={!teachRegionDraft && activeTeachRegions.length < 1}
+                      className="rounded-full border border-gold-400/60 bg-gold-500/15 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-gold-200 hover:bg-gold-500/25 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Undo
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleClearTeachRegionsForSide(teachRegionSide)}
@@ -4192,8 +4383,9 @@ export default function AdminUploads() {
                       {activeTeachRegions.map((region, index) => (
                         <div key={`${teachRegionSide}-${region.id}`} className="flex items-center justify-between rounded border border-white/10 px-2 py-1">
                           <span>
-                            Region {index + 1}: x {Math.round(region.x * 100)}% y {Math.round(region.y * 100)}% w {Math.round(region.width * 100)}% h{" "}
-                            {Math.round(region.height * 100)}%
+                            Region {index + 1}: {region.label || "Unlinked"} · x {Math.round(region.x * 100)}% y {Math.round(region.y * 100)}% w{" "}
+                            {Math.round(region.width * 100)}% h {Math.round(region.height * 100)}%
+                            {region.note ? ` · note: ${region.note}` : ""}
                           </span>
                           <button
                             type="button"
@@ -4232,6 +4424,108 @@ export default function AdminUploads() {
           )}
 
         </section>
+
+        {teachRegionBindDraft ? (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/75 p-4">
+            <div className="w-full max-w-2xl rounded-2xl border border-white/10 bg-night-900 p-4">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-xs uppercase tracking-[0.28em] text-slate-300">Link Teach Region</p>
+                <button
+                  type="button"
+                  onClick={handleCancelTeachRegionBinding}
+                  className="rounded-full border border-white/20 px-3 py-1 text-xs uppercase tracking-[0.24em] text-slate-300"
+                >
+                  Cancel
+                </button>
+              </div>
+              <p className="mb-3 text-xs text-slate-400">
+                Connect this marked region to a card detail field so memory replay understands what this area represents.
+              </p>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-[0.24em] text-slate-400">Card detail field</label>
+                  <select
+                    value={teachRegionBindDraft.targetField}
+                    onChange={(event) => {
+                      const nextField = event.target.value as TeachRegionBindingField;
+                      const fallbackValue = teachRegionBindingOptionMap.get(nextField)?.value ?? "";
+                      setTeachRegionBindDraft((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              targetField: nextField,
+                              targetValue: fallbackValue,
+                            }
+                          : prev
+                      );
+                    }}
+                    className="w-full rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  >
+                    {teachRegionBindingOptions.map((option) => (
+                      <option key={option.key} value={option.key}>
+                        {option.label}
+                        {option.value ? ` (${option.value})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-[0.24em] text-slate-400">Value to teach</label>
+                  <input
+                    value={teachRegionBindDraft.targetValue}
+                    onChange={(event) =>
+                      setTeachRegionBindDraft((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              targetValue: event.target.value,
+                            }
+                          : prev
+                      )
+                    }
+                    placeholder="Example: No Limit"
+                    className="w-full rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] uppercase tracking-[0.24em] text-slate-400">Optional note</label>
+                  <textarea
+                    rows={2}
+                    value={teachRegionBindDraft.note}
+                    onChange={(event) =>
+                      setTeachRegionBindDraft((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              note: event.target.value,
+                            }
+                          : prev
+                      )
+                    }
+                    placeholder="Optional context to improve future review."
+                    className="w-full rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                </div>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCancelTeachRegionBinding}
+                    className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-slate-300"
+                  >
+                    Discard Region
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveTeachRegionBinding}
+                    className="rounded-full border border-gold-500/60 bg-gold-500 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-night-900 shadow-glow"
+                  >
+                    Link Region
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {pickerModalField && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">

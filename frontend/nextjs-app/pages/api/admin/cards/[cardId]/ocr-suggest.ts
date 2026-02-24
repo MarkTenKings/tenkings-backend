@@ -182,6 +182,8 @@ type RegionTemplateMap = Record<OcrRegionPhotoSide, OcrRegionRect[]>;
 type RegionTokenLookup = {
   global: Set<string>;
   byImage: Map<string, Set<string>>;
+  byFieldGlobal: Map<keyof SuggestionFields, Set<string>>;
+  byFieldImage: Map<keyof SuggestionFields, Map<string, Set<string>>>;
 };
 
 type TokenRefSupport = {
@@ -685,6 +687,20 @@ function normalizeImageLabel(value: string | null | undefined): string {
   return normalized.toUpperCase();
 }
 
+function normalizeTeachTargetField(value: string | null | undefined): keyof SuggestionFields | null {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return null;
+  }
+  const direct = normalized as keyof SuggestionFields;
+  if (FIELD_KEYS.includes(direct)) {
+    return direct;
+  }
+  const lower = normalized.toLowerCase();
+  const matched = FIELD_KEYS.find((key) => key.toLowerCase() === lower);
+  return matched ?? null;
+}
+
 function isTruthyString(value: string | null | undefined): boolean {
   const normalized = String(value || "").trim().toLowerCase();
   return TRUE_STRINGS.has(normalized);
@@ -722,6 +738,8 @@ function buildMemoryTokenLookup(tokens: OcrTokenEntry[]): MemoryTokenLookup {
 function buildRegionTokenLookup(tokens: OcrTokenEntry[], templatesBySide: RegionTemplateMap): RegionTokenLookup {
   const global = new Set<string>();
   const byImage = new Map<string, Set<string>>();
+  const byFieldGlobal = new Map<keyof SuggestionFields, Set<string>>();
+  const byFieldImage = new Map<keyof SuggestionFields, Map<string, Set<string>>>();
   const boundsByImage = new Map<string, { maxX: number; maxY: number }>();
 
   tokens.forEach((token) => {
@@ -790,14 +808,14 @@ function buildRegionTokenLookup(tokens: OcrTokenEntry[], templatesBySide: Region
     }
     const centerX = ((minX + maxX) / 2) / bounds.maxX;
     const centerY = ((minY + maxY) / 2) / bounds.maxY;
-    const inRegion = regions.some(
+    const matchedRegions = regions.filter(
       (region) =>
         centerX >= region.x &&
         centerX <= region.x + region.width &&
         centerY >= region.y &&
         centerY <= region.y + region.height
     );
-    if (!inRegion) {
+    if (!matchedRegions.length) {
       return;
     }
     global.add(normalized);
@@ -805,15 +823,34 @@ function buildRegionTokenLookup(tokens: OcrTokenEntry[], templatesBySide: Region
       byImage.set(imageId, new Set());
     }
     byImage.get(imageId)?.add(normalized);
+    matchedRegions.forEach((region) => {
+      const targetField = normalizeTeachTargetField(region.targetField);
+      if (!targetField) {
+        return;
+      }
+      if (!byFieldGlobal.has(targetField)) {
+        byFieldGlobal.set(targetField, new Set());
+      }
+      byFieldGlobal.get(targetField)?.add(normalized);
+      if (!byFieldImage.has(targetField)) {
+        byFieldImage.set(targetField, new Map());
+      }
+      const fieldImageMap = byFieldImage.get(targetField)!;
+      if (!fieldImageMap.has(imageId)) {
+        fieldImageMap.set(imageId, new Set());
+      }
+      fieldImageMap.get(imageId)?.add(normalized);
+    });
   });
 
-  return { global, byImage };
+  return { global, byImage, byFieldGlobal, byFieldImage };
 }
 
 function scoreTokenRefSupport(
   refs: MemoryTokenRef[],
   lookup: MemoryTokenLookup,
-  regionLookup: RegionTokenLookup
+  regionLookup: RegionTokenLookup,
+  expectedField?: keyof SuggestionFields
 ): TokenRefSupport | null {
   if (!refs.length) {
     return null;
@@ -833,8 +870,15 @@ function scoreTokenRefSupport(
     const inGlobal = lookup.global.has(normalized);
     if (inExpected || inGlobal) {
       matchedWeight += weight;
-      const inRegionExpected = regionLookup.byImage.get(expectedImage)?.has(normalized) ?? false;
-      const inRegionGlobal = regionLookup.global.has(normalized);
+      const fieldImageMap = expectedField ? regionLookup.byFieldImage.get(expectedField) : null;
+      const inRegionExpectedField = fieldImageMap?.get(expectedImage)?.has(normalized) ?? false;
+      const inRegionGlobalField = expectedField
+        ? regionLookup.byFieldGlobal.get(expectedField)?.has(normalized) ?? false
+        : false;
+      const inRegionExpectedAny = regionLookup.byImage.get(expectedImage)?.has(normalized) ?? false;
+      const inRegionGlobalAny = regionLookup.global.has(normalized);
+      const inRegionExpected = inRegionExpectedField || inRegionExpectedAny;
+      const inRegionGlobal = inRegionGlobalField || inRegionGlobalAny;
       if (inRegionExpected || inRegionGlobal) {
         regionMatchedWeight += weight;
       }
@@ -1084,7 +1128,7 @@ async function applyFeedbackMemoryHints(params: {
     const ctxCardNumber = context.cardNumberKey;
     const ctxNumbered = context.numberedKey;
     const tokenRefs = parseMemoryTokenRefs(row.tokenAnchorsJson);
-    const tokenSupport = scoreTokenRefSupport(tokenRefs, tokenLookup, regionTokenLookup);
+    const tokenSupport = scoreTokenRefSupport(tokenRefs, tokenLookup, regionTokenLookup, field);
     const tokenSupportScore = tokenSupport?.support ?? null;
     const regionOverlap = tokenSupport?.regionOverlap ?? 0;
 

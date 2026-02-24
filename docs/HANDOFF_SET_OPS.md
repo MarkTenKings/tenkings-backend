@@ -1366,3 +1366,34 @@ Build Set Ops UI flow with:
   - Result: pass with pre-existing `@next/next/no-img-element` warnings only.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Uploads Teach Region Binding + Touch Draw Fix (2026-02-24)
+- Trigger:
+  - Operator reported no visible draw feedback on touch/finger input.
+  - Operator requested explicit teach linkage from drawn image region to corrected card-detail context.
+  - Operator requested `ADD CARDS` page title removal and `UNDO` support for teach drawing.
+- Changes made:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - Removed white header text `Add Cards` from `/admin/uploads`.
+    - Replaced mouse-only teach draw handlers with pointer events (`mouse`/`touch`/`pen`) for live visual feedback while dragging.
+    - Added `Undo` action for teach regions (cancel active draft or remove latest saved region on active side).
+    - Added post-draw `Link Teach Region` modal:
+      - choose card detail field (set/insert/parallel/card number/player/etc),
+      - auto-prefill current corrected value from form state,
+      - optional note text,
+      - save/discard controls.
+    - Teach regions now persist linkage metadata per region:
+      - `targetField`
+      - `targetValue`
+      - `note`
+      - readable `label` summary in region list.
+  - `frontend/nextjs-app/lib/server/ocrRegionTemplates.ts`
+    - Extended region sanitizer/persistence to store `targetField`, `targetValue`, and `note`.
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - Region-overlap token scoring now supports field-aware region hints:
+      - if a region is linked to a specific field, overlap can reinforce that field’s replay confidence path.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file lib/server/ocrRegionTemplates.ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - Result: pass with existing `@next/next/no-img-element` warnings in `uploads.tsx`.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

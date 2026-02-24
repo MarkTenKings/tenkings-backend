@@ -8,6 +8,9 @@ export type OcrRegionRect = {
   width: number;
   height: number;
   label?: string | null;
+  targetField?: string | null;
+  targetValue?: string | null;
+  note?: string | null;
 };
 
 export type OcrRegionTemplateInput = {
@@ -71,6 +74,25 @@ function parseLabel(value: unknown): string | null {
   return cleaned ? cleaned.slice(0, 120) : null;
 }
 
+function parseTargetField(value: unknown): string | null {
+  const cleaned = coerceNullableString(value);
+  if (!cleaned) {
+    return null;
+  }
+  const normalized = cleaned.replace(/[^a-zA-Z0-9_]+/g, "").slice(0, 48);
+  return normalized || null;
+}
+
+function parseTargetValue(value: unknown): string | null {
+  const cleaned = coerceNullableString(value);
+  return cleaned ? cleaned.slice(0, 160) : null;
+}
+
+function parseRegionNote(value: unknown): string | null {
+  const cleaned = coerceNullableString(value);
+  return cleaned ? cleaned.slice(0, 280) : null;
+}
+
 export function sanitizeOcrRegionRects(raw: unknown): OcrRegionRect[] {
   if (!Array.isArray(raw)) {
     return [];
@@ -97,6 +119,9 @@ export function sanitizeOcrRegionRects(raw: unknown): OcrRegionRect[] {
       width,
       height,
       label: parseLabel(record.label),
+      targetField: parseTargetField(record.targetField),
+      targetValue: parseTargetValue(record.targetValue),
+      note: parseRegionNote(record.note),
     });
   });
   return parsed.slice(0, 24);

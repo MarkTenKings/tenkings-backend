@@ -2129,3 +2129,39 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this coding step.
+
+## 2026-02-24 - Uploads Teach Region Binding Modal + Touch Draw + Undo
+
+### Summary
+- Completed follow-up `/admin/uploads` teach UX fixes:
+  - removed page header text `Add Cards`,
+  - switched teach draw to pointer events (touch/mouse/pen) with visible drag overlay feedback,
+  - added `Undo`,
+  - added post-draw link modal to bind each region to a card detail field/value and optional note.
+- Persisted teach-region field linkage metadata and applied field-aware overlap support in OCR replay scoring.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/lib/server/ocrRegionTemplates.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Teach draw input:
+  - replaced mouse handlers with pointer handlers (`onPointerDown/Move/Up/Cancel`) for consistent finger support.
+  - retained rectangle-style region geometry (deterministic OCR-friendly regions instead of freehand strokes).
+- Region linkage flow:
+  - drawing a region opens `Link Teach Region` modal.
+  - operator selects target field from card details, confirms/edits value, optional note, then links region.
+  - linked metadata now saved as `targetField`, `targetValue`, `note`, and human-readable `label`.
+- Replay scoring:
+  - region token lookup now carries field-scoped buckets.
+  - token support scoring can use field-scoped overlap when available, with fallback to generic region overlap.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file lib/server/ocrRegionTemplates.ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - Result: pass; only existing `@next/next/no-img-element` warnings in `uploads.tsx`.
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this coding step.
