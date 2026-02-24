@@ -222,6 +222,8 @@ const OCR_PHOTO_IDS: OcrPhotoId[] = ["FRONT", "BACK", "TILT"];
 const REQUIRED_OCR_PHOTO_IDS: OcrPhotoId[] = ["FRONT", "BACK", "TILT"];
 const TRUE_STRINGS = new Set(["true", "yes", "1"]);
 const BOOLEAN_MEMORY_FIELDS = new Set<keyof SuggestionFields>(["autograph", "memorabilia", "graded"]);
+const MEMORY_EXCLUDED_FIELDS = new Set<keyof SuggestionFields>(["numbered"]);
+const MEMORY_FIELD_KEYS = FIELD_KEYS.filter((field) => !MEMORY_EXCLUDED_FIELDS.has(field));
 
 function coerceNullableString(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -990,7 +992,7 @@ async function applyFeedbackMemoryHints(params: {
   const readAggregateRows = async () =>
     ((await (prisma as any).ocrFeedbackMemoryAggregate.findMany({
       where: {
-        fieldName: { in: FIELD_KEYS },
+        fieldName: { in: MEMORY_FIELD_KEYS },
         OR: orClauses,
       },
       orderBy: [{ lastSeenAt: "desc" }],
@@ -1036,7 +1038,7 @@ async function applyFeedbackMemoryHints(params: {
     if (seedOrClauses.length > 0) {
       const seedRows = (await (prisma as any).ocrFeedbackEvent.findMany({
         where: {
-          fieldName: { in: FIELD_KEYS },
+          fieldName: { in: MEMORY_FIELD_KEYS },
           humanValue: { not: null },
           OR: seedOrClauses,
         },
@@ -1103,7 +1105,7 @@ async function applyFeedbackMemoryHints(params: {
   const nowMs = Date.now();
   rows.forEach((row) => {
     const field = row.fieldName as keyof SuggestionFields;
-    if (!FIELD_KEYS.includes(field)) {
+    if (!MEMORY_FIELD_KEYS.includes(field)) {
       return;
     }
     const humanValue = coerceNullableString(row.value);
@@ -1218,7 +1220,7 @@ async function applyFeedbackMemoryHints(params: {
   });
 
   const applied: MemoryApplyEntry[] = [];
-  FIELD_KEYS.forEach((field) => {
+  MEMORY_FIELD_KEYS.forEach((field) => {
     const top = topByField.get(field);
     if (!top || top.score < 1.3) {
       return;
@@ -1925,6 +1927,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ...memoryAudit,
         error: error instanceof Error ? error.message : "memory_apply_failed",
       };
+    }
+
+    // Numbered serials must be grounded in OCR text; never keep hallucinated or memory-only values.
+    const explicitNumberedMatch = normalizedNumberedText.match(/\b\d{1,4}\s*\/\s*\d{1,4}\b/);
+    if (explicitNumberedMatch) {
+      const canonical = explicitNumberedMatch[0].replace(/\s+/g, "");
+      if (!fields.numbered || normalizeForNumbered(fields.numbered) !== normalizeForNumbered(canonical)) {
+        fields.numbered = canonical;
+        confidence.numbered = Math.max(confidence.numbered ?? 0, 0.86);
+      }
+    } else {
+      fields.numbered = null;
+      confidence.numbered = null;
     }
 
     let variantMatchAudit:

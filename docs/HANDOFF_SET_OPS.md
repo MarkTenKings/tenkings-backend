@@ -1397,3 +1397,28 @@ Build Set Ops UI flow with:
   - Result: pass with existing `@next/next/no-img-element` warnings in `uploads.tsx`.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Uploads Follow-up Stabilization (2026-02-24)
+- Trigger:
+  - Operator reported `numbered` auto-filling as `42/99` on many cards even after teach corrections.
+  - Operator reported mobile draw flow crashing with client-side exception.
+  - Operator reported PhotoRoom cleanup no longer reliably applied before KingsReview handoff.
+- Changes made:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - Excluded `numbered` from OCR memory replay candidate fields.
+    - Added strict OCR grounding for `numbered`:
+      - keep only when OCR text explicitly contains `x/y` serial pattern;
+      - otherwise clear `numbered` + confidence to `null`.
+  - `frontend/nextjs-app/lib/server/ocrFeedbackMemory.ts`
+    - Excluded `numbered` from persisted memory aggregate upserts to prevent future over-generalized serial replay.
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - hardened pointer capture/release paths with safe guards for mobile browser compatibility.
+    - added pointer-leave finalize path to reduce stuck draft states.
+    - restored deterministic PhotoRoom run at send step:
+      - `Send to KingsReview` now calls card PhotoRoom processing first and blocks send when PhotoRoom fails or is not configured.
+      - OCR-stage PhotoRoom trigger remains best-effort and logs warning on failure.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/ocrFeedbackMemory.ts`
+  - Result: pass with existing `@next/next/no-img-element` warnings only.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

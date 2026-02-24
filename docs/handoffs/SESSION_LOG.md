@@ -2165,3 +2165,36 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this coding step.
+
+## 2026-02-24 - Uploads Follow-up Fixes (Numbered Replay, Mobile Draw Crash, PhotoRoom Gate)
+
+### Summary
+- Fixed repeated `numbered` auto-fill regressions by removing `numbered` from replay memory and enforcing OCR-grounded serial parsing.
+- Hardened teach-region pointer handling for mobile browsers to prevent pointer-capture client exceptions.
+- Reintroduced reliable PhotoRoom execution in Add Cards → KingsReview flow by gating send on successful PhotoRoom processing.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/lib/server/ocrFeedbackMemory.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `numbered` behavior:
+  - memory replay excludes `numbered` field.
+  - memory aggregate writer ignores incoming `numbered` rows.
+  - OCR suggest now clears `numbered` when OCR text does not contain explicit `x/y` serial pattern.
+- teach draw stability:
+  - pointer capture/release wrapped in compatibility-safe guards (`try/catch`, feature checks).
+  - pointer leave now routes to cancel/finalize handler.
+- PhotoRoom workflow:
+  - OCR-stage trigger remains best-effort.
+  - `Send to KingsReview` now requires successful PhotoRoom call before enqueue (fails fast with explicit message on PhotoRoom error/not configured).
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/ocrFeedbackMemory.ts`
+  - Result: pass, only existing `@next/next/no-img-element` warnings in uploads.
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this coding step.

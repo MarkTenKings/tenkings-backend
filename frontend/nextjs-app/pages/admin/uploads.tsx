@@ -2070,10 +2070,10 @@ export default function AdminUploads() {
   const triggerPhotoroomForCard = useCallback(
     async (cardId: string) => {
       if (!session?.token) {
-        return;
+        return { ok: false as const, message: "Your session expired. Sign in again and retry." };
       }
       try {
-        await fetch(resolveApiUrl(`/api/admin/cards/${cardId}/photoroom`), {
+        const res = await fetch(resolveApiUrl(`/api/admin/cards/${cardId}/photoroom`), {
           method: "POST",
           mode: isRemoteApi ? "cors" : "same-origin",
           headers: {
@@ -2081,8 +2081,20 @@ export default function AdminUploads() {
             ...buildAdminHeaders(session.token),
           },
         });
+        const payload = (await res.json().catch(() => ({}))) as { message?: string; processed?: number; skipped?: number };
+        if (!res.ok) {
+          return { ok: false as const, message: payload?.message ?? "PhotoRoom background removal failed." };
+        }
+        const message = typeof payload?.message === "string" ? payload.message : "PhotoRoom processed.";
+        if (/not configured/i.test(message)) {
+          return { ok: false as const, message: "PhotoRoom is not configured in this environment." };
+        }
+        return { ok: true as const, message };
       } catch (error) {
-        console.warn("PhotoRoom background removal failed", error);
+        return {
+          ok: false as const,
+          message: error instanceof Error ? error.message : "PhotoRoom background removal failed.",
+        };
       }
     },
     [isRemoteApi, resolveApiUrl, session?.token]
@@ -2164,7 +2176,11 @@ export default function AdminUploads() {
       }
       if (photoroomRequestedRef.current !== cardId) {
         photoroomRequestedRef.current = cardId;
-        void triggerPhotoroomForCard(cardId);
+        void triggerPhotoroomForCard(cardId).then((result) => {
+          if (!result.ok) {
+            console.warn("PhotoRoom background removal failed", result.message);
+          }
+        });
       }
       const suggestions = payload?.suggestions ?? {};
       if (Object.keys(suggestions).length > 0) {
@@ -2967,6 +2983,40 @@ export default function AdminUploads() {
     [teachRegionBindingOptionMap, teachRegionBindingOptions]
   );
 
+  const safelySetPointerCapture = useCallback((target: HTMLDivElement, pointerId: number) => {
+    const captureTarget = target as HTMLDivElement & {
+      setPointerCapture?: (id: number) => void;
+    };
+    if (typeof captureTarget.setPointerCapture !== "function") {
+      return;
+    }
+    try {
+      captureTarget.setPointerCapture(pointerId);
+    } catch {
+      // Some mobile browsers throw even when pointer events exist.
+    }
+  }, []);
+
+  const safelyReleasePointerCapture = useCallback((target: HTMLDivElement, pointerId: number) => {
+    const captureTarget = target as HTMLDivElement & {
+      hasPointerCapture?: (id: number) => boolean;
+      releasePointerCapture?: (id: number) => void;
+    };
+    if (
+      typeof captureTarget.hasPointerCapture !== "function" ||
+      typeof captureTarget.releasePointerCapture !== "function"
+    ) {
+      return;
+    }
+    try {
+      if (captureTarget.hasPointerCapture(pointerId)) {
+        captureTarget.releasePointerCapture(pointerId);
+      }
+    } catch {
+      // Ignore pointer capture release failures for mobile compatibility.
+    }
+  }, []);
+
   const handleTeachRegionPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (!teachRegionDrawEnabled || !activeTeachRegionPreview) {
@@ -2978,10 +3028,10 @@ export default function AdminUploads() {
       beginTeachRegionDraft(event.currentTarget, event.clientX, event.clientY, event.pointerId);
       setTeachRegionFeedback(null);
       setTeachRegionBindDraft(null);
-      event.currentTarget.setPointerCapture(event.pointerId);
+      safelySetPointerCapture(event.currentTarget, event.pointerId);
       event.preventDefault();
     },
-    [activeTeachRegionPreview, beginTeachRegionDraft, teachRegionDrawEnabled]
+    [activeTeachRegionPreview, beginTeachRegionDraft, safelySetPointerCapture, teachRegionDrawEnabled]
   );
 
   const handleTeachRegionPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
@@ -3033,21 +3083,17 @@ export default function AdminUploads() {
   const handleTeachRegionPointerUp = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       finishTeachRegionDraft(event.pointerId);
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
+      safelyReleasePointerCapture(event.currentTarget, event.pointerId);
     },
-    [finishTeachRegionDraft]
+    [finishTeachRegionDraft, safelyReleasePointerCapture]
   );
 
   const handleTeachRegionPointerCancel = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       finishTeachRegionDraft(event.pointerId);
-      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-        event.currentTarget.releasePointerCapture(event.pointerId);
-      }
+      safelyReleasePointerCapture(event.currentTarget, event.pointerId);
     },
-    [finishTeachRegionDraft]
+    [finishTeachRegionDraft, safelyReleasePointerCapture]
   );
 
   const handleUndoTeachRegion = useCallback(() => {
@@ -3318,6 +3364,11 @@ export default function AdminUploads() {
     try {
       setIntakeBusy(true);
       await saveIntakeMetadata(true, trainAiEnabled, trainAiEnabled);
+      const photoRoomResult = await triggerPhotoroomForCard(intakeCardId);
+      if (!photoRoomResult.ok) {
+        throw new Error(photoRoomResult.message);
+      }
+      photoroomRequestedRef.current = intakeCardId;
       const query = buildIntakeQuery();
       const sourceList =
         intakeRequired.category === "tcg"
@@ -3366,6 +3417,7 @@ export default function AdminUploads() {
     queuedReviewCardIds,
     resolveApiUrl,
     saveIntakeMetadata,
+    triggerPhotoroomForCard,
     trainAiEnabled,
     session?.token,
     validateRequiredIntake,
@@ -4314,6 +4366,7 @@ export default function AdminUploads() {
                     onPointerMove={handleTeachRegionPointerMove}
                     onPointerUp={handleTeachRegionPointerUp}
                     onPointerCancel={handleTeachRegionPointerCancel}
+                    onPointerLeave={handleTeachRegionPointerCancel}
                   >
                     {activeTeachRegionPreview ? (
                       <>

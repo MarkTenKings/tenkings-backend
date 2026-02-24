@@ -46,6 +46,7 @@ export type OcrFeedbackMemoryAggregateInput = {
 
 const TAXONOMY_ALIAS_FIELDS = new Set(["insertSet", "parallel"]);
 const BOOLEAN_MEMORY_FIELDS = new Set(["autograph", "memorabilia", "graded"]);
+const MEMORY_EXCLUDED_FIELDS = new Set(["numbered"]);
 const TRUE_STRINGS = new Set(["true", "yes", "1"]);
 const VARIANT_LABEL_STOP_WORDS = new Set(["the"]);
 
@@ -240,6 +241,9 @@ export async function upsertOcrFeedbackMemoryAggregates(rows: OcrFeedbackMemoryA
     const fieldName = coerceNullableString(row.fieldName);
     const humanValue = coerceNullableString(row.humanValue);
     if (!fieldName || !humanValue) {
+      continue;
+    }
+    if (MEMORY_EXCLUDED_FIELDS.has(fieldName)) {
       continue;
     }
     if (BOOLEAN_MEMORY_FIELDS.has(fieldName) && !isTruthyString(humanValue)) {
