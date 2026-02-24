@@ -1186,3 +1186,23 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/parse-upload.ts --file pages/admin/set-ops-review.tsx` (pass)
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Phase 3 Implementation Complete (2026-02-24)
+- Scope delivered:
+  - unknown-first UX for taxonomy fields in Add Cards (`setName`, `insertSet`, `parallel`):
+    - added field-level reason badges when taxonomy remains blank
+    - reasons surfaced from OCR audit status (`low confidence`, `out of pool`, `no set scope`)
+  - removed silent heuristic set auto-pick when no concrete OCR/LLM set hint exists.
+  - added one-click teach capture in Add Cards:
+    - `Teach From Corrections` button persists current corrected card state with OCR feedback/training enabled without sending to KingsReview.
+- Frontend implementation:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - typed `taxonomyConstraints.fieldStatus` in OCR audit payload.
+    - computed `taxonomyUnknownReasons` from audit and rendered badges next to taxonomy controls.
+    - hardened product-line auto-fill effect to require actionable OCR set hint (Phase 3 no silent set forcing).
+    - added `handleTeachFromCorrections` action + UI button + success feedback.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/parse-upload.ts --file pages/admin/set-ops-review.tsx`
+  - Result: pass with existing pre-existing `@next/next/no-img-element` warnings in `pages/admin/uploads.tsx`.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

@@ -1910,3 +1910,35 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this coding step.
+
+## 2026-02-24 - Phase 3 Build: Unknown-State First UX + One-Click Teach
+
+### Summary
+- Implemented Phase 3 in Add Cards UI by surfacing explicit unknown reasons for taxonomy fields and adding a direct teach-capture action.
+- Removed silent heuristic set auto-selection when OCR/LLM does not provide an actionable set hint, aligning with unknown-first policy.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+
+### Implementation Notes
+- OCR audit typing now includes `taxonomyConstraints.fieldStatus` for:
+  - `setName`
+  - `insertSet`
+  - `parallel`
+- Added `taxonomyUnknownReasons` mapping and badges in UI:
+  - `Unknown: low confidence`
+  - `Unknown: not in approved option pool`
+  - `Unknown: no set scope available`
+- Product line auto-fill effect now requires actionable `setName` OCR hint; no fallback-only heuristic autopick from year/manufacturer/sport.
+- Added `Teach From Corrections` button in optional stage:
+  - calls existing metadata save path with `recordOcrFeedback=true` and training enabled,
+  - captures teach signal without sending card to KingsReview,
+  - shows success feedback in intake panel.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/parse-upload.ts --file pages/admin/set-ops-review.tsx`
+  - Result: pass with existing pre-existing warnings only (`@next/next/no-img-element` in uploads).
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this coding step.

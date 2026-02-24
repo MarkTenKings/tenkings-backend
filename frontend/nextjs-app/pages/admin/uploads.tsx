@@ -146,6 +146,14 @@ type OcrAuditPayload = {
     matchedCardNumber?: string;
     topCandidate?: { parallelId?: string; confidence?: number; reason?: string | null } | null;
   };
+  taxonomyConstraints?: {
+    fieldStatus?: Partial<
+      Record<
+        "setName" | "insertSet" | "parallel",
+        "kept" | "cleared_low_confidence" | "cleared_out_of_pool" | "cleared_no_set_scope"
+      >
+    >;
+  };
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -370,6 +378,8 @@ export default function AdminUploads() {
   const [intakeTouched, setIntakeTouched] = useState<Record<string, boolean>>({});
   const [intakeOptionalTouched, setIntakeOptionalTouched] = useState<Record<string, boolean>>({});
   const [trainAiEnabled, setTrainAiEnabled] = useState(false);
+  const [teachBusy, setTeachBusy] = useState(false);
+  const [teachFeedback, setTeachFeedback] = useState<string | null>(null);
   const [productLineOptions, setProductLineOptions] = useState<string[]>([]);
   const [insertSetOptions, setInsertSetOptions] = useState<string[]>([]);
   const [parallelOptions, setParallelOptions] = useState<string[]>([]);
@@ -1053,6 +1063,8 @@ export default function AdminUploads() {
     setIntakeTouched({});
     setIntakeOptionalTouched({});
     setTrainAiEnabled(false);
+    setTeachBusy(false);
+    setTeachFeedback(null);
     setProductLineOptions([]);
     setInsertSetOptions([]);
     setParallelOptions([]);
@@ -1570,6 +1582,8 @@ export default function AdminUploads() {
       setIntakeTouched({});
       setIntakeOptionalTouched({});
       setOcrAudit((payload.ocrSuggestions?.data as Record<string, unknown> | null) ?? null);
+      setTeachBusy(false);
+      setTeachFeedback(null);
       setOcrStatus(payload.ocrSuggestions?.data ? "ready" : "empty");
       setOcrError(null);
       setOcrApplied(false);
@@ -1663,11 +1677,12 @@ export default function AdminUploads() {
     }
     const suggestedSetName = sanitizeNullableText(intakeSuggested.setName);
     const actionableSuggestedSetName = isActionableProductLineHint(suggestedSetName) ? suggestedSetName : "";
+    // Phase 3 unknown-first policy: avoid heuristic-only set auto-picks.
+    if (!actionableSuggestedSetName) {
+      return;
+    }
     const candidate = pickBestCandidate(productLineOptions, [
       actionableSuggestedSetName,
-      `${sanitizeNullableText(intakeRequired.year)} ${sanitizeNullableText(intakeRequired.manufacturer)} ${sanitizeNullableText(
-        intakeRequired.sport
-      )}`.trim(),
     ], 1.1);
     if (candidate) {
       setIntakeOptional((prev) => ({ ...prev, productLine: candidate }));
@@ -1675,9 +1690,6 @@ export default function AdminUploads() {
   }, [
     intakeOptional.productLine,
     intakeRequired.category,
-    intakeRequired.manufacturer,
-    intakeRequired.sport,
-    intakeRequired.year,
     intakeSuggested.setName,
     productLineOptions,
   ]);
@@ -2639,6 +2651,33 @@ export default function AdminUploads() {
     return Array.isArray(applied) ? applied.length : 0;
   }, [typedOcrAudit]);
 
+  const taxonomyUnknownReasons = useMemo(() => {
+    const status = typedOcrAudit?.taxonomyConstraints?.fieldStatus ?? {};
+    const confidence = typedOcrAudit?.confidence ?? {};
+
+    const explain = (field: "setName" | "insertSet" | "parallel") => {
+      const fieldStatus = status[field];
+      if (!fieldStatus || fieldStatus === "kept") {
+        return null;
+      }
+      if (fieldStatus === "cleared_low_confidence") {
+        const raw = confidence[field];
+        const scoreLabel = typeof raw === "number" ? ` (${Math.round(raw * 100)}%)` : "";
+        return `Unknown: low confidence${scoreLabel}`;
+      }
+      if (fieldStatus === "cleared_out_of_pool") {
+        return "Unknown: not in approved option pool";
+      }
+      return "Unknown: no set scope available";
+    };
+
+    return {
+      setName: explain("setName"),
+      insertSet: explain("insertSet"),
+      parallel: explain("parallel"),
+    };
+  }, [typedOcrAudit]);
+
   const rankedInsertSetOptions = useMemo(() => {
     const options = [...insertSetOptions];
     const suggested = (intakeSuggested.insertSet ?? "").trim();
@@ -2686,6 +2725,31 @@ export default function AdminUploads() {
       setIntakeBusy(false);
     }
   }, [saveIntakeMetadata, validateRequiredIntake]);
+
+  const handleTeachFromCorrections = useCallback(async () => {
+    const error = validateRequiredIntake();
+    if (error) {
+      setIntakeError(error);
+      return;
+    }
+    if (!intakeCardId) {
+      setIntakeError("Card asset not found.");
+      return;
+    }
+    try {
+      setTeachBusy(true);
+      setTeachFeedback(null);
+      await saveIntakeMetadata(true, true, true);
+      setTrainAiEnabled(true);
+      setTeachFeedback("Teach captured from current corrections.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to capture teach signal.";
+      setIntakeError(message);
+      setTeachFeedback(null);
+    } finally {
+      setTeachBusy(false);
+    }
+  }, [intakeCardId, saveIntakeMetadata, validateRequiredIntake]);
 
   const handleSendToKingsReview = useCallback(async () => {
     const error = validateRequiredIntake();
@@ -3261,6 +3325,11 @@ export default function AdminUploads() {
                         )}`}
                       />
                     )}
+                    {!sanitizeNullableText(intakeOptional.productLine) && taxonomyUnknownReasons.setName ? (
+                      <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-rose-200">
+                        {taxonomyUnknownReasons.setName}
+                      </p>
+                    ) : null}
                     <div className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs uppercase tracking-[0.22em] text-slate-400">
                       Sport (auto): <span className="text-slate-200">{intakeRequired.sport || "Unknown"}</span>
                     </div>
@@ -3440,6 +3509,11 @@ export default function AdminUploads() {
                         className="h-14 w-14 rounded-lg border border-white/10 object-cover"
                       />
                     ) : null}
+                    {!sanitizeNullableText(intakeOptional.insertSet) && taxonomyUnknownReasons.insertSet ? (
+                      <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-rose-200">
+                        {taxonomyUnknownReasons.insertSet}
+                      </p>
+                    ) : null}
                     <button
                       type="button"
                       onClick={() => setPickerModalField("parallel")}
@@ -3459,6 +3533,11 @@ export default function AdminUploads() {
                         alt={`${intakeOptional.parallel} example`}
                         className="h-14 w-14 rounded-lg border border-white/10 object-cover"
                       />
+                    ) : null}
+                    {!sanitizeNullableText(intakeOptional.parallel) && taxonomyUnknownReasons.parallel ? (
+                      <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-rose-200">
+                        {taxonomyUnknownReasons.parallel}
+                      </p>
                     ) : null}
                   </>
                 )}
@@ -3603,6 +3682,14 @@ export default function AdminUploads() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => void handleTeachFromCorrections()}
+                    disabled={intakeBusy || teachBusy}
+                    className="inline-flex items-center justify-center rounded-full border border-emerald-400/60 bg-emerald-500/15 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-emerald-200 transition hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {teachBusy ? "Saving Teach..." : "Teach From Corrections"}
+                  </button>
+                  <button
+                    type="button"
                     onClick={() => void handleSendToKingsReview()}
                     disabled={intakeBusy}
                     className="inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
@@ -3615,6 +3702,9 @@ export default function AdminUploads() {
                     ? "Training enabled for this card."
                     : "Training off for this card."}
                 </p>
+                {teachFeedback ? (
+                  <p className="text-xs text-emerald-300">{teachFeedback}</p>
+                ) : null}
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
                 <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Intake summary</p>
