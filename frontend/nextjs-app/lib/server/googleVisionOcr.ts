@@ -118,18 +118,60 @@ const extractResultConfidence = (tokens: OcrToken[]): number => {
   return clampConfidence(sum / tokens.length);
 };
 
-const toImageContent = async (image: OcrImageInput): Promise<string> => {
+type PreparedVisionImage = {
+  id?: string;
+  image: {
+    content?: string;
+    source?: { imageUri: string };
+  };
+};
+
+const shouldUseImageUri = (): boolean => {
+  const raw = String(process.env.GOOGLE_VISION_USE_IMAGE_URI ?? "true").trim().toLowerCase();
+  if (["0", "false", "no", "off"].includes(raw)) {
+    return false;
+  }
+  return true;
+};
+
+const toPreparedVisionImage = async (image: OcrImageInput): Promise<PreparedVisionImage> => {
+  const id = typeof image.id === "string" ? image.id : undefined;
   if (typeof image.base64 === "string" && image.base64.trim()) {
-    return normalizeBase64Input(image.base64);
+    return {
+      id,
+      image: {
+        content: normalizeBase64Input(image.base64),
+      },
+    };
   }
   if (typeof image.url === "string" && image.url.trim()) {
-    const response = await fetch(image.url, { method: "GET" });
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`Failed to fetch OCR image (${response.status})${body ? `: ${body.slice(0, 160)}` : ""}`);
+    const url = image.url.trim();
+    if (shouldUseImageUri()) {
+      return {
+        id,
+        image: {
+          source: { imageUri: url },
+        },
+      };
     }
-    const bytes = await response.arrayBuffer();
-    return Buffer.from(bytes).toString("base64");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 12000);
+    try {
+      const response = await fetch(url, { method: "GET", signal: controller.signal });
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`Failed to fetch OCR image (${response.status})${body ? `: ${body.slice(0, 160)}` : ""}`);
+      }
+      const bytes = await response.arrayBuffer();
+      return {
+        id,
+        image: {
+          content: Buffer.from(bytes).toString("base64"),
+        },
+      };
+    } finally {
+      clearTimeout(timeout);
+    }
   }
   throw new Error("OCR image requires `url` or `base64`.");
 };
@@ -143,19 +185,14 @@ export async function runGoogleVisionOcr(images: OcrImageInput[]): Promise<OcrRe
     return { results: [], combined_text: "" };
   }
 
-  const prepared = await Promise.all(
-    images.map(async (image) => ({
-      id: typeof image.id === "string" ? image.id : undefined,
-      content: await toImageContent(image),
-    }))
-  );
+  const prepared = await Promise.all(images.map((image) => toPreparedVisionImage(image)));
 
   const response = await fetch(`${GOOGLE_VISION_ENDPOINT}?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       requests: prepared.map((entry) => ({
-        image: { content: entry.content },
+        image: entry.image,
         features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
       })),
     }),

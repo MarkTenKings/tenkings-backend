@@ -1224,7 +1224,10 @@ export default async function handler(
           };
         });
         await (prisma as any).ocrFeedbackEvent.createMany({ data: rows });
-        await upsertOcrFeedbackMemoryAggregates(rows);
+        const rowsForMemory = rows.filter((row) => row.humanValue && row.wasCorrect === false);
+        if (rowsForMemory.length > 0) {
+          await upsertOcrFeedbackMemoryAggregates(rowsForMemory);
+        }
       }
 
       if (

@@ -482,50 +482,83 @@ async function parseWithLlm(
     };
 
     const executeRequest = async (userContent: Array<Record<string, unknown>>) =>
-      fetch("https://api.openai.com/v1/responses", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: params.model,
-          input: [
-            {
-              role: "system",
-              content: [{ type: "input_text", text: systemInstruction }],
+      {
+        const controller = new AbortController();
+        const timeoutMs = mode === "multimodal" ? 22000 : 15000;
+        const timeout = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          return await fetch("https://api.openai.com/v1/responses", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
             },
-            {
-              role: "user",
-              content: userContent,
-            },
-          ],
-          text:
-            params.format === "json_schema"
-              ? {
-                  format: {
-                    type: "json_schema",
-                    name: "card_ocr_parse",
-                    strict: true,
-                    schema,
-                  },
-                }
-              : {
-                  format: {
-                    type: "json_object",
-                  },
+            signal: controller.signal,
+            body: JSON.stringify({
+              model: params.model,
+              input: [
+                {
+                  role: "system",
+                  content: [{ type: "input_text", text: systemInstruction }],
                 },
-        }),
-      });
+                {
+                  role: "user",
+                  content: userContent,
+                },
+              ],
+              reasoning: {
+                effort: "minimal",
+              },
+              text:
+                params.format === "json_schema"
+                  ? {
+                      format: {
+                        type: "json_schema",
+                        name: "card_ocr_parse",
+                        strict: true,
+                        schema,
+                      },
+                    }
+                  : {
+                      format: {
+                        type: "json_object",
+                      },
+                    },
+            }),
+          });
+        } finally {
+          clearTimeout(timeout);
+        }
+      };
 
-    let response = await executeRequest(buildUserContent("string"));
-    let bodyText = await response.text().catch(() => "");
+    let response: Response;
+    let bodyText = "";
+    try {
+      response = await executeRequest(buildUserContent("string"));
+      bodyText = await response.text().catch(() => "");
+    } catch (error) {
+      return {
+        ok: false,
+        status: 0,
+        bodyText: error instanceof Error ? error.message : "responses_call_failed",
+        parsed: null,
+      };
+    }
 
     if (!response.ok && mode === "multimodal" && response.status === 400) {
-      const retryResponse = await executeRequest(buildUserContent("object"));
-      const retryBodyText = await retryResponse.text().catch(() => "");
-      response = retryResponse;
-      bodyText = retryBodyText;
+      try {
+        const retryResponse = await executeRequest(buildUserContent("object"));
+        const retryBodyText = await retryResponse.text().catch(() => "");
+        response = retryResponse;
+        bodyText = retryBodyText;
+      } catch (error) {
+        return {
+          ok: false,
+          status: 0,
+          bodyText: error instanceof Error ? error.message : "responses_retry_failed",
+          parsed: null,
+        };
+      }
     }
 
     if (!response.ok) {
@@ -660,12 +693,23 @@ function buildMultimodalDecision(params: {
     return { useMultimodal: false, detail: "low", reasons };
   }
 
+  const severeReason =
+    reasons.includes("text_parse_failed") || reasons.includes("core_fields_uncertain");
   const taxonomyUncertainCount = ["set_uncertain", "insert_uncertain", "parallel_uncertain"].filter((key) =>
     reasons.includes(key)
   ).length;
+
+  // Avoid expensive multimodal retries when only one taxonomy field is uncertain.
+  if (!severeReason && taxonomyUncertainCount < 2) {
+    return {
+      useMultimodal: false,
+      detail: "low",
+      reasons,
+    };
+  }
+
   const detail: "low" | "high" =
-    reasons.includes("text_parse_failed") ||
-    reasons.includes("core_fields_uncertain") ||
+    severeReason ||
     (reasons.includes("set_uncertain") && setCandidates >= 4) ||
     taxonomyUncertainCount >= 2
       ? "high"
@@ -1561,7 +1605,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
+    const totalStartMs = Date.now();
+    const ocrStartMs = Date.now();
     const ocrResponse = await runGoogleVisionOcr(images);
+    const ocrElapsedMs = Date.now() - ocrStartMs;
     const photoState = buildPhotoOcrState({
       frontImageUrl: frontImageUrl ?? null,
       backImageUrl: backImageUrl ?? null,
@@ -1793,6 +1840,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       reasons: [],
     };
     let llmTextParsed = false;
+    const llmStartMs = Date.now();
     try {
       const llmTextResult = await parseWithLlm({
         ocrText: combinedTextRaw,
@@ -1845,6 +1893,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         console.warn("LLM OCR multimodal parse failed; keeping text/heuristic suggestions", error);
       }
     }
+    const llmElapsedMs = Date.now() - llmStartMs;
 
     const regionTemplateLayoutClass = sanitizeText(queryHints.layoutClass || "") || "base";
     const regionTemplateSetId = coerceNullableString(queryHints.setId || queryHints.productLine || fields.setName);
@@ -2078,6 +2127,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       llm: llmAudit,
       taxonomyPromptCandidates,
       taxonomyPromptPoolError,
+      timings: {
+        totalMs: Date.now() - totalStartMs,
+        ocrMs: ocrElapsedMs,
+        llmMs: llmElapsedMs,
+      },
       tokens: ocrTokens,
       photoOcr: photoState.byId,
       readiness: photoState.readiness,

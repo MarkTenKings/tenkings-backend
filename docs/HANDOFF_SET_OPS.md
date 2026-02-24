@@ -1478,3 +1478,38 @@ Build Set Ops UI flow with:
     - pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## OCR Latency + Train Send Delay Stabilization (2026-02-24)
+- Trigger:
+  - Operator reported OCR suggestions in Add Cards were delayed (~60s) before fields appeared.
+  - Operator reported `Train AI On` + `Send to KingsReview` introduced long delay before queue advanced.
+  - Operator reported teach draw path still crashing at pointer interaction stage.
+- Root causes identified:
+  - OCR latency:
+    - `ocr-suggest` often executed two LLM passes (`text` + `multimodal`) because multimodal escalation criteria were too broad (single taxonomy uncertainty could trigger multimodal).
+    - Google Vision ingestion did expensive server-side URL fetch + base64 conversion for each image before Vision call.
+  - Train send delay:
+    - `PATCH /api/admin/cards/[cardId]` synchronously upserted OCR memory aggregates for all feedback rows whenever training was enabled.
+    - Send path could duplicate teach persistence after `Teach From Corrections`.
+  - Draw crash:
+    - pointer move handler referenced synthetic event target inside state updater path, which is fragile on mobile pointer batching.
+- Fixes implemented:
+  - `frontend/nextjs-app/lib/server/googleVisionOcr.ts`
+    - switched URL image handling to Vision `imageUri` mode by default (configurable via `GOOGLE_VISION_USE_IMAGE_URI`, default `true`).
+    - retained fallback local fetch/base64 path when `GOOGLE_VISION_USE_IMAGE_URI=false`.
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - reduced multimodal escalation aggressiveness (single taxonomy uncertainty no longer forces multimodal run).
+    - added OpenAI Responses timeout guards (`text` and `multimodal`) + `reasoning.effort="minimal"` for extraction latency reduction.
+    - added OCR audit timing metrics: `timings.totalMs`, `timings.ocrMs`, `timings.llmMs`.
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+    - OCR memory aggregate upsert now runs only for corrected rows (`wasCorrect=false`) instead of all feedback rows.
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - added `teachCapturedFromCorrections` guard to avoid duplicate teach persistence on send after explicit teach action.
+    - hardened pointer move handler to compute bounds before state updater (removes synthetic-event target coupling).
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/cards/[cardId].ts --file lib/server/googleVisionOcr.ts`
+    - pass (existing `@next/next/no-img-element` warnings only).
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

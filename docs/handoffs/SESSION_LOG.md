@@ -2251,3 +2251,49 @@
 
 ### Notes
 - No deploy/restart/migration executed in this coding step.
+
+## 2026-02-24 - OCR/Train Delay + Draw Stability Follow-up
+
+### Summary
+- Investigated and fixed production-follow-up issues:
+  - OCR suggestion latency spikes during Add Cards review.
+  - long delay when sending card with `Train AI On`.
+  - remaining teach draw crash path on mobile.
+
+### Root Causes
+- OCR route frequently escalated to multimodal pass due broad trigger logic, causing two sequential LLM calls for many cards.
+- Vision path fetched each image server-side and base64-encoded before calling Google Vision, adding avoidable overhead.
+- Train-on send path synchronously upserted memory aggregates for all feedback rows.
+- Draw pointer move path relied on synthetic event target inside state updater.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/googleVisionOcr.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Google Vision:
+  - default URL-mode now uses Vision `imageUri` (env: `GOOGLE_VISION_USE_IMAGE_URI=true` by default).
+  - retained opt-out path for legacy fetch+base64 mode.
+- OCR suggest:
+  - reduced multimodal escalation sensitivity (single taxonomy uncertainty no longer auto-triggers multimodal).
+  - added request timeouts for OpenAI Responses calls.
+  - added `reasoning.effort = minimal` for extraction latency.
+  - emits timing audit block (`totalMs`, `ocrMs`, `llmMs`) to diagnose future latency.
+- Card PATCH training persistence:
+  - memory aggregate upsert now limited to corrected rows only (`wasCorrect=false`).
+- Uploads send/teach:
+  - added local dedupe (`teachCapturedFromCorrections`) to avoid duplicate teach write on immediate send.
+  - pointer move now reads bounding rect outside updater to stabilize mobile draw handling.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/cards/[cardId].ts --file lib/server/googleVisionOcr.ts`
+  - Result: pass with existing `@next/next/no-img-element` warnings in uploads.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.

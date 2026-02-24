@@ -528,6 +528,7 @@ export default function AdminUploads() {
   const [trainAiEnabled, setTrainAiEnabled] = useState(false);
   const [teachBusy, setTeachBusy] = useState(false);
   const [teachFeedback, setTeachFeedback] = useState<string | null>(null);
+  const [teachCapturedFromCorrections, setTeachCapturedFromCorrections] = useState(false);
   const [teachLayoutClass, setTeachLayoutClass] = useState("base");
   const [teachRegionSide, setTeachRegionSide] = useState<TeachRegionSide>("FRONT");
   const [teachRegionsBySide, setTeachRegionsBySide] = useState<TeachRegionsBySide>(() => buildEmptyTeachRegionsBySide());
@@ -1454,6 +1455,7 @@ export default function AdminUploads() {
     setTrainAiEnabled(false);
     setTeachBusy(false);
     setTeachFeedback(null);
+    setTeachCapturedFromCorrections(false);
     setTeachLayoutClass("base");
     setTeachRegionSide("FRONT");
     setTeachRegionsBySide(buildEmptyTeachRegionsBySide());
@@ -2005,6 +2007,7 @@ export default function AdminUploads() {
       setOcrAudit((payload.ocrSuggestions?.data as Record<string, unknown> | null) ?? null);
       setTeachBusy(false);
       setTeachFeedback(null);
+      setTeachCapturedFromCorrections(false);
       setOcrStatus(payload.ocrSuggestions?.data ? "ready" : "empty");
       setOcrError(null);
       setOcrApplied(false);
@@ -3310,16 +3313,16 @@ export default function AdminUploads() {
   const handleTeachRegionPointerMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       try {
+        const rect = event.currentTarget.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) {
+          return;
+        }
+        const x = clampFraction((event.clientX - rect.left) / rect.width);
+        const y = clampFraction((event.clientY - rect.top) / rect.height);
         setTeachRegionDraft((prev) => {
           if (!prev || prev.pointerId !== event.pointerId) {
             return prev;
           }
-          const rect = event.currentTarget.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) {
-            return prev;
-          }
-          const x = clampFraction((event.clientX - rect.left) / rect.width);
-          const y = clampFraction((event.clientY - rect.top) / rect.height);
           return {
             ...prev,
             currentX: x,
@@ -3673,11 +3676,13 @@ export default function AdminUploads() {
       setTeachFeedback(null);
       await saveIntakeMetadata(true, true, true);
       setTrainAiEnabled(true);
+      setTeachCapturedFromCorrections(true);
       setTeachFeedback("Teach captured from current corrections.");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to capture teach signal.";
       setIntakeError(message);
       setTeachFeedback(null);
+      setTeachCapturedFromCorrections(false);
     } finally {
       setTeachBusy(false);
     }
@@ -3700,7 +3705,8 @@ export default function AdminUploads() {
     }
     try {
       setIntakeBusy(true);
-      await saveIntakeMetadata(true, trainAiEnabled, trainAiEnabled);
+      const recordTeachOnSend = trainAiEnabled && !teachCapturedFromCorrections;
+      await saveIntakeMetadata(true, recordTeachOnSend, trainAiEnabled);
       const photoRoomResult = await triggerPhotoroomForCard(intakeCardId);
       if (!photoRoomResult.ok) {
         throw new Error(photoRoomResult.message);
@@ -3754,6 +3760,7 @@ export default function AdminUploads() {
     queuedReviewCardIds,
     resolveApiUrl,
     saveIntakeMetadata,
+    teachCapturedFromCorrections,
     triggerPhotoroomForCard,
     trainAiEnabled,
     session?.token,
