@@ -1107,3 +1107,29 @@ Build Set Ops UI flow with:
   - workspace-wide TS check still fails due known pre-existing Prisma/client mismatch.
 - Operational status:
   - No deploy/restart/migration executed in this step.
+
+## Phase 2 Implementation Complete (2026-02-24)
+- Scope delivered:
+  - persisted OCR teach-memory aggregate model for set-family replay (`OcrFeedbackMemoryAggregate`),
+  - correction write-path now updates aggregate memory on every `Train AI` event,
+  - OCR replay now reads aggregate memory with strict Phase 2 gates:
+    - `setName` replay requires `year + manufacturer` (and sport match when present),
+    - `insertSet` / `parallel` replay requires set/card context plus token-anchor overlap,
+  - automatic cold-start backfill from historical `OcrFeedbackEvent` rows when aggregate memory is empty.
+- Backend implementation:
+  - new aggregate utility:
+    - `frontend/nextjs-app/lib/server/ocrFeedbackMemory.ts`
+  - correction write-path integration:
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+  - replay-path migration to aggregate reads:
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - Prisma schema + migration:
+    - `packages/database/prisma/schema.prisma`
+    - `packages/database/prisma/migrations/20260224190000_ocr_feedback_memory_aggregate/migration.sql`
+- Validation:
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId].ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/ocrFeedbackMemory.ts` (pass)
+  - `pnpm --filter @tenkings/shared test` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (fails due broad pre-existing Prisma client mismatch in workspace; not isolated to this change set)
+- Operational status:
+  - No deploy/restart/migration executed in this step.

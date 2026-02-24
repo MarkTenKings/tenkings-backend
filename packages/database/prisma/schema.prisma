@@ -898,6 +898,38 @@ model OcrFeedbackEvent {
   @@index([setId, year, manufacturer])
 }
 
+model OcrFeedbackMemoryAggregate {
+  id              String   @id @default(uuid())
+  fieldName       String
+  value           String
+  valueKey        String
+  setId           String?
+  setIdKey        String   @default("")
+  year            String?
+  yearKey         String   @default("")
+  manufacturer    String?
+  manufacturerKey String   @default("")
+  sport           String?
+  sportKey        String   @default("")
+  cardNumber      String?
+  cardNumberKey   String   @default("")
+  numbered        String?
+  numberedKey     String   @default("")
+  sampleCount     Int      @default(0)
+  correctCount    Int      @default(0)
+  confidencePrior Float    @default(0)
+  aliasValuesJson Json?
+  tokenAnchorsJson Json?
+  firstSeenAt     DateTime @default(now())
+  lastSeenAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([fieldName, valueKey, setIdKey, yearKey, manufacturerKey, sportKey, cardNumberKey, numberedKey], map: "ocr_mem_agg_ctx_value_uidx")
+  @@index([fieldName, yearKey, manufacturerKey, sportKey, lastSeenAt], map: "ocr_mem_agg_year_manu_sport_idx")
+  @@index([fieldName, setIdKey, cardNumberKey, lastSeenAt], map: "ocr_mem_agg_set_card_idx")
+}
+
 model InventoryBatch {
   id          String   @id @default(uuid())
   locationId  String   @db.Uuid

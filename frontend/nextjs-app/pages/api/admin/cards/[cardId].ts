@@ -16,6 +16,7 @@ import {
 import { ensureLabelPairForItem } from "../../../../lib/server/qrCodes";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { normalizeStorageUrl } from "../../../../lib/server/storage";
+import { upsertOcrFeedbackMemoryAggregates } from "../../../../lib/server/ocrFeedbackMemory";
 
 const defaultCardAttributes: CardAttributes = {
   playerName: null,
@@ -1223,6 +1224,7 @@ export default async function handler(
           };
         });
         await (prisma as any).ocrFeedbackEvent.createMany({ data: rows });
+        await upsertOcrFeedbackMemoryAggregates(rows);
       }
 
       if (

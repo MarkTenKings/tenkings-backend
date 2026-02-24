@@ -1777,3 +1777,44 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-24 - Phase 2 Build: Teach Memory v3 Aggregate + Strict Replay Gates
+
+### Summary
+- Implemented Phase 2 end-to-end by introducing a persisted OCR feedback memory aggregate and switching replay logic to use aggregate rows with strict context gating.
+- Added automatic aggregate backfill from historical `OcrFeedbackEvent` rows when a scoped replay query has no aggregate rows (cold-start safe).
+- Preserved immediate-teach behavior by updating aggregate memory at correction write time (`Train AI` flow).
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260224190000_ocr_feedback_memory_aggregate/migration.sql` (new)
+- `frontend/nextjs-app/lib/server/ocrFeedbackMemory.ts` (new)
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `docs/HANDOFF_SET_OPS.md`
+
+### Implementation Notes
+- New table/model: `OcrFeedbackMemoryAggregate`
+  - aggregates by context + canonical value key (`fieldName/valueKey/setIdKey/yearKey/manufacturerKey/sportKey/cardNumberKey/numberedKey`)
+  - stores `sampleCount`, `correctCount`, `confidencePrior`, alias list, and weighted token anchors.
+- Write path:
+  - after creating `OcrFeedbackEvent` rows, API now calls `upsertOcrFeedbackMemoryAggregates(rows)` to keep memory current in seconds.
+- Replay path:
+  - `applyFeedbackMemoryHints` now reads aggregate rows (`ocrFeedbackMemoryAggregate`) instead of raw event replay.
+  - strict replay rules enforced:
+    - `setName`: requires `year + manufacturer` and optional sport compatibility.
+    - `parallel` / `insertSet`: requires set/card context and token-anchor overlap.
+  - weighted token-anchor support used for replay scoring.
+
+### Validation Evidence
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId].ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/ocrFeedbackMemory.ts`
+  - Result: pass.
+- `pnpm --filter @tenkings/shared test`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: fails from broad pre-existing Prisma client mismatch in workspace (not isolated to this change set).
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this step.

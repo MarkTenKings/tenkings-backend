@@ -11,6 +11,11 @@ import {
   resolveCanonicalOption,
   sanitizeText,
 } from "../../../../../lib/server/variantOptionPool";
+import {
+  buildOcrFeedbackMemoryContext,
+  parseOcrFeedbackTokenRefs,
+  upsertOcrFeedbackMemoryAggregates,
+} from "../../../../../lib/server/ocrFeedbackMemory";
 
 type SuggestResponse =
   | {
@@ -135,6 +140,7 @@ type MemoryApplyEntry = {
 type MemoryTokenRef = {
   text: string;
   imageId: string | null;
+  weight?: number | null;
 };
 
 type MemoryTokenLookup = {
@@ -489,11 +495,6 @@ function normalizeImageLabel(value: string | null | undefined): string {
   return normalized.toUpperCase();
 }
 
-function toMemoryToken(value: string | null | undefined): string | null {
-  const normalized = String(value || "").trim().toLowerCase();
-  return normalized || null;
-}
-
 function isTruthyString(value: string | null | undefined): boolean {
   const normalized = String(value || "").trim().toLowerCase();
   return TRUE_STRINGS.has(normalized);
@@ -507,25 +508,7 @@ function normalizeMemoryToken(value: string | null | undefined): string {
 }
 
 function parseMemoryTokenRefs(raw: unknown): MemoryTokenRef[] {
-  if (!Array.isArray(raw)) {
-    return [];
-  }
-  return raw
-    .map((entry) => {
-      if (!entry || typeof entry !== "object") {
-        return null;
-      }
-      const record = entry as Record<string, unknown>;
-      const text = coerceNullableString(record.text);
-      if (!text) {
-        return null;
-      }
-      return {
-        text,
-        imageId: coerceNullableString(record.imageId),
-      };
-    })
-    .filter((entry): entry is MemoryTokenRef => Boolean(entry));
+  return parseOcrFeedbackTokenRefs(raw);
 }
 
 function buildMemoryTokenLookup(
@@ -552,23 +535,26 @@ function scoreTokenRefSupport(refs: MemoryTokenRef[], lookup: MemoryTokenLookup)
   if (!refs.length) {
     return null;
   }
-  let matched = 0;
+  let matchedWeight = 0;
+  let totalWeight = 0;
   refs.forEach((ref) => {
     const normalized = normalizeMemoryToken(ref.text);
     if (!normalized) {
       return;
     }
+    const weight = typeof ref.weight === "number" && Number.isFinite(ref.weight) && ref.weight > 0 ? ref.weight : 1;
+    totalWeight += weight;
     const expectedImage = normalizeImageLabel(ref.imageId);
     const inExpected = lookup.byImage.get(expectedImage)?.has(normalized) ?? false;
     const inGlobal = lookup.global.has(normalized);
     if (inExpected || inGlobal) {
-      matched += 1;
+      matchedWeight += weight;
     }
   });
-  if (matched < 1) {
+  if (totalWeight <= 0 || matchedWeight <= 0) {
     return 0;
   }
-  return matched / refs.length;
+  return matchedWeight / totalWeight;
 }
 
 function buildPhotoOcrState(params: {
@@ -636,7 +622,7 @@ async function applyFeedbackMemoryHints(params: {
   tokens: Array<{ text: string; imageId: string | null }>;
 }) {
   const { fields, confidence, tokens } = params;
-  const context: MemoryContext = {
+  const contextInput: MemoryContext = {
     setId: coerceNullableString(fields.setName),
     year: coerceNullableString(fields.year),
     manufacturer: coerceNullableString(fields.manufacturer),
@@ -644,14 +630,15 @@ async function applyFeedbackMemoryHints(params: {
     cardNumber: coerceNullableString(fields.cardNumber),
     numbered: coerceNullableString(fields.numbered),
   };
+  const context = buildOcrFeedbackMemoryContext(contextInput);
   const tokenLookup = buildMemoryTokenLookup(tokens);
 
   const orClauses: Record<string, string>[] = [];
-  if (context.setId) orClauses.push({ setId: context.setId });
-  if (context.cardNumber) orClauses.push({ cardNumber: context.cardNumber });
-  if (context.year) orClauses.push({ year: context.year });
-  if (context.manufacturer) orClauses.push({ manufacturer: context.manufacturer });
-  if (context.sport) orClauses.push({ sport: context.sport });
+  if (context.setIdKey) orClauses.push({ setIdKey: context.setIdKey });
+  if (context.cardNumberKey) orClauses.push({ cardNumberKey: context.cardNumberKey });
+  if (context.yearKey) orClauses.push({ yearKey: context.yearKey });
+  if (context.manufacturerKey) orClauses.push({ manufacturerKey: context.manufacturerKey });
+  if (context.sportKey) orClauses.push({ sportKey: context.sportKey });
   if (orClauses.length === 0) {
     return {
       context,
@@ -660,46 +647,116 @@ async function applyFeedbackMemoryHints(params: {
     };
   }
 
-  const rows = (await (prisma as any).ocrFeedbackEvent.findMany({
-    where: {
-      fieldName: { in: FIELD_KEYS },
-      humanValue: { not: null },
-      OR: orClauses,
-    },
-    orderBy: [{ createdAt: "desc" }],
-    take: 500,
+  const readAggregateRows = async () =>
+    ((await (prisma as any).ocrFeedbackMemoryAggregate.findMany({
+      where: {
+        fieldName: { in: FIELD_KEYS },
+        OR: orClauses,
+      },
+      orderBy: [{ lastSeenAt: "desc" }],
+      take: 500,
       select: {
         fieldName: true,
-        humanValue: true,
-        wasCorrect: true,
-        setId: true,
-      year: true,
-      manufacturer: true,
-        sport: true,
-        cardNumber: true,
-        numbered: true,
-        tokenRefsJson: true,
-        createdAt: true,
+        value: true,
+        sampleCount: true,
+        confidencePrior: true,
+        setIdKey: true,
+        yearKey: true,
+        manufacturerKey: true,
+        sportKey: true,
+        cardNumberKey: true,
+        numberedKey: true,
+        tokenAnchorsJson: true,
+        lastSeenAt: true,
       },
     })) as Array<{
       fieldName: string;
-      humanValue: string | null;
-    wasCorrect: boolean;
-    setId: string | null;
-    year: string | null;
-      manufacturer: string | null;
-      sport: string | null;
-      cardNumber: string | null;
-      numbered: string | null;
-      tokenRefsJson: unknown;
-      createdAt: Date;
-    }>;
+      value: string;
+      sampleCount: number;
+      confidencePrior: number;
+      setIdKey: string;
+      yearKey: string;
+      manufacturerKey: string;
+      sportKey: string;
+      cardNumberKey: string;
+      numberedKey: string;
+      tokenAnchorsJson: unknown;
+      lastSeenAt: Date;
+    }>);
+
+  let rows = await readAggregateRows();
+  if (rows.length < 1) {
+    const seedOrClauses: Record<string, string>[] = [];
+    if (context.setId) seedOrClauses.push({ setId: context.setId });
+    if (context.cardNumber) seedOrClauses.push({ cardNumber: context.cardNumber });
+    if (context.year) seedOrClauses.push({ year: context.year });
+    if (context.manufacturer) seedOrClauses.push({ manufacturer: context.manufacturer });
+    if (context.sport) seedOrClauses.push({ sport: context.sport });
+
+    if (seedOrClauses.length > 0) {
+      const seedRows = (await (prisma as any).ocrFeedbackEvent.findMany({
+        where: {
+          fieldName: { in: FIELD_KEYS },
+          humanValue: { not: null },
+          OR: seedOrClauses,
+        },
+        orderBy: [{ createdAt: "desc" }],
+        take: 800,
+        select: {
+          fieldName: true,
+          modelValue: true,
+          humanValue: true,
+          wasCorrect: true,
+          setId: true,
+          year: true,
+          manufacturer: true,
+          sport: true,
+          cardNumber: true,
+          numbered: true,
+          tokenRefsJson: true,
+        },
+      })) as Array<{
+        fieldName: string;
+        modelValue: string | null;
+        humanValue: string | null;
+        wasCorrect: boolean;
+        setId: string | null;
+        year: string | null;
+        manufacturer: string | null;
+        sport: string | null;
+        cardNumber: string | null;
+        numbered: string | null;
+        tokenRefsJson: unknown;
+      }>;
+
+      if (seedRows.length > 0) {
+        await upsertOcrFeedbackMemoryAggregates(seedRows);
+        rows = await readAggregateRows();
+      }
+    }
+  }
+
+  rows = rows as Array<{
+    fieldName: string;
+    value: string;
+    sampleCount: number;
+    confidencePrior: number;
+    setIdKey: string;
+    yearKey: string;
+    manufacturerKey: string;
+    sportKey: string;
+    cardNumberKey: string;
+    numberedKey: string;
+    tokenAnchorsJson: unknown;
+    lastSeenAt: Date;
+  }>;
 
   type CandidateAggregate = {
     field: keyof SuggestionFields;
     value: string;
     score: number;
     support: number;
+    prior: number;
   };
 
   const aggregateByFieldValue = new Map<string, CandidateAggregate>();
@@ -709,7 +766,7 @@ async function applyFeedbackMemoryHints(params: {
     if (!FIELD_KEYS.includes(field)) {
       return;
     }
-    const humanValue = coerceNullableString(row.humanValue);
+    const humanValue = coerceNullableString(row.value);
     if (!humanValue) {
       return;
     }
@@ -718,19 +775,19 @@ async function applyFeedbackMemoryHints(params: {
     }
 
     let score = 0.2;
-    const rowSet = toMemoryToken(row.setId);
-    const rowYear = toMemoryToken(row.year);
-    const rowManufacturer = toMemoryToken(row.manufacturer);
-    const rowSport = toMemoryToken(row.sport);
-    const rowCardNumber = toMemoryToken(row.cardNumber);
-    const rowNumbered = toMemoryToken(row.numbered);
-    const ctxSet = toMemoryToken(context.setId);
-    const ctxYear = toMemoryToken(context.year);
-    const ctxManufacturer = toMemoryToken(context.manufacturer);
-    const ctxSport = toMemoryToken(context.sport);
-    const ctxCardNumber = toMemoryToken(context.cardNumber);
-    const ctxNumbered = toMemoryToken(context.numbered);
-    const tokenRefs = parseMemoryTokenRefs(row.tokenRefsJson);
+    const rowSet = row.setIdKey;
+    const rowYear = row.yearKey;
+    const rowManufacturer = row.manufacturerKey;
+    const rowSport = row.sportKey;
+    const rowCardNumber = row.cardNumberKey;
+    const rowNumbered = row.numberedKey;
+    const ctxSet = context.setIdKey;
+    const ctxYear = context.yearKey;
+    const ctxManufacturer = context.manufacturerKey;
+    const ctxSport = context.sportKey;
+    const ctxCardNumber = context.cardNumberKey;
+    const ctxNumbered = context.numberedKey;
+    const tokenRefs = parseMemoryTokenRefs(row.tokenAnchorsJson);
     const tokenSupport = scoreTokenRefSupport(tokenRefs, tokenLookup);
 
     if (field === "setName") {
@@ -763,7 +820,8 @@ async function applyFeedbackMemoryHints(params: {
       if (ctxCardNumber && rowCardNumber && rowCardNumber !== ctxCardNumber) {
         return;
       }
-      if (tokenSupport != null && tokenSupport < 0.25) {
+      // For taxonomy replay we require explicit token overlap support.
+      if (tokenSupport == null || tokenSupport < 0.25) {
         return;
       }
     }
@@ -774,14 +832,15 @@ async function applyFeedbackMemoryHints(params: {
     if (ctxManufacturer && rowManufacturer === ctxManufacturer) score += 0.9;
     if (ctxSport && rowSport === ctxSport) score += 0.9;
     if (ctxNumbered && rowNumbered === ctxNumbered) score += 0.6;
+    score += Math.min(2.5, Math.max(1, row.sampleCount) * 0.22);
+    score += Math.min(1.5, Math.max(0, row.confidencePrior) * 1.4);
     if (tokenSupport != null) {
       if (tokenSupport >= 0.8) score += 1.2;
       else if (tokenSupport >= 0.5) score += 0.7;
       else if (tokenSupport >= 0.35) score += 0.35;
     }
-    score += row.wasCorrect ? 0.15 : 0.35;
 
-    const ageDays = Math.max(0, (nowMs - new Date(row.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+    const ageDays = Math.max(0, (nowMs - new Date(row.lastSeenAt).getTime()) / (1000 * 60 * 60 * 24));
     const recencyMultiplier = Math.max(0.2, 1 - Math.min(1, ageDays / 180));
     score *= recencyMultiplier;
 
@@ -789,13 +848,15 @@ async function applyFeedbackMemoryHints(params: {
     const current = aggregateByFieldValue.get(aggregateKey);
     if (current) {
       current.score += score;
-      current.support += 1;
+      current.support += Math.max(1, row.sampleCount);
+      current.prior = Math.max(current.prior, row.confidencePrior ?? 0);
     } else {
       aggregateByFieldValue.set(aggregateKey, {
         field,
         value: humanValue,
         score,
-        support: 1,
+        support: Math.max(1, row.sampleCount),
+        prior: Math.max(0, row.confidencePrior ?? 0),
       });
     }
   });
@@ -811,10 +872,13 @@ async function applyFeedbackMemoryHints(params: {
   const applied: MemoryApplyEntry[] = [];
   FIELD_KEYS.forEach((field) => {
     const top = topByField.get(field);
-    if (!top || top.score < 1.2) {
+    if (!top || top.score < 1.3) {
       return;
     }
-    const learnedConfidence = Math.min(0.98, 0.55 + Math.min(0.4, top.score / 5));
+    const learnedConfidence = Math.min(
+      0.98,
+      0.52 + Math.min(0.36, top.score / 6) + Math.min(0.12, Math.max(0, top.prior) * 0.12)
+    );
     const currentConfidence = confidence[field] ?? 0;
     const currentValue = fields[field];
     if (!currentValue || currentConfidence < learnedConfidence || currentValue.trim().toLowerCase() === top.value.toLowerCase()) {
