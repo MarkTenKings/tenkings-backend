@@ -1374,6 +1374,27 @@ function normalizeForNumbered(input: string): string {
     .replace(/S(?=\d)/g, "5");
 }
 
+function readHeaderFirst(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) {
+    return String(value[0] || "").trim();
+  }
+  return String(value || "").trim();
+}
+
+function isEvalBypassAuthorized(req: NextApiRequest): boolean {
+  const secret = (process.env.AI_EVAL_RUN_SECRET ?? "").trim();
+  const provided = readHeaderFirst(req.headers["x-ai-eval-secret"]);
+  if (!secret || !provided) {
+    return false;
+  }
+  const secretBuffer = Buffer.from(secret);
+  const providedBuffer = Buffer.from(provided);
+  if (secretBuffer.length !== providedBuffer.length) {
+    return false;
+  }
+  return crypto.timingSafeEqual(secretBuffer, providedBuffer);
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse>) {
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
@@ -1381,7 +1402,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
   }
 
   try {
-    await requireAdminSession(req);
+    if (!isEvalBypassAuthorized(req)) {
+      await requireAdminSession(req);
+    }
     const { cardId } = req.query;
     if (typeof cardId !== "string" || !cardId.trim()) {
       return res.status(400).json({ message: "cardId is required" });

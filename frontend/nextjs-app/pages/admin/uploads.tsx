@@ -480,6 +480,7 @@ export default function AdminUploads() {
   const [teachRegionLoading, setTeachRegionLoading] = useState(false);
   const [teachRegionBusy, setTeachRegionBusy] = useState(false);
   const [teachRegionFeedback, setTeachRegionFeedback] = useState<string | null>(null);
+  const [teachRegionDrawEnabled, setTeachRegionDrawEnabled] = useState(true);
   const [productLineOptions, setProductLineOptions] = useState<string[]>([]);
   const [insertSetOptions, setInsertSetOptions] = useState<string[]>([]);
   const [parallelOptions, setParallelOptions] = useState<string[]>([]);
@@ -2851,7 +2852,7 @@ export default function AdminUploads() {
 
   const handleTeachRegionMouseDown = useCallback(
     (event: ReactMouseEvent<HTMLDivElement>) => {
-      if (event.button !== 0 || !activeTeachRegionPreview) {
+      if (!teachRegionDrawEnabled || event.button !== 0 || !activeTeachRegionPreview) {
         return;
       }
       const rect = event.currentTarget.getBoundingClientRect();
@@ -2869,7 +2870,7 @@ export default function AdminUploads() {
       });
       event.preventDefault();
     },
-    [activeTeachRegionPreview, teachRegionSide]
+    [activeTeachRegionPreview, teachRegionDrawEnabled, teachRegionSide]
   );
 
   const handleTeachRegionMouseMove = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
@@ -3455,9 +3456,10 @@ export default function AdminUploads() {
   };
 
   const gate = renderGate();
+  const showLegacyCapturePanels = false;
   if (gate) {
     return (
-      <AppShell>
+      <AppShell hideHeader hideFooter>
         <Head>
           <title>Ten Kings · Admin Uploads</title>
           <meta name="robots" content="noindex" />
@@ -3468,13 +3470,13 @@ export default function AdminUploads() {
   }
 
   return (
-    <AppShell hideHeader={cameraOpen} hideFooter={cameraOpen}>
+    <AppShell hideHeader hideFooter>
       <Head>
         <title>Ten Kings · Admin Uploads</title>
         <meta name="robots" content="noindex" />
       </Head>
 
-      <div className="flex flex-1 flex-col gap-8 px-6 py-12">
+      <div className="flex flex-1 flex-col gap-6 px-6 py-6">
         <header className="space-y-2">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <Link className="inline-flex text-[10px] uppercase tracking-[0.28em] text-slate-400 transition hover:text-white" href="/admin">
@@ -3508,57 +3510,59 @@ export default function AdminUploads() {
           )}
 
           {intakeStep === "front" && (
-            <div className="grid gap-4 md:grid-cols-[240px,1fr]">
+            <div className="grid gap-4 md:grid-cols-[280px,1fr]">
               <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-300">
-                <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Capture Queue</p>
-                <p className="mt-2 text-xs text-slate-400">
-                  Cards waiting for OCR review:{" "}
-                  <span className="font-semibold text-gold-300">{queuedReviewCardIds.length}</span>
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void openIntakeCapture("front")}
-                  disabled={intakeBusy}
-                  className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-sm font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Add Card
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!selectedQueueCardId) {
-                      return;
-                    }
-                    void loadQueuedCardForReview(selectedQueueCardId);
-                  }}
-                  disabled={intakeBusy || !selectedQueueCardId}
-                  className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-transparent px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-gold-300 transition hover:border-gold-400 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  OCR Review →
-                </button>
-                <div className="mt-4 space-y-2">
-                  <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">OCR Queue</p>
-                  {queuedReviewCardIds.length ? (
-                    <div className="max-h-48 space-y-1 overflow-auto rounded-xl border border-white/10 bg-night-900/50 p-2">
-                      {queuedReviewCardIds.map((id) => (
-                        <label
-                          key={id}
-                          className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1 text-xs text-slate-200 hover:bg-white/5"
-                        >
-                          <input
-                            type="radio"
-                            name="ocr-queue"
-                            checked={selectedQueueCardId === id}
-                            onChange={() => setSelectedQueueCardId(id)}
-                            className="h-3.5 w-3.5 accent-gold-400"
-                          />
-                          <span className="truncate font-mono">{id}</span>
-                        </label>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-xs text-slate-500">No cards in OCR queue.</p>
-                  )}
+                <div className="flex flex-col items-center text-center">
+                  <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Capture Queue</p>
+                  <p className="mt-2 text-xs text-slate-400">
+                    Cards waiting for OCR review:{" "}
+                    <span className="font-semibold text-gold-300">{queuedReviewCardIds.length}</span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void openIntakeCapture("front")}
+                    disabled={intakeBusy}
+                    className="mt-4 inline-flex min-w-[210px] items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-12 py-6 text-lg font-semibold uppercase tracking-[0.2em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Add Card
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!selectedQueueCardId) {
+                        return;
+                      }
+                      void loadQueuedCardForReview(selectedQueueCardId);
+                    }}
+                    disabled={intakeBusy || !selectedQueueCardId}
+                    className="mt-4 inline-flex min-w-[210px] items-center justify-center rounded-full border border-gold-500/60 bg-transparent px-8 py-4 text-sm font-semibold uppercase tracking-[0.24em] text-gold-300 transition hover:border-gold-400 hover:text-gold-200 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    OCR Review →
+                  </button>
+                  <div className="mt-4 w-full space-y-2">
+                    <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">OCR Queue</p>
+                    {queuedReviewCardIds.length ? (
+                      <div className="max-h-48 space-y-1 overflow-auto rounded-xl border border-white/10 bg-night-900/50 p-2">
+                        {queuedReviewCardIds.map((id) => (
+                          <label
+                            key={id}
+                            className="flex cursor-pointer items-center justify-center gap-2 rounded-lg px-2 py-1 text-xs text-slate-200 hover:bg-white/5"
+                          >
+                            <input
+                              type="radio"
+                              name="ocr-queue"
+                              checked={selectedQueueCardId === id}
+                              onChange={() => setSelectedQueueCardId(id)}
+                              className="h-3.5 w-3.5 accent-gold-400"
+                            />
+                            <span className="truncate font-mono">{id}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-slate-500">No cards in OCR queue.</p>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
@@ -4086,6 +4090,17 @@ export default function AdminUploads() {
                       className="rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
                     />
                     <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTeachRegionDrawEnabled((prev) => !prev)}
+                        className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] ${
+                          teachRegionDrawEnabled
+                            ? "border-emerald-400/70 bg-emerald-500/15 text-emerald-200"
+                            : "border-white/20 text-slate-300 hover:border-white/40"
+                        }`}
+                      >
+                        {teachRegionDrawEnabled ? "Draw Mode On" : "Draw Mode Off"}
+                      </button>
                       {TEACH_REGION_SIDES.map((side) => (
                         <button
                           key={side}
@@ -4105,8 +4120,13 @@ export default function AdminUploads() {
                       ))}
                     </div>
                   </div>
+                  <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                    1) Draw Mode On 2) Click and drag on image 3) Save Region Teach
+                  </p>
                   <div
-                    className="relative overflow-hidden rounded-xl border border-white/10 bg-night-800/70"
+                    className={`relative overflow-hidden rounded-xl border border-white/10 bg-night-800/70 select-none touch-none ${
+                      teachRegionDrawEnabled ? "cursor-crosshair" : "cursor-default"
+                    }`}
                     onMouseDown={handleTeachRegionMouseDown}
                     onMouseMove={handleTeachRegionMouseMove}
                     onMouseUp={finishTeachRegionDraft}
@@ -4114,11 +4134,16 @@ export default function AdminUploads() {
                   >
                     {activeTeachRegionPreview ? (
                       <>
-                        <img src={activeTeachRegionPreview} alt={`${teachRegionSide} teach preview`} className="block w-full" />
+                        <img
+                          src={activeTeachRegionPreview}
+                          alt={`${teachRegionSide} teach preview`}
+                          draggable={false}
+                          className="pointer-events-none block w-full select-none"
+                        />
                         {activeTeachRegions.map((region) => (
                           <div
                             key={region.id}
-                            className="absolute border-2 border-emerald-300/80 bg-emerald-400/15"
+                            className="pointer-events-none absolute border-2 border-emerald-300/80 bg-emerald-400/15"
                             style={{
                               left: `${region.x * 100}%`,
                               top: `${region.y * 100}%`,
@@ -4129,7 +4154,7 @@ export default function AdminUploads() {
                         ))}
                         {teachRegionDraft && teachRegionDraft.side === teachRegionSide ? (
                           <div
-                            className="absolute border-2 border-gold-300/80 bg-gold-400/15"
+                            className="pointer-events-none absolute border-2 border-gold-300/80 bg-gold-400/15"
                             style={{
                               left: `${Math.min(teachRegionDraft.startX, teachRegionDraft.currentX) * 100}%`,
                               top: `${Math.min(teachRegionDraft.startY, teachRegionDraft.currentY) * 100}%`,
@@ -4273,6 +4298,7 @@ export default function AdminUploads() {
           </div>
         )}
 
+        {showLegacyCapturePanels && (
         <section className="flex flex-col gap-6 rounded-3xl border border-white/10 bg-night-900/70 p-6">
           <form className="flex flex-col gap-4" onSubmit={submitUploads}>
             <div className="flex flex-wrap items-center gap-3">
@@ -4361,7 +4387,9 @@ export default function AdminUploads() {
             </div>
           )}
         </section>
+        )}
 
+        {showLegacyCapturePanels && (
         <section className="rounded-3xl border border-white/10 bg-night-900/50 p-4">
           <details className="group">
             <summary className="flex cursor-pointer items-center justify-between text-sm uppercase tracking-[0.3em] text-slate-300">
@@ -4436,6 +4464,7 @@ export default function AdminUploads() {
             </div>
           </details>
         </section>
+        )}
       </div>
 
       {cameraOpen && (

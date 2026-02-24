@@ -1271,3 +1271,98 @@ Build Set Ops UI flow with:
     - pass (existing pre-existing `@next/next/no-img-element` warnings in `uploads.tsx`).
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Phase 6 Implementation Complete (2026-02-24)
+- Scope delivered:
+  - Added OCR eval framework for weekly release gating with persisted cases/runs/results.
+  - Added eval run API and cron trigger API.
+  - Added AI Ops dashboard coverage for eval gate state, latest metrics, and manual run action.
+  - Added secure eval-only bypass path so scheduled/manual eval can call OCR suggest without admin cookie.
+- Backend implementation:
+  - new helper: `frontend/nextjs-app/lib/server/ocrEvalFramework.ts`
+    - case CRUD helpers
+    - threshold/env resolution
+    - scoring + gate checks
+  - new APIs:
+    - `frontend/nextjs-app/pages/api/admin/ai-ops/evals/cases.ts`
+    - `frontend/nextjs-app/pages/api/admin/ai-ops/evals/run.ts`
+    - `frontend/nextjs-app/pages/api/admin/cron/ai-evals-weekly.ts`
+  - OCR suggest auth update:
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - allows `x-ai-eval-secret` when it matches `AI_EVAL_RUN_SECRET`.
+  - AI Ops overview extension:
+    - `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+    - now returns eval case counts + recent run summaries.
+- Frontend implementation:
+  - `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+    - added Eval Gate panel
+    - added `Run Eval Now` action
+    - shows latest gate status + failed checks + recent run list
+    - added Gold Eval Cases manager (quick-add case form + enable/disable toggles + case list refresh).
+- DB implementation:
+  - Prisma schema + migration added:
+    - `packages/database/prisma/schema.prisma`
+    - `packages/database/prisma/migrations/20260225000000_ocr_eval_framework/migration.sql`
+  - New models:
+    - `OcrEvalCase`
+    - `OcrEvalRun`
+    - `OcrEvalResult`
+- Gate metrics currently enforced:
+  - `set_top1`
+  - `insert_parallel_top1`
+  - `insert_parallel_top3`
+  - `case_pass_rate`
+  - `unknown_rate`
+  - `wrong_set_rate`
+  - `cross_set_memory_drift` (when memory-applied opportunities exist)
+  - `min_cases`
+- Validation:
+  - `pnpm --filter @tenkings/shared test` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/ai-ops.tsx --file pages/api/admin/ai-ops/overview.ts --file pages/api/admin/ai-ops/evals/run.ts --file pages/api/admin/ai-ops/evals/cases.ts --file pages/api/admin/cron/ai-evals-weekly.ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/ocrEvalFramework.ts` (pass)
+  - `pnpm --filter @tenkings/database generate` (pass)
+- Required env vars for runtime:
+  - `AI_EVAL_RUN_SECRET` (used by eval runner to call OCR suggest)
+  - `AI_EVAL_CRON_SECRET` (used by cron trigger and scheduled eval route)
+  - optional threshold overrides:
+    - `OCR_EVAL_MIN_CASES`
+    - `OCR_EVAL_SET_TOP1_MIN`
+    - `OCR_EVAL_INSERT_PARALLEL_TOP1_MIN`
+    - `OCR_EVAL_INSERT_PARALLEL_TOP3_MIN`
+    - `OCR_EVAL_CASE_PASS_RATE_MIN`
+    - `OCR_EVAL_UNKNOWN_RATE_MAX`
+    - `OCR_EVAL_WRONG_SET_RATE_MAX`
+    - `OCR_EVAL_CROSS_SET_MEMORY_DRIFT_MAX`
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.
+
+## Uploads UX + Teach Clarification Update (2026-02-24)
+- Trigger:
+  - Operator reported teach-region drawing was not obvious and appeared non-functional.
+  - Operator requested `/admin/uploads` cleanup: hide unused Open Camera/Recent Upload Batches sections, remove global header/footer/hamburger, keep only local console/kingsreview links, and enlarge/center Capture Queue actions.
+- Changes made:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - Added explicit draw control for region teach:
+      - `Draw Mode On/Off` toggle.
+      - inline 3-step instruction text.
+      - crosshair cursor while draw mode is on.
+      - disabled image drag/selection (`draggable={false}`, `pointer-events-none`, `select-none`) to reduce accidental image drag interference while marking regions.
+    - Hid global AppShell chrome on uploads (header/footer/hamburger removed):
+      - page now renders with `hideHeader` + `hideFooter`.
+    - Hid legacy bottom sections not currently used:
+      - Open Camera upload panel
+      - Recent Uploads · Batches panel
+      - both gated behind `showLegacyCapturePanels = false`.
+    - Updated Capture Queue card:
+      - centered text/buttons,
+      - increased button sizes (Add Card and OCR Review),
+      - kept queue controls in same block.
+    - tightened top spacing (`py-6`) to shift content up.
+- Functional clarification captured from current code:
+  - `Teach From Corrections` saves the current corrected fields as OCR feedback events and updates memory aggregates immediately (instant replay path).
+  - `Train AI On/Off` controls whether send-to-KingsReview writes teach feedback for that card.
+  - draw/region teach is separate from field-value teach; region templates are used during OCR replay scoring via set/layout/side scope.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx`
+  - Result: pass with pre-existing `@next/next/no-img-element` warnings only.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

@@ -2030,3 +2030,102 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this coding step.
+
+## 2026-02-24 - Phase 6 Build: Eval Flywheel + Release Gate
+
+### Summary
+- Implemented Phase 6 end-to-end:
+  - gold-case storage APIs (`eval cases`),
+  - eval execution API (`run eval`),
+  - weekly cron trigger route,
+  - persisted eval run/results,
+  - AI Ops dashboard release-gate visibility and manual run action,
+  - AI Ops gold-case manager (quick add + enable/disable toggles).
+- Added secure eval bypass path for OCR suggest so scheduled runs can execute without admin cookie.
+- Added threshold-based gate checks including top-3 insert/parallel and cross-set memory drift guard.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/ocrEvalFramework.ts` (new)
+- `frontend/nextjs-app/pages/api/admin/ai-ops/evals/run.ts` (new)
+- `frontend/nextjs-app/pages/api/admin/ai-ops/evals/cases.ts` (new)
+- `frontend/nextjs-app/pages/api/admin/cron/ai-evals-weekly.ts` (new)
+- `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+- `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260225000000_ocr_eval_framework/migration.sql` (new)
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- New DB models:
+  - `OcrEvalCase`
+  - `OcrEvalRun`
+  - `OcrEvalResult`
+- Eval scoring/gate now tracks:
+  - set top-1 accuracy
+  - insert/parallel top-1 accuracy
+  - insert/parallel top-3 accuracy
+  - case pass rate
+  - unknown rate
+  - wrong-set rate
+  - cross-set memory drift rate (memory-applied cases)
+- AI Ops now shows:
+  - enabled/total eval cases
+  - latest run pass/fail and failed checks
+  - key gate metrics
+  - recent run history
+  - manual `Run Eval Now` trigger
+- OCR suggest auth:
+  - if `x-ai-eval-secret` matches `AI_EVAL_RUN_SECRET`, request bypasses admin session check (eval-only path).
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared test`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/ai-ops.tsx --file pages/api/admin/ai-ops/overview.ts --file pages/api/admin/ai-ops/evals/run.ts --file pages/api/admin/ai-ops/evals/cases.ts --file pages/api/admin/cron/ai-evals-weekly.ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/ocrEvalFramework.ts`
+  - Result: pass (`No ESLint warnings or errors`).
+- `pnpm --filter @tenkings/database generate`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this coding step.
+- New env vars expected before scheduled eval usage:
+  - `AI_EVAL_RUN_SECRET`
+  - `AI_EVAL_CRON_SECRET`
+  - optional `OCR_EVAL_*` threshold overrides.
+
+## 2026-02-24 - Uploads UX Cleanup + Teach Region Draw UX
+
+### Summary
+- Improved `/admin/uploads` teach-region usability and reduced page noise for operators.
+- Added explicit draw mode controls and visual guidance for Teach Regions.
+- Removed global site shell chrome from uploads page to maximize workspace area.
+- Hid currently unused Open Camera upload panel and Recent Upload Batches panel.
+- Centered Capture Queue content and enlarged `Add Card` / `OCR Review` buttons.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Teach Regions UX:
+  - added `Draw Mode On/Off` toggle.
+  - added inline instruction (`Draw Mode On -> drag on image -> Save Region Teach`).
+  - enabled crosshair cursor while draw mode is active.
+  - disabled image dragging/selection to prevent accidental browser drag behavior while drawing.
+- Shell/layout:
+  - uploads now uses `AppShell hideHeader hideFooter` in both gate and main render paths.
+  - local page nav links (`← Console`, `KingsReview →`) remain intact.
+- Legacy sections:
+  - Open Camera upload section and Recent Upload Batches section are hidden behind `showLegacyCapturePanels = false`.
+- Capture Queue:
+  - text/buttons centered.
+  - action buttons increased in size.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx`
+  - Result: pass with existing `@next/next/no-img-element` warnings only.
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this coding step.

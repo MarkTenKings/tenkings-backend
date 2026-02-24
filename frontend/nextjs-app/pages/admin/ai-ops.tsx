@@ -83,6 +83,96 @@ type OverviewPayload = {
   ops: {
     attentionCards: AttentionCard[];
   };
+  evals: {
+    totalCases: number;
+    enabledCases: number;
+    lastRun: {
+      id: string;
+      status: string;
+      trigger: string;
+      createdAt: string;
+      completedAt: string | null;
+      gatePass: boolean | null;
+      failedChecks: string[];
+      summary: {
+        totalCases?: number;
+        passedCases?: number;
+        failedCases?: number;
+        casePassRatePct?: number | null;
+        metrics?: {
+          setTop1AccuracyPct?: number | null;
+          insertParallelTop1AccuracyPct?: number | null;
+          insertParallelTop3AccuracyPct?: number | null;
+          unknownRatePct?: number | null;
+          wrongSetRatePct?: number | null;
+          crossSetMemoryDriftPct?: number | null;
+        };
+      } | null;
+    } | null;
+    recentRuns: Array<{
+      id: string;
+      status: string;
+      trigger: string;
+      createdAt: string;
+      completedAt: string | null;
+      gatePass: boolean | null;
+      failedChecks: string[];
+    }>;
+  };
+};
+
+type EvalCase = {
+  id: string;
+  slug: string;
+  title: string;
+  description: string | null;
+  cardAssetId: string;
+  enabled: boolean;
+  tags: string[];
+  expected: {
+    setName?: string | null;
+    insertSet?: string | null;
+    parallel?: string | null;
+  };
+  hints: {
+    year?: string | null;
+    manufacturer?: string | null;
+    sport?: string | null;
+    productLine?: string | null;
+    setId?: string | null;
+    layoutClass?: string | null;
+  };
+  updatedAt: string;
+};
+
+type NewEvalCaseDraft = {
+  slug: string;
+  title: string;
+  cardAssetId: string;
+  expectedSetName: string;
+  expectedInsertSet: string;
+  expectedParallel: string;
+  hintSetId: string;
+  hintYear: string;
+  hintManufacturer: string;
+  hintSport: string;
+  hintProductLine: string;
+  hintLayoutClass: string;
+};
+
+const EMPTY_NEW_CASE_DRAFT: NewEvalCaseDraft = {
+  slug: "",
+  title: "",
+  cardAssetId: "",
+  expectedSetName: "",
+  expectedInsertSet: "",
+  expectedParallel: "",
+  hintSetId: "",
+  hintYear: "",
+  hintManufacturer: "",
+  hintSport: "",
+  hintProductLine: "",
+  hintLayoutClass: "",
 };
 
 function toPercent(value: number | null): string {
@@ -134,6 +224,12 @@ export default function AiOpsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState<Record<string, boolean>>({});
+  const [runningEval, setRunningEval] = useState(false);
+  const [evalCases, setEvalCases] = useState<EvalCase[]>([]);
+  const [casesLoading, setCasesLoading] = useState(false);
+  const [casesLoadedOnce, setCasesLoadedOnce] = useState(false);
+  const [caseSaving, setCaseSaving] = useState(false);
+  const [newEvalCase, setNewEvalCase] = useState<NewEvalCaseDraft>(EMPTY_NEW_CASE_DRAFT);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -177,11 +273,134 @@ export default function AiOpsPage() {
     [loadOverview]
   );
 
-  useEffect(() => {
-    if (!sessionLoading && session && isAdmin && !data && !loading) {
-      void loadOverview();
+  const runEvalNow = useCallback(async () => {
+    setRunningEval(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/admin/ai-ops/evals/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trigger: "manual" }),
+      });
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? "Eval run failed");
+      }
+      await loadOverview();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Eval run failed");
+    } finally {
+      setRunningEval(false);
     }
-  }, [data, isAdmin, loadOverview, loading, session, sessionLoading]);
+  }, [loadOverview]);
+
+  const loadEvalCases = useCallback(async () => {
+    setCasesLoading(true);
+    try {
+      const response = await fetch("/api/admin/ai-ops/evals/cases");
+      const payload = (await response.json().catch(() => null)) as
+        | { cases?: EvalCase[]; message?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? "Failed to load eval cases");
+      }
+      setEvalCases(Array.isArray(payload?.cases) ? payload.cases : []);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Failed to load eval cases");
+    } finally {
+      setCasesLoading(false);
+      setCasesLoadedOnce(true);
+    }
+  }, []);
+
+  const toggleEvalCase = useCallback(
+    async (slug: string, enabled: boolean) => {
+      setCaseSaving(true);
+      setError(null);
+      try {
+        const response = await fetch("/api/admin/ai-ops/evals/cases", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ slug, enabled }),
+        });
+        const payload = (await response.json().catch(() => null)) as
+          | { cases?: EvalCase[]; message?: string }
+          | null;
+        if (!response.ok) {
+          throw new Error(payload?.message ?? "Failed to update eval case");
+        }
+        if (Array.isArray(payload?.cases)) {
+          setEvalCases(payload.cases);
+        } else {
+          await loadEvalCases();
+        }
+        await loadOverview();
+      } catch (requestError) {
+        setError(requestError instanceof Error ? requestError.message : "Failed to update eval case");
+      } finally {
+        setCaseSaving(false);
+      }
+    },
+    [loadEvalCases, loadOverview]
+  );
+
+  const saveEvalCase = useCallback(async () => {
+    if (!newEvalCase.slug.trim() || !newEvalCase.title.trim() || !newEvalCase.cardAssetId.trim()) {
+      setError("slug, title, and card asset id are required to save an eval case");
+      return;
+    }
+    setCaseSaving(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/admin/ai-ops/evals/cases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          slug: newEvalCase.slug,
+          title: newEvalCase.title,
+          cardAssetId: newEvalCase.cardAssetId,
+          enabled: true,
+          expected: {
+            ...(newEvalCase.expectedSetName.trim() ? { setName: newEvalCase.expectedSetName } : {}),
+            ...(newEvalCase.expectedInsertSet.trim() ? { insertSet: newEvalCase.expectedInsertSet } : {}),
+            ...(newEvalCase.expectedParallel.trim() ? { parallel: newEvalCase.expectedParallel } : {}),
+          },
+          hints: {
+            ...(newEvalCase.hintSetId.trim() ? { setId: newEvalCase.hintSetId } : {}),
+            ...(newEvalCase.hintYear.trim() ? { year: newEvalCase.hintYear } : {}),
+            ...(newEvalCase.hintManufacturer.trim() ? { manufacturer: newEvalCase.hintManufacturer } : {}),
+            ...(newEvalCase.hintSport.trim() ? { sport: newEvalCase.hintSport } : {}),
+            ...(newEvalCase.hintProductLine.trim() ? { productLine: newEvalCase.hintProductLine } : {}),
+            ...(newEvalCase.hintLayoutClass.trim() ? { layoutClass: newEvalCase.hintLayoutClass } : {}),
+          },
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as
+        | { caseItem?: EvalCase; message?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? "Failed to save eval case");
+      }
+      setNewEvalCase(EMPTY_NEW_CASE_DRAFT);
+      await loadEvalCases();
+      await loadOverview();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Failed to save eval case");
+    } finally {
+      setCaseSaving(false);
+    }
+  }, [loadEvalCases, loadOverview, newEvalCase]);
+
+  useEffect(() => {
+    if (!sessionLoading && session && isAdmin) {
+      if (!data && !loading) {
+        void loadOverview();
+      }
+      if (!casesLoadedOnce && !casesLoading) {
+        void loadEvalCases();
+      }
+    }
+  }, [casesLoadedOnce, casesLoading, data, isAdmin, loadEvalCases, loadOverview, loading, session, sessionLoading]);
 
   const renderSignIn = () => (
     <div className="flex flex-1 flex-col items-center justify-center gap-5 text-center">
@@ -245,6 +464,14 @@ export default function AiOpsPage() {
               >
                 {loading ? "Refreshing..." : "Refresh"}
               </button>
+              <button
+                type="button"
+                onClick={runEvalNow}
+                disabled={runningEval}
+                className="rounded-full border border-emerald-400/55 bg-emerald-400/12 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-100 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {runningEval ? "Running Eval..." : "Run Eval Now"}
+              </button>
               <Link
                 href="/admin/uploads"
                 className="rounded-full border border-gold-500/60 bg-gold-500 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-night-900 transition hover:bg-gold-400"
@@ -277,6 +504,261 @@ export default function AiOpsPage() {
                 <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Fallback LLM</p>
                 <p className="mt-2 text-xl font-semibold text-white">{data.config.fallbackModel}</p>
               </article>
+            </section>
+
+            <section className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Eval Gate</p>
+                  <p className="mt-1 text-sm text-slate-200">
+                    Enabled cases: {data.evals.enabledCases} / {data.evals.totalCases}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Latest run</p>
+                  <p
+                    className={`mt-1 text-sm font-semibold ${
+                      data.evals.lastRun?.gatePass === true
+                        ? "text-emerald-300"
+                        : data.evals.lastRun?.gatePass === false
+                        ? "text-rose-300"
+                        : "text-slate-300"
+                    }`}
+                  >
+                    {data.evals.lastRun?.gatePass === true
+                      ? "PASS"
+                      : data.evals.lastRun?.gatePass === false
+                      ? "FAIL"
+                      : data.evals.lastRun
+                      ? "UNKNOWN"
+                      : "NO RUN"}
+                  </p>
+                </div>
+              </div>
+
+              {data.evals.lastRun ? (
+                <div className="mt-4 space-y-3">
+                  <p className="text-xs text-slate-300">
+                    Run #{data.evals.lastRun.id.slice(0, 8)} · {data.evals.lastRun.trigger} ·{" "}
+                    {toDateTime(data.evals.lastRun.completedAt ?? data.evals.lastRun.createdAt)}
+                  </p>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                      Set top-1: {toPercent(data.evals.lastRun.summary?.metrics?.setTop1AccuracyPct ?? null)}
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                      Insert/parallel top-1:{" "}
+                      {toPercent(data.evals.lastRun.summary?.metrics?.insertParallelTop1AccuracyPct ?? null)}
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                      Insert/parallel top-3:{" "}
+                      {toPercent(data.evals.lastRun.summary?.metrics?.insertParallelTop3AccuracyPct ?? null)}
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                      Unknown rate: {toPercent(data.evals.lastRun.summary?.metrics?.unknownRatePct ?? null)}
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                      Wrong-set rate: {toPercent(data.evals.lastRun.summary?.metrics?.wrongSetRatePct ?? null)}
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                      Cross-set drift: {toPercent(data.evals.lastRun.summary?.metrics?.crossSetMemoryDriftPct ?? null)}
+                    </div>
+                  </div>
+
+                  {data.evals.lastRun.failedChecks.length > 0 ? (
+                    <div className="rounded-2xl border border-rose-400/40 bg-rose-400/10 p-3">
+                      <p className="text-[11px] uppercase tracking-[0.2em] text-rose-200">Failed checks</p>
+                      <p className="mt-2 text-sm text-rose-100">{data.evals.lastRun.failedChecks.join(", ")}</p>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-emerald-400/40 bg-emerald-400/10 p-3 text-sm text-emerald-100">
+                      Eval gate checks passed.
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="mt-4 text-sm text-slate-400">No eval run found yet. Run one now to activate release gating.</p>
+              )}
+
+              {data.evals.recentRuns.length > 0 ? (
+                <div className="mt-4 overflow-x-auto">
+                  <table className="min-w-full">
+                    <thead>
+                      <tr className="border-b border-white/10">
+                        <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.2em] text-slate-400">Run</th>
+                        <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.2em] text-slate-400">Status</th>
+                        <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.2em] text-slate-400">When</th>
+                        <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.2em] text-slate-400">Gate</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.evals.recentRuns.map((run) => (
+                        <tr key={run.id} className="border-b border-white/5">
+                          <td className="px-3 py-2 text-sm text-slate-200">#{run.id.slice(0, 8)} · {run.trigger}</td>
+                          <td className="px-3 py-2 text-sm text-slate-200">{run.status}</td>
+                          <td className="px-3 py-2 text-sm text-slate-300">{toDateTime(run.completedAt ?? run.createdAt)}</td>
+                          <td
+                            className={`px-3 py-2 text-sm ${
+                              run.gatePass === true ? "text-emerald-300" : run.gatePass === false ? "text-rose-300" : "text-slate-300"
+                            }`}
+                          >
+                            {run.gatePass === true ? "PASS" : run.gatePass === false ? "FAIL" : "-"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+
+              <div className="mt-6 rounded-2xl border border-white/10 bg-night-900/50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Gold Eval Cases</p>
+                  <button
+                    type="button"
+                    onClick={loadEvalCases}
+                    disabled={casesLoading}
+                    className="rounded-full border border-slate-500/50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {casesLoading ? "Loading..." : "Refresh Cases"}
+                  </button>
+                </div>
+
+                <div className="mt-3 grid gap-2 md:grid-cols-3">
+                  <input
+                    value={newEvalCase.slug}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, slug: event.target.value }))}
+                    placeholder="slug (ex: finest-no-limit-nl30)"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                  <input
+                    value={newEvalCase.title}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, title: event.target.value }))}
+                    placeholder="title"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                  <input
+                    value={newEvalCase.cardAssetId}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, cardAssetId: event.target.value }))}
+                    placeholder="cardAssetId"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                  <input
+                    value={newEvalCase.expectedSetName}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, expectedSetName: event.target.value }))}
+                    placeholder="expected setName"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                  <input
+                    value={newEvalCase.expectedInsertSet}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, expectedInsertSet: event.target.value }))}
+                    placeholder="expected insertSet (optional)"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                  <input
+                    value={newEvalCase.expectedParallel}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, expectedParallel: event.target.value }))}
+                    placeholder="expected parallel (optional)"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                  <input
+                    value={newEvalCase.hintSetId}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintSetId: event.target.value }))}
+                    placeholder="hint setId (optional)"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                  <input
+                    value={newEvalCase.hintYear}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintYear: event.target.value }))}
+                    placeholder="hint year"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                  <input
+                    value={newEvalCase.hintManufacturer}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintManufacturer: event.target.value }))}
+                    placeholder="hint manufacturer"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                  <input
+                    value={newEvalCase.hintSport}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintSport: event.target.value }))}
+                    placeholder="hint sport"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                  <input
+                    value={newEvalCase.hintProductLine}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintProductLine: event.target.value }))}
+                    placeholder="hint productLine"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                  <input
+                    value={newEvalCase.hintLayoutClass}
+                    onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintLayoutClass: event.target.value }))}
+                    placeholder="hint layoutClass"
+                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                  />
+                </div>
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={saveEvalCase}
+                    disabled={caseSaving}
+                    className="rounded-full border border-gold-500/60 bg-gold-500 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-night-900 transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {caseSaving ? "Saving..." : "Save Eval Case"}
+                  </button>
+                </div>
+
+                <div className="mt-4 overflow-x-auto">
+                  <table className="min-w-full">
+                    <thead>
+                      <tr className="border-b border-white/10">
+                        <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.2em] text-slate-400">Case</th>
+                        <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.2em] text-slate-400">Card</th>
+                        <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.2em] text-slate-400">Expected</th>
+                        <th className="px-3 py-2 text-left text-[11px] uppercase tracking-[0.2em] text-slate-400">Enabled</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {evalCases.length === 0 ? (
+                        <tr>
+                          <td className="px-3 py-3 text-sm text-slate-400" colSpan={4}>
+                            No eval cases loaded.
+                          </td>
+                        </tr>
+                      ) : (
+                        evalCases.slice(0, 80).map((evalCase) => (
+                          <tr key={evalCase.id} className="border-b border-white/5 align-top">
+                            <td className="px-3 py-2 text-sm text-slate-100">
+                              <p>{evalCase.title}</p>
+                              <p className="mt-1 text-xs uppercase tracking-[0.16em] text-slate-400">{evalCase.slug}</p>
+                            </td>
+                            <td className="px-3 py-2 text-sm text-slate-300">{evalCase.cardAssetId}</td>
+                            <td className="px-3 py-2 text-xs text-slate-300">
+                              set: {evalCase.expected.setName ?? "-"} | insert: {evalCase.expected.insertSet ?? "-"} |
+                              parallel: {evalCase.expected.parallel ?? "-"}
+                            </td>
+                            <td className="px-3 py-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleEvalCase(evalCase.slug, !evalCase.enabled)}
+                                disabled={caseSaving}
+                                className={`rounded-full px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] transition ${
+                                  evalCase.enabled
+                                    ? "border border-emerald-400/45 bg-emerald-400/10 text-emerald-200 hover:bg-emerald-400/20"
+                                    : "border border-slate-500/45 bg-slate-500/10 text-slate-300 hover:bg-slate-500/20"
+                                } disabled:cursor-not-allowed disabled:opacity-60`}
+                              >
+                                {evalCase.enabled ? "Enabled" : "Disabled"}
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </section>
 
             <section className="rounded-3xl border border-white/10 bg-night-800/65 p-4">

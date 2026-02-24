@@ -70,6 +70,29 @@ type OverviewResponse =
       ops: {
         attentionCards: AttentionCard[];
       };
+      evals: {
+        totalCases: number;
+        enabledCases: number;
+        lastRun: {
+          id: string;
+          status: string;
+          trigger: string;
+          createdAt: string;
+          completedAt: string | null;
+          gatePass: boolean | null;
+          failedChecks: string[];
+          summary: Record<string, unknown> | null;
+        } | null;
+        recentRuns: Array<{
+          id: string;
+          status: string;
+          trigger: string;
+          createdAt: string;
+          completedAt: string | null;
+          gatePass: boolean | null;
+          failedChecks: string[];
+        }>;
+      };
     }
   | { message: string };
 
@@ -176,6 +199,16 @@ function toSortedArray(map: Map<string, number>, limit = 10): Array<{ key: strin
     .sort((a, b) => b[1] - a[1])
     .slice(0, limit)
     .map(([key, count]) => ({ key, count }));
+}
+
+function readGateSummary(summary: unknown): { pass: boolean | null; failedChecks: string[] } {
+  const summaryRecord = toRecord(summary);
+  const gate = toRecord(summaryRecord?.gate);
+  const pass = typeof gate?.pass === "boolean" ? gate.pass : null;
+  const failedChecks = Array.isArray(gate?.failedChecks)
+    ? gate.failedChecks.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  return { pass, failedChecks };
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<OverviewResponse>) {
@@ -440,6 +473,38 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     attentionCards.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
+    const [totalEvalCases, enabledEvalCases, recentEvalRunsRaw] = await Promise.all([
+      (prisma as any).ocrEvalCase.count(),
+      (prisma as any).ocrEvalCase.count({ where: { enabled: true } }),
+      (prisma as any).ocrEvalRun.findMany({
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        select: {
+          id: true,
+          status: true,
+          trigger: true,
+          createdAt: true,
+          completedAt: true,
+          summaryJson: true,
+        },
+      }),
+    ]);
+
+    const recentEvalRuns = (recentEvalRunsRaw as Array<Record<string, unknown>>).map((row) => {
+      const gate = readGateSummary(row.summaryJson);
+      return {
+        id: String(row.id),
+        status: toText(row.status) ?? "UNKNOWN",
+        trigger: toText(row.trigger) ?? "unknown",
+        createdAt: new Date(row.createdAt as string | Date).toISOString(),
+        completedAt: row.completedAt ? new Date(row.completedAt as string | Date).toISOString() : null,
+        gatePass: gate.pass,
+        failedChecks: gate.failedChecks,
+        summary: toRecord(row.summaryJson),
+      };
+    });
+    const [latestEvalRun, ...restEvalRuns] = recentEvalRuns;
+
     return res.status(200).json({
       generatedAt: new Date().toISOString(),
       config: {
@@ -467,6 +532,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       },
       ops: {
         attentionCards: attentionCards.slice(0, 24),
+      },
+      evals: {
+        totalCases: Number(totalEvalCases ?? 0),
+        enabledCases: Number(enabledEvalCases ?? 0),
+        lastRun: latestEvalRun
+          ? {
+              id: latestEvalRun.id,
+              status: latestEvalRun.status,
+              trigger: latestEvalRun.trigger,
+              createdAt: latestEvalRun.createdAt,
+              completedAt: latestEvalRun.completedAt,
+              gatePass: latestEvalRun.gatePass,
+              failedChecks: latestEvalRun.failedChecks,
+              summary: latestEvalRun.summary,
+            }
+          : null,
+        recentRuns: restEvalRuns.map((run) => ({
+          id: run.id,
+          status: run.status,
+          trigger: run.trigger,
+          createdAt: run.createdAt,
+          completedAt: run.completedAt,
+          gatePass: run.gatePass,
+          failedChecks: run.failedChecks,
+        })),
       },
     });
   } catch (error) {

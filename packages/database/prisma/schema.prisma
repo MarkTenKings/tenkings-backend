@@ -952,6 +952,63 @@ model OcrRegionTemplate {
   @@index([photoSideKey], map: "ocr_region_template_side_idx")
 }
 
+model OcrEvalCase {
+  id          String   @id @default(uuid())
+  slug        String   @unique
+  title       String
+  description String?
+  cardAssetId String
+  enabled     Boolean  @default(true)
+  tags        String[] @default([])
+  hintsJson   Json?
+  expectedJson Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  results OcrEvalResult[]
+
+  @@index([enabled, updatedAt])
+  @@index([cardAssetId])
+}
+
+model OcrEvalRun {
+  id            String   @id @default(uuid())
+  status        String   @default("COMPLETED")
+  trigger       String
+  thresholdsJson Json?
+  summaryJson   Json?
+  totalsJson    Json?
+  startedAt     DateTime @default(now())
+  completedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  results OcrEvalResult[]
+
+  @@index([createdAt])
+  @@index([status, createdAt])
+}
+
+model OcrEvalResult {
+  id            String   @id @default(uuid())
+  runId         String
+  caseId        String
+  cardAssetId   String
+  passed        Boolean
+  fieldScoresJson Json?
+  expectedJson  Json?
+  predictedJson Json?
+  auditJson     Json?
+  createdAt     DateTime @default(now())
+
+  run  OcrEvalRun  @relation(fields: [runId], references: [id], onDelete: Cascade)
+  test OcrEvalCase @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, caseId], map: "ocr_eval_result_run_case_uidx")
+  @@index([runId, passed], map: "ocr_eval_result_run_pass_idx")
+  @@index([caseId, createdAt], map: "ocr_eval_result_case_created_idx")
+}
+
 model InventoryBatch {
   id          String   @id @default(uuid())
   locationId  String   @db.Uuid
