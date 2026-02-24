@@ -1888,3 +1888,25 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this coding step.
+
+## 2026-02-24 - Set Ops PDF Header Parsing Fix (Rookie subheader guard)
+
+### Summary
+- Added follow-up parser hardening for checklist PDFs where standalone `Rookie`/`RC` lines were being interpreted as new section headers.
+- This prevents `parallel` from switching to `Rookie` mid-block and keeps the active insert/parallel header (e.g., `COMIC COURT`, `SONIC BOOM`, `ALL KINGS`) across rookie subsets.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `docs/HANDOFF_SET_OPS.md`
+
+### Implementation Notes
+- Added `isRookieSubheaderLine(...)` helper.
+- Updated `looksLikeContextualChecklistSectionHeader(...)` to reject rookie marker lines.
+- Updated parse loop to skip rookie marker lines when next line is a card-id row, without flushing/changing active section.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/parse-upload.ts --file pages/admin/set-ops-review.tsx`
+  - Result: pass (`No ESLint warnings or errors`).
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this coding step.

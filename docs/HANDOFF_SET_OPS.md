@@ -1171,3 +1171,18 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/parse-upload.ts --file pages/admin/set-ops-review.tsx` (pass)
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Set Ops PDF Parse Fix - Follow-up (2026-02-24)
+- Trigger:
+  - improved parse still had scattered rows where `parallel` became `Rookie` for rookie subsections inside insert blocks.
+- Root cause:
+  - contextual header detection was still eligible to promote standalone `Rookie`/`RC` lines to active section headers when followed by card-id rows.
+- Fixes shipped:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+    - added `isRookieSubheaderLine(...)` guard.
+    - contextual header detector now explicitly rejects rookie marker lines as section headers.
+    - parse loop now drops rookie marker lines while preserving current section (prevents parallel overwrite to `Rookie`).
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/parse-upload.ts --file pages/admin/set-ops-review.tsx` (pass)
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

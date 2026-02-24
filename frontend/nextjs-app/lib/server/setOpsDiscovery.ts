@@ -880,12 +880,19 @@ function looksLikeChecklistSectionHeader(line: string) {
   return true;
 }
 
+function isRookieSubheaderLine(line: string) {
+  const value = compactWhitespace(line);
+  if (!value) return false;
+  return /^(rookie|rookies|rc|rookie cards?)$/i.test(value);
+}
+
 function looksLikeContextualChecklistSectionHeader(params: { line: string; nextLine: string | null }) {
   const value = compactWhitespace(params.line);
   const next = compactWhitespace(params.nextLine || "");
   if (!value || !next) return false;
   if (value.length < 2 || value.length > 110) return false;
   if (/^page\s+\d+/i.test(value)) return false;
+  if (isRookieSubheaderLine(value)) return false;
   if (TABLE_NEGATIVE_TOKEN_RE.test(value.toLowerCase())) return false;
   if (isKnownNbaTeamName(value)) return false;
 
@@ -926,6 +933,16 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
     const nextLine = lines[index + 1] ?? null;
+    const nextFirstToken = compactWhitespace(nextLine || "")
+      .split(/\s+/)
+      .filter(Boolean)[0];
+
+    // "Rookie"/"RC" can appear as intra-section markers in checklist PDFs.
+    // Keep current section and drop this marker line instead of promoting it to parallel.
+    if (isRookieSubheaderLine(line) && looksLikeChecklistCardIdToken(nextFirstToken || "")) {
+      continue;
+    }
+
     const isSectionHeader =
       looksLikeChecklistSectionHeader(line) ||
       looksLikeContextualChecklistSectionHeader({
