@@ -2337,3 +2337,36 @@
 
 ### Notes
 - No deploy/restart/migration executed in this coding step.
+
+## 2026-02-24 - AI Ops Dashboard Auth Header Fix
+
+### Summary
+- Fixed `/admin/ai-ops` dashboard load/run behavior where requests were silently failing and UI appeared blank/no-op.
+
+### Root Cause
+- Client page `frontend/nextjs-app/pages/admin/ai-ops.tsx` was calling protected admin APIs without admin headers.
+- Protected endpoints (`/api/admin/ai-ops/*`) require admin session auth and rejected those requests.
+- Empty-state UI hid request errors, so operators saw “nothing loads” instead of an actionable message.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added `buildAdminHeaders` usage across all AI Ops fetch calls:
+  - overview load,
+  - eval run,
+  - eval case list/create/toggle,
+  - retry OCR action.
+- Added `session.token` guards to block requests early with explicit message when token is missing.
+- Exposed `error` message in empty-state card so API failures are visible before initial hydration.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/ai-ops.tsx`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.

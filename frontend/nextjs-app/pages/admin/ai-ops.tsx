@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
+import { buildAdminHeaders } from "../../lib/adminHeaders";
 
 type WindowSummary = {
   processed: number;
@@ -267,12 +268,19 @@ export default function AiOpsPage() {
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
     [session?.user.id, session?.user.phone]
   );
+  const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
 
   const loadOverview = useCallback(async () => {
+    if (!session?.token) {
+      setError("Session token missing. Sign in again.");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/admin/ai-ops/overview");
+      const response = await fetch("/api/admin/ai-ops/overview", {
+        headers: adminHeaders,
+      });
       const payload = (await response.json()) as OverviewPayload | { message?: string };
       if (!response.ok || !("generatedAt" in payload)) {
         const message = "message" in payload && payload.message ? payload.message : "Failed to load AI Ops data";
@@ -284,13 +292,19 @@ export default function AiOpsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [adminHeaders, session?.token]);
 
   const retryCard = useCallback(
     async (cardId: string) => {
+      if (!session?.token) {
+        setError("Session token missing. Sign in again.");
+        return;
+      }
       setRetrying((prev) => ({ ...prev, [cardId]: true }));
       try {
-        const response = await fetch(`/api/admin/cards/${cardId}/ocr-suggest`);
+        const response = await fetch(`/api/admin/cards/${cardId}/ocr-suggest`, {
+          headers: adminHeaders,
+        });
         if (!response.ok) {
           const payload = (await response.json().catch(() => null)) as { message?: string } | null;
           throw new Error(payload?.message ?? "Retry failed");
@@ -302,16 +316,20 @@ export default function AiOpsPage() {
         setRetrying((prev) => ({ ...prev, [cardId]: false }));
       }
     },
-    [loadOverview]
+    [adminHeaders, loadOverview, session?.token]
   );
 
   const runEvalNow = useCallback(async () => {
+    if (!session?.token) {
+      setError("Session token missing. Sign in again.");
+      return;
+    }
     setRunningEval(true);
     setError(null);
     try {
       const response = await fetch("/api/admin/ai-ops/evals/run", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
         body: JSON.stringify({ trigger: "manual" }),
       });
       const payload = (await response.json().catch(() => null)) as { message?: string } | null;
@@ -324,12 +342,18 @@ export default function AiOpsPage() {
     } finally {
       setRunningEval(false);
     }
-  }, [loadOverview]);
+  }, [loadOverview, session?.token]);
 
   const loadEvalCases = useCallback(async () => {
+    if (!session?.token) {
+      setError("Session token missing. Sign in again.");
+      return;
+    }
     setCasesLoading(true);
     try {
-      const response = await fetch("/api/admin/ai-ops/evals/cases");
+      const response = await fetch("/api/admin/ai-ops/evals/cases", {
+        headers: adminHeaders,
+      });
       const payload = (await response.json().catch(() => null)) as
         | { cases?: EvalCase[]; message?: string }
         | null;
@@ -343,16 +367,20 @@ export default function AiOpsPage() {
       setCasesLoading(false);
       setCasesLoadedOnce(true);
     }
-  }, []);
+  }, [adminHeaders, session?.token]);
 
   const toggleEvalCase = useCallback(
     async (slug: string, enabled: boolean) => {
+      if (!session?.token) {
+        setError("Session token missing. Sign in again.");
+        return;
+      }
       setCaseSaving(true);
       setError(null);
       try {
         const response = await fetch("/api/admin/ai-ops/evals/cases", {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
           body: JSON.stringify({ slug, enabled }),
         });
         const payload = (await response.json().catch(() => null)) as
@@ -373,10 +401,14 @@ export default function AiOpsPage() {
         setCaseSaving(false);
       }
     },
-    [loadEvalCases, loadOverview]
+    [loadEvalCases, loadOverview, session?.token]
   );
 
   const saveEvalCase = useCallback(async () => {
+    if (!session?.token) {
+      setError("Session token missing. Sign in again.");
+      return;
+    }
     if (!newEvalCase.slug.trim() || !newEvalCase.title.trim() || !newEvalCase.cardAssetId.trim()) {
       setError("slug, title, and card asset id are required to save an eval case");
       return;
@@ -386,7 +418,7 @@ export default function AiOpsPage() {
     try {
       const response = await fetch("/api/admin/ai-ops/evals/cases", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: buildAdminHeaders(session.token, { "Content-Type": "application/json" }),
         body: JSON.stringify({
           slug: newEvalCase.slug,
           title: newEvalCase.title,
@@ -421,7 +453,7 @@ export default function AiOpsPage() {
     } finally {
       setCaseSaving(false);
     }
-  }, [loadEvalCases, loadOverview, newEvalCase]);
+  }, [loadEvalCases, loadOverview, newEvalCase, session?.token]);
 
   useEffect(() => {
     if (!sessionLoading && session && isAdmin) {
@@ -467,6 +499,7 @@ export default function AiOpsPage() {
       return (
         <div className="rounded-3xl border border-white/10 bg-night-800/65 p-6">
           <p className="text-sm text-slate-300">Load OCR/LLM health and teach-memory metrics for the last 24 hours and 7 days.</p>
+          {error ? <p className="mt-3 text-sm text-rose-300">{error}</p> : null}
           <button
             type="button"
             onClick={loadOverview}

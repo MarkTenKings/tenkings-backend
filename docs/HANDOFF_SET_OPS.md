@@ -1540,3 +1540,29 @@ Build Set Ops UI flow with:
     - pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## AI Ops Dashboard Load + Run Eval Fix (2026-02-24)
+- Trigger:
+  - `/admin/ai-ops` appeared empty on load.
+  - `Run Eval Now` appeared non-functional.
+- Root cause:
+  - `frontend/nextjs-app/pages/admin/ai-ops.tsx` used raw `fetch(...)` calls without admin auth headers.
+  - Backend AI Ops routes require `Authorization`/admin session, so requests failed and dashboard never hydrated.
+  - Empty-state UI did not surface request errors, which made failures look like a no-op.
+- Fixes implemented:
+  - `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+    - added `buildAdminHeaders` import and memoized header generation from `session.token`.
+    - added admin headers to all AI Ops fetch calls:
+      - `/api/admin/ai-ops/overview`
+      - `/api/admin/ai-ops/evals/run`
+      - `/api/admin/ai-ops/evals/cases` (GET/POST/PATCH)
+      - retry OCR call (`/api/admin/cards/:id/ocr-suggest`)
+    - added token guards with explicit error text when session token is missing.
+    - surfaced `error` text in the empty-state block so failures are visible even before dashboard data loads.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/ai-ops.tsx`
+    - pass.
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.
