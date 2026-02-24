@@ -16,6 +16,11 @@ import {
   parseOcrFeedbackTokenRefs,
   upsertOcrFeedbackMemoryAggregates,
 } from "../../../../../lib/server/ocrFeedbackMemory";
+import {
+  listOcrRegionTemplates,
+  type OcrRegionPhotoSide,
+  type OcrRegionRect,
+} from "../../../../../lib/server/ocrRegionTemplates";
 
 type SuggestResponse =
   | {
@@ -143,9 +148,32 @@ type MemoryTokenRef = {
   weight?: number | null;
 };
 
+type OcrTokenPoint = {
+  x: number;
+  y: number;
+};
+
+type OcrTokenEntry = {
+  text: string;
+  imageId: string | null;
+  bbox: OcrTokenPoint[];
+};
+
 type MemoryTokenLookup = {
   global: Set<string>;
   byImage: Map<string, Set<string>>;
+};
+
+type RegionTemplateMap = Record<OcrRegionPhotoSide, OcrRegionRect[]>;
+
+type RegionTokenLookup = {
+  global: Set<string>;
+  byImage: Map<string, Set<string>>;
+};
+
+type TokenRefSupport = {
+  support: number;
+  regionOverlap: number;
 };
 
 type TaxonomyPromptCandidates = {
@@ -162,6 +190,7 @@ type TaxonomyConstraintAudit = {
     sport: string | null;
     productLine: string | null;
     setId: string | null;
+    layoutClass: string | null;
   };
   pool: {
     approvedSetCount: number;
@@ -511,9 +540,7 @@ function parseMemoryTokenRefs(raw: unknown): MemoryTokenRef[] {
   return parseOcrFeedbackTokenRefs(raw);
 }
 
-function buildMemoryTokenLookup(
-  tokens: Array<{ text: string; imageId: string | null }>
-): MemoryTokenLookup {
+function buildMemoryTokenLookup(tokens: OcrTokenEntry[]): MemoryTokenLookup {
   const global = new Set<string>();
   const byImage = new Map<string, Set<string>>();
   tokens.forEach((token) => {
@@ -531,12 +558,108 @@ function buildMemoryTokenLookup(
   return { global, byImage };
 }
 
-function scoreTokenRefSupport(refs: MemoryTokenRef[], lookup: MemoryTokenLookup): number | null {
+function buildRegionTokenLookup(tokens: OcrTokenEntry[], templatesBySide: RegionTemplateMap): RegionTokenLookup {
+  const global = new Set<string>();
+  const byImage = new Map<string, Set<string>>();
+  const boundsByImage = new Map<string, { maxX: number; maxY: number }>();
+
+  tokens.forEach((token) => {
+    const imageId = normalizeImageLabel(token.imageId);
+    const points = Array.isArray(token.bbox) ? token.bbox : [];
+    if (!points.length) {
+      return;
+    }
+    let maxX = 0;
+    let maxY = 0;
+    points.forEach((point) => {
+      if (typeof point?.x === "number" && Number.isFinite(point.x)) {
+        maxX = Math.max(maxX, point.x);
+      }
+      if (typeof point?.y === "number" && Number.isFinite(point.y)) {
+        maxY = Math.max(maxY, point.y);
+      }
+    });
+    if (maxX <= 0 || maxY <= 0) {
+      return;
+    }
+    const current = boundsByImage.get(imageId);
+    if (!current) {
+      boundsByImage.set(imageId, { maxX, maxY });
+      return;
+    }
+    current.maxX = Math.max(current.maxX, maxX);
+    current.maxY = Math.max(current.maxY, maxY);
+  });
+
+  tokens.forEach((token) => {
+    const normalized = normalizeMemoryToken(token.text);
+    if (!normalized) {
+      return;
+    }
+    const imageId = normalizeImageLabel(token.imageId);
+    const side = imageId as OcrRegionPhotoSide;
+    const regions = templatesBySide[side] ?? [];
+    if (!regions.length) {
+      return;
+    }
+    const points = Array.isArray(token.bbox) ? token.bbox : [];
+    if (!points.length) {
+      return;
+    }
+    const bounds = boundsByImage.get(imageId);
+    if (!bounds || bounds.maxX <= 0 || bounds.maxY <= 0) {
+      return;
+    }
+    let minX = Number.POSITIVE_INFINITY;
+    let maxX = 0;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxY = 0;
+    points.forEach((point) => {
+      if (typeof point?.x === "number" && Number.isFinite(point.x)) {
+        minX = Math.min(minX, point.x);
+        maxX = Math.max(maxX, point.x);
+      }
+      if (typeof point?.y === "number" && Number.isFinite(point.y)) {
+        minY = Math.min(minY, point.y);
+        maxY = Math.max(maxY, point.y);
+      }
+    });
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxX <= minX || maxY <= minY) {
+      return;
+    }
+    const centerX = ((minX + maxX) / 2) / bounds.maxX;
+    const centerY = ((minY + maxY) / 2) / bounds.maxY;
+    const inRegion = regions.some(
+      (region) =>
+        centerX >= region.x &&
+        centerX <= region.x + region.width &&
+        centerY >= region.y &&
+        centerY <= region.y + region.height
+    );
+    if (!inRegion) {
+      return;
+    }
+    global.add(normalized);
+    if (!byImage.has(imageId)) {
+      byImage.set(imageId, new Set());
+    }
+    byImage.get(imageId)?.add(normalized);
+  });
+
+  return { global, byImage };
+}
+
+function scoreTokenRefSupport(
+  refs: MemoryTokenRef[],
+  lookup: MemoryTokenLookup,
+  regionLookup: RegionTokenLookup
+): TokenRefSupport | null {
   if (!refs.length) {
     return null;
   }
   let matchedWeight = 0;
   let totalWeight = 0;
+  let regionMatchedWeight = 0;
   refs.forEach((ref) => {
     const normalized = normalizeMemoryToken(ref.text);
     if (!normalized) {
@@ -549,12 +672,22 @@ function scoreTokenRefSupport(refs: MemoryTokenRef[], lookup: MemoryTokenLookup)
     const inGlobal = lookup.global.has(normalized);
     if (inExpected || inGlobal) {
       matchedWeight += weight;
+      const inRegionExpected = regionLookup.byImage.get(expectedImage)?.has(normalized) ?? false;
+      const inRegionGlobal = regionLookup.global.has(normalized);
+      if (inRegionExpected || inRegionGlobal) {
+        regionMatchedWeight += weight;
+      }
     }
   });
   if (totalWeight <= 0 || matchedWeight <= 0) {
-    return 0;
+    return { support: 0, regionOverlap: 0 };
   }
-  return matchedWeight / totalWeight;
+  const support = matchedWeight / totalWeight;
+  const regionOverlap = regionMatchedWeight <= 0 ? 0 : Math.min(1, regionMatchedWeight / matchedWeight);
+  return {
+    support,
+    regionOverlap,
+  };
 }
 
 function buildPhotoOcrState(params: {
@@ -619,9 +752,10 @@ function buildPhotoOcrState(params: {
 async function applyFeedbackMemoryHints(params: {
   fields: SuggestionFields;
   confidence: SuggestionConfidence;
-  tokens: Array<{ text: string; imageId: string | null }>;
+  tokens: OcrTokenEntry[];
+  regionTemplatesBySide: RegionTemplateMap;
 }) {
-  const { fields, confidence, tokens } = params;
+  const { fields, confidence, tokens, regionTemplatesBySide } = params;
   const contextInput: MemoryContext = {
     setId: coerceNullableString(fields.setName),
     year: coerceNullableString(fields.year),
@@ -632,6 +766,7 @@ async function applyFeedbackMemoryHints(params: {
   };
   const context = buildOcrFeedbackMemoryContext(contextInput);
   const tokenLookup = buildMemoryTokenLookup(tokens);
+  const regionTokenLookup = buildRegionTokenLookup(tokens, regionTemplatesBySide);
 
   const orClauses: Record<string, string>[] = [];
   if (context.setIdKey) orClauses.push({ setIdKey: context.setIdKey });
@@ -788,7 +923,9 @@ async function applyFeedbackMemoryHints(params: {
     const ctxCardNumber = context.cardNumberKey;
     const ctxNumbered = context.numberedKey;
     const tokenRefs = parseMemoryTokenRefs(row.tokenAnchorsJson);
-    const tokenSupport = scoreTokenRefSupport(tokenRefs, tokenLookup);
+    const tokenSupport = scoreTokenRefSupport(tokenRefs, tokenLookup, regionTokenLookup);
+    const tokenSupportScore = tokenSupport?.support ?? null;
+    const regionOverlap = tokenSupport?.regionOverlap ?? 0;
 
     if (field === "setName") {
       // Set-level memory is only allowed when year+manufacturer context is strong.
@@ -805,7 +942,7 @@ async function applyFeedbackMemoryHints(params: {
         return;
       }
       // If we have token anchors from the taught card, require at least weak overlap.
-      if (tokenSupport != null && tokenSupport < 0.35) {
+      if (tokenSupportScore != null && tokenSupportScore < 0.35 && regionOverlap < 0.55) {
         return;
       }
     }
@@ -821,7 +958,7 @@ async function applyFeedbackMemoryHints(params: {
         return;
       }
       // For taxonomy replay we require explicit token overlap support.
-      if (tokenSupport == null || tokenSupport < 0.25) {
+      if (tokenSupportScore == null || (tokenSupportScore < 0.25 && regionOverlap < 0.45)) {
         return;
       }
     }
@@ -834,10 +971,16 @@ async function applyFeedbackMemoryHints(params: {
     if (ctxNumbered && rowNumbered === ctxNumbered) score += 0.6;
     score += Math.min(2.5, Math.max(1, row.sampleCount) * 0.22);
     score += Math.min(1.5, Math.max(0, row.confidencePrior) * 1.4);
-    if (tokenSupport != null) {
-      if (tokenSupport >= 0.8) score += 1.2;
-      else if (tokenSupport >= 0.5) score += 0.7;
-      else if (tokenSupport >= 0.35) score += 0.35;
+    if (tokenSupportScore != null) {
+      if (tokenSupportScore >= 0.8) score += 1.2;
+      else if (tokenSupportScore >= 0.5) score += 0.7;
+      else if (tokenSupportScore >= 0.35) score += 0.35;
+    }
+    if (regionOverlap >= 0.7) score += 1;
+    else if (regionOverlap >= 0.5) score += 0.65;
+    else if (regionOverlap >= 0.3) score += 0.35;
+    if (field === "setName" && regionOverlap >= 0.65) {
+      score += 0.45;
     }
 
     const ageDays = Math.max(0, (nowMs - new Date(row.lastSeenAt).getTime()) / (1000 * 60 * 60 * 24));
@@ -909,6 +1052,7 @@ async function constrainTaxonomyFields(params: {
     sport: string | null;
     productLine: string | null;
     setId: string | null;
+    layoutClass: string | null;
   };
 }): Promise<TaxonomyConstraintAudit> {
   const { fields, confidence, queryHints } = params;
@@ -1087,6 +1231,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       sport: sanitizeText(req.query.sport) || null,
       productLine: sanitizeText(req.query.productLine) || null,
       setId: sanitizeText(req.query.setId) || null,
+      layoutClass: sanitizeText(req.query.layoutClass) || null,
     };
 
     const card = await prisma.cardAsset.findFirst({
@@ -1424,6 +1569,57 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       console.warn("LLM OCR parse failed; using heuristic suggestions", error);
     }
 
+    const regionTemplateLayoutClass = sanitizeText(queryHints.layoutClass || "") || "base";
+    const regionTemplateSetId = coerceNullableString(queryHints.setId || queryHints.productLine || fields.setName);
+    let regionTemplatesBySide: RegionTemplateMap = {
+      FRONT: [],
+      BACK: [],
+      TILT: [],
+    };
+    let regionTemplateAudit: {
+      setId: string | null;
+      layoutClass: string;
+      loadedSides: OcrRegionPhotoSide[];
+      regionCountBySide: Record<OcrRegionPhotoSide, number>;
+      error?: string;
+    } = {
+      setId: regionTemplateSetId,
+      layoutClass: regionTemplateLayoutClass,
+      loadedSides: [],
+      regionCountBySide: {
+        FRONT: 0,
+        BACK: 0,
+        TILT: 0,
+      },
+    };
+    try {
+      if (regionTemplateSetId) {
+        const templateState = await listOcrRegionTemplates({
+          setId: regionTemplateSetId,
+          layoutClass: regionTemplateLayoutClass,
+        });
+        regionTemplatesBySide = templateState.templatesBySide;
+        regionTemplateAudit = {
+          ...regionTemplateAudit,
+          setId: templateState.setId,
+          layoutClass: templateState.layoutClass,
+          loadedSides: (["FRONT", "BACK", "TILT"] as OcrRegionPhotoSide[]).filter(
+            (side) => (templateState.templatesBySide[side] ?? []).length > 0
+          ),
+          regionCountBySide: {
+            FRONT: templateState.templatesBySide.FRONT.length,
+            BACK: templateState.templatesBySide.BACK.length,
+            TILT: templateState.templatesBySide.TILT.length,
+          },
+        };
+      }
+    } catch (error) {
+      regionTemplateAudit = {
+        ...regionTemplateAudit,
+        error: error instanceof Error ? error.message : "region_template_load_failed",
+      };
+    }
+
     let memoryAudit: {
       context: MemoryContext;
       consideredRows: number;
@@ -1442,7 +1638,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       applied: [],
     };
     try {
-      memoryAudit = await applyFeedbackMemoryHints({ fields, confidence, tokens: ocrTokens });
+      memoryAudit = await applyFeedbackMemoryHints({
+        fields,
+        confidence,
+        tokens: ocrTokens,
+        regionTemplatesBySide,
+      });
     } catch (error) {
       console.warn("OCR feedback memory apply failed", error);
       memoryAudit = {
@@ -1578,6 +1779,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       photoOcr: photoState.byId,
       readiness: photoState.readiness,
       memory: memoryAudit,
+      regionTemplates: regionTemplateAudit,
       variantMatch: variantMatchAudit,
       taxonomyConstraints: taxonomyConstraintAudit,
     };

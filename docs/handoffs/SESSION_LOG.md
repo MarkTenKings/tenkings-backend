@@ -1942,3 +1942,49 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this coding step.
+
+## 2026-02-24 - Phase 4 Build: Region Teach Templates + Replay Priority
+
+### Summary
+- Implemented Phase 4 end-to-end for Add Cards:
+  - click-drag Teach Regions UI on `FRONT`/`BACK`/`TILT`,
+  - persisted region templates keyed by `setId + layoutClass + photoSide`,
+  - OCR replay scoring now boosts token-anchor support when current OCR tokens overlap taught regions.
+- Added OCR `layoutClass` hint wiring from Add Cards to `/api/admin/cards/[cardId]/ocr-suggest`.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/lib/server/ocrRegionTemplates.ts` (new)
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/region-teach.ts` (new)
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260224223000_ocr_region_templates/migration.sql` (new)
+- `docs/HANDOFF_SET_OPS.md`
+
+### Implementation Notes
+- New model/table:
+  - `OcrRegionTemplate`
+  - stores normalized region rectangles (`regionsJson`) and `sampleCount` per scope:
+    - `setIdKey`
+    - `layoutClassKey`
+    - `photoSideKey`
+- New API route:
+  - `GET /api/admin/cards/:cardId/region-teach?setId=...&layoutClass=...`
+  - `POST /api/admin/cards/:cardId/region-teach`
+    - upserts templates for one or more photo sides in a single call.
+- Replay integration:
+  - `applyFeedbackMemoryHints(...)` now receives region templates and computes `regionOverlap` for token refs.
+  - scoring gates now allow stronger confidence when token matches occur within taught regions.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/cards/[cardId]/region-teach.ts --file lib/server/ocrRegionTemplates.ts`
+  - Result: pass (with existing `@next/next/no-img-element` warnings in uploads).
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+  - Result: pass.
+- `pnpm --filter @tenkings/database generate`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: fails due broad pre-existing Prisma/client type mismatch across workspace (not isolated to this change set).
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this coding step.

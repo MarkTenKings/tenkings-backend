@@ -256,6 +256,7 @@ model User {
   setApprovals            SetApproval[]         @relation("SetApprovalApprovedBy")
   setSeedJobsRequested    SetSeedJob[]          @relation("SetSeedJobRequestedBy")
   setAuditEvents          SetAuditEvent[]       @relation("SetAuditEventActor")
+  ocrRegionTemplates      OcrRegionTemplate[]   @relation("OcrRegionTemplateCreatedBy")
 }
 
 model Location {
@@ -928,6 +929,27 @@ model OcrFeedbackMemoryAggregate {
   @@unique([fieldName, valueKey, setIdKey, yearKey, manufacturerKey, sportKey, cardNumberKey, numberedKey], map: "ocr_mem_agg_ctx_value_uidx")
   @@index([fieldName, yearKey, manufacturerKey, sportKey, lastSeenAt], map: "ocr_mem_agg_year_manu_sport_idx")
   @@index([fieldName, setIdKey, cardNumberKey, lastSeenAt], map: "ocr_mem_agg_set_card_idx")
+}
+
+model OcrRegionTemplate {
+  id             String   @id @default(uuid())
+  setId          String
+  setIdKey       String   @default("")
+  layoutClass    String
+  layoutClassKey String   @default("")
+  photoSide      String
+  photoSideKey   String   @default("")
+  regionsJson    Json
+  sampleCount    Int      @default(1)
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  createdBy User? @relation("OcrRegionTemplateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([setIdKey, layoutClassKey, photoSideKey], map: "ocr_region_template_scope_uidx")
+  @@index([setIdKey, layoutClassKey], map: "ocr_region_template_set_layout_idx")
+  @@index([photoSideKey], map: "ocr_region_template_side_idx")
 }
 
 model InventoryBatch {

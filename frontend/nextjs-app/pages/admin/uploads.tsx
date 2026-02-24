@@ -1,6 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
@@ -154,6 +154,34 @@ type OcrAuditPayload = {
       >
     >;
   };
+  regionTemplates?: {
+    setId?: string | null;
+    layoutClass?: string;
+    loadedSides?: string[];
+    regionCountBySide?: Partial<Record<"FRONT" | "BACK" | "TILT", number>>;
+    error?: string;
+  };
+};
+
+type TeachRegionSide = "FRONT" | "BACK" | "TILT";
+
+type TeachRegionRect = {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  label: string;
+};
+
+type TeachRegionsBySide = Record<TeachRegionSide, TeachRegionRect[]>;
+
+type TeachRegionDraft = {
+  side: TeachRegionSide;
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -172,6 +200,71 @@ const TIER_LABELS: Record<string, string> = {
 const CAMERA_STORAGE_KEY = "tenkings.adminUploads.cameraDeviceId";
 const OCR_QUEUE_STORAGE_KEY = "tenkings.adminUploads.ocrQueue";
 const OCR_DRAFT_STORAGE_KEY = "tenkings.adminUploads.ocrDraft";
+const TEACH_REGION_SIDES: TeachRegionSide[] = ["FRONT", "BACK", "TILT"];
+
+const clampFraction = (value: number): number => {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  if (value <= 0) {
+    return 0;
+  }
+  if (value >= 1) {
+    return 1;
+  }
+  return Number(value.toFixed(5));
+};
+
+const normalizeTeachLayoutClass = (value: string): string => {
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "base";
+};
+
+const buildEmptyTeachRegionsBySide = (): TeachRegionsBySide => ({
+  FRONT: [],
+  BACK: [],
+  TILT: [],
+});
+
+const coerceTeachRegionsBySide = (raw: unknown): TeachRegionsBySide => {
+  if (!raw || typeof raw !== "object") {
+    return buildEmptyTeachRegionsBySide();
+  }
+  const input = raw as Record<string, unknown>;
+  const output = buildEmptyTeachRegionsBySide();
+  TEACH_REGION_SIDES.forEach((side) => {
+    const list = Array.isArray(input[side]) ? input[side] : [];
+    output[side] = list
+      .map((entry) => {
+        if (!entry || typeof entry !== "object") {
+          return null;
+        }
+        const region = entry as Record<string, unknown>;
+        const x = clampFraction(typeof region.x === "number" ? region.x : NaN);
+        const y = clampFraction(typeof region.y === "number" ? region.y : NaN);
+        const width = clampFraction(typeof region.width === "number" ? region.width : NaN);
+        const height = clampFraction(typeof region.height === "number" ? region.height : NaN);
+        if (width < 0.01 || height < 0.01 || x + width > 1.001 || y + height > 1.001) {
+          return null;
+        }
+        return {
+          id: `region-${side}-${Math.random().toString(36).slice(2, 9)}`,
+          x,
+          y,
+          width,
+          height,
+          label: typeof region.label === "string" ? region.label : "",
+        } as TeachRegionRect;
+      })
+      .filter((entry): entry is TeachRegionRect => Boolean(entry))
+      .slice(0, 24);
+  });
+  return output;
+};
 
 const sanitizeNullableText = (value: string | null | undefined): string => {
   const normalized = String(value ?? "").trim();
@@ -380,6 +473,13 @@ export default function AdminUploads() {
   const [trainAiEnabled, setTrainAiEnabled] = useState(false);
   const [teachBusy, setTeachBusy] = useState(false);
   const [teachFeedback, setTeachFeedback] = useState<string | null>(null);
+  const [teachLayoutClass, setTeachLayoutClass] = useState("base");
+  const [teachRegionSide, setTeachRegionSide] = useState<TeachRegionSide>("FRONT");
+  const [teachRegionsBySide, setTeachRegionsBySide] = useState<TeachRegionsBySide>(() => buildEmptyTeachRegionsBySide());
+  const [teachRegionDraft, setTeachRegionDraft] = useState<TeachRegionDraft | null>(null);
+  const [teachRegionLoading, setTeachRegionLoading] = useState(false);
+  const [teachRegionBusy, setTeachRegionBusy] = useState(false);
+  const [teachRegionFeedback, setTeachRegionFeedback] = useState<string | null>(null);
   const [productLineOptions, setProductLineOptions] = useState<string[]>([]);
   const [insertSetOptions, setInsertSetOptions] = useState<string[]>([]);
   const [parallelOptions, setParallelOptions] = useState<string[]>([]);
@@ -1065,6 +1165,13 @@ export default function AdminUploads() {
     setTrainAiEnabled(false);
     setTeachBusy(false);
     setTeachFeedback(null);
+    setTeachLayoutClass("base");
+    setTeachRegionSide("FRONT");
+    setTeachRegionsBySide(buildEmptyTeachRegionsBySide());
+    setTeachRegionDraft(null);
+    setTeachRegionLoading(false);
+    setTeachRegionBusy(false);
+    setTeachRegionFeedback(null);
     setProductLineOptions([]);
     setInsertSetOptions([]);
     setParallelOptions([]);
@@ -1569,6 +1676,23 @@ export default function AdminUploads() {
         tcgLanguage: "",
         tcgOutOf: "",
       });
+      const nextInsertSet = sanitizeNullableText(normalized.setCode ?? "");
+      const nextParallel = sanitizeNullableText((attributes.variantKeywords ?? [])[0] ?? ocrFields.parallel ?? "");
+      const nextAutograph =
+        Boolean(attributes.autograph ?? false) || String(ocrFields.autograph ?? "").toLowerCase() === "true";
+      if (nextInsertSet) {
+        setTeachLayoutClass(`insert_${normalizeTeachLayoutClass(nextInsertSet)}`);
+      } else if (nextParallel) {
+        setTeachLayoutClass(`parallel_${normalizeTeachLayoutClass(nextParallel)}`);
+      } else if (nextAutograph) {
+        setTeachLayoutClass("autograph");
+      } else {
+        setTeachLayoutClass("base");
+      }
+      setTeachRegionSide("FRONT");
+      setTeachRegionsBySide(buildEmptyTeachRegionsBySide());
+      setTeachRegionDraft(null);
+      setTeachRegionFeedback(null);
 
       setIntakeSuggested(
         Object.entries(ocrFields).reduce<Record<string, string>>((acc, [key, value]) => {
@@ -1943,6 +2067,7 @@ export default function AdminUploads() {
       const hintManufacturer = sanitizeNullableText(intakeRequired.manufacturer);
       const hintSport = sanitizeNullableText(intakeRequired.sport);
       const hintProductLine = sanitizeNullableText(intakeOptional.productLine);
+      const hintLayoutClass = normalizeTeachLayoutClass(teachLayoutClass);
       if (hintYear) {
         params.set("year", hintYear);
       }
@@ -1955,6 +2080,9 @@ export default function AdminUploads() {
       if (hintProductLine) {
         params.set("productLine", hintProductLine);
         params.set("setId", hintProductLine);
+      }
+      if (hintLayoutClass) {
+        params.set("layoutClass", hintLayoutClass);
       }
       const endpoint =
         params.size > 0
@@ -2015,6 +2143,7 @@ export default function AdminUploads() {
     intakeRequired.manufacturer,
     intakeRequired.sport,
     intakeRequired.year,
+    teachLayoutClass,
     session?.token,
     triggerPhotoroomForCard,
   ]);
@@ -2707,6 +2836,243 @@ export default function AdminUploads() {
     const [hit] = options.splice(idx, 1);
     return [hit, ...options];
   }, [intakeSuggested.parallel, parallelOptions]);
+
+  const teachRegionPreviewBySide = useMemo<Record<TeachRegionSide, string | null>>(
+    () => ({
+      FRONT: intakeFrontPreview,
+      BACK: intakeBackPreview,
+      TILT: intakeTiltPreview,
+    }),
+    [intakeBackPreview, intakeFrontPreview, intakeTiltPreview]
+  );
+
+  const activeTeachRegionPreview = teachRegionPreviewBySide[teachRegionSide] ?? null;
+  const activeTeachRegions = teachRegionsBySide[teachRegionSide] ?? [];
+
+  const handleTeachRegionMouseDown = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      if (event.button !== 0 || !activeTeachRegionPreview) {
+        return;
+      }
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return;
+      }
+      const x = clampFraction((event.clientX - rect.left) / rect.width);
+      const y = clampFraction((event.clientY - rect.top) / rect.height);
+      setTeachRegionDraft({
+        side: teachRegionSide,
+        startX: x,
+        startY: y,
+        currentX: x,
+        currentY: y,
+      });
+      event.preventDefault();
+    },
+    [activeTeachRegionPreview, teachRegionSide]
+  );
+
+  const handleTeachRegionMouseMove = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    setTeachRegionDraft((prev) => {
+      if (!prev) {
+        return prev;
+      }
+      const rect = event.currentTarget.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return prev;
+      }
+      const x = clampFraction((event.clientX - rect.left) / rect.width);
+      const y = clampFraction((event.clientY - rect.top) / rect.height);
+      return {
+        ...prev,
+        currentX: x,
+        currentY: y,
+      };
+    });
+  }, []);
+
+  const finishTeachRegionDraft = useCallback(() => {
+    if (!teachRegionDraft) {
+      return;
+    }
+    const x = clampFraction(Math.min(teachRegionDraft.startX, teachRegionDraft.currentX));
+    const y = clampFraction(Math.min(teachRegionDraft.startY, teachRegionDraft.currentY));
+    const width = clampFraction(Math.abs(teachRegionDraft.currentX - teachRegionDraft.startX));
+    const height = clampFraction(Math.abs(teachRegionDraft.currentY - teachRegionDraft.startY));
+    if (width >= 0.01 && height >= 0.01) {
+      const side = teachRegionDraft.side;
+      const region: TeachRegionRect = {
+        id: `region-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        x,
+        y,
+        width,
+        height,
+        label: "",
+      };
+      setTeachRegionsBySide((prev) => ({
+        ...prev,
+        [side]: [...prev[side], region].slice(0, 24),
+      }));
+    }
+    setTeachRegionDraft(null);
+  }, [teachRegionDraft]);
+
+  const handleClearTeachRegionsForSide = useCallback((side: TeachRegionSide) => {
+    setTeachRegionsBySide((prev) => ({
+      ...prev,
+      [side]: [],
+    }));
+    setTeachRegionFeedback(null);
+  }, []);
+
+  const handleDeleteTeachRegion = useCallback((side: TeachRegionSide, regionId: string) => {
+    setTeachRegionsBySide((prev) => ({
+      ...prev,
+      [side]: prev[side].filter((region) => region.id !== regionId),
+    }));
+    setTeachRegionFeedback(null);
+  }, []);
+
+  const loadTeachRegionTemplates = useCallback(async () => {
+    const token = session?.token;
+    const cardId = intakeCardId;
+    const setId = sanitizeNullableText(intakeOptional.productLine);
+    if (!token || !cardId || !setId) {
+      setTeachRegionsBySide(buildEmptyTeachRegionsBySide());
+      setTeachRegionFeedback(null);
+      return;
+    }
+    try {
+      setTeachRegionLoading(true);
+      setTeachRegionFeedback(null);
+      const params = new URLSearchParams({
+        setId,
+        layoutClass: normalizeTeachLayoutClass(teachLayoutClass),
+      });
+      const res = await fetch(resolveApiUrl(`/api/admin/cards/${cardId}/region-teach?${params.toString()}`), {
+        method: "GET",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: buildAdminHeaders(token),
+      });
+      if (!res.ok) {
+        setTeachRegionsBySide(buildEmptyTeachRegionsBySide());
+        return;
+      }
+      const payload = (await res.json()) as { templatesBySide?: unknown };
+      setTeachRegionsBySide(coerceTeachRegionsBySide(payload?.templatesBySide));
+    } catch {
+      setTeachRegionsBySide(buildEmptyTeachRegionsBySide());
+    } finally {
+      setTeachRegionLoading(false);
+    }
+  }, [
+    intakeCardId,
+    intakeOptional.productLine,
+    isRemoteApi,
+    resolveApiUrl,
+    session?.token,
+    teachLayoutClass,
+  ]);
+
+  useEffect(() => {
+    void loadTeachRegionTemplates();
+    setTeachRegionDraft(null);
+  }, [loadTeachRegionTemplates]);
+
+  useEffect(() => {
+    const insertSet = sanitizeNullableText(intakeOptional.insertSet);
+    const parallel = sanitizeNullableText(intakeOptional.parallel);
+    const inferredLayout = insertSet
+      ? `insert_${normalizeTeachLayoutClass(insertSet)}`
+      : parallel
+      ? `parallel_${normalizeTeachLayoutClass(parallel)}`
+      : intakeOptional.autograph
+      ? "autograph"
+      : "base";
+    setTeachLayoutClass((prev) => {
+      const normalizedPrev = normalizeTeachLayoutClass(prev);
+      const autoManaged =
+        normalizedPrev === "base" ||
+        normalizedPrev === "autograph" ||
+        normalizedPrev.startsWith("insert_") ||
+        normalizedPrev.startsWith("parallel_");
+      if (!autoManaged || normalizedPrev === inferredLayout) {
+        return prev;
+      }
+      return inferredLayout;
+    });
+  }, [intakeOptional.autograph, intakeOptional.insertSet, intakeOptional.parallel]);
+
+  const handleSaveTeachRegions = useCallback(async () => {
+    const token = session?.token;
+    if (!token) {
+      setIntakeError("Your session expired. Sign in again and retry.");
+      return;
+    }
+    if (!intakeCardId) {
+      setIntakeError("Card asset not found.");
+      return;
+    }
+    const setId = sanitizeNullableText(intakeOptional.productLine);
+    if (!setId) {
+      setIntakeError("Select Product Set before saving teach regions.");
+      return;
+    }
+    const templates = TEACH_REGION_SIDES.map((side) => ({
+      photoSide: side,
+      regions: teachRegionsBySide[side].map((region) => ({
+        x: region.x,
+        y: region.y,
+        width: region.width,
+        height: region.height,
+        label: region.label || undefined,
+      })),
+    })).filter((entry) => entry.regions.length > 0);
+    if (!templates.length) {
+      setIntakeError("Draw at least one teach region before saving.");
+      return;
+    }
+    try {
+      setTeachRegionBusy(true);
+      setTeachRegionFeedback(null);
+      const res = await fetch(resolveApiUrl(`/api/admin/cards/${intakeCardId}/region-teach`), {
+        method: "POST",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAdminHeaders(token),
+        },
+        body: JSON.stringify({
+          setId,
+          layoutClass: normalizeTeachLayoutClass(teachLayoutClass),
+          templates,
+        }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        throw new Error(payload?.message ?? "Failed to save teach regions.");
+      }
+      const payload = (await res.json()) as { updatedCount?: number; templatesBySide?: unknown };
+      setTeachRegionsBySide(coerceTeachRegionsBySide(payload?.templatesBySide));
+      setTeachRegionFeedback(
+        `Teach regions saved (${payload?.updatedCount ?? templates.length} side${(payload?.updatedCount ?? templates.length) === 1 ? "" : "s"}).`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save teach regions.";
+      setIntakeError(message);
+      setTeachRegionFeedback(null);
+    } finally {
+      setTeachRegionBusy(false);
+    }
+  }, [
+    intakeCardId,
+    intakeOptional.productLine,
+    isRemoteApi,
+    resolveApiUrl,
+    session?.token,
+    teachLayoutClass,
+    teachRegionsBySide,
+  ]);
 
   const handleIntakeRequiredContinue = useCallback(async () => {
     const error = validateRequiredIntake();
@@ -3705,6 +4071,123 @@ export default function AdminUploads() {
                 {teachFeedback ? (
                   <p className="text-xs text-emerald-300">{teachFeedback}</p>
                 ) : null}
+                <div className="space-y-3 rounded-2xl border border-white/10 bg-night-900/60 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-[10px] uppercase tracking-[0.28em] text-slate-300">Teach Regions (Phase 4)</p>
+                    <span className="text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                      {teachRegionLoading ? "Loading..." : `${activeTeachRegions.length} region${activeTeachRegions.length === 1 ? "" : "s"} on ${teachRegionSide}`}
+                    </span>
+                  </div>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <input
+                      value={teachLayoutClass}
+                      onChange={(event) => setTeachLayoutClass(normalizeTeachLayoutClass(event.target.value))}
+                      placeholder="Layout class (base, insert_daily_dribble)"
+                      className="rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                    />
+                    <div className="flex items-center gap-2">
+                      {TEACH_REGION_SIDES.map((side) => (
+                        <button
+                          key={side}
+                          type="button"
+                          onClick={() => {
+                            setTeachRegionSide(side);
+                            setTeachRegionDraft(null);
+                          }}
+                          className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] ${
+                            teachRegionSide === side
+                              ? "border-gold-400/70 bg-gold-500/20 text-gold-200"
+                              : "border-white/20 text-slate-300 hover:border-white/40"
+                          }`}
+                        >
+                          {side}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div
+                    className="relative overflow-hidden rounded-xl border border-white/10 bg-night-800/70"
+                    onMouseDown={handleTeachRegionMouseDown}
+                    onMouseMove={handleTeachRegionMouseMove}
+                    onMouseUp={finishTeachRegionDraft}
+                    onMouseLeave={finishTeachRegionDraft}
+                  >
+                    {activeTeachRegionPreview ? (
+                      <>
+                        <img src={activeTeachRegionPreview} alt={`${teachRegionSide} teach preview`} className="block w-full" />
+                        {activeTeachRegions.map((region) => (
+                          <div
+                            key={region.id}
+                            className="absolute border-2 border-emerald-300/80 bg-emerald-400/15"
+                            style={{
+                              left: `${region.x * 100}%`,
+                              top: `${region.y * 100}%`,
+                              width: `${region.width * 100}%`,
+                              height: `${region.height * 100}%`,
+                            }}
+                          />
+                        ))}
+                        {teachRegionDraft && teachRegionDraft.side === teachRegionSide ? (
+                          <div
+                            className="absolute border-2 border-gold-300/80 bg-gold-400/15"
+                            style={{
+                              left: `${Math.min(teachRegionDraft.startX, teachRegionDraft.currentX) * 100}%`,
+                              top: `${Math.min(teachRegionDraft.startY, teachRegionDraft.currentY) * 100}%`,
+                              width: `${Math.abs(teachRegionDraft.currentX - teachRegionDraft.startX) * 100}%`,
+                              height: `${Math.abs(teachRegionDraft.currentY - teachRegionDraft.startY) * 100}%`,
+                            }}
+                          />
+                        ) : null}
+                      </>
+                    ) : (
+                      <div className="flex h-40 items-center justify-center text-xs uppercase tracking-[0.2em] text-slate-500">
+                        Missing {teachRegionSide} photo
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleClearTeachRegionsForSide(teachRegionSide)}
+                      className="rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-slate-300 hover:border-white/40"
+                    >
+                      Clear {teachRegionSide}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveTeachRegions()}
+                      disabled={teachRegionBusy || intakeBusy}
+                      className="rounded-full border border-emerald-400/70 bg-emerald-500/15 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-emerald-200 hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {teachRegionBusy ? "Saving..." : "Save Region Teach"}
+                    </button>
+                  </div>
+                  {activeTeachRegions.length > 0 ? (
+                    <div className="max-h-24 space-y-1 overflow-auto pr-1 text-[10px] text-slate-400">
+                      {activeTeachRegions.map((region, index) => (
+                        <div key={`${teachRegionSide}-${region.id}`} className="flex items-center justify-between rounded border border-white/10 px-2 py-1">
+                          <span>
+                            Region {index + 1}: x {Math.round(region.x * 100)}% y {Math.round(region.y * 100)}% w {Math.round(region.width * 100)}% h{" "}
+                            {Math.round(region.height * 100)}%
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTeachRegion(teachRegionSide, region.id)}
+                            className="text-rose-300 hover:text-rose-200"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {teachRegionFeedback ? <p className="text-xs text-emerald-300">{teachRegionFeedback}</p> : null}
+                  {typedOcrAudit?.regionTemplates?.loadedSides?.length ? (
+                    <p className="text-[10px] text-slate-500">
+                      OCR replay loaded region templates for {typedOcrAudit.regionTemplates.loadedSides.join(", ")}.
+                    </p>
+                  ) : null}
+                </div>
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
                 <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Intake summary</p>

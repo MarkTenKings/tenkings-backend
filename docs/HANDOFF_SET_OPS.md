@@ -1206,3 +1206,40 @@ Build Set Ops UI flow with:
   - Result: pass with existing pre-existing `@next/next/no-img-element` warnings in `pages/admin/uploads.tsx`.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Phase 4 Implementation Complete (2026-02-24)
+- Scope delivered:
+  - Added Region Teach storage and APIs for Add Cards phase (`setId + layoutClass + photoSide`).
+  - Added click-drag Teach Regions UI in Add Cards optional stage with:
+    - side selector (`FRONT`/`BACK`/`TILT`),
+    - layout class input,
+    - draw/clear/delete/save region flow.
+  - OCR replay memory scoring now prioritizes token-anchor matches that overlap taught regions.
+  - Add Cards OCR request now sends `layoutClass` hint to keep replay scoped by layout.
+- Backend implementation:
+  - new server helper:
+    - `frontend/nextjs-app/lib/server/ocrRegionTemplates.ts`
+  - new API route:
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/region-teach.ts`
+  - OCR suggest integration:
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - Prisma schema + migration:
+    - `packages/database/prisma/schema.prisma`
+    - `packages/database/prisma/migrations/20260224223000_ocr_region_templates/migration.sql`
+- Frontend implementation:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - region teach state/handlers,
+    - region overlay draw UI,
+    - save/load template calls,
+    - layout-class query hint on `/ocr-suggest`.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/cards/[cardId]/region-teach.ts --file lib/server/ocrRegionTemplates.ts`
+    - pass (existing pre-existing `@next/next/no-img-element` warnings in `uploads.tsx`).
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+    - pass.
+  - `pnpm --filter @tenkings/database generate`
+    - pass.
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - fails due broad pre-existing Prisma client/type mismatch in workspace (not isolated to this change set).
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.
