@@ -2370,3 +2370,35 @@
 
 ### Notes
 - No deploy/restart/migration executed in this coding step.
+
+## 2026-02-24 - Add Cards Required Set Field Manual Fallback
+
+### Summary
+- Added a manual set-entry fallback path in Add Cards while keeping set as a required field.
+- Behavior now supports: choose from approved set list OR switch to manual typed set when the list does not contain the correct value.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Introduced manual mode toggle for required `productLine` field on sports flow.
+- Added dropdown option: `Set not listed (enter manually)`.
+- In manual mode:
+  - show text input for set name,
+  - show `Back to set list` button.
+- Required validation unchanged: set cannot be blank.
+- Added mode-sync effect:
+  - unknown/non-option set values open manual mode,
+  - known option values return to list mode.
+- Added guard so automatic set suggestion picker does not run while manual mode is active.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx`
+  - Result: pass (existing `@next/next/no-img-element` warnings only).
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.

@@ -374,6 +374,7 @@ const OCR_TAXONOMY_THRESHOLD: Record<"setName" | "insertSet" | "parallel", numbe
   insertSet: 0.8,
   parallel: 0.8,
 };
+const PRODUCT_LINE_MANUAL_OPTION = "__MANUAL_ENTRY__";
 
 const ocrSuggestionThreshold = (field: string, baseThreshold: number): number => {
   if (field === "setName" || field === "insertSet" || field === "parallel") {
@@ -539,6 +540,7 @@ export default function AdminUploads() {
   const [teachRegionDrawEnabled, setTeachRegionDrawEnabled] = useState(true);
   const [teachRegionBindDraft, setTeachRegionBindDraft] = useState<TeachRegionBindDraft | null>(null);
   const [productLineOptions, setProductLineOptions] = useState<string[]>([]);
+  const [productLineManualMode, setProductLineManualMode] = useState(false);
   const [insertSetOptions, setInsertSetOptions] = useState<string[]>([]);
   const [parallelOptions, setParallelOptions] = useState<string[]>([]);
   const [variantOptionItems, setVariantOptionItems] = useState<VariantOptionItem[]>([]);
@@ -1452,6 +1454,7 @@ export default function AdminUploads() {
     setIntakeSuggested({});
     setIntakeTouched({});
     setIntakeOptionalTouched({});
+    setProductLineManualMode(false);
     setTrainAiEnabled(false);
     setTeachBusy(false);
     setTeachFeedback(null);
@@ -2089,7 +2092,25 @@ export default function AdminUploads() {
   }, [intakeOptional.productLine, intakeRequired.category, intakeRequired.sport]);
 
   useEffect(() => {
+    const current = sanitizeNullableText(intakeOptional.productLine);
+    if (!current) {
+      return;
+    }
+    const isKnown = productLineOptions.some((option) => option.toLowerCase() === current.toLowerCase());
+    if (isKnown && productLineManualMode) {
+      setProductLineManualMode(false);
+      return;
+    }
+    if (!isKnown && !productLineManualMode) {
+      setProductLineManualMode(true);
+    }
+  }, [intakeOptional.productLine, productLineManualMode, productLineOptions]);
+
+  useEffect(() => {
     if (intakeRequired.category !== "sport" || productLineOptions.length === 0) {
+      return;
+    }
+    if (productLineManualMode) {
       return;
     }
     const current = sanitizeNullableText(intakeOptional.productLine);
@@ -2115,8 +2136,21 @@ export default function AdminUploads() {
     intakeOptional.productLine,
     intakeRequired.category,
     intakeSuggested.setName,
+    productLineManualMode,
     productLineOptions,
   ]);
+
+  const selectedProductLineOption = useMemo(() => {
+    if (productLineManualMode) {
+      return PRODUCT_LINE_MANUAL_OPTION;
+    }
+    const current = sanitizeNullableText(intakeOptional.productLine);
+    if (!current) {
+      return "";
+    }
+    const matched = productLineOptions.find((option) => option.toLowerCase() === current.toLowerCase());
+    return matched ?? "";
+  }, [intakeOptional.productLine, productLineManualMode, productLineOptions]);
 
   useEffect(() => {
     if (intakeRequired.category !== "sport" || insertSetOptions.length === 0) {
@@ -4252,24 +4286,64 @@ export default function AdminUploads() {
                       )}`}
                     />
                     {productLineOptions.length > 0 ? (
-                      <select
-                        value={intakeOptional.productLine}
-                        onChange={(event) => {
-                          setIntakeOptionalTouched((prev) => ({ ...prev, productLine: true }));
-                          setIntakeOptional((prev) => ({ ...prev, productLine: event.target.value }));
-                        }}
-                        className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
-                          "setName",
-                          intakeOptional.productLine
-                        )}`}
-                      >
-                        <option value="">Product line / set (select)</option>
-                        {productLineOptions.map((option) => (
-                          <option key={option} value={option}>
-                            {option}
-                          </option>
-                        ))}
-                      </select>
+                      <>
+                        {!productLineManualMode ? (
+                          <select
+                            value={selectedProductLineOption}
+                            onChange={(event) => {
+                              const nextValue = event.target.value;
+                              setIntakeOptionalTouched((prev) => ({ ...prev, productLine: true }));
+                              if (nextValue === PRODUCT_LINE_MANUAL_OPTION) {
+                                setProductLineManualMode(true);
+                                setIntakeOptional((prev) => ({ ...prev, productLine: "" }));
+                                return;
+                              }
+                              setProductLineManualMode(false);
+                              setIntakeOptional((prev) => ({ ...prev, productLine: nextValue }));
+                            }}
+                            className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                              "setName",
+                              intakeOptional.productLine
+                            )}`}
+                          >
+                            <option value="">Product line / set (select)</option>
+                            {productLineOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                            <option value={PRODUCT_LINE_MANUAL_OPTION}>Set not listed (enter manually)</option>
+                          </select>
+                        ) : (
+                          <>
+                            <input
+                              placeholder="Type set name (manual)"
+                              value={intakeOptional.productLine}
+                              onChange={handleOptionalChange("productLine")}
+                              className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                                "setName",
+                                intakeOptional.productLine
+                              )}`}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setProductLineManualMode(false);
+                                const current = sanitizeNullableText(intakeOptional.productLine);
+                                const known = current
+                                  ? productLineOptions.some((option) => option.toLowerCase() === current.toLowerCase())
+                                  : false;
+                                if (!known) {
+                                  setIntakeOptional((prev) => ({ ...prev, productLine: "" }));
+                                }
+                              }}
+                              className="w-fit rounded-full border border-white/20 px-4 py-1.5 text-[10px] uppercase tracking-[0.22em] text-slate-300 transition hover:border-white/40 hover:text-white"
+                            >
+                              Back to set list
+                            </button>
+                          </>
+                        )}
+                      </>
                     ) : (
                       <input
                         placeholder="Product line / set (e.g. Topps Basketball)"

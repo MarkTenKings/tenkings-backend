@@ -1566,3 +1566,22 @@ Build Set Ops UI flow with:
     - pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Add Cards Set Field: Manual Entry Fallback While Keeping Required (2026-02-24)
+- Trigger:
+  - Need to keep set required while allowing operators to enter a set manually when correct set is not in option list.
+- Change:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - Added manual set-entry mode for required sport set field even when approved set options exist.
+    - Added select option: `Set not listed (enter manually)`.
+    - Added manual text input mode with `Back to set list` action.
+    - Preserved required validation (`Product line / set is required.`) with no bypass.
+    - Added sync logic so unknown loaded/suggested sets auto-open manual mode, known sets auto-return to list mode.
+    - Prevented set auto-pick effect from overriding operator intent while manual mode is active.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx`
+    - pass (existing `@next/next/no-img-element` warnings only).
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.
