@@ -1133,3 +1133,41 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (fails due broad pre-existing Prisma client mismatch in workspace; not isolated to this change set)
 - Operational status:
   - No deploy/restart/migration executed in this step.
+
+## Deploy/Migration Field Note (2026-02-24)
+- Operator-reported runtime actions on droplet:
+  - initial migrate attempt failed due placeholder env (`DATABASE_URL='<prod-db-url>'` not a real postgres URL).
+  - operator then exported live `DATABASE_URL` from compose service env.
+  - `pnpm --filter @tenkings/database migrate:deploy` returned `No pending migrations to apply`.
+  - `pnpm --filter @tenkings/database generate` succeeded.
+- Verification caution:
+  - local Phase 2 branch contains migration `20260224190000_ocr_feedback_memory_aggregate`;
+  - if droplet reports fewer migrations than expected, run droplet `git pull --ff-only` and rerun migrate before relying on parity.
+
+## Deploy/Migration Confirmation (2026-02-24, Follow-up)
+- Operator confirmed droplet parity + migration apply:
+  - `git fetch --all --prune` pulled `origin/main` to commit `4c41c1d`.
+  - `git pull --ff-only` updated droplet working tree from `6e3f20c` to `4c41c1d`.
+  - migration folder `20260224190000_ocr_feedback_memory_aggregate` now present on droplet.
+  - `pnpm --filter @tenkings/database migrate:deploy` applied migration `20260224190000_ocr_feedback_memory_aggregate` successfully.
+- Current interpretation:
+  - Phase 2 schema changes are now live in production DB.
+  - Remaining validation is behavioral smoke in prod UI/API (teach replay quality), not deployment parity.
+
+## Set Ops PDF Parse Fix (2026-02-24)
+- Trigger:
+  - PDF upload in `/admin/set-ops-review` parsed many rows with `parallel = INSERT` instead of insert-set headers such as `THE DAILY DRIBBLE` / `NEW SCHOOL`.
+  - Evidence pattern: card numbers and player names mostly correct, but section/parallel labeling collapsed to generic category header.
+- Root cause:
+  - checklist section-header detector required keyword-based headers and missed contextual insert headers lacking explicit keywords.
+  - generic header (`INSERT`) became active section while real insert header line was treated as row text.
+- Fixes shipped:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+    - added contextual section-header detection using line lookahead (if next line starts with card-id token).
+    - now recognizes headers like `THE DAILY DRIBBLE`, `NEW SCHOOL`, and year-led headers (e.g. `1980 TOPPS CHROME BASKETBALL`) when followed by card-number rows.
+    - hardened card-id token logic to reject 4-digit season/year-like tokens (`1900..2099`) as card numbers.
+    - expanded trailing header-noise cleanup tokens to reduce section bleed into player names.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/parse-upload.ts --file pages/admin/set-ops-review.tsx` (pass)
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

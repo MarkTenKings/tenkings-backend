@@ -1818,3 +1818,73 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-24 - Droplet Migration Follow-up (Operator-Run)
+
+### Summary
+- Operator executed droplet DB migration steps after Phase 2 push.
+- First attempt failed because `DATABASE_URL` was set to placeholder literal (`<prod-db-url>`).
+- Operator corrected by exporting live DB URL from running compose service env.
+- Migration command then completed with no pending migrations, and Prisma client generation succeeded.
+
+### Operator-Reported Evidence
+- `export DATABASE_URL="$(cd infra && docker compose exec -T bytebot-lite-service sh -lc 'echo -n \"$DATABASE_URL\"')"`
+- URL sanity checks:
+  - length: `145`
+  - protocol check: `DATABASE_URL format OK`
+- `pnpm --filter @tenkings/database migrate:deploy`
+  - Result: `No pending migrations to apply.`
+- `pnpm --filter @tenkings/database generate`
+  - Result: success.
+
+### Caution / Next Verification
+- Local branch for Phase 2 includes migration `20260224190000_ocr_feedback_memory_aggregate`.
+- If droplet migration count appears lower than expected, verify droplet git parity and rerun migrate:
+  - `git fetch --all --prune`
+  - `git pull --ff-only`
+  - `pnpm --filter @tenkings/database migrate:deploy`
+
+## 2026-02-24 - Droplet Parity + Migration Confirmed (Operator-Run)
+
+### Summary
+- Operator completed parity correction and applied the Phase 2 migration in production.
+- Droplet advanced from commit `6e3f20c` to `4c41c1d` via fast-forward pull.
+- Migration `20260224190000_ocr_feedback_memory_aggregate` was applied successfully.
+
+### Operator-Reported Evidence
+- `git log -1 --oneline` before pull: `6e3f20c`
+- `git fetch --all --prune` showed `origin/main` advanced to `4c41c1d`
+- `git pull --ff-only` fast-forwarded and included:
+  - `packages/database/prisma/migrations/20260224190000_ocr_feedback_memory_aggregate/migration.sql`
+- `pnpm --filter @tenkings/database migrate:deploy`
+  - Result: `Applying migration 20260224190000_ocr_feedback_memory_aggregate`
+  - Result: `All migrations have been successfully applied.`
+
+### Notes
+- Production DB schema now includes Phase 2 aggregate memory table.
+- Next step is behavioral smoke validation in prod Add Cards flow before starting Phase 3 build.
+
+## 2026-02-24 - Set Ops PDF Header Parsing Fix (Insert header context)
+
+### Summary
+- Fixed PDF checklist parsing issue where generic category headers (`INSERT`/`INSERTS`) were incorrectly applied as `parallel` values for many rows.
+- Added contextual section-header detection so real insert headers without explicit keyword signals (e.g. `THE DAILY DRIBBLE`, `NEW SCHOOL`) are promoted to active section when followed by card-number rows.
+- Added safeguards against year-like tokens becoming card numbers and reduced trailing section-header spill into player names.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `docs/HANDOFF_SET_OPS.md`
+
+### Implementation Notes
+- New contextual header detector uses next-line lookahead:
+  - if current line is header-like and next line starts with a valid card-id token, treat current line as section header.
+- `looksLikeChecklistCardIdToken` now rejects pure 4-digit year-range tokens (`1900..2099`) to avoid rows like `1980 TOPPS ...` being treated as card records.
+- Expanded trailing header-noise vocabulary for player-token cleanup:
+  - `NEW`, `SCHOOL`, `TOPPS`, `CHROME`, `BASKETBALL`.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/api/admin/set-ops/discovery/parse-upload.ts --file pages/admin/set-ops-review.tsx`
+  - Result: pass (`No ESLint warnings or errors`).
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this coding step.

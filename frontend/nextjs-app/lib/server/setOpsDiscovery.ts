@@ -572,6 +572,11 @@ const checklistSectionNoiseWords = new Set([
   "FUTURE",
   "STARS",
   "ROOKIE",
+  "NEW",
+  "SCHOOL",
+  "TOPPS",
+  "CHROME",
+  "BASKETBALL",
 ]);
 
 const nbaTeamSuffixes: string[][] = [
@@ -650,6 +655,10 @@ function normalizeChecklistCardToken(raw: string) {
 function looksLikeChecklistCardIdToken(raw: string) {
   const token = normalizeChecklistCardToken(raw);
   if (!token || token.length > 16) return false;
+  if (/^\d{4}$/.test(token)) {
+    const numeric = Number(token);
+    if (Number.isFinite(numeric) && numeric >= 1900 && numeric <= 2099) return false;
+  }
   if (/^\d{4}[-/]\d{2,4}$/.test(token)) return false;
   if (!/^[A-Za-z0-9]+(?:[-./][A-Za-z0-9]+){0,3}$/.test(token)) return false;
 
@@ -871,6 +880,32 @@ function looksLikeChecklistSectionHeader(line: string) {
   return true;
 }
 
+function looksLikeContextualChecklistSectionHeader(params: { line: string; nextLine: string | null }) {
+  const value = compactWhitespace(params.line);
+  const next = compactWhitespace(params.nextLine || "");
+  if (!value || !next) return false;
+  if (value.length < 2 || value.length > 110) return false;
+  if (/^page\s+\d+/i.test(value)) return false;
+  if (TABLE_NEGATIVE_TOKEN_RE.test(value.toLowerCase())) return false;
+  if (isKnownNbaTeamName(value)) return false;
+
+  const nextFirstToken = next.split(/\s+/).filter(Boolean)[0] || "";
+  if (!looksLikeChecklistCardIdToken(nextFirstToken)) return false;
+
+  const tokens = value.split(/\s+/).filter(Boolean);
+  if (tokens.length < 1 || tokens.length > 10) return false;
+  const firstToken = tokens[0] || "";
+  const hasYearLead = /^\d{4}$/.test(firstToken) && Number(firstToken) >= 1900 && Number(firstToken) <= 2099;
+  if (looksLikeChecklistCardIdToken(firstToken) && !hasYearLead) return false;
+  if (tokens.slice(1).some((token) => looksLikeChecklistCardIdToken(token))) return false;
+
+  const letters = (value.match(/\p{L}/gu) ?? []).length;
+  if (letters < 3) return false;
+  const looksTitleOrUpper = /^([A-Z0-9][A-Za-z0-9'’.&/-]*)(\s+[A-Z0-9][A-Za-z0-9'’.&/-]*)*$/.test(value);
+  if (!looksTitleOrUpper) return false;
+  return true;
+}
+
 function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>> {
   const lines = String(text || "")
     .split(/\r?\n/)
@@ -888,8 +923,16 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
     activeLines = [];
   };
 
-  for (const line of lines) {
-    if (looksLikeChecklistSectionHeader(line)) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const nextLine = lines[index + 1] ?? null;
+    const isSectionHeader =
+      looksLikeChecklistSectionHeader(line) ||
+      looksLikeContextualChecklistSectionHeader({
+        line,
+        nextLine,
+      });
+    if (isSectionHeader) {
       flushActive();
       activeSection = normalizeChecklistSectionName(line);
       continue;
