@@ -1079,3 +1079,31 @@ Build Set Ops UI flow with:
   - preserve instant-teach priority while adding global model improvement cadence.
 - Operational status:
   - No deploy/restart/migration executed in this step.
+
+## Phase 1 Implementation Complete (2026-02-24)
+- Scope delivered:
+  - candidate-constrained taxonomy (`setName`, `insertSet`, `parallel`) for Add Cards OCR suggestions,
+  - approved-set scoping by year/manufacturer/sport aliases,
+  - set-scoped insert/parallel pools once set is selected,
+  - out-of-pool taxonomy rejection in API (clears to blank/unknown),
+  - taxonomy confidence gate at `0.80`.
+- Backend implementation:
+  - new shared utility: `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+  - options API now sourced from shared utility and supports `setId` narrowing:
+    - `frontend/nextjs-app/pages/api/admin/variants/options.ts`
+  - OCR suggest API now:
+    - prompts LLM with candidate lists,
+    - enforces taxonomy constraints post-parse,
+    - stores taxonomy constraint audit payload:
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- Add Cards UI implementation:
+  - sends OCR suggest context hints (`year/manufacturer/sport/productLine/setId`)
+  - applies taxonomy suggestions only when matched to option pool
+  - retries delayed insert/parallel autofill after options load
+  - removes fallback behavior that injected non-pool suggestions into ranked lists
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+- Validation:
+  - targeted lint passed for changed files.
+  - workspace-wide TS check still fails due known pre-existing Prisma/client mismatch.
+- Operational status:
+  - No deploy/restart/migration executed in this step.

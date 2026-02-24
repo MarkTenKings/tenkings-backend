@@ -1750,3 +1750,30 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-24 - Phase 1 Build: Candidate-Constrained Taxonomy in Add Cards
+
+### Summary
+- Implemented Phase 1 end-to-end for Add Cards OCR/LLM taxonomy handling:
+  - approved-set scoped candidate pool generation,
+  - taxonomy candidate constraints (`setName`, `insertSet`, `parallel`),
+  - API-level out-of-pool rejection to `null`/blank,
+  - taxonomy confidence threshold enforcement at `0.80`,
+  - set-scoped insert/parallel option loading when a set is selected.
+- Added LLM prompt candidate list constraints so taxonomy fields are selected from enumerated options (or null) instead of unrestricted free text.
+- Improved option classification so unlabeled insert names (e.g. `No Limit`, `Daily Dribble`, `Rise To Stardom`, `The Stars of NBA`) are still surfaced for operators by placing unknown labels in both insert/parallel pools.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts` (new shared pool/scoping utility)
+- `frontend/nextjs-app/pages/api/admin/variants/options.ts` (rewired to shared pool + `setId` support)
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts` (taxonomy-constrained suggestions + thresholding + audit)
+- `frontend/nextjs-app/pages/admin/uploads.tsx` (UI-side constrained apply + delayed option-safe apply + set-scoped fetch)
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/options.ts --file lib/server/variantOptionPool.ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/admin/uploads.tsx`
+  - Result: pass (existing `@next/next/no-img-element` warnings in uploads only).
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: fails from broad pre-existing Prisma client/schema mismatch in workspace (not isolated to this change set).
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this step.

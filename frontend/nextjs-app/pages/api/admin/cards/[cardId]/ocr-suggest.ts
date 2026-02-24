@@ -6,6 +6,11 @@ import { normalizeStorageUrl } from "../../../../../lib/server/storage";
 import { runGoogleVisionOcr } from "../../../../../lib/server/googleVisionOcr";
 import { extractCardAttributes, resolveOcrLlmAttempt } from "@tenkings/shared";
 import { runVariantMatch } from "../../../../../lib/server/variantMatcher";
+import {
+  loadVariantOptionPool,
+  resolveCanonicalOption,
+  sanitizeText,
+} from "../../../../../lib/server/variantOptionPool";
 
 type SuggestResponse =
   | {
@@ -71,6 +76,12 @@ const FIELD_KEYS: (keyof SuggestionFields)[] = [
   "gradeValue",
 ];
 
+const TAXONOMY_FIELD_THRESHOLD: Record<"setName" | "insertSet" | "parallel", number> = {
+  setName: 0.8,
+  insertSet: 0.8,
+  parallel: 0.8,
+};
+
 type LlmParseResponse = {
   meta: LlmParseMeta;
   fields: SuggestionFields;
@@ -121,6 +132,42 @@ type MemoryApplyEntry = {
   support: number;
 };
 
+type MemoryTokenRef = {
+  text: string;
+  imageId: string | null;
+};
+
+type MemoryTokenLookup = {
+  global: Set<string>;
+  byImage: Map<string, Set<string>>;
+};
+
+type TaxonomyPromptCandidates = {
+  setOptions: string[];
+  insertOptions: string[];
+  parallelOptions: string[];
+};
+
+type TaxonomyConstraintAudit = {
+  selectedSetId: string | null;
+  queryHints: {
+    year: string | null;
+    manufacturer: string | null;
+    sport: string | null;
+    productLine: string | null;
+    setId: string | null;
+  };
+  pool: {
+    approvedSetCount: number;
+    scopedSetCount: number;
+    selectedSetId: string | null;
+    setOptions: string[];
+    insertOptions: string[];
+    parallelOptions: string[];
+  };
+  fieldStatus: Record<string, "kept" | "cleared_low_confidence" | "cleared_out_of_pool" | "cleared_no_set_scope">;
+};
+
 const OCR_PHOTO_IDS: OcrPhotoId[] = ["FRONT", "BACK", "TILT"];
 const REQUIRED_OCR_PHOTO_IDS: OcrPhotoId[] = ["FRONT", "BACK", "TILT"];
 const TRUE_STRINGS = new Set(["true", "yes", "1"]);
@@ -142,6 +189,29 @@ function coerceConfidence(value: unknown): number | null {
     return null;
   }
   return value;
+}
+
+function fieldThreshold(field: keyof SuggestionFields): number {
+  if (field === "setName" || field === "insertSet" || field === "parallel") {
+    return TAXONOMY_FIELD_THRESHOLD[field];
+  }
+  return DEFAULT_THRESHOLD;
+}
+
+function limitCandidateList(values: string[], limit: number): string[] {
+  return Array.from(new Set(values.map((entry) => sanitizeText(entry)).filter(Boolean))).slice(0, limit);
+}
+
+function buildTaxonomyPromptCandidates(params: {
+  setOptions: string[];
+  insertOptions: string[];
+  parallelOptions: string[];
+}): TaxonomyPromptCandidates {
+  return {
+    setOptions: limitCandidateList(params.setOptions, 80),
+    insertOptions: limitCandidateList(params.insertOptions, 140),
+    parallelOptions: limitCandidateList(params.parallelOptions, 160),
+  };
 }
 
 function parseLlmJsonPayload(raw: string): LlmParsedPayload | null {
@@ -234,7 +304,8 @@ function extractResponsesOutputText(payload: unknown): string | null {
 
 async function parseWithLlm(
   ocrText: string,
-  imageSections: OcrImageSection[]
+  imageSections: OcrImageSection[],
+  taxonomyCandidates: TaxonomyPromptCandidates
 ): Promise<LlmParseResponse | null> {
   const apiKey = (process.env.OPENAI_API_KEY ?? "").trim();
   if (!apiKey) {
@@ -258,9 +329,32 @@ async function parseWithLlm(
       ? imageSections.map((section) => `[${section.id}]\n${section.text}`).join("\n\n")
       : "No per-image OCR sections provided.";
 
-  const systemInstruction =
-    "Extract card metadata from OCR text. Return only JSON that matches the schema. Use null for unknown fields.";
-  const userPrompt = `OCR combined text:\n${ocrText}\n\nOCR by photo:\n${labeledSections}`;
+  const taxonomyRules = [
+    "Taxonomy constraints:",
+    `- setName must be one of the provided set options or null.`,
+    `- insertSet must be one of the provided insert options or null.`,
+    `- parallel must be one of the provided parallel options or null.`,
+    `- Never invent taxonomy labels outside the candidate lists.`,
+  ].join("\n");
+
+  const taxonomyCandidateBlock = [
+    "Candidate set options:",
+    taxonomyCandidates.setOptions.length > 0 ? taxonomyCandidates.setOptions.join(" | ") : "(none)",
+    "",
+    "Candidate insert options:",
+    taxonomyCandidates.insertOptions.length > 0 ? taxonomyCandidates.insertOptions.join(" | ") : "(none)",
+    "",
+    "Candidate parallel options:",
+    taxonomyCandidates.parallelOptions.length > 0 ? taxonomyCandidates.parallelOptions.join(" | ") : "(none)",
+  ].join("\n");
+
+  const systemInstruction = [
+    "Extract card metadata from OCR text.",
+    "Return only JSON that matches the schema.",
+    "Use null for unknown fields.",
+    taxonomyRules,
+  ].join("\n");
+  const userPrompt = `OCR combined text:\n${ocrText}\n\nOCR by photo:\n${labeledSections}\n\n${taxonomyCandidateBlock}`;
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -405,6 +499,78 @@ function isTruthyString(value: string | null | undefined): boolean {
   return TRUE_STRINGS.has(normalized);
 }
 
+function normalizeMemoryToken(value: string | null | undefined): string {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function parseMemoryTokenRefs(raw: unknown): MemoryTokenRef[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") {
+        return null;
+      }
+      const record = entry as Record<string, unknown>;
+      const text = coerceNullableString(record.text);
+      if (!text) {
+        return null;
+      }
+      return {
+        text,
+        imageId: coerceNullableString(record.imageId),
+      };
+    })
+    .filter((entry): entry is MemoryTokenRef => Boolean(entry));
+}
+
+function buildMemoryTokenLookup(
+  tokens: Array<{ text: string; imageId: string | null }>
+): MemoryTokenLookup {
+  const global = new Set<string>();
+  const byImage = new Map<string, Set<string>>();
+  tokens.forEach((token) => {
+    const normalized = normalizeMemoryToken(token.text);
+    if (!normalized) {
+      return;
+    }
+    global.add(normalized);
+    const imageId = normalizeImageLabel(token.imageId);
+    if (!byImage.has(imageId)) {
+      byImage.set(imageId, new Set());
+    }
+    byImage.get(imageId)?.add(normalized);
+  });
+  return { global, byImage };
+}
+
+function scoreTokenRefSupport(refs: MemoryTokenRef[], lookup: MemoryTokenLookup): number | null {
+  if (!refs.length) {
+    return null;
+  }
+  let matched = 0;
+  refs.forEach((ref) => {
+    const normalized = normalizeMemoryToken(ref.text);
+    if (!normalized) {
+      return;
+    }
+    const expectedImage = normalizeImageLabel(ref.imageId);
+    const inExpected = lookup.byImage.get(expectedImage)?.has(normalized) ?? false;
+    const inGlobal = lookup.global.has(normalized);
+    if (inExpected || inGlobal) {
+      matched += 1;
+    }
+  });
+  if (matched < 1) {
+    return 0;
+  }
+  return matched / refs.length;
+}
+
 function buildPhotoOcrState(params: {
   frontImageUrl: string | null;
   backImageUrl: string | null;
@@ -467,8 +633,9 @@ function buildPhotoOcrState(params: {
 async function applyFeedbackMemoryHints(params: {
   fields: SuggestionFields;
   confidence: SuggestionConfidence;
+  tokens: Array<{ text: string; imageId: string | null }>;
 }) {
-  const { fields, confidence } = params;
+  const { fields, confidence, tokens } = params;
   const context: MemoryContext = {
     setId: coerceNullableString(fields.setName),
     year: coerceNullableString(fields.year),
@@ -477,6 +644,7 @@ async function applyFeedbackMemoryHints(params: {
     cardNumber: coerceNullableString(fields.cardNumber),
     numbered: coerceNullableString(fields.numbered),
   };
+  const tokenLookup = buildMemoryTokenLookup(tokens);
 
   const orClauses: Record<string, string>[] = [];
   if (context.setId) orClauses.push({ setId: context.setId });
@@ -500,30 +668,32 @@ async function applyFeedbackMemoryHints(params: {
     },
     orderBy: [{ createdAt: "desc" }],
     take: 500,
-    select: {
-      fieldName: true,
-      humanValue: true,
-      wasCorrect: true,
-      setId: true,
+      select: {
+        fieldName: true,
+        humanValue: true,
+        wasCorrect: true,
+        setId: true,
       year: true,
       manufacturer: true,
-      sport: true,
-      cardNumber: true,
-      numbered: true,
-      createdAt: true,
-    },
-  })) as Array<{
-    fieldName: string;
-    humanValue: string | null;
+        sport: true,
+        cardNumber: true,
+        numbered: true,
+        tokenRefsJson: true,
+        createdAt: true,
+      },
+    })) as Array<{
+      fieldName: string;
+      humanValue: string | null;
     wasCorrect: boolean;
     setId: string | null;
     year: string | null;
-    manufacturer: string | null;
-    sport: string | null;
-    cardNumber: string | null;
-    numbered: string | null;
-    createdAt: Date;
-  }>;
+      manufacturer: string | null;
+      sport: string | null;
+      cardNumber: string | null;
+      numbered: string | null;
+      tokenRefsJson: unknown;
+      createdAt: Date;
+    }>;
 
   type CandidateAggregate = {
     field: keyof SuggestionFields;
@@ -537,10 +707,6 @@ async function applyFeedbackMemoryHints(params: {
   rows.forEach((row) => {
     const field = row.fieldName as keyof SuggestionFields;
     if (!FIELD_KEYS.includes(field)) {
-      return;
-    }
-    // Do not memory-overwrite set selection globally; this caused cross-card set drift.
-    if (field === "setName") {
       return;
     }
     const humanValue = coerceNullableString(row.humanValue);
@@ -564,6 +730,28 @@ async function applyFeedbackMemoryHints(params: {
     const ctxSport = toMemoryToken(context.sport);
     const ctxCardNumber = toMemoryToken(context.cardNumber);
     const ctxNumbered = toMemoryToken(context.numbered);
+    const tokenRefs = parseMemoryTokenRefs(row.tokenRefsJson);
+    const tokenSupport = scoreTokenRefSupport(tokenRefs, tokenLookup);
+
+    if (field === "setName") {
+      // Set-level memory is only allowed when year+manufacturer context is strong.
+      if (!ctxYear || !ctxManufacturer) {
+        return;
+      }
+      if (!rowYear || rowYear !== ctxYear) {
+        return;
+      }
+      if (!rowManufacturer || rowManufacturer !== ctxManufacturer) {
+        return;
+      }
+      if (ctxSport && rowSport && rowSport !== ctxSport) {
+        return;
+      }
+      // If we have token anchors from the taught card, require at least weak overlap.
+      if (tokenSupport != null && tokenSupport < 0.35) {
+        return;
+      }
+    }
 
     if (field === "parallel" || field === "insertSet") {
       if (!ctxSet && !ctxCardNumber) {
@@ -575,6 +763,9 @@ async function applyFeedbackMemoryHints(params: {
       if (ctxCardNumber && rowCardNumber && rowCardNumber !== ctxCardNumber) {
         return;
       }
+      if (tokenSupport != null && tokenSupport < 0.25) {
+        return;
+      }
     }
 
     if (ctxSet && rowSet === ctxSet) score += 2.2;
@@ -583,6 +774,11 @@ async function applyFeedbackMemoryHints(params: {
     if (ctxManufacturer && rowManufacturer === ctxManufacturer) score += 0.9;
     if (ctxSport && rowSport === ctxSport) score += 0.9;
     if (ctxNumbered && rowNumbered === ctxNumbered) score += 0.6;
+    if (tokenSupport != null) {
+      if (tokenSupport >= 0.8) score += 1.2;
+      else if (tokenSupport >= 0.5) score += 0.7;
+      else if (tokenSupport >= 0.35) score += 0.35;
+    }
     score += row.wasCorrect ? 0.15 : 0.35;
 
     const ageDays = Math.max(0, (nowMs - new Date(row.createdAt).getTime()) / (1000 * 60 * 60 * 24));
@@ -640,6 +836,138 @@ async function applyFeedbackMemoryHints(params: {
   };
 }
 
+async function constrainTaxonomyFields(params: {
+  fields: SuggestionFields;
+  confidence: SuggestionConfidence;
+  queryHints: {
+    year: string | null;
+    manufacturer: string | null;
+    sport: string | null;
+    productLine: string | null;
+    setId: string | null;
+  };
+}): Promise<TaxonomyConstraintAudit> {
+  const { fields, confidence, queryHints } = params;
+  const year = sanitizeText(queryHints.year || fields.year || "");
+  const manufacturer = sanitizeText(queryHints.manufacturer || fields.manufacturer || "");
+  const sport = sanitizeText(queryHints.sport || fields.sport || "") || null;
+  const productLine = sanitizeText(queryHints.productLine || fields.setName || "") || null;
+  const explicitSetId = sanitizeText(queryHints.setId || "") || null;
+
+  const fieldStatus: TaxonomyConstraintAudit["fieldStatus"] = {
+    setName: "cleared_out_of_pool",
+    insertSet: "cleared_out_of_pool",
+    parallel: "cleared_out_of_pool",
+  };
+
+  if (!year || !manufacturer) {
+    fields.setName = null;
+    fields.insertSet = null;
+    fields.parallel = null;
+    return {
+      selectedSetId: null,
+      queryHints,
+      pool: {
+        approvedSetCount: 0,
+        scopedSetCount: 0,
+        selectedSetId: null,
+        setOptions: [],
+        insertOptions: [],
+        parallelOptions: [],
+      },
+      fieldStatus: {
+        setName: "cleared_no_set_scope",
+        insertSet: "cleared_no_set_scope",
+        parallel: "cleared_no_set_scope",
+      },
+    };
+  }
+
+  const pool = await loadVariantOptionPool({
+    year,
+    manufacturer,
+    sport,
+    productLine,
+    setId: explicitSetId,
+  });
+
+  const setOptions = pool.sets.map((entry) => entry.setId);
+  let selectedSetId = pool.selectedSetId ?? null;
+
+  const setConfidence = confidence.setName;
+  const rawSetName = coerceNullableString(fields.setName);
+  if (selectedSetId) {
+    fields.setName = selectedSetId;
+    confidence.setName = Math.max(confidence.setName ?? 0, 0.99);
+    fieldStatus.setName = "kept";
+  } else if (!rawSetName || setConfidence == null || setConfidence < TAXONOMY_FIELD_THRESHOLD.setName) {
+    fields.setName = null;
+    fieldStatus.setName = setConfidence == null || setConfidence < TAXONOMY_FIELD_THRESHOLD.setName
+      ? "cleared_low_confidence"
+      : "cleared_no_set_scope";
+  } else {
+    const resolvedSet = resolveCanonicalOption(setOptions, rawSetName, 1.05);
+    if (resolvedSet) {
+      fields.setName = resolvedSet;
+      selectedSetId = resolvedSet;
+      fieldStatus.setName = "kept";
+    } else {
+      fields.setName = null;
+      fieldStatus.setName = "cleared_out_of_pool";
+    }
+  }
+
+  const scopedInsertOptions = selectedSetId
+    ? pool.insertOptions.filter((entry) => entry.setIds.includes(selectedSetId)).map((entry) => entry.label)
+    : [];
+  const scopedParallelOptions = selectedSetId
+    ? pool.parallelOptions.filter((entry) => entry.setIds.includes(selectedSetId)).map((entry) => entry.label)
+    : [];
+
+  const applyScopedField = (
+    field: "insertSet" | "parallel",
+    options: string[]
+  ) => {
+    const rawValue = coerceNullableString(fields[field]);
+    const score = confidence[field];
+    if (!selectedSetId || options.length < 1) {
+      fields[field] = null;
+      fieldStatus[field] = "cleared_no_set_scope";
+      return;
+    }
+    if (!rawValue || score == null || score < TAXONOMY_FIELD_THRESHOLD[field]) {
+      fields[field] = null;
+      fieldStatus[field] = "cleared_low_confidence";
+      return;
+    }
+    const resolved = resolveCanonicalOption(options, rawValue, 0.9);
+    if (resolved) {
+      fields[field] = resolved;
+      fieldStatus[field] = "kept";
+      return;
+    }
+    fields[field] = null;
+    fieldStatus[field] = "cleared_out_of_pool";
+  };
+
+  applyScopedField("insertSet", scopedInsertOptions);
+  applyScopedField("parallel", scopedParallelOptions);
+
+  return {
+    selectedSetId,
+    queryHints,
+    pool: {
+      approvedSetCount: pool.approvedSetCount,
+      scopedSetCount: pool.scopedSetIds.length,
+      selectedSetId: pool.selectedSetId,
+      setOptions: setOptions.slice(0, 80),
+      insertOptions: scopedInsertOptions.slice(0, 160),
+      parallelOptions: scopedParallelOptions.slice(0, 160),
+    },
+    fieldStatus,
+  };
+}
+
 function buildProxyUrl(req: NextApiRequest, targetUrl: string): string | null {
   const normalizedTarget = normalizeStorageUrl(targetUrl) ?? targetUrl;
   const secret = process.env.OCR_PROXY_SECRET ?? process.env.OPENAI_API_KEY;
@@ -689,6 +1017,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (typeof cardId !== "string" || !cardId.trim()) {
       return res.status(400).json({ message: "cardId is required" });
     }
+    const queryHints = {
+      year: sanitizeText(req.query.year) || null,
+      manufacturer: sanitizeText(req.query.manufacturer) || null,
+      sport: sanitizeText(req.query.sport) || null,
+      productLine: sanitizeText(req.query.productLine) || null,
+      setId: sanitizeText(req.query.setId) || null,
+    };
 
     const card = await prisma.cardAsset.findFirst({
       where: { id: cardId },
@@ -906,14 +1241,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const parallelKeywords = [
         "refractor",
         "x-fractor",
-        "gold",
-        "silver",
-        "black",
-        "green",
-        "blue",
-        "red",
-        "purple",
-        "orange",
+        "gold refractor",
+        "silver refractor",
         "holo",
         "prizm",
         "mojo",
@@ -983,9 +1312,37 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     }
 
+    let taxonomyPromptCandidates: TaxonomyPromptCandidates = {
+      setOptions: [],
+      insertOptions: [],
+      parallelOptions: [],
+    };
+    let taxonomyPromptPoolError: string | null = null;
+    try {
+      const promptPool = await loadVariantOptionPool({
+        year: sanitizeText(queryHints.year || fields.year || ""),
+        manufacturer: sanitizeText(queryHints.manufacturer || fields.manufacturer || ""),
+        sport: sanitizeText(queryHints.sport || fields.sport || "") || null,
+        productLine: sanitizeText(queryHints.productLine || fields.setName || "") || null,
+        setId: sanitizeText(queryHints.setId || "") || null,
+      });
+      taxonomyPromptCandidates = buildTaxonomyPromptCandidates({
+        setOptions: promptPool.sets.map((entry) => entry.setId),
+        insertOptions: promptPool.insertOptions.map((entry) => entry.label),
+        parallelOptions: promptPool.parallelOptions.map((entry) => entry.label),
+      });
+    } catch (error) {
+      taxonomyPromptPoolError = error instanceof Error ? error.message : "taxonomy_prompt_pool_failed";
+      taxonomyPromptCandidates = {
+        setOptions: [],
+        insertOptions: [],
+        parallelOptions: [],
+      };
+    }
+
     let llmMeta: LlmParseMeta | null = null;
     try {
-      const llmResult = await parseWithLlm(combinedTextRaw, imageSections);
+      const llmResult = await parseWithLlm(combinedTextRaw, imageSections, taxonomyPromptCandidates);
       if (llmResult) {
         llmMeta = llmResult.meta;
         FIELD_KEYS.forEach((key) => {
@@ -1021,7 +1378,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       applied: [],
     };
     try {
-      memoryAudit = await applyFeedbackMemoryHints({ fields, confidence });
+      memoryAudit = await applyFeedbackMemoryHints({ fields, confidence, tokens: ocrTokens });
     } catch (error) {
       console.warn("OCR feedback memory apply failed", error);
       memoryAudit = {
@@ -1099,11 +1456,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     }
 
+    let taxonomyConstraintAudit: TaxonomyConstraintAudit | null = null;
+    try {
+      taxonomyConstraintAudit = await constrainTaxonomyFields({
+        fields,
+        confidence,
+        queryHints,
+      });
+    } catch (error) {
+      console.warn("Failed to constrain taxonomy suggestions", error);
+      fields.setName = null;
+      fields.insertSet = null;
+      fields.parallel = null;
+      taxonomyConstraintAudit = {
+        selectedSetId: null,
+        queryHints,
+        pool: {
+          approvedSetCount: 0,
+          scopedSetCount: 0,
+          selectedSetId: null,
+          setOptions: [],
+          insertOptions: [],
+          parallelOptions: [],
+        },
+        fieldStatus: {
+          setName: "cleared_no_set_scope",
+          insertSet: "cleared_no_set_scope",
+          parallel: "cleared_no_set_scope",
+        },
+      };
+    }
+
     const suggestions: Record<string, string> = {};
     FIELD_KEYS.forEach((key) => {
       const value = fields[key];
       const score = confidence[key];
-      if (value && score != null && score >= DEFAULT_THRESHOLD) {
+      if (value && score != null && score >= fieldThreshold(key)) {
         suggestions[key] = value;
       }
     });
@@ -1112,15 +1500,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       source: "google-vision+llm",
       model: `google-vision|${llmMeta?.model ?? OCR_LLM_MODEL}`,
       threshold: DEFAULT_THRESHOLD,
+      fieldThresholds: {
+        default: DEFAULT_THRESHOLD,
+        taxonomy: TAXONOMY_FIELD_THRESHOLD,
+      },
       createdAt: new Date().toISOString(),
       fields,
       confidence,
       llm: llmMeta,
+      taxonomyPromptCandidates,
+      taxonomyPromptPoolError,
       tokens: ocrTokens,
       photoOcr: photoState.byId,
       readiness: photoState.readiness,
       memory: memoryAudit,
       variantMatch: variantMatchAudit,
+      taxonomyConstraints: taxonomyConstraintAudit,
     };
 
     await prisma.cardAsset.update({

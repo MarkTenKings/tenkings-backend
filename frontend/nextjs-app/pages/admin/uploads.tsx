@@ -213,6 +213,19 @@ const normalizeVariantLabelKey = (value: string): string =>
     .join(" ")
     .trim();
 
+const OCR_TAXONOMY_THRESHOLD: Record<"setName" | "insertSet" | "parallel", number> = {
+  setName: 0.8,
+  insertSet: 0.8,
+  parallel: 0.8,
+};
+
+const ocrSuggestionThreshold = (field: string, baseThreshold: number): number => {
+  if (field === "setName" || field === "insertSet" || field === "parallel") {
+    return Math.max(baseThreshold, OCR_TAXONOMY_THRESHOLD[field]);
+  }
+  return baseThreshold;
+};
+
 const isActionableProductLineHint = (value: string): boolean => {
   const tokens = tokenize(value);
   if (tokens.length >= 2) {
@@ -1669,6 +1682,64 @@ export default function AdminUploads() {
     productLineOptions,
   ]);
 
+  useEffect(() => {
+    if (intakeRequired.category !== "sport" || insertSetOptions.length === 0) {
+      return;
+    }
+    if (sanitizeNullableText(intakeOptional.insertSet) || intakeOptionalTouched.insertSet) {
+      return;
+    }
+    const suggestedInsertSet = sanitizeNullableText(intakeSuggested.insertSet);
+    if (!suggestedInsertSet) {
+      return;
+    }
+    const candidate = pickBestCandidate(
+      insertSetOptions,
+      [suggestedInsertSet, sanitizeNullableText(intakeSuggested.parallel), sanitizeNullableText(intakeOptional.productLine)],
+      0.6
+    );
+    if (candidate) {
+      setIntakeOptional((prev) => ({ ...prev, insertSet: candidate }));
+    }
+  }, [
+    intakeOptional.insertSet,
+    intakeOptional.productLine,
+    intakeOptionalTouched.insertSet,
+    intakeRequired.category,
+    intakeSuggested.insertSet,
+    intakeSuggested.parallel,
+    insertSetOptions,
+  ]);
+
+  useEffect(() => {
+    if (intakeRequired.category !== "sport" || parallelOptions.length === 0) {
+      return;
+    }
+    if (sanitizeNullableText(intakeOptional.parallel) || intakeOptionalTouched.parallel) {
+      return;
+    }
+    const suggestedParallel = sanitizeNullableText(intakeSuggested.parallel);
+    if (!suggestedParallel) {
+      return;
+    }
+    const candidate = pickBestCandidate(
+      parallelOptions,
+      [suggestedParallel, sanitizeNullableText(intakeSuggested.insertSet), sanitizeNullableText(intakeOptional.productLine)],
+      0.6
+    );
+    if (candidate) {
+      setIntakeOptional((prev) => ({ ...prev, parallel: candidate }));
+    }
+  }, [
+    intakeOptional.parallel,
+    intakeOptional.productLine,
+    intakeOptionalTouched.parallel,
+    intakeRequired.category,
+    intakeSuggested.insertSet,
+    intakeSuggested.parallel,
+    parallelOptions,
+  ]);
+
   const applySuggestions = useCallback(
     (suggestions: Record<string, string>) => {
       if (!ocrApplied) {
@@ -1722,7 +1793,7 @@ export default function AdminUploads() {
                   intakeRequired.sport
                 )}`.trim(),
               ], 1.1)
-            : suggestedProductLine || null;
+            : null;
         if (constrainedProductLine && !intakeOptionalTouched.productLine && !prev.productLine.trim()) {
           next.productLine = constrainedProductLine;
           ocrAppliedOptionalFieldsRef.current.push("productLine");
@@ -1730,7 +1801,7 @@ export default function AdminUploads() {
         const constrainedInsert =
           suggestedInsertSet && insertSetOptions.length > 0
             ? pickBestCandidate(insertSetOptions, [suggestedInsertSet, suggestedProductLine, suggestedParallel], 0.6)
-            : suggestedInsertSet || null;
+            : null;
         if (constrainedInsert && !intakeOptionalTouched.insertSet && !prev.insertSet.trim()) {
           next.insertSet = constrainedInsert;
           ocrAppliedOptionalFieldsRef.current.push("insertSet");
@@ -1738,7 +1809,7 @@ export default function AdminUploads() {
         const constrainedParallel =
           suggestedParallel && parallelOptions.length > 0
             ? pickBestCandidate(parallelOptions, [suggestedParallel, suggestedInsertSet, suggestedProductLine], 0.6)
-            : suggestedParallel || null;
+            : null;
         if (constrainedParallel && !intakeOptionalTouched.parallel && !prev.parallel.trim()) {
           next.parallel = constrainedParallel;
           ocrAppliedOptionalFieldsRef.current.push("parallel");
@@ -1855,7 +1926,29 @@ export default function AdminUploads() {
     try {
       setOcrStatus("running");
       setOcrError(null);
-      const res = await fetch(`/api/admin/cards/${cardId}/ocr-suggest`, {
+      const params = new URLSearchParams();
+      const hintYear = sanitizeNullableText(intakeRequired.year);
+      const hintManufacturer = sanitizeNullableText(intakeRequired.manufacturer);
+      const hintSport = sanitizeNullableText(intakeRequired.sport);
+      const hintProductLine = sanitizeNullableText(intakeOptional.productLine);
+      if (hintYear) {
+        params.set("year", hintYear);
+      }
+      if (hintManufacturer) {
+        params.set("manufacturer", hintManufacturer);
+      }
+      if (hintSport) {
+        params.set("sport", hintSport);
+      }
+      if (hintProductLine) {
+        params.set("productLine", hintProductLine);
+        params.set("setId", hintProductLine);
+      }
+      const endpoint =
+        params.size > 0
+          ? `/api/admin/cards/${cardId}/ocr-suggest?${params.toString()}`
+          : `/api/admin/cards/${cardId}/ocr-suggest`;
+      const res = await fetch(endpoint, {
         headers: buildAdminHeaders(session.token),
       });
       if (ocrRequestIdRef.current !== requestId || ocrCardIdRef.current !== cardId) {
@@ -1904,7 +1997,15 @@ export default function AdminUploads() {
       setOcrError("OCR request failed");
       // ignore suggestion failures
     }
-  }, [applySuggestions, session?.token, triggerPhotoroomForCard]);
+  }, [
+    applySuggestions,
+    intakeOptional.productLine,
+    intakeRequired.manufacturer,
+    intakeRequired.sport,
+    intakeRequired.year,
+    session?.token,
+    triggerPhotoroomForCard,
+  ]);
 
   const startOcrForCard = useCallback(
     (cardId: string) => {
@@ -2112,7 +2213,12 @@ export default function AdminUploads() {
       return Object.keys(fields).reduce<Record<string, string>>((acc, key) => {
         const value = fields[key];
         const score = confidence[key];
-        if (typeof value === "string" && value.trim() && typeof score === "number" && score >= threshold) {
+        if (
+          typeof value === "string" &&
+          value.trim() &&
+          typeof score === "number" &&
+          score >= ocrSuggestionThreshold(key, threshold)
+        ) {
           acc[key] = value;
         }
         return acc;
@@ -2267,6 +2373,7 @@ export default function AdminUploads() {
       }
       if (productLine) {
         params.set("productLine", productLine);
+        params.set("setId", productLine);
       }
       params.set("limit", "5000");
       const res = await fetch(`/api/admin/variants/options?${params.toString()}`, {
@@ -2299,7 +2406,7 @@ export default function AdminUploads() {
       setVariantCatalog(variants);
       setProductLineOptions(sets);
       setInsertSetOptions(insertLabels);
-      setParallelOptions(parallelLabels.length > 0 ? parallelLabels : insertLabels);
+      setParallelOptions(parallelLabels);
       setVariantOptionItems([...insertItems, ...parallelItems]);
       setVariantScopeSummary({
         approvedSetCount:
@@ -2541,7 +2648,7 @@ export default function AdminUploads() {
     const suggestedKey = normalizeVariantLabelKey(suggested);
     const idx = options.findIndex((value) => normalizeVariantLabelKey(value) === suggestedKey);
     if (idx <= 0) {
-      return idx === 0 ? options : [suggested, ...options];
+      return options;
     }
     const [hit] = options.splice(idx, 1);
     return [hit, ...options];
@@ -2556,7 +2663,7 @@ export default function AdminUploads() {
     const suggestedKey = normalizeVariantLabelKey(suggested);
     const idx = options.findIndex((value) => normalizeVariantLabelKey(value) === suggestedKey);
     if (idx <= 0) {
-      return idx === 0 ? options : [suggested, ...options];
+      return options;
     }
     const [hit] = options.splice(idx, 1);
     return [hit, ...options];
