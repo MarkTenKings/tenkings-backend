@@ -1591,3 +1591,162 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-23 - Teach Memory v2 Anchoring + Option Injection Guard
+
+### Summary
+- Upgraded OCR teach-memory replay to use stored token anchor evidence (`tokenRefsJson`) with image-side aware matching, enabling stronger one-card learning carryover while reducing cross-set drift.
+- Re-enabled set-memory replay under strict context constraints (year + manufacturer required, sport-aware, optional token-support gate) instead of global suppression.
+- Removed color-only heuristic parallel fallback bias (e.g., frequent `Red` false positives).
+- Stopped Add Cards picker from injecting non-canonical OCR suggestions into option lists; only canonical option-pool values are now ranked/displayed.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+
+### Implementation Notes
+- `ocr-suggest.ts`
+  - added token normalization + lookup utilities and token-ref support scoring.
+  - `applyFeedbackMemoryHints(...)` now accepts current OCR tokens and reads `tokenRefsJson` from `OcrFeedbackEvent` rows.
+  - set-memory replay (`field === setName`) now allowed only when context is strong (`year` + `manufacturer`), with token-overlap checks when anchors exist.
+  - insert/parallel memory replay now additionally gates on token-overlap when anchors exist.
+  - removed broad color-word fallback from heuristic parallel keywords to reduce noisy `Red` suggestions.
+- `uploads.tsx`
+  - `rankedInsertSetOptions` / `rankedParallelOptions` no longer prepend non-pool OCR suggestions.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/admin/uploads.tsx --file pages/api/admin/variants/options.ts`
+  - Result: pass with existing `@next/next/no-img-element` warnings in uploads only.
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-23 - OCR/LLM Baby Brain Master Plan Document Authored
+
+### Summary
+- Authored a shareable master plan document for Codex agents outlining the end-state vision, phased implementation plan, operator SOP, architecture, metrics, rollout order, and primary-source references for OCR/LLM learning system design.
+- Document starts with the operator-provided big-picture vision: "teach one card, learn the set family instantly, return unknown when uncertain, persist memory in DB."
+
+### Files Updated
+- `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` (new)
+
+### Research Sources Included
+- OpenAI Responses API, Structured Outputs, Vision, GPT-5, Evals docs.
+- Google Cloud Vision OCR + full text annotation docs.
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-23 - Master Plan Wording Clarification (Phase 1 scope)
+
+### Summary
+- Clarified Phase 1 wording in `OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` to prevent ambiguity:
+  - only taxonomy fields (`setName`, `insertSet`, `parallel`) are candidate-constrained,
+  - free-text fields (`playerName`, `cardName`, `cardNumber`, etc.) remain OCR+LLM and are not DB-enumerated.
+- Added matching clarification in target architecture section (hybrid constrained + free-text design).
+
+### Files Updated
+- `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md`
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-23 - Master Plan Hardening Additions (6 Governance Sections)
+
+### Summary
+- Extended `OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` with 6 operational hardening sections requested by operator review:
+  1. CardState Contract
+  2. Learning Event Schema
+  3. Long-Tail Trigger Definitions
+  4. Three-Speed Learning Policy (with SLA)
+  5. Taxonomy Lifecycle Rules
+  6. Release Safety Gates
+- Goal: make implementation consistent across multiple Codex agents with explicit contracts, logging, trigger policy, and release gates.
+
+### Files Updated
+- `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md`
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-23 - Taxonomy Threshold Values Added to Master Plan
+
+### Summary
+- Added explicit operator-approved taxonomy confidence thresholds to `OCR_LLM_BABY_BRAIN_MASTER_PLAN.md`:
+  - `setName`: `0.80`
+  - `insertSet`: `0.80`
+  - `parallel`: `0.80`
+- Added explicit behavior rule: below-threshold taxonomy fields stay blank (`unknown`) for human review.
+- Clarified scope: free-text OCR+LLM fields (player/card/numbered/autograph/etc.) continue auto-fill behavior and are not blocked by taxonomy thresholds.
+- Updated long-tail trigger definition:
+  - `set_low_confidence` now explicitly means `setName < 0.80`.
+
+### Files Updated
+- `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md`
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-24 - Master Plan Schema Clarification (CardState + Event JSON)
+
+### Summary
+- Updated `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` with concrete schema examples to remove ambiguity for future implementers.
+- Added explicit field semantics for:
+  - `cardId` (system-generated internal id),
+  - `setName` (taxonomy label) vs `setYear` (separate UI year field),
+  - optional `setId` canonical storage key,
+  - `numbered` (`null` or serial string like `3/25`),
+  - `autographed` (`true` or `null`),
+  - `graded` (`null` or structured grade object, e.g. `PSA 10`).
+- Added concrete JSON examples for:
+  - CardState (raw card + auto/numbered/graded card),
+  - `recognition_suggested` event payload,
+  - `recognition_corrected` event payload.
+
+### Files Updated
+- `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md`
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-24 - Master Plan Ownership/SLA + Instant-Teach Clarification
+
+### Summary
+- Updated `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` to formalize operational ownership and incident SLAs, and to explicitly align with operator priority: instant teach is primary.
+- Added `Ownership and Incident SLA` table with default triggers and response windows for:
+  - wrong-set spikes,
+  - taxonomy drift,
+  - teach replay failure,
+  - OCR/LLM service degradation,
+  - post-deploy model/prompt regression.
+- Added explicit `Instant Teach vs Weekly Retrain` explanation:
+  - each train action applies immediately via memory update/replay,
+  - weekly retrain remains for broader model generalization and unseen cases.
+- Strengthened region-markup strategy:
+  - moved Region Teach from optional to core set-family learning phase,
+  - added layout grouping key (`setId + layoutClass + photoSide`) to support one-teach-many behavior for base cards while isolating insert/auto/parallel layouts.
+- Updated rollout order to move region teach earlier (after Phase 2 memory).
+
+### Files Updated
+- `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md`
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this step.
+
+## 2026-02-24 - Master Plan Core Retrain Ops Workflow Added
+
+### Summary
+- Updated `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` with explicit core retrain operations workflow so operators know exactly what is automatic vs manual.
+- Added new section: `Core Retrain Operations Workflow (UI + Actions)` covering:
+  - automatic teach-signal ingestion and retrain snapshot generation,
+  - daily-light and weekly-full retrain cadence defaults,
+  - eval gates before promotion,
+  - AI Ops UI components (`Production Model`, `Learning Intake`, `Retrain Jobs`, `Candidate Compare`),
+  - required operator actions (`Train AI` during review, promote candidate, rollback on regression),
+  - promotion authority defaults and emergency rollback path.
+
+### Files Updated
+- `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md`
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this step.

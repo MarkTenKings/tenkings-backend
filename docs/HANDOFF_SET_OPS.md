@@ -967,3 +967,115 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/options.ts --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts` passed (existing `no-img-element` warnings only).
 - Deployment status:
   - No deploy/restart/migration executed in this coding step.
+
+## Teach Memory v2 + Add Cards Option Guard (2026-02-23)
+- Trigger:
+  - Operator observed: set misses persisted, insert suggestions appeared one-card-only without canonical option continuity, and frequent `Red` parallel bias.
+- Fixes shipped:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - memory replay now uses `tokenRefsJson` anchor overlap against current OCR tokens (including per-image id context).
+    - set-memory replay re-enabled with strict year+manufacturer context and token-support gating to reduce cross-set bleed.
+    - insert/parallel memory replay strengthened with token-support gating.
+    - removed color-only fallback keywords from heuristic parallel inference.
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - option ranking no longer injects non-canonical OCR suggestions into picker lists.
+- Expected behavior change:
+  - Teach on one card should apply faster to same set patterns while reducing wrong-set drift.
+  - Insert/parallel pickers should stay canonical to DB-backed option pool.
+  - Random color over-suggestion should reduce.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/admin/uploads.tsx --file pages/api/admin/variants/options.ts` passed (existing uploads warnings only).
+- Deployment status:
+  - No deploy/restart/migration executed in this coding step.
+
+## OCR/LLM Baby Brain Master Plan Doc (2026-02-23)
+- Added planning artifact for multi-agent coordination:
+  - `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md`
+- Document contents:
+  - big-picture product vision for "teach once, learn set family"
+  - phased implementation roadmap with "what/why/done" criteria
+  - target architecture and guardrails
+  - operator teaching SOP
+  - suggested data model/API changes
+  - eval gates and rollout sequence
+  - primary-source research links (OpenAI + Google Vision docs)
+- Operational status:
+  - No deploy/restart/migration executed in this step.
+
+## Master Plan Clarification (2026-02-23)
+- Updated `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` Phase 1 wording for clarity:
+  - constrained fields: `setName`, `insertSet`, `parallel`
+  - unconstrained OCR+LLM fields: `playerName`, `cardName`, `cardNumber`, etc.
+- Purpose: avoid misinterpretation that all player/card text must be pre-enumerated in DB.
+- Operational status:
+  - No deploy/restart/migration executed in this step.
+
+## Master Plan Governance Additions (2026-02-23)
+- Updated `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` to include 6 implementation-governance sections:
+  - CardState Contract
+  - Learning Event Schema
+  - Long-Tail Trigger Definitions
+  - Three-Speed Learning Policy (SLA)
+  - Taxonomy Lifecycle Rules
+  - Release Safety Gates
+- Purpose: ensure future agents implement the same contracts, logging semantics, and promotion safeguards.
+- Operational status:
+  - No deploy/restart/migration executed in this step.
+
+## Master Plan Threshold Clarification (2026-02-23)
+- Updated `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` with explicit taxonomy thresholds:
+  - `setName` auto-fill >= `0.80`
+  - `insertSet` auto-fill >= `0.80`
+  - `parallel` auto-fill >= `0.80`
+- Added rule: below-threshold taxonomy fields remain blank (`unknown`) for human review.
+- Added scope clarification: free-text OCR+LLM fields continue normal auto-fill behavior.
+- Added explicit long-tail trigger cutoff: `set_low_confidence` = `setName < 0.80`.
+- Operational status:
+  - No deploy/restart/migration executed in this step.
+
+## Master Plan Schema Clarification (2026-02-24)
+- Updated `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` to add concrete CardState and event schema examples for implementation consistency.
+- Clarified field contracts:
+  - `cardId` is system-generated and not operator-entered.
+  - `setName` (taxonomy display value) remains separate from `setYear` (year field).
+  - optional `setId` canonical key recommended for storage/join safety.
+  - `numbered` is `null` or serial text (e.g. `1/5`, `3/25`).
+  - `autographed` is `true` or `null`.
+  - `graded` is `null` or object (`company`, `gradeValue`, `label`).
+- Added concrete JSON payload examples:
+  - CardState raw-card example
+  - CardState auto+numbered+graded example
+  - `recognition_suggested`
+  - `recognition_corrected`
+- Operational status:
+  - No deploy/restart/migration executed in this step.
+
+## Master Plan Ops Ownership + Instant-Teach Policy Update (2026-02-24)
+- Updated `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` with explicit operations ownership and SLA table:
+  - wrong-set spike, taxonomy drift, teach replay failure, service degradation, and post-deploy regression triggers
+  - default ack/mitigation windows
+  - explicit rollback authority mapping.
+- Added explicit model explaining that instant teach and retraining are complementary:
+  - train action writes memory and affects next similar card immediately
+  - retraining improves base model behavior for broader/unseen cases.
+- Upgraded Region Teach strategy from optional to core phase:
+  - added layout grouping key (`setId + layoutClass + photoSide`)
+  - documented one-teach-many behavior for base cards in same set family
+  - kept class isolation guardrails to avoid cross-layout contamination.
+- Updated rollout sequence to pull region teach earlier (after memory phase).
+- Operational status:
+  - No deploy/restart/migration executed in this step.
+
+## Master Plan Core Retrain Workflow Clarification (2026-02-24)
+- Updated `docs/context/OCR_LLM_BABY_BRAIN_MASTER_PLAN.md` to add explicit operator-facing core retrain workflow.
+- Added `Core Retrain Operations Workflow (UI + Actions)` section with:
+  - automatic data intake from teaches/corrections/region templates,
+  - scheduled retrain candidate generation (`daily-light`, `weekly-full`),
+  - eval-gated candidate comparison and promotion flow,
+  - concrete AI Ops UI surfaces and required operator actions,
+  - promotion authority and emergency rollback policy.
+- Purpose:
+  - make retraining understandable operationally,
+  - preserve instant-teach priority while adding global model improvement cadence.
+- Operational status:
+  - No deploy/restart/migration executed in this step.
