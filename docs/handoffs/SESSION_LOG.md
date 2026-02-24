@@ -1988,3 +1988,45 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this coding step.
+
+## 2026-02-24 - Phase 5 Build: Selective Multimodal OCR+LLM Path
+
+### Summary
+- Implemented Phase 5 in OCR suggestion pipeline:
+  - LLM now uses text-only parsing first.
+  - For hard cards only, pipeline escalates to multimodal (image + OCR text) using Responses API.
+  - High-detail image mode is used selectively when uncertainty is severe; otherwise low detail is used.
+- Candidate-constrained taxonomy policy remains enforced for multimodal output (no free-text taxonomy labels accepted).
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+- `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+
+### Implementation Notes
+- `parseWithLlm(...)` now supports:
+  - `mode: "text" | "multimodal"`
+  - `detail: "low" | "high" | null`
+  - optional `images` payload list.
+- Added multimodal request compatibility fallback:
+  - first sends `input_image` with string `image_url`,
+  - retries with object-form `image_url` payload on 400 errors.
+- Added `buildMultimodalDecision(...)` with hard-card triggers:
+  - text parse failure,
+  - low-confidence taxonomy candidates,
+  - missing core fields.
+- Added audit metadata:
+  - `llm.mode`, `llm.detail`,
+  - `llm.attempts.text`, `llm.attempts.multimodal`,
+  - `llm.multimodalDecision`.
+- AI Ops metrics now include:
+  - multimodal use rate,
+  - high-detail share among multimodal calls.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/ai-ops/overview.ts --file pages/admin/ai-ops.tsx --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/region-teach.ts --file lib/server/ocrRegionTemplates.ts`
+  - Result: pass (with existing `@next/next/no-img-element` warnings in uploads).
+
+### Notes
+- No deploy/restart/migration or DB operation executed in this coding step.

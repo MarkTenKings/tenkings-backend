@@ -1243,3 +1243,31 @@ Build Set Ops UI flow with:
     - fails due broad pre-existing Prisma client/type mismatch in workspace (not isolated to this change set).
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Phase 5 Implementation Complete (2026-02-24)
+- Scope delivered:
+  - Added selective multimodal OCR+LLM path for hard cards only in Add Cards suggestion flow.
+  - LLM now runs text-first; only escalates to image+text when uncertainty conditions are met.
+  - Added low/high image detail policy:
+    - low detail for moderate uncertainty
+    - high detail for severe uncertainty (`text_parse_failed`, multiple taxonomy misses, or missing core fields).
+  - Preserved candidate-constrained taxonomy output contract (`setName`/`insertSet`/`parallel`) for both text and multimodal calls.
+- Backend implementation:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - refactored `parseWithLlm` into mode-aware text/multimodal request builder,
+    - added resilient multimodal payload retry for `input_image` schema variants,
+    - added hard-card decision engine (`buildMultimodalDecision`),
+    - added confidence-aware merge logic for text+multimodal parsed fields,
+    - writes multimodal decision + attempt metadata into OCR audit (`llm.attempts`, `llm.multimodalDecision`, `llm.mode`, `llm.detail`).
+  - `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+    - added live metrics for multimodal usage and high-detail share.
+- Frontend implementation:
+  - `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+    - added Pipeline Health rows:
+      - `Multimodal use rate`
+      - `High-detail share`
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/ai-ops/overview.ts --file pages/admin/ai-ops.tsx --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/region-teach.ts --file lib/server/ocrRegionTemplates.ts`
+    - pass (existing pre-existing `@next/next/no-img-element` warnings in `uploads.tsx`).
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

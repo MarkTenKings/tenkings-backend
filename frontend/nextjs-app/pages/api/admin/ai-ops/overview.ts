@@ -10,6 +10,8 @@ type WindowAccumulator = {
   processed: number;
   llmParsed: number;
   fallbackUsed: number;
+  multimodalUsed: number;
+  multimodalHighDetail: number;
   jsonObjectFormat: number;
   variantMatchOk: number;
   memoryAppliedCards: number;
@@ -112,6 +114,8 @@ function createWindowAccumulator(): WindowAccumulator {
     processed: 0,
     llmParsed: 0,
     fallbackUsed: 0,
+    multimodalUsed: 0,
+    multimodalHighDetail: 0,
     jsonObjectFormat: 0,
     variantMatchOk: 0,
     memoryAppliedCards: 0,
@@ -132,6 +136,10 @@ function summarizeWindow(window: WindowAccumulator) {
     llmParseRatePct: percentage(window.llmParsed, window.processed),
     fallbackUsed: window.fallbackUsed,
     fallbackRatePct: percentage(window.fallbackUsed, window.llmParsed),
+    multimodalUsed: window.multimodalUsed,
+    multimodalUsedRatePct: percentage(window.multimodalUsed, window.llmParsed),
+    multimodalHighDetail: window.multimodalHighDetail,
+    multimodalHighDetailRatePct: percentage(window.multimodalHighDetail, window.multimodalUsed),
     jsonObjectFormat: window.jsonObjectFormat,
     jsonObjectRatePct: percentage(window.jsonObjectFormat, window.llmParsed),
     variantMatchOk: window.variantMatchOk,
@@ -236,6 +244,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const llmModel = toText(llm?.model);
       const llmFormat = toText(llm?.format);
       const fallbackUsed = llm?.fallbackUsed === true;
+      const llmMode = toText(llm?.mode);
+      const llmDetail = toText(llm?.detail);
       const memoryAppliedEntries = Array.isArray(memory?.applied) ? memory.applied.length : 0;
       const variantMatchOk = variantMatch?.ok === true;
       const frontStatus = toText(toRecord(photoOcr?.FRONT)?.status);
@@ -250,6 +260,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         }
         if (fallbackUsed) {
           window.fallbackUsed += 1;
+        }
+        if (llmMode === "multimodal") {
+          window.multimodalUsed += 1;
+          if (llmDetail === "high") {
+            window.multimodalHighDetail += 1;
+          }
         }
         if (llmFormat === "json_object") {
           window.jsonObjectFormat += 1;

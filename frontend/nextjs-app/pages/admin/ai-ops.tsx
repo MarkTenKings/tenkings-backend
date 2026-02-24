@@ -11,6 +11,10 @@ type WindowSummary = {
   llmParseRatePct: number | null;
   fallbackUsed: number;
   fallbackRatePct: number | null;
+  multimodalUsed: number;
+  multimodalUsedRatePct: number | null;
+  multimodalHighDetail: number;
+  multimodalHighDetailRatePct: number | null;
   jsonObjectFormat: number;
   jsonObjectRatePct: number | null;
   variantMatchOk: number;
@@ -297,6 +301,16 @@ export default function AiOpsPage() {
                       label="Fallback use rate"
                       left={toPercent(data.live.last24h.fallbackRatePct)}
                       right={toPercent(data.live.last7d.fallbackRatePct)}
+                    />
+                    <StatRow
+                      label="Multimodal use rate"
+                      left={toPercent(data.live.last24h.multimodalUsedRatePct)}
+                      right={toPercent(data.live.last7d.multimodalUsedRatePct)}
+                    />
+                    <StatRow
+                      label="High-detail share"
+                      left={toPercent(data.live.last24h.multimodalHighDetailRatePct)}
+                      right={toPercent(data.live.last7d.multimodalHighDetailRatePct)}
                     />
                     <StatRow
                       label="Variant match ok rate"

@@ -103,11 +103,24 @@ type LlmParseMeta = {
   model: string;
   format: "json_schema" | "json_object";
   fallbackUsed: boolean;
+  mode: "text" | "multimodal";
+  detail: "low" | "high" | null;
 };
 
 type LlmParsedPayload = {
   fields: SuggestionFields;
   confidence: SuggestionConfidence;
+};
+
+type LlmImageInput = {
+  id: OcrPhotoId;
+  url: string;
+};
+
+type MultimodalDecision = {
+  useMultimodal: boolean;
+  detail: "low" | "high";
+  reasons: string[];
 };
 
 type OcrImageSection = {
@@ -338,15 +351,25 @@ function extractResponsesOutputText(payload: unknown): string | null {
 }
 
 async function parseWithLlm(
-  ocrText: string,
-  imageSections: OcrImageSection[],
-  taxonomyCandidates: TaxonomyPromptCandidates
+  params: {
+    ocrText: string;
+    imageSections: OcrImageSection[];
+    taxonomyCandidates: TaxonomyPromptCandidates;
+    mode: "text" | "multimodal";
+    detail: "low" | "high" | null;
+    images?: LlmImageInput[];
+  }
 ): Promise<LlmParseResponse | null> {
+  const { ocrText, imageSections, taxonomyCandidates, mode, detail } = params;
+  const images = Array.isArray(params.images) ? params.images : [];
   const apiKey = (process.env.OPENAI_API_KEY ?? "").trim();
   if (!apiKey) {
     return null;
   }
   if (!ocrText.trim()) {
+    return null;
+  }
+  if (mode === "multimodal" && images.length < 1) {
     return null;
   }
 
@@ -383,13 +406,21 @@ async function parseWithLlm(
     taxonomyCandidates.parallelOptions.length > 0 ? taxonomyCandidates.parallelOptions.join(" | ") : "(none)",
   ].join("\n");
 
+  const imageAttachmentContext =
+    mode === "multimodal" && images.length > 0
+      ? `Attached images (in order): ${images.map((entry) => entry.id).join(", ")}.`
+      : "No images attached to this request.";
+
   const systemInstruction = [
     "Extract card metadata from OCR text.",
     "Return only JSON that matches the schema.",
     "Use null for unknown fields.",
+    mode === "multimodal"
+      ? "Use the attached card images together with OCR text when OCR is ambiguous."
+      : "Use OCR text only.",
     taxonomyRules,
   ].join("\n");
-  const userPrompt = `OCR combined text:\n${ocrText}\n\nOCR by photo:\n${labeledSections}\n\n${taxonomyCandidateBlock}`;
+  const userPrompt = `OCR combined text:\n${ocrText}\n\nOCR by photo:\n${labeledSections}\n\n${imageAttachmentContext}\n\n${taxonomyCandidateBlock}`;
   const schema = {
     type: "object",
     additionalProperties: false,
@@ -419,43 +450,80 @@ async function parseWithLlm(
     bodyText: string;
     parsed: LlmParsedPayload | null;
   }> => {
-    const response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: params.model,
-        input: [
-          {
-            role: "system",
-            content: [{ type: "input_text", text: systemInstruction }],
-          },
-          {
-            role: "user",
-            content: [{ type: "input_text", text: userPrompt }],
-          },
-        ],
-        text:
-          params.format === "json_schema"
-            ? {
-                format: {
-                  type: "json_schema",
-                  name: "card_ocr_parse",
-                  strict: true,
-                  schema,
-                },
-              }
-            : {
-                format: {
-                  type: "json_object",
-                },
+    const buildUserContent = (
+      imageUrlMode: "string" | "object"
+    ): Array<Record<string, unknown>> => {
+      const userContent: Array<Record<string, unknown>> = [{ type: "input_text", text: userPrompt }];
+      if (mode === "multimodal" && images.length > 0) {
+        images.forEach((image) => {
+          userContent.push({ type: "input_text", text: `Attached card image side: ${image.id}` });
+          if (imageUrlMode === "object") {
+            userContent.push({
+              type: "input_image",
+              image_url: {
+                url: image.url,
+                detail: detail ?? "low",
               },
-      }),
-    });
+            });
+          } else {
+            userContent.push({
+              type: "input_image",
+              image_url: image.url,
+              detail: detail ?? "low",
+            });
+          }
+        });
+      }
+      return userContent;
+    };
 
-    const bodyText = await response.text().catch(() => "");
+    const executeRequest = async (userContent: Array<Record<string, unknown>>) =>
+      fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: params.model,
+          input: [
+            {
+              role: "system",
+              content: [{ type: "input_text", text: systemInstruction }],
+            },
+            {
+              role: "user",
+              content: userContent,
+            },
+          ],
+          text:
+            params.format === "json_schema"
+              ? {
+                  format: {
+                    type: "json_schema",
+                    name: "card_ocr_parse",
+                    strict: true,
+                    schema,
+                  },
+                }
+              : {
+                  format: {
+                    type: "json_object",
+                  },
+                },
+        }),
+      });
+
+    let response = await executeRequest(buildUserContent("string"));
+    let bodyText = await response.text().catch(() => "");
+
+    if (!response.ok && mode === "multimodal" && response.status === 400) {
+      const retryResponse = await executeRequest(buildUserContent("object"));
+      const retryBodyText = await retryResponse.text().catch(() => "");
+      response = retryResponse;
+      bodyText = retryBodyText;
+    }
+
     if (!response.ok) {
       return {
         ok: false,
@@ -509,7 +577,100 @@ async function parseWithLlm(
       model: resolved.attempt.model,
       format: resolved.attempt.format,
       fallbackUsed: resolved.fallbackUsed,
+      mode,
+      detail: mode === "multimodal" ? detail ?? "low" : null,
     },
+  };
+}
+
+function applyLlmParsedPayload(params: {
+  targetFields: SuggestionFields;
+  targetConfidence: SuggestionConfidence;
+  parsed: LlmParseResponse;
+}) {
+  const { targetFields, targetConfidence, parsed } = params;
+  FIELD_KEYS.forEach((key) => {
+    const nextValue = parsed.fields[key];
+    if (!nextValue) {
+      return;
+    }
+    const nextConfidence = parsed.confidence[key] ?? 0.85;
+    const currentValue = targetFields[key];
+    const currentConfidence = targetConfidence[key] ?? 0;
+    const sameValue =
+      !!currentValue && currentValue.trim().toLowerCase() === nextValue.trim().toLowerCase();
+    if (!currentValue || sameValue || nextConfidence >= currentConfidence) {
+      targetFields[key] = nextValue;
+      targetConfidence[key] = Math.max(currentConfidence, nextConfidence);
+    }
+  });
+}
+
+function buildMultimodalDecision(params: {
+  fields: SuggestionFields;
+  confidence: SuggestionConfidence;
+  taxonomyCandidates: TaxonomyPromptCandidates;
+  images: LlmImageInput[];
+  llmTextParsed: boolean;
+}): MultimodalDecision {
+  const { fields, confidence, taxonomyCandidates, images, llmTextParsed } = params;
+  const reasons: string[] = [];
+  if (images.length < 1) {
+    return { useMultimodal: false, detail: "low", reasons };
+  }
+
+  const setThreshold = TAXONOMY_FIELD_THRESHOLD.setName;
+  const insertThreshold = TAXONOMY_FIELD_THRESHOLD.insertSet;
+  const parallelThreshold = TAXONOMY_FIELD_THRESHOLD.parallel;
+  const setReady = Boolean(fields.setName && (confidence.setName ?? 0) >= setThreshold);
+  const insertReady = Boolean(fields.insertSet && (confidence.insertSet ?? 0) >= insertThreshold);
+  const parallelReady = Boolean(fields.parallel && (confidence.parallel ?? 0) >= parallelThreshold);
+
+  const setCandidates = taxonomyCandidates.setOptions.length;
+  const insertCandidates = taxonomyCandidates.insertOptions.length;
+  const parallelCandidates = taxonomyCandidates.parallelOptions.length;
+  const hasTaxonomyPool = setCandidates > 0 || insertCandidates > 0 || parallelCandidates > 0;
+
+  if (!llmTextParsed) {
+    reasons.push("text_parse_failed");
+  }
+  if (setCandidates > 0 && !setReady) {
+    reasons.push("set_uncertain");
+  }
+  if (insertCandidates > 0 && !insertReady) {
+    reasons.push("insert_uncertain");
+  }
+  if (parallelCandidates > 0 && !parallelReady) {
+    reasons.push("parallel_uncertain");
+  }
+  const playerConfidence = confidence.playerName ?? 0;
+  const cardNumberConfidence = confidence.cardNumber ?? 0;
+  if ((!fields.playerName || playerConfidence < 0.68) && (!fields.cardNumber || cardNumberConfidence < 0.68)) {
+    reasons.push("core_fields_uncertain");
+  }
+
+  if (!hasTaxonomyPool && !reasons.includes("text_parse_failed")) {
+    return { useMultimodal: false, detail: "low", reasons: [] };
+  }
+  if (reasons.length < 1) {
+    return { useMultimodal: false, detail: "low", reasons };
+  }
+
+  const taxonomyUncertainCount = ["set_uncertain", "insert_uncertain", "parallel_uncertain"].filter((key) =>
+    reasons.includes(key)
+  ).length;
+  const detail: "low" | "high" =
+    reasons.includes("text_parse_failed") ||
+    reasons.includes("core_fields_uncertain") ||
+    (reasons.includes("set_uncertain") && setCandidates >= 4) ||
+    taxonomyUncertainCount >= 2
+      ? "high"
+      : "low";
+
+  return {
+    useMultimodal: true,
+    detail,
+    reasons,
   };
 }
 
@@ -1290,6 +1451,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       ...(backProxyUrl ? [{ id: "back", url: backProxyUrl }] : []),
       ...(tiltProxyUrl ? [{ id: "tilt", url: tiltProxyUrl }] : []),
     ];
+    const llmImages: LlmImageInput[] = [
+      ...(frontProxyUrl ? [{ id: "FRONT" as const, url: frontProxyUrl }] : []),
+      ...(backProxyUrl ? [{ id: "BACK" as const, url: backProxyUrl }] : []),
+      ...(tiltProxyUrl ? [{ id: "TILT" as const, url: tiltProxyUrl }] : []),
+    ];
 
     if (images.length === 0) {
       return res.status(200).json({
@@ -1550,23 +1716,65 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     let llmMeta: LlmParseMeta | null = null;
+    let llmTextMeta: LlmParseMeta | null = null;
+    let llmMultimodalMeta: LlmParseMeta | null = null;
+    let multimodalDecision: MultimodalDecision = {
+      useMultimodal: false,
+      detail: "low",
+      reasons: [],
+    };
+    let llmTextParsed = false;
     try {
-      const llmResult = await parseWithLlm(combinedTextRaw, imageSections, taxonomyPromptCandidates);
-      if (llmResult) {
-        llmMeta = llmResult.meta;
-        FIELD_KEYS.forEach((key) => {
-          if (llmResult.fields[key]) {
-            fields[key] = llmResult.fields[key];
-          }
-          if (llmResult.confidence[key] != null) {
-            confidence[key] = llmResult.confidence[key];
-          } else if (fields[key]) {
-            confidence[key] = 0.85;
-          }
+      const llmTextResult = await parseWithLlm({
+        ocrText: combinedTextRaw,
+        imageSections,
+        taxonomyCandidates: taxonomyPromptCandidates,
+        mode: "text",
+        detail: null,
+      });
+      if (llmTextResult) {
+        llmTextParsed = true;
+        llmTextMeta = llmTextResult.meta;
+        applyLlmParsedPayload({
+          targetFields: fields,
+          targetConfidence: confidence,
+          parsed: llmTextResult,
         });
+        llmMeta = llmTextResult.meta;
       }
     } catch (error) {
-      console.warn("LLM OCR parse failed; using heuristic suggestions", error);
+      console.warn("LLM OCR text parse failed; using heuristics/multimodal fallback", error);
+    }
+
+    multimodalDecision = buildMultimodalDecision({
+      fields,
+      confidence,
+      taxonomyCandidates: taxonomyPromptCandidates,
+      images: llmImages,
+      llmTextParsed,
+    });
+    if (multimodalDecision.useMultimodal) {
+      try {
+        const llmMultimodalResult = await parseWithLlm({
+          ocrText: combinedTextRaw,
+          imageSections,
+          taxonomyCandidates: taxonomyPromptCandidates,
+          mode: "multimodal",
+          detail: multimodalDecision.detail,
+          images: llmImages,
+        });
+        if (llmMultimodalResult) {
+          llmMultimodalMeta = llmMultimodalResult.meta;
+          applyLlmParsedPayload({
+            targetFields: fields,
+            targetConfidence: confidence,
+            parsed: llmMultimodalResult,
+          });
+          llmMeta = llmMultimodalResult.meta;
+        }
+      } catch (error) {
+        console.warn("LLM OCR multimodal parse failed; keeping text/heuristic suggestions", error);
+      }
     }
 
     const regionTemplateLayoutClass = sanitizeText(queryHints.layoutClass || "") || "base";
@@ -1761,6 +1969,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     });
 
+    const llmAudit = llmMeta
+      ? {
+          ...llmMeta,
+          fallbackUsed:
+            llmMeta.fallbackUsed || llmTextMeta?.fallbackUsed === true || llmMultimodalMeta?.fallbackUsed === true,
+          attempts: {
+            text: llmTextMeta,
+            multimodal: llmMultimodalMeta,
+          },
+          multimodalDecision,
+        }
+      : null;
+
     const audit = {
       source: "google-vision+llm",
       model: `google-vision|${llmMeta?.model ?? OCR_LLM_MODEL}`,
@@ -1772,7 +1993,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       createdAt: new Date().toISOString(),
       fields,
       confidence,
-      llm: llmMeta,
+      llm: llmAudit,
       taxonomyPromptCandidates,
       taxonomyPromptPoolError,
       tokens: ocrTokens,
