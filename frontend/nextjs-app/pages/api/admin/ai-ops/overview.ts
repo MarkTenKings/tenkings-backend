@@ -67,6 +67,38 @@ type OverviewResponse =
           createdAt: string;
         }>;
       };
+      teachRegions: {
+        templateSaves24h: number;
+        templateSaves7d: number;
+        clientErrors24h: number;
+        clientErrors7d: number;
+        snapshots7d: number;
+        templatesUpdated7d: number;
+        avgRegionsPerSave7d: number | null;
+        recentTemplateSaves: Array<{
+          id: string;
+          cardId: string | null;
+          fileName: string | null;
+          setId: string | null;
+          layoutClass: string | null;
+          photoSide: string | null;
+          regionCount: number;
+          templatesUpdated: number;
+          snapshotImageUrl: string | null;
+          createdAt: string;
+        }>;
+        recentClientErrors: Array<{
+          id: string;
+          cardId: string | null;
+          fileName: string | null;
+          setId: string | null;
+          layoutClass: string | null;
+          photoSide: string | null;
+          action: string | null;
+          message: string | null;
+          createdAt: string;
+        }>;
+      };
       ops: {
         attentionCards: AttentionCard[];
       };
@@ -388,6 +420,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       createdAt: Date;
     }>;
 
+    const teachRegionEventRows = (await (prisma as any).ocrRegionTeachEvent.findMany({
+      where: {
+        createdAt: {
+          gte: since14d,
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+      take: 3000,
+      select: {
+        id: true,
+        cardAssetId: true,
+        setId: true,
+        layoutClass: true,
+        photoSide: true,
+        eventType: true,
+        regionCount: true,
+        templatesUpdated: true,
+        snapshotImageUrl: true,
+        debugPayloadJson: true,
+        createdAt: true,
+      },
+    })) as Array<{
+      id: string;
+      cardAssetId: string | null;
+      setId: string | null;
+      layoutClass: string | null;
+      photoSide: string | null;
+      eventType: string;
+      regionCount: number;
+      templatesUpdated: number;
+      snapshotImageUrl: string | null;
+      debugPayloadJson: unknown;
+      createdAt: Date;
+    }>;
+
     const correctedFieldCounts = new Map<string, number>();
     const lessons7dRows: typeof feedbackRows = [];
     const lessonsPrev7dRows: typeof feedbackRows = [];
@@ -471,6 +540,122 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       createdAt: row.createdAt,
     }));
 
+    let templateSaves24h = 0;
+    let templateSaves7d = 0;
+    let clientErrors24h = 0;
+    let clientErrors7d = 0;
+    let templatesUpdated7d = 0;
+    let snapshots7d = 0;
+    let regionCountTotal7d = 0;
+    const recentTemplateSavesRaw: Array<{
+      id: string;
+      cardId: string | null;
+      setId: string | null;
+      layoutClass: string | null;
+      photoSide: string | null;
+      regionCount: number;
+      templatesUpdated: number;
+      snapshotImageUrl: string | null;
+      createdAt: string;
+    }> = [];
+    const recentClientErrorsRaw: Array<{
+      id: string;
+      cardId: string | null;
+      setId: string | null;
+      layoutClass: string | null;
+      photoSide: string | null;
+      action: string | null;
+      message: string | null;
+      createdAt: string;
+    }> = [];
+
+    teachRegionEventRows.forEach((row) => {
+      const createdMs = row.createdAt.getTime();
+      const in24h = createdMs >= since24hMs;
+      const in7d = createdMs >= since7dMs;
+      const eventType = toText(row.eventType)?.toUpperCase() ?? "TEMPLATE_SAVE";
+      if (eventType === "CLIENT_ERROR") {
+        if (in24h) {
+          clientErrors24h += 1;
+        }
+        if (in7d) {
+          clientErrors7d += 1;
+        }
+        if (recentClientErrorsRaw.length < 30) {
+          const debugPayload = toRecord(row.debugPayloadJson);
+          recentClientErrorsRaw.push({
+            id: row.id,
+            cardId: row.cardAssetId ?? null,
+            setId: toText(row.setId),
+            layoutClass: toText(row.layoutClass),
+            photoSide: toText(row.photoSide),
+            action: toText(debugPayload?.action),
+            message: toText(debugPayload?.message),
+            createdAt: row.createdAt.toISOString(),
+          });
+        }
+        return;
+      }
+
+      if (in24h) {
+        templateSaves24h += 1;
+      }
+      if (in7d) {
+        templateSaves7d += 1;
+        templatesUpdated7d += Math.max(0, Number(row.templatesUpdated || 0));
+        regionCountTotal7d += Math.max(0, Number(row.regionCount || 0));
+        if (toText(row.snapshotImageUrl)) {
+          snapshots7d += 1;
+        }
+      }
+      if (recentTemplateSavesRaw.length < 30) {
+        recentTemplateSavesRaw.push({
+          id: row.id,
+          cardId: row.cardAssetId ?? null,
+          setId: toText(row.setId),
+          layoutClass: toText(row.layoutClass),
+          photoSide: toText(row.photoSide),
+          regionCount: Math.max(0, Number(row.regionCount || 0)),
+          templatesUpdated: Math.max(0, Number(row.templatesUpdated || 0)),
+          snapshotImageUrl: toText(row.snapshotImageUrl),
+          createdAt: row.createdAt.toISOString(),
+        });
+      }
+    });
+
+    const teachRegionCardIds = Array.from(
+      new Set(
+        [...recentTemplateSavesRaw, ...recentClientErrorsRaw]
+          .map((row) => row.cardId)
+          .filter((value): value is string => Boolean(value))
+      )
+    );
+    const teachRegionCards =
+      teachRegionCardIds.length > 0
+        ? await prisma.cardAsset.findMany({
+            where: {
+              id: {
+                in: teachRegionCardIds,
+              },
+            },
+            select: {
+              id: true,
+              fileName: true,
+            },
+          })
+        : [];
+    const teachRegionCardMap = new Map(teachRegionCards.map((row) => [row.id, row.fileName]));
+    const recentTemplateSaves = recentTemplateSavesRaw.map((row) => ({
+      ...row,
+      fileName: row.cardId ? teachRegionCardMap.get(row.cardId) ?? null : null,
+    }));
+    const recentClientErrors = recentClientErrorsRaw.map((row) => ({
+      ...row,
+      fileName: row.cardId ? teachRegionCardMap.get(row.cardId) ?? null : null,
+    }));
+    const avgRegionsPerSave7d =
+      templateSaves7d > 0 ? Number((regionCountTotal7d / templateSaves7d).toFixed(2)) : null;
+
     attentionCards.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
     const [totalEvalCases, enabledEvalCases, recentEvalRunsRaw] = await Promise.all([
@@ -529,6 +714,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         accuracyDeltaPct,
         topCorrectedFields: correctedFieldRows,
         recentCorrections,
+      },
+      teachRegions: {
+        templateSaves24h,
+        templateSaves7d,
+        clientErrors24h,
+        clientErrors7d,
+        snapshots7d,
+        templatesUpdated7d,
+        avgRegionsPerSave7d,
+        recentTemplateSaves,
+        recentClientErrors,
       },
       ops: {
         attentionCards: attentionCards.slice(0, 24),

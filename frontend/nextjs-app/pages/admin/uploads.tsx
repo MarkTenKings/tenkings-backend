@@ -221,6 +221,21 @@ type TeachRegionBindDraft = {
   note: string;
 };
 
+type TeachRegionSnapshot = {
+  photoSide: TeachRegionSide;
+  dataUrl: string;
+  width: number;
+  height: number;
+  devicePixelRatio: number | null;
+};
+
+type TeachRegionTelemetryPayload = {
+  action: string;
+  message: string;
+  stack?: string | null;
+  extra?: Record<string, unknown>;
+};
+
 const CATEGORY_LABELS: Record<string, string> = {
   SPORTS: "Sports",
   POKEMON: "Pokémon",
@@ -577,6 +592,12 @@ export default function AdminUploads() {
   const ocrAppliedOptionalFieldsRef = useRef<(keyof IntakeOptionalFields)[]>([]);
   const photoroomRequestedRef = useRef<string | null>(null);
   const restoredDraftRef = useRef(false);
+  const teachRegionImageRefs = useRef<Record<TeachRegionSide, HTMLImageElement | null>>({
+    FRONT: null,
+    BACK: null,
+    TILT: null,
+  });
+  const teachRegionTelemetryDedupRef = useRef<Record<string, number>>({});
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -1142,6 +1163,232 @@ export default function AdminUploads() {
     [apiBase]
   );
 
+  const reportTeachRegionClientError = useCallback(
+    async ({ action, message, stack, extra }: TeachRegionTelemetryPayload) => {
+      const token = session?.token;
+      const cardId = intakeCardId;
+      if (!token || !cardId) {
+        return;
+      }
+      const setId = sanitizeNullableText(intakeOptional.productLine) || null;
+      const layoutClass = normalizeTeachLayoutClass(teachLayoutClass);
+      const dedupeKey = `${action}|${message.slice(0, 140)}|${teachRegionSide}|${setId ?? ""}`;
+      const now = Date.now();
+      const previous = teachRegionTelemetryDedupRef.current[dedupeKey];
+      if (previous && now - previous < 4000) {
+        return;
+      }
+      teachRegionTelemetryDedupRef.current[dedupeKey] = now;
+
+      const regionCountBySide = TEACH_REGION_SIDES.reduce<Record<string, number>>((acc, side) => {
+        acc[side] = teachRegionsBySide[side]?.length ?? 0;
+        return acc;
+      }, {});
+      const viewport =
+        typeof window === "undefined"
+          ? null
+          : {
+              width: window.innerWidth,
+              height: window.innerHeight,
+              pixelRatio: Number((window.devicePixelRatio || 1).toFixed(3)),
+            };
+
+      try {
+        await fetch(resolveApiUrl(`/api/admin/cards/${cardId}/region-teach-telemetry`), {
+          method: "POST",
+          mode: isRemoteApi ? "cors" : "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            ...buildAdminHeaders(token),
+          },
+          body: JSON.stringify({
+            setId,
+            layoutClass,
+            photoSide: teachRegionSide,
+            action,
+            message: message.slice(0, 1000),
+            stack: stack ? stack.slice(0, 6000) : null,
+            teachRegionDrawEnabled,
+            intakeStep,
+            regionCountBySide,
+            viewport,
+            userAgent: typeof navigator === "undefined" ? null : navigator.userAgent,
+            extra: extra ?? null,
+          }),
+        });
+      } catch {
+        // Avoid recursive error handling loops in telemetry.
+      }
+    },
+    [
+      intakeCardId,
+      intakeOptional.productLine,
+      intakeStep,
+      isRemoteApi,
+      resolveApiUrl,
+      session?.token,
+      teachLayoutClass,
+      teachRegionDrawEnabled,
+      teachRegionSide,
+      teachRegionsBySide,
+    ]
+  );
+
+  const buildTeachRegionSnapshot = useCallback(
+    (side: TeachRegionSide, regions: TeachRegionRect[]): TeachRegionSnapshot | null => {
+      if (typeof document === "undefined" || regions.length < 1) {
+        return null;
+      }
+      const image = teachRegionImageRefs.current[side];
+      const imageWidth = image?.naturalWidth || image?.clientWidth || 1200;
+      const imageHeight = image?.naturalHeight || image?.clientHeight || 1600;
+      const width = Math.max(320, Math.round(imageWidth));
+      const height = Math.max(320, Math.round(imageHeight));
+
+      const drawOverlay = (ctx: CanvasRenderingContext2D) => {
+        regions.forEach((region) => {
+          const x = region.x * width;
+          const y = region.y * height;
+          const w = region.width * width;
+          const h = region.height * height;
+          ctx.save();
+          ctx.lineWidth = Math.max(3, Math.round(width * 0.004));
+          ctx.strokeStyle = "#facc15";
+          ctx.fillStyle = "rgba(250, 204, 21, 0.24)";
+          ctx.strokeRect(x, y, w, h);
+          ctx.fillRect(x, y, w, h);
+          ctx.restore();
+        });
+      };
+
+      const renderCanvas = (drawSource: boolean): string | null => {
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d");
+        if (!context) {
+          return null;
+        }
+        context.fillStyle = "#0f172a";
+        context.fillRect(0, 0, width, height);
+        if (drawSource && image && image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
+          context.drawImage(image, 0, 0, width, height);
+        }
+        drawOverlay(context);
+        return canvas.toDataURL("image/png");
+      };
+
+      try {
+        const dataUrl = renderCanvas(true);
+        if (!dataUrl) {
+          return null;
+        }
+        return {
+          photoSide: side,
+          dataUrl,
+          width,
+          height,
+          devicePixelRatio:
+            typeof window === "undefined" ? null : Number((window.devicePixelRatio || 1).toFixed(3)),
+        };
+      } catch (error) {
+        void reportTeachRegionClientError({
+          action: "snapshot_primary_failed",
+          message: error instanceof Error ? error.message : "snapshot_primary_failed",
+          stack: error instanceof Error ? error.stack : null,
+          extra: {
+            photoSide: side,
+            regionCount: regions.length,
+          },
+        });
+        try {
+          const fallbackDataUrl = renderCanvas(false);
+          if (!fallbackDataUrl) {
+            return null;
+          }
+          return {
+            photoSide: side,
+            dataUrl: fallbackDataUrl,
+            width,
+            height,
+            devicePixelRatio:
+              typeof window === "undefined" ? null : Number((window.devicePixelRatio || 1).toFixed(3)),
+          };
+        } catch (fallbackError) {
+          void reportTeachRegionClientError({
+            action: "snapshot_fallback_failed",
+            message: fallbackError instanceof Error ? fallbackError.message : "snapshot_fallback_failed",
+            stack: fallbackError instanceof Error ? fallbackError.stack : null,
+            extra: {
+              photoSide: side,
+              regionCount: regions.length,
+            },
+          });
+          return null;
+        }
+      }
+    },
+    [reportTeachRegionClientError]
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const shouldCapture = (text: string) => /(teach|region|draw|pointer|canvas|touch|gesture)/i.test(text);
+
+    const handleWindowError = (event: ErrorEvent) => {
+      const message = String(event.message || event.error?.message || "").trim();
+      const stack =
+        event.error instanceof Error
+          ? event.error.stack
+          : typeof (event as ErrorEvent & { error?: { stack?: string } }).error?.stack === "string"
+          ? (event as ErrorEvent & { error?: { stack?: string } }).error?.stack
+          : null;
+      const textForMatch = `${message} ${event.filename || ""} ${stack || ""}`.trim();
+      if (!teachRegionDrawEnabled && !shouldCapture(textForMatch)) {
+        return;
+      }
+      void reportTeachRegionClientError({
+        action: "window_error",
+        message: message || "window_error",
+        stack,
+        extra: {
+          filename: event.filename || null,
+          lineno: event.lineno || null,
+          colno: event.colno || null,
+        },
+      });
+    };
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const message =
+        typeof reason === "string"
+          ? reason
+          : reason instanceof Error
+          ? reason.message
+          : "unhandled_rejection";
+      const stack = reason instanceof Error ? reason.stack : null;
+      const textForMatch = `${message} ${stack || ""}`.trim();
+      if (!teachRegionDrawEnabled && !shouldCapture(textForMatch)) {
+        return;
+      }
+      void reportTeachRegionClientError({
+        action: "unhandled_rejection",
+        message,
+        stack,
+      });
+    };
+
+    window.addEventListener("error", handleWindowError);
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+    return () => {
+      window.removeEventListener("error", handleWindowError);
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+    };
+  }, [reportTeachRegionClientError, teachRegionDrawEnabled]);
+
   const resetOcrState = useCallback(() => {
     setOcrStatus(null);
     setOcrAudit(null);
@@ -1222,6 +1469,12 @@ export default function AdminUploads() {
     setVariantScopeSummary(null);
     setVariantCatalog([]);
     setOptionPreviewUrls({});
+    teachRegionImageRefs.current = {
+      FRONT: null,
+      BACK: null,
+      TILT: null,
+    };
+    teachRegionTelemetryDedupRef.current = {};
     resetOcrState();
     restoredDraftRef.current = false;
     if (typeof window !== "undefined") {
@@ -3019,39 +3272,76 @@ export default function AdminUploads() {
 
   const handleTeachRegionPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (!teachRegionDrawEnabled || !activeTeachRegionPreview) {
-        return;
+      try {
+        if (!teachRegionDrawEnabled || !activeTeachRegionPreview) {
+          return;
+        }
+        if (event.pointerType === "mouse" && event.button !== 0) {
+          return;
+        }
+        beginTeachRegionDraft(event.currentTarget, event.clientX, event.clientY, event.pointerId);
+        setTeachRegionFeedback(null);
+        setTeachRegionBindDraft(null);
+        safelySetPointerCapture(event.currentTarget, event.pointerId);
+        event.preventDefault();
+      } catch (error) {
+        void reportTeachRegionClientError({
+          action: "pointer_down",
+          message: error instanceof Error ? error.message : "pointer_down_failed",
+          stack: error instanceof Error ? error.stack : null,
+          extra: {
+            pointerType: event.pointerType,
+            pointerId: event.pointerId,
+            clientX: event.clientX,
+            clientY: event.clientY,
+          },
+        });
       }
-      if (event.pointerType === "mouse" && event.button !== 0) {
-        return;
-      }
-      beginTeachRegionDraft(event.currentTarget, event.clientX, event.clientY, event.pointerId);
-      setTeachRegionFeedback(null);
-      setTeachRegionBindDraft(null);
-      safelySetPointerCapture(event.currentTarget, event.pointerId);
-      event.preventDefault();
     },
-    [activeTeachRegionPreview, beginTeachRegionDraft, safelySetPointerCapture, teachRegionDrawEnabled]
+    [
+      activeTeachRegionPreview,
+      beginTeachRegionDraft,
+      reportTeachRegionClientError,
+      safelySetPointerCapture,
+      teachRegionDrawEnabled,
+    ]
   );
 
-  const handleTeachRegionPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    setTeachRegionDraft((prev) => {
-      if (!prev || prev.pointerId !== event.pointerId) {
-        return prev;
+  const handleTeachRegionPointerMove = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      try {
+        setTeachRegionDraft((prev) => {
+          if (!prev || prev.pointerId !== event.pointerId) {
+            return prev;
+          }
+          const rect = event.currentTarget.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) {
+            return prev;
+          }
+          const x = clampFraction((event.clientX - rect.left) / rect.width);
+          const y = clampFraction((event.clientY - rect.top) / rect.height);
+          return {
+            ...prev,
+            currentX: x,
+            currentY: y,
+          };
+        });
+      } catch (error) {
+        void reportTeachRegionClientError({
+          action: "pointer_move",
+          message: error instanceof Error ? error.message : "pointer_move_failed",
+          stack: error instanceof Error ? error.stack : null,
+          extra: {
+            pointerType: event.pointerType,
+            pointerId: event.pointerId,
+            clientX: event.clientX,
+            clientY: event.clientY,
+          },
+        });
       }
-      const rect = event.currentTarget.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) {
-        return prev;
-      }
-      const x = clampFraction((event.clientX - rect.left) / rect.width);
-      const y = clampFraction((event.clientY - rect.top) / rect.height);
-      return {
-        ...prev,
-        currentX: x,
-        currentY: y,
-      };
-    });
-  }, []);
+    },
+    [reportTeachRegionClientError]
+  );
 
   const finishTeachRegionDraft = useCallback(
     (pointerId?: number) => {
@@ -3082,18 +3372,42 @@ export default function AdminUploads() {
 
   const handleTeachRegionPointerUp = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      finishTeachRegionDraft(event.pointerId);
-      safelyReleasePointerCapture(event.currentTarget, event.pointerId);
+      try {
+        finishTeachRegionDraft(event.pointerId);
+        safelyReleasePointerCapture(event.currentTarget, event.pointerId);
+      } catch (error) {
+        void reportTeachRegionClientError({
+          action: "pointer_up",
+          message: error instanceof Error ? error.message : "pointer_up_failed",
+          stack: error instanceof Error ? error.stack : null,
+          extra: {
+            pointerType: event.pointerType,
+            pointerId: event.pointerId,
+          },
+        });
+      }
     },
-    [finishTeachRegionDraft, safelyReleasePointerCapture]
+    [finishTeachRegionDraft, reportTeachRegionClientError, safelyReleasePointerCapture]
   );
 
   const handleTeachRegionPointerCancel = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      finishTeachRegionDraft(event.pointerId);
-      safelyReleasePointerCapture(event.currentTarget, event.pointerId);
+      try {
+        finishTeachRegionDraft(event.pointerId);
+        safelyReleasePointerCapture(event.currentTarget, event.pointerId);
+      } catch (error) {
+        void reportTeachRegionClientError({
+          action: "pointer_cancel",
+          message: error instanceof Error ? error.message : "pointer_cancel_failed",
+          stack: error instanceof Error ? error.stack : null,
+          extra: {
+            pointerType: event.pointerType,
+            pointerId: event.pointerId,
+          },
+        });
+      }
     },
-    [finishTeachRegionDraft, safelyReleasePointerCapture]
+    [finishTeachRegionDraft, reportTeachRegionClientError, safelyReleasePointerCapture]
   );
 
   const handleUndoTeachRegion = useCallback(() => {
@@ -3264,6 +3578,12 @@ export default function AdminUploads() {
     try {
       setTeachRegionBusy(true);
       setTeachRegionFeedback(null);
+      const snapshots = templates
+        .map((entry) => {
+          const side = entry.photoSide as TeachRegionSide;
+          return buildTeachRegionSnapshot(side, teachRegionsBySide[side] ?? []);
+        })
+        .filter((entry): entry is TeachRegionSnapshot => Boolean(entry));
       const res = await fetch(resolveApiUrl(`/api/admin/cards/${intakeCardId}/region-teach`), {
         method: "POST",
         mode: isRemoteApi ? "cors" : "same-origin",
@@ -3275,28 +3595,45 @@ export default function AdminUploads() {
           setId,
           layoutClass: normalizeTeachLayoutClass(teachLayoutClass),
           templates,
+          snapshots,
         }),
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
         throw new Error(payload?.message ?? "Failed to save teach regions.");
       }
-      const payload = (await res.json()) as { updatedCount?: number; templatesBySide?: unknown };
+      const payload = (await res.json()) as { updatedCount?: number; templatesBySide?: unknown; warnings?: string[] };
       setTeachRegionsBySide(coerceTeachRegionsBySide(payload?.templatesBySide));
-      setTeachRegionFeedback(
-        `Teach regions saved (${payload?.updatedCount ?? templates.length} side${(payload?.updatedCount ?? templates.length) === 1 ? "" : "s"}).`
-      );
+      const successMessage =
+        `Teach regions saved (${payload?.updatedCount ?? templates.length} side${(payload?.updatedCount ?? templates.length) === 1 ? "" : "s"}).`;
+      if (Array.isArray(payload?.warnings) && payload.warnings.length > 0) {
+        setTeachRegionFeedback(`${successMessage} Warnings: ${payload.warnings.join(" | ").slice(0, 360)}`);
+      } else {
+        setTeachRegionFeedback(successMessage);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to save teach regions.";
       setIntakeError(message);
       setTeachRegionFeedback(null);
+      void reportTeachRegionClientError({
+        action: "save_teach_regions",
+        message,
+        stack: error instanceof Error ? error.stack : null,
+        extra: {
+          setId,
+          layoutClass: normalizeTeachLayoutClass(teachLayoutClass),
+          templateSides: templates.map((entry) => entry.photoSide),
+        },
+      });
     } finally {
       setTeachRegionBusy(false);
     }
   }, [
+    buildTeachRegionSnapshot,
     intakeCardId,
     intakeOptional.productLine,
     isRemoteApi,
+    reportTeachRegionClientError,
     resolveApiUrl,
     session?.token,
     teachLayoutClass,
@@ -4371,10 +4708,23 @@ export default function AdminUploads() {
                     {activeTeachRegionPreview ? (
                       <>
                         <img
+                          ref={(node) => {
+                            teachRegionImageRefs.current[teachRegionSide] = node;
+                          }}
                           src={activeTeachRegionPreview}
                           alt={`${teachRegionSide} teach preview`}
                           draggable={false}
                           className="pointer-events-none block w-full select-none"
+                          onError={() => {
+                            void reportTeachRegionClientError({
+                              action: "teach_preview_image_error",
+                              message: "Teach preview image failed to load.",
+                              extra: {
+                                photoSide: teachRegionSide,
+                                previewUrl: activeTeachRegionPreview,
+                              },
+                            });
+                          }}
                         />
                         {activeTeachRegions.map((region) => (
                           <div

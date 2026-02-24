@@ -2198,3 +2198,56 @@
 
 ### Notes
 - No deploy/restart/migration or DB operation executed in this coding step.
+
+## 2026-02-24 - Teach Region Full Plan (Telemetry + AI Ops Events + Snapshot Persistence)
+
+### Summary
+- Completed the remaining Phase-4-adjacent reliability/observability items end-to-end:
+  - draw crash telemetry and debug payload capture in Add Cards teach-region flow,
+  - AI Ops panel support for teach-region save/error events,
+  - optional saved annotation snapshot PNG upload tied to region teach saves.
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260225013000_ocr_region_teach_events/migration.sql` (new)
+- `frontend/nextjs-app/lib/server/ocrRegionTeachEvents.ts` (new)
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/region-teach.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/region-teach-telemetry.ts` (new)
+- `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+- `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added new `OcrRegionTeachEvent` persistence model with:
+  - event type (`TEMPLATE_SAVE` / `CLIENT_ERROR`),
+  - scope fields (`setId`, `layoutClass`, `photoSide`, `cardAssetId`),
+  - metrics (`regionCount`, `templatesUpdated`),
+  - optional snapshot URL/storage key,
+  - debug payload JSON for client crash diagnostics.
+- `region-teach` API now accepts `snapshots` (up to 3 sides) and stores per-side snapshots when provided.
+- `region-teach` API now logs `TEMPLATE_SAVE` events per saved side and returns non-fatal snapshot warnings.
+- Added `region-teach-telemetry` API to store `CLIENT_ERROR` events from browser-side failures.
+- `/admin/uploads` now:
+  - reports draw/runtime failures with rich context (action, side, layout, region counts, viewport, UA),
+  - wraps pointer handlers in guarded telemetry capture,
+  - captures/attaches annotation snapshots during save.
+- `/admin/ai-ops` now displays:
+  - teach-region save/error counts (24h/7d),
+  - snapshot coverage and average regions/save,
+  - recent save events (including snapshot link),
+  - recent client error events.
+
+### Validation Evidence
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+  - Result: pass.
+- `pnpm --filter @tenkings/database generate`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/region-teach.ts --file pages/api/admin/cards/[cardId]/region-teach-telemetry.ts --file lib/server/ocrRegionTeachEvents.ts --file pages/api/admin/ai-ops/overview.ts --file pages/admin/ai-ops.tsx`
+  - Result: pass (with existing `@next/next/no-img-element` warnings in `uploads.tsx`).
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.

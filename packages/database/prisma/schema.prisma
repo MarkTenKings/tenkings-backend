@@ -257,6 +257,7 @@ model User {
   setSeedJobsRequested    SetSeedJob[]          @relation("SetSeedJobRequestedBy")
   setAuditEvents          SetAuditEvent[]       @relation("SetAuditEventActor")
   ocrRegionTemplates      OcrRegionTemplate[]   @relation("OcrRegionTemplateCreatedBy")
+  ocrRegionTeachEvents    OcrRegionTeachEvent[] @relation("OcrRegionTeachEventCreatedBy")
 }
 
 model Location {
@@ -803,6 +804,7 @@ model CardAsset {
   sportsDbPlayer     SportsDbPlayer?       @relation(fields: [sportsDbPlayerId], references: [id], onDelete: SetNull)
   variantDecisions   CardVariantDecision[]
   ocrFeedbackEvents  OcrFeedbackEvent[]
+  ocrRegionTeachEvents OcrRegionTeachEvent[]
 
   @@index([sportsDbPlayerId])
   @@index([inventoryBatchId])
@@ -950,6 +952,33 @@ model OcrRegionTemplate {
   @@unique([setIdKey, layoutClassKey, photoSideKey], map: "ocr_region_template_scope_uidx")
   @@index([setIdKey, layoutClassKey], map: "ocr_region_template_set_layout_idx")
   @@index([photoSideKey], map: "ocr_region_template_side_idx")
+}
+
+model OcrRegionTeachEvent {
+  id                String   @id @default(uuid())
+  cardAssetId       String?
+  setId             String?
+  setIdKey          String   @default("")
+  layoutClass       String?
+  layoutClassKey    String   @default("")
+  photoSide         String?
+  photoSideKey      String   @default("")
+  eventType         String
+  regionCount       Int      @default(0)
+  templatesUpdated  Int      @default(0)
+  snapshotStorageKey String?
+  snapshotImageUrl  String?
+  debugPayloadJson  Json?
+  createdById       String?
+  createdAt         DateTime @default(now())
+
+  cardAsset CardAsset? @relation(fields: [cardAssetId], references: [id], onDelete: SetNull)
+  createdBy User?      @relation("OcrRegionTeachEventCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([createdAt], map: "ocr_region_teach_event_created_idx")
+  @@index([eventType, createdAt], map: "ocr_region_teach_event_type_created_idx")
+  @@index([setIdKey, layoutClassKey, createdAt], map: "ocr_region_teach_event_set_layout_idx")
+  @@index([cardAssetId, createdAt], map: "ocr_region_teach_event_card_idx")
 }
 
 model OcrEvalCase {

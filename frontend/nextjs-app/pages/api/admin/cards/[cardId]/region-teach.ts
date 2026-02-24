@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { listOcrRegionTemplates, upsertOcrRegionTemplates } from "../../../../../lib/server/ocrRegionTemplates";
+import { createOcrRegionTeachEvent, storeOcrRegionSnapshot } from "../../../../../lib/server/ocrRegionTeachEvents";
 
 type RegionTeachResponse =
   | {
@@ -10,6 +11,7 @@ type RegionTeachResponse =
       templatesBySide: Record<"FRONT" | "BACK" | "TILT", Array<Record<string, unknown>>>;
       sampleCountBySide: Record<"FRONT" | "BACK" | "TILT", number>;
       updatedCount?: number;
+      warnings?: string[];
     }
   | { message: string };
 
@@ -71,12 +73,90 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           regions: Array.isArray(entry.regions) ? entry.regions : [],
         })),
       });
+      const warnings: string[] = [];
+
+      const snapshotEntries: Array<Record<string, unknown>> = [];
+      if (Array.isArray(body.snapshots)) {
+        body.snapshots.forEach((entry) => {
+          if (entry && typeof entry === "object") {
+            snapshotEntries.push(entry as Record<string, unknown>);
+          }
+        });
+      } else if (body.snapshot && typeof body.snapshot === "object") {
+        snapshotEntries.push(body.snapshot as Record<string, unknown>);
+      }
+      const snapshotsBySide = new Map<
+        "FRONT" | "BACK" | "TILT",
+        {
+          photoSide: "FRONT" | "BACK" | "TILT";
+          storageKey: string;
+          imageUrl: string;
+          width: number | null;
+          height: number | null;
+          devicePixelRatio: number | null;
+        }
+      >();
+      for (const snapshotInput of snapshotEntries.slice(0, 3)) {
+        const dataUrl = getStringValue(snapshotInput.dataUrl);
+        const photoSide = getStringValue(snapshotInput.photoSide);
+        if (!dataUrl || !photoSide) {
+          continue;
+        }
+        try {
+          const stored = await storeOcrRegionSnapshot({
+            cardAssetId: cardId,
+            snapshot: {
+              photoSide,
+              dataUrl,
+              width: typeof snapshotInput.width === "number" ? snapshotInput.width : null,
+              height: typeof snapshotInput.height === "number" ? snapshotInput.height : null,
+              devicePixelRatio: typeof snapshotInput.devicePixelRatio === "number" ? snapshotInput.devicePixelRatio : null,
+            },
+          });
+          if (stored) {
+            snapshotsBySide.set(stored.photoSide, stored);
+          }
+        } catch (error) {
+          warnings.push(error instanceof Error ? error.message : "snapshot_store_failed");
+        }
+      }
+
+      const requestedTemplates = templates.map((entry) => ({
+        photoSide: getStringValue(entry.photoSide),
+        regions: Array.isArray(entry.regions) ? entry.regions.length : 0,
+      }));
+      await Promise.all(
+        requestedTemplates.map(async (entry) => {
+          if (!entry.photoSide) {
+            return;
+          }
+          const sideSnapshot = snapshotsBySide.get(entry.photoSide as "FRONT" | "BACK" | "TILT") ?? null;
+          await createOcrRegionTeachEvent({
+            cardAssetId: cardId,
+            setId,
+            layoutClass,
+            photoSide: entry.photoSide,
+            eventType: "TEMPLATE_SAVE",
+            regionCount: entry.regions,
+            templatesUpdated: result.updatedCount ?? 0,
+            snapshotStorageKey: sideSnapshot?.storageKey ?? null,
+            snapshotImageUrl: sideSnapshot?.imageUrl ?? null,
+            debugPayload: {
+              width: sideSnapshot?.width ?? null,
+              height: sideSnapshot?.height ?? null,
+              devicePixelRatio: sideSnapshot?.devicePixelRatio ?? null,
+            },
+            createdById: admin.user.id,
+          });
+        })
+      );
       return res.status(200).json({
         setId: result.setId,
         layoutClass: result.layoutClass,
         templatesBySide: result.templatesBySide as Record<"FRONT" | "BACK" | "TILT", Array<Record<string, unknown>>>,
         sampleCountBySide: result.sampleCountBySide,
         updatedCount: result.updatedCount,
+        warnings: warnings.length > 0 ? warnings : undefined,
       });
     }
 

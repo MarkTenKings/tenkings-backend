@@ -80,6 +80,38 @@ type OverviewPayload = {
       createdAt: string;
     }>;
   };
+  teachRegions: {
+    templateSaves24h: number;
+    templateSaves7d: number;
+    clientErrors24h: number;
+    clientErrors7d: number;
+    snapshots7d: number;
+    templatesUpdated7d: number;
+    avgRegionsPerSave7d: number | null;
+    recentTemplateSaves: Array<{
+      id: string;
+      cardId: string | null;
+      fileName: string | null;
+      setId: string | null;
+      layoutClass: string | null;
+      photoSide: string | null;
+      regionCount: number;
+      templatesUpdated: number;
+      snapshotImageUrl: string | null;
+      createdAt: string;
+    }>;
+    recentClientErrors: Array<{
+      id: string;
+      cardId: string | null;
+      fileName: string | null;
+      setId: string | null;
+      layoutClass: string | null;
+      photoSide: string | null;
+      action: string | null;
+      message: string | null;
+      createdAt: string;
+    }>;
+  };
   ops: {
     attentionCards: AttentionCard[];
   };
@@ -890,6 +922,104 @@ export default function AiOpsPage() {
                   </div>
                 </div>
               </article>
+            </section>
+
+            <section className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+              <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Teach Region Telemetry</p>
+              <div className="mt-3 grid gap-3 md:grid-cols-3">
+                <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                  <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Template saves</p>
+                  <p className="mt-1 text-sm text-slate-100">24h: {data.teachRegions.templateSaves24h}</p>
+                  <p className="text-sm text-slate-100">7d: {data.teachRegions.templateSaves7d}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                  <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Client errors</p>
+                  <p className="mt-1 text-sm text-rose-200">24h: {data.teachRegions.clientErrors24h}</p>
+                  <p className="text-sm text-rose-200">7d: {data.teachRegions.clientErrors7d}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                  <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Snapshot coverage</p>
+                  <p className="mt-1 text-sm text-slate-100">Snapshots (7d): {data.teachRegions.snapshots7d}</p>
+                  <p className="text-sm text-slate-100">
+                    Avg regions/save: {data.teachRegions.avgRegionsPerSave7d == null ? "-" : data.teachRegions.avgRegionsPerSave7d}
+                  </p>
+                  <p className="text-sm text-slate-100">Templates updated (7d): {data.teachRegions.templatesUpdated7d}</p>
+                </div>
+              </div>
+              <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                <article className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Recent Teach Region Saves</p>
+                  <div className="mt-2 max-h-72 overflow-auto">
+                    <table className="min-w-full">
+                      <thead>
+                        <tr className="border-b border-white/10">
+                          <th className="px-2 py-1 text-left text-[10px] uppercase tracking-[0.18em] text-slate-400">Card</th>
+                          <th className="px-2 py-1 text-left text-[10px] uppercase tracking-[0.18em] text-slate-400">Layout</th>
+                          <th className="px-2 py-1 text-left text-[10px] uppercase tracking-[0.18em] text-slate-400">Regions</th>
+                          <th className="px-2 py-1 text-left text-[10px] uppercase tracking-[0.18em] text-slate-400">Snapshot</th>
+                          <th className="px-2 py-1 text-left text-[10px] uppercase tracking-[0.18em] text-slate-400">When</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.teachRegions.recentTemplateSaves.length === 0 ? (
+                          <tr>
+                            <td className="px-2 py-2 text-xs text-slate-400" colSpan={5}>
+                              No teach-region save events yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          data.teachRegions.recentTemplateSaves.map((event) => (
+                            <tr key={event.id} className="border-b border-white/5 align-top">
+                              <td className="px-2 py-1.5 text-xs text-slate-100">{event.fileName ?? event.cardId ?? "-"}</td>
+                              <td className="px-2 py-1.5 text-xs text-slate-300">
+                                {(event.layoutClass ?? "-") + " / " + (event.photoSide ?? "-")}
+                              </td>
+                              <td className="px-2 py-1.5 text-xs text-slate-300">
+                                {event.regionCount} · upd {event.templatesUpdated}
+                              </td>
+                              <td className="px-2 py-1.5 text-xs text-slate-300">
+                                {event.snapshotImageUrl ? (
+                                  <a
+                                    href={event.snapshotImageUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-sky-300 hover:text-sky-200"
+                                  >
+                                    Open
+                                  </a>
+                                ) : (
+                                  "-"
+                                )}
+                              </td>
+                              <td className="px-2 py-1.5 text-xs text-slate-300">{toDateTime(event.createdAt)}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </article>
+                <article className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Recent Teach Region Client Errors</p>
+                  <div className="mt-2 max-h-72 space-y-2 overflow-auto pr-1">
+                    {data.teachRegions.recentClientErrors.length === 0 ? (
+                      <p className="text-xs text-slate-400">No teach-region client errors in this window.</p>
+                    ) : (
+                      data.teachRegions.recentClientErrors.map((event) => (
+                        <article key={event.id} className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-2">
+                          <p className="text-xs text-rose-100">
+                            {(event.action ?? "client_error").toUpperCase()} · {toDateTime(event.createdAt)}
+                          </p>
+                          <p className="mt-1 text-xs text-rose-200">{event.message ?? "Unknown error"}</p>
+                          <p className="mt-1 text-[10px] uppercase tracking-[0.18em] text-rose-100/80">
+                            {event.fileName ?? event.cardId ?? "-"} · {(event.layoutClass ?? "-") + " / " + (event.photoSide ?? "-")}
+                          </p>
+                        </article>
+                      ))
+                    )}
+                  </div>
+                </article>
+              </div>
             </section>
 
             <section className="rounded-3xl border border-white/10 bg-night-800/65 p-4">

@@ -1422,3 +1422,59 @@ Build Set Ops UI flow with:
   - Result: pass with existing `@next/next/no-img-element` warnings only.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Teach Region Full Plan Completion (2026-02-24)
+- Scope delivered:
+  - Completed draw crash telemetry + debug payload capture for `/admin/uploads` teach-region workflow.
+  - Added AI Ops Teach Region event visibility (save/error metrics and recent event details).
+  - Added optional annotation snapshot PNG persistence alongside vector region templates.
+- Backend implementation:
+  - Prisma schema + migration:
+    - `packages/database/prisma/schema.prisma`
+    - `packages/database/prisma/migrations/20260225013000_ocr_region_teach_events/migration.sql`
+    - New model: `OcrRegionTeachEvent` (save/error event log with optional snapshot URL + debug payload).
+  - New helper:
+    - `frontend/nextjs-app/lib/server/ocrRegionTeachEvents.ts`
+    - snapshot upload (`storeOcrRegionSnapshot`)
+    - event persistence (`createOcrRegionTeachEvent`)
+  - API updates:
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/region-teach.ts`
+      - now accepts `snapshots` payload (multi-side),
+      - stores side snapshots,
+      - writes `TEMPLATE_SAVE` events,
+      - returns non-fatal `warnings` list.
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/region-teach-telemetry.ts` (new)
+      - captures client-side draw/runtime failures as `CLIENT_ERROR` events.
+  - AI Ops overview API:
+    - `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+    - now returns `teachRegions` block with:
+      - 24h/7d save counts,
+      - 24h/7d client error counts,
+      - snapshot coverage,
+      - templates-updated totals,
+      - avg regions/save,
+      - recent save/error event lists.
+- Frontend implementation:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - client telemetry sender to `/region-teach-telemetry` with draw/session context,
+    - guarded pointer handlers (`down/move/up/cancel`) to capture/report runtime errors,
+    - global `window error` / `unhandledrejection` hooks with teach-region filtering,
+    - snapshot builder for taught regions (image+overlay, fallback overlay-only),
+    - `Save Region Teach` now uploads snapshots with templates,
+    - teach preview image error telemetry.
+  - `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+    - new Teach Region Telemetry panel:
+      - summary counters (save/error/snapshot coverage),
+      - recent template saves table,
+      - recent client error feed.
+- Validation:
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+    - pass.
+  - `pnpm --filter @tenkings/database generate`
+    - pass.
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/region-teach.ts --file pages/api/admin/cards/[cardId]/region-teach-telemetry.ts --file lib/server/ocrRegionTeachEvents.ts --file pages/api/admin/ai-ops/overview.ts --file pages/admin/ai-ops.tsx`
+    - pass (existing `@next/next/no-img-element` warnings only in `uploads.tsx`).
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.
