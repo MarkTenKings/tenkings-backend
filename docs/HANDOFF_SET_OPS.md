@@ -1513,3 +1513,30 @@ Build Set Ops UI flow with:
     - pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## OCR + Send UX Follow-up (2026-02-24)
+- Trigger:
+  - Operator requested no blocking wait on `Send to KingsReview` and confirmed draw crash still reproducing.
+- Additional fixes delivered:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - send flow no longer blocks on PhotoRoom:
+      - enqueue + queue-advance happens first,
+      - PhotoRoom runs in background (fire-and-forget) after handoff.
+    - queue advance no longer waits synchronously on `loadQueuedCardForReview`; it is now async with error capture.
+    - added explicit dedupe signal for teach-on-send:
+      - `teachCapturedFromCorrections` prevents duplicate teach write after manual teach.
+  - `frontend/nextjs-app/lib/server/ocrFeedbackMemory.ts`
+    - memory aggregate upsert path now processes candidate rows with bounded concurrency (`OCR_MEMORY_UPSERT_CONCURRENCY`, default 6) instead of strict serial loop.
+    - reduces train-on send latency while preserving same aggregate semantics.
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - Responses API calls now include timeout guards and `reasoning.effort=minimal`.
+    - multimodal fallback remains but with tighter escalation conditions.
+  - `frontend/nextjs-app/lib/server/googleVisionOcr.ts`
+    - Vision URL input now defaults to `imageUri` mode to avoid pre-fetch/base64 conversion overhead.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/cards/[cardId].ts --file lib/server/googleVisionOcr.ts --file lib/server/ocrFeedbackMemory.ts`
+    - pass (existing `@next/next/no-img-element` warnings only).
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

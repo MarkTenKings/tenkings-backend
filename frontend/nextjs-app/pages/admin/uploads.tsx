@@ -3705,13 +3705,9 @@ export default function AdminUploads() {
     }
     try {
       setIntakeBusy(true);
+      const sendingCardId = intakeCardId;
       const recordTeachOnSend = trainAiEnabled && !teachCapturedFromCorrections;
       await saveIntakeMetadata(true, recordTeachOnSend, trainAiEnabled);
-      const photoRoomResult = await triggerPhotoroomForCard(intakeCardId);
-      if (!photoRoomResult.ok) {
-        throw new Error(photoRoomResult.message);
-      }
-      photoroomRequestedRef.current = intakeCardId;
       const query = buildIntakeQuery();
       const sourceList =
         intakeRequired.category === "tcg"
@@ -3725,7 +3721,7 @@ export default function AdminUploads() {
           ...buildAdminHeaders(token),
         },
         body: JSON.stringify({
-          cardAssetId: intakeCardId,
+          cardAssetId: sendingCardId,
           query,
           sources: sourceList,
           categoryType: intakeRequired.category,
@@ -3738,11 +3734,24 @@ export default function AdminUploads() {
       const nextReviewCardId = queuedReviewCardIds[0] ?? null;
       if (nextReviewCardId) {
         clearActiveIntakeState();
-        await loadQueuedCardForReview(nextReviewCardId);
+        void loadQueuedCardForReview(nextReviewCardId).catch((loadError) => {
+          const message =
+            loadError instanceof Error ? loadError.message : "Failed to load next card for OCR review.";
+          setIntakeError(message);
+        });
       } else {
         clearActiveIntakeState();
         void openIntakeCapture("front");
       }
+
+      // Run PhotoRoom processing in background after queue handoff so UX remains fast.
+      void triggerPhotoroomForCard(sendingCardId).then((result) => {
+        if (!result.ok) {
+          console.warn("PhotoRoom background removal failed", result.message);
+          return;
+        }
+        photoroomRequestedRef.current = sendingCardId;
+      });
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to send to KingsReview.";
       setIntakeError(message);

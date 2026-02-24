@@ -237,33 +237,70 @@ export function buildOcrFeedbackMemoryContext(input: OcrFeedbackMemoryContextInp
 
 export async function upsertOcrFeedbackMemoryAggregates(rows: OcrFeedbackMemoryAggregateInput[]) {
   const now = new Date();
-  for (const row of rows) {
-    const fieldName = coerceNullableString(row.fieldName);
-    const humanValue = coerceNullableString(row.humanValue);
-    if (!fieldName || !humanValue) {
-      continue;
-    }
-    if (MEMORY_EXCLUDED_FIELDS.has(fieldName)) {
-      continue;
-    }
-    if (BOOLEAN_MEMORY_FIELDS.has(fieldName) && !isTruthyString(humanValue)) {
-      continue;
-    }
+  const candidates = rows
+    .map((row) => {
+      const fieldName = coerceNullableString(row.fieldName);
+      const humanValue = coerceNullableString(row.humanValue);
+      if (!fieldName || !humanValue) {
+        return null;
+      }
+      if (MEMORY_EXCLUDED_FIELDS.has(fieldName)) {
+        return null;
+      }
+      if (BOOLEAN_MEMORY_FIELDS.has(fieldName) && !isTruthyString(humanValue)) {
+        return null;
+      }
+      const valueKey = buildOcrFeedbackMemoryValueKey(fieldName, humanValue);
+      if (!valueKey) {
+        return null;
+      }
+      const context = buildOcrFeedbackMemoryContext({
+        setId: row.setId,
+        year: row.year,
+        manufacturer: row.manufacturer,
+        sport: row.sport,
+        cardNumber: row.cardNumber,
+        numbered: row.numbered,
+      });
+      return {
+        row,
+        fieldName,
+        humanValue,
+        valueKey,
+        context,
+        incomingTokenRefs: parseOcrFeedbackTokenRefs(row.tokenRefsJson),
+      };
+    })
+    .filter(
+      (
+        entry
+      ): entry is {
+        row: OcrFeedbackMemoryAggregateInput;
+        fieldName: string;
+        humanValue: string;
+        valueKey: string;
+        context: OcrFeedbackMemoryContext;
+        incomingTokenRefs: OcrFeedbackMemoryTokenRef[];
+      } => Boolean(entry)
+    );
 
-    const valueKey = buildOcrFeedbackMemoryValueKey(fieldName, humanValue);
-    if (!valueKey) {
-      continue;
-    }
+  if (candidates.length < 1) {
+    return;
+  }
 
-    const context = buildOcrFeedbackMemoryContext({
-      setId: row.setId,
-      year: row.year,
-      manufacturer: row.manufacturer,
-      sport: row.sport,
-      cardNumber: row.cardNumber,
-      numbered: row.numbered,
-    });
-    const incomingTokenRefs = parseOcrFeedbackTokenRefs(row.tokenRefsJson);
+  const concurrencyRaw = Number(process.env.OCR_MEMORY_UPSERT_CONCURRENCY ?? "6");
+  const concurrency =
+    Number.isFinite(concurrencyRaw) && concurrencyRaw > 0 ? Math.min(12, Math.max(1, Math.floor(concurrencyRaw))) : 6;
+
+  let cursor = 0;
+  const processNext = async (): Promise<void> => {
+    const index = cursor;
+    cursor += 1;
+    if (index >= candidates.length) {
+      return;
+    }
+    const candidate = candidates[index];
+    const { row, fieldName, humanValue, valueKey, context, incomingTokenRefs } = candidate;
 
     const existing = await (prisma as any).ocrFeedbackMemoryAggregate.findFirst({
       where: {
@@ -316,7 +353,8 @@ export async function upsertOcrFeedbackMemoryAggregates(rows: OcrFeedbackMemoryA
           lastSeenAt: now,
         },
       });
-      continue;
+      await processNext();
+      return;
     }
 
     const sampleCount = Number(existing.sampleCount || 0) + 1;
@@ -335,5 +373,9 @@ export async function upsertOcrFeedbackMemoryAggregates(rows: OcrFeedbackMemoryA
         lastSeenAt: now,
       },
     });
-  }
+    await processNext();
+  };
+
+  const workers = Array.from({ length: Math.min(concurrency, candidates.length) }, () => processNext());
+  await Promise.all(workers);
 }

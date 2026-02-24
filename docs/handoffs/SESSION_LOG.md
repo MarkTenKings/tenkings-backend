@@ -2297,3 +2297,43 @@
 
 ### Notes
 - No deploy/restart/migration executed in this coding step.
+
+## 2026-02-24 - OCR/Send UX Follow-up (Background PhotoRoom + Faster Train Path)
+
+### Summary
+- Implemented second round performance fixes after operator validation:
+  - Send-to-KingsReview UX now advances queue before PhotoRoom completes.
+  - OCR feedback memory aggregate upserts now run with bounded concurrency.
+  - OCR suggest retained low-latency model behavior with timeout guards.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/lib/server/ocrFeedbackMemory.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/lib/server/googleVisionOcr.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `/admin/uploads` send flow:
+  - removed blocking PhotoRoom await from send path.
+  - enqueue + next-card transition happen first.
+  - PhotoRoom runs async in background with warning log on failure.
+  - next-card load is now non-blocking (`void loadQueuedCardForReview(...).catch(...)`).
+- Teach/send dedupe:
+  - added `teachCapturedFromCorrections` state so send does not duplicate teach-record write if manual teach was already captured.
+- Memory aggregate upsert:
+  - switched from fully serial row processing to bounded concurrent worker model (`OCR_MEMORY_UPSERT_CONCURRENCY`, default 6).
+- OCR speed:
+  - kept reduced multimodal escalation behavior.
+  - Responses call uses timeout guard + minimal reasoning effort.
+  - Vision URLs use `imageUri` mode by default (faster path).
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/cards/[cardId].ts --file lib/server/googleVisionOcr.ts --file lib/server/ocrFeedbackMemory.ts`
+  - Result: pass with existing `@next/next/no-img-element` warnings.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.
