@@ -2633,3 +2633,24 @@
 
 ### Notes
 - No deploy/restart/migration executed in this coding step.
+
+## 2026-02-25 - Replace Job SQL Enum Cast Fix
+
+### Summary
+- Investigated production replace execution failure at `Run Replace`.
+- Postgres returned enum type mismatch (`42804`) for `SetReplaceJob.datasetType`.
+- Fixed raw SQL write paths to cast `datasetType` to `SetDatasetType`.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsReplace.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsReplace.ts`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.

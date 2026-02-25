@@ -348,7 +348,7 @@ async function createReplaceJobRow(data: {
       "updatedAt"
     ) VALUES (
       $1,
-      $2,
+      $2::\"SetDatasetType\",
       $3::\"SetReplaceJobStatus\",
       $4,
       $5::jsonb,
@@ -393,7 +393,13 @@ async function updateReplaceJobRow(jobId: string, patch: ReplaceJobUpdatePatch) 
   for (const [field, rawValue] of updates) {
     const value = replaceJobJsonFields.has(field) && rawValue != null ? JSON.stringify(rawValue) : rawValue;
     values.push(value);
-    const cast = replaceJobJsonFields.has(field) ? "::jsonb" : field === "status" ? "::\"SetReplaceJobStatus\"" : "";
+    const cast = replaceJobJsonFields.has(field)
+      ? "::jsonb"
+      : field === "status"
+        ? "::\"SetReplaceJobStatus\""
+        : field === "datasetType"
+          ? "::\"SetDatasetType\""
+          : "";
     assignments.push(`\"${field}\" = $${values.length}${cast}`);
   }
 

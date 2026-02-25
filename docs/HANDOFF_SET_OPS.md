@@ -1773,3 +1773,21 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts` -> pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Replace Job SQL Enum Cast Fix (2026-02-25)
+- Trigger:
+  - Operator clicked `Run Replace` and API failed with Postgres error:
+    - `column "datasetType" is of type "SetDatasetType" but expression is of type text (42804)`.
+- Root cause:
+  - Raw SQL insert/update paths in `setOpsReplace` cast `status` enum but did not cast `datasetType` enum.
+- Fix:
+  - `frontend/nextjs-app/lib/server/setOpsReplace.ts`
+  - Added enum cast in insert:
+    - `$2::"SetDatasetType"`
+  - Added enum cast in dynamic update mapper when field is `datasetType`:
+    - `::"SetDatasetType"`.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsReplace.ts` -> pass.
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.
