@@ -1613,3 +1613,24 @@ Build Set Ops UI flow with:
     - pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Set Ops PDF Parser: Preserve Section Headers on Compound Lines (2026-02-24)
+- Trigger:
+  - Operator reported missing option families in Add Cards (example: `1980 81 TOPPS CHROME BASKETBALL`, `1980 81 TOPPS BASKETBALL AUTOGRAPHS`) despite source PDF containing them.
+- Root cause:
+  - Some checklist PDFs emit a single text line containing both section header and first card row.
+  - Existing parser treated that as row text only, causing section label loss/bleed into previous section (e.g., generic `INSERT`/`ROOKIE` drift).
+- Fix:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+    - added `splitChecklistCompoundLine(...)`:
+      - detects `header + cardId + player` compound lines,
+      - splits into true section header and row segment,
+      - preserves section name as `parallel` for row normalization.
+    - integrated split before normal section-header detection in `parseChecklistRowsFromText(...)`.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file lib/server/variantOptionPool.ts --file pages/admin/uploads.tsx`
+    - pass (existing `@next/next/no-img-element` warnings only in `uploads.tsx`).
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

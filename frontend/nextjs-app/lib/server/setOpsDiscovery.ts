@@ -913,6 +913,38 @@ function looksLikeContextualChecklistSectionHeader(params: { line: string; nextL
   return true;
 }
 
+function splitChecklistCompoundLine(line: string) {
+  const value = compactWhitespace(line);
+  if (!value) return null;
+  const tokens = value.split(/\s+/).filter(Boolean);
+  if (tokens.length < 4) return null;
+
+  let cardIndex = -1;
+  for (let index = 1; index < tokens.length - 1; index += 1) {
+    const token = tokens[index] || "";
+    const nextToken = tokens[index + 1] || "";
+    if (!looksLikeChecklistCardIdToken(token)) continue;
+    if (!/^[A-Za-z]/.test(nextToken)) continue;
+    cardIndex = index;
+    break;
+  }
+
+  if (cardIndex < 2) return null;
+  const header = compactWhitespace(tokens.slice(0, cardIndex).join(" "));
+  const row = compactWhitespace(tokens.slice(cardIndex).join(" "));
+  if (!header || !row) return null;
+
+  const headerLooksValid =
+    looksLikeChecklistSectionHeader(header) ||
+    looksLikeContextualChecklistSectionHeader({
+      line: header,
+      nextLine: row,
+    });
+  if (!headerLooksValid) return null;
+
+  return { header, row };
+}
+
 function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>> {
   const lines = String(text || "")
     .split(/\r?\n/)
@@ -933,6 +965,13 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
     const nextLine = lines[index + 1] ?? null;
+    const compoundSplit = splitChecklistCompoundLine(line);
+    if (compoundSplit) {
+      flushActive();
+      activeSection = normalizeChecklistSectionName(compoundSplit.header);
+      activeLines.push(compoundSplit.row);
+      continue;
+    }
     const nextFirstToken = compactWhitespace(nextLine || "")
       .split(/\s+/)
       .filter(Boolean)[0];

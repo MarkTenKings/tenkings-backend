@@ -2445,3 +2445,36 @@
 
 ### Notes
 - No deploy/restart/migration executed in this coding step.
+
+## 2026-02-24 - PDF Checklist Compound-Line Header Split Fix
+
+### Summary
+- Fixed Set Ops PDF checklist parsing for lines that contain both a section header and the first card row on the same line.
+- This directly targets missing family labels in downstream variant option pickers (for example 1980/TFRA-style families).
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added `splitChecklistCompoundLine(...)` helper:
+  - identifies `header + card-id + player...` lines,
+  - verifies prefix behaves like a section header,
+  - returns split `{ header, row }`.
+- Updated `parseChecklistRowsFromText(...)` loop to:
+  - process compound split before normal line classification,
+  - flush/set `activeSection` from split header,
+  - keep split row in the correct section block.
+- Expected outcome:
+  - preserves section-derived `parallel` labels instead of leaking previous generic sections,
+  - improves availability of family options in Add Cards insert/parallel dropdowns after re-ingest/re-seed.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file lib/server/variantOptionPool.ts --file pages/admin/uploads.tsx`
+  - Result: pass (existing `@next/next/no-img-element` warnings in uploads only).
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.
