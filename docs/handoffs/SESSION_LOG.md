@@ -2558,3 +2558,57 @@
 ### Notes
 - No deploy/restart/migration or destructive DB operation executed in this coding step.
 - Migration `20260225143000_set_replace_jobs` must be applied in runtime environment before replace jobs can be persisted.
+
+## 2026-02-25 - Replace Wizard Production Deploy + Migration Applied
+
+### Summary
+- Operator completed droplet sync, service rebuild/recreate, feature-flag enablement, DB migration, Prisma generate, and runtime restart for Replace Wizard rollout.
+- Production DB migration for replace jobs is now applied.
+
+### Runtime Evidence (operator output)
+- Droplet repo fast-forwarded to:
+  - `09b4b6f feat(set-ops): add end-to-end replace set wizard`
+- Feature flag configured in runtime env:
+  - `SET_OPS_REPLACE_WIZARD=true`
+- Service rebuild/recreate:
+  - `docker compose up -d --build --force-recreate bytebot-lite-service` completed successfully.
+  - `docker compose ps` showed `infra-bytebot-lite-service-1` up.
+- Runtime env check inside container:
+  - `SET_OPS_REPLACE_WIZARD=true`
+  - `DATABASE_URL length: 145`
+- DB migration:
+  - `pnpm --filter @tenkings/database migrate:deploy`
+  - Result: `Applying migration 20260225143000_set_replace_jobs`
+  - Result: `All migrations have been successfully applied.`
+- Prisma client generation:
+  - `pnpm --filter @tenkings/database generate`
+  - Result: success (`Generated Prisma Client (v5.22.0) ...`)
+- Post-migration restart:
+  - `docker compose restart bytebot-lite-service` succeeded.
+  - `docker compose ps` shows bytebot-lite-service healthy/up.
+
+### Notes
+- `docker-compose.yml` `version` deprecation message is warning-only and did not block rollout.
+- Next required step is production UI smoke test of Replace Wizard workflow on a safe test set.
+
+## 2026-02-25 - Replace Parser Fix (Year-Range Section Header Detection)
+
+### Summary
+- Investigated production replace-preview parsing defect where `1980 81 TOPPS BASKETBALL` rows were grouped into prior section `BIG BOX BALLERS`.
+- Identified header-detection false negative in `setOpsDiscovery`:
+  - contextual section-header check treated token `81` as an inline card id,
+  - compound-line splitter had the same false-positive pattern for `YYYY NN ...`.
+- Implemented a narrow parser fix to support year-range section headers while keeping existing card-id safeguards.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.
+- Production should be re-tested with same checklist upload after deploy to confirm `80BK-*` rows carry `1980 81 TOPPS BASKETBALL` parallel label.

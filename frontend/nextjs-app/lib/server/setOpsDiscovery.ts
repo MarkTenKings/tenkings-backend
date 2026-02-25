@@ -672,6 +672,11 @@ function looksLikeChecklistCardIdToken(raw: string) {
   return false;
 }
 
+function isLikelyYearRangeSuffixToken(raw: string) {
+  const token = normalizeChecklistCardToken(raw).replace(/^[’']/, "");
+  return /^\d{2,4}$/.test(token);
+}
+
 function normalizeChecklistLineForTokenization(raw: string) {
   return compactWhitespace(raw)
     .replace(/\b([A-Za-z])\s+([A-Za-z])\s*-\s*(\d{1,4}[A-Za-z]?)\b/g, "$1$2-$3")
@@ -904,7 +909,13 @@ function looksLikeContextualChecklistSectionHeader(params: { line: string; nextL
   const firstToken = tokens[0] || "";
   const hasYearLead = /^\d{4}$/.test(firstToken) && Number(firstToken) >= 1900 && Number(firstToken) <= 2099;
   if (looksLikeChecklistCardIdToken(firstToken) && !hasYearLead) return false;
-  if (tokens.slice(1).some((token) => looksLikeChecklistCardIdToken(token))) return false;
+  const hasInlineCardToken = tokens.slice(1).some((token, tokenIndex) => {
+    if (hasYearLead && tokenIndex === 0 && isLikelyYearRangeSuffixToken(token)) {
+      return false;
+    }
+    return looksLikeChecklistCardIdToken(token);
+  });
+  if (hasInlineCardToken) return false;
 
   const letters = (value.match(/\p{L}/gu) ?? []).length;
   if (letters < 3) return false;
@@ -922,7 +933,11 @@ function splitChecklistCompoundLine(line: string) {
   let cardIndex = -1;
   for (let index = 1; index < tokens.length - 1; index += 1) {
     const token = tokens[index] || "";
+    const previousToken = tokens[index - 1] || "";
     const nextToken = tokens[index + 1] || "";
+    const isYearRangeSecondToken =
+      index === 1 && /^\d{4}$/.test(previousToken) && isLikelyYearRangeSuffixToken(token);
+    if (isYearRangeSecondToken) continue;
     if (!looksLikeChecklistCardIdToken(token)) continue;
     if (!/^[A-Za-z]/.test(nextToken)) continue;
     cardIndex = index;

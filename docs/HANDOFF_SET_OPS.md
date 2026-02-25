@@ -1715,3 +1715,40 @@ Build Set Ops UI flow with:
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
   - Migration `20260225143000_set_replace_jobs` still needs apply in target runtime before replace endpoints can persist jobs.
+
+## Replace Wizard Runtime Rollout Evidence (2026-02-25)
+- Operator-executed production rollout completed on droplet:
+  - repo updated to `09b4b6f` (`feat(set-ops): add end-to-end replace set wizard`)
+  - `SET_OPS_REPLACE_WIZARD=true` present in `env/bytebot-lite-service.env`
+  - bytebot-lite-service rebuilt/recreated and restarted successfully
+  - in-container env check confirmed:
+    - `SET_OPS_REPLACE_WIZARD=true`
+    - `DATABASE_URL length: 145`
+  - DB migration command result:
+    - `Applying migration 20260225143000_set_replace_jobs`
+    - `All migrations have been successfully applied.`
+  - Prisma client generate completed successfully on droplet.
+- Current state:
+  - Replace Wizard code + migration are deployed.
+  - Feature flag is enabled in runtime.
+  - Next step is production UI smoke validation of replace flow on a safe test set.
+
+## Replace Parser Regression Fix (2026-02-25)
+- Trigger:
+  - Operator tested Replace Wizard in production and reported section bleed:
+    - `1980 81 TOPPS BASKETBALL` rows were incorrectly kept under prior section `BIG BOX BALLERS`.
+- Root cause:
+  - In checklist parser (`setOpsDiscovery`), contextual-header detection rejected the line because token `81` was interpreted as a card ID.
+  - Compound-line splitter had the same blind spot when token 2 after a 4-digit year looked numeric.
+- Fix:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+  - Added `isLikelyYearRangeSuffixToken(...)`.
+  - Updated `looksLikeContextualChecklistSectionHeader(...)` to allow the second token when pattern is `YYYY NN ...`.
+  - Updated `splitChecklistCompoundLine(...)` to skip `YYYY NN` false card-id detection at token index 1.
+- Expected behavior after fix:
+  - Section headers like `1980 81 TOPPS BASKETBALL` are recognized as new parallels/sections.
+  - Subsequent `80BK-*` rows should no longer inherit `BIG BOX BALLERS`.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts` -> pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.
