@@ -2654,3 +2654,24 @@
 
 ### Notes
 - No deploy/restart/migration executed in this coding step.
+
+## 2026-02-25 - Replace Job Insert ID Fix
+
+### Summary
+- Investigated second replace execution failure after enum-cast patch.
+- Postgres returned `23502` not-null failure for `SetReplaceJob` insert; failing row showed `id = null`.
+- Fixed raw SQL insert to supply explicit UUID id.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsReplace.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsReplace.ts`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.

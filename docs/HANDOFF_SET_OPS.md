@@ -1791,3 +1791,21 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Replace Job Insert ID Fix (2026-02-25)
+- Trigger:
+  - Operator retried `Run Replace` and received Postgres `23502` not-null insert failure.
+  - Error payload showed failing row with leading `null` id value.
+- Root cause:
+  - Migration table `SetReplaceJob` defines `"id" TEXT NOT NULL` without DB default.
+  - Raw SQL insert path in `setOpsReplace` did not provide `"id"` value.
+- Fix:
+  - `frontend/nextjs-app/lib/server/setOpsReplace.ts`
+  - Import `randomUUID` from `node:crypto`.
+  - Generate `jobId = randomUUID()` in `createReplaceJobRow(...)`.
+  - Include `"id"` in insert column list and bind `jobId` in insert values.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsReplace.ts` -> pass.
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { NextApiRequest } from "next";
 import { z } from "zod";
 import {
@@ -332,8 +332,10 @@ async function createReplaceJobRow(data: {
   requestedById: string | null;
   activeSetLock: string | null;
 }) {
+  const jobId = randomUUID();
   const rows = await prisma.$queryRawUnsafe<Record<string, unknown>[]>(
     `INSERT INTO "SetReplaceJob" (
+      "id",
       "setId",
       "datasetType",
       "status",
@@ -348,19 +350,21 @@ async function createReplaceJobRow(data: {
       "updatedAt"
     ) VALUES (
       $1,
-      $2::\"SetDatasetType\",
-      $3::\"SetReplaceJobStatus\",
-      $4,
-      $5::jsonb,
+      $2,
+      $3::\"SetDatasetType\",
+      $4::\"SetReplaceJobStatus\",
+      $5,
       $6::jsonb,
       $7::jsonb,
-      $8,
+      $8::jsonb,
       $9,
       $10,
+      $11,
       NOW(),
       NOW()
     )
     RETURNING ${replaceJobColumns}`,
+    jobId,
     data.setId,
     data.datasetType,
     data.status,
