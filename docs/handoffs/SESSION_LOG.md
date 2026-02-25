@@ -2612,3 +2612,24 @@
 ### Notes
 - No deploy/restart/migration executed in this coding step.
 - Production should be re-tested with same checklist upload after deploy to confirm `80BK-*` rows carry `1980 81 TOPPS BASKETBALL` parallel label.
+
+## 2026-02-25 - Replace Parser Fix #2 (Numeric-Lead Insert Header Detection)
+
+### Summary
+- After first header fix, operator found another preview mislabel:
+  - `8 Bit Ballers` rows were grouped under prior section (`Sole Ambition`).
+- Root cause was a second contextual-header edge case:
+  - leading numeric token (`8`) was treated as card id, so section header was rejected.
+- Implemented narrow pattern support for numeric-brand section headers tied to matching next-line card prefix (ex: header starts with `8` and next line starts with `8BB-...`).
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.

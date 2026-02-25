@@ -1752,3 +1752,24 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts` -> pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Replace Parser Regression Fix #2 (2026-02-25)
+- Trigger:
+  - After first fix, operator confirmed improvement but reported another section bleed:
+    - `8 Bit Ballers` rows were being labeled as prior section (`Sole Ambition`).
+- Root cause:
+  - `looksLikeContextualChecklistSectionHeader(...)` treated leading numeric token `8` as a card id and rejected the section header line.
+- Fix:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+  - Added targeted allowance for numeric-brand section headers when:
+    - first token is 1-2 digits,
+    - next token is word-like,
+    - next line starts with matching prefixed card id pattern (ex: `8BB-1`).
+  - This keeps normal card-id safeguards in place and only opens a narrow path for this checklist pattern.
+- Expected behavior after fix:
+  - `8 Bit Ballers` is recognized as a distinct section header.
+  - Following `8BB-*` rows should not inherit prior section labels.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts` -> pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

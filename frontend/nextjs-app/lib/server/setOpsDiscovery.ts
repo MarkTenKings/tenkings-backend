@@ -907,8 +907,15 @@ function looksLikeContextualChecklistSectionHeader(params: { line: string; nextL
   const tokens = value.split(/\s+/).filter(Boolean);
   if (tokens.length < 1 || tokens.length > 10) return false;
   const firstToken = tokens[0] || "";
+  const secondToken = tokens[1] || "";
   const hasYearLead = /^\d{4}$/.test(firstToken) && Number(firstToken) >= 1900 && Number(firstToken) <= 2099;
-  if (looksLikeChecklistCardIdToken(firstToken) && !hasYearLead) return false;
+  const allowsNumericBrandHeader =
+    /^\d{1,2}$/.test(firstToken) &&
+    tokens.length >= 3 &&
+    tokens.length <= 6 &&
+    /^[A-Za-z]/.test(secondToken) &&
+    new RegExp(`^${firstToken}[A-Za-z]{1,8}-[A-Za-z0-9]{1,6}$`, "i").test(nextFirstToken);
+  if (looksLikeChecklistCardIdToken(firstToken) && !hasYearLead && !allowsNumericBrandHeader) return false;
   const hasInlineCardToken = tokens.slice(1).some((token, tokenIndex) => {
     if (hasYearLead && tokenIndex === 0 && isLikelyYearRangeSuffixToken(token)) {
       return false;
