@@ -552,6 +552,7 @@ export default function AdminUploads() {
   const [variantCatalog, setVariantCatalog] = useState<VariantApiRow[]>([]);
   const [optionPreviewUrls, setOptionPreviewUrls] = useState<Record<string, string>>({});
   const [pickerModalField, setPickerModalField] = useState<null | "insertSet" | "parallel">(null);
+  const [pickerSearch, setPickerSearch] = useState("");
   type OcrApplyField = Exclude<keyof IntakeRequiredFields, "category">;
   const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty" | "error">(
     null
@@ -3157,35 +3158,42 @@ export default function AdminUploads() {
     };
   }, [typedOcrAudit]);
 
-  const rankedInsertSetOptions = useMemo(() => {
-    const options = [...insertSetOptions];
-    const suggested = (intakeSuggested.insertSet ?? "").trim();
-    if (!suggested) {
-      return options;
-    }
-    const suggestedKey = normalizeVariantLabelKey(suggested);
-    const idx = options.findIndex((value) => normalizeVariantLabelKey(value) === suggestedKey);
-    if (idx <= 0) {
-      return options;
-    }
-    const [hit] = options.splice(idx, 1);
-    return [hit, ...options];
-  }, [insertSetOptions, intakeSuggested.insertSet]);
+  const sortedInsertSetOptions = useMemo(
+    () =>
+      [...insertSetOptions].sort((a, b) =>
+        a.localeCompare(b, undefined, {
+          sensitivity: "base",
+          numeric: true,
+        })
+      ),
+    [insertSetOptions]
+  );
 
-  const rankedParallelOptions = useMemo(() => {
-    const options = [...parallelOptions];
-    const suggested = (intakeSuggested.parallel ?? "").trim();
-    if (!suggested) {
-      return options;
+  const sortedParallelOptions = useMemo(
+    () =>
+      [...parallelOptions].sort((a, b) =>
+        a.localeCompare(b, undefined, {
+          sensitivity: "base",
+          numeric: true,
+        })
+      ),
+    [parallelOptions]
+  );
+
+  const filteredPickerOptions = useMemo(() => {
+    const search = sanitizeNullableText(pickerSearch).toLowerCase();
+    const base = pickerModalField === "insertSet" ? sortedInsertSetOptions : sortedParallelOptions;
+    if (!search) {
+      return base;
     }
-    const suggestedKey = normalizeVariantLabelKey(suggested);
-    const idx = options.findIndex((value) => normalizeVariantLabelKey(value) === suggestedKey);
-    if (idx <= 0) {
-      return options;
+    return base.filter((option) => option.toLowerCase().includes(search));
+  }, [pickerModalField, pickerSearch, sortedInsertSetOptions, sortedParallelOptions]);
+
+  useEffect(() => {
+    if (!pickerModalField) {
+      setPickerSearch("");
     }
-    const [hit] = options.splice(idx, 1);
-    return [hit, ...options];
-  }, [intakeSuggested.parallel, parallelOptions]);
+  }, [pickerModalField]);
 
   const teachRegionBindingOptions = useMemo<TeachRegionBindingOption[]>(
     () => [
@@ -4306,7 +4314,11 @@ export default function AdminUploads() {
                               intakeOptional.productLine
                             )}`}
                           >
-                            <option value="">Product line / set (select)</option>
+                            <option value="">
+                              {taxonomyUnknownReasons.setName && !sanitizeNullableText(intakeOptional.productLine)
+                                ? taxonomyUnknownReasons.setName
+                                : "Product line / set (select)"}
+                            </option>
                             {productLineOptions.map((option) => (
                               <option key={option} value={option}>
                                 {option}
@@ -4317,13 +4329,14 @@ export default function AdminUploads() {
                         ) : (
                           <>
                             <input
-                              placeholder="Type set name (manual)"
+                              placeholder={taxonomyUnknownReasons.setName || "Type set name (manual)"}
                               value={intakeOptional.productLine}
                               onChange={handleOptionalChange("productLine")}
-                              className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
-                                "setName",
-                                intakeOptional.productLine
-                              )}`}
+                              className={`w-full rounded-2xl border px-3 py-2 text-sm text-white ${
+                                taxonomyUnknownReasons.setName && !sanitizeNullableText(intakeOptional.productLine)
+                                  ? "border-rose-400/40 bg-rose-500/10 placeholder:text-rose-200"
+                                  : "border-white/10 bg-night-800"
+                              } ${suggestedClass("setName", intakeOptional.productLine)}`}
                             />
                             <button
                               type="button"
@@ -4355,11 +4368,6 @@ export default function AdminUploads() {
                         )}`}
                       />
                     )}
-                    {!sanitizeNullableText(intakeOptional.productLine) && taxonomyUnknownReasons.setName ? (
-                      <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-rose-200">
-                        {taxonomyUnknownReasons.setName}
-                      </p>
-                    ) : null}
                     <div className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs uppercase tracking-[0.22em] text-slate-400">
                       Sport (auto): <span className="text-slate-200">{intakeRequired.sport || "Unknown"}</span>
                     </div>
@@ -4434,6 +4442,14 @@ export default function AdminUploads() {
                     </span>
                   ) : null}
                 </div>
+                <button
+                  type="button"
+                  onClick={() => void handleIntakeRequiredContinue()}
+                  disabled={intakeBusy}
+                  className="inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-6 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Next fields
+                </button>
                 {ocrPhotoSummary.length > 0 && (
                   <div className="rounded-2xl border border-white/10 bg-night-900/70 p-3 text-[10px] text-slate-300">
                     <p className="uppercase tracking-[0.26em] text-slate-500">OCR By Photo</p>
@@ -4464,14 +4480,6 @@ export default function AdminUploads() {
                     )}
                   </div>
                 )}
-                <button
-                  type="button"
-                  onClick={() => void handleIntakeRequiredContinue()}
-                  disabled={intakeBusy}
-                  className="mt-2 inline-flex w-fit items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-6 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Continue to optional fields
-                </button>
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
                 <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Captured photos</p>
@@ -4522,15 +4530,24 @@ export default function AdminUploads() {
                     <button
                       type="button"
                       onClick={() => setPickerModalField("insertSet")}
-                      className={`flex w-full items-center justify-between rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-left text-sm text-white ${suggestedClass(
-                        "insertSet",
-                        intakeOptional.insertSet
-                      )}`}
+                      className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2 text-left text-sm text-white ${
+                        !sanitizeNullableText(intakeOptional.insertSet) && taxonomyUnknownReasons.insertSet
+                          ? "border-rose-400/40 bg-rose-500/10"
+                          : "border-white/10 bg-night-800"
+                      } ${suggestedClass("insertSet", intakeOptional.insertSet)}`}
                     >
-                      <span className={intakeOptional.insertSet ? "text-white" : "text-slate-400"}>
-                        {intakeOptional.insertSet || "Insert set (tap to choose)"}
+                      <span
+                        className={
+                          intakeOptional.insertSet
+                            ? "text-white"
+                            : taxonomyUnknownReasons.insertSet
+                            ? "text-rose-200"
+                            : "text-slate-400"
+                        }
+                      >
+                        {intakeOptional.insertSet || taxonomyUnknownReasons.insertSet || "Insert Set"}
                       </span>
-                      <span className="text-xs uppercase tracking-[0.22em] text-slate-400">Select</span>
+                      <span className="text-base text-slate-400">▾</span>
                     </button>
                     {intakeOptional.insertSet && optionPreviewUrls[intakeOptional.insertSet] ? (
                       <img
@@ -4539,23 +4556,27 @@ export default function AdminUploads() {
                         className="h-14 w-14 rounded-lg border border-white/10 object-cover"
                       />
                     ) : null}
-                    {!sanitizeNullableText(intakeOptional.insertSet) && taxonomyUnknownReasons.insertSet ? (
-                      <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-rose-200">
-                        {taxonomyUnknownReasons.insertSet}
-                      </p>
-                    ) : null}
                     <button
                       type="button"
                       onClick={() => setPickerModalField("parallel")}
-                      className={`flex w-full items-center justify-between rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-left text-sm text-white ${suggestedClass(
-                        "parallel",
-                        intakeOptional.parallel
-                      )}`}
+                      className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2 text-left text-sm text-white ${
+                        !sanitizeNullableText(intakeOptional.parallel) && taxonomyUnknownReasons.parallel
+                          ? "border-rose-400/40 bg-rose-500/10"
+                          : "border-white/10 bg-night-800"
+                      } ${suggestedClass("parallel", intakeOptional.parallel)}`}
                     >
-                      <span className={intakeOptional.parallel ? "text-white" : "text-slate-400"}>
-                        {intakeOptional.parallel || "Variant / parallel (tap to choose)"}
+                      <span
+                        className={
+                          intakeOptional.parallel
+                            ? "text-white"
+                            : taxonomyUnknownReasons.parallel
+                            ? "text-rose-200"
+                            : "text-slate-400"
+                        }
+                      >
+                        {intakeOptional.parallel || taxonomyUnknownReasons.parallel || "Variant / Parallel"}
                       </span>
-                      <span className="text-xs uppercase tracking-[0.22em] text-slate-400">Select</span>
+                      <span className="text-base text-slate-400">▾</span>
                     </button>
                     {intakeOptional.parallel && optionPreviewUrls[intakeOptional.parallel] ? (
                       <img
@@ -4563,11 +4584,6 @@ export default function AdminUploads() {
                         alt={`${intakeOptional.parallel} example`}
                         className="h-14 w-14 rounded-lg border border-white/10 object-cover"
                       />
-                    ) : null}
-                    {!sanitizeNullableText(intakeOptional.parallel) && taxonomyUnknownReasons.parallel ? (
-                      <p className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-rose-200">
-                        {taxonomyUnknownReasons.parallel}
-                      </p>
                     ) : null}
                   </>
                 )}
@@ -5035,10 +5051,18 @@ export default function AdminUploads() {
                   Close
                 </button>
               </div>
+              <div className="mb-3">
+                <input
+                  value={pickerSearch}
+                  onChange={(event) => setPickerSearch(event.target.value)}
+                  placeholder={pickerModalField === "insertSet" ? "Search insert sets..." : "Search variants/parallels..."}
+                  className="w-full rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                />
+              </div>
               <div className="grid max-h-[70vh] grid-cols-1 gap-2 overflow-auto pr-1 md:grid-cols-2">
                 {[
                   "__NONE__",
-                  ...(pickerModalField === "insertSet" ? rankedInsertSetOptions : rankedParallelOptions),
+                  ...filteredPickerOptions,
                 ].map((option) => {
                   const optionMeta =
                     option === "__NONE__" ? null : optionDetailByLabel.get(normalizeVariantLabelKey(option));

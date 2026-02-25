@@ -2402,3 +2402,46 @@
 
 ### Notes
 - No deploy/restart/migration executed in this coding step.
+
+## 2026-02-24 - Uploads Mobile UX + Option Picker Search + Parallel Family Option Coverage
+
+### Summary
+- Tightened `/admin/uploads` required/optional review UX for mobile.
+- Added alphabetical + searchable insert/parallel picker.
+- Added backend option-pool support for `parallelFamily` labels to improve missing-option coverage.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Required page:
+  - moved required-step gold button to sit right below OCR status area.
+  - changed label to `Next fields`.
+- Unknown messages:
+  - moved `Unknown: ...` messaging inline into set/insert/parallel fields.
+  - removed separate red helper rows under these fields.
+- Field label cleanup:
+  - insert placeholder now `Insert Set`.
+  - parallel placeholder now `Variant / Parallel`.
+  - added right-side dropdown indicator (`▾`) on insert/parallel picker controls.
+- Picker modal:
+  - options now alphabetically sorted (case-insensitive, numeric-aware).
+  - added search bar above `None` entry for faster operator lookup.
+- Option pool coverage:
+  - updated `loadVariantOptionPool` to generate operator labels from both:
+    - `parallelId`
+    - `parallelFamily`
+  - deduped by normalized label key.
+  - this allows family-style labels (including autograph families) to appear even when family text is not stored in `parallelId`.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file lib/server/variantOptionPool.ts`
+  - Result: pass (existing `@next/next/no-img-element` warnings in uploads only).
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.

@@ -1585,3 +1585,31 @@ Build Set Ops UI flow with:
     - pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Uploads UX Tightening + Variant Option Coverage (2026-02-24)
+- Trigger:
+  - Operator requested required-step UX compression on mobile, inline unknown messaging, cleaner insert/parallel picker labels, alphabetical option ordering with search, and investigation of missing autograph-family option.
+- Changes implemented:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - Required-step action button moved up directly below OCR status row.
+    - Gold button text changed from `Continue to optional fields` to `Next fields`.
+    - Unknown taxonomy messages moved inline into fields:
+      - set field placeholder option/manual input placeholder,
+      - insert/parallel picker button text.
+    - Removed separate red helper blocks under set/insert/parallel fields to reduce vertical space.
+    - Insert/parallel picker field placeholders shortened:
+      - `Insert Set`
+      - `Variant / Parallel`
+    - Added right-side dropdown indicator (`▾`) in insert/parallel picker buttons.
+    - Picker modal now supports search input at top (above `None` option).
+    - Picker options now sorted alphabetically (case-insensitive, numeric-aware).
+  - `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+    - option pool now emits labels from both `parallelId` and `parallelFamily` (deduped by normalized key).
+    - this addresses missing family-name options (e.g., autograph-family names) when family label is present but `parallelId` differs.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file lib/server/variantOptionPool.ts`
+    - pass (existing `@next/next/no-img-element` warnings only in `uploads.tsx`).
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

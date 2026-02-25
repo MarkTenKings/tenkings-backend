@@ -451,24 +451,34 @@ export async function loadVariantOptionPool(params: {
   const optionMap = new Map<string, OptionAccumulator>();
   groupedRows.forEach((row) => {
     const setId = sanitizeText(row.setId);
-    const label = sanitizeText(row.parallelId);
+    const parallelId = sanitizeText(row.parallelId);
     const parallelFamily = sanitizeText(row.parallelFamily) || null;
-    if (!setId || !label) {
+    if (!setId || !parallelId) {
       return;
     }
-    const key = normalizeVariantLabelKey(label);
-    const existing = optionMap.get(key);
-    if (existing) {
-      existing.count += row._count?._all ?? 0;
-      existing.setIds.add(setId);
-      classifyOptionKinds({ parallelId: label, parallelFamily }).forEach((kind) => existing.kinds.add(kind));
-      return;
-    }
-    optionMap.set(key, {
-      label,
-      kinds: classifyOptionKinds({ parallelId: label, parallelFamily }),
-      count: row._count?._all ?? 0,
-      setIds: new Set([setId]),
+    const kindsForRow = classifyOptionKinds({ parallelId, parallelFamily });
+    const labelCandidates = [parallelId, parallelFamily].map((entry) => sanitizeText(entry)).filter(Boolean);
+    const seenKeys = new Set<string>();
+
+    labelCandidates.forEach((label) => {
+      const key = normalizeVariantLabelKey(label);
+      if (!key || seenKeys.has(key)) {
+        return;
+      }
+      seenKeys.add(key);
+      const existing = optionMap.get(key);
+      if (existing) {
+        existing.count += row._count?._all ?? 0;
+        existing.setIds.add(setId);
+        kindsForRow.forEach((kind) => existing.kinds.add(kind));
+        return;
+      }
+      optionMap.set(key, {
+        label,
+        kinds: new Set(kindsForRow),
+        count: row._count?._all ?? 0,
+        setIds: new Set([setId]),
+      });
     });
   });
 
