@@ -9,6 +9,7 @@ import {
   roleDeniedMessage,
   writeSetOpsAuditEvent,
 } from "../../../../../lib/server/setOps";
+import { ensureNoActiveSetReplaceJob } from "../../../../../lib/server/setOpsReplace";
 
 const confirmSchema = z.object({
   setId: z.string().min(1),
@@ -58,6 +59,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(400).json({ message: "setId is required" });
     }
     const setIdCandidates = Array.from(new Set([rawSetId, setId].filter(Boolean)));
+
+    await ensureNoActiveSetReplaceJob(rawSetId);
 
     const expectedPhrase = buildSetDeleteConfirmationPhrase(confirmationSetId);
     if (!isSetDeleteConfirmationValid(confirmationSetId, payload.typedConfirmation)) {

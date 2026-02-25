@@ -1634,3 +1634,84 @@ Build Set Ops UI flow with:
     - pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Session Update (2026-02-25)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Verified local repository state before doc updates:
+  - branch: `main`
+  - HEAD: `60f4a15`
+  - pre-existing working-tree changes detected and intentionally left untouched:
+    - `frontend/nextjs-app/pages/admin/set-ops.tsx`
+    - `packages/database/prisma/schema.prisma`
+    - `frontend/nextjs-app/lib/server/setOpsReplace.ts` (untracked)
+    - `frontend/nextjs-app/pages/api/admin/set-ops/replace/` (untracked)
+- No code/runtime changes, deploys, restarts, migrations, or DB operations were executed in this session.
+- Existing `Next Actions (Ordered)` remain unchanged.
+
+## Set Replace Wizard End-to-End Completion (2026-02-25)
+- Scope completed:
+  - Finished Replace Set Wizard backend + API + admin UI flow end-to-end.
+  - Stabilized implementation to compile/work without Prisma-generated `SetReplaceJob` delegate by using raw SQL wrappers in replace service.
+  - Added cross-op safety guard so set delete/seed starts are blocked while replace job is active.
+- Database layer:
+  - Added Prisma enum/model:
+    - `SetReplaceJobStatus`
+    - `SetReplaceJob`
+  - Added migration scaffold:
+    - `packages/database/prisma/migrations/20260225143000_set_replace_jobs/migration.sql`
+  - Runtime lock strategy:
+    - per-set lock via unique nullable `activeSetLock` on `SetReplaceJob`.
+- Backend service:
+  - `frontend/nextjs-app/lib/server/setOpsReplace.ts` (new):
+    - preview/diff generation + immutable `previewHash`,
+    - job create/list/cancel/run orchestration,
+    - progress step state (`validate_preview`, `delete_existing_set`, `create_draft_version`, `approve_draft`, `seed_set`),
+    - stage logs + result payload,
+    - required confirmation phrase (`REPLACE <normalizedSetId>`),
+    - replace safety checks (active replace lock, active seed jobs, blocking errors),
+    - audit event writes for preview/start/delete/approve/seed/failure paths.
+- API routes:
+  - Added:
+    - `POST /api/admin/set-ops/replace/preview`
+    - `GET/POST /api/admin/set-ops/replace/jobs`
+    - `POST /api/admin/set-ops/replace/jobs/:jobId/cancel`
+  - Replace routes are gated by:
+    - feature flag `SET_OPS_REPLACE_WIZARD` (fallback `NEXT_PUBLIC_SET_OPS_REPLACE_WIZARD`, non-prod default enabled),
+    - reviewer role for read/preview,
+    - reviewer + delete + approver roles for start/cancel.
+  - `POST /replace/jobs` now creates job and starts async orchestration run.
+- Cross-op guardrails:
+  - `frontend/nextjs-app/pages/api/admin/set-ops/delete/confirm.ts`
+    - blocks confirm delete if active replace job exists for set.
+  - `frontend/nextjs-app/pages/api/admin/set-ops/seed/jobs.ts`
+    - blocks seed start if active replace job exists for set.
+  - `frontend/nextjs-app/pages/api/admin/set-ops/access.ts`
+    - now returns `featureFlags.replaceWizard`.
+- Admin UI:
+  - `frontend/nextjs-app/pages/admin/set-ops.tsx`:
+    - replace column/action now conditional on feature flag + roles,
+    - replace modal workflow with:
+      - upload,
+      - preview summary + suspicious labels + unique label panel,
+      - paginated parsed rows table,
+      - typed confirmation + optional reason,
+      - live progress badges/log stream,
+      - terminal summary + seed workspace link,
+      - recent replace jobs and cancel action for active job.
+- Compile-safety fixes finalized:
+  - Replace service now uses local replace-status constants and raw SQL wrappers so it does not depend on generated `SetReplaceJob` Prisma delegate/enum in this workstation.
+  - Replaced seed-terminal `.includes(...)` narrow-type check with `Set`.
+  - Fixed nullable record narrowing in replace runner state machine.
+- Validation evidence:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx --file lib/server/setOpsReplace.ts --file pages/api/admin/set-ops/access.ts --file pages/api/admin/set-ops/delete/confirm.ts --file pages/api/admin/set-ops/seed/jobs.ts --file pages/api/admin/set-ops/replace/preview.ts --file pages/api/admin/set-ops/replace/jobs/index.ts --file pages/api/admin/set-ops/replace/jobs/[jobId]/cancel.ts` -> pass.
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `pnpm --filter @tenkings/database generate` -> command exits 0 but generated client still does not expose `SetReplaceJob`/`SetReplaceJobStatus` in this workstation; replace service intentionally avoids typed delegate dependency.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.
+  - Migration `20260225143000_set_replace_jobs` still needs apply in target runtime before replace endpoints can persist jobs.

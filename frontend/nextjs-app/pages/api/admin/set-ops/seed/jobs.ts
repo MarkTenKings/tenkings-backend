@@ -9,6 +9,7 @@ import {
   writeSetOpsAuditEvent,
 } from "../../../../../lib/server/setOps";
 import { runSeedJob } from "../../../../../lib/server/setOpsSeed";
+import { ensureNoActiveSetReplaceJob } from "../../../../../lib/server/setOpsReplace";
 
 const startSchema = z.object({
   setId: z.string().min(1),
@@ -152,6 +153,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       if (!setId) {
         return res.status(400).json({ message: "setId is required" });
       }
+
+      await ensureNoActiveSetReplaceJob(setId);
 
       const draft = await prisma.setDraft.findUnique({
         where: { setId },

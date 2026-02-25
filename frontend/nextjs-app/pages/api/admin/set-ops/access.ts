@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { canPerformSetOpsRole } from "../../../../lib/server/setOps";
+import { isSetOpsReplaceWizardEnabled } from "../../../../lib/server/setOpsReplace";
 
 type ResponseBody =
   | {
@@ -9,6 +10,9 @@ type ResponseBody =
         approver: boolean;
         delete: boolean;
         admin: boolean;
+      };
+      featureFlags: {
+        replaceWizard: boolean;
       };
       user: {
         id: string;
@@ -33,6 +37,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         approver: canPerformSetOpsRole(admin, "approver"),
         delete: canPerformSetOpsRole(admin, "delete"),
         admin: canPerformSetOpsRole(admin, "admin"),
+      },
+      featureFlags: {
+        replaceWizard: isSetOpsReplaceWizardEnabled(),
       },
       user: {
         id: admin.user.id,
