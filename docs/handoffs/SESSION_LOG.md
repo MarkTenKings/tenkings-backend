@@ -2799,3 +2799,72 @@
 
 ### Notes
 - No deploy/restart/migration executed in this coding step.
+
+## 2026-02-26 - Taxonomy Layer Analysis (No-Code Research Session)
+
+### Summary
+- Completed a no-code analysis session per user request to evaluate the new checklist taxonomy layer:
+  - card type/program (insert/base/auto/relic families),
+  - variation,
+  - parallel + odds scope.
+- Compared official external source structure against current Ten Kings implementation.
+- Produced migration direction for additive/surgical integration (no big-bang rewrite).
+
+### External Evidence Reviewed
+- Official Topps product page for `2025-26 Topps Basketball` (Checklist/Odds links).
+- Official Topps checklist PDF (program + variation sections).
+- Official Topps odds PDF (parallel/odds scope across base, insert, auto/relic segments).
+- Official Upper Deck checklist details page (manufacturer checklist + odds pattern).
+
+### Local Evidence Reviewed
+- `packages/database/prisma/schema.prisma` (flat `CardVariant` model and dataset enums).
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts` (checklist section -> `parallel` mapping).
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts` (parallel/player worksheet normalization assumptions).
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts` (insert/parallel heuristic classification from `parallelId`).
+- `frontend/nextjs-app/lib/server/variantMatcher.ts` (candidate matching keyed by `parallelId`).
+- `frontend/nextjs-app/pages/admin/uploads.tsx` and `pages/api/admin/kingsreview/enqueue.ts` (query composition and metadata mapping).
+
+### Findings
+- Current system conflates card program/type, variation labels, and true parallels into one field family (`parallelId`/`parallel`).
+- This conflation impacts ingest normalization, operator pickers, matcher candidates, and downstream comp-query quality.
+- Official source evidence validates the need for separate taxonomy layers and explicit scope rules.
+
+### Operational Notes
+- No code changes deployed.
+- No deploy/restart/migration commands executed.
+- No destructive DB/data operations executed.
+
+## 2026-02-26 - Catalog Ops Execution Pack (Docs Bundle for Future Agents)
+
+### Summary
+- Created a reusable execution-docs bundle so future Codex agents can implement Workstation 2 redesign + Taxonomy V2 with low ambiguity.
+- Bundle is intentionally split into contracts (strategy/system/build/UX/quality+ops) plus an agent kickoff checklist.
+
+### Files Added
+- `docs/context/catalog-ops-execution-pack/README.md`
+- `docs/context/catalog-ops-execution-pack/STRATEGIC_CONTRACT.md`
+- `docs/context/catalog-ops-execution-pack/SYSTEM_CONTRACT.md`
+- `docs/context/catalog-ops-execution-pack/BUILD_CONTRACT.md`
+- `docs/context/catalog-ops-execution-pack/UX_CONTRACT.md`
+- `docs/context/catalog-ops-execution-pack/QUALITY_AND_OPS_CONTRACT.md`
+- `docs/context/catalog-ops-execution-pack/AGENT_KICKOFF_CHECKLIST.md`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- Verified files exist under `docs/context/catalog-ops-execution-pack`.
+- Confirmed no runtime code paths, deploys, restarts, migrations, or DB operations were executed.
+
+### Notes
+- This is a docs-only enablement step to improve multi-agent execution quality and consistency.
+
+### Addendum (2026-02-26)
+- Also updated: `docs/context/FINAL_MASTER_HANDOFF_PACK.md` with pointer to the new execution pack.
+
+### Addendum (2026-02-26, Plan Coverage Tightening)
+- Added explicit full-detail specs to execution pack for strict coverage of approved notes:
+  - `docs/context/catalog-ops-execution-pack/MASTER_PLAN_V2_COMPLETE.md`
+  - `docs/context/catalog-ops-execution-pack/WORKSTATION2_REDESIGN_SPEC.md`
+- Updated `docs/context/catalog-ops-execution-pack/README.md` read order to include these canonical specs.

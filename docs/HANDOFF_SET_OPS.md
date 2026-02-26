@@ -1906,3 +1906,62 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsReplace.ts --file pages/admin/set-ops.tsx` -> pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Taxonomy Layer Analysis (2026-02-26)
+- Session type: analysis/research only (no code edits to runtime paths in this step).
+- User request: evaluate new taxonomy layer separating card type/program vs variation vs parallel/odds and map against current implementation.
+
+### Verified External Evidence
+- Official Topps product page exposes separate Checklist + Odds downloads for the same set (`2025-26 Topps Basketball`) and checklist spotlight context.
+- Official Topps checklist PDF structure confirms card-program sections + explicit variation sections (ex: `BASE CARDS I`, `BASE CARDS I GOLDEN MIRROR IMAGE VARIATION`, `BASE CARDS I CLEAR VARIATION`, insert programs like `THE DAILY DRIBBLE`).
+- Official Topps odds PDF confirms parallel/odds layer and program scoping, including:
+  - base parallels/odds,
+  - insert parallels/odds (ex: `THE DAILY DRIBBLE PARALLEL`),
+  - autograph/relic parallel odds sections.
+- Official Upper Deck checklist details page confirms another manufacturer pattern where checklist rows include set/program + stated odds columns.
+
+### Current-System Gap Assessment
+- Current Prisma/ingestion model remains flat around `CardVariant(setId, cardNumber, parallelId, parallelFamily, oddsInfo)` with uniqueness on `(setId, cardNumber, parallelId)`.
+- Parser/draft normalization currently maps checklist section/program labels into `parallel` field, which conflates:
+  - card type/program names,
+  - variations,
+  - true parallels.
+- Upload OCR, option-pool classification, variant matcher, and KingsReview query builder all consume this conflated layer, so taxonomy drift propagates across intake + comp search.
+
+### Recommended Direction (Surgical)
+1. Add additive taxonomy entities (no big-bang rewrite):
+   - program/card-type,
+   - variation,
+   - parallel definition,
+   - scope rules (which program/format each parallel applies to),
+   - optional odds-by-format rows.
+2. Keep existing `CardVariant` read compatibility initially; introduce dual-read/backfill.
+3. Move parsing output from single `parallel` label into structured fields (`program`, `variation`, `parallel`) with safe fallback.
+4. Update Add Card + OCR suggestion UI to 3-pickers (`Card Type`, `Variation`, `Parallel`) with scope gating.
+5. Update KingsReview query builder to deterministic layer order and include variation/parallel tokens only when selected/validated.
+
+### Operational Notes
+- No deploy/restart/migration run in this analysis step.
+- No destructive DB actions were executed.
+
+## Catalog Ops Execution Pack Added (2026-02-26)
+- Added a dedicated implementation bundle for Workstation 2 redesign + Taxonomy V2 in:
+  - `docs/context/catalog-ops-execution-pack/`
+- Bundle includes:
+  - `README.md`
+  - `STRATEGIC_CONTRACT.md`
+  - `SYSTEM_CONTRACT.md`
+  - `BUILD_CONTRACT.md`
+  - `UX_CONTRACT.md`
+  - `QUALITY_AND_OPS_CONTRACT.md`
+  - `AGENT_KICKOFF_CHECKLIST.md`
+- Purpose:
+  - Give any Codex agent a deterministic, low-ambiguity blueprint from strategy through execution, quality gates, and ops handoff.
+- Runtime impact:
+  - docs-only update; no deploy/restart/migration or DB operations executed in this step.
+
+## Execution Pack Expansion (2026-02-26)
+- Added explicit canonical detail specs so no plan intent is implicit:
+  - `docs/context/catalog-ops-execution-pack/MASTER_PLAN_V2_COMPLETE.md`
+  - `docs/context/catalog-ops-execution-pack/WORKSTATION2_REDESIGN_SPEC.md`
+- These two files encode the full approved plan details (taxonomy architecture + workstation redesign) beyond summary contracts.

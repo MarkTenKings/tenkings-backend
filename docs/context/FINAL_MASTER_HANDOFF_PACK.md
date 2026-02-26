@@ -59,3 +59,9 @@ Agents must follow `AGENTS.md`:
 - update `SESSION_LOG.md` after commit-worthy changes,
 - update before/after deploy/restart/migrate,
 - no destructive data operations without explicit approval.
+
+## Catalog Ops Execution Pack Reference (2026-02-26)
+For Workstation 2 redesign + Taxonomy V2 implementation guidance, use:
+- `docs/context/catalog-ops-execution-pack/README.md`
+
+This pack provides strategy/system/build/UX/quality contracts and an agent kickoff checklist.
