@@ -29,6 +29,8 @@ type ResponseBody =
         setIds: string[];
         primarySetId: string | null;
       }>;
+      source: "legacy" | "taxonomy_v2";
+      legacyFallbackUsed: boolean;
       scope: {
         year: string;
         manufacturer: string;
@@ -39,6 +41,7 @@ type ResponseBody =
         scopedSetCount: number;
         selectedSetId: string | null;
         variantCount: number;
+        source: "legacy" | "taxonomy_v2";
       };
     }
   | { message: string };
@@ -71,6 +74,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       sets: pool.sets,
       insertOptions: pool.insertOptions.map((entry) => ({ ...entry, kind: "insert" as const })),
       parallelOptions: pool.parallelOptions.map((entry) => ({ ...entry, kind: "parallel" as const })),
+      source: pool.source,
       scope: {
         year,
         manufacturer,
@@ -81,7 +85,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         scopedSetCount: pool.scopedSetIds.length,
         selectedSetId: pool.selectedSetId,
         variantCount: pool.variantCount,
+        source: pool.source,
       },
+      legacyFallbackUsed: pool.legacyFallbackUsed,
     });
   } catch (error) {
     const response = toErrorResponse(error);

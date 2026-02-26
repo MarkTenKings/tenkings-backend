@@ -1,5 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
@@ -94,6 +95,40 @@ type DiscoveryResult = {
   score: number;
   discoveredAt: string;
 };
+
+type ReviewStepId = "source-intake" | "ingestion-queue" | "draft-approval" | "seed-monitor";
+
+const REVIEW_STEPS: Array<{ id: ReviewStepId; label: string; description: string }> = [
+  {
+    id: "source-intake",
+    label: "Source Intake",
+    description: "Discover sources and import URL/file payloads.",
+  },
+  {
+    id: "ingestion-queue",
+    label: "Ingestion Queue",
+    description: "Queue jobs, select a set, and build draft.",
+  },
+  {
+    id: "draft-approval",
+    label: "Draft & Approval",
+    description: "Edit rows, save immutable versions, approve/reject.",
+  },
+  {
+    id: "seed-monitor",
+    label: "Seed Monitor",
+    description: "Start, watch, cancel, and retry seed jobs.",
+  },
+];
+
+function parseReviewStep(value: string | string[] | undefined): ReviewStepId | null {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) return null;
+  if (REVIEW_STEPS.some((step) => step.id === raw)) {
+    return raw as ReviewStepId;
+  }
+  return null;
+}
 
 function formatDate(value: string | null) {
   if (!value) return "-";
@@ -279,6 +314,7 @@ function formatDatasetMode(mode: CombinedDatasetMode) {
 }
 
 export default function SetOpsReviewPage() {
+  const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -324,6 +360,7 @@ export default function SetOpsReviewPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<SetOpsPermissions | null>(null);
+  const [activeStep, setActiveStep] = useState<ReviewStepId>("source-intake");
 
   const selectedJob = useMemo(
     () => ingestionJobs.find((job) => job.id === selectedJobId) ?? null,
@@ -345,6 +382,51 @@ export default function SetOpsReviewPage() {
   const blockingErrorCount = useMemo(
     () => editableRows.flatMap((row) => row.errors).filter((issue) => issue.blocking).length,
     [editableRows]
+  );
+
+  const stepCompletion = useMemo<Record<ReviewStepId, boolean>>(
+    () => ({
+      "source-intake":
+        discoveryResults.length > 0 || Boolean(discoverySourceUrlInput.trim()) || Boolean(discoverySetIdOverrideInput.trim()),
+      "ingestion-queue": ingestionJobs.length > 0 || Boolean(selectedJobId),
+      "draft-approval": Boolean(latestApprovedVersionId || (latestVersion?.id && blockingErrorCount === 0)),
+      "seed-monitor": seedJobs.some((job) => job.status === "COMPLETE"),
+    }),
+    [
+      blockingErrorCount,
+      discoveryResults.length,
+      discoverySetIdOverrideInput,
+      discoverySourceUrlInput,
+      ingestionJobs.length,
+      latestApprovedVersionId,
+      latestVersion?.id,
+      seedJobs,
+      selectedJobId,
+    ]
+  );
+
+  const activeStepIndex = useMemo(() => REVIEW_STEPS.findIndex((step) => step.id === activeStep), [activeStep]);
+
+  const setActiveStepWithUrl = useCallback(
+    (nextStep: ReviewStepId) => {
+      setActiveStep(nextStep);
+      if (!router.isReady) return;
+      const current = parseReviewStep(router.query.step);
+      if (current === nextStep) return;
+      const nextQuery = {
+        ...router.query,
+        step: nextStep,
+      };
+      void router.replace(
+        {
+          pathname: router.pathname,
+          query: nextQuery,
+        },
+        undefined,
+        { shallow: true }
+      );
+    },
+    [router]
   );
 
   const addDraftRow = useCallback(() => {
@@ -514,6 +596,12 @@ export default function SetOpsReviewPage() {
       });
   }, [fetchIngestionJobs, isAdmin, loadAccess, session?.token]);
 
+  useEffect(() => {
+    const stepFromQuery = parseReviewStep(router.query.step);
+    if (!stepFromQuery) return;
+    setActiveStep(stepFromQuery);
+  }, [router.query.step]);
+
   const createIngestionJob = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
@@ -595,6 +683,7 @@ export default function SetOpsReviewPage() {
           );
         }
         await fetchIngestionJobs();
+        setActiveStepWithUrl("ingestion-queue");
       } catch (createError) {
         setError(createError instanceof Error ? createError.message : "Failed to enqueue ingestion job");
       } finally {
@@ -611,6 +700,7 @@ export default function SetOpsReviewPage() {
       queueDatasetMode,
       rawPayloadInput,
       session?.token,
+      setActiveStepWithUrl,
       setIdInput,
       sourceUrlInput,
     ]
@@ -829,6 +919,7 @@ export default function SetOpsReviewPage() {
               .join(", ")}).`
           );
         }
+        setActiveStepWithUrl("ingestion-queue");
       } catch (importError) {
         setError(importError instanceof Error ? importError.message : "Failed to import discovered source");
       } finally {
@@ -847,6 +938,7 @@ export default function SetOpsReviewPage() {
       fetchIngestionJobs,
       isAdmin,
       session?.token,
+      setActiveStepWithUrl,
     ]
   );
 
@@ -943,6 +1035,7 @@ export default function SetOpsReviewPage() {
               .join(", ")}).`
           );
         }
+        setActiveStepWithUrl("ingestion-queue");
       } catch (importError) {
         setError(importError instanceof Error ? importError.message : "Failed to import source URL");
       } finally {
@@ -962,6 +1055,7 @@ export default function SetOpsReviewPage() {
       fetchIngestionJobs,
       isAdmin,
       session?.token,
+      setActiveStepWithUrl,
     ]
   );
 
@@ -1004,6 +1098,7 @@ export default function SetOpsReviewPage() {
       setStatus(
         `Built draft from ${selectedJobId} (${payload.summary?.rowCount ?? 0} rows, blocking=${payload.summary?.blockingErrorCount ?? 0}).`
       );
+      setActiveStepWithUrl("draft-approval");
     } catch (buildError) {
       setError(buildError instanceof Error ? buildError.message : "Failed to build draft");
     } finally {
@@ -1020,6 +1115,7 @@ export default function SetOpsReviewPage() {
     selectedJob,
     selectedJobId,
     session?.token,
+    setActiveStepWithUrl,
   ]);
 
   const saveDraftVersion = useCallback(async () => {
@@ -1111,6 +1207,9 @@ export default function SetOpsReviewPage() {
         setStatus(
           `${decision} complete (blocking=${payload.blockingErrorCount ?? 0}, added=${payload.diffSummary?.added ?? 0}, changed=${payload.diffSummary?.changed ?? 0}).`
         );
+        if (decision === "APPROVED") {
+          setActiveStepWithUrl("seed-monitor");
+        }
       } catch (approvalError) {
         setError(approvalError instanceof Error ? approvalError.message : "Approval request failed");
       } finally {
@@ -1127,6 +1226,7 @@ export default function SetOpsReviewPage() {
       latestVersion?.id,
       selectedSetId,
       session?.token,
+      setActiveStepWithUrl,
     ]
   );
 
@@ -1301,9 +1401,9 @@ export default function SetOpsReviewPage() {
       <div className="flex flex-1 flex-col gap-8 px-6 py-10">
         <header className="space-y-3">
           <p className="text-xs uppercase tracking-[0.3em] text-violet-300">Set Ops</p>
-          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Human Review Workspace</h1>
+          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Ingest & Draft Workspace</h1>
           <p className="max-w-3xl text-sm text-slate-300">
-            Ingest datasets, build normalized draft versions, edit rows, approve/reject, and run monitored seed jobs from the UI.
+            Guided stepper flow: source intake, ingestion queue, draft approval, then seed monitor. Existing APIs/actions are unchanged.
           </p>
           <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em]">
             <span className={`rounded-full border px-2 py-1 ${canReview ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
@@ -1350,10 +1450,60 @@ export default function SetOpsReviewPage() {
         {error && <p className="text-xs text-rose-300">{error}</p>}
 
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
-          <h2 className="text-lg font-semibold text-white">0. Discover Sources (Online)</h2>
-          <p className="mt-1 text-xs text-slate-400">
-            Search the web by year/manufacturer/sport, then import a discovered source directly into ingestion queue.
-          </p>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {REVIEW_STEPS.map((step, index) => {
+              const isActive = step.id === activeStep;
+              const isComplete = stepCompletion[step.id];
+              const isPast = activeStepIndex > index;
+              return (
+                <button
+                  key={step.id}
+                  type="button"
+                  onClick={() => setActiveStepWithUrl(step.id)}
+                  className={`rounded-2xl border p-3 text-left transition ${
+                    isActive
+                      ? "border-gold-500/60 bg-gold-500/15"
+                      : isComplete || isPast
+                        ? "border-emerald-400/40 bg-emerald-500/10 hover:border-emerald-300/60"
+                        : "border-white/15 bg-night-950/50 hover:border-white/35"
+                  }`}
+                >
+                  <p className="text-[10px] uppercase tracking-[0.24em] text-slate-300">Step {index + 1}</p>
+                  <p className="mt-1 text-sm font-semibold uppercase tracking-[0.12em] text-white">{step.label}</p>
+                  <p className="mt-1 text-xs text-slate-300">{step.description}</p>
+                  <p
+                    className={`mt-2 text-[10px] uppercase tracking-[0.18em] ${
+                      isActive ? "text-gold-100" : isComplete ? "text-emerald-200" : "text-slate-400"
+                    }`}
+                  >
+                    {isActive ? "Open" : isComplete ? "Complete" : "Pending"}
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-white">1. Source Intake</h2>
+              <p className="mt-1 text-xs text-slate-400">
+                Search the web by year/manufacturer/sport, then import a discovered source directly into ingestion queue.
+              </p>
+            </div>
+            {activeStep !== "source-intake" && (
+              <button
+                type="button"
+                onClick={() => setActiveStepWithUrl("source-intake")}
+                className="rounded-lg border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40"
+              >
+                Open Step
+              </button>
+            )}
+          </div>
+          {activeStep === "source-intake" ? (
+            <>
           <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={runDiscoverySearch}>
             <input
               value={discoveryYearInput}
@@ -1537,10 +1687,39 @@ export default function SetOpsReviewPage() {
               </tbody>
             </table>
           </div>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setActiveStepWithUrl("ingestion-queue")}
+              className="h-10 rounded-xl border border-gold-500/50 bg-gold-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-gold-100 transition hover:bg-gold-500/30"
+            >
+              Continue to Step 2
+            </button>
+          </div>
+            </>
+          ) : (
+            <p className="mt-3 text-xs text-slate-400">Step collapsed. Reopen to run discovery and source imports.</p>
+          )}
         </section>
 
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
-          <h2 className="text-lg font-semibold text-white">1. Ingestion Queue</h2>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-white">2. Ingestion Queue</h2>
+              <p className="mt-1 text-xs text-slate-400">Queue/import jobs, choose a job, then build draft from the selected row.</p>
+            </div>
+            {activeStep !== "ingestion-queue" && (
+              <button
+                type="button"
+                onClick={() => setActiveStepWithUrl("ingestion-queue")}
+                className="rounded-lg border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40"
+              >
+                Open Step
+              </button>
+            )}
+          </div>
+          {activeStep === "ingestion-queue" ? (
+            <>
           <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={createIngestionJob}>
             <input
               value={setIdInput}
@@ -1688,13 +1867,41 @@ export default function SetOpsReviewPage() {
               Clear Selected Job
             </button>
           </div>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setActiveStepWithUrl("draft-approval")}
+              disabled={!selectedSetId}
+              className="h-10 rounded-xl border border-gold-500/50 bg-gold-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-gold-100 transition hover:bg-gold-500/30 disabled:opacity-60"
+            >
+              Continue to Step 3
+            </button>
+          </div>
+            </>
+          ) : (
+            <p className="mt-3 text-xs text-slate-400">Step collapsed. Reopen to queue rows and build a draft version.</p>
+          )}
         </section>
 
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
-          <h2 className="text-lg font-semibold text-white">2. Draft Review + Approval</h2>
-          <p className="mt-1 text-xs text-slate-400">Selected set: {selectedSetId || "-"}</p>
-          <p className="mt-1 text-xs text-slate-400">Blocking errors: {blockingErrorCount}</p>
-
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-white">3. Draft & Approval</h2>
+              <p className="mt-1 text-xs text-slate-400">Selected set: {selectedSetId || "-"}</p>
+              <p className="mt-1 text-xs text-slate-400">Blocking errors: {blockingErrorCount}</p>
+            </div>
+            {activeStep !== "draft-approval" && (
+              <button
+                type="button"
+                onClick={() => setActiveStepWithUrl("draft-approval")}
+                className="rounded-lg border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40"
+              >
+                Open Step
+              </button>
+            )}
+          </div>
+          {activeStep === "draft-approval" ? (
+            <>
           <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
@@ -1866,10 +2073,40 @@ export default function SetOpsReviewPage() {
               </tbody>
             </table>
           </div>
+          <div className="mt-4 flex justify-end">
+            <button
+              type="button"
+              onClick={() => setActiveStepWithUrl("seed-monitor")}
+              disabled={!selectedSetId}
+              className="h-10 rounded-xl border border-gold-500/50 bg-gold-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-gold-100 transition hover:bg-gold-500/30 disabled:opacity-60"
+            >
+              Continue to Step 4
+            </button>
+          </div>
+            </>
+          ) : (
+            <p className="mt-3 text-xs text-slate-400">Step collapsed. Reopen to edit rows and run approval actions.</p>
+          )}
         </section>
 
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
-          <h2 className="text-lg font-semibold text-white">3. Seed Runner + Monitor</h2>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-white">4. Seed Monitor</h2>
+              <p className="mt-1 text-xs text-slate-400">Start and monitor seed jobs for the selected set.</p>
+            </div>
+            {activeStep !== "seed-monitor" && (
+              <button
+                type="button"
+                onClick={() => setActiveStepWithUrl("seed-monitor")}
+                className="rounded-lg border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40"
+              >
+                Open Step
+              </button>
+            )}
+          </div>
+          {activeStep === "seed-monitor" ? (
+            <>
           <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
@@ -1947,6 +2184,10 @@ export default function SetOpsReviewPage() {
               </tbody>
             </table>
           </div>
+            </>
+          ) : (
+            <p className="mt-3 text-xs text-slate-400">Step collapsed. Reopen to run and monitor seed jobs.</p>
+          )}
         </section>
       </div>
     </AppShell>

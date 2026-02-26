@@ -1,5 +1,7 @@
 import sharp from "sharp";
 import { prisma } from "@tenkings/database";
+import { readTaxonomyV2Flags } from "./taxonomyV2Flags";
+import { resolveTaxonomyScopeForMatcher } from "./taxonomyV2Core";
 
 export type VariantCandidate = {
   parallelId: string;
@@ -172,6 +174,8 @@ export async function runVariantMatch(params: {
   setId: string;
   cardNumber?: string | null;
   numbered?: string | null;
+  program?: string | null;
+  variation?: string | null;
 }): Promise<VariantMatchResult> {
   const cardAssetId = params.cardAssetId.trim();
   const setInput = params.setId.trim();
@@ -222,6 +226,52 @@ export async function runVariantMatch(params: {
   }
   if (!variants.length || !matchedSetId) {
     return { ok: false, message: "No variants found for resolved set/card" };
+  }
+
+  let taxonomyScoped = false;
+  const taxonomyFlags = readTaxonomyV2Flags();
+  if (taxonomyFlags.matcher) {
+    const scope = await resolveTaxonomyScopeForMatcher({
+      setId: matchedSetId,
+      program: params.program,
+      variation: params.variation,
+      cardNumber: cardNumberInput,
+    });
+    if (!scope.hasTaxonomy && !taxonomyFlags.allowLegacyFallback) {
+      return {
+        ok: false,
+        message: "Taxonomy V2 scope is required for matcher cutover; no taxonomy scope found for set",
+        matchedSetId,
+        matchedCardNumber: cardNumberInput,
+      };
+    }
+    if (scope.hasTaxonomy) {
+      const allowedParallelKeys = new Set(scope.scopedParallelLabels.map((entry) => String(entry || "").trim().toLowerCase()).filter(Boolean));
+      if (allowedParallelKeys.size > 0) {
+        variants = variants.filter((variant) => allowedParallelKeys.has(String(variant.parallelId || "").trim().toLowerCase()));
+        taxonomyScoped = true;
+      } else {
+        if (taxonomyFlags.allowLegacyFallback) {
+          taxonomyScoped = false;
+        } else {
+          return {
+            ok: false,
+            message: "No in-scope taxonomy candidates for resolved set/program/card",
+            matchedSetId,
+            matchedCardNumber: cardNumberInput,
+          };
+        }
+      }
+    }
+  }
+
+  if (!variants.length) {
+    return {
+      ok: false,
+      message: "No variants left after taxonomy scope filtering",
+      matchedSetId,
+      matchedCardNumber: cardNumberInput,
+    };
   }
 
   const tiltPhoto = cardAsset.photos?.find((photo) => photo.kind === "TILT")?.imageUrl ?? null;
@@ -293,7 +343,7 @@ export async function runVariantMatch(params: {
     }
 
     let confidence = bestScore;
-    let reason = "cosine";
+    let reason = taxonomyScoped ? "cosine|taxonomy-scope" : "cosine";
     if (targetDenominator) {
       const searchable = [
         variant.parallelId,

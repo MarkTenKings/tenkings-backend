@@ -1,5 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
@@ -89,7 +90,13 @@ function sourceHostFromUrl(value: string | null | undefined) {
   }
 }
 
+function readQueryValue(value: string | string[] | undefined) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
 export default function VariantRefQaPage() {
+  const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -115,6 +122,8 @@ export default function VariantRefQaPage() {
   const [status, setStatus] = useState<StatusMessage>(null);
 
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
+  const querySetId = useMemo(() => readQueryValue(router.query.setId), [router.query.setId]);
+  const queryProgramId = useMemo(() => readQueryValue(router.query.programId), [router.query.programId]);
 
   const loadSetRows = useCallback(async (search = "") => {
     if (!session?.token) return;
@@ -209,6 +218,17 @@ export default function VariantRefQaPage() {
     if (!session?.token) return;
     void loadSetRows();
   }, [loadSetRows, session?.token]);
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    if (querySetId) {
+      setSetSearch((prev) => (prev ? prev : querySetId));
+      setSelectedSetFilter((prev) => (prev === querySetId ? prev : querySetId));
+    }
+    if (queryProgramId) {
+      setQuery((prev) => (prev ? prev : queryProgramId));
+    }
+  }, [queryProgramId, querySetId, router.isReady]);
 
   useEffect(() => {
     if (!session?.token || !selectedSetFilter) return;

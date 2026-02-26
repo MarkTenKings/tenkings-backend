@@ -231,6 +231,42 @@ enum SetAuditStatus {
   DENIED
 }
 
+enum TaxonomyArtifactType {
+  CHECKLIST
+  ODDS
+  COMBINED
+  MANUAL_PATCH
+}
+
+enum TaxonomySourceKind {
+  OFFICIAL_CHECKLIST
+  OFFICIAL_ODDS
+  TRUSTED_SECONDARY
+  MANUAL_PATCH
+}
+
+enum TaxonomyEntityType {
+  PROGRAM
+  CARD
+  VARIATION
+  PARALLEL
+  PARALLEL_SCOPE
+  ODDS_ROW
+}
+
+enum TaxonomyConflictStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+enum TaxonomyAmbiguityStatus {
+  PENDING
+  IN_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
 model User {
   id                      String                @id @default(uuid())
   email                   String?               @unique
@@ -577,9 +613,10 @@ model SetIngestionJob {
   parsedAt         DateTime?
   reviewedAt       DateTime?
 
-  draft       SetDraft?       @relation(fields: [draftId], references: [id], onDelete: SetNull)
-  createdBy   User?           @relation("SetIngestionJobCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  auditEvents SetAuditEvent[]
+  draft           SetDraft?           @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  createdBy       User?               @relation("SetIngestionJobCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  auditEvents     SetAuditEvent[]
+  taxonomySources SetTaxonomySource[]
 
   @@index([setId, status])
   @@index([datasetType, status])
@@ -692,6 +729,201 @@ model SetAuditEvent {
   @@index([draftId, createdAt])
   @@index([action, createdAt])
   @@index([status, createdAt])
+}
+
+model SetTaxonomySource {
+  id               String               @id @default(uuid())
+  setId            String
+  ingestionJobId   String?
+  artifactType     TaxonomyArtifactType @default(CHECKLIST)
+  sourceKind       TaxonomySourceKind
+  sourceLabel      String?
+  sourceUrl        String?
+  parserVersion    String?
+  sourceTimestamp  DateTime?
+  parserConfidence Float?
+  metadataJson     Json?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  ingestionJob    SetIngestionJob?            @relation(fields: [ingestionJobId], references: [id], onDelete: SetNull)
+  programs        SetProgram[]
+  cards           SetCard[]
+  variations      SetVariation[]
+  parallels       SetParallel[]
+  parallelScopes  SetParallelScope[]
+  oddsRows        SetOddsByFormat[]
+  ambiguityItems  SetTaxonomyAmbiguityQueue[]
+  conflictsAsBase SetTaxonomyConflict[]       @relation("TaxonomyConflictExistingSource")
+  conflictsAsNext SetTaxonomyConflict[]       @relation("TaxonomyConflictIncomingSource")
+
+  @@index([setId, createdAt])
+  @@index([sourceKind, createdAt])
+  @@index([ingestionJobId])
+}
+
+model SetProgram {
+  id           String   @id @default(uuid())
+  setId        String
+  programId    String
+  label        String
+  codePrefix   String?
+  programClass String?
+  sourceId     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  source         SetTaxonomySource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  cards          SetCard[]
+  variations     SetVariation[]
+  parallelScopes SetParallelScope[]
+  oddsRows       SetOddsByFormat[]
+
+  @@unique([setId, programId])
+  @@index([setId, label])
+}
+
+model SetCard {
+  id         String   @id @default(uuid())
+  setId      String
+  programId  String
+  cardNumber String
+  playerName String?
+  sourceId   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  program SetProgram         @relation(fields: [setId, programId], references: [setId, programId], onDelete: Cascade)
+  source  SetTaxonomySource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@unique([setId, programId, cardNumber])
+  @@index([setId, cardNumber])
+}
+
+model SetVariation {
+  id          String   @id @default(uuid())
+  setId       String
+  programId   String
+  variationId String
+  label       String
+  scopeNote   String?
+  sourceId    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  program SetProgram         @relation(fields: [setId, programId], references: [setId, programId], onDelete: Cascade)
+  source  SetTaxonomySource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  scopes  SetParallelScope[]
+
+  @@unique([setId, programId, variationId])
+  @@index([setId, label])
+}
+
+model SetParallel {
+  id                String   @id @default(uuid())
+  setId             String
+  parallelId        String
+  label             String
+  serialDenominator Int?
+  serialText        String?
+  finishFamily      String?
+  sourceId          String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  source   SetTaxonomySource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  scopes   SetParallelScope[]
+  oddsRows SetOddsByFormat[]
+
+  @@unique([setId, parallelId])
+  @@index([setId, label])
+}
+
+model SetParallelScope {
+  id          String   @id @default(uuid())
+  setId       String
+  scopeKey    String
+  parallelId  String
+  programId   String
+  variationId String?
+  formatKey   String?
+  channelKey  String?
+  sourceId    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  program   SetProgram         @relation(fields: [setId, programId], references: [setId, programId], onDelete: Cascade)
+  parallel  SetParallel        @relation(fields: [setId, parallelId], references: [setId, parallelId], onDelete: Cascade)
+  variation SetVariation?      @relation(fields: [setId, programId, variationId], references: [setId, programId, variationId], onDelete: Cascade)
+  source    SetTaxonomySource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@unique([setId, scopeKey])
+  @@index([setId, programId])
+  @@index([setId, parallelId])
+}
+
+model SetOddsByFormat {
+  id         String   @id @default(uuid())
+  setId      String
+  oddsKey    String
+  programId  String?
+  parallelId String?
+  formatKey  String?
+  channelKey String?
+  oddsText   String
+  sourceId   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  program  SetProgram?        @relation(fields: [setId, programId], references: [setId, programId], onDelete: Cascade)
+  parallel SetParallel?       @relation(fields: [setId, parallelId], references: [setId, parallelId], onDelete: Cascade)
+  source   SetTaxonomySource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@unique([setId, oddsKey])
+  @@index([setId, programId, parallelId])
+  @@index([setId, formatKey, channelKey])
+}
+
+model SetTaxonomyConflict {
+  id                String                 @id @default(uuid())
+  setId             String
+  entityType        TaxonomyEntityType
+  entityKey         String
+  conflictField     String
+  existingSourceId  String?
+  incomingSourceId  String?
+  existingValueJson Json?
+  incomingValueJson Json?
+  status            TaxonomyConflictStatus @default(OPEN)
+  resolutionNote    String?
+  resolvedAt        DateTime?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  existingSource SetTaxonomySource? @relation("TaxonomyConflictExistingSource", fields: [existingSourceId], references: [id], onDelete: SetNull)
+  incomingSource SetTaxonomySource? @relation("TaxonomyConflictIncomingSource", fields: [incomingSourceId], references: [id], onDelete: SetNull)
+
+  @@index([setId, status, createdAt])
+  @@index([setId, entityType, entityKey])
+}
+
+model SetTaxonomyAmbiguityQueue {
+  id             String                  @id @default(uuid())
+  setId          String
+  entityType     TaxonomyEntityType
+  ambiguityKey   String
+  payloadJson    Json?
+  sourceId       String?
+  status         TaxonomyAmbiguityStatus @default(PENDING)
+  resolutionNote String?
+  resolvedAt     DateTime?
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  source SetTaxonomySource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+
+  @@unique([setId, ambiguityKey])
+  @@index([setId, status, createdAt])
 }
 
 model SetReplaceJob {
@@ -853,18 +1085,36 @@ model CardAsset {
 }
 
 model CardVariant {
-  id             String   @id @default(uuid())
+  id             String                  @id @default(uuid())
   setId          String
   cardNumber     String
   parallelId     String
   parallelFamily String?
-  keywords       String[] @default([])
+  keywords       String[]                @default([])
   oddsInfo       String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  taxonomyMap    CardVariantTaxonomyMap?
 
   @@unique([setId, cardNumber, parallelId])
   @@index([setId, cardNumber])
+}
+
+model CardVariantTaxonomyMap {
+  id            String   @id @default(uuid())
+  cardVariantId String   @unique
+  setId         String
+  programId     String?
+  cardNumber    String?
+  variationId   String?
+  parallelId    String?
+  canonicalKey  String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  cardVariant CardVariant @relation(fields: [cardVariantId], references: [id], onDelete: Cascade)
+
+  @@index([setId, canonicalKey])
 }
 
 model CardVariantReferenceImage {

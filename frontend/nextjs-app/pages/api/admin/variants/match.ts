@@ -20,7 +20,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(405).json({ message: "Method not allowed" });
     }
 
-    const { cardAssetId, setId, cardNumber, numbered } = req.body ?? {};
+    const { cardAssetId, setId, cardNumber, numbered, program, variation } = req.body ?? {};
     if (!cardAssetId || !setId) {
       return res.status(400).json({ message: "cardAssetId and setId are required" });
     }
@@ -30,6 +30,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       setId: String(setId),
       cardNumber: cardNumber ? String(cardNumber) : null,
       numbered: numbered ? String(numbered) : null,
+      program: program ? String(program) : null,
+      variation: variation ? String(variation) : null,
     });
     if (!result.ok) {
       return res.status(404).json({ message: result.message });

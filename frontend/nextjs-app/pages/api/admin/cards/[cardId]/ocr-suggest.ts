@@ -2012,6 +2012,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           setId: suggestedSetId,
           cardNumber: suggestedCardNumber,
           numbered: suggestedNumbered,
+          program: fields.insertSet,
         });
         if (matchResult.ok) {
           const topCandidate = matchResult.candidates[0] ?? null;

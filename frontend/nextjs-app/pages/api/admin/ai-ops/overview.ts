@@ -32,6 +32,8 @@ type AttentionCard = {
   issues: string[];
   model: string | null;
   fallbackUsed: boolean;
+  setId: string | null;
+  programId: string | null;
 };
 
 type OverviewResponse =
@@ -61,6 +63,8 @@ type OverviewResponse =
         recentCorrections: Array<{
           cardId: string;
           fileName: string | null;
+          setId: string | null;
+          programId: string | null;
           fieldName: string;
           modelValue: string | null;
           humanValue: string | null;
@@ -233,6 +237,14 @@ function toSortedArray(map: Map<string, number>, limit = 10): Array<{ key: strin
     .map(([key, count]) => ({ key, count }));
 }
 
+function readTaxonomyContextFromAudit(value: unknown): { setId: string | null; programId: string | null } {
+  const audit = toRecord(value);
+  const fields = toRecord(audit?.fields);
+  const setId = toText(fields?.setName) ?? toText(fields?.setId);
+  const programId = toText(fields?.insertSet) ?? toText(fields?.programId);
+  return { setId, programId };
+}
+
 function readGateSummary(summary: unknown): { pass: boolean | null; failedChecks: string[] } {
   const summaryRecord = toRecord(summary);
   const gate = toRecord(summaryRecord?.gate);
@@ -299,6 +311,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
 
       const audit = toRecord(row.ocrSuggestionJson);
+      const taxonomyContext = readTaxonomyContextFromAudit(row.ocrSuggestionJson);
       const llm = toRecord(audit?.llm);
       const readiness = toRecord(audit?.readiness);
       const photoOcr = toRecord(audit?.photoOcr);
@@ -389,6 +402,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           issues: Array.from(new Set(issues)),
           model: llmModel,
           fallbackUsed,
+          setId: taxonomyContext.setId,
+          programId: taxonomyContext.programId,
         });
       }
     });
@@ -505,10 +520,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             select: {
               id: true,
               fileName: true,
+              ocrSuggestionJson: true,
             },
           })
         : [];
-    const correctionCardMap = new Map(correctionCards.map((row) => [row.id, row.fileName]));
+    const correctionCardMap = new Map(
+      correctionCards.map((row) => {
+        const taxonomyContext = readTaxonomyContextFromAudit(row.ocrSuggestionJson);
+        return [
+          row.id,
+          {
+            fileName: row.fileName,
+            setId: taxonomyContext.setId,
+            programId: taxonomyContext.programId,
+          },
+        ] as const;
+      })
+    );
 
     const corrections7d = lessons7dRows.filter((row) => row.wasCorrect === false).length;
     const accuracy7dPct = percentage(
@@ -533,7 +561,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const recentCorrections = recentCorrectionsRaw.map((row) => ({
       cardId: row.cardId,
-      fileName: correctionCardMap.get(row.cardId) ?? null,
+      fileName: correctionCardMap.get(row.cardId)?.fileName ?? null,
+      setId: correctionCardMap.get(row.cardId)?.setId ?? null,
+      programId: correctionCardMap.get(row.cardId)?.programId ?? null,
       fieldName: row.fieldName,
       modelValue: row.modelValue,
       humanValue: row.humanValue,

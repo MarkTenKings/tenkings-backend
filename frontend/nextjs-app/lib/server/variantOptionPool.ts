@@ -1,4 +1,6 @@
 import { prisma } from "@tenkings/database";
+import { readTaxonomyV2Flags } from "./taxonomyV2Flags";
+const taxonomyDb = prisma as any;
 
 export type VariantCatalogRow = {
   setId: string;
@@ -32,6 +34,8 @@ export type VariantOptionPool = {
   approvedSetCount: number;
   variantCount: number;
   selectedSetId: string | null;
+  source: "legacy" | "taxonomy_v2";
+  legacyFallbackUsed: boolean;
 };
 
 type SetScopeRule = {
@@ -314,6 +318,159 @@ function classifyOptionKinds(params: { parallelId: string; parallelFamily: strin
   return kinds;
 }
 
+async function loadTaxonomyV2OptionPool(params: {
+  querySetIds: string[];
+  setHints: string[];
+  selectedSetId: string | null;
+  approvedSetCount: number;
+  scopedSetIds: string[];
+}): Promise<VariantOptionPool | null> {
+  const programs = (await taxonomyDb.setProgram.findMany({
+    where: {
+      setId: { in: params.querySetIds },
+    },
+    select: {
+      setId: true,
+      programId: true,
+      label: true,
+      _count: {
+        select: {
+          cards: true,
+        },
+      },
+    },
+    orderBy: [{ setId: "asc" }, { label: "asc" }],
+  })) as Array<{ setId: string; programId: string; label: string; _count: { cards: number } }>;
+
+  if (programs.length < 1) {
+    return null;
+  }
+
+  const scopeRows = (await taxonomyDb.setParallelScope.findMany({
+    where: {
+      setId: { in: params.querySetIds },
+    },
+    select: {
+      setId: true,
+      programId: true,
+      parallel: {
+        select: {
+          label: true,
+        },
+      },
+    },
+    orderBy: [{ setId: "asc" }],
+    take: 5000,
+  })) as Array<{ setId: string; programId: string; parallel: { label: string } }>;
+
+  if (scopeRows.length < 1) {
+    return null;
+  }
+
+  const cardCountsBySetRows = (await taxonomyDb.setCard.groupBy({
+    by: ["setId"],
+    where: { setId: { in: params.querySetIds } },
+    _count: { _all: true },
+  })) as Array<{ setId: string; _count: { _all: number } }>;
+  const cardCountsBySet = new Map<string, number>(
+    cardCountsBySetRows.map((row: { setId: string; _count: { _all: number } }) => [row.setId, row._count._all])
+  );
+
+  const sets: SetOptionRow[] = params.querySetIds
+    .map((setId) => ({
+      setId,
+      count: cardCountsBySet.get(setId) ?? 0,
+      score: Number(scoreSet(setId, params.setHints).toFixed(3)),
+    }))
+    .sort((a, b) => b.score - a.score || b.count - a.count || a.setId.localeCompare(b.setId));
+
+  const variants: VariantCatalogRow[] = scopeRows.map((row: { setId: string; parallel: { label: string } }) => ({
+    setId: sanitizeText(row.setId),
+    cardNumber: "ALL",
+    parallelId: sanitizeText(row.parallel.label),
+    parallelFamily: null,
+  }));
+
+  type OptionAccumulator = {
+    label: string;
+    kind: VariantOptionKind;
+    count: number;
+    setIds: Set<string>;
+  };
+
+  const insertOptionMap = new Map<string, OptionAccumulator>();
+  programs.forEach((program: { setId: string; label: string; _count: { cards: number } }) => {
+    const label = sanitizeText(program.label);
+    if (!label) return;
+    const key = normalizeVariantLabelKey(label);
+    const existing = insertOptionMap.get(key);
+    if (existing) {
+      existing.count += program._count.cards;
+      existing.setIds.add(program.setId);
+      return;
+    }
+    insertOptionMap.set(key, {
+      label,
+      kind: "insert",
+      count: program._count.cards,
+      setIds: new Set([program.setId]),
+    });
+  });
+
+  const parallelOptionMap = new Map<string, OptionAccumulator>();
+  scopeRows.forEach((row: { setId: string; parallel: { label: string } }) => {
+    const label = sanitizeText(row.parallel.label);
+    if (!label) return;
+    const key = normalizeVariantLabelKey(label);
+    const existing = parallelOptionMap.get(key);
+    if (existing) {
+      existing.count += 1;
+      existing.setIds.add(row.setId);
+      return;
+    }
+    parallelOptionMap.set(key, {
+      label,
+      kind: "parallel",
+      count: 1,
+      setIds: new Set([row.setId]),
+    });
+  });
+
+  const toOptionRows = (map: Map<string, OptionAccumulator>): VariantOptionRow[] =>
+    Array.from(map.values())
+      .map((entry) => {
+        const setIds = Array.from(entry.setIds).sort((a, b) => {
+          const scoreA = sets.find((set) => set.setId === a)?.score ?? 0;
+          const scoreB = sets.find((set) => set.setId === b)?.score ?? 0;
+          return scoreB - scoreA || a.localeCompare(b);
+        });
+        return {
+          label: entry.label,
+          kind: entry.kind,
+          count: entry.count,
+          setIds,
+          primarySetId: setIds[0] ?? null,
+        } satisfies VariantOptionRow;
+      })
+      .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+
+  const insertOptions = toOptionRows(insertOptionMap);
+  const parallelOptions = toOptionRows(parallelOptionMap);
+
+  return {
+    variants,
+    sets,
+    insertOptions,
+    parallelOptions,
+    scopedSetIds: params.scopedSetIds,
+    approvedSetCount: params.approvedSetCount,
+    variantCount: variants.length,
+    selectedSetId: params.selectedSetId,
+    source: "taxonomy_v2",
+    legacyFallbackUsed: false,
+  };
+}
+
 export async function loadVariantOptionPool(params: {
   year: string;
   manufacturer: string;
@@ -337,6 +494,8 @@ export async function loadVariantOptionPool(params: {
       approvedSetCount: 0,
       variantCount: 0,
       selectedSetId: null,
+      source: "legacy",
+      legacyFallbackUsed: false,
     };
   }
 
@@ -361,6 +520,8 @@ export async function loadVariantOptionPool(params: {
       approvedSetCount: 0,
       variantCount: 0,
       selectedSetId: null,
+      source: "legacy",
+      legacyFallbackUsed: false,
     };
   }
 
@@ -384,6 +545,8 @@ export async function loadVariantOptionPool(params: {
       approvedSetCount: approvedSetIds.length,
       variantCount: 0,
       selectedSetId: null,
+      source: "legacy",
+      legacyFallbackUsed: false,
     };
   }
 
@@ -401,6 +564,34 @@ export async function loadVariantOptionPool(params: {
   }
 
   const querySetIds = selectedSetId ? [selectedSetId] : scopedSetIds;
+  const taxonomyFlags = readTaxonomyV2Flags();
+  if (taxonomyFlags.pickers) {
+    const taxonomyPool = await loadTaxonomyV2OptionPool({
+      querySetIds,
+      setHints,
+      selectedSetId,
+      approvedSetCount: approvedSetIds.length,
+      scopedSetIds,
+    });
+    if (taxonomyPool) {
+      return taxonomyPool;
+    }
+    if (!taxonomyFlags.allowLegacyFallback) {
+      return {
+        variants: [],
+        sets: [],
+        insertOptions: [],
+        parallelOptions: [],
+        scopedSetIds,
+        approvedSetCount: approvedSetIds.length,
+        variantCount: 0,
+        selectedSetId,
+        source: "taxonomy_v2",
+        legacyFallbackUsed: false,
+      };
+    }
+  }
+
   const groupedRows = await prisma.cardVariant.groupBy({
     by: ["setId", "parallelId", "parallelFamily"],
     where: {
@@ -518,5 +709,7 @@ export async function loadVariantOptionPool(params: {
     approvedSetCount: approvedSetIds.length,
     variantCount,
     selectedSetId,
+    source: "legacy",
+    legacyFallbackUsed: taxonomyFlags.pickers,
   };
 }

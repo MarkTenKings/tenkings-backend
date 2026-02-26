@@ -9,6 +9,15 @@ import {
   writeSetOpsAuditEvent,
 } from "../../../../../lib/server/setOps";
 import { createDraftVersionPayload, normalizeDraftRows } from "../../../../../lib/server/setOpsDrafts";
+import { readTaxonomyV2Flags } from "../../../../../lib/server/taxonomyV2Flags";
+import { ingestTaxonomyV2FromIngestionJob, type TaxonomyIngestResult } from "../../../../../lib/server/taxonomyV2Core";
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
 
 const buildSchema = z.object({
   ingestionJobId: z.string().min(1),
@@ -68,6 +77,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         datasetType: true,
         rawPayload: true,
         sourceUrl: true,
+        parserVersion: true,
+        parseSummaryJson: true,
       },
     });
 
@@ -100,6 +111,42 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       fallbackSetId: setId,
       rawPayload: job.rawPayload,
     });
+
+    const taxonomyFlags = readTaxonomyV2Flags();
+    let taxonomyIngest: TaxonomyIngestResult | null = null;
+    if (taxonomyFlags.ingest) {
+      try {
+        taxonomyIngest = await ingestTaxonomyV2FromIngestionJob({
+          setId,
+          ingestionJobId: job.id,
+          datasetType: job.datasetType,
+          rawPayload: job.rawPayload,
+          sourceUrl: job.sourceUrl,
+          parserVersion: job.parserVersion,
+          parseSummary: asRecord(job.parseSummaryJson),
+        });
+      } catch (error) {
+        taxonomyIngest = {
+          applied: false,
+          adapter: "error",
+          sourceId: null,
+          sourceKind: null,
+          artifactType: null,
+          counts: {
+            programs: 0,
+            cards: 0,
+            variations: 0,
+            parallels: 0,
+            scopes: 0,
+            oddsRows: 0,
+            conflicts: 0,
+            ambiguities: 0,
+            bridges: 0,
+          },
+          skippedReason: error instanceof Error ? error.message : "taxonomy_ingest_failed",
+        };
+      }
+    }
 
     const versionPayload = createDraftVersionPayload({
       setId,
@@ -150,6 +197,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       },
     });
 
+    const existingParseSummary = asRecord(job.parseSummaryJson) ?? {};
     await prisma.setIngestionJob.update({
       where: { id: job.id },
       data: {
@@ -158,10 +206,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         parsedAt: new Date(),
         reviewedAt: new Date(),
         parseSummaryJson: {
+          ...existingParseSummary,
           rowCount: versionPayload.rowCount,
           errorCount: versionPayload.errorCount,
           blockingErrorCount: versionPayload.blockingErrorCount,
           draftVersionId: version.id,
+          taxonomyIngest:
+            taxonomyIngest && taxonomyFlags.ingest
+              ? {
+                  applied: taxonomyIngest.applied,
+                  adapter: taxonomyIngest.adapter,
+                  sourceId: taxonomyIngest.sourceId,
+                  sourceKind: taxonomyIngest.sourceKind,
+                  artifactType: taxonomyIngest.artifactType,
+                  counts: taxonomyIngest.counts,
+                  skippedReason: taxonomyIngest.skippedReason ?? null,
+                }
+              : null,
         } as Prisma.InputJsonValue,
       },
     });
@@ -180,6 +241,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         rowCount: version.rowCount,
         errorCount: version.errorCount,
         blockingErrorCount: version.blockingErrorCount,
+        taxonomyIngest:
+          taxonomyIngest && taxonomyFlags.ingest
+            ? {
+                applied: taxonomyIngest.applied,
+                adapter: taxonomyIngest.adapter,
+                sourceId: taxonomyIngest.sourceId,
+                sourceKind: taxonomyIngest.sourceKind,
+                artifactType: taxonomyIngest.artifactType,
+                counts: taxonomyIngest.counts,
+                skippedReason: taxonomyIngest.skippedReason ?? null,
+              }
+            : null,
       },
     });
 

@@ -1,5 +1,6 @@
 import Head from "next/head";
 import Link from "next/link";
+import { useRouter } from "next/router";
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { useSession } from "../../hooks/useSession";
@@ -113,6 +114,11 @@ function sourceHostFromUrl(value: string | null | undefined) {
   }
 }
 
+function readQueryValue(value: string | string[] | undefined) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  return typeof raw === "string" ? raw.trim() : "";
+}
+
 function primaryPlayerLabel(value: string | null | undefined) {
   const raw = String(value || "").split("::")[0]?.trim() || "";
   if (!raw) return "";
@@ -148,6 +154,7 @@ function extractSeedTargetsFromDraftRows(rows: unknown[], targetSetId: string): 
 }
 
 export default function AdminVariants() {
+  const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
   const [variants, setVariants] = useState<VariantRow[]>([]);
   const [references, setReferences] = useState<ReferenceRow[]>([]);
@@ -199,6 +206,8 @@ export default function AdminVariants() {
   );
 
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
+  const querySetId = useMemo(() => readQueryValue(router.query.setId), [router.query.setId]);
+  const queryProgramId = useMemo(() => readQueryValue(router.query.programId), [router.query.programId]);
   const referenceVariantRows = useMemo(() => {
     const byVariant = new Map<string, ReferenceRow>();
     for (const ref of references) {
@@ -353,6 +362,29 @@ export default function AdminVariants() {
     }
     setSavedSetHydrated(true);
   }, []);
+
+  useEffect(() => {
+    if (!router.isReady || !savedSetHydrated) return;
+
+    const normalizedSet = querySetId.trim();
+    const normalizedProgram = queryProgramId.trim();
+    if (!normalizedSet && !normalizedProgram) return;
+
+    if (normalizedSet) {
+      setSeedForm((prev) => (prev.setId === normalizedSet ? prev : { ...prev, setId: normalizedSet }));
+      setRefForm((prev) => (prev.setId === normalizedSet ? prev : { ...prev, setId: normalizedSet }));
+      setForm((prev) => (prev.setId === normalizedSet ? prev : { ...prev, setId: normalizedSet }));
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(LAST_VARIANT_SET_STORAGE_KEY, normalizedSet);
+      }
+      void fetchReferences(normalizedSet);
+    }
+
+    if (normalizedProgram) {
+      setQuery((prev) => (prev ? prev : normalizedProgram));
+      setSeedForm((prev) => (prev.query ? prev : { ...prev, query: normalizedProgram }));
+    }
+  }, [fetchReferences, queryProgramId, querySetId, router.isReady, savedSetHydrated]);
 
   useEffect(() => {
     if (!savedSetHydrated || typeof window === "undefined") return;

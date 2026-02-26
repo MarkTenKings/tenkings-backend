@@ -1,6 +1,8 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { CardPhotoKind, CardReviewStage, enqueueBytebotLiteJob, prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { readTaxonomyV2Flags } from "../../../../lib/server/taxonomyV2Flags";
+import { resolveScopedParallelToken, resolveTaxonomyProgramAndVariation } from "../../../../lib/server/taxonomyV2Core";
 
 const normalizeWhitespace = (value: unknown): string =>
   typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -152,6 +154,91 @@ const buildCompSearchQuery = (card: {
   return tokens.join(" ").replace(/\s+/g, " ").trim();
 };
 
+const buildCompSearchQueryV2 = async (card: {
+  customTitle: string | null;
+  ocrText: string | null;
+  resolvedPlayerName: string | null;
+  classificationJson: unknown;
+  variantId: string | null;
+}) => {
+  const normalized =
+    typeof card.classificationJson === "object" && card.classificationJson
+      ? ((card.classificationJson as any).normalized ?? null)
+      : null;
+  const attributes =
+    typeof card.classificationJson === "object" && card.classificationJson
+      ? ((card.classificationJson as any).attributes ?? null)
+      : null;
+
+  const year = normalizeWhitespace(normalized?.year ?? attributes?.year);
+  const manufacturerRaw = normalizeWhitespace(attributes?.brand ?? normalized?.company);
+  const manufacturer = manufacturerRaw ? toTitleCase(manufacturerRaw) : "";
+  const setNameRaw = normalizeWhitespace(normalized?.setName ?? attributes?.setName);
+  const normalizedSetName = normalizeSetForQuery(setNameRaw, year, manufacturerRaw);
+  const cardNumber = normalizeWhitespace(normalized?.cardNumber ?? attributes?.cardNumber);
+  const playerName = normalizeWhitespace(card.resolvedPlayerName ?? attributes?.playerName);
+  const numbered = normalizeWhitespace(attributes?.numbered);
+
+  const rawProgram = normalizeWhitespace(normalized?.setCode ?? attributes?.setCode ?? attributes?.insertSet);
+  const rawVariation = normalizeWhitespace(normalized?.variationName ?? attributes?.variation);
+  const rawParallel = normalizeWhitespace(
+    normalized?.parallelName ??
+      attributes?.parallel ??
+      (Array.isArray(attributes?.variantKeywords) ? attributes.variantKeywords[0] : "") ??
+      card.variantId ??
+      ""
+  );
+
+  const setCandidates = Array.from(
+    new Set(
+      [
+        normalizeWhitespace(setNameRaw),
+        [year, manufacturerRaw, normalizedSetName].filter(Boolean).join(" ").trim(),
+        [year, manufacturerRaw, setNameRaw].filter(Boolean).join(" ").trim(),
+      ].filter(Boolean)
+    )
+  );
+
+  let taxonomyResolution: Awaited<ReturnType<typeof resolveTaxonomyProgramAndVariation>> | null = null;
+  for (const candidateSetId of setCandidates) {
+    const nextResolution = await resolveTaxonomyProgramAndVariation({
+      setId: candidateSetId,
+      program: rawProgram || null,
+      variation: rawVariation || null,
+    });
+    if (nextResolution.hasTaxonomy) {
+      taxonomyResolution = nextResolution;
+      break;
+    }
+  }
+
+  let scopedParallelLabel: string | null = null;
+  if (taxonomyResolution?.hasTaxonomy && taxonomyResolution.setId && rawParallel) {
+    const scopedParallel = await resolveScopedParallelToken({
+      setId: taxonomyResolution.setId,
+      programId: taxonomyResolution.programId,
+      variationId: taxonomyResolution.variationId,
+      parallel: rawParallel,
+    });
+    if (scopedParallel?.inScope) {
+      scopedParallelLabel = normalizeWhitespace(scopedParallel.parallelLabel);
+    }
+  }
+
+  const tokens: string[] = [];
+  pushUniqueToken(tokens, year);
+  pushUniqueToken(tokens, manufacturer);
+  pushUniqueToken(tokens, normalizedSetName || setNameRaw);
+  pushUniqueToken(tokens, taxonomyResolution?.programLabel ?? rawProgram);
+  pushUniqueToken(tokens, cardNumber);
+  pushUniqueToken(tokens, playerName);
+  pushUniqueToken(tokens, taxonomyResolution?.variationLabel ?? rawVariation);
+  pushUniqueToken(tokens, scopedParallelLabel ?? "");
+  pushUniqueToken(tokens, numbered);
+
+  return tokens.join(" ").replace(/\s+/g, " ").trim();
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     const admin = await requireAdminSession(req);
@@ -169,6 +256,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     let query = rawQuery;
     if (cardAssetId && !useManual) {
+      const flags = readTaxonomyV2Flags();
       const card = await prisma.cardAsset.findFirst({
         where: { id: cardAssetId, batch: { uploadedById: admin.user.id } },
         select: {
@@ -182,7 +270,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         },
       });
       if (card) {
-        const generated = buildCompSearchQuery(card);
+        const useTaxonomyQuery = flags.kingsreviewQuery || !flags.allowLegacyFallback;
+        const generated = useTaxonomyQuery ? await buildCompSearchQueryV2(card) : buildCompSearchQuery(card);
         if (generated) {
           query = generated;
         }

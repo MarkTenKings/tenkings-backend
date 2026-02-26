@@ -2868,3 +2868,414 @@
   - `docs/context/catalog-ops-execution-pack/MASTER_PLAN_V2_COMPLETE.md`
   - `docs/context/catalog-ops-execution-pack/WORKSTATION2_REDESIGN_SPEC.md`
 - Updated `docs/context/catalog-ops-execution-pack/README.md` read order to include these canonical specs.
+
+## 2026-02-26 - AGENTS Startup Context Sync (Docs-Only)
+
+### Summary
+- Re-read all mandatory startup docs listed in `AGENTS.md` in required order.
+- Confirmed local branch status remains `main...origin/main`.
+- Updated handoff docs for this session with explicit no-ops evidence.
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- Working tree includes pre-existing untracked file: `Deployments`.
+- No code/runtime changes, deploy/restart/migration commands, or DB operations were executed in this session.
+
+## 2026-02-26 - Catalog Ops Phase 0 (Shell Routes + Wrappers Only)
+
+### Summary
+- Re-read mandatory startup docs from `AGENTS.md` plus execution-pack kickoff docs.
+- Implemented only Phase 0 workstation scaffolding from execution pack:
+  - shell routes,
+  - shared shell/context bar/deep-link handling,
+  - legacy wrappers.
+- Preserved existing backend/runtime behavior (no API or server behavior changes).
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `docs/context/catalog-ops-execution-pack/README.md`
+- `docs/context/catalog-ops-execution-pack/AGENT_KICKOFF_CHECKLIST.md`
+- `docs/context/catalog-ops-execution-pack/BUILD_CONTRACT.md`
+- `docs/context/catalog-ops-execution-pack/WORKSTATION2_REDESIGN_SPEC.md`
+
+### Files Added
+- `frontend/nextjs-app/lib/catalogOpsFlags.ts`
+- `frontend/nextjs-app/components/catalogOps/CatalogOpsWorkstationShell.tsx`
+- `frontend/nextjs-app/components/catalogOps/CatalogOpsLegacyFrame.tsx`
+- `frontend/nextjs-app/pages/admin/catalog-ops/index.tsx`
+- `frontend/nextjs-app/pages/admin/catalog-ops/ingest-draft.tsx`
+- `frontend/nextjs-app/pages/admin/catalog-ops/variant-studio.tsx`
+- `frontend/nextjs-app/pages/admin/catalog-ops/ai-quality.tsx`
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/index.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added Phase 0 feature-flag reads for workstation/surface routing:
+  - `CATALOG_OPS_WORKSTATION`
+  - `CATALOG_OPS_OVERVIEW_V2`
+  - `CATALOG_OPS_INGEST_STEPPER`
+  - `CATALOG_OPS_VARIANT_STUDIO`
+  - `CATALOG_OPS_AI_QUALITY`
+- Added new IA routes:
+  - `/admin/catalog-ops`
+  - `/admin/catalog-ops/ingest-draft`
+  - `/admin/catalog-ops/variant-studio`
+  - `/admin/catalog-ops/ai-quality`
+- All new routes wrap existing legacy pages in an embedded frame to keep behavior parity during rollout.
+- Legacy routes remain available:
+  - `/admin/set-ops`
+  - `/admin/set-ops-review`
+  - `/admin/variants`
+  - `/admin/variant-ref-qa`
+  - `/admin/ai-ops`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/catalogOps/CatalogOpsWorkstationShell.tsx --file components/catalogOps/CatalogOpsLegacyFrame.tsx --file lib/catalogOpsFlags.ts --file pages/admin/catalog-ops/index.tsx --file pages/admin/catalog-ops/ingest-draft.tsx --file pages/admin/catalog-ops/variant-studio.tsx --file pages/admin/catalog-ops/ai-quality.tsx --file pages/admin/index.tsx`
+  - Result: pass (`No ESLint warnings or errors`).
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: pass.
+
+### Notes
+- Working tree still includes pre-existing untracked file: `Deployments`.
+- No deploy/restart/migration commands were executed.
+- No DB operations or destructive set operations were executed in this session.
+
+## 2026-02-26 - Catalog Ops Phase 1 (Ingest & Draft Guided Stepper)
+
+### Summary
+- Implemented Phase 1 deliverable: converted long Set Ops Review workspace into a guided 4-step Ingest & Draft flow.
+- Preserved current API usage and backend behavior; this change is UI/workflow composition only.
+- Wired step state to URL (`?step=`) for deep-link/re-entry behavior.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `frontend/nextjs-app/pages/admin/catalog-ops/ingest-draft.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added step definitions and URL step parsing:
+  - `source-intake`
+  - `ingestion-queue`
+  - `draft-approval`
+  - `seed-monitor`
+- Added top stepper cards with status (`Open` / `Complete` / `Pending`).
+- Converted each major section into collapsible step content (single expanded step at a time).
+- Added Continue actions:
+  - Step 1 -> Step 2
+  - Step 2 -> Step 3
+  - Step 3 -> Step 4
+- Added automatic step transitions on successful workflow events:
+  - source import/queue success -> Step 2
+  - build draft success -> Step 3
+  - approve success -> Step 4
+- Updated Catalog Ops route wrapper copy and default link to `step=source-intake`.
+- No API contracts/routes changed.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/admin/catalog-ops/ingest-draft.tsx`
+  - Result: pass (`No ESLint warnings or errors`).
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Result: pass.
+
+### Notes
+- Working tree still includes pre-existing untracked file: `Deployments`.
+- No deploy/restart/migration commands executed.
+- No DB operations or destructive set operations executed in this session.
+
+## 2026-02-26 - Catalog Ops Phase 2 (Variant Studio Consolidation)
+
+### Summary
+- Implemented Phase 2 deliverable by consolidating Variant Studio into a single route with two subtabs:
+  - `Catalog Dictionary`
+  - `Reference QA`
+- Added shared set/program context controls on the consolidated route.
+- Preserved existing batch QA and dictionary behavior by keeping legacy underlying workflows active.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/catalog-ops/variant-studio.tsx`
+- `frontend/nextjs-app/pages/admin/variants.tsx`
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Consolidated route (`/admin/catalog-ops/variant-studio`) now includes:
+  - subtab controls for dictionary/QA
+  - shared context input form (`setId`, `programId`)
+  - context apply/clear behavior persisted to URL query
+  - legacy frame target switching per active subtab while preserving shared context.
+- Added query-context hydration to legacy surfaces:
+  - `variants.tsx` consumes `setId`/`programId` query to prefill set context and initial query state.
+  - `variant-ref-qa.tsx` consumes `setId`/`programId` query to initialize set filter and optional search context.
+- No backend API changes were made in this phase.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/catalog-ops/variant-studio.tsx --file pages/admin/variants.tsx --file pages/admin/variant-ref-qa.tsx`
+  - Result: no new lint errors; existing warnings remain on pre-existing `<img>` usage in `variant-ref-qa.tsx`.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false`
+  - Result: pass.
+- Note:
+  - an earlier plain `tsc --noEmit` attempt in this environment exited with `SIGSEGV`; immediate rerun with identical code passed.
+
+### Notes
+- Working tree still includes pre-existing untracked file: `Deployments`.
+- No deploy/restart/migration commands executed.
+- No DB operations or destructive set operations executed in this session.
+
+## 2026-02-26 - Catalog Ops Phase 3 (Overview Redesign)
+
+### Summary
+- Implemented Phase 3 overview redesign on `/admin/catalog-ops` (CAT-030) with a high-signal set health surface.
+- Replaced legacy iframe wrapper on the overview route with a native workstation page that preserves existing backend APIs.
+- Converted replace/delete actions on the overview route to panel-based flows (right-side action panel + right-side danger panel).
+
+### Files Added
+- `frontend/nextjs-app/components/catalogOps/CatalogOpsOverviewSurface.tsx`
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/catalog-ops/index.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Deliverable 1 complete: Set health table + summary cards.
+  - Added summary cards for:
+    - taxonomy coverage (draft-status proxy),
+    - unresolved ambiguities (review/reject proxy),
+    - ref QA status (reference/variant coverage proxy),
+    - last seed result (complete/failed counts).
+  - Added set health table with per-set health chips and operational status.
+- Deliverable 2 complete: Replace action panel.
+  - Added right-side replace panel on overview route.
+  - Preserved existing replace API behaviors (`parse-upload`, `replace/preview`, `replace/jobs`, `cancel`) and progress polling.
+- Deliverable 3 complete: Delete danger panel.
+  - Added right-side delete panel with dry-run impact and typed confirmation requirements.
+  - Preserved existing delete APIs and safety constraints (`delete/dry-run`, `delete/confirm`).
+- Deliverable 4 complete: Cross-links to Ingest & Draft and Variant Studio.
+  - Added top-level and row-level deep links with preserved set context.
+- Legacy route safety preserved:
+  - `/admin/set-ops` remains available and unchanged as fallback.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/catalogOps/CatalogOpsOverviewSurface.tsx --file pages/admin/catalog-ops/index.tsx`
+  - Result: pass (`No ESLint warnings or errors`).
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration commands were executed.
+- No DB operations or destructive set operations were executed in this coding session.
+
+## 2026-02-26 - Catalog Ops Phase 4 (AI Quality Integration)
+
+### Summary
+- Implemented Phase 4 AI Quality integration (CAT-040) by replacing the `/admin/catalog-ops/ai-quality` legacy iframe wrapper with a native workstation surface.
+- Added set/program failure-analysis filters on AI Quality and connected context-aware deep links into Ingest & Draft and Variant Studio.
+- Extended AI Ops overview payload with set/program context metadata for attention queue and correction rows to support scoped filtering/routing.
+
+### Files Added
+- `frontend/nextjs-app/components/catalogOps/CatalogOpsAiQualitySurface.tsx`
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/catalog-ops/ai-quality.tsx`
+- `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Native AI Quality surface now includes required retained blocks:
+  - Eval gate + latest run,
+  - recent runs,
+  - failed checks,
+  - correction telemetry,
+  - attention queue.
+- Added shared set/program filter controls driven by workstation URL context:
+  - apply/clear filters updates `setId` and `programId` in route state.
+- Added context-aware workflow deep links:
+  - top-level links to `/admin/catalog-ops/ingest-draft` and `/admin/catalog-ops/variant-studio` with preserved context.
+  - row-level links from corrections and attention queue into those workflows with row set/program context.
+- Added metadata extension in AI Ops overview API:
+  - `ops.attentionCards[].setId/programId`
+  - `teach.recentCorrections[].setId/programId`
+  - derived from OCR audit taxonomy fields to support scoped failure analysis.
+- Legacy AI Ops route remains available as fallback:
+  - `/admin/ai-ops`.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/catalogOps/CatalogOpsAiQualitySurface.tsx --file pages/admin/catalog-ops/ai-quality.tsx --file pages/api/admin/ai-ops/overview.ts`
+  - Result: pass (`No ESLint warnings or errors`).
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration commands were executed.
+- No DB operations or destructive set operations were executed in this coding session.
+
+## 2026-02-26 - Catalog Ops Phase 5 (Taxonomy V2 Activation)
+
+### Summary
+- Implemented Phase 5 deliverables end-to-end behind flags:
+  - Taxonomy V2 schema/migration,
+  - Topps adapter v1 + taxonomy ingest core,
+  - V2 picker option pool,
+  - V2 matcher scope gating,
+  - V2 KingsReview deterministic query builder.
+
+### Files Added
+- `packages/database/prisma/migrations/20260226100000_taxonomy_v2_activation/migration.sql`
+- `frontend/nextjs-app/lib/server/taxonomyV2Enums.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2Flags.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2Utils.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2AdapterTypes.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2ToppsAdapter.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2Core.ts`
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/src/index.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/drafts/build.ts`
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+- `frontend/nextjs-app/lib/server/variantMatcher.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/options.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/match.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added additive Taxonomy V2 entities and supporting enums:
+  - provenance source,
+  - program/card/variation/parallel/scope/odds,
+  - conflict tracking,
+  - ambiguity queue,
+  - legacy `CardVariant` compatibility map.
+- Added Topps adapter v1 parsing contract and ingest execution pipeline with:
+  - deterministic source precedence ranking,
+  - conflict persistence,
+  - ambiguity queue upserts,
+  - compatibility bridge upserts.
+- Set Ops draft build now conditionally runs taxonomy ingest when `TAXONOMY_V2_INGEST` is enabled and writes ingest summary into job parse metadata + audit metadata.
+- Variant option pool now conditionally uses taxonomy-backed option generation when `TAXONOMY_V2_PICKERS` is enabled (with source marker in response payload).
+- Variant matcher now applies taxonomy scope filtering before ranking when `TAXONOMY_V2_MATCHER` is enabled.
+- KingsReview enqueue now supports deterministic taxonomy-aware builder when `TAXONOMY_V2_KINGSREVIEW_QUERY` is enabled, with in-scope parallel enforcement.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build`
+  - Result: pass.
+- `DATABASE_URL='postgresql://local:local@localhost:5432/local' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/taxonomyV2Enums.ts --file lib/server/taxonomyV2Flags.ts --file lib/server/taxonomyV2Utils.ts --file lib/server/taxonomyV2AdapterTypes.ts --file lib/server/taxonomyV2ToppsAdapter.ts --file lib/server/taxonomyV2Core.ts --file lib/server/variantOptionPool.ts --file lib/server/variantMatcher.ts --file pages/api/admin/set-ops/drafts/build.ts --file pages/api/admin/variants/options.ts --file pages/api/admin/variants/match.ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/kingsreview/enqueue.ts`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false`
+  - Result: first run SIGSEGV in environment; immediate rerun pass.
+
+### Operations
+- No deploy/restart/migration commands executed in this coding session.
+- No destructive set operations executed.
+- Rollback remains flag-based (`TAXONOMY_V2_*` toggles).
+
+## 2026-02-26 - Catalog Ops Phase 6 (Panini + Upper Deck Adapter Rollout)
+
+### Summary
+- Implemented Phase 6 by extending Taxonomy V2 ingestion from Topps-only to multi-manufacturer adapter support.
+- Added Panini and Upper Deck adapter implementations and routed taxonomy core ingest through deterministic adapter selection.
+
+### Files Added
+- `frontend/nextjs-app/lib/server/taxonomyV2ManufacturerAdapter.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2PaniniAdapter.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2UpperDeckAdapter.ts`
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/taxonomyV2ToppsAdapter.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2Core.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added shared manufacturer adapter utility that normalizes source rows into taxonomy contracts:
+  - programs,
+  - cards,
+  - variations,
+  - parallels,
+  - scopes,
+  - odds rows,
+  - ambiguity signals.
+- Added source-matching profiles for:
+  - Topps,
+  - Panini,
+  - Upper Deck.
+- Updated taxonomy core `createAdapterOutput(...)` to evaluate adapter list in deterministic order and use first eligible adapter result.
+- Preserved existing fallback behavior (`adapter: none`) when no manufacturer matcher is eligible.
+- Consumer cutover flags remain unchanged; broader rollout is enabled by expanded ingest adapter coverage.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/taxonomyV2ManufacturerAdapter.ts --file lib/server/taxonomyV2ToppsAdapter.ts --file lib/server/taxonomyV2PaniniAdapter.ts --file lib/server/taxonomyV2UpperDeckAdapter.ts --file lib/server/taxonomyV2Core.ts`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false`
+  - Result: pass.
+- `pnpm --filter @tenkings/database build`
+  - Result: pass.
+
+### Operations
+- No deploy/restart/migration commands executed in this coding session.
+- No destructive set operations or manual DB data operations executed.
+
+## 2026-02-26 - Catalog Ops Phase 7 (Cutover + Flat-Only Deprecation)
+
+### Summary
+- Implemented final Phase 7 cutover by making Taxonomy V2 default-on and deprecating flat-only runtime paths from normal operation.
+- Retained explicit rollback controls so legacy behavior is still available only when intentionally enabled.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/taxonomyV2Flags.ts`
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+- `frontend/nextjs-app/lib/server/variantMatcher.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/options.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Taxonomy flag behavior now supports Phase 7 cutover controls:
+  - `TAXONOMY_V2_DEFAULT_ON` (defaults to true when unset).
+  - `TAXONOMY_V2_FORCE_LEGACY=true` to force rollback to legacy behavior.
+  - `TAXONOMY_V2_ALLOW_LEGACY_FALLBACK` to permit/deny fallback when taxonomy scope/data is unavailable.
+- Picker runtime hardening:
+  - when pickers run in V2 mode and fallback is disallowed, the API does not silently fall back to flat legacy options.
+  - options payload now returns `legacyFallbackUsed` for observability.
+- Matcher runtime hardening:
+  - when matcher V2 is enabled and fallback is disallowed, missing taxonomy scope is treated as a hard failure.
+- KingsReview runtime hardening:
+  - V2 deterministic query builder is used unless explicit fallback permissions allow legacy behavior.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/taxonomyV2Flags.ts --file lib/server/variantOptionPool.ts --file lib/server/variantMatcher.ts --file pages/api/admin/variants/options.ts --file pages/api/admin/kingsreview/enqueue.ts`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false`
+  - Result: pass.
+- `pnpm --filter @tenkings/database build`
+  - Result: pass.
+
+### Operations
+- No deploy/restart/migration commands were executed in this coding session.
+- No destructive set operations or manual DB data operations were executed.
+- Program status: Phase 0 through Phase 7 are now implemented in codebase; execution-pack phase sequence is complete.
