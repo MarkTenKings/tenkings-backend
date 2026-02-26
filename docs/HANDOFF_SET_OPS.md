@@ -1809,3 +1809,100 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
 - Operational status:
   - No deploy/restart/migration executed in this coding step.
+
+## Replace Wizard Production Success Evidence (2026-02-25)
+- Operator re-tested Replace Wizard in production after parser + SQL fixes.
+- Runtime result from `/admin/set-ops` replace progress:
+  - Job id: `2ee1ed8c-183f-46ed-831a-90f8a1b37a7c`
+  - Status: `COMPLETE`
+  - Steps completed:
+    - validate preview
+    - delete existing set data
+    - create/build draft
+    - approve draft
+    - seed set
+  - Draft version id: `3668ab4d-d558-44e9-b2d0-3a3f095f80d4`
+  - Approval id: `dfc6ad93-522b-4552-b6a3-07f1a461a032`
+  - Seed workspace/job id: `6eacc841-dcca-4657-929f-b0b26692c9c1`
+  - Final seed summary:
+    - inserted: `1793`
+    - updated: `30`
+    - skipped: `0`
+    - failed: `0`
+- Current status:
+  - Replace flow is now working end-to-end in production for tested set (`2025-26 Topps Basketball`).
+
+## Production Outage Triage Note (2026-02-25)
+- Incident:
+  - Operator reported site outage (`ERR_CONNECTION_CLOSED`) on `https://collect.tenkings.co`.
+- Runtime evidence supplied by operator:
+  - Droplet services restarted successfully:
+    - `infra-bytebot-lite-service-1` up
+    - `infra-caddy-1` up
+  - External TLS probe from workstation:
+    - `curl -svI https://collect.tenkings.co`
+    - DNS resolved to `216.150.1.193` / `216.150.16.193`
+    - TLS handshake failed with `SSL_ERROR_SYSCALL`
+- Analysis:
+  - `collect.tenkings.co` is not resolving to expected Vercel/droplet endpoint.
+  - Failure occurs at DNS/edge/TLS layer before app code execution.
+  - Not attributable to replace-parser or set-replace SQL changes.
+
+## Outage Mitigation Evidence (2026-02-25)
+- Operator ran Vercel recovery steps from workstation:
+  - linked CLI to correct project: `tenkings-backend-nextjs-app`
+  - confirmed `collect.tenkings.co` exists on **two** Vercel projects:
+    - `tenkings-backend-nextjs-app`
+    - `ten-kings-collect-tvz4`
+  - deployed production build:
+    - `https://tenkings-backend-nextjs-9dl06mpyy-ten-kings.vercel.app` (`Ready`)
+  - forced alias:
+    - `collect.tenkings.co -> tenkings-backend-nextjs-9dl06mpyy-ten-kings.vercel.app`
+- Current risk to monitor:
+  - dual-project domain attachment can cause future alias/routing drift.
+
+## Outage Follow-up Evidence (2026-02-25)
+- Operator completed alias recovery command successfully:
+  - `collect.tenkings.co -> tenkings-backend-nextjs-9dl06mpyy-ten-kings.vercel.app`
+- But live check still failed:
+  - `curl -svI https://collect.tenkings.co`
+  - DNS resolved to `216.150.1.193`, `216.150.16.193`
+  - TLS failed with `SSL_ERROR_SYSCALL`
+- Conclusion:
+  - DNS for `collect` is still not pointing to Vercel target (`cname.vercel-dns.com`), so alias changes cannot restore traffic until DNS record is corrected at current DNS host.
+
+## Production Access Recovery Confirmed (2026-02-25)
+- Operator confirmed public access recovery by disabling Vercel deployment protection on `tenkings-backend-nextjs-app`.
+- Operator also confirmed rollback/promotion to the most recent build that includes Replace DB work and reported site is running again.
+- Current operator decision:
+  - keep current recovered state as-is (no additional alias steps at this moment).
+
+## Replace Wizard Reference Image Preservation (2026-02-25)
+- Trigger:
+  - Replace run completed, but existing seeded reference images disappeared because replace deleted all `CardVariantReferenceImage` rows and seed only recreates `CardVariant`.
+- Root cause:
+  - `runSetReplaceJob(...)` delete stage removed all set-scoped reference images.
+  - No restore step existed after seed.
+- Fix:
+  - `frontend/nextjs-app/lib/server/setOpsReplace.ts`
+  - Added snapshot/restore flow for reference images:
+    - before delete: capture all set-scoped reference images and keep only those whose normalized `(cardNumber, parallelId)` still exist in accepted incoming rows,
+    - delete stage still clears set-scoped rows (unchanged safety semantics),
+    - after successful seed: restore preserved reference images in chunked `createMany` inserts, rewriting `setId/cardNumber/parallelId` to canonical incoming keys.
+  - Added replace logs:
+    - `replace:refs:snapshot total=... preserved=...`
+    - `replace:refs:restore:start count=...`
+    - `replace:refs:restore:complete restored=...` (or skipped)
+  - Added result/audit metadata block:
+    - `referenceImagePreservation.snapshotCount`
+    - `referenceImagePreservation.preservedCount`
+    - `referenceImagePreservation.restoredCount`
+  - `frontend/nextjs-app/pages/admin/set-ops.tsx`
+  - Final replace summary now displays:
+    - `Ref images preserved`
+    - `Ref images restored`
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsReplace.ts --file pages/admin/set-ops.tsx` -> pass.
+- Operational status:
+  - No deploy/restart/migration executed in this coding step.

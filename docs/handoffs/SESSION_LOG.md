@@ -2675,3 +2675,127 @@
 
 ### Notes
 - No deploy/restart/migration executed in this coding step.
+
+## 2026-02-25 - Replace Wizard Production Run Confirmed COMPLETE
+
+### Summary
+- Operator executed Replace Wizard in production for `2025-26 Topps Basketball` after latest parser and SQL fixes.
+- Replace job completed end-to-end with all workflow stages successful.
+
+### Runtime Evidence (operator UI output)
+- Replace job id: `2ee1ed8c-183f-46ed-831a-90f8a1b37a7c`
+- Final status: `COMPLETE`
+- Step results:
+  - Validate preview: complete (`Preview hash and validations verified`)
+  - Delete existing set data: complete
+  - Create/build draft: complete (`Draft version 3668ab4d-d558-44e9-b2d0-3a3f095f80d4`)
+  - Approve draft: complete (`Approval dfc6ad93-522b-4552-b6a3-07f1a461a032`)
+  - Seed set: complete (`Seed completed inserted=1793 updated=30`)
+- Final summary:
+  - Inserted: `1793`
+  - Updated: `30`
+  - Skipped: `0`
+  - Failed: `0`
+- Seed workspace/job id shown by UI:
+  - `6eacc841-dcca-4657-929f-b0b26692c9c1`
+
+### Notes
+- Production Replace Wizard flow is validated as functional for this set/run.
+
+## 2026-02-25 - Outage Triage (collect.tenkings.co)
+
+### Summary
+- Operator reported full-site outage with browser error `ERR_CONNECTION_CLOSED`.
+- Evidence indicates edge/DNS/TLS routing issue rather than application runtime crash.
+
+### Runtime Evidence (operator output)
+- Droplet restart completed successfully:
+  - `docker compose restart caddy bytebot-lite-service`
+  - `docker compose ps` showed both services `Up`.
+- Workstation probe:
+  - `curl -svI https://collect.tenkings.co`
+  - resolved IPs: `216.150.1.193`, `216.150.16.193`
+  - handshake failure: `OpenSSL SSL_connect: SSL_ERROR_SYSCALL`
+
+### Assessment
+- App containers were healthy at time of check.
+- `collect.tenkings.co` endpoint failed before reaching app runtime.
+- Likely DNS/edge mapping drift for `collect.tenkings.co` (domain currently not reaching expected serving origin).
+
+## 2026-02-25 - Outage Mitigation (Vercel Alias Recovery)
+
+### Summary
+- Operator executed project-link, redeploy, and forced alias to restore `collect.tenkings.co` routing.
+
+### Runtime Evidence (operator output)
+- Vercel project link confirmed:
+  - `ten-kings/tenkings-backend-nextjs-app`
+- Domain inspect showed dual attachment:
+  - `tenkings-backend-nextjs-app`
+  - `ten-kings-collect-tvz4`
+- Fresh production deploy completed:
+  - `https://tenkings-backend-nextjs-9dl06mpyy-ten-kings.vercel.app` (`Ready`)
+- Alias force-set completed:
+  - `collect.tenkings.co -> tenkings-backend-nextjs-9dl06mpyy-ten-kings.vercel.app`
+
+### Notes
+- Dual-project domain attachment remains a drift risk; cleanup recommended after service stability is confirmed.
+
+## 2026-02-25 - Outage Follow-up (Alias Set But DNS Still Wrong)
+
+### Summary
+- Operator confirmed alias assignment succeeded, but custom domain remained unavailable.
+
+### Runtime Evidence (operator output)
+- Alias set success:
+  - `collect.tenkings.co now points to https://tenkings-backend-nextjs-9dl06mpyy-ten-kings.vercel.app`
+- Probe still failing:
+  - `curl -svI https://collect.tenkings.co`
+  - resolved A records: `216.150.1.193`, `216.150.16.193`
+  - TLS error: `SSL_ERROR_SYSCALL`
+
+### Assessment
+- DNS path for `collect` is still not routing to Vercel as required.
+- App/runtime recoveries cannot resolve outage until DNS record at active DNS provider is corrected.
+
+## 2026-02-25 - Production Access Recovery Confirmed
+
+### Summary
+- Operator reported that disabling Vercel protection restored public site availability.
+- Operator reported rollback/promotion to latest desired build (with replace DB work) is active and site is running.
+
+### Runtime Evidence (operator statement)
+- "turning the vercel protection OFF fixed it and now my website is running again"
+- "rolled back to most recent build with all the replace db work"
+
+### Notes
+- Operator asked to keep recovered state as-is for now.
+
+## 2026-02-25 - Replace Wizard Fix (Preserve Existing Reference Images)
+
+### Summary
+- Investigated operator-reported behavior where running Set Replace removed all previously seeded images.
+- Confirmed root cause in `runSetReplaceJob`:
+  - delete stage removed all `CardVariantReferenceImage` rows for the set,
+  - seed stage only creates/updates `CardVariant`, so refs were never restored.
+- Implemented reference-image preservation in replace workflow:
+  - snapshot existing set refs before delete,
+  - keep only refs whose normalized `(cardNumber, parallelId)` keys still exist in accepted incoming rows,
+  - after successful seed, restore preserved refs in chunked inserts using canonical incoming keys.
+- Added `referenceImagePreservation` counts to replace result/audit metadata.
+- Updated `/admin/set-ops` final replace summary to display preserved/restored ref counts.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsReplace.ts`
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsReplace.ts --file pages/admin/set-ops.tsx`
+  - Result: pass.
+
+### Notes
+- No deploy/restart/migration executed in this coding step.

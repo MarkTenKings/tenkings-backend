@@ -999,6 +999,10 @@ export default function SetOpsPage() {
   }, [replaceLatestJob]);
   const replaceResultPayload = useMemo(() => toObject(replaceLatestJob?.result ?? null), [replaceLatestJob]);
   const replaceSeedSummary = useMemo(() => toObject(replaceResultPayload?.seedSummary), [replaceResultPayload]);
+  const replaceReferenceImagePreservation = useMemo(
+    () => toObject(replaceResultPayload?.referenceImagePreservation),
+    [replaceResultPayload]
+  );
 
   useEffect(() => {
     if (replacePreviewPage > replacePreviewPageCount) {
@@ -1625,6 +1629,14 @@ export default function SetOpsPage() {
                       <p>Updated: {Number(replaceSeedSummary?.updated ?? 0).toLocaleString()}</p>
                       <p>Skipped: {Number(replaceSeedSummary?.skipped ?? 0).toLocaleString()}</p>
                       <p>Failed: {Number(replaceSeedSummary?.failed ?? 0).toLocaleString()}</p>
+                      <p>
+                        Ref images preserved:{" "}
+                        {Number(replaceReferenceImagePreservation?.preservedCount ?? 0).toLocaleString()}
+                      </p>
+                      <p>
+                        Ref images restored:{" "}
+                        {Number(replaceReferenceImagePreservation?.restoredCount ?? 0).toLocaleString()}
+                      </p>
                       <div className="mt-2 flex flex-wrap gap-3">
                         {replaceLatestJob.seedJobId && (
                           <Link className="text-gold-200 underline hover:text-gold-100" href="/admin/set-ops-review">

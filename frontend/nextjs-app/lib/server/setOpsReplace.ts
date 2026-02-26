@@ -10,7 +10,7 @@ import {
   SetSeedJobStatus,
   type Prisma,
 } from "@tenkings/database";
-import { normalizeSetLabel } from "@tenkings/shared";
+import { normalizeCardNumber, normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
 import type { AdminSession } from "./admin";
 import { computeSetDeleteImpact, writeSetOpsAuditEvent } from "./setOps";
 import { createDraftVersionPayload, extractDraftRows, normalizeDraftRows, summarizeDraftDiff } from "./setOpsDrafts";
@@ -189,6 +189,100 @@ function buildSetIdCandidates(inputSetId: string) {
 function buildVariantKey(cardNumber: string | null, parallelId: string) {
   const normalizedCardNumber = String(cardNumber || "ALL").trim() || "ALL";
   return `${normalizedCardNumber}::${String(parallelId || "").trim()}`;
+}
+
+function normalizeVariantCardNumberForKey(cardNumber: string | null | undefined) {
+  return normalizeCardNumber(cardNumber) ?? "ALL";
+}
+
+function buildNormalizedVariantKey(cardNumber: string | null | undefined, parallelId: string | null | undefined) {
+  const normalizedCardNumber = normalizeVariantCardNumberForKey(cardNumber);
+  const normalizedParallelId = normalizeParallelLabel(parallelId);
+  return `${normalizedCardNumber}::${normalizedParallelId}`;
+}
+
+function buildAcceptedVariantKeyMap(rows: PreparedSetReplace["normalizedRows"]) {
+  const keys = new Map<string, { cardNumber: string; parallelId: string }>();
+  for (const row of rows) {
+    if (hasBlockingErrors(row.errors) || !row.parallel) {
+      continue;
+    }
+    const cardNumber = normalizeVariantCardNumberForKey(row.cardNumber);
+    const parallelId = normalizeParallelLabel(row.parallel);
+    if (!parallelId) {
+      continue;
+    }
+    keys.set(`${cardNumber}::${parallelId}`, {
+      cardNumber,
+      parallelId,
+    });
+  }
+  return keys;
+}
+
+type PreservedReferenceImageRow = {
+  cardNumber: string | null;
+  parallelId: string;
+  refType: string;
+  pairKey: string | null;
+  sourceListingId: string | null;
+  playerSeed: string | null;
+  storageKey: string | null;
+  qaStatus: string;
+  ownedStatus: string;
+  promotedAt: Date | null;
+  sourceUrl: string | null;
+  listingTitle: string | null;
+  rawImageUrl: string;
+  cropUrls: string[];
+  cropEmbeddings: Prisma.JsonValue | null;
+  qualityScore: number | null;
+  qualityGateScore: number | null;
+  qualityGateStatus: string | null;
+  qualityGateReasonsJson: Prisma.JsonValue | null;
+  canonicalCardNumber: string;
+  canonicalParallelId: string;
+};
+
+const REFERENCE_IMAGE_RESTORE_CHUNK_SIZE = 200;
+
+async function restorePreservedReferenceImages(params: { setId: string; rows: PreservedReferenceImageRow[] }) {
+  let restoredCount = 0;
+
+  for (let index = 0; index < params.rows.length; index += REFERENCE_IMAGE_RESTORE_CHUNK_SIZE) {
+    const chunk = params.rows.slice(index, index + REFERENCE_IMAGE_RESTORE_CHUNK_SIZE);
+    if (chunk.length < 1) continue;
+
+    const inserted = await prisma.cardVariantReferenceImage.createMany({
+      data: chunk.map((row) => ({
+        setId: params.setId,
+        cardNumber: row.canonicalCardNumber,
+        parallelId: row.canonicalParallelId,
+        refType: row.refType,
+        pairKey: row.pairKey,
+        sourceListingId: row.sourceListingId,
+        playerSeed: row.playerSeed,
+        storageKey: row.storageKey,
+        qaStatus: row.qaStatus,
+        ownedStatus: row.ownedStatus,
+        promotedAt: row.promotedAt,
+        sourceUrl: row.sourceUrl,
+        listingTitle: row.listingTitle,
+        rawImageUrl: row.rawImageUrl,
+        cropUrls: row.cropUrls,
+        cropEmbeddings: row.cropEmbeddings == null ? undefined : (row.cropEmbeddings as Prisma.InputJsonValue),
+        qualityScore: row.qualityScore,
+        qualityGateScore: row.qualityGateScore,
+        qualityGateStatus: row.qualityGateStatus,
+        qualityGateReasonsJson:
+          row.qualityGateReasonsJson == null ? undefined : (row.qualityGateReasonsJson as Prisma.InputJsonValue),
+      })),
+    });
+
+    restoredCount += inserted.count;
+  }
+
+  return restoredCount;
 }
 
 function sha256(input: string) {
@@ -1041,6 +1135,10 @@ export async function runSetReplaceJob(params: {
   let deleteImpact: Awaited<ReturnType<typeof computeSetDeleteImpact>> | null = null;
   let prepared: PreparedSetReplace | null = null;
   let seedSummary: Awaited<ReturnType<typeof runSeedJob>> | null = null;
+  let preservedReferenceImages: PreservedReferenceImageRow[] = [];
+  let referenceImageSnapshotCount = 0;
+  let referenceImagePreservedCount = 0;
+  let referenceImageRestoredCount = 0;
 
   const persist = async (data: ReplaceJobUpdatePatch = {}) => {
     record = await updateReplaceJobRow(params.jobId, data);
@@ -1098,6 +1196,70 @@ export async function runSetReplaceJob(params: {
 
     deleteImpact = await computeSetDeleteImpact(prisma, runArgs.setId);
 
+    const incomingVariantKeyMap = buildAcceptedVariantKeyMap(prepared.normalizedRows);
+    const existingReferenceImages = await prisma.cardVariantReferenceImage.findMany({
+      where: {
+        setId: {
+          in: prepared.setIdCandidates,
+        },
+      },
+      select: {
+        cardNumber: true,
+        parallelId: true,
+        refType: true,
+        pairKey: true,
+        sourceListingId: true,
+        playerSeed: true,
+        storageKey: true,
+        qaStatus: true,
+        ownedStatus: true,
+        promotedAt: true,
+        sourceUrl: true,
+        listingTitle: true,
+        rawImageUrl: true,
+        cropUrls: true,
+        cropEmbeddings: true,
+        qualityScore: true,
+        qualityGateScore: true,
+        qualityGateStatus: true,
+        qualityGateReasonsJson: true,
+      },
+    });
+
+    referenceImageSnapshotCount = existingReferenceImages.length;
+    preservedReferenceImages = [];
+
+    for (const row of existingReferenceImages) {
+      const matchedVariant = incomingVariantKeyMap.get(buildNormalizedVariantKey(row.cardNumber, row.parallelId));
+      if (!matchedVariant) continue;
+      preservedReferenceImages.push({
+        cardNumber: row.cardNumber,
+        parallelId: row.parallelId,
+        refType: row.refType,
+        pairKey: row.pairKey,
+        sourceListingId: row.sourceListingId,
+        playerSeed: row.playerSeed,
+        storageKey: row.storageKey,
+        qaStatus: row.qaStatus,
+        ownedStatus: row.ownedStatus,
+        promotedAt: row.promotedAt,
+        sourceUrl: row.sourceUrl,
+        listingTitle: row.listingTitle,
+        rawImageUrl: row.rawImageUrl,
+        cropUrls: row.cropUrls,
+        cropEmbeddings: row.cropEmbeddings,
+        qualityScore: row.qualityScore,
+        qualityGateScore: row.qualityGateScore,
+        qualityGateStatus: row.qualityGateStatus,
+        qualityGateReasonsJson: row.qualityGateReasonsJson,
+        canonicalCardNumber: matchedVariant.cardNumber,
+        canonicalParallelId: matchedVariant.parallelId,
+      });
+    }
+
+    referenceImagePreservedCount = preservedReferenceImages.length;
+    logs.push(`replace:refs:snapshot total=${referenceImageSnapshotCount} preserved=${referenceImagePreservedCount}`);
+
     await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       await tx.cardVariantReferenceImage.deleteMany({
         where: {
@@ -1132,6 +1294,11 @@ export async function runSetReplaceJob(params: {
       logsJson: logs as Prisma.InputJsonValue,
       resultJson: {
         deleteImpact,
+        referenceImagePreservation: {
+          snapshotCount: referenceImageSnapshotCount,
+          preservedCount: referenceImagePreservedCount,
+          restoredCount: referenceImageRestoredCount,
+        },
       } as Prisma.InputJsonValue,
     });
 
@@ -1145,6 +1312,10 @@ export async function runSetReplaceJob(params: {
       metadata: {
         replaceJobId: params.jobId,
         deleteImpact,
+        referenceImagePreservation: {
+          snapshotCount: referenceImageSnapshotCount,
+          preservedCount: referenceImagePreservedCount,
+        },
       },
     });
 
@@ -1342,6 +1513,17 @@ export async function runSetReplaceJob(params: {
       throw new Error(`Seed stage failed with status ${seedSummary.status}`);
     }
 
+    if (preservedReferenceImages.length > 0) {
+      logs.push(`replace:refs:restore:start count=${preservedReferenceImages.length}`);
+      referenceImageRestoredCount = await restorePreservedReferenceImages({
+        setId: prepared.setId,
+        rows: preservedReferenceImages,
+      });
+      logs.push(`replace:refs:restore:complete restored=${referenceImageRestoredCount}`);
+    } else {
+      logs.push("replace:refs:restore:skipped preserved=0");
+    }
+
     setStageComplete(progress, SetReplaceJobStatus.SEEDING_SET, `Seed completed inserted=${seedSummary.inserted} updated=${seedSummary.updated}`);
 
     await writeSetOpsAuditEvent({
@@ -1359,6 +1541,11 @@ export async function runSetReplaceJob(params: {
       metadata: {
         replaceJobId: params.jobId,
         seedSummary,
+        referenceImagePreservation: {
+          snapshotCount: referenceImageSnapshotCount,
+          preservedCount: referenceImagePreservedCount,
+          restoredCount: referenceImageRestoredCount,
+        },
       },
     });
 
@@ -1383,6 +1570,11 @@ export async function runSetReplaceJob(params: {
         deleteImpact,
         preview: prepared.preview,
         seedSummary,
+        referenceImagePreservation: {
+          snapshotCount: referenceImageSnapshotCount,
+          preservedCount: referenceImagePreservedCount,
+          restoredCount: referenceImageRestoredCount,
+        },
       } as Prisma.InputJsonValue,
     });
 
@@ -1417,6 +1609,11 @@ export async function runSetReplaceJob(params: {
         deleteImpact,
         preview: prepared?.preview ?? null,
         seedSummary,
+        referenceImagePreservation: {
+          snapshotCount: referenceImageSnapshotCount,
+          preservedCount: referenceImagePreservedCount,
+          restoredCount: referenceImageRestoredCount,
+        },
       } as Prisma.InputJsonValue,
     });
 
