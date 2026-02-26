@@ -546,7 +546,9 @@ function normalizeChecklistSectionName(raw: string) {
   if (
     /^base(?:\s+set)?$/.test(baseKey) ||
     /^base\s+cards?(?:\s+(?:[ivxlcdm]+|\d+))?$/.test(baseKey) ||
-    /^base\s+checklist(?:\s+(?:[ivxlcdm]+|\d+))?$/.test(baseKey)
+    /^base\s+checklist(?:\s+(?:[ivxlcdm]+|\d+))?$/.test(baseKey) ||
+    /^set\s+checklist(?:\s+(?:[ivxlcdm]+|\d+))?$/.test(baseKey) ||
+    /^checklist(?:\s+(?:[ivxlcdm]+|\d+))?$/.test(baseKey)
   ) {
     return "Base Set";
   }
@@ -572,6 +574,7 @@ const checklistSectionNoiseWords = new Set([
   "AUTOGRAPH",
   "CARDS",
   "BASELINE",
+  "CHECKLIST",
   "MASTERS",
   "ELECTRIFYING",
   "SIGNATURES",
@@ -1120,6 +1123,289 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
         playerSeed,
         player: playerSeed,
       });
+    }
+  }
+
+  return rows;
+}
+
+const ODDS_VALUE_RE = /\b\d+\s*:\s*[\d,]+\b/i;
+const SERIAL_VALUE_RE = /\b(?:1\s*\/\s*1|\/\s*[\d,]+)\b/i;
+
+function normalizeOddsValueToken(value: string) {
+  return compactWhitespace(value).replace(/\s+/g, "");
+}
+
+function normalizeSerialValueToken(value: string) {
+  return compactWhitespace(value)
+    .replace(/\s+/g, "")
+    .replace(/^\/+/, "/")
+    .replace(/^1\/1$/i, "1/1");
+}
+
+function sanitizeParallelOddsLabel(value: string) {
+  let next = compactWhitespace(value)
+    .replace(/^[-–—:;,.()\s]+/, "")
+    .replace(/[-–—:;,.()\s]+$/, "");
+
+  next = next.replace(/\bparallels?\s+list\s*&?\s*odds?\b.*$/i, "").trim();
+  next = next.replace(/^and\s+/i, "").trim();
+  next = next.replace(/^including\s+/i, "").trim();
+  next = next.replace(/^hobby\s+or\s+jumbo\s+exclusives?\s+include\s+/i, "").trim();
+  next = next.replace(/^as\s+for\s+retail[,:\s]+/i, "").trim();
+  next = next.replace(/^the\s+black\s+friday\s+target\s+blasters?\s+have\s+several\s+exclusive\s+parallels?,\s+including\s+/i, "").trim();
+
+  return next;
+}
+
+function parseParallelOddsSegment(segment: string): {
+  odds: string | null;
+  format: string | null;
+  serial: string | null;
+} | null {
+  const value = compactWhitespace(segment)
+    .replace(/[.]+$/, "")
+    .replace(/^[-–—:;,\s]+/, "")
+    .replace(/[-–—:;,\s]+$/, "");
+  if (!value) return null;
+
+  const oddsMatch = value.match(ODDS_VALUE_RE);
+  const serialMatch = value.match(SERIAL_VALUE_RE);
+
+  const odds = oddsMatch ? normalizeOddsValueToken(oddsMatch[0]) : null;
+  const serial = serialMatch ? normalizeSerialValueToken(serialMatch[0]) : null;
+
+  let format = value;
+  if (oddsMatch) {
+    format = format.replace(oddsMatch[0], " ");
+  }
+  if (serialMatch) {
+    format = format.replace(serialMatch[0], " ");
+  }
+  format = compactWhitespace(
+    format
+      .replace(/[()]/g, " ")
+      .replace(/\bpacks?\b/gi, " ")
+      .replace(/^[-–—:;,\s]+/, "")
+      .replace(/[-–—:;,\s]+$/, "")
+  );
+
+  return {
+    odds,
+    format: format || null,
+    serial,
+  };
+}
+
+function inferDefaultProgramFromOddsText(text: string) {
+  const lower = compactWhitespace(text).toLowerCase();
+  if (!lower) return null;
+  if (/\bbase\s+(?:cards?|set|parallels?)\b/.test(lower) || /^base\b/.test(lower)) return "Base";
+  return null;
+}
+
+function parseParallelOddsRowsFromText(text: string): Array<Record<string, unknown>> {
+  const normalized = String(text || "").replace(/\u00A0/g, " ");
+  if (!normalized.trim()) return [];
+
+  const defaultProgram = inferDefaultProgramFromOddsText(normalized);
+  const rows: Array<Record<string, unknown>> = [];
+  const dedupe = new Set<string>();
+
+  const pushRow = (row: {
+    program?: string | null;
+    parallel: string;
+    serial?: string | null;
+    odds?: string | null;
+    format?: string | null;
+  }) => {
+    const parallel = sanitizeParallelOddsLabel(row.parallel);
+    if (!parallel || !looksLikeLabelValue(parallel)) return;
+    const serial = row.serial ? normalizeSerialValueToken(row.serial) : null;
+    const odds = row.odds ? normalizeOddsValueToken(row.odds) : null;
+    const format = row.format ? compactWhitespace(row.format) : null;
+    const program = compactWhitespace(row.program || "") || null;
+
+    // Require at least one odds/serial/format signal so checklist card rows don't leak in.
+    if (!odds && !serial && !format) return;
+
+    const key = [
+      normalizeFieldKey(program || ""),
+      normalizeFieldKey(parallel),
+      normalizeFieldKey(serial || ""),
+      normalizeFieldKey(odds || ""),
+      normalizeFieldKey(format || ""),
+    ].join("::");
+    if (dedupe.has(key)) return;
+    dedupe.add(key);
+
+    rows.push({
+      program: program || null,
+      parallel,
+      serial,
+      odds,
+      format,
+    });
+  };
+
+  const parseDashChunk = (chunk: string) => {
+    const value = compactWhitespace(chunk);
+    if (!value) return;
+    if (!ODDS_VALUE_RE.test(value) && !SERIAL_VALUE_RE.test(value)) return;
+
+    const dashMatch = value.match(/^(.+?)\s*[-–—]\s*(.+)$/);
+    if (!dashMatch) return;
+
+    const parallelLabel = sanitizeParallelOddsLabel(dashMatch[1] || "");
+    if (!parallelLabel || !looksLikeLabelValue(parallelLabel)) return;
+
+    let remainder = compactWhitespace(dashMatch[2] || "");
+    if (!remainder) return;
+
+    let serialPrefix: string | null = null;
+    const serialLeadMatch = remainder.match(/^(1\s*\/\s*1|\/\s*[\d,]+)\s*(?:[-–—:;,]\s*)?(.*)$/i);
+    if (serialLeadMatch) {
+      serialPrefix = normalizeSerialValueToken(serialLeadMatch[1] || "");
+      remainder = compactWhitespace(serialLeadMatch[2] || "");
+    }
+
+    const segments = remainder
+      .split(/\s*;\s*/)
+      .map((entry) => compactWhitespace(entry))
+      .filter(Boolean);
+
+    if (segments.length < 1) {
+      pushRow({
+        program: defaultProgram,
+        parallel: parallelLabel,
+        serial: serialPrefix,
+      });
+      return;
+    }
+
+    let emitted = 0;
+    for (const segment of segments) {
+      const parsed = parseParallelOddsSegment(segment);
+      if (!parsed) continue;
+      pushRow({
+        program: defaultProgram,
+        parallel: parallelLabel,
+        serial: parsed.serial || serialPrefix,
+        odds: parsed.odds,
+        format: parsed.format,
+      });
+      emitted += 1;
+    }
+
+    if (emitted < 1 && serialPrefix) {
+      pushRow({
+        program: defaultProgram,
+        parallel: parallelLabel,
+        serial: serialPrefix,
+      });
+    }
+  };
+
+  const parseSimpleOddsLine = (line: string) => {
+    const value = compactWhitespace(line)
+      .replace(/\*+/g, " ")
+      .replace(/^[-–—:;,\s]+/, "")
+      .replace(/[-–—:;,\s]+$/, "");
+    if (!value) return;
+    if (!ODDS_VALUE_RE.test(value) && !SERIAL_VALUE_RE.test(value)) return;
+    if (/^(odds?\s*list|pack\s*odds?|parallel(?:s)?\s*list(?:\s*&\s*odds?)?)$/i.test(value)) return;
+
+    const oddsTailMatch = value.match(/^(.*?)(\d+\s*:\s*[\d,]+)\s*$/);
+    if (!oddsTailMatch) return;
+
+    let labelPart = compactWhitespace(oddsTailMatch[1] || "");
+    const odds = normalizeOddsValueToken(oddsTailMatch[2] || "");
+    if (!labelPart || !odds) return;
+
+    let serial: string | null = null;
+    const serialTailMatch = labelPart.match(/^(.*?)(1\s*\/\s*1|\/\s*[\d,]+)\s*$/i);
+    if (serialTailMatch) {
+      labelPart = compactWhitespace(serialTailMatch[1] || "");
+      serial = normalizeSerialValueToken(serialTailMatch[2] || "");
+    }
+
+    labelPart = sanitizeParallelOddsLabel(
+      labelPart
+        .replace(/\bx\s*\d+\s*up\b/gi, " ")
+        .replace(/\s+/g, " ")
+    );
+
+    if (!labelPart || !looksLikeLabelValue(labelPart)) return;
+    pushRow({
+      program: defaultProgram,
+      parallel: labelPart,
+      serial,
+      odds,
+      format: null,
+    });
+  };
+
+  const bulletChunks = normalized
+    .split(/[•●▪◦]/g)
+    .map((entry) => compactWhitespace(entry))
+    .filter(Boolean);
+  const dashLineChunks = normalized
+    .split(/\r?\n/)
+    .map((entry) => compactWhitespace(entry))
+    .filter((entry) => entry && /[-–—]/.test(entry) && (ODDS_VALUE_RE.test(entry) || SERIAL_VALUE_RE.test(entry)));
+
+  const chunksToParse = bulletChunks.length > 1 ? bulletChunks : dashLineChunks;
+  for (const chunk of chunksToParse) {
+    parseDashChunk(chunk);
+  }
+
+  const simpleLines = normalized
+    .split(/\r?\n/)
+    .map((entry) => compactWhitespace(entry))
+    .filter(Boolean);
+  for (const line of simpleLines) {
+    parseSimpleOddsLine(line);
+  }
+
+  // Capture narrative lines that use "ParallelName (odds...)" style.
+  const parentheticalMatches = Array.from(
+    normalized.matchAll(/([A-Za-z0-9][A-Za-z0-9'’&./+\- ]{1,100})\s*\(([^)]{2,220})\)/g)
+  );
+  for (const match of parentheticalMatches) {
+    const label = sanitizeParallelOddsLabel(match[1] || "");
+    const content = compactWhitespace(match[2] || "");
+    if (!label || !content) continue;
+    if (!ODDS_VALUE_RE.test(content) && !SERIAL_VALUE_RE.test(content)) continue;
+    if (!looksLikeLabelValue(label)) continue;
+
+    const segments = content
+      .split(/\s*;\s*/)
+      .map((entry) => compactWhitespace(entry))
+      .filter(Boolean);
+    if (segments.length < 1) continue;
+
+    for (const segment of segments) {
+      const parsed = parseParallelOddsSegment(segment);
+      if (!parsed) continue;
+      pushRow({
+        program: defaultProgram,
+        parallel: label,
+        serial: parsed.serial,
+        odds: parsed.odds,
+        format: parsed.format,
+      });
+    }
+  }
+
+  // Fallback for flattened extraction where multiple odds entries are joined by periods.
+  if (rows.length < 1 && normalized.includes(".")) {
+    const sentenceChunks = normalized
+      .split(/\s*\.\s*/)
+      .map((entry) => compactWhitespace(entry))
+      .filter(Boolean);
+    for (const chunk of sentenceChunks) {
+      parseSimpleOddsLine(chunk);
+      parseDashChunk(chunk);
     }
   }
 
@@ -2185,14 +2471,27 @@ async function fetchRowsFromSource(
   if (isPdfSource) {
     const buffer = Buffer.from(await response.arrayBuffer());
     const checklistText = extractChecklistTextFromPdfBuffer(buffer);
-    const rows = parseChecklistRowsFromText(checklistText);
-    return {
-      rows,
-      parserName: "pdf-checklist-v1",
-      contentType,
-      fetchedAt: new Date().toISOString(),
-      attempts: attemptsUsed,
-    };
+    const checklistRows = parseChecklistRowsFromText(checklistText);
+    if (checklistRows.length > 0) {
+      return {
+        rows: checklistRows,
+        parserName: "pdf-checklist-v1",
+        contentType,
+        fetchedAt: new Date().toISOString(),
+        attempts: attemptsUsed,
+      };
+    }
+
+    const oddsRows = parseParallelOddsRowsFromText(checklistText);
+    if (oddsRows.length > 0) {
+      return {
+        rows: oddsRows,
+        parserName: "pdf-parallel-odds-v1",
+        contentType,
+        fetchedAt: new Date().toISOString(),
+        attempts: attemptsUsed,
+      };
+    }
   }
 
   const content = await response.text();
@@ -2244,11 +2543,23 @@ async function fetchRowsFromSource(
     };
   }
 
-  const htmlChecklistRows = parseChecklistRowsFromText(extractChecklistTextFromHtml(content));
+  const htmlChecklistText = extractChecklistTextFromHtml(content);
+  const htmlChecklistRows = parseChecklistRowsFromText(htmlChecklistText);
   if (htmlChecklistRows.length > 0) {
     return {
       rows: htmlChecklistRows,
       parserName: "html-checklist-text-v1",
+      contentType,
+      fetchedAt: new Date().toISOString(),
+      attempts: attemptsUsed,
+    };
+  }
+
+  const htmlParallelOddsRows = parseParallelOddsRowsFromText(htmlChecklistText);
+  if (htmlParallelOddsRows.length > 0) {
+    return {
+      rows: htmlParallelOddsRows,
+      parserName: "html-parallel-odds-v1",
       contentType,
       fetchedAt: new Date().toISOString(),
       attempts: attemptsUsed,
@@ -2287,7 +2598,9 @@ async function fetchRowsFromSource(
     };
   }
 
-  throw new Error("Could not parse rows from source URL. Supported sources: JSON, CSV, PDF checklists, or checklist tables.");
+  throw new Error(
+    "Could not parse rows from source URL. Supported sources: JSON, CSV, PDF checklists, PDF parallel/odds lists, or checklist tables."
+  );
 }
 
 export function parseUploadedSourceFile(params: {
@@ -2309,13 +2622,19 @@ export function parseUploadedSourceFile(params: {
 
   if (isPdf) {
     const checklistText = extractChecklistTextFromPdfBuffer(params.fileBuffer);
-    const rows = parseChecklistRowsFromText(checklistText);
-    if (rows.length < 1) {
-      throw new Error(
-        "No checklist rows were detected from this PDF. Use an official text-based checklist PDF (not a scanned image PDF)."
-      );
+    const checklistRows = parseChecklistRowsFromText(checklistText);
+    if (checklistRows.length > 0) {
+      return { rows: checklistRows, parserName: "upload-pdf-checklist-v1" };
     }
-    return { rows, parserName: "upload-pdf-checklist-v1" };
+
+    const oddsRows = parseParallelOddsRowsFromText(checklistText);
+    if (oddsRows.length > 0) {
+      return { rows: oddsRows, parserName: "upload-pdf-parallel-odds-v1" };
+    }
+
+    throw new Error(
+      "No checklist or parallel/odds rows were detected from this PDF. Use an official text-based checklist/odds PDF (not a scanned image PDF)."
+    );
   }
 
   const text = params.fileBuffer.toString("utf8");
@@ -2366,7 +2685,12 @@ export function parseUploadedSourceFile(params: {
     return { rows: checklistRows, parserName: "upload-text-checklist-v1" };
   }
 
-  throw new Error("No usable checklist rows found. Upload CSV/JSON/PDF checklist sources.");
+  const oddsRows = parseParallelOddsRowsFromText(text);
+  if (oddsRows.length > 0) {
+    return { rows: oddsRows, parserName: "upload-text-parallel-odds-v1" };
+  }
+
+  throw new Error("No usable checklist/parallel/odds rows found. Upload CSV/JSON/PDF checklist or odds sources.");
 }
 
 function buildDiscoverySearchText(query: NormalizedDiscoveryQuery) {

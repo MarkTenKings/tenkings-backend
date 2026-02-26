@@ -2308,3 +2308,59 @@ Build Set Ops UI flow with:
 - Operations:
   - No deploy/restart/migration in this coding step.
   - No destructive data operations executed.
+
+## PDF Parallel/Odds Parser Support (2026-02-26)
+- Trigger:
+  - Operator requested ingestion support for official-style parallel/odds PDFs (non-card-checklist layout).
+- Prior gap:
+  - PDF parsing focused on checklist rows (card number + player) and could miss odds-list artifacts.
+- Fix implemented:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+  - Added fallback parallel/odds extraction for PDF/HTML/text flows when checklist parsing returns no rows.
+  - Extracted fields:
+    - `parallel`
+    - `serial` (e.g. `/250`, `1/1`)
+    - `odds` (e.g. `1:87`)
+    - `format` (e.g. `Hobby`, `Jumbo`, `Value Blaster`)
+- Parser variants introduced:
+  - `pdf-parallel-odds-v1`
+  - `html-parallel-odds-v1`
+  - `upload-pdf-parallel-odds-v1`
+  - `upload-text-parallel-odds-v1`
+- Workflow implication:
+  - Same set can now ingest checklist PDF (base/player rows) and parallel/odds PDF as separate ingestion jobs, then proceed through draft/approve/seed workflow.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts` -> pass.
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false` -> pass.
+  - `pnpm --filter @tenkings/database build` -> pass.
+- Operations:
+  - No deploy/restart/migration in this coding step.
+  - No destructive data operations executed.
+
+## Set Checklist + Odds List Alignment Update (2026-02-26)
+- Trigger:
+  - Operator clarified current target data model for Set Ops ingestion is two PDFs per set:
+    1. `SET CHECKLIST`
+    2. `ODDS LIST`
+  - Reported issue: base cards still skipped in checklist flow and odds-list PDF format not reliably parsed.
+- Parser fixes implemented:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+  - Checklist section normalization now maps `SET CHECKLIST`/`CHECKLIST` to `Base Set`.
+  - Added direct odds-line parser for lines like:
+    - `Base Sapphire Gold 1:6`
+    - `Topps Chrome Autographs Sapphire Red 1:1078`
+  - Maintains support for bullet/dash/parenthetical odds formats.
+  - Source/upload flows now fallback from checklist parsing to odds parsing for PDF/HTML/text when checklist rows are absent.
+- UI terminology alignment implemented:
+  - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+  - Operator-facing labels now use:
+    - `SET CHECKLIST`
+    - `ODDS LIST`
+  - Backend enums and API contracts remain unchanged (`PARALLEL_DB`, `PLAYER_WORKSHEET`) for compatibility.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/admin/set-ops-review.tsx` -> pass.
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false` -> pass.
+  - `pnpm --filter @tenkings/database build` -> pass.
+- Operations:
+  - No deploy/restart/migration in this coding step.
+  - No destructive data operations executed.

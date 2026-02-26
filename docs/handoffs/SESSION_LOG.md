@@ -3347,3 +3347,82 @@
 ### Operations
 - No deploy/restart/migration commands executed in this coding step.
 - No destructive set operations or manual DB data operations executed.
+
+## 2026-02-26 - PDF Parallel/Odds Parser Support
+
+### Summary
+- Extended Set Ops source/upload parsing to support non-checklist parallel+odds PDF content.
+- System now falls back to parallel/odds text extraction when checklist-row extraction returns zero rows.
+- This complements the earlier base-card checklist parser hardening and enables two-artifact ingest workflows for the same set.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+
+### Implementation Notes
+- Added parallel/odds parser pipeline:
+  - recognizes bullet/list style odds lines,
+  - parses `parallel`, `serial` (ex: `/250`, `1/1`), `odds` (ex: `1:87`), and `format` (ex: `Hobby`, `Jumbo`, `Value Blaster`).
+- Added parser fallback integration points:
+  - source URL import PDF path (`pdf-parallel-odds-v1`)
+  - source URL import HTML/text fallback path (`html-parallel-odds-v1`)
+  - upload parse PDF path (`upload-pdf-parallel-odds-v1`)
+  - upload parse text path (`upload-text-parallel-odds-v1`)
+- Updated error messaging to explicitly include checklist + parallel/odds support.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false`
+  - Result: pass.
+- `pnpm --filter @tenkings/database build`
+  - Result: pass.
+
+### Operations
+- No deploy/restart/migration commands executed in this coding step.
+- No destructive set operations or manual DB data operations executed.
+
+## 2026-02-26 - Set Checklist + Odds List Parser/Terminology Alignment
+
+### Summary
+- Addressed two operator-reported ingestion gaps:
+  1. Base-card sections in checklist PDFs still being skipped in some layouts.
+  2. Odds-list PDFs using simple `Label 1:xx` lines not being captured reliably.
+- Updated Set Ops review UI wording to operator terminology:
+  - `SET CHECKLIST`
+  - `ODDS LIST`
+  while preserving backend dataset enums.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+
+### Implementation Notes
+- Checklist parser hardening:
+  - `SET CHECKLIST` and `CHECKLIST` section headers now normalize to `Base Set`.
+  - `CHECKLIST` added to section-noise token cleanup for extracted player token hygiene.
+- Odds parser hardening:
+  - Added direct line parser for odds-list format:
+    - example: `Base Sapphire Gold 1:6`
+  - Supports extracted signals for:
+    - `parallel` label
+    - optional `serial` token (`/250`, `1/1`)
+    - trailing `odds` token (`1:68`)
+  - Retains existing bullet/dash/parenthetical odds parsing and adds sentence-split fallback for flattened extraction.
+- Source/upload pipeline support:
+  - PDF source/upload now falls back from checklist parser to parallel/odds parser when checklist rows are absent.
+  - HTML/text source fallback similarly attempts parallel/odds parsing.
+- UI terminology alignment:
+  - Display labels now use `SET CHECKLIST` and `ODDS LIST` in queue selectors/import buttons/job-type display.
+  - Backend values remain unchanged (`PARALLEL_DB`, `PLAYER_WORKSHEET`) for compatibility.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file pages/admin/set-ops-review.tsx`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false`
+  - Result: pass.
+- `pnpm --filter @tenkings/database build`
+  - Result: pass.
+
+### Operations
+- No deploy/restart/migration commands executed in this coding step.
+- No destructive set operations or manual DB data operations executed.

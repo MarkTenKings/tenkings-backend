@@ -259,7 +259,7 @@ function parseRowsFromFileContent(fileName: string, content: string): Array<Reco
 
   const csvRows = parseCsvRows(content);
   if (csvRows.length > 0) return csvRows;
-  throw new Error("No usable rows found. Upload a CSV with headers, JSON row array, or a checklist PDF.");
+  throw new Error("No usable rows found. Upload a CSV with headers, JSON row array, or a checklist/odds PDF.");
 }
 
 function inferSetIdFromRows(rows: Array<Record<string, unknown>>) {
@@ -308,9 +308,20 @@ function expandDatasetMode(mode: CombinedDatasetMode): DatasetType[] {
   return [mode];
 }
 
+function formatDatasetLabel(mode: CombinedDatasetMode) {
+  if (mode === "COMBINED") return "SET CHECKLIST + ODDS LIST";
+  return mode === "PARALLEL_DB" ? "ODDS LIST" : "SET CHECKLIST";
+}
+
 function formatDatasetMode(mode: CombinedDatasetMode) {
-  if (mode === "COMBINED") return "parallel_db + player_worksheet";
-  return mode === "PARALLEL_DB" ? "parallel_db" : "player_worksheet";
+  return formatDatasetLabel(mode);
+}
+
+function formatDatasetTypeValue(value: string) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (normalized === "PARALLEL_DB") return formatDatasetLabel("PARALLEL_DB");
+  if (normalized === "PLAYER_WORKSHEET") return formatDatasetLabel("PLAYER_WORKSHEET");
+  return normalized || "-";
 }
 
 export default function SetOpsReviewPage() {
@@ -1567,7 +1578,7 @@ export default function SetOpsReviewPage() {
               onClick={() => void importDirectSourceUrl("PARALLEL_DB")}
               className="h-11 rounded-xl border border-violet-400/50 bg-violet-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-violet-100 transition hover:bg-violet-500/30 disabled:opacity-60"
             >
-              {discoveryImportBusyId === "direct:PARALLEL_DB" ? "Importing..." : "Import URL as parallel_db"}
+              {discoveryImportBusyId === "direct:PARALLEL_DB" ? "Importing..." : "Import URL as ODDS LIST"}
             </button>
             <button
               type="button"
@@ -1575,7 +1586,7 @@ export default function SetOpsReviewPage() {
               onClick={() => void importDirectSourceUrl("PLAYER_WORKSHEET")}
               className="h-11 rounded-xl border border-gold-500/50 bg-gold-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-gold-100 transition hover:bg-gold-500/30 disabled:opacity-60"
             >
-              {discoveryImportBusyId === "direct:PLAYER_WORKSHEET" ? "Importing..." : "Import URL as player_worksheet"}
+              {discoveryImportBusyId === "direct:PLAYER_WORKSHEET" ? "Importing..." : "Import URL as SET CHECKLIST"}
             </button>
             <button
               type="button"
@@ -1583,7 +1594,7 @@ export default function SetOpsReviewPage() {
               onClick={() => void importDirectSourceUrl("COMBINED")}
               className="h-11 rounded-xl border border-emerald-500/50 bg-emerald-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-60"
             >
-              {discoveryImportBusyId === "direct:COMBINED" ? "Importing..." : "Import URL as combined"}
+              {discoveryImportBusyId === "direct:COMBINED" ? "Importing..." : "Import URL as SET CHECKLIST + ODDS LIST"}
             </button>
             <button
               type="button"
@@ -1655,7 +1666,7 @@ export default function SetOpsReviewPage() {
                           onClick={() => void importDiscoveredResult(result, "PARALLEL_DB")}
                           className="rounded border border-violet-400/50 bg-violet-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-violet-100 disabled:opacity-60"
                         >
-                          {discoveryImportBusyId === result.id ? "Importing..." : "Import parallel_db"}
+                          {discoveryImportBusyId === result.id ? "Importing..." : "Import ODDS LIST"}
                         </button>
                         <button
                           type="button"
@@ -1663,7 +1674,7 @@ export default function SetOpsReviewPage() {
                           onClick={() => void importDiscoveredResult(result, "PLAYER_WORKSHEET")}
                           className="rounded border border-gold-500/50 bg-gold-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gold-100 disabled:opacity-60"
                         >
-                          {discoveryImportBusyId === result.id ? "Importing..." : "Import player_worksheet"}
+                          {discoveryImportBusyId === result.id ? "Importing..." : "Import SET CHECKLIST"}
                         </button>
                         <button
                           type="button"
@@ -1671,7 +1682,7 @@ export default function SetOpsReviewPage() {
                           onClick={() => void importDiscoveredResult(result, "COMBINED")}
                           className="rounded border border-emerald-500/50 bg-emerald-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100 disabled:opacity-60"
                         >
-                          {discoveryImportBusyId === result.id ? "Importing..." : "Import combined"}
+                          {discoveryImportBusyId === result.id ? "Importing..." : "Import SET CHECKLIST + ODDS LIST"}
                         </button>
                       </div>
                     </td>
@@ -1734,9 +1745,9 @@ export default function SetOpsReviewPage() {
               disabled={!canReview}
               className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
             >
-              <option value="PARALLEL_DB">parallel_db</option>
-              <option value="PLAYER_WORKSHEET">player_worksheet</option>
-              <option value="COMBINED">combined (parallel + player)</option>
+              <option value="PARALLEL_DB">ODDS LIST</option>
+              <option value="PLAYER_WORKSHEET">SET CHECKLIST</option>
+              <option value="COMBINED">SET CHECKLIST + ODDS LIST</option>
             </select>
             <input
               value={sourceUrlInput}
@@ -1830,7 +1841,7 @@ export default function SetOpsReviewPage() {
                   >
                     <td className="border-b border-white/5 px-2 py-2 font-mono text-xs">{job.id.slice(0, 8)}</td>
                     <td className="border-b border-white/5 px-2 py-2">{job.setId}</td>
-                    <td className="border-b border-white/5 px-2 py-2">{job.datasetType}</td>
+                    <td className="border-b border-white/5 px-2 py-2">{formatDatasetTypeValue(job.datasetType)}</td>
                     <td className="border-b border-white/5 px-2 py-2 text-xs">{job.sourceProvider ?? "-"}</td>
                     <td className="border-b border-white/5 px-2 py-2">{job.status}</td>
                     <td className="border-b border-white/5 px-2 py-2 text-xs text-slate-400">{formatDate(job.createdAt)}</td>
