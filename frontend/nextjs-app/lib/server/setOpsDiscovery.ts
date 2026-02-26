@@ -528,11 +528,30 @@ function normalizeChecklistSectionName(raw: string) {
     .replace(/[\u2013\u2014]/g, "-")
     .replace(/\s*:\s*$/, "");
   if (!value) return "Base Set";
-  if (/^base$/i.test(value)) return "Base Set";
-  return value
+
+  const normalized = value
     .replace(/^\d+\.\s*/, "")
     .replace(/\s*checklist$/i, "")
     .trim();
+  if (!normalized) return "Base Set";
+
+  const baseKey = normalized
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  // Common official PDF section headers:
+  // "BASE", "BASE SET", "BASE CARDS I/II/III", "BASE CHECKLIST"
+  if (
+    /^base(?:\s+set)?$/.test(baseKey) ||
+    /^base\s+cards?(?:\s+(?:[ivxlcdm]+|\d+))?$/.test(baseKey) ||
+    /^base\s+checklist(?:\s+(?:[ivxlcdm]+|\d+))?$/.test(baseKey)
+  ) {
+    return "Base Set";
+  }
+
+  return normalized;
 }
 
 const checklistSectionNoiseWords = new Set([
@@ -967,6 +986,39 @@ function splitChecklistCompoundLine(line: string) {
   return { header, row };
 }
 
+type ChecklistParsedRecord = {
+  cardNumber: string;
+  playerSeed: string;
+};
+
+function extractChecklistRecordsFromTokens(tokens: string[]): ChecklistParsedRecord[] {
+  if (tokens.length < 2) return [];
+
+  const startIndices: number[] = [];
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    const token = tokens[index]!;
+    const nextToken = tokens[index + 1]!;
+    if (!looksLikeChecklistCardIdToken(token)) continue;
+    if (!/^[A-Za-z]/.test(nextToken)) continue;
+    startIndices.push(index);
+  }
+  if (startIndices.length < 1) return [];
+
+  const records: ChecklistParsedRecord[] = [];
+  for (let index = 0; index < startIndices.length; index += 1) {
+    const start = startIndices[index]!;
+    const end = startIndices[index + 1] ?? tokens.length;
+    const cardNumber = normalizeChecklistCardToken(tokens[start]!);
+    const recordTokens = tokens.slice(start + 1, end);
+    const playerSeed = extractPlayerSeedFromRecordTokens(recordTokens);
+    if (!cardNumber || !playerSeed) continue;
+    if (!looksLikeLabelValue(playerSeed)) continue;
+    records.push({ cardNumber, playerSeed });
+  }
+
+  return records;
+}
+
 function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>> {
   const lines = String(text || "")
     .split(/\r?\n/)
@@ -1028,28 +1080,28 @@ function parseChecklistRowsFromText(text: string): Array<Record<string, unknown>
 
   for (const block of blocks) {
     const blockSection = normalizeChecklistSectionName(block.section);
-    const mergedText = compactWhitespace(block.lines.join(" "));
-    if (!mergedText) continue;
-    const tokens = normalizeChecklistTokens(mergedText.split(/\s+/).filter(Boolean));
-    if (tokens.length < 2) continue;
-
-    const startIndices: number[] = [];
-    for (let index = 0; index < tokens.length - 1; index += 1) {
-      const token = tokens[index]!;
-      const nextToken = tokens[index + 1]!;
-      if (!looksLikeChecklistCardIdToken(token)) continue;
-      if (!/^[A-Za-z]/.test(nextToken)) continue;
-      startIndices.push(index);
+    const lineRecords: ChecklistParsedRecord[] = [];
+    for (const line of block.lines) {
+      const lineTokens = normalizeChecklistTokens(compactWhitespace(line).split(/\s+/).filter(Boolean));
+      if (lineTokens.length < 2) continue;
+      lineRecords.push(...extractChecklistRecordsFromTokens(lineTokens));
     }
 
-    if (startIndices.length < 1) continue;
+    const records =
+      lineRecords.length > 0
+        ? lineRecords
+        : (() => {
+            const mergedText = compactWhitespace(block.lines.join(" "));
+            if (!mergedText) return [] as ChecklistParsedRecord[];
+            const mergedTokens = normalizeChecklistTokens(mergedText.split(/\s+/).filter(Boolean));
+            return extractChecklistRecordsFromTokens(mergedTokens);
+          })();
 
-    for (let index = 0; index < startIndices.length; index += 1) {
-      const start = startIndices[index]!;
-      const end = startIndices[index + 1] ?? tokens.length;
-      const cardNumber = normalizeChecklistCardToken(tokens[start]!);
-      const recordTokens = tokens.slice(start + 1, end);
-      const playerSeed = extractPlayerSeedFromRecordTokens(recordTokens);
+    if (records.length < 1) continue;
+
+    for (const record of records) {
+      const cardNumber = record.cardNumber;
+      const playerSeed = record.playerSeed;
       const inferredParallel = inferParallelFromCardNumber(cardNumber);
       const resolvedParallel =
         blockSection === "Base Set" && inferredParallel

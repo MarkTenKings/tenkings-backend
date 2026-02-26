@@ -2265,3 +2265,46 @@ Build Set Ops UI flow with:
   - No destructive set operations or manual DB data operations executed.
 - Program status:
   - Phase 0 through Phase 7 implemented in codebase; master plan execution phases are complete.
+
+## Production Catalog Ops Workstation Enablement (2026-02-26)
+- Operator completed Vercel production rollout for Phase 0-7 build (`99eb34b`) and validated new routes on deployment URLs.
+- Runtime root cause for missing workstation surfaces was custom-domain alias drift to an older deployment, not missing UI routes in code.
+- Evidence sequence:
+  - deployment URL served Catalog Ops routes with `200`.
+  - `collect.tenkings.co` initially returned `404` for `/admin/catalog-ops*` while legacy `/admin/set-ops` remained `200`.
+  - after env activation/redeploy, collect still showed stale feature-flag panel until alias was moved to newest deployment.
+- Production flags now configured (`NEXT_PUBLIC_*`):
+  - `NEXT_PUBLIC_CATALOG_OPS_WORKSTATION=true`
+  - `NEXT_PUBLIC_CATALOG_OPS_OVERVIEW_V2=true`
+  - `NEXT_PUBLIC_CATALOG_OPS_INGEST_STEPPER=true`
+  - `NEXT_PUBLIC_CATALOG_OPS_VARIANT_STUDIO=true`
+  - `NEXT_PUBLIC_CATALOG_OPS_AI_QUALITY=true`
+- Alias correction applied:
+  - `collect.tenkings.co -> https://tenkings-backend-nextjs-i1d1vlyxo-ten-kings.vercel.app`
+- Current state:
+  - Catalog Ops workstation routes are reachable on production custom domain.
+  - Legacy routes remain available as fallback by design.
+
+## PDF Base Card Parser Hardening (2026-02-26)
+- Trigger:
+  - Operator reported base-card rows from uploaded checklist PDFs were not being captured reliably (legacy behavior carried forward).
+- Root cause addressed in parser:
+  - Base section headers such as `BASE CARDS I/II/...` were not normalized to canonical base section label.
+  - Checklist extraction relied mainly on merged block tokenization, which is brittle for some PDF text layouts.
+- Fix implemented:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+  - Section normalization now maps these to `Base Set`:
+    - `BASE`
+    - `BASE SET`
+    - `BASE CARDS I/II/...`
+    - `BASE CHECKLIST`
+  - Added tokenized checklist record extractor helper and switched parser flow to:
+    1. parse records line-by-line first,
+    2. fallback to merged-block parsing when needed.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts` -> pass.
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false` -> pass.
+  - `pnpm --filter @tenkings/database build` -> pass.
+- Operations:
+  - No deploy/restart/migration in this coding step.
+  - No destructive data operations executed.

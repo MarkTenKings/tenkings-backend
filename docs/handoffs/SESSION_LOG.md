@@ -3279,3 +3279,71 @@
 - No deploy/restart/migration commands were executed in this coding session.
 - No destructive set operations or manual DB data operations were executed.
 - Program status: Phase 0 through Phase 7 are now implemented in codebase; execution-pack phase sequence is complete.
+
+## 2026-02-26 - Catalog Ops Workstation Production Enablement (Vercel)
+
+### Summary
+- Operator deployed production frontend for commit `99eb34b` and validated new Catalog Ops routes existed on deployment URLs.
+- Operator added Catalog Ops workstation `NEXT_PUBLIC_*` production flags and redeployed.
+- Root runtime issue was stale custom-domain alias target, not missing route code.
+- `collect.tenkings.co` was re-aliased to the newest production deployment and workstation routes became active.
+
+### Runtime Evidence (operator commands/results)
+- Initial production deploy:
+  - `npx -y vercel@latest deploy --prod --yes --scope ten-kings`
+  - produced: `https://tenkings-backend-nextjs-47v5tumel-ten-kings.vercel.app`
+- Route parity check proved deployment mismatch:
+  - deployment URL returned `200` for:
+    - `/admin/catalog-ops`
+    - `/admin/catalog-ops/ingest-draft`
+    - `/admin/catalog-ops/variant-studio`
+    - `/admin/catalog-ops/ai-quality`
+  - `https://collect.tenkings.co` initially returned `404` for the same Catalog Ops paths while legacy `/admin/set-ops` returned `200`.
+- Production env flags confirmed in pulled env file (`.vercel/.env.production.local`):
+  - `NEXT_PUBLIC_CATALOG_OPS_WORKSTATION="true"`
+  - `NEXT_PUBLIC_CATALOG_OPS_OVERVIEW_V2="true"`
+  - `NEXT_PUBLIC_CATALOG_OPS_INGEST_STEPPER="true"`
+  - `NEXT_PUBLIC_CATALOG_OPS_VARIANT_STUDIO="true"`
+  - `NEXT_PUBLIC_CATALOG_OPS_AI_QUALITY="true"`
+- Latest production deployment identified as:
+  - `https://tenkings-backend-nextjs-i1d1vlyxo-ten-kings.vercel.app`
+- Alias state before correction:
+  - `collect.tenkings.co -> tenkings-backend-nextjs-47v5tumel-ten-kings.vercel.app`
+- Alias correction executed:
+  - `npx -y vercel@latest alias set "https://tenkings-backend-nextjs-i1d1vlyxo-ten-kings.vercel.app" collect.tenkings.co --scope ten-kings`
+  - result: `Success! https://collect.tenkings.co now points to https://tenkings-backend-nextjs-i1d1vlyxo-ten-kings.vercel.app`
+
+### Notes
+- No code edits were required for this fix.
+- No droplet restart/migration or destructive DB operation was executed in this recovery step.
+
+## 2026-02-26 - PDF Checklist Parser Fix (Base Cards Capture)
+
+### Summary
+- Implemented parser hardening so base-card checklist sections from uploaded/source PDFs are recognized and converted into ingestion rows more reliably.
+- Specifically addressed section labels like `BASE CARDS I/II/...` so they normalize to `Base Set` instead of being treated as separate parallel labels.
+- Added line-first record extraction path for checklist parsing, with existing merged-text extraction retained as fallback.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+
+### Implementation Notes
+- Updated checklist section normalization:
+  - `BASE`, `BASE SET`, `BASE CARDS I/II/...`, and `BASE CHECKLIST` now normalize to `Base Set`.
+- Added token-to-record helper (`extractChecklistRecordsFromTokens`) used by checklist parser.
+- `parseChecklistRowsFromText(...)` now:
+  - parses records from each checklist line first,
+  - falls back to merged-block token parsing when line parsing yields no records.
+- This improves extraction for official checklist PDF layouts where base rows appear under top-of-document base headers.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts`
+  - Result: pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false`
+  - Result: pass.
+- `pnpm --filter @tenkings/database build`
+  - Result: pass.
+
+### Operations
+- No deploy/restart/migration commands executed in this coding step.
+- No destructive set operations or manual DB data operations executed.
