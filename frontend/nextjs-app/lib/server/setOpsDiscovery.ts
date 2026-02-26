@@ -2283,6 +2283,92 @@ function findField(row: Record<string, unknown>, keys: string[]) {
   return "";
 }
 
+function looksLikeOddsValue(value: string) {
+  return /^\d+\s*:\s*[\d,]+$/i.test(compactWhitespace(value));
+}
+
+const parallelMarkerTokens = new Set([
+  "sapphire",
+  "holo",
+  "foil",
+  "rainbow",
+  "gold",
+  "orange",
+  "black",
+  "red",
+  "purple",
+  "blue",
+  "green",
+  "pink",
+  "aqua",
+  "silver",
+  "wood",
+  "platinum",
+  "fractor",
+  "refractor",
+  "superfractor",
+  "superfractors",
+  "padpardascha",
+  "sandglitter",
+  "glitter",
+  "victory",
+  "diamante",
+  "tipoff",
+  "pattern",
+  "blackout",
+  "surge",
+  "flashdrop",
+  "cartload",
+  "cybercircuit",
+  "doorbuster",
+  "crackleboard",
+  "toppsfoil",
+  "base",
+]);
+
+function splitProgramAndParallelLabel(label: string) {
+  const cleaned = compactWhitespace(label)
+    .replace(/\*+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) {
+    return { cardType: null, parallelName: "" };
+  }
+
+  const tokens = cleaned.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) {
+    return { cardType: null, parallelName: cleaned };
+  }
+
+  let parallelStart = -1;
+  for (let index = tokens.length - 1; index >= 1; index -= 1) {
+    const token = normalizeFieldKey(tokens[index] || "");
+    if (!token) continue;
+    if (parallelMarkerTokens.has(token)) {
+      parallelStart = index;
+      break;
+    }
+  }
+
+  if (parallelStart < 1) {
+    return { cardType: null, parallelName: cleaned };
+  }
+
+  while (parallelStart > 1) {
+    const previous = normalizeFieldKey(tokens[parallelStart - 1] || "");
+    if (!parallelMarkerTokens.has(previous)) break;
+    parallelStart -= 1;
+  }
+
+  const cardType = compactWhitespace(tokens.slice(0, parallelStart).join(" "));
+  const parallelName = compactWhitespace(tokens.slice(parallelStart).join(" "));
+  if (!cardType || !parallelName) {
+    return { cardType: null, parallelName: cleaned };
+  }
+
+  return { cardType, parallelName };
+}
+
 function normalizeRowsForIngestion(params: {
   rows: Array<Record<string, unknown>>;
   setId: string;
@@ -2291,17 +2377,43 @@ function normalizeRowsForIngestion(params: {
 }) {
   return params.rows.map((row, index) => {
     const setId = normalizeSetLabel(findField(row, ["setId", "set", "setName", "set_name"]) || params.setId);
-    const cardNumber = findField(row, ["cardNumber", "card_number", "cardNo", "number", "card"]) || null;
-    const parallel =
+    const rawCardNumber = findField(row, ["cardNumber", "card_number", "cardNo", "number", "card"]);
+    const rawParallel =
       findField(row, ["parallel", "parallelId", "parallel_id", "parallelName", "variation", "variant", "refractor"]) ||
       (params.datasetType === SetDatasetType.PARALLEL_DB ? "" : "");
-    const playerSeed =
-      findField(row, ["playerSeed", "playerName", "player", "athlete", "subject"]) ||
-      (params.datasetType === SetDatasetType.PLAYER_WORKSHEET ? "" : "");
-    const listingId = findField(row, ["listingId", "sourceListingId", "listing", "itemId", "itemNumber"]) || null;
+    const rawCardType = findField(row, ["cardType", "card_type", "program", "programLabel", "insertSet", "insert"]);
+    const rawOdds = findField(row, ["odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"]);
+    const rawSerial = findField(row, ["serial", "serialNumber", "serial_number", "printRun"]);
+    const rawFormat = findField(row, ["format", "channel", "boxType", "packType", "productType"]);
+
+    const splitLabel = params.datasetType === SetDatasetType.PARALLEL_DB ? splitProgramAndParallelLabel(rawParallel) : null;
+    const parallel = compactWhitespace(splitLabel?.parallelName || rawParallel);
+    const cardType = compactWhitespace(rawCardType || splitLabel?.cardType || "");
+    const odds = compactWhitespace(rawOdds);
+    const serial = compactWhitespace(rawSerial);
+    const format = compactWhitespace(rawFormat);
+
+    const playerSeed = compactWhitespace(
+      params.datasetType === SetDatasetType.PARALLEL_DB
+        ? cardType || findField(row, ["playerSeed", "playerName", "player", "athlete", "subject"])
+        : findField(row, ["playerSeed", "playerName", "player", "athlete", "subject"])
+    );
+    const cardNumber =
+      params.datasetType === SetDatasetType.PARALLEL_DB
+        ? looksLikeCardNumberValue(rawCardNumber)
+          ? rawCardNumber
+          : null
+        : rawCardNumber || null;
+    const listingIdInput = findField(row, ["listingId", "sourceListingId", "listing", "itemId", "itemNumber"]);
+    const listingIdFallback =
+      params.datasetType === SetDatasetType.PARALLEL_DB
+        ? compactWhitespace([format, odds, serial].filter(Boolean).join(" | "))
+        : "";
+    const listingId = listingIdInput || listingIdFallback || null;
     const sourceUrl = findField(row, ["sourceUrl", "url", "source"]) || params.sourceUrl;
 
     return {
+      ...row,
       index,
       setId,
       cardNumber,
@@ -2309,7 +2421,10 @@ function normalizeRowsForIngestion(params: {
       playerSeed,
       listingId,
       sourceUrl,
-      ...row,
+      cardType: cardType || null,
+      odds: odds || null,
+      serial: serial || null,
+      format: format || null,
     } as Record<string, unknown>;
   });
 }
@@ -2346,9 +2461,12 @@ function filterRowsForIngestion(rows: Array<Record<string, unknown>>, datasetTyp
     const cardNumber = compactWhitespace(String(row.cardNumber ?? ""));
     const parallel = compactWhitespace(String(row.parallel ?? ""));
     const playerSeed = compactWhitespace(String(row.playerSeed ?? ""));
+    const odds = compactWhitespace(String(row.odds ?? ""));
+    const serial = compactWhitespace(String(row.serial ?? ""));
+    const format = compactWhitespace(String(row.format ?? ""));
     const sourceUrl = compactWhitespace(String(row.sourceUrl ?? ""));
 
-    if ([cardNumber, parallel, playerSeed].some((value) => isLikelyRowNoiseValue(value))) {
+    if ([cardNumber, parallel, playerSeed, odds, serial, format].some((value) => isLikelyRowNoiseValue(value))) {
       addReason("html_or_navigation_noise");
       continue;
     }
@@ -2368,6 +2486,18 @@ function filterRowsForIngestion(rows: Array<Record<string, unknown>>, datasetTyp
       }
       if (/^\$?\d+(?:\.\d+)?$/.test(parallel)) {
         addReason("parallel_looks_like_price");
+        continue;
+      }
+      if (!odds && !serial && !format) {
+        addReason("missing_odds_or_serial");
+        continue;
+      }
+      if (odds && !looksLikeOddsValue(odds)) {
+        addReason("invalid_odds_value");
+        continue;
+      }
+      if (cardNumber && !looksLikeCardNumberValue(cardNumber) && !looksLikeOddsValue(cardNumber)) {
+        addReason("invalid_card_number_for_odds_dataset");
         continue;
       }
     }
@@ -2451,7 +2581,11 @@ function extractChecklistCandidateUrls(html: string, baseUrl: string) {
 
 async function fetchRowsFromSource(
   url: string,
-  context: { depth: number; visited: Set<string> } = { depth: 0, visited: new Set<string>() }
+  context: { depth: number; visited: Set<string>; preferredDatasetType?: SetDatasetType | null } = {
+    depth: 0,
+    visited: new Set<string>(),
+    preferredDatasetType: null,
+  }
 ): Promise<SourceFetchResult> {
   const normalizedUrl = compactWhitespace(url);
   if (!normalizedUrl) {
@@ -2472,7 +2606,46 @@ async function fetchRowsFromSource(
     const buffer = Buffer.from(await response.arrayBuffer());
     const checklistText = extractChecklistTextFromPdfBuffer(buffer);
     const checklistRows = parseChecklistRowsFromText(checklistText);
-    if (checklistRows.length > 0) {
+    const oddsRows = parseParallelOddsRowsFromText(checklistText);
+    if (context.preferredDatasetType === SetDatasetType.PARALLEL_DB) {
+      if (oddsRows.length > 0) {
+        return {
+          rows: oddsRows,
+          parserName: "pdf-parallel-odds-v1",
+          contentType,
+          fetchedAt: new Date().toISOString(),
+          attempts: attemptsUsed,
+        };
+      }
+      if (checklistRows.length > 0) {
+        return {
+          rows: checklistRows,
+          parserName: "pdf-checklist-v1",
+          contentType,
+          fetchedAt: new Date().toISOString(),
+          attempts: attemptsUsed,
+        };
+      }
+    } else if (context.preferredDatasetType === SetDatasetType.PLAYER_WORKSHEET) {
+      if (checklistRows.length > 0) {
+        return {
+          rows: checklistRows,
+          parserName: "pdf-checklist-v1",
+          contentType,
+          fetchedAt: new Date().toISOString(),
+          attempts: attemptsUsed,
+        };
+      }
+      if (oddsRows.length > 0) {
+        return {
+          rows: oddsRows,
+          parserName: "pdf-parallel-odds-v1",
+          contentType,
+          fetchedAt: new Date().toISOString(),
+          attempts: attemptsUsed,
+        };
+      }
+    } else if (checklistRows.length > 0) {
       return {
         rows: checklistRows,
         parserName: "pdf-checklist-v1",
@@ -2480,10 +2653,7 @@ async function fetchRowsFromSource(
         fetchedAt: new Date().toISOString(),
         attempts: attemptsUsed,
       };
-    }
-
-    const oddsRows = parseParallelOddsRowsFromText(checklistText);
-    if (oddsRows.length > 0) {
+    } else if (oddsRows.length > 0) {
       return {
         rows: oddsRows,
         parserName: "pdf-parallel-odds-v1",
@@ -2545,7 +2715,46 @@ async function fetchRowsFromSource(
 
   const htmlChecklistText = extractChecklistTextFromHtml(content);
   const htmlChecklistRows = parseChecklistRowsFromText(htmlChecklistText);
-  if (htmlChecklistRows.length > 0) {
+  const htmlParallelOddsRows = parseParallelOddsRowsFromText(htmlChecklistText);
+  if (context.preferredDatasetType === SetDatasetType.PARALLEL_DB) {
+    if (htmlParallelOddsRows.length > 0) {
+      return {
+        rows: htmlParallelOddsRows,
+        parserName: "html-parallel-odds-v1",
+        contentType,
+        fetchedAt: new Date().toISOString(),
+        attempts: attemptsUsed,
+      };
+    }
+    if (htmlChecklistRows.length > 0) {
+      return {
+        rows: htmlChecklistRows,
+        parserName: "html-checklist-text-v1",
+        contentType,
+        fetchedAt: new Date().toISOString(),
+        attempts: attemptsUsed,
+      };
+    }
+  } else if (context.preferredDatasetType === SetDatasetType.PLAYER_WORKSHEET) {
+    if (htmlChecklistRows.length > 0) {
+      return {
+        rows: htmlChecklistRows,
+        parserName: "html-checklist-text-v1",
+        contentType,
+        fetchedAt: new Date().toISOString(),
+        attempts: attemptsUsed,
+      };
+    }
+    if (htmlParallelOddsRows.length > 0) {
+      return {
+        rows: htmlParallelOddsRows,
+        parserName: "html-parallel-odds-v1",
+        contentType,
+        fetchedAt: new Date().toISOString(),
+        attempts: attemptsUsed,
+      };
+    }
+  } else if (htmlChecklistRows.length > 0) {
     return {
       rows: htmlChecklistRows,
       parserName: "html-checklist-text-v1",
@@ -2553,10 +2762,7 @@ async function fetchRowsFromSource(
       fetchedAt: new Date().toISOString(),
       attempts: attemptsUsed,
     };
-  }
-
-  const htmlParallelOddsRows = parseParallelOddsRowsFromText(htmlChecklistText);
-  if (htmlParallelOddsRows.length > 0) {
+  } else if (htmlParallelOddsRows.length > 0) {
     return {
       rows: htmlParallelOddsRows,
       parserName: "html-parallel-odds-v1",
@@ -2573,6 +2779,7 @@ async function fetchRowsFromSource(
         const nested = await fetchRowsFromSource(checklistUrl, {
           depth: context.depth + 1,
           visited: context.visited,
+          preferredDatasetType: context.preferredDatasetType ?? null,
         });
         return {
           rows: nested.rows,
@@ -2607,6 +2814,7 @@ export function parseUploadedSourceFile(params: {
   fileName: string;
   fileBuffer: Buffer;
   contentType?: string | null;
+  preferredDatasetType?: SetDatasetType | null;
 }): { rows: Array<Record<string, unknown>>; parserName: string } {
   const fileName = compactWhitespace(params.fileName);
   if (!fileName) {
@@ -2623,12 +2831,24 @@ export function parseUploadedSourceFile(params: {
   if (isPdf) {
     const checklistText = extractChecklistTextFromPdfBuffer(params.fileBuffer);
     const checklistRows = parseChecklistRowsFromText(checklistText);
-    if (checklistRows.length > 0) {
-      return { rows: checklistRows, parserName: "upload-pdf-checklist-v1" };
-    }
-
     const oddsRows = parseParallelOddsRowsFromText(checklistText);
-    if (oddsRows.length > 0) {
+    if (params.preferredDatasetType === SetDatasetType.PARALLEL_DB) {
+      if (oddsRows.length > 0) {
+        return { rows: oddsRows, parserName: "upload-pdf-parallel-odds-v1" };
+      }
+      if (checklistRows.length > 0) {
+        return { rows: checklistRows, parserName: "upload-pdf-checklist-v1" };
+      }
+    } else if (params.preferredDatasetType === SetDatasetType.PLAYER_WORKSHEET) {
+      if (checklistRows.length > 0) {
+        return { rows: checklistRows, parserName: "upload-pdf-checklist-v1" };
+      }
+      if (oddsRows.length > 0) {
+        return { rows: oddsRows, parserName: "upload-pdf-parallel-odds-v1" };
+      }
+    } else if (checklistRows.length > 0) {
+      return { rows: checklistRows, parserName: "upload-pdf-checklist-v1" };
+    } else if (oddsRows.length > 0) {
       return { rows: oddsRows, parserName: "upload-pdf-parallel-odds-v1" };
     }
 
@@ -2674,19 +2894,49 @@ export function parseUploadedSourceFile(params: {
     if (htmlTableRows.length > 0) {
       return { rows: htmlTableRows, parserName: "upload-html-table-v1" };
     }
-    const htmlChecklistRows = parseChecklistRowsFromText(extractChecklistTextFromHtml(text));
-    if (htmlChecklistRows.length > 0) {
+    const htmlText = extractChecklistTextFromHtml(text);
+    const htmlChecklistRows = parseChecklistRowsFromText(htmlText);
+    const htmlOddsRows = parseParallelOddsRowsFromText(htmlText);
+    if (params.preferredDatasetType === SetDatasetType.PARALLEL_DB) {
+      if (htmlOddsRows.length > 0) {
+        return { rows: htmlOddsRows, parserName: "upload-html-parallel-odds-v1" };
+      }
+      if (htmlChecklistRows.length > 0) {
+        return { rows: htmlChecklistRows, parserName: "upload-html-checklist-v1" };
+      }
+    } else if (params.preferredDatasetType === SetDatasetType.PLAYER_WORKSHEET) {
+      if (htmlChecklistRows.length > 0) {
+        return { rows: htmlChecklistRows, parserName: "upload-html-checklist-v1" };
+      }
+      if (htmlOddsRows.length > 0) {
+        return { rows: htmlOddsRows, parserName: "upload-html-parallel-odds-v1" };
+      }
+    } else if (htmlChecklistRows.length > 0) {
       return { rows: htmlChecklistRows, parserName: "upload-html-checklist-v1" };
+    } else if (htmlOddsRows.length > 0) {
+      return { rows: htmlOddsRows, parserName: "upload-html-parallel-odds-v1" };
     }
   }
 
   const checklistRows = parseChecklistRowsFromText(text);
-  if (checklistRows.length > 0) {
-    return { rows: checklistRows, parserName: "upload-text-checklist-v1" };
-  }
-
   const oddsRows = parseParallelOddsRowsFromText(text);
-  if (oddsRows.length > 0) {
+  if (params.preferredDatasetType === SetDatasetType.PARALLEL_DB) {
+    if (oddsRows.length > 0) {
+      return { rows: oddsRows, parserName: "upload-text-parallel-odds-v1" };
+    }
+    if (checklistRows.length > 0) {
+      return { rows: checklistRows, parserName: "upload-text-checklist-v1" };
+    }
+  } else if (params.preferredDatasetType === SetDatasetType.PLAYER_WORKSHEET) {
+    if (checklistRows.length > 0) {
+      return { rows: checklistRows, parserName: "upload-text-checklist-v1" };
+    }
+    if (oddsRows.length > 0) {
+      return { rows: oddsRows, parserName: "upload-text-parallel-odds-v1" };
+    }
+  } else if (checklistRows.length > 0) {
+    return { rows: checklistRows, parserName: "upload-text-checklist-v1" };
+  } else if (oddsRows.length > 0) {
     return { rows: oddsRows, parserName: "upload-text-parallel-odds-v1" };
   }
 
@@ -2930,7 +3180,11 @@ export async function importDiscoveredSource(params: {
 
   let fetched: SourceFetchResult;
   try {
-    fetched = await fetchRowsFromSource(sourceUrl);
+    fetched = await fetchRowsFromSource(sourceUrl, {
+      depth: 0,
+      visited: new Set<string>(),
+      preferredDatasetType: params.datasetType,
+    });
   } catch (error) {
     const status = parseStatusCodeFromError(error);
     if (status === 401 || status === 403) {

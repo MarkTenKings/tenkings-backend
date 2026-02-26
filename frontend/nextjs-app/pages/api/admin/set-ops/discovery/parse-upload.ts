@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { SetAuditStatus } from "@tenkings/database";
+import { SetAuditStatus, SetDatasetType } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../../lib/server/admin";
 import { canPerformSetOpsRole, roleDeniedMessage, writeSetOpsAuditEvent } from "../../../../../lib/server/setOps";
 import { parseUploadedSourceFile } from "../../../../../lib/server/setOpsDiscovery";
@@ -70,6 +70,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     const fileName = resolveUploadFileName(req);
     const fileBuffer = await readRawBody(req);
+    const datasetTypeQuery = Array.isArray(req.query.datasetType) ? req.query.datasetType[0] : req.query.datasetType;
+    const requestedDatasetType = String(datasetTypeQuery || "")
+      .trim()
+      .toUpperCase();
+    const preferredDatasetType =
+      requestedDatasetType && requestedDatasetType in SetDatasetType
+        ? (requestedDatasetType as SetDatasetType)
+        : null;
     const contentType = Array.isArray(req.headers["content-type"])
       ? req.headers["content-type"][0]
       : req.headers["content-type"] || null;
@@ -78,6 +86,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       fileName,
       fileBuffer,
       contentType,
+      preferredDatasetType,
     });
 
     await writeSetOpsAuditEvent({
@@ -88,6 +97,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       metadata: {
         fileName,
         contentType,
+        preferredDatasetType,
         parserName: parsed.parserName,
         rowCount: parsed.rows.length,
       },

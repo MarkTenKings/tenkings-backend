@@ -2364,3 +2364,59 @@ Build Set Ops UI flow with:
 - Operations:
   - No deploy/restart/migration in this coding step.
   - No destructive data operations executed.
+
+## ODDS LIST Parser Routing + Draft Table Mapping Fix (2026-02-26)
+- Trigger:
+  - Operator reported ODDS LIST draft rows were mapped into checklist-style columns and included parser noise rows such as `glyphsLib`, `msfontlib`, and version-like tokens in `Card #`.
+- Root causes:
+  - Source/upload parsing still favored checklist extraction in some ODDS LIST flows.
+  - Draft table in Step 3 always rendered checklist column semantics.
+  - ODDS LIST quality gate did not require odds/serial signals strongly enough.
+- Fix implemented:
+  - `frontend/nextjs-app/lib/server/setOpsDiscovery.ts`
+    - Added dataset-aware parser preference:
+      - `PARALLEL_DB` (ODDS LIST) => odds-first parse.
+      - `PLAYER_WORKSHEET` (SET CHECKLIST) => checklist-first parse.
+    - Applied this preference to:
+      - discovery source URL imports
+      - upload parser (`parse-upload`) path
+      - nested checklist-link fallback fetches
+    - Added odds-specific normalization fields:
+      - `cardType`, `odds`, `serial`, `format`
+    - Added program/parallel label splitter so rows map to:
+      - Card Type
+      - Parallel Name
+    - Tightened ODDS LIST row filtering to reject rows missing odds/serial signals and malformed noise rows.
+  - `frontend/nextjs-app/pages/api/admin/set-ops/discovery/parse-upload.ts`
+    - Added `datasetType` query support and forwarding to `parseUploadedSourceFile`.
+  - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+    - Upload parse request now sends selected dataset mode (except combined mode).
+    - Step 3 Draft table now renders dataset-aware columns:
+      - ODDS LIST => `Card Type | Parallel Name | Odds`
+      - SET CHECKLIST => existing `Card # | Parallel | Player Seed`
+    - Save payload includes new fields (`cardType`, `odds`, `serial`, `format`).
+  - `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+    - Extended draft row model/version payload extraction with `cardType`, `odds`, `serial`, `format`.
+    - Added PARALLEL_DB validation for required odds/serial signal.
+    - Added listing-id fallback derived from `format | odds | serial` for stable dedupe across odds rows.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDiscovery.ts --file lib/server/setOpsDrafts.ts --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/discovery/parse-upload.ts` -> pass.
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit --pretty false` -> pass.
+  - `pnpm --filter @tenkings/database build` -> pass.
+- Operations:
+  - No deploy/restart/migration in this coding step.
+  - No destructive data operations executed.
+
+## Session Update (2026-02-26, Startup Context Sync #2)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Context baseline for this work session:
+  - Catalog Ops Phase 0-7 implementation is documented as complete.
+  - Production Catalog Ops workstation routes are documented as enabled on `collect.tenkings.co`.
+  - Latest parser hardening entries cover checklist base-card capture and ODDS LIST routing/column mapping.
+- Operations:
+  - No code/runtime changes, deploys, restarts, migrations, or DB operations were executed in this startup sync step.

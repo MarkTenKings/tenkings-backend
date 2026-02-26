@@ -20,6 +20,10 @@ export type SetOpsDraftRow = {
   setId: string;
   cardNumber: string | null;
   parallel: string;
+  cardType: string | null;
+  odds: string | null;
+  serial: string | null;
+  format: string | null;
   playerSeed: string;
   listingId: string | null;
   sourceUrl: string | null;
@@ -63,9 +67,20 @@ const rowSignalFields = [
   "parallelId",
   "parallel_id",
   "parallelName",
+  "cardType",
+  "card_type",
+  "program",
+  "programLabel",
   "playerSeed",
   "playerName",
   "player",
+  "odds",
+  "oddsInfo",
+  "packOdds",
+  "serial",
+  "serialNumber",
+  "format",
+  "channel",
   "listingId",
   "sourceListingId",
   "source_listing_id",
@@ -131,6 +146,14 @@ function looksLikeMarkupNoise(value: string | null | undefined) {
   return false;
 }
 
+function normalizeOddsValue(value: string | null | undefined) {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  const match = text.match(/\d+\s*:\s*[\d,]+/);
+  if (!match) return null;
+  return match[0].replace(/\s+/g, "");
+}
+
 export function normalizeDraftRows(params: {
   datasetType: SetDatasetType;
   fallbackSetId: string;
@@ -147,14 +170,26 @@ export function normalizeDraftRows(params: {
     const cardNumber = normalizeCardNumber(
       firstString(raw, ["cardNumber", "card_number", "cardNo", "number", "card"])
     );
+    const cardType = normalizePlayerSeed(
+      firstString(raw, ["cardType", "card_type", "program", "programLabel", "insertSet", "insert"])
+    );
+    const odds = normalizeOddsValue(firstString(raw, ["odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"]));
+    const serial = normalizeParallelLabel(firstString(raw, ["serial", "serialNumber", "serial_number", "printRun"])) || null;
+    const format = normalizePlayerSeed(firstString(raw, ["format", "channel", "boxType", "packType", "productType"])) || null;
     const parallel = normalizeParallelLabel(
       firstString(raw, ["parallel", "parallelId", "parallel_id", "parallelName"])
     );
-    const playerSeed = normalizePlayerSeed(firstString(raw, ["playerSeed", "playerName", "player"]));
+    const playerSeed = normalizePlayerSeed(
+      firstString(raw, ["playerSeed", "playerName", "player"]) || (params.datasetType === SetDatasetType.PARALLEL_DB ? cardType : "")
+    );
     const sourceUrl = firstString(raw, ["sourceUrl", "url", "source"]) || null;
-    const listingId = normalizeListingId(
+    let listingId = normalizeListingId(
       firstString(raw, ["listingId", "sourceListingId", "source_listing_id", "listing", "url", "sourceUrl"])
     );
+    if (!listingId && params.datasetType === SetDatasetType.PARALLEL_DB) {
+      const fallbackListing = [format || "", odds || "", serial || ""].filter(Boolean).join(" | ");
+      listingId = normalizeListingId(fallbackListing);
+    }
 
     const errors: DraftValidationIssue[] = [];
     const warnings: string[] = [];
@@ -165,6 +200,9 @@ export function normalizeDraftRows(params: {
 
     if (params.datasetType === SetDatasetType.PARALLEL_DB && !parallel) {
       errors.push({ field: "parallel", message: "parallel is required for parallel_db rows", blocking: true });
+    }
+    if (params.datasetType === SetDatasetType.PARALLEL_DB && !odds && !serial) {
+      errors.push({ field: "odds", message: "odds (or serial) is required for parallel_db rows", blocking: true });
     }
 
     if (params.datasetType === SetDatasetType.PLAYER_WORKSHEET && !playerSeed) {
@@ -177,12 +215,21 @@ export function normalizeDraftRows(params: {
     if (looksLikeMarkupNoise(parallel)) {
       errors.push({ field: "parallel", message: "parallel appears to contain HTML/navigation/script content", blocking: true });
     }
+    if (looksLikeMarkupNoise(cardType)) {
+      errors.push({ field: "cardType", message: "cardType appears to contain HTML/navigation/script content", blocking: true });
+    }
     if (looksLikeMarkupNoise(playerSeed)) {
       errors.push({ field: "playerSeed", message: "playerSeed appears to contain HTML/navigation/script content", blocking: true });
     }
+    if (looksLikeMarkupNoise(odds)) {
+      errors.push({ field: "odds", message: "odds appears to contain HTML/navigation/script content", blocking: true });
+    }
 
-    if (!cardNumber) {
+    if (!cardNumber && params.datasetType === SetDatasetType.PLAYER_WORKSHEET) {
       warnings.push("cardNumber missing or legacy NULL value");
+    }
+    if (params.datasetType === SetDatasetType.PARALLEL_DB && !cardType) {
+      warnings.push("cardType missing");
     }
 
     const duplicateKey = buildSetOpsDuplicateKey({
@@ -208,6 +255,10 @@ export function normalizeDraftRows(params: {
       setId: normalizedSetId || fallbackSetId,
       cardNumber,
       parallel,
+      cardType: cardType || null,
+      odds,
+      serial,
+      format,
       playerSeed,
       listingId,
       sourceUrl,
@@ -240,6 +291,10 @@ export function createDraftVersionPayload(params: {
     setId: row.setId,
     cardNumber: row.cardNumber,
     parallel: row.parallel,
+    cardType: row.cardType,
+    odds: row.odds,
+    serial: row.serial,
+    format: row.format,
     playerSeed: row.playerSeed,
     listingId: row.listingId,
     sourceUrl: row.sourceUrl,
@@ -256,6 +311,10 @@ export function createDraftVersionPayload(params: {
       setId: row.setId,
       cardNumber: row.cardNumber,
       parallel: row.parallel,
+      cardType: row.cardType,
+      odds: row.odds,
+      serial: row.serial,
+      format: row.format,
       playerSeed: row.playerSeed,
       listingId: row.listingId,
       sourceUrl: row.sourceUrl,
@@ -316,6 +375,10 @@ export function extractDraftRows(dataJson: unknown): SetOpsDraftRow[] {
         setId: normalizeSetLabel(String(row.setId || "")),
         cardNumber: normalizeCardNumber(String(row.cardNumber ?? "")),
         parallel: normalizeParallelLabel(String(row.parallel || "")),
+        cardType: normalizePlayerSeed(String(row.cardType || "")) || null,
+        odds: normalizeOddsValue(String(row.odds ?? "")),
+        serial: normalizeParallelLabel(String(row.serial || "")) || null,
+        format: normalizePlayerSeed(String(row.format || "")) || null,
         playerSeed: normalizePlayerSeed(String(row.playerSeed || "")),
         listingId: normalizeListingId(String(row.listingId ?? "")),
         sourceUrl: String(row.sourceUrl ?? "").trim() || null,
@@ -333,6 +396,10 @@ function rowSignature(row: SetOpsDraftRow) {
     setId: row.setId,
     cardNumber: row.cardNumber,
     parallel: row.parallel,
+    cardType: row.cardType,
+    odds: row.odds,
+    serial: row.serial,
+    format: row.format,
     playerSeed: row.playerSeed,
     listingId: row.listingId,
     sourceUrl: row.sourceUrl,

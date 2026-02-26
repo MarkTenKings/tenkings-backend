@@ -32,6 +32,10 @@ type DraftRow = {
   setId: string;
   cardNumber: string | null;
   parallel: string;
+  cardType: string | null;
+  odds: string | null;
+  serial: string | null;
+  format: string | null;
   playerSeed: string;
   listingId: string | null;
   sourceUrl: string | null;
@@ -394,6 +398,7 @@ export default function SetOpsReviewPage() {
     () => editableRows.flatMap((row) => row.errors).filter((issue) => issue.blocking).length,
     [editableRows]
   );
+  const isOddsDataset = datasetType === "PARALLEL_DB";
 
   const stepCompletion = useMemo<Record<ReviewStepId, boolean>>(
     () => ({
@@ -453,6 +458,10 @@ export default function SetOpsReviewPage() {
           setId: nextSetId,
           cardNumber: null,
           parallel: "",
+          cardType: null,
+          odds: null,
+          serial: null,
+          format: null,
           playerSeed: "",
           listingId: null,
           sourceUrl: nextSourceUrl,
@@ -736,15 +745,20 @@ export default function SetOpsReviewPage() {
         let parserName = "";
 
         if (isPdf) {
-          const response = await fetch(`/api/admin/set-ops/discovery/parse-upload?fileName=${encodeURIComponent(file.name)}`, {
-            method: "POST",
-            headers: {
-              ...adminHeaders,
-              "Content-Type": "application/octet-stream",
-              "X-File-Name": encodeURIComponent(file.name),
-            },
-            body: await file.arrayBuffer(),
-          });
+          const datasetForUpload =
+            queueDatasetMode === "COMBINED" ? "" : `&datasetType=${encodeURIComponent(queueDatasetMode)}`;
+          const response = await fetch(
+            `/api/admin/set-ops/discovery/parse-upload?fileName=${encodeURIComponent(file.name)}${datasetForUpload}`,
+            {
+              method: "POST",
+              headers: {
+                ...adminHeaders,
+                "Content-Type": "application/octet-stream",
+                "X-File-Name": encodeURIComponent(file.name),
+              },
+              body: await file.arrayBuffer(),
+            }
+          );
           const payload = (await response.json().catch(() => ({}))) as {
             message?: string;
             rows?: Array<Record<string, unknown>>;
@@ -786,7 +800,7 @@ export default function SetOpsReviewPage() {
         event.target.value = "";
       }
     },
-    [adminHeaders, canReview, setIdInput]
+    [adminHeaders, canReview, queueDatasetMode, setIdInput]
   );
 
   const runDiscoverySearch = useCallback(
@@ -1154,6 +1168,10 @@ export default function SetOpsReviewPage() {
             setId: row.setId,
             cardNumber: row.cardNumber,
             parallel: row.parallel,
+            cardType: row.cardType,
+            odds: row.odds,
+            serial: row.serial,
+            format: row.format,
             playerSeed: row.playerSeed,
             listingId: row.listingId,
             sourceUrl: row.sourceUrl,
@@ -1766,7 +1784,7 @@ export default function SetOpsReviewPage() {
             <div className="md:col-span-2 rounded-xl border border-white/10 bg-night-950/40 p-3">
               <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Upload Source File</p>
               <p className="mt-1 text-xs text-slate-400">
-                Upload CSV/JSON/PDF checklist files. No manual JSON editing required.
+                Upload CSV/JSON/PDF checklist or odds-list files. No manual JSON editing required.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <input
@@ -1967,9 +1985,9 @@ export default function SetOpsReviewPage() {
               <thead>
                 <tr>
                   <th className="border-b border-white/10 px-2 py-2">#</th>
-                  <th className="border-b border-white/10 px-2 py-2">Card #</th>
-                  <th className="border-b border-white/10 px-2 py-2">Parallel</th>
-                  <th className="border-b border-white/10 px-2 py-2">Player Seed</th>
+                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Card Type" : "Card #"}</th>
+                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Parallel Name" : "Parallel"}</th>
+                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Odds" : "Player Seed"}</th>
                   <th className="border-b border-white/10 px-2 py-2">Listing ID</th>
                   <th className="border-b border-white/10 px-2 py-2">Source URL</th>
                   <th className="border-b border-white/10 px-2 py-2">Issues</th>
@@ -1982,17 +2000,23 @@ export default function SetOpsReviewPage() {
                     <td className="border-b border-white/5 px-2 py-2">{row.index + 1}</td>
                     <td className="border-b border-white/5 px-2 py-2">
                       <input
-                        value={row.cardNumber ?? ""}
+                        value={isOddsDataset ? row.cardType ?? row.playerSeed ?? "" : row.cardNumber ?? ""}
                         onChange={(event) => {
                           const next = event.target.value;
                           setEditableRows((prev) => {
                             const copy = [...prev];
-                            copy[rowIndex] = { ...copy[rowIndex], cardNumber: next || null };
+                            if (isOddsDataset) {
+                              copy[rowIndex] = { ...copy[rowIndex], cardType: next || null, playerSeed: next };
+                            } else {
+                              copy[rowIndex] = { ...copy[rowIndex], cardNumber: next || null };
+                            }
                             return copy;
                           });
                         }}
                         disabled={!canReview}
-                        className="h-8 w-24 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        className={`h-8 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none ${
+                          isOddsDataset ? "w-48" : "w-24"
+                        }`}
                       />
                     </td>
                     <td className="border-b border-white/5 px-2 py-2">
@@ -2012,17 +2036,23 @@ export default function SetOpsReviewPage() {
                     </td>
                     <td className="border-b border-white/5 px-2 py-2">
                       <input
-                        value={row.playerSeed ?? ""}
+                        value={isOddsDataset ? row.odds ?? row.cardNumber ?? "" : row.playerSeed ?? ""}
                         onChange={(event) => {
                           const next = event.target.value;
                           setEditableRows((prev) => {
                             const copy = [...prev];
-                            copy[rowIndex] = { ...copy[rowIndex], playerSeed: next };
+                            if (isOddsDataset) {
+                              copy[rowIndex] = { ...copy[rowIndex], odds: next || null, cardNumber: null };
+                            } else {
+                              copy[rowIndex] = { ...copy[rowIndex], playerSeed: next };
+                            }
                             return copy;
                           });
                         }}
                         disabled={!canReview}
-                        className="h-8 w-40 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        className={`h-8 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none ${
+                          isOddsDataset ? "w-24" : "w-40"
+                        }`}
                       />
                     </td>
                     <td className="border-b border-white/5 px-2 py-2">
