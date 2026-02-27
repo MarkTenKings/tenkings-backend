@@ -2886,3 +2886,205 @@ Build Set Ops UI flow with:
 ### Safety/Migrations
 - No DB migrations run.
 - No destructive DB/set operations run.
+
+## Full Audit Refresh (2026-02-27): Endpoint + DB on `collect.tenkings.co`
+
+### Runtime Endpoint Snapshot
+- `variants/options` broad Topps Basketball scope:
+  - `200`, `source=taxonomy_v2`, `legacyFallbackUsed=false`, `approvedSetCount=4`, `scopedSetCount=3`, `variantCount=23`.
+- `variants/options` explicit `setId=2025-26 Topps Basketball`:
+  - `200`, `source=legacy`, `legacyFallbackUsed=true`, `variantCount=1793`, populated legacy options.
+- `variants/options` approved sets:
+  - Finest and Retail both `200` with `source=taxonomy_v2`, `legacyFallbackUsed=false`.
+- `variants/match`:
+  - downstream `404` (`Variant embedding service is not configured`), no taxonomy hard-stop.
+- `ocr-suggest`:
+  - `200`, taxonomy constraints populated (`selectedSetId` + non-empty option pools), field clamping active.
+- `kingsreview/enqueue`:
+  - auto-query mode is mixed by card data (some `200` queued, some `400 query is required`),
+  - manual-query mode remains `200` and queues successfully.
+- `set-ops/access`:
+  - `200`, approver/delete/admin permissions true.
+- `set-ops/taxonomy/backfill` dry-run:
+  - `200`, approved-set dry-run resolves both target sets with zero blocking rows.
+
+### DB Snapshot
+- Global:
+  - `SetTaxonomySource=18`
+  - `SetProgram=9`
+  - `SetCard=921`
+  - `SetVariation=0`
+  - `SetParallel=41`
+  - `SetParallelScope=41`
+  - `SetOddsByFormat=3`
+  - `CardVariantTaxonomyMap=903`
+  - `CardVariant=2915`
+- Classification stable:
+  - `PARALLEL_DB|CHECKLIST|6`
+  - `PARALLEL_DB|ODDS|6`
+  - `PLAYER_WORKSHEET|CHECKLIST|4`
+- Integrity checks all clean (`scope_missing_*`, `odds_missing_*`, duplicate scope/odds keys all zero).
+- Historical contamination/noise remains but no recent regressions:
+  - PARALLEL_DB-linked `SetCard` historical total `253`
+  - parser-noise historical total `12`
+  - last 60 minutes: `0` new PARALLEL_DB-linked `SetCard`, `0` new parser-noise rows.
+
+### Before/After vs Prior Baseline (Post-Fix #4)
+- Prior baseline:
+  - `SetProgram=7`, `SetParallel=35`, `SetParallelScope=35`, `SetOddsByFormat=3`.
+- Current:
+  - `SetProgram=9` (`+2`)
+  - `SetParallel=41` (`+6`)
+  - `SetParallelScope=41` (`+6`)
+  - `SetOddsByFormat=3` (unchanged)
+- Classification remained unchanged and stable.
+
+### Remaining Gaps
+- `2025-26 Topps Basketball` still has no usable taxonomy population (`programs/parallels/scopes/odds/maps=0`) and continues to rely on legacy fallback.
+- Sapphire family setId fragmentation persists (`Sapphire`, `Saphire`, `_Odds`, `Checklist`, `v4`).
+- Two Fix #5 verification fixtures are now approved active sets and contribute to `approvedSetCount` unless later cleaned.
+
+## Step 1 + 2 Update (2026-02-27, Executed): Fixture Cleanup + Topps Taxonomy Population
+
+### What Was Executed
+- Archived both Fix #5 verification fixture sets in production:
+  - `2026 Fix5 Seed Verification Set 20260227041936`
+  - `2026 Fix5 Post Deploy Verification Set 20260227052338`
+- Populated taxonomy for `2025-26 Topps Basketball` and re-verified runtime behavior.
+
+### Key Before State
+- `2025-26 Topps Basketball` was still taxonomy-empty:
+  - `programs=0`, `parallels=0`, `scopes=0`, `odds=0`, `maps=0`, `variants=1793`.
+- Explicit options for Topps used legacy fallback:
+  - `source=legacy`, `legacyFallbackUsed=true`.
+- Topps draft status was `REVIEW_REQUIRED` (latest approved version existed with blocking errors `0`).
+
+### Execution Notes
+- Step 1 archive calls succeeded and set both fixture drafts to `ARCHIVED`.
+- Topps draft was moved to `APPROVED` to allow taxonomy population.
+- Official `POST /api/admin/set-ops/taxonomy/backfill` apply path failed for Topps with:
+  - `Invalid prisma.cardVariantTaxonomyMap.upsert(): Transaction not found`.
+- Performed idempotent manual population for Topps taxonomy rows + canonical map rows using production DB credentials.
+  - This was additive/non-destructive and verified with before/after counts.
+
+### Key After State
+- `2025-26 Topps Basketball` now populated:
+  - `programs=1`
+  - `parallels=55`
+  - `scopes=55`
+  - `cards=1757`
+  - `maps=1793`
+  - `odds=0`
+  - `variants=1793`
+- Runtime options for explicit Topps set now use taxonomy path:
+  - `source=taxonomy_v2`, `legacyFallbackUsed=false`, `variants=55`.
+- Broad Topps Basketball options remain healthy:
+  - `source=taxonomy_v2`, `legacyFallbackUsed=false`, `sets=3`.
+- Matcher sanity unchanged:
+  - no taxonomy hard-stop; downstream message remains `Variant embedding service is not configured`.
+
+### Global Delta (Before -> After)
+- `SetProgram: 9 -> 10`
+- `SetParallel: 41 -> 96`
+- `SetParallelScope: 41 -> 96`
+- `SetCard: 921 -> 2678`
+- `CardVariantTaxonomyMap: 903 -> 2696`
+- `SetTaxonomySource: 18 -> 20`
+- `SetOddsByFormat: 3 -> 3`
+
+### Integrity/Contamination Checks
+- Historical contamination counters unchanged:
+  - `SetCard` rows linked to `PARALLEL_DB` sources: `253`.
+  - parser-noise `SetCard` rows: `12`.
+- Topps-specific newly populated `SetCard` parser-noise rows: `0`.
+- Topps map duplicates by `cardVariantId`: `0`.
+
+### Remaining Follow-Up
+- Fix backfill apply reliability for large sets in API path:
+  - current `taxonomy/backfill` apply fails on Topps with Prisma transaction closure during map upserts.
+- Consider restoring API-path-only execution once transaction timeout/bridge-upsert strategy is hardened (batching or non-transactional map upserts).
+
+## Investigation Update (2026-02-27): Mobile Add Card OCR Queue Showing 0
+
+### Reported Symptom
+- Operator captured front/back/tilt via **Add Card** on phone.
+- Expected card to appear in OCR queue, but queue count remained `0`.
+
+### Root Cause Summary
+- **UI queue race (primary for "queue=0"):**
+  - OCR queue in uploads UI is client-local (`queuedReviewCardIds` + localStorage), not server-backed.
+  - Queue ID is added only if `intakeCardId` exists at tilt capture time.
+  - On mobile, front upload can still be in-flight when back/tilt are captured; in that branch, pending blobs are set and then immediately wiped by `clearActiveIntakeState()`, so queue insertion never happens.
+- **Front-upload pacing gap (contributes to orphan uploads):**
+  - back/tilt capture buttons are not gated by `intakePhotoBusy`.
+  - Operator can proceed before front upload finishes (`/uploads/complete` not always reached), leaving `CardAsset` rows in `UPLOADING` with no OCR job.
+- **Independent OCR backend failure (post-enqueue):**
+  - For assets that do enqueue OCR jobs, processing worker fails with `imageUrl is not a base64 data URI`.
+  - Worker mock-mode decode path expects base64 data URIs, while uploaded assets are S3 URLs.
+
+### Production Evidence
+- Test window assets for operator user included:
+  - two `UPLOADING` assets, no OCR jobs, no back/tilt photos, storage objects missing.
+  - one completed front asset with OCR job failed on base64-data-URI error.
+- Recent OCR jobs (72h sample) repeatedly fail with the same base64-data-URI error message.
+
+### Impact
+- Users can complete 3-capture UX but still see queue `0` due dropped local queue insertion path.
+- Even successful front completes do not progress through OCR worker because backend processing is failing.
+
+### Note on Scope
+- This issue was investigated after Fix #4/#5; those set-ops commits did not modify Add Card uploads flow files.
+
+## Add Card/OCR Fix Update (2026-02-27, Code Complete, Not Deployed)
+
+### What Was Fixed
+- Mobile Add Card queue reliability in `uploads.tsx`:
+  - back/tilt capture now gated on front-upload completion (`intakeCardId` present, not `intakePhotoBusy`).
+  - tilt finalization/queue handoff now occurs only after successful TILT upload.
+  - no immediate state clear on failed/missing card-id branch.
+- OCR worker image loading in `processing-service`:
+  - no longer requires base64 data URI only.
+  - now supports URL-backed image assets by fetching `imageUrl` when needed.
+
+### Why
+- Root-cause analysis showed two independent failures:
+  - queue ID could be dropped on mobile when front upload had not finished before back/tilt flow reset.
+  - OCR worker repeatedly failed queued jobs because assets were URL-backed but worker expected data URI in mock path.
+
+### Validation (Local)
+- Next.js app typecheck passed.
+- Targeted uploads lint passed (warnings only).
+- Processing service build passed.
+
+### Deployment Notes
+- Code is not deployed yet.
+- Requires:
+  - Vercel deploy for Next.js frontend/API changes.
+  - Droplet processing-service rebuild/restart to pick up worker fix.
+
+## Add Card Fast Capture Follow-Up (2026-02-27)
+
+### Problem
+- Mobile operators need to capture multiple cards rapidly (front/back/tilt per card) without waiting for upload completion between cards.
+- Blocking gates introduced in a prior patch (`back/tilt` disabled until front upload completed) violated required workflow speed.
+
+### Fix Applied (Code Complete, Not Deployed)
+- File: `frontend/nextjs-app/pages/admin/uploads.tsx`
+- Removed back/tilt button blocking on `intakePhotoBusy` and `intakeCardId`.
+- Added background finalization per captured card after tilt:
+  - waits for front upload to resolve card id when needed,
+  - uploads pending back/tilt photos in background,
+  - appends resolved card id to `queuedReviewCardIds` after successful background upload.
+- Added front-upload token/ref guards to avoid stale state updates during rapid card-to-card capture resets.
+
+### Resulting Behavior
+- Operator can immediately continue to next card capture after tilt photo.
+- OCR queue IDs are added asynchronously as each card’s background finalization completes.
+- No architecture/UI refactor; focused change within existing Add Card capture flow.
+
+### Validation
+- Next.js typecheck passed.
+- Targeted uploads lint passed (warnings only).
+
+### Deploy Status
+- Not deployed in this update.

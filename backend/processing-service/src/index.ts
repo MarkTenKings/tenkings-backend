@@ -205,27 +205,41 @@ async function handlePhotoroomJob(job: ProcessingJob) {
 
 
 
-function extractMockBase64(asset: { id: string; imageUrl: string | null }) {
-  if (!asset.imageUrl) {
-    throw new Error(`[processing-service] asset ${asset.id} missing image data for mock storage`);
+function extractDataUriBase64(imageUrl: string | null) {
+  if (!imageUrl) return null;
+  const match = imageUrl.match(/^data:(?:[^;]+);base64,(.+)$/);
+  return match?.[1] ?? null;
+}
+
+async function fetchImageBufferFromUrl(assetId: string, imageUrl: string) {
+  const response = await fetch(imageUrl);
+  if (!response.ok) {
+    throw new Error(`[processing-service] asset ${assetId} image fetch failed (${response.status})`);
   }
-  const match = asset.imageUrl.match(/^data:(?:[^;]+);base64,(.+)$/);
-  if (!match) {
-    throw new Error(`[processing-service] asset ${asset.id} imageUrl is not a base64 data URI`);
-  }
-  return match[1];
+  const payload = await response.arrayBuffer();
+  return Buffer.from(payload);
 }
 
 async function loadAssetBuffer(asset: { id: string; storageKey: string; imageUrl: string | null }) {
-  if (config.storageMode === "mock") {
-    const base64 = extractMockBase64(asset);
-    return Buffer.from(base64, "base64");
+  const dataUriBase64 = extractDataUriBase64(asset.imageUrl);
+  if (dataUriBase64) {
+    return Buffer.from(dataUriBase64, "base64");
   }
+
   if (config.storageMode === "local") {
     const filePath = path.join(config.localStorageRoot, asset.storageKey);
     return fs.readFile(filePath);
   }
-  throw new Error(`Storage mode ${config.storageMode} not yet supported`);
+
+  if (asset.imageUrl && /^https?:\/\//i.test(asset.imageUrl)) {
+    return fetchImageBufferFromUrl(asset.id, asset.imageUrl);
+  }
+
+  if (config.storageMode === "mock") {
+    throw new Error(`[processing-service] asset ${asset.id} missing image data for mock storage`);
+  }
+
+  throw new Error(`[processing-service] asset ${asset.id} image source unreadable for mode ${config.storageMode}`);
 }
 
 async function handleOcrJob(job: ProcessingJob) {

@@ -42,6 +42,10 @@ interface UploadResult {
 type IntakeStep = "front" | "back" | "tilt" | "required" | "optional" | "done";
 type IntakeCategory = "sport" | "tcg";
 type IntakeReviewMode = "capture" | "review";
+type IntakeFrontUploadPayload = {
+  assetId: string;
+  batchId: string;
+};
 
 type IntakeRequiredFields = {
   category: IntakeCategory;
@@ -602,6 +606,8 @@ export default function AdminUploads() {
     TILT: null,
   });
   const teachRegionTelemetryDedupRef = useRef<Record<string, number>>({});
+  const activeFrontUploadRef = useRef<Promise<IntakeFrontUploadPayload> | null>(null);
+  const activeFrontUploadTokenRef = useRef(0);
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -1411,6 +1417,8 @@ export default function AdminUploads() {
   }, []);
 
   const clearActiveIntakeState = useCallback(() => {
+    activeFrontUploadRef.current = null;
+    activeFrontUploadTokenRef.current += 1;
     setIntakeStep("front");
     setIntakeReviewMode("capture");
     setIntakeRequired({
@@ -1709,12 +1717,13 @@ export default function AdminUploads() {
   );
 
   const uploadCardPhoto = useCallback(
-    async (file: File, kind: "BACK" | "TILT") => {
+    async (file: File, kind: "BACK" | "TILT", cardIdOverride?: string) => {
       const token = session?.token;
       if (!token) {
         throw new Error("Your session expired. Sign in again and retry.");
       }
-      if (!intakeCardId) {
+      const targetCardId = cardIdOverride ?? intakeCardId;
+      if (!targetCardId) {
         throw new Error("Card asset not found. Capture the front image first.");
       }
 
@@ -1727,7 +1736,7 @@ export default function AdminUploads() {
           ...buildAdminHeaders(token),
         },
         body: JSON.stringify({
-          cardAssetId: intakeCardId,
+          cardAssetId: targetCardId,
           kind,
           fileName: optimizedFile.name,
           size: optimizedFile.size,
@@ -2517,52 +2526,119 @@ export default function AdminUploads() {
   );
 
   const uploadQueuedPhoto = useCallback(
-    async (blob: Blob, kind: "BACK" | "TILT") => {
+    async (
+      blob: Blob,
+      kind: "BACK" | "TILT",
+      cardIdOverride?: string,
+      options?: {
+        updateIntakeState?: boolean;
+        setBusyState?: boolean;
+        triggerOcr?: boolean;
+      }
+    ): Promise<boolean> => {
+      const updateIntakeState = options?.updateIntakeState ?? true;
+      const setBusyState = options?.setBusyState ?? updateIntakeState;
+      const triggerOcr = options?.triggerOcr ?? updateIntakeState;
+      const targetCardId = cardIdOverride ?? intakeCardId;
+      if (!targetCardId) {
+        if (updateIntakeState) {
+          setIntakeError("Front image is still uploading. Capture the next card and this one will finalize in background.");
+        }
+        return false;
+      }
       const mime = blob.type || "image/jpeg";
       const extension = mime.endsWith("png") ? "png" : mime.endsWith("webp") ? "webp" : "jpg";
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const fileName = `intake-${kind.toLowerCase()}-${timestamp}.${extension}`;
       const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
-      setIntakePhotoBusy(true);
+      if (setBusyState) {
+        setIntakePhotoBusy(true);
+      }
+      let uploaded = false;
       try {
-        const presign = await uploadCardPhoto(file, kind);
-        if (kind === "BACK") {
-          setIntakeBackPhotoId(presign.photoId);
-        } else {
-          setIntakeTiltPhotoId(presign.photoId);
+        const presign = await uploadCardPhoto(file, kind, targetCardId);
+        if (updateIntakeState) {
+          if (kind === "BACK") {
+            setIntakeBackPhotoId(presign.photoId);
+          } else {
+            setIntakeTiltPhotoId(presign.photoId);
+          }
         }
+        uploaded = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to upload photo.";
-        setIntakeError(message);
+        if (updateIntakeState) {
+          setIntakeError(message);
+        } else {
+          console.warn("[admin/uploads] Background photo upload failed", { kind, targetCardId, message });
+        }
       } finally {
-        setIntakePhotoBusy(false);
-        if (intakeCardId) {
+        if (setBusyState) {
+          setIntakePhotoBusy(false);
+        }
+        if (uploaded && triggerOcr) {
           setTimeout(() => {
-            if (ocrCardIdRef.current === null || ocrCardIdRef.current === intakeCardId) {
-              startOcrForCard(intakeCardId);
+            if (ocrCardIdRef.current === null || ocrCardIdRef.current === targetCardId) {
+              startOcrForCard(targetCardId);
             }
           }, 300);
         }
       }
+      return uploaded;
     },
     [intakeCardId, startOcrForCard, uploadCardPhoto]
   );
 
-  useEffect(() => {
-    if (!intakeCardId) {
-      return;
-    }
-    if (pendingBackBlob) {
-      const blob = pendingBackBlob;
-      setPendingBackBlob(null);
-      void uploadQueuedPhoto(blob, "BACK");
-    }
-    if (pendingTiltBlob) {
-      const blob = pendingTiltBlob;
-      setPendingTiltBlob(null);
-      void uploadQueuedPhoto(blob, "TILT");
-    }
-  }, [intakeCardId, pendingBackBlob, pendingTiltBlob, uploadQueuedPhoto]);
+  const finalizeCapturedCardInBackground = useCallback(
+    async (params: {
+      existingCardId: string | null;
+      frontUploadPromise: Promise<IntakeFrontUploadPayload> | null;
+      backBlob: Blob | null;
+      tiltBlob: Blob;
+    }) => {
+      const { existingCardId, frontUploadPromise, backBlob, tiltBlob } = params;
+      let targetCardId = existingCardId;
+      if (!targetCardId) {
+        if (!frontUploadPromise) {
+          setIntakeError("Front upload did not start for one card. Re-capture that card.");
+          return;
+        }
+        try {
+          const frontUpload = await frontUploadPromise;
+          targetCardId = frontUpload.assetId;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Front upload failed";
+          setIntakeError(`A captured card could not be queued: ${message}`);
+          return;
+        }
+      }
+
+      if (backBlob) {
+        const backUploaded = await uploadQueuedPhoto(backBlob, "BACK", targetCardId, {
+          updateIntakeState: false,
+          setBusyState: false,
+          triggerOcr: false,
+        });
+        if (!backUploaded) {
+          setIntakeError("A captured card back photo failed in background upload.");
+          return;
+        }
+      }
+
+      const tiltUploaded = await uploadQueuedPhoto(tiltBlob, "TILT", targetCardId, {
+        updateIntakeState: false,
+        setBusyState: false,
+        triggerOcr: false,
+      });
+      if (!tiltUploaded) {
+        setIntakeError("A captured card tilt photo failed in background upload.");
+        return;
+      }
+
+      setQueuedReviewCardIds((prev) => (prev.includes(targetCardId) ? prev : [...prev, targetCardId]));
+    },
+    [uploadQueuedPhoto]
+  );
 
   const confirmIntakeCapture = useCallback(
     async (target: "front" | "back" | "tilt", blob: Blob) => {
@@ -2575,45 +2651,55 @@ export default function AdminUploads() {
         const file = new File([blob], fileName, { type: mime, lastModified: Date.now() });
 
         if (target === "front") {
+          setPendingBackBlob(null);
+          setPendingTiltBlob(null);
           setIntakePhotoBusy(true);
           setIntakeFrontPreview(URL.createObjectURL(blob));
           setIntakeStep("back");
           setIntakeCaptureTarget("back");
+          const currentToken = activeFrontUploadTokenRef.current + 1;
+          activeFrontUploadTokenRef.current = currentToken;
+          const frontUploadPromise = uploadCardAsset(file) as Promise<IntakeFrontUploadPayload>;
+          activeFrontUploadRef.current = frontUploadPromise;
           void (async () => {
             try {
-              const presign = await uploadCardAsset(file);
+              const presign = await frontUploadPromise;
+              if (activeFrontUploadTokenRef.current !== currentToken) {
+                return;
+              }
               setIntakeCardId(presign.assetId);
               setIntakeBatchId(presign.batchId);
             } catch (error) {
+              if (activeFrontUploadTokenRef.current !== currentToken) {
+                return;
+              }
               const message = error instanceof Error ? error.message : "Failed to capture photo.";
               setIntakeError(message);
             } finally {
-              setIntakePhotoBusy(false);
+              if (activeFrontUploadTokenRef.current === currentToken) {
+                setIntakePhotoBusy(false);
+              }
             }
           })();
         } else if (target === "back") {
           setIntakeBackPreview(URL.createObjectURL(blob));
+          setPendingBackBlob(blob);
           setIntakeStep("tilt");
           setIntakeCaptureTarget("tilt");
-          if (intakeCardId) {
-            void uploadQueuedPhoto(blob, "BACK");
-          } else {
-            setPendingBackBlob(blob);
-          }
         } else {
           setIntakeTiltPreview(URL.createObjectURL(blob));
-          setIntakeStep("front");
+          setPendingTiltBlob(blob);
           setIntakeCaptureTarget(null);
-          if (intakeCardId) {
-            void uploadQueuedPhoto(blob, "TILT");
-            setQueuedReviewCardIds((prev) =>
-              prev.includes(intakeCardId) ? prev : [...prev, intakeCardId]
-            );
-          } else {
-            setPendingTiltBlob(blob);
-          }
+          const backgroundCardId = intakeCardId;
+          const backgroundFrontUploadPromise = activeFrontUploadRef.current;
+          const backgroundBackBlob = pendingBackBlob;
+          void finalizeCapturedCardInBackground({
+            existingCardId: backgroundCardId,
+            frontUploadPromise: backgroundFrontUploadPromise,
+            backBlob: backgroundBackBlob,
+            tiltBlob: blob,
+          });
           clearActiveIntakeState();
-          setIntakeReviewMode("capture");
           closeCamera();
           void openIntakeCapture("front");
         }
@@ -2626,7 +2712,15 @@ export default function AdminUploads() {
         }
       }
     },
-    [clearActiveIntakeState, closeCamera, intakeCardId, openIntakeCapture, uploadCardAsset, uploadQueuedPhoto]
+    [
+      clearActiveIntakeState,
+      closeCamera,
+      finalizeCapturedCardInBackground,
+      intakeCardId,
+      openIntakeCapture,
+      pendingBackBlob,
+      uploadCardAsset,
+    ]
   );
 
   const handleCapture = useCallback(async () => {
@@ -4219,13 +4313,13 @@ export default function AdminUploads() {
               <div className="rounded-2xl border border-white/10 bg-night-900/60 p-4 text-sm text-slate-300">
                 <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Step 2</p>
                 <p className="mt-2">Capture the back of the card (required).</p>
-                <button
-                  type="button"
-                  onClick={() => void openIntakeCapture("back")}
-                  disabled={intakeBusy}
-                  className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Capture back
+                  <button
+                    type="button"
+                    onClick={() => void openIntakeCapture("back")}
+                    disabled={intakeBusy}
+                    className="mt-4 inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-4 py-2 text-xs font-semibold uppercase tracking-[0.28em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    Capture back
                 </button>
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
