@@ -76,14 +76,57 @@ function inferProgramClass(label: string | null): string | null {
   return "insert";
 }
 
+const ODDS_TOKEN_RE = /\b\d+\s*:\s*[\d,]+\b/i;
+const PARSER_NOISE_TOKENS = [
+  "glyphslib",
+  "msfontlib",
+  "ufo2ft",
+  "project git revision",
+  "truetype",
+  "opentype",
+  "fontlib",
+  "cyrl",
+  "latn",
+  "greek",
+] as const;
+
+function extractOddsToken(value: unknown): string {
+  const text = sanitizeTaxonomyText(value);
+  if (!text) return "";
+  const match = text.match(ODDS_TOKEN_RE);
+  return match ? sanitizeTaxonomyText(match[0]).replace(/\s+/g, "") : "";
+}
+
+function looksLikeParserNoiseText(value: unknown): boolean {
+  const text = sanitizeTaxonomyText(value).toLowerCase();
+  if (!text) return false;
+  if (/^\d+(?:\.\d+){1,4}$/.test(text)) return true;
+  if (text.length > 40 && !/\s/.test(text)) return true;
+  return PARSER_NOISE_TOKENS.some((token) => text.includes(token));
+}
+
 function looksLikeOddsRow(record: RowRecord) {
-  const oddsText = firstText(record, ["odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"]);
+  const oddsText =
+    firstText(record, ["odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"]) ||
+    extractOddsToken(firstText(record, ["parallel", "parallelId", "parallel_id", "parallelName", "parallelType"]));
   if (oddsText) return true;
+  const serialText = firstText(record, ["serial", "serialText", "serialNumber", "numbered"]);
+  if (serialText || parseSerialDenominator(serialText) != null) return true;
   const format = firstText(record, ["format", "packType", "boxType", "productFormat"]);
   return Boolean(format && (record.odds || record.oddsInfo || record.packOdds));
 }
 
-function inferArtifactType(params: { hasChecklistSignals: boolean; hasOddsSignals: boolean }): TaxonomyArtifactType {
+function inferArtifactType(params: {
+  datasetType: SetDatasetType;
+  hasChecklistSignals: boolean;
+  hasOddsSignals: boolean;
+}): TaxonomyArtifactType {
+  if (params.datasetType === SetDatasetType.PARALLEL_DB) {
+    return TaxonomyArtifactType.ODDS;
+  }
+  if (params.datasetType === SetDatasetType.PLAYER_WORKSHEET) {
+    return TaxonomyArtifactType.CHECKLIST;
+  }
   if (params.hasChecklistSignals && params.hasOddsSignals) return TaxonomyArtifactType.COMBINED;
   if (params.hasOddsSignals) return TaxonomyArtifactType.ODDS;
   return TaxonomyArtifactType.CHECKLIST;
@@ -164,6 +207,7 @@ export function buildManufacturerTaxonomyAdapterOutput(
 
   let hasChecklistSignals = false;
   let hasOddsSignals = false;
+  const isOddsDataset = params.datasetType === SetDatasetType.PARALLEL_DB;
 
   rows.forEach((row, index) => {
     const rawProgram = firstText(row, [
@@ -184,7 +228,8 @@ export function buildManufacturerTaxonomyAdapterOutput(
     const playerName = firstText(row, ["playerName", "player", "playerSeed", "name"]);
     const codePrefix = firstText(row, ["codePrefix", "prefix", "programPrefix", "setPrefix"]) || null;
 
-    const oddsText = firstText(row, ["odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"]);
+    const oddsText =
+      firstText(row, ["odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"]) || extractOddsToken(rawParallel);
     const formatKey = normalizeFormatKey(firstText(row, ["format", "packType", "boxType", "productFormat", "formatType"]));
     const channelKey = normalizeChannelKey(firstText(row, ["channel", "productChannel", "distribution", "retailType"]));
 
@@ -192,14 +237,21 @@ export function buildManufacturerTaxonomyAdapterOutput(
     const serialDenominator = parseSerialDenominator(serialText || rawParallel);
     const finishFamily = firstText(row, ["finishFamily", "finish", "foil", "surface"]) || null;
 
-    const programLabel = sanitizeTaxonomyText(rawProgram || (cardNumber ? "Base" : ""));
-    const variationLabel = sanitizeTaxonomyText(rawVariation);
-    const parallelLabel = sanitizeTaxonomyText(rawParallel);
+    const hasOddsRowSignal = Boolean(oddsText || serialText || serialDenominator != null || looksLikeOddsRow(row));
+    if (isOddsDataset && !hasOddsRowSignal) {
+      return;
+    }
 
-    if (programLabel || cardNumber || parallelLabel || variationLabel) {
+    const nextProgramLabel = sanitizeTaxonomyText(rawProgram || (!isOddsDataset && cardNumber ? "Base" : ""));
+    const programLabel = looksLikeParserNoiseText(nextProgramLabel) ? "" : nextProgramLabel;
+    const variationLabel = sanitizeTaxonomyText(rawVariation);
+    const nextParallelLabel = sanitizeTaxonomyText(rawParallel);
+    const parallelLabel = looksLikeParserNoiseText(nextParallelLabel) ? "" : nextParallelLabel;
+
+    if (!isOddsDataset && (programLabel || cardNumber || parallelLabel || variationLabel)) {
       hasChecklistSignals = true;
     }
-    if (oddsText || looksLikeOddsRow(row)) {
+    if (hasOddsRowSignal || looksLikeOddsRow(row)) {
       hasOddsSignals = true;
     }
 
@@ -212,7 +264,7 @@ export function buildManufacturerTaxonomyAdapterOutput(
       });
     }
 
-    if (cardNumber) {
+    if (!isOddsDataset && cardNumber) {
       if (programLabel) {
         addUniqueByKey(cards, cardSeen, `${programLabel.toLowerCase()}::${cardNumber.toLowerCase()}`, {
           programLabel,
@@ -232,7 +284,7 @@ export function buildManufacturerTaxonomyAdapterOutput(
       }
     }
 
-    if (variationLabel) {
+    if (!isOddsDataset && variationLabel) {
       if (programLabel) {
         addUniqueByKey(variations, variationSeen, `${programLabel.toLowerCase()}::${variationLabel.toLowerCase()}`, {
           programLabel,
@@ -291,16 +343,17 @@ export function buildManufacturerTaxonomyAdapterOutput(
       }
     }
 
-    if (oddsText) {
+    const oddsRowText = sanitizeTaxonomyText(oddsText || serialText || "");
+    if (oddsRowText) {
       const oddsKey = [
         programLabel.toLowerCase(),
         parallelLabel.toLowerCase(),
         formatKey ?? "",
         channelKey ?? "",
-        oddsText.toLowerCase(),
+        oddsRowText.toLowerCase(),
       ].join("::");
       addUniqueByKey(oddsRows, oddsSeen, oddsKey, {
-        oddsText,
+        oddsText: oddsRowText,
         programLabel: programLabel || null,
         parallelLabel: parallelLabel || null,
         formatKey,
@@ -310,7 +363,11 @@ export function buildManufacturerTaxonomyAdapterOutput(
     }
   });
 
-  const artifactType = inferArtifactType({ hasChecklistSignals, hasOddsSignals });
+  const artifactType = inferArtifactType({
+    datasetType: params.datasetType,
+    hasChecklistSignals,
+    hasOddsSignals,
+  });
   const sourceKind = inferSourceKind({
     sourceUrl: params.sourceUrl,
     parseSummary: params.parseSummary,

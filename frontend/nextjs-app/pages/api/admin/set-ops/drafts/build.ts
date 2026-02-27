@@ -111,6 +111,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       fallbackSetId: setId,
       rawPayload: job.rawPayload,
     });
+    const taxonomyRows = normalized.rows
+      .filter((row) => row.errors.every((issue) => !issue.blocking))
+      .map((row) => ({
+        setId: row.setId,
+        cardNumber: row.cardNumber,
+        cardType: row.cardType,
+        program: row.cardType,
+        programLabel: row.cardType,
+        parallel: row.parallel,
+        playerName: row.playerSeed,
+        playerSeed: row.playerSeed,
+        odds: row.odds,
+        serial: row.serial,
+        format: row.format,
+        sourceUrl: row.sourceUrl,
+      }));
 
     const taxonomyFlags = readTaxonomyV2Flags();
     let taxonomyIngest: TaxonomyIngestResult | null = null;
@@ -120,7 +136,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           setId,
           ingestionJobId: job.id,
           datasetType: job.datasetType,
-          rawPayload: job.rawPayload,
+          rawPayload: taxonomyRows,
           sourceUrl: job.sourceUrl,
           parserVersion: job.parserVersion,
           parseSummary: asRecord(job.parseSummaryJson),

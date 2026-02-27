@@ -2420,3 +2420,257 @@ Build Set Ops UI flow with:
   - Latest parser hardening entries cover checklist base-card capture and ODDS LIST routing/column mapping.
 - Operations:
   - No code/runtime changes, deploys, restarts, migrations, or DB operations were executed in this startup sync step.
+
+## Taxonomy V2 + Odds Integration Forensic Audit (2026-02-26)
+- Scope:
+  - Production forensic audit only (no fixes, no schema writes, no deploy/restart/migration).
+  - Traced ingest -> taxonomy tables -> options -> matcher -> OCR -> KingsReview with runtime + DB evidence.
+- Runtime evidence snapshot:
+  - `collect.tenkings.co` resolves to Vercel deployment `dpl_8hnfJJpLH3UJMT8VaMbYKLhDgfpf` (`tenkings-backend-nextjs-6zpgmm17i-ten-kings.vercel.app`).
+  - Active local `.vercel/project.json` in repo points to `nextjs-app`, while live project was `tenkings-backend-nextjs-app`.
+  - Production env scan for live project showed:
+    - present: `NEXT_PUBLIC_CATALOG_OPS_*`, `SET_OPS_REPLACE_WIZARD`, `NEXT_PUBLIC_SET_OPS_REPLACE_WIZARD`.
+    - absent: explicit `TAXONOMY_V2_*` env vars.
+  - Because flags are absent, runtime defaults from `taxonomyV2Flags.ts` apply (`defaultOn=true`, `allowLegacyFallback=false`).
+- DB evidence snapshot:
+  - Migrations applied:
+    - `20260222120000_set_ops_workflow_foundation`
+    - `20260226100000_taxonomy_v2_activation`
+  - Target set (`2025-26 Topps Basketball`) counts:
+    - `SetTaxonomySource=1`
+    - `SetProgram=0`
+    - `SetCard=0`
+    - `SetVariation=0`
+    - `SetParallel=0`
+    - `SetParallelScope=0`
+    - `SetOddsByFormat=0`
+    - `CardVariant=1793`
+    - `CardVariantTaxonomyMap=0`
+  - Global taxonomy counts:
+    - `SetTaxonomySource=10`
+    - `SetProgram=3`
+    - `SetCard=253`
+    - `SetVariation=0`
+    - `SetParallel=11`
+    - `SetParallelScope=11`
+    - `SetOddsByFormat=0`
+    - `CardVariantTaxonomyMap=235`
+  - Bridge integrity check:
+    - `CardVariantTaxonomyMap.total_rows=235`, `missing_cardvariant=0`, `setid_mismatch=0`, duplicate canonical keys `0`.
+  - Data-fragmentation evidence:
+    - Topps Chrome Sapphire appears as multiple near-duplicate `setId` values (`Sapphire`, `Saphire`, `_Odds`, `Checklist`, `v4`), splitting taxonomy artifacts.
+  - Classification evidence:
+    - multiple `PARALLEL_DB` sources are stored as `artifactType=CHECKLIST`.
+    - `SetOddsByFormat` remained empty (`0`) even when odds-oriented sources were ingested.
+    - `SetCard` rows include parser-noise values (`0.9.8`, `3.1.0`, `glyphsLib`, `msfontlib`) in odds-related set IDs.
+- Endpoint/runtime wiring evidence:
+  - `/api/admin/variants/options` responses in production returned:
+    - `source="taxonomy_v2"`
+    - `legacyFallbackUsed=false`
+    - `approvedSetCount=2`
+    - `variantCount=0`, `sets_count=0`, `insert_count=0`, `parallel_count=0`
+  - Approved active sets at runtime were only:
+    - `2023-24 Topps Chrome Basketball Retail`
+    - `2025-26 Topps Finest Basketball`
+  - `/api/admin/variants/match` (valid JSON payload) returned:
+    - `"Taxonomy V2 scope is required for matcher cutover; no taxonomy scope found for set"`
+  - OCR audit sample rows showed taxonomy pool exhaustion:
+    - `set_opts/insert_opts/parallel_opts = 0`
+    - statuses such as `cleared_out_of_pool`
+    - variant-match messages with no set/variant candidates.
+- Consolidated findings:
+  - Taxonomy V2 runtime path is active by default, and fallback is effectively disabled.
+  - Legacy `CardVariant` data is still the dominant populated layer for key sets (notably `2025-26 Topps Basketball`), but bridge rows are missing there.
+  - Add Card options/matcher disconnections are primarily data + gating issues (approved-set scope + empty taxonomy), not just UI rendering.
+  - Adapter ingest currently misclassifies/under-classifies odds artifacts; odds rows are not landing in `SetOddsByFormat`.
+  - Identity alignment is incomplete: canonical taxonomy identity exists, but replace/seed/reference flows still operate mainly on legacy `(setId, cardNumber, parallelId)` keys.
+- Operations:
+  - No code edits to runtime paths from this audit entry.
+  - No deploy/restart/migration commands executed during audit.
+  - No destructive DB operations executed.
+
+## Runtime Update (2026-02-26) - Taxonomy Flag Cutover + Domain Alias Correction
+- Applied explicit production taxonomy flags on Vercel project `tenkings-backend-nextjs-app`:
+  - `TAXONOMY_V2_DEFAULT_ON=true`
+  - `TAXONOMY_V2_INGEST=true`
+  - `TAXONOMY_V2_PICKERS=true`
+  - `TAXONOMY_V2_MATCHER=true`
+  - `TAXONOMY_V2_KINGSREVIEW_QUERY=true`
+  - `TAXONOMY_V2_FORCE_LEGACY=false`
+  - `TAXONOMY_V2_ALLOW_LEGACY_FALLBACK=true`
+- Deployed new production build (`dpl_7UwRdhix5UEu7Rx25ndT3JERD54D`).
+- Found and corrected custom-domain drift:
+  - `collect.tenkings.co` was still aliased to older deployment (`dpl_8hnfJJpLH3UJMT8VaMbYKLhDgfpf`).
+  - Re-pointed alias to new deployment (`...aqurf6u35...`).
+- Verified production runtime behavior after alias correction:
+  - `/api/admin/variants/options` now returns `source=legacy` with `legacyFallbackUsed=true` for 2025-26 Topps Basketball scope.
+  - Option pools now populate (`sets=1`, `insertOptions=14`, `parallelOptions=10`) instead of taxonomy-empty (`0/0/0`) output seen pre-cutover.
+  - `/api/admin/variants/match` no longer returns taxonomy-scope hard-stop for the probe request; current response is `No approved variant set found for supplied set name`.
+- No DB migrations/destructive operations executed in this runtime cutover.
+
+## Runtime Update (2026-02-26) - Fix #2 Deployed (Approved Scope + Set Identity Normalization)
+- Deployed Fix #2 to production (`dpl_4X8tEAW4n2pNVcAzfJg8SDSQuQrT`, URL `...biqp1mq8y...`) and repointed `collect.tenkings.co` to this deployment.
+- Backend changes introduced a shared set-scope identity layer used by both options and matcher:
+  - approved scope is still anchored to `SetDraft(status=APPROVED)`
+  - when `TAXONOMY_V2_ALLOW_LEGACY_FALLBACK=true`, scope additionally includes `REVIEW_REQUIRED` sets that already have live `CardVariant` rows
+  - set-id matching now accepts identity-equivalent labels (suffix/punctuation/version drift)
+- Verified runtime impact on production:
+  - `/api/admin/variants/options` broad 2025-26 Topps Basketball scope now includes 3 in-scope sets (Topps Basketball + Sapphire + Finest), not the prior disconnected single-set behavior.
+  - `/api/admin/variants/options` with explicit `setId=2025-26 Topps Basketball` now resolves correctly to that set and returns populated legacy pools (`variantCount=1793`, inserts/parallels populated).
+  - `/api/admin/variants/match` no longer fails on approved-only scope gate for `2025-26 Topps Basketball`; requests now proceed to downstream matching/embedding stages.
+- No migrations or destructive operations executed for this fix.
+
+## Session Update (2026-02-26, AGENTS Startup Context Sync #3)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Verified repository state from workstation:
+  - branch: `main` (`git status -sb` => `## main...origin/main`)
+  - in-progress local changes are present in Set Ops/taxonomy code and handoff docs.
+- Operations:
+  - No new code/runtime/DB changes were executed in this startup sync step.
+  - No deploy/restart/migration/destructive set operations were executed.
+
+## Validation Refresh (2026-02-26, Post-Fix #2 Recheck, No Deploy)
+- Scope:
+  - Production read-only verification only.
+  - No deploy, restart, migration, or destructive set/DB operation executed.
+- Runtime/API evidence (`collect.tenkings.co`):
+  - `GET /api/admin/variants/options?year=2025-26&manufacturer=Topps&sport=Basketball`
+    - `source=taxonomy_v2`, `legacyFallbackUsed=false`, `approvedSetCount=2`, `scopedSetCount=3`, `variantCount=9`.
+  - `GET /api/admin/variants/options?...&setId=2025-26%20Topps%20Basketball`
+    - `source=legacy`, `legacyFallbackUsed=true`, `selectedSetId=2025-26 Topps Basketball`, `variantCount=1793`, `insertOptions=53`, `parallelOptions=38`.
+  - `POST /api/admin/variants/match` probe (`cardAssetId` sampled from prod)
+    - returns downstream message `No variants found for resolved set/card` (no taxonomy scope hard-stop).
+- DB evidence (fresh production SQL):
+  - Core table totals:
+    - `SetProgram=3`
+    - `SetParallel=11`
+    - `SetParallelScope=11`
+    - `SetOddsByFormat=0`
+    - `SetTaxonomySource=10`
+    - `SetCard=253`
+    - `CardVariantTaxonomyMap=235`
+  - `2025-26 Topps Basketball`:
+    - `SetProgram=0`, `SetParallel=0`, `SetParallelScope=0`, `SetOddsByFormat=0`, `SetTaxonomySource=1`, `SetCard=0`, `CardVariant=1793`, `CardVariantTaxonomyMap=0`.
+  - PARALLEL_DB classification check (`SetIngestionJob` -> `SetTaxonomySource`):
+    - `PARALLEL_DB|CHECKLIST|6`
+    - `PLAYER_WORKSHEET|CHECKLIST|4`
+  - PARALLEL_DB contamination of checklist table:
+    - `SetCard` rows sourced from `PARALLEL_DB`: `253` total.
+  - Parser-noise rows still present in `SetCard` for odds-family set IDs (`0.9.8`, `3.1.0`, `4.49.0`, `6.6.6`).
+  - Scope/odds FK integrity remains clean where rows exist:
+    - `scope_missing_program=0`, `scope_missing_parallel=0`, `scope_missing_variation=0`, `odds_missing_program=0`, `odds_missing_parallel=0`.
+- Set identity normalization status:
+  - Ingestion/set IDs remain fragmented (examples observed):
+    - `2025-26 Topps Chrome Basketball Sapphire`
+    - `2025-26 Topps Chrome Basketball Saphire`
+    - `2025-26_Topps_Chrome_Basketball_Sapphire_Odds`
+    - `2025-26 Topps Chrome Basketball Sapphire Checklist`
+    - `2025-26 Topps Chrome Basketball Sapphire v4`
+- Current conclusion:
+  - Fix #1 and Fix #2 runtime behavior is still active/verified.
+  - Odds taxonomy ingest integrity issues remain unresolved in production (classification + population), and Fix #3 has not been deployed yet.
+
+## Fix #3 Verification Update (2026-02-27, No Deploy)
+- Scope:
+  - Implemented minimal Fix #3 code locally (odds classification + ingest sanitation paths):
+    - `frontend/nextjs-app/lib/server/taxonomyV2ManufacturerAdapter.ts`
+    - `frontend/nextjs-app/pages/api/admin/set-ops/drafts/build.ts`
+  - No deploy/restart/migration performed.
+- Pre-check (production SQL before non-deploy verify ingest):
+  - `SetProgram=3`
+  - `SetParallel=11`
+  - `SetParallelScope=11`
+  - `SetOddsByFormat=0`
+  - classification:
+    - `PARALLEL_DB|CHECKLIST|6`
+    - `PLAYER_WORKSHEET|CHECKLIST|4`
+  - `SetCard` rows sourced from `PARALLEL_DB`: `253`
+- Non-deploy verification execution:
+  - Ran controlled verification ingest against production DB (no deploy) for set:
+    - `2026 Topps Fix3 Verification Odds Set`
+  - Verification ingest result:
+    - `artifactType=ODDS`
+    - `sourceKind=OFFICIAL_ODDS`
+    - counts:
+      - `programs=2`
+      - `cards=0`
+      - `parallels=3`
+      - `scopes=3`
+      - `oddsRows=3`
+      - `ambiguities=0`
+  - Evidence IDs:
+    - ingestionJobId: `946938ad-49d5-4eee-8481-bec4794e9ca6`
+    - sourceId: `154e1d7a-dae9-48d8-aedd-bc25122e8743`
+- Post-check (production SQL after non-deploy verify ingest):
+  - `SetProgram=5`
+  - `SetParallel=14`
+  - `SetParallelScope=14`
+  - `SetOddsByFormat=3`
+  - classification:
+    - `PARALLEL_DB|CHECKLIST|6`
+    - `PLAYER_WORKSHEET|CHECKLIST|4`
+    - `PARALLEL_DB|ODDS|1`
+  - `SetCard` rows sourced from `PARALLEL_DB`: `253` (unchanged)
+  - recent PARALLEL_DB-sourced SetCard inserts (`20 min`): `0`
+  - recent parser-noise SetCard inserts (`20 min`): `0`
+  - verification set counts:
+    - `SetProgram=2`
+    - `SetParallel=3`
+    - `SetParallelScope=3`
+    - `SetOddsByFormat=3`
+    - `SetCard=0`
+  - stored odds row example:
+    - `setId=2026 Topps Fix3 Verification Odds Set`
+    - `parallelLabel=Sapphire Red`
+    - `formatKey=hobby`
+    - `oddsText=1:12`
+- Runtime sanity probes after verification:
+  - `GET /api/admin/variants/options?year=2025-26&manufacturer=Topps&sport=Basketball`
+    - still returns usable payload (`source=taxonomy_v2`, `sets=3`, `insertOptions=1`, `parallelOptions=9`).
+  - `POST /api/admin/variants/match`
+    - still returns downstream no-match (`No variants found for resolved set/card`), not taxonomy hard-stop.
+- Side-effect handled:
+  - Earlier non-deploy draft-build probes moved `2025-26 Topps Finest Basketball` to `REVIEW_REQUIRED`.
+  - Restored to `APPROVED` to preserve prior runtime scope baseline.
+
+## Fix #3 Deploy Update (2026-02-27, Deploy Complete; collect.tenkings.co Alias Pending)
+- Deploy:
+  - Project: `tenkings-backend-nextjs-app`
+  - Deployment id: `dpl_5YxFWGimj9vK2SbmCUwYaFvL3khC`
+  - Deployment URL: `https://tenkings-backend-nextjs-9pvd3t2ec-ten-kings.vercel.app`
+  - Project alias URL: `https://tenkings-backend-nextjs-app-ten-kings.vercel.app`
+- Custom domain status:
+  - `collect.tenkings.co` remains pinned to previous deployment `dpl_4X8tEAW4n2pNVcAzfJg8SDSQuQrT`.
+  - Alias update from current account failed with domain ACL error (`no access to domain under ten-kings`).
+  - Runtime verification therefore executed against the new deployment URL directly.
+- Post-deploy runtime verification (new deployment URL):
+  - `GET /api/admin/variants/options?year=2025-26&manufacturer=Topps&sport=Basketball`
+    - usable payload, `source=taxonomy_v2`, `approvedSetCount=2`, `scopedSetCount=3`, `variantCount=9`.
+  - `POST /api/admin/variants/match` (real prod `cardAssetId`)
+    - returns downstream `Variant embedding service is not configured` (no taxonomy scope hard-stop).
+- Post-deploy production DB snapshot:
+  - `SetProgram=5`
+  - `SetParallel=14`
+  - `SetParallelScope=14`
+  - `SetOddsByFormat=3`
+  - classification:
+    - `PARALLEL_DB|CHECKLIST|6`
+    - `PARALLEL_DB|ODDS|1`
+    - `PLAYER_WORKSHEET|CHECKLIST|4`
+  - contamination guard:
+    - PARALLEL_DB-sourced `SetCard` total unchanged at `253`
+    - new PARALLEL_DB-sourced `SetCard` rows in recent `20 min`: `0`
+    - recent parser-noise `SetCard` rows: `0`
+  - stored odds row sample:
+    - `setId=2026 Topps Fix3 Verification Odds Set`
+    - `parallelLabel=Superfractor`
+    - `formatKey=hobby`
+    - `oddsText=1:2048`
+- Operations:
+  - No DB migrations executed.
+  - No destructive DB/set operations executed.
