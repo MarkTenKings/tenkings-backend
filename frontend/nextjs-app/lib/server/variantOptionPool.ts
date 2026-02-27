@@ -1,5 +1,6 @@
 import { prisma } from "@tenkings/database";
 import { readTaxonomyV2Flags } from "./taxonomyV2Flags";
+import { loadVariantScopeSetIds, resolveSetIdByIdentity, resolveVariantSetIdsForScope } from "./variantSetScope";
 const taxonomyDb = prisma as any;
 
 export type VariantCatalogRow = {
@@ -318,6 +319,169 @@ function classifyOptionKinds(params: { parallelId: string; parallelFamily: strin
   return kinds;
 }
 
+type TaxonomyProgramPoolRow = {
+  setId: string;
+  programId: string;
+  label: string;
+  cardCount: number;
+};
+
+type TaxonomyScopePoolRow = {
+  setId: string;
+  programId: string;
+  parallelLabel: string;
+};
+
+function supportsTaxonomyDelegateReads() {
+  return Boolean(
+    taxonomyDb?.setProgram?.findMany &&
+      taxonomyDb?.setParallelScope?.findMany &&
+      taxonomyDb?.setCard?.groupBy &&
+      taxonomyDb?.setParallel?.findMany
+  );
+}
+
+function buildSqlInClause(values: string[]) {
+  return values.map((_, index) => `$${index + 1}`).join(", ");
+}
+
+async function loadTaxonomyProgramsForOptionPool(setIds: string[]): Promise<TaxonomyProgramPoolRow[]> {
+  if (setIds.length < 1) return [];
+
+  if (supportsTaxonomyDelegateReads()) {
+    const programs = (await taxonomyDb.setProgram.findMany({
+      where: {
+        setId: { in: setIds },
+      },
+      select: {
+        setId: true,
+        programId: true,
+        label: true,
+        _count: {
+          select: {
+            cards: true,
+          },
+        },
+      },
+      orderBy: [{ setId: "asc" }, { label: "asc" }],
+    })) as Array<{ setId: string; programId: string; label: string; _count: { cards: number } }>;
+
+    return programs.map((row) => ({
+      setId: row.setId,
+      programId: row.programId,
+      label: row.label,
+      cardCount: Number(row._count?.cards ?? 0),
+    }));
+  }
+
+  const inClause = buildSqlInClause(setIds);
+  const rows = await prisma.$queryRawUnsafe<
+    Array<{
+      setId: string;
+      programId: string;
+      label: string;
+      cardCount: number;
+    }>
+  >(
+    `select
+       p."setId" as "setId",
+       p."programId" as "programId",
+       p."label" as "label",
+       coalesce(count(c."id"), 0)::int as "cardCount"
+     from "SetProgram" p
+     left join "SetCard" c
+       on c."setId" = p."setId"
+      and c."programId" = p."programId"
+     where p."setId" in (${inClause})
+     group by p."setId", p."programId", p."label"
+     order by p."setId" asc, p."label" asc`,
+    ...setIds
+  );
+
+  return rows;
+}
+
+async function loadTaxonomyScopeRowsForOptionPool(setIds: string[]): Promise<TaxonomyScopePoolRow[]> {
+  if (setIds.length < 1) return [];
+
+  if (supportsTaxonomyDelegateReads()) {
+    const rows = (await taxonomyDb.setParallelScope.findMany({
+      where: {
+        setId: { in: setIds },
+      },
+      select: {
+        setId: true,
+        programId: true,
+        parallel: {
+          select: {
+            label: true,
+          },
+        },
+      },
+      orderBy: [{ setId: "asc" }],
+      take: 5000,
+    })) as Array<{ setId: string; programId: string; parallel: { label: string } }>;
+
+    return rows.map((row) => ({
+      setId: row.setId,
+      programId: row.programId,
+      parallelLabel: row.parallel?.label ?? "",
+    }));
+  }
+
+  const inClause = buildSqlInClause(setIds);
+  const rows = await prisma.$queryRawUnsafe<
+    Array<{
+      setId: string;
+      programId: string;
+      parallelLabel: string;
+    }>
+  >(
+    `select
+       s."setId" as "setId",
+       s."programId" as "programId",
+       p."label" as "parallelLabel"
+     from "SetParallelScope" s
+     inner join "SetParallel" p
+       on p."setId" = s."setId"
+      and p."parallelId" = s."parallelId"
+     where s."setId" in (${inClause})
+     order by s."setId" asc
+     limit 5000`,
+    ...setIds
+  );
+
+  return rows;
+}
+
+async function loadTaxonomyCardCountsForOptionPool(setIds: string[]): Promise<Array<{ setId: string; count: number }>> {
+  if (setIds.length < 1) return [];
+
+  if (supportsTaxonomyDelegateReads()) {
+    const rows = (await taxonomyDb.setCard.groupBy({
+      by: ["setId"],
+      where: { setId: { in: setIds } },
+      _count: { _all: true },
+    })) as Array<{ setId: string; _count: { _all: number } }>;
+
+    return rows.map((row) => ({
+      setId: row.setId,
+      count: Number(row._count?._all ?? 0),
+    }));
+  }
+
+  const inClause = buildSqlInClause(setIds);
+  return prisma.$queryRawUnsafe<Array<{ setId: string; count: number }>>(
+    `select
+       c."setId" as "setId",
+       count(*)::int as "count"
+     from "SetCard" c
+     where c."setId" in (${inClause})
+     group by c."setId"`,
+    ...setIds
+  );
+}
+
 async function loadTaxonomyV2OptionPool(params: {
   querySetIds: string[];
   setHints: string[];
@@ -325,56 +489,20 @@ async function loadTaxonomyV2OptionPool(params: {
   approvedSetCount: number;
   scopedSetIds: string[];
 }): Promise<VariantOptionPool | null> {
-  const programs = (await taxonomyDb.setProgram.findMany({
-    where: {
-      setId: { in: params.querySetIds },
-    },
-    select: {
-      setId: true,
-      programId: true,
-      label: true,
-      _count: {
-        select: {
-          cards: true,
-        },
-      },
-    },
-    orderBy: [{ setId: "asc" }, { label: "asc" }],
-  })) as Array<{ setId: string; programId: string; label: string; _count: { cards: number } }>;
+  const programs = await loadTaxonomyProgramsForOptionPool(params.querySetIds);
 
   if (programs.length < 1) {
     return null;
   }
 
-  const scopeRows = (await taxonomyDb.setParallelScope.findMany({
-    where: {
-      setId: { in: params.querySetIds },
-    },
-    select: {
-      setId: true,
-      programId: true,
-      parallel: {
-        select: {
-          label: true,
-        },
-      },
-    },
-    orderBy: [{ setId: "asc" }],
-    take: 5000,
-  })) as Array<{ setId: string; programId: string; parallel: { label: string } }>;
+  const scopeRows = await loadTaxonomyScopeRowsForOptionPool(params.querySetIds);
 
   if (scopeRows.length < 1) {
     return null;
   }
 
-  const cardCountsBySetRows = (await taxonomyDb.setCard.groupBy({
-    by: ["setId"],
-    where: { setId: { in: params.querySetIds } },
-    _count: { _all: true },
-  })) as Array<{ setId: string; _count: { _all: number } }>;
-  const cardCountsBySet = new Map<string, number>(
-    cardCountsBySetRows.map((row: { setId: string; _count: { _all: number } }) => [row.setId, row._count._all])
-  );
+  const cardCountsBySetRows = await loadTaxonomyCardCountsForOptionPool(params.querySetIds);
+  const cardCountsBySet = new Map<string, number>(cardCountsBySetRows.map((row) => [row.setId, row.count]));
 
   const sets: SetOptionRow[] = params.querySetIds
     .map((setId) => ({
@@ -384,10 +512,10 @@ async function loadTaxonomyV2OptionPool(params: {
     }))
     .sort((a, b) => b.score - a.score || b.count - a.count || a.setId.localeCompare(b.setId));
 
-  const variants: VariantCatalogRow[] = scopeRows.map((row: { setId: string; parallel: { label: string } }) => ({
+  const variants: VariantCatalogRow[] = scopeRows.map((row) => ({
     setId: sanitizeText(row.setId),
     cardNumber: "ALL",
-    parallelId: sanitizeText(row.parallel.label),
+    parallelId: sanitizeText(row.parallelLabel),
     parallelFamily: null,
   }));
 
@@ -399,27 +527,27 @@ async function loadTaxonomyV2OptionPool(params: {
   };
 
   const insertOptionMap = new Map<string, OptionAccumulator>();
-  programs.forEach((program: { setId: string; label: string; _count: { cards: number } }) => {
+  programs.forEach((program) => {
     const label = sanitizeText(program.label);
     if (!label) return;
     const key = normalizeVariantLabelKey(label);
     const existing = insertOptionMap.get(key);
     if (existing) {
-      existing.count += program._count.cards;
+      existing.count += program.cardCount;
       existing.setIds.add(program.setId);
       return;
     }
     insertOptionMap.set(key, {
       label,
       kind: "insert",
-      count: program._count.cards,
+      count: program.cardCount,
       setIds: new Set([program.setId]),
     });
   });
 
   const parallelOptionMap = new Map<string, OptionAccumulator>();
-  scopeRows.forEach((row: { setId: string; parallel: { label: string } }) => {
-    const label = sanitizeText(row.parallel.label);
+  scopeRows.forEach((row) => {
+    const label = sanitizeText(row.parallelLabel);
     if (!label) return;
     const key = normalizeVariantLabelKey(label);
     const existing = parallelOptionMap.get(key);
@@ -499,25 +627,35 @@ export async function loadVariantOptionPool(params: {
     };
   }
 
-  const approvedRows = await prisma.setDraft.findMany({
-    where: {
-      status: "APPROVED",
-      archivedAt: null,
-    },
-    select: {
-      setId: true,
-    },
+  const taxonomyFlags = readTaxonomyV2Flags();
+  const scopeSetIds = await loadVariantScopeSetIds({
+    includeLegacyReviewRequired: taxonomyFlags.allowLegacyFallback,
   });
-
-  const approvedSetIds = Array.from(new Set(approvedRows.map((row) => sanitizeText(row.setId)).filter(Boolean)));
-  if (approvedSetIds.length < 1) {
+  const approvedSetIds = scopeSetIds.approvedSetIds;
+  if (scopeSetIds.scopeSetIds.length < 1) {
     return {
       variants: [],
       sets: [],
       insertOptions: [],
       parallelOptions: [],
       scopedSetIds: [],
-      approvedSetCount: 0,
+      approvedSetCount: approvedSetIds.length,
+      variantCount: 0,
+      selectedSetId: null,
+      source: "legacy",
+      legacyFallbackUsed: false,
+    };
+  }
+
+  const scopeVariantSetIds = await resolveVariantSetIdsForScope(scopeSetIds.scopeSetIds);
+  if (scopeVariantSetIds.length < 1) {
+    return {
+      variants: [],
+      sets: [],
+      insertOptions: [],
+      parallelOptions: [],
+      scopedSetIds: [],
+      approvedSetCount: approvedSetIds.length,
       variantCount: 0,
       selectedSetId: null,
       source: "legacy",
@@ -529,7 +667,7 @@ export async function loadVariantOptionPool(params: {
   const manufacturerHints = buildManufacturerHints(manufacturer);
   const sportHints = buildSportHints(sport);
   const scopedSetIds = filterScopedSetIds({
-    approvedSetIds,
+    approvedSetIds: scopeVariantSetIds,
     yearHints,
     manufacturerHints,
     sportHints,
@@ -560,11 +698,10 @@ export async function loadVariantOptionPool(params: {
   let selectedSetId: string | null = null;
   const explicitSetCandidate = explicitSetId || productLine;
   if (explicitSetCandidate) {
-    selectedSetId = resolveCanonicalOption(scopedSetIds, explicitSetCandidate, 1.1);
+    selectedSetId = resolveSetIdByIdentity(scopedSetIds, explicitSetCandidate) ?? resolveCanonicalOption(scopedSetIds, explicitSetCandidate, 1.1);
   }
 
   const querySetIds = selectedSetId ? [selectedSetId] : scopedSetIds;
-  const taxonomyFlags = readTaxonomyV2Flags();
   if (taxonomyFlags.pickers) {
     const taxonomyPool = await loadTaxonomyV2OptionPool({
       querySetIds,

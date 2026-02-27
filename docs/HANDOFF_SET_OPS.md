@@ -2674,3 +2674,162 @@ Build Set Ops UI flow with:
 - Operations:
   - No DB migrations executed.
   - No destructive DB/set operations executed.
+
+## Fix #4 Update (2026-02-27, Approved-Set Taxonomy Backfill Complete)
+- Scope:
+  - Implemented approved-draft taxonomy backfill endpoint:
+    - `POST /api/admin/set-ops/taxonomy/backfill`
+  - Endpoint runs taxonomy ingest from approved draft versions (no draft-status mutation), supports dry-run, and records Set Ops audit events.
+  - Added fallback bootstrap from legacy `CardVariant` rows when approved `PARALLEL_DB` ingest yields no taxonomy entities.
+- Deployed sequence:
+  - initial Fix #4 deploy: `dpl_GgEsPizYotZr7Uh5Tx2qaTGq8sy6` (`...qyltl0xbf...`)
+  - fallback patch deploy: `dpl_EMApLNumN9z5Rh9EVbqKDhkwsHMC` (`...6wcvko256...`)
+  - batch-throughput patch deploy: `dpl_8ixsnaJiBVNWDSKpw69vXfQCjYDP` (`...p92j55qej...`)
+  - final bootstrap-source-decoupling deploy: `dpl_F2SskfnDXLYis4hjZN1CzqrN19sN` (`...hedae53b2...`)
+  - `collect.tenkings.co` is currently aliased to final deploy `dpl_F2SskfnDXLYis4hjZN1CzqrN19sN`.
+- Baseline before Fix #4 apply:
+  - global:
+    - `SetProgram=5`
+    - `SetParallel=14`
+    - `SetParallelScope=14`
+    - `SetOddsByFormat=3`
+  - approved sets:
+    - `2023-24 Topps Chrome Basketball Retail`: `programs=0`, `parallels=0`, `scopes=0`, `odds=0`, `maps=0`, `variants=199`
+    - `2025-26 Topps Finest Basketball`: `programs=0`, `parallels=0`, `scopes=0`, `odds=0`, `maps=0`, `variants=463`
+  - runtime options for both approved sets returned `source=legacy`, `legacyFallbackUsed=true`.
+- Final post-fix state:
+  - global:
+    - `SetProgram=7`
+    - `SetParallel=35`
+    - `SetParallelScope=35`
+    - `SetOddsByFormat=3` (unchanged)
+  - approved sets now populated:
+    - `2023-24 Topps Chrome Basketball Retail`: `programs=1`, `parallels=7`, `scopes=7`, `odds=0`, `maps=199`, `variants=199`
+    - `2025-26 Topps Finest Basketball`: `programs=1`, `parallels=14`, `scopes=14`, `odds=0`, `maps=463`, `variants=463`
+  - runtime:
+    - `GET /api/admin/variants/options` with each approved set now returns `source=taxonomy_v2`, `legacyFallbackUsed=false`.
+    - broad 2025-26 Topps basketball options now include Finest taxonomy scope rows (`variantCount` increased from prior `9` to `23`).
+    - matcher sanity unchanged: no taxonomy hard-stop (`Variant embedding service is not configured` downstream message).
+- Important metric correction:
+  - initial bootstrap linked sources to PARALLEL_DB ingestion jobs, which inflated contamination metrics.
+  - corrected by setting bootstrap `SetTaxonomySource.ingestionJobId=NULL` (2 rows) and shipping code to keep it null.
+  - contamination metric restored:
+    - `SetCard` rows linked to PARALLEL_DB sources: `253` (restored)
+    - bootstrap sources linked to ingestion jobs: `0`
+  - current classification snapshot:
+    - `PARALLEL_DB|CHECKLIST|6`
+    - `PARALLEL_DB|ODDS|6`
+    - `PLAYER_WORKSHEET|CHECKLIST|4`
+- Operations:
+  - No DB migrations executed.
+  - No destructive DB/set operations executed.
+
+## Fix #5 Update (2026-02-27, Canonical Identity Migration in Seed/Replace/Reference - Code Complete, No Deploy)
+- Scope completed in code:
+  - migrated Set Ops seed and replace/reference identity handling to canonical taxonomy identity first (`CardVariantTaxonomyMap.canonicalKey`) with explicit legacy fallback.
+  - kept architecture unchanged and constrained to set-ops identity resolution paths.
+- New shared identity resolver:
+  - `frontend/nextjs-app/lib/server/setOpsVariantIdentity.ts`
+  - responsibilities:
+    - load set-scoped identity context (`CardVariant`, `CardVariantTaxonomyMap`, `SetCard`, `SetParallelScope`)
+    - resolve canonical keys for variant tuples
+    - expose canonical + legacy lookup keys for deterministic matching
+- Seed flow changes:
+  - `frontend/nextjs-app/lib/server/setOpsSeed.ts`
+  - `runSeedJob` now:
+    - checks canonical identity matches before legacy tuple checks
+    - updates in-memory canonical/legacy indexes during the run
+    - upserts `CardVariantTaxonomyMap` for seeded rows
+  - `computeQueueCount` now evaluates reference coverage by canonical identity (fallback legacy key when canonical unavailable).
+- Replace/reference flow changes:
+  - `frontend/nextjs-app/lib/server/setOpsReplace.ts`
+  - `prepareSetReplacePreview` now computes diff sets using canonical identity keys.
+  - reference-image preservation in replace now matches refs to incoming rows by canonical identity first, then legacy fallback.
+- Validation:
+  - Type check pass:
+    - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - Lint pass:
+    - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsSeed.ts --file lib/server/setOpsReplace.ts --file lib/server/setOpsVariantIdentity.ts`
+- Deployment/runtime status:
+  - not deployed yet.
+  - no DB migrations and no destructive operations run in this step.
+- Next operational step:
+  - run pre-deploy smoke checks on replace/seed APIs and targeted set run in production-linked verification flow, then request deploy approval.
+
+## Fix #5 Update (2026-02-27, Runtime Hardening + Pre-Deploy Smoke)
+- Follow-up hardening applied after initial Fix #5 implementation:
+  - `setOpsVariantIdentity` now reads taxonomy context via SQL (`CardVariantTaxonomyMap`, `SetCard`, `SetParallelScope`) instead of delegate access that can be missing in stale generated Prisma clients.
+  - `setOpsSeed` canonical-map persistence now uses SQL upsert into `CardVariantTaxonomyMap`.
+- Reason:
+  - local pre-deploy API run surfaced runtime delegate absence (`undefined.findMany`) in environments where generated Prisma client is not aligned with taxonomy schema.
+  - hardening keeps Fix #5 functional without requiring delegate availability for those taxonomy tables.
+- Pre-deploy local API smoke against Fix #5 code (`localhost:4010` + SSH DB tunnel) produced:
+  - pass: `set-ops/access`, `replace/jobs`, `replace/preview`, `seed/jobs`.
+  - replace preview accepted-row proof:
+    - payload with `odds` produced `acceptedRowCount=2`, `unchangedCount=2`, `toAddCount=0`.
+    - canonical key format observed in diff key output (`canonical::...`).
+  - sanity: `variants/match` returned downstream 404 (`No in-scope variant set found for supplied set name`) and did not crash.
+  - local-only caveat: `variants/options` remained 500 due workspace Prisma-client taxonomy delegate mismatch (outside Fix #5 flow).
+- Deployment status:
+  - no deployment performed in this step.
+  - ready for deploy approval with post-deploy production verification commands.
+
+## Fix #5 Verification Hold (2026-02-27): Local Options 500 + Real Seed Execution Proof
+
+### Why This Step Happened
+- Deploy for Fix #5 was explicitly held pending proof of:
+  - local `/api/admin/variants/options` 500 resolution (Prisma delegate mismatch scenario), and
+  - one real seed execution proving canonical identity resolution + legacy fallback + dedupe + map upserts.
+
+### Local `/variants/options` 500 Resolution
+- File updated: `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+- Change:
+  - taxonomy option-pool reads now fall back to SQL queries when taxonomy Prisma delegates are absent.
+  - delegate path is still used when available.
+- Result:
+  - endpoint no longer fails locally under stale Prisma client conditions.
+
+### Delegate Mismatch Evidence (Still Present Locally)
+- Local runtime probe showed:
+  - `prisma.setProgram` => `undefined`
+  - `prisma.setParallelScope` => `undefined`
+  - `prisma.setCard` => `undefined`
+  - taxonomy model names absent from local `Prisma.ModelName`.
+- Despite this, `/api/admin/variants/options` now returns HTTP `200` because of SQL fallback path.
+
+### Real Seed Execution Evidence (Isolated Verification Set)
+- Verification set:
+  - `2026 Fix5 Seed Verification Set 20260227041936`
+- Seed call:
+  - `POST /api/admin/set-ops/seed/jobs` with approved `draftVersionId=5d9123e7-cd73-48a2-a84f-bad181b75b30`
+  - response summary: `COMPLETE`, `processed=3`, `updated=2`, `inserted=1`, `failed=0`, `skipped=0`.
+
+### Canonical + Fallback + Dedupe + Upsert Proof
+- Pre-seed setup:
+  - canonical-only resolution row:
+    - existing variant `A-1 | Gold Prism`
+    - existing map canonical key for `A-1 | Gold`
+    - tuple `A-1 | Gold` intentionally absent (`count=0`).
+  - fallback row:
+    - existing variant `A-2 | Silver`
+    - no map row before seed.
+  - insert row:
+    - no existing variant for `A-3 | Blue`.
+- Before/after:
+  - `CardVariant` count: `2 -> 3`
+  - `CardVariantTaxonomyMap` count: `1 -> 3`
+  - duplicate tuples (`setId, cardNumber, parallelId`): none.
+  - post-seed variants retained/created as expected:
+    - retained id for `A-1 | Gold Prism` (canonical path avoided duplicate insert)
+    - retained id for `A-2 | Silver` (legacy fallback path)
+    - inserted `A-3 | Blue`
+  - post-seed map rows present for all 3 variant ids (including new row for fallback variant id and inserted variant id).
+
+### Runtime Sanity (Local, No Regression)
+- `GET /api/admin/variants/options` (broad scope) => `200`.
+- `GET /api/admin/variants/options` (explicit setId) => `200`.
+- `POST /api/admin/variants/match` => downstream `404` (`No in-scope variant set found for supplied set name`), no taxonomy hard-stop crash.
+
+### Deploy Status
+- Fix #5 deploy remains held in this checkpoint.
+- No DB migration, no deploy, no restart executed in this step.

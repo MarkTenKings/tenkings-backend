@@ -4050,3 +4050,302 @@
 ### Operations/Safety
 - No DB migrations executed.
 - No destructive set/DB operations executed.
+
+## 2026-02-27 - Planned Action: Fix #4 Deploy + Approved-Set Taxonomy Backfill
+
+### Planned Action
+- Deploy Fix #4 code introducing approved-draft taxonomy backfill endpoint:
+  - `POST /api/admin/set-ops/taxonomy/backfill`
+- Run `dryRun=true` first to verify targeted approved active sets and ingestion-job resolution.
+- Run non-dry backfill for approved active sets to populate Taxonomy V2 tables without changing draft/approval status.
+- Capture before/after DB evidence for:
+  - `SetProgram`
+  - `SetParallel`
+  - `SetParallelScope`
+  - `SetOddsByFormat`
+  - per-approved-set taxonomy counts and fallback/runtime behavior.
+
+### Safety
+- No DB migrations planned.
+- No destructive set/DB operations planned.
+- Backfill path is scoped to approved active drafts and reuses blocking-error filtered draft rows.
+
+## 2026-02-27 - Planned Action: Fix #4 Patch Redeploy (Legacy Bootstrap Fallback)
+
+### Planned Action
+- Redeploy Fix #4 with a minimal fallback in taxonomy backfill flow:
+  - when approved-draft ingest produces no `SetProgram/SetParallelScope`, bootstrap checklist taxonomy from legacy `CardVariant` rows for that set.
+- Re-run backfill endpoint and capture post-patch before/after evidence.
+
+### Safety
+- No DB migrations planned.
+- No destructive set/DB operations planned.
+
+## 2026-02-27 - Planned Action: Fix #4 Patch Redeploy #2 (Batch Bootstrap Throughput)
+
+### Planned Action
+- Redeploy Fix #4 patch to optimize legacy bootstrap path with `createMany(..., skipDuplicates=true)` for:
+  - `SetProgram`
+  - `SetParallel`
+  - `SetParallelScope`
+  - `SetCard`
+- Re-run production backfill endpoint after patch to avoid Prisma transaction timeout and complete approved-set taxonomy population.
+
+### Safety
+- No DB migrations planned.
+- No destructive set/DB operations planned.
+
+## 2026-02-27 - Planned Action: Fix #4 Patch Redeploy #3 (Bootstrap Source Decoupling)
+
+### Planned Action
+- Redeploy Fix #4 patch to persist bootstrap source decoupling:
+  - legacy bootstrap taxonomy sources are written with `ingestionJobId=NULL` to avoid polluting PARALLEL_DB contamination/classification metrics.
+- Verify post-patch metrics:
+  - PARALLEL_DB-linked `SetCard` contamination count
+  - `SetIngestionJob.datasetType` -> `SetTaxonomySource.artifactType` grouping
+  - approved-set runtime options source/fallback behavior.
+
+### Safety
+- No DB migrations planned.
+- No destructive set/DB operations planned.
+
+## 2026-02-27 - Fix #4 Result (Approved-Set Taxonomy Backfill + Runtime Cutover on collect.tenkings.co)
+
+### Summary
+- Implemented Fix #4 as a production-safe backfill workflow for approved active sets:
+  - added endpoint `POST /api/admin/set-ops/taxonomy/backfill`
+  - uses latest approved draft version rows, preserves draft/approval status, and runs taxonomy ingest without forcing review-state transitions.
+- Initial deploy/backfill pass populated only compatibility maps (`CardVariantTaxonomyMap`) for approved sets because approved versions were `PARALLEL_DB` rows with no odds/serial signals after Fix #3 gating.
+- Added a minimal fallback bootstrap from legacy `CardVariant` rows to populate checklist taxonomy entities for approved sets (`SetProgram`, `SetParallel`, `SetParallelScope`, `SetCard`) when ingest output remained empty.
+- Hardened bootstrap implementation with batched `createMany(..., skipDuplicates=true)` to avoid Prisma interactive transaction timeout.
+- Decoupled bootstrap sources from ingestion jobs (`ingestionJobId=NULL`) to avoid polluting PARALLEL_DB contamination/classification metrics.
+
+### Code Changes
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+  - added `buildTaxonomyIngestRows` helper for consistent blocking-error filtered taxonomy payload generation.
+- `frontend/nextjs-app/pages/api/admin/set-ops/drafts/build.ts`
+  - switched to shared `buildTaxonomyIngestRows` helper.
+- `frontend/nextjs-app/pages/api/admin/set-ops/taxonomy/backfill.ts` (new)
+  - new admin backfill endpoint with:
+    - approver-role enforcement
+    - approved-draft selection
+    - dry-run mode
+    - per-set ingest result reporting
+    - optional legacy bootstrap fallback when taxonomy entities remain empty
+    - Set Ops audit event capture.
+- `frontend/nextjs-app/lib/server/taxonomyV2Core.ts`
+  - added `backfillTaxonomyV2FromLegacyVariants` fallback helper.
+  - optimized fallback entity writes with `createMany(..., skipDuplicates=true)`.
+  - final patch writes bootstrap `SetTaxonomySource` rows with `ingestionJobId=NULL`.
+
+### Deploy Evidence
+- Fix #4 initial deploy (endpoint introduction):
+  - deployment: `dpl_GgEsPizYotZr7Uh5Tx2qaTGq8sy6`
+  - URL: `https://tenkings-backend-nextjs-qyltl0xbf-ten-kings.vercel.app`
+  - `collect.tenkings.co` aliased to this deployment.
+- Fix #4 patch deploy (legacy bootstrap fallback):
+  - deployment: `dpl_EMApLNumN9z5Rh9EVbqKDhkwsHMC`
+  - URL: `https://tenkings-backend-nextjs-6wcvko256-ten-kings.vercel.app`
+- Fix #4 patch deploy #2 (batch throughput):
+  - deployment: `dpl_8ixsnaJiBVNWDSKpw69vXfQCjYDP`
+  - URL: `https://tenkings-backend-nextjs-p92j55qej-ten-kings.vercel.app`
+- Fix #4 patch deploy #3 (bootstrap source decoupling):
+  - deployment: `dpl_F2SskfnDXLYis4hjZN1CzqrN19sN`
+  - URL: `https://tenkings-backend-nextjs-hedae53b2-ten-kings.vercel.app`
+  - final `collect.tenkings.co` target: `dpl_F2SskfnDXLYis4hjZN1CzqrN19sN`.
+
+### Production Baseline Before Fix #4 Backfill
+- Global:
+  - `SetProgram=5`
+  - `SetParallel=14`
+  - `SetParallelScope=14`
+  - `SetOddsByFormat=3`
+- Approved active sets:
+  - `2023-24 Topps Chrome Basketball Retail`: `programs=0`, `parallels=0`, `scopes=0`, `odds=0`, `maps=0`, `variants=199`
+  - `2025-26 Topps Finest Basketball`: `programs=0`, `parallels=0`, `scopes=0`, `odds=0`, `maps=0`, `variants=463`
+- Runtime (selected approved sets):
+  - options endpoint returned `source=legacy`, `legacyFallbackUsed=true`.
+
+### Backfill Execution Evidence
+- Dry-run (`POST /api/admin/set-ops/taxonomy/backfill`):
+  - `processed=2`, `applied=0`, `skipped=2` (expected for dry run)
+  - both approved sets resolved with `datasetType=PARALLEL_DB`, `eligibleRowCount` matched row count, no blocking rows.
+- Initial non-dry run (before fallback patch):
+  - `processed=2`, `applied=2`
+  - ingest adapter `topps-v1`, `artifactType=ODDS`
+  - entity counts remained zero for programs/parallels/scopes/odds
+  - maps populated (`+199`, `+463`) via compatibility bridge.
+- Non-dry run after batch-throughput fallback patch:
+  - `processed=2`, `applied=2`
+  - legacy bootstrap populated:
+    - `2023-24 Topps Chrome Basketball Retail`: `programs +1`, `parallels +7`, `scopes +7`, `cards +199`
+    - `2025-26 Topps Finest Basketball`: `programs +1`, `parallels +14`, `scopes +14`, `cards +463`
+  - ingest source + bootstrap source ids captured in endpoint response and Set Ops audit events.
+
+### Post-Fix #4 Production Evidence
+- Global:
+  - `SetProgram=7` (from `5`)
+  - `SetParallel=35` (from `14`)
+  - `SetParallelScope=35` (from `14`)
+  - `SetOddsByFormat=3` (unchanged)
+- Approved active sets:
+  - `2023-24 Topps Chrome Basketball Retail`: `programs=1`, `parallels=7`, `scopes=7`, `odds=0`, `maps=199`, `variants=199`
+  - `2025-26 Topps Finest Basketball`: `programs=1`, `parallels=14`, `scopes=14`, `odds=0`, `maps=463`, `variants=463`
+- Runtime options behavior on `collect.tenkings.co`:
+  - `setId=2025-26 Topps Finest Basketball`:
+    - `source=taxonomy_v2`
+    - `legacyFallbackUsed=false`
+  - `setId=2023-24 Topps Chrome Basketball Retail`:
+    - `source=taxonomy_v2`
+    - `legacyFallbackUsed=false`
+  - broad `year=2025-26&manufacturer=Topps&sport=Basketball`:
+    - still `source=taxonomy_v2`
+    - `variantCount` increased from prior `9` to `23` due inclusion of Finest taxonomy scopes.
+- Matcher sanity:
+  - `POST /api/admin/variants/match` still no taxonomy hard-stop; response remained downstream (`Variant embedding service is not configured`).
+
+### Metric Correction (Bootstrap Source Decoupling)
+- Identified intermediate regression:
+  - bootstrap sources linked to PARALLEL_DB jobs inflated contamination metric (`SetCard` from PARALLEL_DB rose to `915`).
+- Applied non-destructive correction:
+  - SQL update set `SetTaxonomySource.ingestionJobId=NULL` for `parserVersion='legacy-bootstrap-v1'` rows.
+  - affected rows: `2`.
+- Verified corrected metrics:
+  - `SetCard` rows linked to PARALLEL_DB sources restored to `253`.
+  - bootstrap sources linked to ingestion jobs: `0`.
+  - classification now:
+    - `PARALLEL_DB|CHECKLIST|6`
+    - `PARALLEL_DB|ODDS|6`
+    - `PLAYER_WORKSHEET|CHECKLIST|4`
+
+### Operations/Safety
+- No DB migrations executed.
+- No destructive set/DB operations executed.
+
+## 2026-02-27 - Fix #5 Implementation (Canonical Taxonomy Identity in Seed/Replace/Reference, No Deploy)
+
+### Summary
+- Implemented canonical taxonomy identity resolution for Set Ops seed and replace flows, with deterministic legacy fallback when canonical bridge rows are missing.
+- Seed pipeline now resolves existing variants by canonical identity first (via `CardVariantTaxonomyMap.canonicalKey`) before falling back to legacy tuple matching.
+- Seed pipeline now upserts `CardVariantTaxonomyMap` for seeded rows to keep canonical identity aligned with runtime writes.
+- Replace preview diff now compares existing/incoming variants by canonical identity keys.
+- Replace reference-image preservation now matches incoming variants by canonical identity keys first, then falls back to legacy identity, and restores refs using normalized destination tuple values.
+- Seed queue-count computation now aggregates reference coverage using canonical identity to reduce tuple-drift mismatches.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsVariantIdentity.ts` (new)
+- `frontend/nextjs-app/lib/server/setOpsSeed.ts`
+- `frontend/nextjs-app/lib/server/setOpsReplace.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsSeed.ts --file lib/server/setOpsReplace.ts --file lib/server/setOpsVariantIdentity.ts` passed.
+
+### Operations/Safety
+- No deploy/restart/migration executed for this Fix #5 coding step.
+- No destructive set/DB operations executed.
+
+## 2026-02-27 - Fix #5 Hardening + Pre-Deploy API Smoke (No Deploy)
+
+### Summary
+- Hardened Fix #5 identity implementation to remove runtime dependence on generated Prisma taxonomy delegates that may be missing in some workspaces.
+- Updated canonical identity context loading to use SQL reads for taxonomy bridge/scope tables.
+- Updated seed canonical-map write path to SQL upsert for `CardVariantTaxonomyMap`.
+- Ran pre-deploy local API smoke checks against Fix #5 code using:
+  - local Next.js API server (`localhost:4010`)
+  - temporary SSH DB tunnel through droplet (`root@104.131.27.245`) to production DB host.
+
+### Additional Files Updated
+- `frontend/nextjs-app/lib/server/setOpsVariantIdentity.ts`
+- `frontend/nextjs-app/lib/server/setOpsSeed.ts`
+
+### Validation Evidence
+- Type check pass:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+- Lint pass:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsSeed.ts --file lib/server/setOpsReplace.ts --file lib/server/setOpsVariantIdentity.ts`
+
+### Pre-Deploy API Smoke Results (Fix #5 local code)
+- `GET /api/admin/set-ops/access` => `200`
+- `GET /api/admin/set-ops/replace/jobs?...` => `200`
+- `POST /api/admin/set-ops/replace/preview` => `200`
+  - accepted-row proof payload (`A-1/A-2`, `Arrivals`, with `odds`) returned:
+    - `summary.acceptedRowCount=2`
+    - `diff.unchangedCount=2`
+    - `diff.toAddCount=0`
+  - `toRemove` sample keys show canonical identity format (`canonical::...`) as expected.
+- `GET /api/admin/set-ops/seed/jobs?...` => `200`
+- `POST /api/admin/variants/match` => `404` with downstream message (`No in-scope variant set found for supplied set name`), not auth/runtime crash.
+- `GET /api/admin/variants/options?...` => `500` locally with `Cannot read properties of undefined (reading 'findMany')`.
+  - This is a local workspace Prisma-client generation mismatch for taxonomy delegates (pre-existing outside Fix #5 scope); production has previously served this endpoint successfully.
+
+### Operations/Safety
+- No deploy/restart/migration executed in this step.
+- No destructive set/DB operations executed.
+
+## 2026-02-27 - Fix #5 Verification Gate (Deploy Held): Local Options 500 Resolved + Real Seed Execution Evidence
+
+### Scope
+- User requested two blockers resolved before any Fix #5 deploy:
+  - resolve local `/api/admin/variants/options` 500 (Prisma delegate mismatch) or prove prod safety.
+  - run one real seed execution (small/safe) with evidence for canonical identity + fallback + dedupe + taxonomy-map upserts.
+- Deploy remained on hold for this step.
+
+### Code Change (Local 500 Resolution)
+- Updated `frontend/nextjs-app/lib/server/variantOptionPool.ts`:
+  - added SQL fallback reads for Taxonomy V2 option loading when Prisma taxonomy delegates are missing (`setProgram`, `setParallelScope`, `setCard`).
+  - kept existing delegate path when delegates are present.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/variantOptionPool.ts` passed.
+
+### Delegate Mismatch Proof + Endpoint Result
+- Local generated Prisma client still lacks taxonomy delegates/models:
+  - `setProgramDelegate=undefined`
+  - `setParallelScopeDelegate=undefined`
+  - `setCardDelegate=undefined`
+  - `Prisma.ModelName` taxonomy entries empty.
+- Despite mismatch, local endpoint now succeeds via SQL fallback:
+  - `GET http://127.0.0.1:4010/api/admin/variants/options?year=2025-26&manufacturer=Topps&sport=Basketball`
+    - HTTP `200`
+    - `source=taxonomy_v2`, `legacyFallbackUsed=false`.
+
+### Real Seed Execution Test (Small, Isolated)
+- Created isolated verification set fixture (non-destructive, unique set id):
+  - `setId=2026 Fix5 Seed Verification Set 20260227041936`
+- Fixture design to prove both resolution paths:
+  - canonical-only row: existing variant `A-1 | Gold Prism` with map canonical key for `A-1 | Gold`.
+    - tuple `A-1 | Gold` intentionally absent before run (`count=0`) so canonical mapping is required to avoid insert.
+  - fallback row: existing variant `A-2 | Silver` with no map row before run.
+  - insert row: `A-3 | Blue` absent before run.
+- Seed API execution:
+  - `POST /api/admin/set-ops/seed/jobs`
+  - response: HTTP `200`, status `COMPLETE`
+  - progress/result: `processed=3`, `updated=2`, `inserted=1`, `failed=0`, `skipped=0`.
+
+### Before/After Evidence (Verification Set)
+- Before seed:
+  - `CardVariant count=2`
+  - `CardVariantTaxonomyMap count=1`
+  - `A-1 | Gold` tuple count `0`
+  - map row existed for canonical variant id `a914d1bf-c13b-4bc9-a33b-a6852526b382` with canonical key `...::a-1::none::gold`.
+- After seed:
+  - `CardVariant count=3`
+  - `CardVariantTaxonomyMap count=3`
+  - duplicate query (`group by cardNumber, parallelId having count(*) > 1`) => no rows.
+  - variants:
+    - `A-1 | Gold Prism` (same existing id retained)
+    - `A-2 | Silver` (same existing id retained)
+    - `A-3 | Blue` (new id inserted)
+  - map rows now exist for all 3 variants (`A-1`, `A-2`, `A-3`) with canonical keys.
+  - `A-1 | Gold` tuple remains absent (`count=0`), confirming no duplicate insert on canonical-only row.
+
+### Runtime No-Regression Sanity (Local)
+- `GET /api/admin/variants/options` broad scope => HTTP `200`, usable payload.
+- `GET /api/admin/variants/options` with explicit setId => HTTP `200`, usable payload.
+- `POST /api/admin/variants/match` => HTTP `404` downstream message (`No in-scope variant set found for supplied set name`), no taxonomy hard-stop/runtime crash.
+
+### Operations/Safety
+- No deploy/restart/migration executed.
+- No destructive DB operation executed.
+- Added data only in isolated verification set namespace for seed-evidence capture.
