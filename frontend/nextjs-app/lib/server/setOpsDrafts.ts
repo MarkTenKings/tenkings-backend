@@ -39,6 +39,21 @@ export type SetOpsDraftSummary = {
   blockingErrorCount: number;
 };
 
+export type SetOpsTaxonomyIngestRow = {
+  setId: string;
+  cardNumber: string | null;
+  cardType: string | null;
+  program: string | null;
+  programLabel: string | null;
+  parallel: string;
+  playerName: string;
+  playerSeed: string;
+  odds: string | null;
+  serial: string | null;
+  format: string | null;
+  sourceUrl: string | null;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
@@ -278,6 +293,25 @@ export function normalizeDraftRows(params: {
       blockingErrorCount,
     } satisfies SetOpsDraftSummary,
   };
+}
+
+export function buildTaxonomyIngestRows(rows: SetOpsDraftRow[]): SetOpsTaxonomyIngestRow[] {
+  return rows
+    .filter((row) => row.errors.every((issue) => !issue.blocking))
+    .map((row) => ({
+      setId: row.setId,
+      cardNumber: row.cardNumber,
+      cardType: row.cardType,
+      program: row.cardType,
+      programLabel: row.cardType,
+      parallel: row.parallel,
+      playerName: row.playerSeed,
+      playerSeed: row.playerSeed,
+      odds: row.odds,
+      serial: row.serial,
+      format: row.format,
+      sourceUrl: row.sourceUrl,
+    }));
 }
 
 export function createDraftVersionPayload(params: {

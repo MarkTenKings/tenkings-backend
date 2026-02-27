@@ -4349,3 +4349,16 @@
 - No deploy/restart/migration executed.
 - No destructive DB operation executed.
 - Added data only in isolated verification set namespace for seed-evidence capture.
+
+## 2026-02-27 - Planned Action: Final Fix #5 Commit + Production Deploy + Post-Deploy Verification
+
+### Planned Action
+- Commit and push final Fix #5 code set (canonical identity migration in seed/replace/reference, plus supporting set-ops taxonomy backfill files currently pending in working tree).
+- Deploy production build to Vercel project `tenkings-backend-nextjs-app`.
+- Run post-deploy runtime + DB verification focused on:
+  - `/api/admin/variants/options` and `/api/admin/variants/match` runtime sanity.
+  - Real seed execution evidence for canonical identity, legacy fallback, duplicate prevention, and `CardVariantTaxonomyMap` upserts.
+
+### Safety
+- No destructive set/DB operations planned.
+- No DB migrations planned.

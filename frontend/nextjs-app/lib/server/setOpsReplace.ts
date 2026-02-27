@@ -10,11 +10,20 @@ import {
   SetSeedJobStatus,
   type Prisma,
 } from "@tenkings/database";
-import { normalizeCardNumber, normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
+import { normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
 import type { AdminSession } from "./admin";
 import { computeSetDeleteImpact, writeSetOpsAuditEvent } from "./setOps";
 import { createDraftVersionPayload, extractDraftRows, normalizeDraftRows, summarizeDraftDiff } from "./setOpsDrafts";
 import { runSeedJob } from "./setOpsSeed";
+import {
+  buildPreferredSetOpsVariantIdentityLookupKey,
+  buildSetOpsVariantIdentityLookupKeys,
+  loadSetOpsVariantIdentityContext,
+  normalizeVariantCardNumberForIdentity,
+  normalizeVariantParallelLabelForIdentity,
+  resolveSetOpsVariantIdentity,
+  type SetOpsVariantIdentityContext,
+} from "./setOpsVariantIdentity";
 
 const REPLACE_GENERIC_LABELS = new Set([
   "insert",
@@ -186,36 +195,31 @@ function buildSetIdCandidates(inputSetId: string) {
   return Array.from(new Set([raw, normalized].filter(Boolean)));
 }
 
-function buildVariantKey(cardNumber: string | null, parallelId: string) {
-  const normalizedCardNumber = String(cardNumber || "ALL").trim() || "ALL";
-  return `${normalizedCardNumber}::${String(parallelId || "").trim()}`;
-}
-
-function normalizeVariantCardNumberForKey(cardNumber: string | null | undefined) {
-  return normalizeCardNumber(cardNumber) ?? "ALL";
-}
-
-function buildNormalizedVariantKey(cardNumber: string | null | undefined, parallelId: string | null | undefined) {
-  const normalizedCardNumber = normalizeVariantCardNumberForKey(cardNumber);
-  const normalizedParallelId = normalizeParallelLabel(parallelId);
-  return `${normalizedCardNumber}::${normalizedParallelId}`;
-}
-
-function buildAcceptedVariantKeyMap(rows: PreparedSetReplace["normalizedRows"]) {
+function buildAcceptedVariantKeyMap(params: {
+  rows: PreparedSetReplace["normalizedRows"];
+  identityContext: SetOpsVariantIdentityContext;
+}) {
   const keys = new Map<string, { cardNumber: string; parallelId: string }>();
-  for (const row of rows) {
+  for (const row of params.rows) {
     if (hasBlockingErrors(row.errors) || !row.parallel) {
       continue;
     }
-    const cardNumber = normalizeVariantCardNumberForKey(row.cardNumber);
-    const parallelId = normalizeParallelLabel(row.parallel);
+    const identity = resolveSetOpsVariantIdentity({
+      context: params.identityContext,
+      cardNumber: row.cardNumber,
+      parallelId: row.parallel,
+    });
+    const cardNumber = normalizeVariantCardNumberForIdentity(row.cardNumber);
+    const parallelId = normalizeVariantParallelLabelForIdentity(row.parallel);
     if (!parallelId) {
       continue;
     }
-    keys.set(`${cardNumber}::${parallelId}`, {
-      cardNumber,
-      parallelId,
-    });
+    for (const identityKey of buildSetOpsVariantIdentityLookupKeys(identity)) {
+      keys.set(identityKey, {
+        cardNumber,
+        parallelId,
+      });
+    }
   }
   return keys;
 }
@@ -759,6 +763,10 @@ export async function prepareSetReplacePreview(params: {
   });
 
   const acceptedRows = normalized.rows.filter((row) => !hasBlockingErrors(row.errors) && Boolean(row.parallel));
+  const identityContext = await loadSetOpsVariantIdentityContext({
+    setId: normalizedSetId,
+    setIdCandidates,
+  });
 
   const existingVariants = await prisma.cardVariant.findMany({
     where: {
@@ -772,8 +780,28 @@ export async function prepareSetReplacePreview(params: {
     },
   });
 
-  const existingKeySet = new Set(existingVariants.map((row) => buildVariantKey(row.cardNumber, row.parallelId)));
-  const incomingKeySet = new Set(acceptedRows.map((row) => buildVariantKey(row.cardNumber, row.parallel)));
+  const existingKeySet = new Set(
+    existingVariants.map((row) =>
+      buildPreferredSetOpsVariantIdentityLookupKey(
+        resolveSetOpsVariantIdentity({
+          context: identityContext,
+          cardNumber: row.cardNumber,
+          parallelId: row.parallelId,
+        })
+      )
+    )
+  );
+  const incomingKeySet = new Set(
+    acceptedRows.map((row) =>
+      buildPreferredSetOpsVariantIdentityLookupKey(
+        resolveSetOpsVariantIdentity({
+          context: identityContext,
+          cardNumber: row.cardNumber,
+          parallelId: row.parallel,
+        })
+      )
+    )
+  );
 
   const toAdd = Array.from(incomingKeySet).filter((key) => !existingKeySet.has(key)).sort((a, b) => a.localeCompare(b));
   const toRemove = Array.from(existingKeySet).filter((key) => !incomingKeySet.has(key)).sort((a, b) => a.localeCompare(b));
@@ -1196,7 +1224,14 @@ export async function runSetReplaceJob(params: {
 
     deleteImpact = await computeSetDeleteImpact(prisma, runArgs.setId);
 
-    const incomingVariantKeyMap = buildAcceptedVariantKeyMap(prepared.normalizedRows);
+    const identityContext = await loadSetOpsVariantIdentityContext({
+      setId: prepared.setId,
+      setIdCandidates: prepared.setIdCandidates,
+    });
+    const incomingVariantKeyMap = buildAcceptedVariantKeyMap({
+      rows: prepared.normalizedRows,
+      identityContext,
+    });
     const existingReferenceImages = await prisma.cardVariantReferenceImage.findMany({
       where: {
         setId: {
@@ -1230,7 +1265,14 @@ export async function runSetReplaceJob(params: {
     preservedReferenceImages = [];
 
     for (const row of existingReferenceImages) {
-      const matchedVariant = incomingVariantKeyMap.get(buildNormalizedVariantKey(row.cardNumber, row.parallelId));
+      const identity = resolveSetOpsVariantIdentity({
+        context: identityContext,
+        cardNumber: row.cardNumber,
+        parallelId: row.parallelId,
+      });
+      const matchedVariant = buildSetOpsVariantIdentityLookupKeys(identity)
+        .map((identityKey) => incomingVariantKeyMap.get(identityKey))
+        .find((candidate) => Boolean(candidate));
       if (!matchedVariant) continue;
       preservedReferenceImages.push({
         cardNumber: row.cardNumber,

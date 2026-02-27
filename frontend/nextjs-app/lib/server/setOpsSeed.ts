@@ -1,6 +1,13 @@
+import { randomUUID } from "node:crypto";
 import { prisma, SetSeedJobStatus, type Prisma } from "@tenkings/database";
 import { normalizeSetLabel } from "@tenkings/shared";
 import { extractDraftRows } from "./setOpsDrafts";
+import {
+  buildCanonicalVariantIdentityLookupKey,
+  buildPreferredSetOpsVariantIdentityLookupKey,
+  loadSetOpsVariantIdentityContext,
+  resolveSetOpsVariantIdentity,
+} from "./setOpsVariantIdentity";
 
 export type SeedExecutionSummary = {
   status: SetSeedJobStatus;
@@ -19,9 +26,18 @@ function blockingErrorCount(row: { errors: Array<{ blocking: boolean }> }) {
 }
 
 async function computeQueueCount(setId: string) {
+  const identityContext = await loadSetOpsVariantIdentityContext({
+    setId,
+    setIdCandidates: [setId],
+  });
+
   const variants = await prisma.cardVariant.findMany({
     where: { setId },
-    select: { cardNumber: true, parallelId: true },
+    select: {
+      id: true,
+      cardNumber: true,
+      parallelId: true,
+    },
   });
 
   const grouped = await prisma.cardVariantReferenceImage.groupBy({
@@ -32,13 +48,26 @@ async function computeQueueCount(setId: string) {
 
   const refCounts = new Map<string, number>();
   for (const row of grouped) {
-    const card = row.cardNumber ?? "ALL";
-    refCounts.set(`${card}::${row.parallelId}`, row._count._all);
+    const identity = resolveSetOpsVariantIdentity({
+      context: identityContext,
+      cardNumber: row.cardNumber,
+      parallelId: row.parallelId,
+    });
+    const identityKey = buildPreferredSetOpsVariantIdentityLookupKey(identity);
+    refCounts.set(identityKey, (refCounts.get(identityKey) ?? 0) + row._count._all);
   }
 
   let queueCount = 0;
   for (const variant of variants) {
-    const count = refCounts.get(`${variant.cardNumber}::${variant.parallelId}`) ?? 0;
+    const identity = resolveSetOpsVariantIdentity({
+      context: identityContext,
+      cardNumber: variant.cardNumber,
+      parallelId: variant.parallelId,
+    });
+    const canonicalKey = identityContext.preferredCanonicalKeyByVariantId.get(variant.id) ?? null;
+    const canonicalIdentityKey = canonicalKey ? buildCanonicalVariantIdentityLookupKey(canonicalKey) : null;
+    const identityKey = canonicalIdentityKey || buildPreferredSetOpsVariantIdentityLookupKey(identity);
+    const count = refCounts.get(identityKey) ?? 0;
     if (count < 2) queueCount += 1;
   }
   return queueCount;
@@ -56,6 +85,12 @@ export async function runSeedJob(params: {
   const allRows = extractDraftRows(params.draftDataJson);
   const rows = allRows.filter((row) => normalizeSetLabel(row.setId) === setId);
   const total = rows.length;
+  const identityContext = await loadSetOpsVariantIdentityContext({
+    setId,
+    setIdCandidates: [setId],
+  });
+  const variantIdByCanonicalKey = new Map(identityContext.variantIdByCanonicalKey);
+  const variantIdByLegacyKey = new Map(identityContext.variantIdByLegacyKey);
 
   let processed = 0;
   let inserted = 0;
@@ -100,30 +135,115 @@ export async function runSeedJob(params: {
     }
 
     try {
-      const cardNumber = row.cardNumber ?? "ALL";
-      const existing = await prisma.cardVariant.findUnique({
-        where: {
-          setId_cardNumber_parallelId: {
-            setId,
-            cardNumber,
-            parallelId: row.parallel,
-          },
-        },
-        select: { id: true },
+      const identity = resolveSetOpsVariantIdentity({
+        context: identityContext,
+        cardNumber: row.cardNumber,
+        parallelId: row.parallel,
       });
+      const cardNumber = identity.cardNumber;
+      const parallelId = identity.parallelLabel;
 
-      if (existing) {
+      let resolvedVariantId: string | null = null;
+      for (const canonicalKey of identity.canonicalKeys) {
+        const candidate = variantIdByCanonicalKey.get(canonicalKey);
+        if (candidate) {
+          resolvedVariantId = candidate;
+          break;
+        }
+      }
+      if (!resolvedVariantId) {
+        resolvedVariantId = variantIdByLegacyKey.get(identity.legacyFallbackKey) ?? null;
+      }
+      if (!resolvedVariantId) {
+        const existing = await prisma.cardVariant.findUnique({
+          where: {
+            setId_cardNumber_parallelId: {
+              setId,
+              cardNumber,
+              parallelId,
+            },
+          },
+          select: { id: true },
+        });
+        resolvedVariantId = existing?.id ?? null;
+      }
+
+      if (resolvedVariantId) {
         updated += 1;
       } else {
-        await prisma.cardVariant.create({
+        const created = await prisma.cardVariant.create({
           data: {
             setId,
             cardNumber,
-            parallelId: row.parallel,
+            parallelId,
             keywords: [],
           },
+          select: { id: true },
         });
+        resolvedVariantId = created.id;
         inserted += 1;
+      }
+
+      if (resolvedVariantId) {
+        variantIdByLegacyKey.set(identity.legacyFallbackKey, resolvedVariantId);
+        for (const canonicalKey of identity.canonicalKeys) {
+          variantIdByCanonicalKey.set(canonicalKey, resolvedVariantId);
+        }
+
+        if (identity.preferredCanonicalKey) {
+          try {
+            const mapRowId = randomUUID();
+            await prisma.$executeRawUnsafe(
+              `insert into "CardVariantTaxonomyMap" (
+                 "id",
+                 "cardVariantId",
+                 "setId",
+                 "programId",
+                 "cardNumber",
+                 "variationId",
+                 "parallelId",
+                 "canonicalKey",
+                 "createdAt",
+                 "updatedAt"
+               )
+               values (
+                 $1,
+                 $2,
+                 $3,
+                 $4,
+                 $5,
+                 null,
+                 $6,
+                 $7,
+                 now(),
+                 now()
+               )
+               on conflict ("cardVariantId")
+               do update set
+                 "setId" = excluded."setId",
+                 "programId" = excluded."programId",
+                 "cardNumber" = excluded."cardNumber",
+                 "variationId" = excluded."variationId",
+                 "parallelId" = excluded."parallelId",
+                 "canonicalKey" = excluded."canonicalKey",
+                 "updatedAt" = now()`,
+              mapRowId,
+              resolvedVariantId,
+              setId,
+              identity.preferredProgramId,
+              cardNumber,
+              identity.parallelSlug,
+              identity.preferredCanonicalKey
+            );
+            identityContext.preferredCanonicalKeyByVariantId.set(resolvedVariantId, identity.preferredCanonicalKey);
+          } catch (mapError) {
+            logs.push(
+              `seed:map:warn index=${row.index} message=${
+                mapError instanceof Error ? mapError.message : "unknown"
+              }`
+            );
+          }
+        }
       }
     } catch (error) {
       failed += 1;

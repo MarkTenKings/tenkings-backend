@@ -8,7 +8,11 @@ import {
   roleDeniedMessage,
   writeSetOpsAuditEvent,
 } from "../../../../../lib/server/setOps";
-import { createDraftVersionPayload, normalizeDraftRows } from "../../../../../lib/server/setOpsDrafts";
+import {
+  buildTaxonomyIngestRows,
+  createDraftVersionPayload,
+  normalizeDraftRows,
+} from "../../../../../lib/server/setOpsDrafts";
 import { readTaxonomyV2Flags } from "../../../../../lib/server/taxonomyV2Flags";
 import { ingestTaxonomyV2FromIngestionJob, type TaxonomyIngestResult } from "../../../../../lib/server/taxonomyV2Core";
 
@@ -111,22 +115,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       fallbackSetId: setId,
       rawPayload: job.rawPayload,
     });
-    const taxonomyRows = normalized.rows
-      .filter((row) => row.errors.every((issue) => !issue.blocking))
-      .map((row) => ({
-        setId: row.setId,
-        cardNumber: row.cardNumber,
-        cardType: row.cardType,
-        program: row.cardType,
-        programLabel: row.cardType,
-        parallel: row.parallel,
-        playerName: row.playerSeed,
-        playerSeed: row.playerSeed,
-        odds: row.odds,
-        serial: row.serial,
-        format: row.format,
-        sourceUrl: row.sourceUrl,
-      }));
+    const taxonomyRows = buildTaxonomyIngestRows(normalized.rows);
 
     const taxonomyFlags = readTaxonomyV2Flags();
     let taxonomyIngest: TaxonomyIngestResult | null = null;

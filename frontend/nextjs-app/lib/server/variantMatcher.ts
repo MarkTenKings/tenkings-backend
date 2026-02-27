@@ -2,6 +2,7 @@ import sharp from "sharp";
 import { prisma } from "@tenkings/database";
 import { readTaxonomyV2Flags } from "./taxonomyV2Flags";
 import { resolveTaxonomyScopeForMatcher } from "./taxonomyV2Core";
+import { filterSetIdsByScopeIdentity, loadVariantScopeSetIds } from "./variantSetScope";
 
 export type VariantCandidate = {
   parallelId: string;
@@ -102,22 +103,15 @@ async function resolveSetIdCandidates(inputSetId: string) {
   return [];
 }
 
-async function filterApprovedSetCandidates(setIds: string[]) {
+async function filterScopeSetCandidates(setIds: string[], includeLegacyReviewRequired: boolean) {
   const uniqueSetIds = Array.from(new Set(setIds.map((entry) => String(entry || "").trim()).filter(Boolean)));
   if (uniqueSetIds.length < 1) return [];
 
-  const approvedRows = await prisma.setDraft.findMany({
-    where: {
-      setId: { in: uniqueSetIds },
-      status: "APPROVED",
-      archivedAt: null,
-    },
-    select: {
-      setId: true,
-    },
+  const scopeSetIds = await loadVariantScopeSetIds({
+    includeLegacyReviewRequired,
   });
-  const approvedSetIds = new Set(approvedRows.map((row) => String(row.setId || "").trim()).filter(Boolean));
-  return uniqueSetIds.filter((setId) => approvedSetIds.has(setId));
+  if (scopeSetIds.scopeSetIds.length < 1) return [];
+  return filterSetIdsByScopeIdentity(uniqueSetIds, scopeSetIds.scopeSetIds);
 }
 
 async function findVariants(params: { setId: string; cardNumber?: string | null }) {
@@ -193,13 +187,14 @@ export async function runVariantMatch(params: {
     return { ok: false, message: "Card image not found" };
   }
 
+  const taxonomyFlags = readTaxonomyV2Flags();
   const setCandidates = await resolveSetIdCandidates(setInput);
   if (setCandidates.length === 0) {
     return { ok: false, message: "No variant set found for supplied set name" };
   }
-  const approvedSetCandidates = await filterApprovedSetCandidates(setCandidates);
-  if (approvedSetCandidates.length === 0) {
-    return { ok: false, message: "No approved variant set found for supplied set name" };
+  const scopedSetCandidates = await filterScopeSetCandidates(setCandidates, taxonomyFlags.allowLegacyFallback);
+  if (scopedSetCandidates.length === 0) {
+    return { ok: false, message: "No in-scope variant set found for supplied set name" };
   }
 
   let matchedSetId = "";
@@ -210,7 +205,7 @@ export async function runVariantMatch(params: {
     keywords: string[];
     oddsInfo: string | null;
   }> = [];
-  for (const setId of approvedSetCandidates) {
+  for (const setId of scopedSetCandidates) {
     const rows = await findVariants({ setId, cardNumber: cardNumberInput === "ALL" ? "" : cardNumberInput });
     if (rows.length > 0) {
       matchedSetId = setId;
@@ -229,7 +224,6 @@ export async function runVariantMatch(params: {
   }
 
   let taxonomyScoped = false;
-  const taxonomyFlags = readTaxonomyV2Flags();
   if (taxonomyFlags.matcher) {
     const scope = await resolveTaxonomyScopeForMatcher({
       setId: matchedSetId,

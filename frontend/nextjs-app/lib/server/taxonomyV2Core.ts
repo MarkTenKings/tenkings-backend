@@ -75,6 +75,19 @@ export type TaxonomyIngestResult = {
   skippedReason?: string;
 };
 
+export type TaxonomyLegacyBackfillResult = {
+  applied: boolean;
+  sourceId: string | null;
+  counts: {
+    programs: number;
+    cards: number;
+    parallels: number;
+    scopes: number;
+    bridges: number;
+  };
+  skippedReason?: string;
+};
+
 function normalizeLabelKey(value: string): string {
   return sanitizeTaxonomyText(value).toLowerCase();
 }
@@ -870,6 +883,165 @@ async function upsertCompatibilityBridge(params: {
   }
 
   return bridges;
+}
+
+export async function backfillTaxonomyV2FromLegacyVariants(params: {
+  setId: string;
+  ingestionJobId?: string | null;
+  sourceLabel?: string | null;
+}): Promise<TaxonomyLegacyBackfillResult> {
+  const setId = normalizeSetId(params.setId);
+  if (!setId) {
+    return {
+      applied: false,
+      sourceId: null,
+      counts: {
+        programs: 0,
+        cards: 0,
+        parallels: 0,
+        scopes: 0,
+        bridges: 0,
+      },
+      skippedReason: "setId is required",
+    };
+  }
+
+  const variants = (await taxonomyDb.cardVariant.findMany({
+    where: { setId },
+    select: {
+      id: true,
+      cardNumber: true,
+      parallelId: true,
+    },
+  })) as Array<{ id: string; cardNumber: string; parallelId: string }>;
+
+  if (variants.length < 1) {
+    return {
+      applied: false,
+      sourceId: null,
+      counts: {
+        programs: 0,
+        cards: 0,
+        parallels: 0,
+        scopes: 0,
+        bridges: 0,
+      },
+      skippedReason: "No legacy variants found for set",
+    };
+  }
+
+  return await prisma.$transaction(async (tx) => {
+    const db = tx as TaxonomyTx;
+    const source = await db.setTaxonomySource.create({
+      data: {
+        setId,
+        ingestionJobId: null,
+        artifactType: TaxonomyArtifactType.CHECKLIST,
+        sourceKind: TaxonomySourceKind.TRUSTED_SECONDARY,
+        sourceLabel: sanitizeTaxonomyText(params.sourceLabel) || "legacy-variant-bootstrap",
+        parserVersion: "legacy-bootstrap-v1",
+        parserConfidence: 0.4,
+        metadataJson: {
+          mode: "legacy_variant_bootstrap",
+          variantCount: variants.length,
+        },
+      },
+    });
+
+    const counts: TaxonomyLegacyBackfillResult["counts"] = {
+      programs: 0,
+      cards: 0,
+      parallels: 0,
+      scopes: 0,
+      bridges: 0,
+    };
+
+    const programId = "base";
+    const createdPrograms = await db.setProgram.createMany({
+      data: [
+        {
+          setId,
+          programId,
+          label: "Base",
+          programClass: "base",
+          sourceId: source.id,
+        },
+      ],
+      skipDuplicates: true,
+    });
+    counts.programs += createdPrograms.count;
+
+    const parallelMap = new Map<string, string>();
+    const cardNumbers = new Set<string>();
+
+    variants.forEach((variant: { cardNumber: string; parallelId: string }) => {
+      const parallelLabel = sanitizeTaxonomyText(variant.parallelId);
+      const parallelId = normalizeParallelId(parallelLabel || variant.parallelId);
+      if (parallelId) {
+        if (!parallelMap.has(parallelId)) {
+          parallelMap.set(parallelId, parallelLabel || parallelId);
+        }
+      }
+
+      const cardNumber = normalizeTaxonomyCardNumber(variant.cardNumber);
+      if (cardNumber) {
+        cardNumbers.add(cardNumber);
+      }
+    });
+
+    const parallelRows = Array.from(parallelMap.entries()).map(([parallelId, label]) => ({
+      setId,
+      parallelId,
+      label,
+      sourceId: source.id,
+    }));
+    if (parallelRows.length > 0) {
+      const createdParallels = await db.setParallel.createMany({
+        data: parallelRows,
+        skipDuplicates: true,
+      });
+      counts.parallels += createdParallels.count;
+    }
+
+    const scopeRows = Array.from(parallelMap.keys()).map((parallelId) => ({
+      setId,
+      scopeKey: [programId, parallelId, "none", "any", "any"].join("::"),
+      programId,
+      parallelId,
+      variationId: null,
+      formatKey: null,
+      channelKey: null,
+      sourceId: source.id,
+    }));
+    if (scopeRows.length > 0) {
+      const createdScopes = await db.setParallelScope.createMany({
+        data: scopeRows,
+        skipDuplicates: true,
+      });
+      counts.scopes += createdScopes.count;
+    }
+
+    const cardRows = Array.from(cardNumbers.values()).map((cardNumber) => ({
+      setId,
+      programId,
+      cardNumber,
+      playerName: null,
+      sourceId: source.id,
+    }));
+    if (cardRows.length > 0) {
+      const createdCards = await db.setCard.createMany({
+        data: cardRows,
+        skipDuplicates: true,
+      });
+      counts.cards += createdCards.count;
+    }
+
+    return {
+      applied: true,
+      sourceId: source.id,
+      counts,
+    } satisfies TaxonomyLegacyBackfillResult;
+  });
 }
 
 function dedupeAdapterOutput(output: TaxonomyAdapterOutput): TaxonomyAdapterOutput {
