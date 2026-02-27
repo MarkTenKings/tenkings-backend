@@ -4362,3 +4362,54 @@
 ### Safety
 - No destructive set/DB operations planned.
 - No DB migrations planned.
+
+## 2026-02-27 - Fix #5 Deploy Result (Commit 64f8cf1) + Post-Deploy Verification
+
+### Deploy
+- Commit pushed to `main`:
+  - `64f8cf1 feat(set-ops): finalize canonical identity seed/replace and taxonomy backfill`
+- Production deploy executed via Vercel CLI (linked project):
+  - project: `tenkings-backend-nextjs-app`
+  - production URL: `https://tenkings-backend-nextjs-8i2nywp1w-ten-kings.vercel.app`
+  - custom domain alias applied: `https://collect.tenkings.co`
+
+### Post-Deploy Runtime Verification (`collect.tenkings.co`)
+- `GET /api/admin/variants/options?year=2025-26&manufacturer=Topps&sport=Basketball`
+  - HTTP `200`
+  - `source=taxonomy_v2`, `legacyFallbackUsed=false`
+  - `approvedSetCount=3`, `scopedSetCount=3`, `variantCount=23`
+- `GET /api/admin/variants/options?...&setId=2025-26%20Topps%20Basketball`
+  - HTTP `200`
+  - `source=legacy`, `legacyFallbackUsed=true`
+  - `selectedSetId=2025-26 Topps Basketball`, `variantCount=1793`
+- `POST /api/admin/variants/match` (real `cardAssetId` probe)
+  - HTTP `404` with downstream message `Variant embedding service is not configured`
+  - no taxonomy hard-stop/runtime crash.
+
+### Post-Deploy Real Seed Verification (Fix #5 Acceptance Path)
+- Fresh isolated verification fixture created:
+  - `setId=2026 Fix5 Post Deploy Verification Set 20260227052338`
+  - `draftVersionId=82ddaa11-6007-4d51-a2a0-42661c66e098`
+- Fixture before seed:
+  - `CardVariant=2`
+  - `CardVariantTaxonomyMap=1`
+  - tuple `A-1|Gold` count `0` (canonical-only resolution precondition)
+- Seed executed through deployed API:
+  - `POST https://collect.tenkings.co/api/admin/set-ops/seed/jobs`
+  - HTTP `200`, job status `COMPLETE`
+  - result: `processed=3`, `updated=2`, `inserted=1`, `failed=0`, `skipped=0`
+- DB after seed:
+  - `CardVariant=3`
+  - `CardVariantTaxonomyMap=3`
+  - duplicate tuple query (`group by cardNumber,parallelId having count(*)>1`) => no rows
+  - retained existing ids:
+    - canonical-path variant id preserved: `7c868fee-0448-41d4-a991-c74af685db2b` (`A-1|Gold Prism`)
+    - fallback-path variant id preserved: `4284a176-7982-47a6-9eb5-6806500363c9` (`A-2|Silver`)
+  - inserted new variant:
+    - `75b9e723-82c4-4893-901b-3fedd82b3a75` (`A-3|Blue`)
+  - post-seed map rows present for all 3 variant ids with canonical keys.
+  - `A-1|Gold` tuple remains absent (`count=0`) confirming canonical resolution avoided duplicate insert.
+
+### Operations/Safety
+- No DB migrations executed.
+- No destructive set/DB operations executed.

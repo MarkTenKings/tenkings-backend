@@ -2833,3 +2833,56 @@ Build Set Ops UI flow with:
 ### Deploy Status
 - Fix #5 deploy remains held in this checkpoint.
 - No DB migration, no deploy, no restart executed in this step.
+
+## Fix #5 Final Commit + Production Deploy (2026-02-27)
+
+### Commit/Deploy Summary
+- Final Fix #5 commit pushed:
+  - `64f8cf1 feat(set-ops): finalize canonical identity seed/replace and taxonomy backfill`
+- Deployment:
+  - project: `tenkings-backend-nextjs-app`
+  - production deployment URL: `https://tenkings-backend-nextjs-8i2nywp1w-ten-kings.vercel.app`
+  - `collect.tenkings.co` aliased to this deployment.
+
+### Included Code Set
+- Canonical identity resolver + usage in seed/replace:
+  - `frontend/nextjs-app/lib/server/setOpsVariantIdentity.ts` (new)
+  - `frontend/nextjs-app/lib/server/setOpsSeed.ts`
+  - `frontend/nextjs-app/lib/server/setOpsReplace.ts`
+- Taxonomy backfill workflow + helpers (pending local code now committed):
+  - `frontend/nextjs-app/pages/api/admin/set-ops/taxonomy/backfill.ts` (new)
+  - `frontend/nextjs-app/lib/server/taxonomyV2Core.ts`
+  - `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+  - `frontend/nextjs-app/pages/api/admin/set-ops/drafts/build.ts`
+- Matcher scope identity alignment retained:
+  - `frontend/nextjs-app/lib/server/variantMatcher.ts`
+
+### Post-Deploy Runtime Sanity
+- `GET /api/admin/variants/options?year=2025-26&manufacturer=Topps&sport=Basketball`
+  - `200`, `source=taxonomy_v2`, `legacyFallbackUsed=false`, `scopedSetCount=3`, `variantCount=23`.
+- `GET /api/admin/variants/options?...&setId=2025-26 Topps Basketball`
+  - `200`, `source=legacy`, `legacyFallbackUsed=true`, `selectedSetId=2025-26 Topps Basketball`, `variantCount=1793`.
+- `POST /api/admin/variants/match`
+  - downstream `404` (`Variant embedding service is not configured`), no taxonomy hard-stop/runtime exception.
+
+### Post-Deploy Real Seed Verification (Canonical + Fallback + Dedupe + Map Upserts)
+- Verification set:
+  - `2026 Fix5 Post Deploy Verification Set 20260227052338`
+- Before seed:
+  - `CardVariant=2`, `CardVariantTaxonomyMap=1`, tuple `A-1|Gold` count `0`.
+- Seed via deployed API:
+  - `POST /api/admin/set-ops/seed/jobs`
+  - `COMPLETE`, `processed=3`, `updated=2`, `inserted=1`, `failed=0`, `skipped=0`.
+- After seed:
+  - `CardVariant=3`, `CardVariantTaxonomyMap=3`.
+  - duplicate tuple query returned none.
+  - canonical path proof:
+    - existing `A-1|Gold Prism` variant id retained, no new `A-1|Gold` tuple inserted (`count=0`).
+  - fallback path proof:
+    - existing `A-2|Silver` variant id retained and taxonomy map row upserted.
+  - insert proof:
+    - `A-3|Blue` new variant inserted and mapped.
+
+### Safety/Migrations
+- No DB migrations run.
+- No destructive DB/set operations run.
