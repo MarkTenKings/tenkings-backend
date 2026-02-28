@@ -2405,6 +2405,36 @@ export default function AdminUploads() {
     [isRemoteApi, resolveApiUrl, session?.token]
   );
 
+  const warmOcrSuggestionsInBackground = useCallback(
+    async (cardId: string) => {
+      const token = session?.token;
+      if (!token || !cardId) {
+        return;
+      }
+      const endpoint = `/api/admin/cards/${encodeURIComponent(cardId)}/ocr-suggest`;
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        try {
+          const response = await fetch(endpoint, {
+            headers: buildAdminHeaders(token),
+          });
+          if (!response.ok) {
+            return;
+          }
+          const payload = (await response.json().catch(() => null)) as
+            | { status?: string }
+            | null;
+          if (payload?.status !== "pending") {
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1200));
+        } catch {
+          return;
+        }
+      }
+    },
+    [session?.token]
+  );
+
 
   const fetchOcrSuggestions = useCallback(async (cardId: string) => {
     if (!session?.token) {
@@ -2655,8 +2685,9 @@ export default function AdminUploads() {
       }
 
       setQueuedReviewCardIds((prev) => (prev.includes(targetCardId) ? prev : [...prev, targetCardId]));
+      void warmOcrSuggestionsInBackground(targetCardId);
     },
-    [uploadQueuedPhoto]
+    [uploadQueuedPhoto, warmOcrSuggestionsInBackground]
   );
 
   const confirmIntakeCapture = useCallback(

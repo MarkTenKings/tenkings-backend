@@ -4924,3 +4924,30 @@
 - Direct manual SQL OCR-job smoke insert using omitted `id` failed due DB constraint (`ProcessingJob.id` has no default in current prod schema).
 - No schema migration executed.
 - No destructive DB/set operation executed.
+
+## 2026-02-28 - OCR Auto-Run + Set Picker Fallback Hardening (Code Complete)
+
+### Summary
+- Removed dependence on review-screen interaction for OCR suggestion generation.
+- Added background OCR-suggest warm path immediately after front/back/tilt capture finalizes.
+- Hardened set-options scope resolution so explicit set input can recover even when OCR manufacturer/year hints are noisy.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+
+### Behavioral Changes
+- Add Card background finalization now triggers a silent `/api/admin/cards/[cardId]/ocr-suggest` loop (pending-aware retries) as soon as back+tilt uploads complete.
+- OCR suggestions are now generated in background for queued cards before operator opens review details.
+- Variant option pool no longer hard-fails to empty set scope when hint matching misses:
+  - explicit `setId/productLine` can resolve against full in-scope set ids,
+  - when hint-filtered scope is empty, pool falls back to in-scope variant set ids instead of returning empty options.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file lib/server/variantOptionPool.ts` passed (existing `no-img-element` warnings only).
+
+### Deployment Notes
+- Requires web app deploy surface refresh (Next.js runtime) for production behavior.
+- No schema migration executed.
+- No destructive DB/set operation executed.

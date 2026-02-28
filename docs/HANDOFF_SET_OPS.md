@@ -3193,3 +3193,28 @@ Build Set Ops UI flow with:
   1. `ocrText` reflects card text from multiple sides,
   2. player/manufacturer/year extraction quality is restored,
   3. queued-card load auto-runs OCR suggest when suggestion data is missing.
+
+## Add Card OCR + Set Picker Hardening (2026-02-28)
+
+### Operator Issues Addressed
+1. OCR should run automatically without waiting for review interaction.
+2. Player extraction quality degraded when OCR suggest was not being generated in time.
+3. `2025-26 Topps Basketball` not consistently appearing in first-screen set picker when hint matching missed.
+
+### Implemented Fixes
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - Added background `warmOcrSuggestionsInBackground(cardId)` after card finalization.
+  - This runs `/api/admin/cards/[cardId]/ocr-suggest` in pending-aware retry loop without UI coupling.
+  - Keeps fast capture UX while generating OCR+LLM suggestion payloads early.
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+  - Added explicit-set recovery path that resolves manual `setId/productLine` against global in-scope set ids.
+  - If strict year/manufacturer/sport scope filter returns empty, fallback now uses in-scope variant set ids instead of empty pickers.
+
+### Production Context Notes
+- Confirmed production dataset contains `2025-26 Topps Basketball` in `CardVariant` and `SetDraft` (`APPROVED`).
+- Existing cards captured before this fix may still show poor OCR/suggestion state until re-run/new capture.
+
+### Expected Post-Deploy Behavior
+- New cards should have OCR suggestions generated in background right after full photo finalize.
+- First-screen set pickers should remain populated even when OCR hints are imperfect.
+- Manual set entry should reliably bind to intended set scope and feed insert/parallel options consistently.

@@ -666,26 +666,32 @@ export async function loadVariantOptionPool(params: {
   const yearHints = buildYearHints(year);
   const manufacturerHints = buildManufacturerHints(manufacturer);
   const sportHints = buildSportHints(sport);
-  const scopedSetIds = filterScopedSetIds({
+  let scopedSetIds = filterScopedSetIds({
     approvedSetIds: scopeVariantSetIds,
     yearHints,
     manufacturerHints,
     sportHints,
   });
+  const explicitSetCandidate = explicitSetId || productLine;
+  let selectedSetId: string | null = null;
+  if (explicitSetCandidate) {
+    selectedSetId =
+      resolveSetIdByIdentity(scopedSetIds, explicitSetCandidate) ??
+      resolveCanonicalOption(scopedSetIds, explicitSetCandidate, 1.1);
+    if (!selectedSetId) {
+      const globalResolved =
+        resolveSetIdByIdentity(scopeVariantSetIds, explicitSetCandidate) ??
+        resolveCanonicalOption(scopeVariantSetIds, explicitSetCandidate, 1.1);
+      if (globalResolved) {
+        selectedSetId = globalResolved;
+        scopedSetIds = [globalResolved];
+      }
+    }
+  }
 
   if (scopedSetIds.length < 1) {
-    return {
-      variants: [],
-      sets: [],
-      insertOptions: [],
-      parallelOptions: [],
-      scopedSetIds: [],
-      approvedSetCount: approvedSetIds.length,
-      variantCount: 0,
-      selectedSetId: null,
-      source: "legacy",
-      legacyFallbackUsed: false,
-    };
+    // Keep pickers usable even when OCR hints are noisy (e.g., misspelled manufacturer).
+    scopedSetIds = scopeVariantSetIds;
   }
 
   const setHints = [
@@ -695,9 +701,7 @@ export async function loadVariantOptionPool(params: {
     [year, manufacturer].filter(Boolean).join(" "),
   ].filter((entry): entry is string => Boolean(entry && entry.trim()));
 
-  let selectedSetId: string | null = null;
-  const explicitSetCandidate = explicitSetId || productLine;
-  if (explicitSetCandidate) {
+  if (!selectedSetId && explicitSetCandidate) {
     selectedSetId = resolveSetIdByIdentity(scopedSetIds, explicitSetCandidate) ?? resolveCanonicalOption(scopedSetIds, explicitSetCandidate, 1.1);
   }
 
