@@ -5012,3 +5012,40 @@
   1. no red `could not be queued` error,
   2. card reaches review queue,
   3. OCR suggestion data appears automatically in background.
+
+## 2026-02-28 - OCR/LLM Model Research + Migration Plan (Docs-Only)
+
+### Trigger
+- Operator reported OCR suggestion quality still poor (`playerName`/`teamName` gibberish) and requested deep research on latest OpenAI model guidance before next build pass.
+
+### External Verification Performed
+- Reviewed OpenAI docs (`developers.openai.com`) for:
+  - GPT-5.2 model page and latest-model guidance
+  - API overview/reference
+  - Responses API create docs
+  - Reasoning and function-calling guidance
+  - Model catalog entries (including `gpt-5.2`, `gpt-5.2-chat-latest`, and `gpt-5.3-codex`)
+
+### Code Findings (Current Repo)
+- OCR suggest API already uses OpenAI Responses endpoint and model env vars:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- Current request payload sets `reasoning.effort = "minimal"` in OCR LLM calls.
+- Current defaults remain:
+  - `OCR_LLM_MODEL = gpt-5`
+  - `OCR_LLM_FALLBACK_MODEL = gpt-5-mini`
+
+### Risk Identified
+- Latest GPT-5.2 docs list reasoning efforts as `none|low|medium|high|xhigh`.
+- Existing hardcoded `minimal` effort can create model-compatibility failures when switching OCR to GPT-5.2-family models.
+
+### Session Output
+- Produced operator-facing migration plan prioritizing:
+  1. parameter compatibility fixes,
+  2. model selection/routing strategy,
+  3. observability (`x-request-id` / `X-Client-Request-Id`),
+  4. eval harness and gated rollout.
+
+### Operations/Safety
+- No code edits shipped in this step.
+- No deploy/restart/migration executed in this step.
+- No destructive DB/set operation executed.

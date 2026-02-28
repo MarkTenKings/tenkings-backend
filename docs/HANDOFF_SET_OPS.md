@@ -3250,3 +3250,31 @@ Build Set Ops UI flow with:
 ### Current Residual Risk
 - Non-recoverable presign/upload failures with no `assetId` still correctly fail hard and show error (expected behavior).
 - OCR/player extraction quality still requires fresh production capture verification after queue recovery patch.
+
+## OpenAI GPT-5.2 Research + OCR Brain Upgrade Plan (2026-02-28, Docs-Only)
+
+### Why This Was Added
+- Operator requested deep verification of latest OpenAI docs and a surgical plan for upgrading "AI baby brain" quality.
+
+### Verified Docs Scope
+- `developers.openai.com` model + API docs were reviewed for:
+  - model catalog and GPT-5.2 model page,
+  - Responses API request format,
+  - reasoning parameter support,
+  - function-calling/tool controls (`allowed_tools`),
+  - API request tracing (`x-request-id`, `X-Client-Request-Id`).
+
+### Key Compatibility Finding
+- Current OCR suggest code uses `reasoning.effort: "minimal"` in Responses API payload.
+- GPT-5.2 docs define reasoning effort values as `none|low|medium|high|xhigh`.
+- This mismatch is a high-probability source of OCR LLM parse degradation when OCR model/env is switched to GPT-5.2 family.
+
+### Planned Next Execution
+1. Make OCR LLM request builder model-aware for reasoning effort compatibility.
+2. Set OCR primary/fallback to validated latest model IDs for extraction workload.
+3. Add structured per-request tracing for OpenAI calls to identify failures quickly.
+4. Run pinned eval set against fresh production-like captures before broad rollout.
+
+### Session Scope
+- No runtime code deploy executed in this docs-only step.
+- No migration/destructive set operation executed.
