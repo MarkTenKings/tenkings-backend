@@ -54,7 +54,8 @@ type SuggestionFields = {
 type SuggestionConfidence = Record<keyof SuggestionFields, number | null>;
 
 const DEFAULT_THRESHOLD = 0.7;
-const OCR_LLM_MODEL = (process.env.OCR_LLM_MODEL ?? "gpt-5.2").trim();
+const OCR_LLM_MODEL_RAW = (process.env.OCR_LLM_MODEL ?? "").trim();
+const OCR_LLM_MODEL = OCR_LLM_MODEL_RAW && OCR_LLM_MODEL_RAW !== "gpt-5" ? OCR_LLM_MODEL_RAW : "gpt-5.2";
 const OCR_LLM_FALLBACK_MODEL = (process.env.OCR_LLM_FALLBACK_MODEL ?? "gpt-5-mini").trim();
 const OCR_LLM_REASONING_VALUES = new Set<OcrLlmReasoningEffort>(["none", "low", "medium", "high", "xhigh"]);
 const OCR_LLM_REASONING_EFFORT = parseOcrReasoningEffort(process.env.OCR_LLM_REASONING_EFFORT);
