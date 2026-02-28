@@ -561,6 +561,7 @@ export default function AdminUploads() {
   const [ocrStatus, setOcrStatus] = useState<null | "idle" | "running" | "pending" | "ready" | "empty" | "error">(
     null
   );
+  const [pendingAutoOcrCardId, setPendingAutoOcrCardId] = useState<string | null>(null);
   const [ocrAudit, setOcrAudit] = useState<Record<string, unknown> | null>(null);
   const [ocrApplied, setOcrApplied] = useState(false);
   const [ocrMode, setOcrMode] = useState<null | "high" | "low">(null);
@@ -1401,6 +1402,7 @@ export default function AdminUploads() {
 
   const resetOcrState = useCallback(() => {
     setOcrStatus(null);
+    setPendingAutoOcrCardId(null);
     setOcrAudit(null);
     setOcrApplied(false);
     setOcrMode(null);
@@ -1931,6 +1933,8 @@ export default function AdminUploads() {
       const photos = Array.isArray(payload.photos) ? payload.photos : [];
       const backPhoto = photos.find((photo: any) => photo?.kind === "BACK") ?? null;
       const tiltPhoto = photos.find((photo: any) => photo?.kind === "TILT") ?? null;
+      const hasRequiredIntakePhotos = Boolean(backPhoto?.imageUrl) && Boolean(tiltPhoto?.imageUrl);
+      const hasExistingOcrSuggestions = Boolean(payload.ocrSuggestions?.data);
       const ocrFields = (payload.ocrSuggestions?.data?.fields ?? {}) as Record<string, string | null>;
       const normalized = (payload.classificationNormalized ?? {}) as Record<string, any>;
       const attributes = (payload.classification ?? {}) as Record<string, any>;
@@ -2021,7 +2025,7 @@ export default function AdminUploads() {
       setTeachBusy(false);
       setTeachFeedback(null);
       setTeachCapturedFromCorrections(false);
-      setOcrStatus(payload.ocrSuggestions?.data ? "ready" : "empty");
+      setOcrStatus(hasExistingOcrSuggestions ? "ready" : "empty");
       setOcrError(null);
       setOcrApplied(false);
       setOcrMode(null);
@@ -2029,6 +2033,7 @@ export default function AdminUploads() {
       setIntakeStep("required");
       setIntakeError(null);
       setQueuedReviewCardIds((prev) => prev.filter((id) => id !== cardId));
+      setPendingAutoOcrCardId(!hasExistingOcrSuggestions && hasRequiredIntakePhotos ? cardId : null);
     },
     [resolveApiUrl, session?.token]
   );
@@ -2507,6 +2512,20 @@ export default function AdminUploads() {
     session?.token,
     triggerPhotoroomForCard,
   ]);
+
+  useEffect(() => {
+    if (!pendingAutoOcrCardId) {
+      return;
+    }
+    if (intakeCardId !== pendingAutoOcrCardId) {
+      return;
+    }
+    if (ocrStatus === "running" || ocrStatus === "pending") {
+      return;
+    }
+    setPendingAutoOcrCardId(null);
+    void fetchOcrSuggestions(pendingAutoOcrCardId);
+  }, [fetchOcrSuggestions, intakeCardId, ocrStatus, pendingAutoOcrCardId]);
 
   const startOcrForCard = useCallback(
     (cardId: string) => {

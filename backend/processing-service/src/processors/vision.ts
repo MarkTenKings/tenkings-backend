@@ -22,7 +22,7 @@ export async function extractTextFromImage(imageBase64: string): Promise<VisionR
         requests: [
           {
             image: { content: imageBase64 },
-            features: [{ type: "TEXT_DETECTION" }],
+            features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
           },
         ],
       }),
@@ -35,8 +35,14 @@ export async function extractTextFromImage(imageBase64: string): Promise<VisionR
   }
 
   const payload = (await response.json()) as any;
-  const annotation = payload?.responses?.[0]?.fullTextAnnotation;
-  const text = typeof annotation?.text === "string" ? annotation.text : "";
+  const fullText = payload?.responses?.[0]?.fullTextAnnotation?.text;
+  const annotationText = payload?.responses?.[0]?.textAnnotations?.[0]?.description;
+  const text =
+    typeof fullText === "string" && fullText.trim()
+      ? fullText.trim()
+      : typeof annotationText === "string"
+      ? annotationText.trim()
+      : "";
 
   return {
     text,

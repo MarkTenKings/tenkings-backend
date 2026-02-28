@@ -5,6 +5,7 @@ import sharp from "sharp";
 import {
   type Prisma,
   CardAssetStatus,
+  CardPhotoKind,
   ProcessingJobStatus,
   ProcessingJobType,
   enqueueProcessingJob,
@@ -242,24 +243,133 @@ async function loadAssetBuffer(asset: { id: string; storageKey: string; imageUrl
   throw new Error(`[processing-service] asset ${asset.id} image source unreadable for mode ${config.storageMode}`);
 }
 
+function normalizeOcrText(value: unknown): string {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.replace(/\r/g, "\n").trim();
+}
+
 async function handleOcrJob(job: ProcessingJob) {
-  const asset = await prisma.cardAsset.findUnique({ where: { id: job.cardAssetId } });
+  const asset = await prisma.cardAsset.findUnique({
+    where: { id: job.cardAssetId },
+    include: {
+      photos: {
+        where: { kind: { in: [CardPhotoKind.BACK, CardPhotoKind.TILT] } },
+        select: {
+          id: true,
+          kind: true,
+          storageKey: true,
+          imageUrl: true,
+        },
+      },
+    },
+  });
   if (!asset) {
     throw new Error(`Card asset ${job.cardAssetId} missing`);
   }
 
   const existingEbayUrl = (asset as unknown as { ebaySoldUrl?: string | null }).ebaySoldUrl ?? null;
   const startedAt = asset.processingStartedAt ?? new Date();
-  const buffer = await loadAssetBuffer(asset);
-  const base64 = buffer.toString("base64");
+  const frontBuffer = await loadAssetBuffer(asset);
+
+  const ocrCandidates: Array<{
+    imageId: "FRONT" | "BACK" | "TILT";
+    kind: CardPhotoKind;
+    sourceId: string;
+    storageKey: string;
+    buffer: Buffer;
+  }> = [
+    {
+      imageId: "FRONT",
+      kind: CardPhotoKind.FRONT,
+      sourceId: asset.id,
+      storageKey: asset.storageKey,
+      buffer: frontBuffer,
+    },
+  ];
+
+  for (const photo of asset.photos) {
+    const imageId = photo.kind === CardPhotoKind.BACK ? "BACK" : "TILT";
+    try {
+      const photoBuffer = await loadAssetBuffer({
+        id: photo.id,
+        storageKey: photo.storageKey,
+        imageUrl: photo.imageUrl,
+      });
+      ocrCandidates.push({
+        imageId,
+        kind: photo.kind,
+        sourceId: photo.id,
+        storageKey: photo.storageKey,
+        buffer: photoBuffer,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[processing-service] OCR skipped ${imageId} photo for asset=${asset.id} photo=${photo.id}: ${message}`
+      );
+    }
+  }
+
   console.log(
-    `[processing-service] OCR begin asset=${asset.id} visionKey=${Boolean(config.googleVisionApiKey)} storageMode=${config.storageMode}`
+    `[processing-service] OCR begin asset=${asset.id} visionKey=${Boolean(config.googleVisionApiKey)} storageMode=${config.storageMode} images=${ocrCandidates.length}`
   );
 
-  const vision = await extractTextFromImage(base64);
-  const ocrJson =
-    vision.raw === null || vision.raw === undefined ? JSON_NULL : toInputJson(vision.raw);
-  const normalizedOcr = vision.text ?? asset.ocrText ?? undefined;
+  const imageOcrRows: Array<{
+    imageId: "FRONT" | "BACK" | "TILT";
+    kind: CardPhotoKind;
+    sourceId: string;
+    storageKey: string;
+    text: string;
+    raw: unknown;
+  }> = [];
+
+  for (const candidate of ocrCandidates) {
+    try {
+      const vision = await extractTextFromImage(candidate.buffer.toString("base64"));
+      imageOcrRows.push({
+        imageId: candidate.imageId,
+        kind: candidate.kind,
+        sourceId: candidate.sourceId,
+        storageKey: candidate.storageKey,
+        text: normalizeOcrText(vision.text),
+        raw: vision.raw,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[processing-service] OCR failed image=${candidate.imageId} asset=${asset.id} source=${candidate.sourceId}: ${message}`
+      );
+    }
+  }
+
+  if (imageOcrRows.length < 1) {
+    throw new Error(`OCR failed for all images on asset ${asset.id}`);
+  }
+
+  const normalizedOcr =
+    imageOcrRows
+      .map((row) => row.text)
+      .filter((entry) => entry.length > 0)
+      .join("\n\n") || asset.ocrText || undefined;
+
+  const ocrJson = toInputJson({
+    provider: "google-vision",
+    mode: imageOcrRows.length > 1 ? "multi-image" : "single-image",
+    imageCount: imageOcrRows.length,
+    generatedAt: new Date().toISOString(),
+    images: imageOcrRows.map((row) => ({
+      imageId: row.imageId,
+      kind: row.kind,
+      sourceId: row.sourceId,
+      storageKey: row.storageKey,
+      text: row.text,
+      raw: row.raw ?? null,
+    })),
+    combinedText: normalizedOcr ?? "",
+  });
+
   const attributes = extractCardAttributes(normalizedOcr);
   const enhancedAttributes = {
     ...attributes,
@@ -274,7 +384,7 @@ async function handleOcrJob(job: ProcessingJob) {
 
   let thumbnailUrl: string | null = null;
   try {
-    const thumbnailBuffer = await sharp(buffer)
+    const thumbnailBuffer = await sharp(frontBuffer)
       .rotate()
       .resize({ width: 512, height: 512, fit: "inside", withoutEnlargement: true })
       .webp({ quality: 80 })
@@ -290,7 +400,7 @@ async function handleOcrJob(job: ProcessingJob) {
       const updateData: Prisma.CardAssetUpdateInput = {
         processingStartedAt: startedAt,
         status: CardAssetStatus.CLASSIFY_PENDING,
-        ocrText: vision.text,
+        ocrText: normalizedOcr ?? null,
         ocrJson,
         classificationJson: toInputJson(classificationPayload),
         errorMessage: null,
