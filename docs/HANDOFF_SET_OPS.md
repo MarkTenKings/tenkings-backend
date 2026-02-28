@@ -3278,3 +3278,37 @@ Build Set Ops UI flow with:
 ### Session Scope
 - No runtime code deploy executed in this docs-only step.
 - No migration/destructive set operation executed.
+
+## OCR Brain Recovery Implementation (2026-02-28, Commit 56736ff)
+
+### Operator Pain Addressed
+- OCR suggestion output still produced gibberish player/team values.
+- Untouched prefilled fields could stay wrong even after later OCR suggest runs.
+
+### Implemented Fixes
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - Added `teamName` to OCR suggestion schema/threshold pipeline.
+  - Updated default OCR model target to `gpt-5.2` when env is unset.
+  - Added reasoning-effort compatibility controls:
+    - env-driven `OCR_LLM_REASONING_EFFORT` (default `none`, `minimal` mapped to `low`),
+    - automatic retry without reasoning block when model rejects reasoning effort.
+  - Added OpenAI request tracing:
+    - sends `X-Client-Request-Id`,
+    - stores `requestId`, `clientRequestId`, `reasoningEffort`, `imageUrlMode`, `reasoningRetried` in audit `llm` metadata.
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - Intake review load now prioritizes OCR suggestion values over stale classification values for core fields.
+  - Apply-suggestions logic now allows high-confidence OCR suggestion values to overwrite untouched prefilled junk.
+  - Team name now applies from OCR suggestions.
+- `packages/shared/src/ocrLlmFallback.ts`
+  - Added retryable model-availability error handling so attempt plan can continue to fallback model instead of hard-failing on primary model unavailability.
+- `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+  - Updated model default display to `gpt-5.2`.
+
+### Validation
+- `@tenkings/shared` tests passed.
+- Next.js typecheck passed.
+- Targeted lint passed (existing image warnings only).
+
+### Deploy State
+- Commit pushed to `origin/main`: `56736ff`.
+- Runtime verification now depends on fresh production Add Card captures.

@@ -5049,3 +5049,67 @@
 - No code edits shipped in this step.
 - No deploy/restart/migration executed in this step.
 - No destructive DB/set operation executed.
+
+## 2026-02-28 - OCR Brain Recovery: GPT-5.2 Compatibility + Suggestion Precedence (Code Complete)
+
+### Summary
+- Implemented OCR suggestion hardening for model compatibility, tracing, and field-quality application.
+- Added `teamName` as first-class OCR suggestion field and wired it into intake application.
+- Rebalanced intake prefill precedence to trust OCR suggestion outputs ahead of legacy classification snapshots.
+- Added retry behavior so model-unavailable primary attempts can continue into fallback model plan.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+- `packages/shared/src/ocrLlmFallback.ts`
+- `packages/shared/tests/ocrLlmFallback.test.js`
+
+### Key Behavior Changes
+- OCR LLM defaults now target `gpt-5.2` when env does not override.
+- Responses calls now include:
+  - model-compatible reasoning effort (`OCR_LLM_REASONING_EFFORT`, default `none`, with `minimal -> low` compatibility map),
+  - automatic retry without reasoning block when reasoning-effort is rejected,
+  - request tracing headers (`X-Client-Request-Id`) and audit capture (`x-request-id`).
+- OCR suggestion schema now includes `teamName`.
+- Intake apply flow can replace untouched prefilled junk with high-confidence OCR suggestions (player/team/year/manufacturer/sport/cardNumber/numbered).
+- Card detail load now prioritizes OCR suggestion fields over stale classification fallbacks.
+- Shared OCR attempt resolver now treats model-availability client errors as retryable and continues to fallback attempts.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared test` passed.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/admin/uploads.tsx --file pages/api/admin/ai-ops/overview.ts` passed (existing `no-img-element` warnings only).
+
+### Commit
+- `56736ff` - `fix(ocr): harden gpt-5.2 calls and restore high-confidence field application`
+
+## 2026-02-28 - Planned Action: Deploy OCR Brain Recovery Commit (56736ff)
+
+### Planned Action
+- Push commit `56736ff` to `origin/main` for production web-runtime deployment (Vercel surface).
+- Validate with fresh Add Card captures that:
+  1. OCR suggestions auto-populate with coherent player/team values,
+  2. high-confidence suggestions replace untouched junk prefill,
+  3. audit shows llm tracing fields (`requestId`, `clientRequestId`, `reasoningEffort`).
+
+### Safety
+- No schema migration planned.
+- No destructive DB/set operation planned.
+
+## 2026-02-28 - OCR Brain Recovery Deploy Result (Commit 56736ff)
+
+### Deploy Evidence
+- Workstation branch `main` pushed to remote:
+  - `git push origin main` -> `228bd3d..56736ff`.
+- Production web runtime deploy surface is Vercel-hosted (`collect.tenkings.co`), so this commit is now on the active deploy path.
+
+### Post-Deploy Verification Target
+- Run fresh Add Card capture flow and confirm:
+  1. coherent `playerName` + `teamName` suggestions,
+  2. untouched junk prefill is replaced by high-confidence OCR suggestions,
+  3. OCR audit now carries OpenAI trace metadata (`requestId`, `clientRequestId`, `reasoningEffort`).
+
+### Operations/Safety
+- No schema migration executed.
+- No destructive DB/set operation executed.
