@@ -35,6 +35,25 @@ export function isStructuredOutputUnsupported(status: number, body: string): boo
   );
 }
 
+export function isRetryableAttemptFailure(status: number, body: string): boolean {
+  if (status < 400 || status >= 500) {
+    return false;
+  }
+  const normalized = String(body || "").toLowerCase();
+  if (!normalized) {
+    return status === 404;
+  }
+  const mentionsModel = normalized.includes("model");
+  const unavailable =
+    normalized.includes("not found") ||
+    normalized.includes("does not exist") ||
+    normalized.includes("unsupported value") ||
+    normalized.includes("not available") ||
+    normalized.includes("permission") ||
+    normalized.includes("access denied");
+  return mentionsModel && unavailable;
+}
+
 export function buildOcrLlmAttemptPlan(primaryModel: string, fallbackModel?: string | null): OcrLlmAttempt[] {
   const primary = String(primaryModel || "").trim();
   if (!primary) {
@@ -69,6 +88,9 @@ export async function resolveOcrLlmAttempt<TParsed>(
 
     if (!result.ok) {
       if (attempt.format === "json_schema" && isStructuredOutputUnsupported(result.status, result.bodyText)) {
+        continue;
+      }
+      if (isRetryableAttemptFailure(result.status, result.bodyText)) {
         continue;
       }
       throw new Error(

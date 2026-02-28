@@ -33,6 +33,7 @@ type SuggestResponse =
 
 type SuggestionFields = {
   playerName: string | null;
+  teamName: string | null;
   year: string | null;
   manufacturer: string | null;
   sport: string | null;
@@ -53,8 +54,10 @@ type SuggestionFields = {
 type SuggestionConfidence = Record<keyof SuggestionFields, number | null>;
 
 const DEFAULT_THRESHOLD = 0.7;
-const OCR_LLM_MODEL = (process.env.OCR_LLM_MODEL ?? "gpt-5").trim();
+const OCR_LLM_MODEL = (process.env.OCR_LLM_MODEL ?? "gpt-5.2").trim();
 const OCR_LLM_FALLBACK_MODEL = (process.env.OCR_LLM_FALLBACK_MODEL ?? "gpt-5-mini").trim();
+const OCR_LLM_REASONING_VALUES = new Set<OcrLlmReasoningEffort>(["none", "low", "medium", "high", "xhigh"]);
+const OCR_LLM_REASONING_EFFORT = parseOcrReasoningEffort(process.env.OCR_LLM_REASONING_EFFORT);
 const TCG_KEYWORDS = [
   "pokemon",
   "magic",
@@ -69,6 +72,7 @@ const TCG_KEYWORDS = [
 
 const FIELD_KEYS: (keyof SuggestionFields)[] = [
   "playerName",
+  "teamName",
   "year",
   "manufacturer",
   "sport",
@@ -105,6 +109,11 @@ type LlmParseMeta = {
   fallbackUsed: boolean;
   mode: "text" | "multimodal";
   detail: "low" | "high" | null;
+  requestId: string | null;
+  clientRequestId: string | null;
+  reasoningEffort: OcrLlmReasoningEffort | null;
+  imageUrlMode: "string" | "object" | null;
+  reasoningRetried: boolean;
 };
 
 type LlmParsedPayload = {
@@ -129,6 +138,7 @@ type OcrImageSection = {
 };
 
 type OcrPhotoId = "FRONT" | "BACK" | "TILT";
+type OcrLlmReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
 
 type PhotoOcrState = {
   id: OcrPhotoId;
@@ -248,6 +258,36 @@ function fieldThreshold(field: keyof SuggestionFields): number {
     return TAXONOMY_FIELD_THRESHOLD[field];
   }
   return DEFAULT_THRESHOLD;
+}
+
+function parseOcrReasoningEffort(rawValue: string | undefined): OcrLlmReasoningEffort {
+  const normalized = String(rawValue ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return "none";
+  }
+  if (normalized === "minimal") {
+    return "low";
+  }
+  if (OCR_LLM_REASONING_VALUES.has(normalized as OcrLlmReasoningEffort)) {
+    return normalized as OcrLlmReasoningEffort;
+  }
+  return "none";
+}
+
+function isReasoningEffortRejected(status: number, bodyText: string): boolean {
+  if (status !== 400) {
+    return false;
+  }
+  const normalized = String(bodyText || "").toLowerCase();
+  if (!normalized.includes("reasoning")) {
+    return false;
+  }
+  return (
+    normalized.includes("effort") ||
+    normalized.includes("unsupported") ||
+    normalized.includes("invalid") ||
+    normalized.includes("must be")
+  );
 }
 
 function limitCandidateList(values: string[], limit: number): string[] {
@@ -445,6 +485,16 @@ async function parseWithLlm(
     },
   };
 
+  const lastAttemptMetaRef: {
+    current: {
+      requestId: string | null;
+      clientRequestId: string | null;
+      reasoningEffort: OcrLlmReasoningEffort | null;
+      imageUrlMode: "string" | "object" | null;
+      reasoningRetried: boolean;
+    } | null;
+  } = { current: null };
+
   const callResponses = async (params: {
     model: string;
     format: "json_schema" | "json_object";
@@ -481,98 +531,131 @@ async function parseWithLlm(
       return userContent;
     };
 
-    const executeRequest = async (userContent: Array<Record<string, unknown>>) =>
-      {
-        const controller = new AbortController();
-        const timeoutMs = mode === "multimodal" ? 22000 : 15000;
-        const timeout = setTimeout(() => controller.abort(), timeoutMs);
-        try {
-          return await fetch("https://api.openai.com/v1/responses", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-            },
-            signal: controller.signal,
-            body: JSON.stringify({
-              model: params.model,
-              input: [
-                {
-                  role: "system",
-                  content: [{ type: "input_text", text: systemInstruction }],
+    type HttpAttemptResult = {
+      ok: boolean;
+      status: number;
+      bodyText: string;
+      requestId: string | null;
+      clientRequestId: string;
+      reasoningEffort: OcrLlmReasoningEffort | null;
+      imageUrlMode: "string" | "object";
+      reasoningRetried: boolean;
+    };
+
+    const executeRequest = async (
+      imageUrlMode: "string" | "object",
+      includeReasoning: boolean
+    ): Promise<HttpAttemptResult> => {
+      const userContent = buildUserContent(imageUrlMode);
+      const controller = new AbortController();
+      const timeoutMs = mode === "multimodal" ? 22000 : 15000;
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      const clientRequestId = `ocr-${crypto.randomUUID()}`;
+      const requestBody: Record<string, unknown> = {
+        model: params.model,
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: systemInstruction }],
+          },
+          {
+            role: "user",
+            content: userContent,
+          },
+        ],
+        text:
+          params.format === "json_schema"
+            ? {
+                format: {
+                  type: "json_schema",
+                  name: "card_ocr_parse",
+                  strict: true,
+                  schema,
                 },
-                {
-                  role: "user",
-                  content: userContent,
+              }
+            : {
+                format: {
+                  type: "json_object",
                 },
-              ],
-              reasoning: {
-                effort: "minimal",
               },
-              text:
-                params.format === "json_schema"
-                  ? {
-                      format: {
-                        type: "json_schema",
-                        name: "card_ocr_parse",
-                        strict: true,
-                        schema,
-                      },
-                    }
-                  : {
-                      format: {
-                        type: "json_object",
-                      },
-                    },
-            }),
-          });
-        } finally {
-          clearTimeout(timeout);
-        }
       };
-
-    let response: Response;
-    let bodyText = "";
-    try {
-      response = await executeRequest(buildUserContent("string"));
-      bodyText = await response.text().catch(() => "");
-    } catch (error) {
-      return {
-        ok: false,
-        status: 0,
-        bodyText: error instanceof Error ? error.message : "responses_call_failed",
-        parsed: null,
-      };
-    }
-
-    if (!response.ok && mode === "multimodal" && response.status === 400) {
+      if (includeReasoning) {
+        requestBody.reasoning = { effort: OCR_LLM_REASONING_EFFORT };
+      }
       try {
-        const retryResponse = await executeRequest(buildUserContent("object"));
-        const retryBodyText = await retryResponse.text().catch(() => "");
-        response = retryResponse;
-        bodyText = retryBodyText;
+        const response = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+            "X-Client-Request-Id": clientRequestId,
+          },
+          signal: controller.signal,
+          body: JSON.stringify(requestBody),
+        });
+        const bodyText = await response.text().catch(() => "");
+        return {
+          ok: response.ok,
+          status: response.status,
+          bodyText,
+          requestId: response.headers.get("x-request-id"),
+          clientRequestId,
+          reasoningEffort: includeReasoning ? OCR_LLM_REASONING_EFFORT : null,
+          imageUrlMode,
+          reasoningRetried: false,
+        };
       } catch (error) {
         return {
           ok: false,
           status: 0,
-          bodyText: error instanceof Error ? error.message : "responses_retry_failed",
-          parsed: null,
+          bodyText: error instanceof Error ? error.message : "responses_call_failed",
+          requestId: null,
+          clientRequestId,
+          reasoningEffort: includeReasoning ? OCR_LLM_REASONING_EFFORT : null,
+          imageUrlMode,
+          reasoningRetried: false,
         };
+      } finally {
+        clearTimeout(timeout);
       }
-    }
+    };
 
-    if (!response.ok) {
+    const executeCompatibleRequest = async (imageUrlMode: "string" | "object"): Promise<HttpAttemptResult> => {
+      const firstAttempt = await executeRequest(imageUrlMode, true);
+      if (firstAttempt.ok || !isReasoningEffortRejected(firstAttempt.status, firstAttempt.bodyText)) {
+        return firstAttempt;
+      }
+      const retryAttempt = await executeRequest(imageUrlMode, false);
+      return {
+        ...retryAttempt,
+        reasoningRetried: true,
+      };
+    };
+
+    let httpResult = await executeCompatibleRequest("string");
+    if (!httpResult.ok && mode === "multimodal" && httpResult.status === 400) {
+      httpResult = await executeCompatibleRequest("object");
+    }
+    lastAttemptMetaRef.current = {
+      requestId: httpResult.requestId,
+      clientRequestId: httpResult.clientRequestId,
+      reasoningEffort: httpResult.reasoningEffort,
+      imageUrlMode: httpResult.imageUrlMode,
+      reasoningRetried: httpResult.reasoningRetried,
+    };
+
+    if (!httpResult.ok) {
       return {
         ok: false,
-        status: response.status,
-        bodyText,
+        status: httpResult.status,
+        bodyText: httpResult.bodyText,
         parsed: null,
       };
     }
 
     let payload: unknown = null;
     try {
-      payload = bodyText ? JSON.parse(bodyText) : null;
+      payload = httpResult.bodyText ? JSON.parse(httpResult.bodyText) : null;
     } catch {
       payload = null;
     }
@@ -580,15 +663,15 @@ async function parseWithLlm(
     if (!content) {
       return {
         ok: true,
-        status: response.status,
-        bodyText,
+        status: httpResult.status,
+        bodyText: httpResult.bodyText,
         parsed: null,
       };
     }
     return {
       ok: true,
-      status: response.status,
-      bodyText,
+      status: httpResult.status,
+      bodyText: httpResult.bodyText,
       parsed: parseLlmJsonPayload(content),
     };
   };
@@ -616,6 +699,11 @@ async function parseWithLlm(
       fallbackUsed: resolved.fallbackUsed,
       mode,
       detail: mode === "multimodal" ? detail ?? "low" : null,
+      requestId: lastAttemptMetaRef.current?.requestId ?? null,
+      clientRequestId: lastAttemptMetaRef.current?.clientRequestId ?? null,
+      reasoningEffort: lastAttemptMetaRef.current?.reasoningEffort ?? null,
+      imageUrlMode: lastAttemptMetaRef.current?.imageUrlMode ?? null,
+      reasoningRetried: lastAttemptMetaRef.current?.reasoningRetried ?? false,
     },
   };
 }
@@ -1664,6 +1752,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const attributes = extractCardAttributes(combinedTextRaw);
     const fields: SuggestionFields = {
       playerName: attributes.playerName ?? null,
+      teamName: attributes.teamName ?? null,
       year: attributes.year ?? null,
       manufacturer: attributes.brand ?? null,
       sport: null,

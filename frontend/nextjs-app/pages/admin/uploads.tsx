@@ -1985,36 +1985,36 @@ export default function AdminUploads() {
       setIntakeBackPhotoId(backPhoto?.id ?? null);
       setIntakeTiltPhotoId(tiltPhoto?.id ?? null);
 
-      const nextProductLineRaw = sanitizeNullableText(normalized.setName ?? ocrFields.setName ?? "");
+      const nextProductLineRaw = sanitizeNullableText(ocrFields.setName ?? normalized.setName ?? "");
       const nextProductLine = isActionableProductLineHint(nextProductLineRaw) ? nextProductLineRaw : "";
       const inferredSport = inferSportFromProductLine(nextProductLineRaw);
       setIntakeRequired({
         category: categoryType,
         playerName:
           categoryType === "sport"
-            ? sanitizeNullableText(attributes.playerName ?? ocrFields.playerName ?? "")
+            ? sanitizeNullableText(ocrFields.playerName ?? attributes.playerName ?? "")
             : "",
         sport:
           categoryType === "sport"
-            ? sanitizeNullableText(attributes.sport ?? ocrFields.sport ?? inferredSport)
+            ? sanitizeNullableText(ocrFields.sport ?? attributes.sport ?? inferredSport)
             : "",
-        manufacturer: sanitizeNullableText(attributes.brand ?? normalized.company ?? ocrFields.manufacturer ?? ""),
-        year: sanitizeNullableText(attributes.year ?? normalized.year ?? ocrFields.year ?? ""),
+        manufacturer: sanitizeNullableText(ocrFields.manufacturer ?? normalized.company ?? attributes.brand ?? ""),
+        year: sanitizeNullableText(ocrFields.year ?? normalized.year ?? attributes.year ?? ""),
         cardName:
           categoryType === "tcg"
-            ? sanitizeNullableText(attributes.cardName ?? normalized.displayName ?? ocrFields.cardName ?? "")
+            ? sanitizeNullableText(ocrFields.cardName ?? attributes.cardName ?? normalized.displayName ?? "")
             : "",
         game:
-          categoryType === "tcg" ? sanitizeNullableText(attributes.game ?? ocrFields.game ?? "") : "",
+          categoryType === "tcg" ? sanitizeNullableText(ocrFields.game ?? attributes.game ?? "") : "",
       });
 
       setIntakeOptional({
-        teamName: sanitizeNullableText(attributes.teamName ?? ""),
+        teamName: sanitizeNullableText(ocrFields.teamName ?? attributes.teamName ?? ""),
         productLine: nextProductLine,
-        insertSet: sanitizeNullableText(normalized.setCode ?? ""),
-        parallel: sanitizeNullableText((attributes.variantKeywords ?? [])[0] ?? ocrFields.parallel ?? ""),
-        cardNumber: sanitizeNullableText(normalized.cardNumber ?? ocrFields.cardNumber ?? ""),
-        numbered: sanitizeNullableText(attributes.numbered ?? ocrFields.numbered ?? ""),
+        insertSet: sanitizeNullableText(ocrFields.insertSet ?? normalized.setCode ?? ""),
+        parallel: sanitizeNullableText(ocrFields.parallel ?? (attributes.variantKeywords ?? [])[0] ?? ""),
+        cardNumber: sanitizeNullableText(ocrFields.cardNumber ?? normalized.cardNumber ?? ""),
+        numbered: sanitizeNullableText(ocrFields.numbered ?? attributes.numbered ?? ""),
         autograph: Boolean(attributes.autograph ?? false),
         memorabilia: Boolean(attributes.memorabilia ?? false),
         graded:
@@ -2028,8 +2028,8 @@ export default function AdminUploads() {
         tcgLanguage: "",
         tcgOutOf: "",
       });
-      const nextInsertSet = sanitizeNullableText(normalized.setCode ?? "");
-      const nextParallel = sanitizeNullableText((attributes.variantKeywords ?? [])[0] ?? ocrFields.parallel ?? "");
+      const nextInsertSet = sanitizeNullableText(ocrFields.insertSet ?? normalized.setCode ?? "");
+      const nextParallel = sanitizeNullableText(ocrFields.parallel ?? (attributes.variantKeywords ?? [])[0] ?? "");
       const nextAutograph =
         Boolean(attributes.autograph ?? false) || String(ocrFields.autograph ?? "").toLowerCase() === "true";
       if (nextInsertSet) {
@@ -2263,7 +2263,11 @@ export default function AdminUploads() {
   ]);
 
   const applySuggestions = useCallback(
-    (suggestions: Record<string, string>) => {
+    (suggestions: Record<string, string>, suggestionConfidence?: Record<string, number | null | undefined>) => {
+      const confidenceFor = (field: string): number => {
+        const value = suggestionConfidence?.[field];
+        return typeof value === "number" && Number.isFinite(value) ? value : 0;
+      };
       if (!ocrApplied) {
         ocrBackupRef.current = intakeRequired;
         ocrAppliedFieldsRef.current = [];
@@ -2273,27 +2277,51 @@ export default function AdminUploads() {
       setIntakeSuggested((prev) => ({ ...prev, ...suggestions }));
       setIntakeRequired((prev) => {
         const next = { ...prev };
-        if (prev.category === "sport" && suggestions.playerName && !intakeTouched.playerName && !prev.playerName.trim()) {
+        if (
+          prev.category === "sport" &&
+          suggestions.playerName &&
+          !intakeTouched.playerName &&
+          (!prev.playerName.trim() || confidenceFor("playerName") >= 0.9)
+        ) {
           next.playerName = suggestions.playerName;
           ocrAppliedFieldsRef.current.push("playerName");
         }
-        if (suggestions.year && !intakeTouched.year && !prev.year.trim()) {
+        if (suggestions.year && !intakeTouched.year && (!prev.year.trim() || confidenceFor("year") >= 0.9)) {
           next.year = suggestions.year;
           ocrAppliedFieldsRef.current.push("year");
         }
-        if (suggestions.manufacturer && !intakeTouched.manufacturer && !prev.manufacturer.trim()) {
+        if (
+          suggestions.manufacturer &&
+          !intakeTouched.manufacturer &&
+          (!prev.manufacturer.trim() || confidenceFor("manufacturer") >= 0.9)
+        ) {
           next.manufacturer = suggestions.manufacturer;
           ocrAppliedFieldsRef.current.push("manufacturer");
         }
-        if (prev.category === "sport" && suggestions.sport && !intakeTouched.sport && !prev.sport.trim()) {
+        if (
+          prev.category === "sport" &&
+          suggestions.sport &&
+          !intakeTouched.sport &&
+          (!prev.sport.trim() || confidenceFor("sport") >= 0.9)
+        ) {
           next.sport = suggestions.sport;
           ocrAppliedFieldsRef.current.push("sport");
         }
-        if (prev.category === "tcg" && suggestions.game && !intakeTouched.game && !prev.game.trim()) {
+        if (
+          prev.category === "tcg" &&
+          suggestions.game &&
+          !intakeTouched.game &&
+          (!prev.game.trim() || confidenceFor("game") >= 0.9)
+        ) {
           next.game = suggestions.game;
           ocrAppliedFieldsRef.current.push("game");
         }
-        if (prev.category === "tcg" && suggestions.cardName && !intakeTouched.cardName && !prev.cardName.trim()) {
+        if (
+          prev.category === "tcg" &&
+          suggestions.cardName &&
+          !intakeTouched.cardName &&
+          (!prev.cardName.trim() || confidenceFor("cardName") >= 0.9)
+        ) {
           next.cardName = suggestions.cardName;
           ocrAppliedFieldsRef.current.push("cardName");
         }
@@ -2301,6 +2329,14 @@ export default function AdminUploads() {
       });
       setIntakeOptional((prev) => {
         const next = { ...prev };
+        if (
+          suggestions.teamName &&
+          !intakeOptionalTouched.teamName &&
+          (!prev.teamName.trim() || confidenceFor("teamName") >= 0.88)
+        ) {
+          next.teamName = suggestions.teamName;
+          ocrAppliedOptionalFieldsRef.current.push("teamName");
+        }
         const rawSuggestedProductLine = sanitizeNullableText(suggestions.setName);
         const suggestedProductLine = isActionableProductLineHint(rawSuggestedProductLine)
           ? rawSuggestedProductLine
@@ -2336,11 +2372,19 @@ export default function AdminUploads() {
           next.parallel = constrainedParallel;
           ocrAppliedOptionalFieldsRef.current.push("parallel");
         }
-        if (suggestions.cardNumber && !intakeOptionalTouched.cardNumber && !prev.cardNumber.trim()) {
+        if (
+          suggestions.cardNumber &&
+          !intakeOptionalTouched.cardNumber &&
+          (!prev.cardNumber.trim() || confidenceFor("cardNumber") >= 0.88)
+        ) {
           next.cardNumber = suggestions.cardNumber;
           ocrAppliedOptionalFieldsRef.current.push("cardNumber");
         }
-        if (suggestions.numbered && !intakeOptionalTouched.numbered && !prev.numbered.trim()) {
+        if (
+          suggestions.numbered &&
+          !intakeOptionalTouched.numbered &&
+          (!prev.numbered.trim() || confidenceFor("numbered") >= 0.88)
+        ) {
           next.numbered = suggestions.numbered;
           ocrAppliedOptionalFieldsRef.current.push("numbered");
         }
@@ -2395,6 +2439,7 @@ export default function AdminUploads() {
       productLineOptions,
       ocrApplied,
       intakeOptionalTouched.cardNumber,
+      intakeOptionalTouched.teamName,
       intakeOptionalTouched.productLine,
       intakeOptionalTouched.insertSet,
       intakeOptionalTouched.parallel,
@@ -2555,8 +2600,10 @@ export default function AdminUploads() {
         });
       }
       const suggestions = payload?.suggestions ?? {};
+      const suggestionConfidence =
+        (payload?.audit?.confidence as Record<string, number | null | undefined> | undefined) ?? undefined;
       if (Object.keys(suggestions).length > 0) {
-        applySuggestions(suggestions);
+        applySuggestions(suggestions, suggestionConfidence);
         setOcrMode("high");
         setOcrStatus("ready");
       } else {

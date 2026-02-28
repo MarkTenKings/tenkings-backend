@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   buildOcrLlmAttemptPlan,
+  isRetryableAttemptFailure,
   isStructuredOutputUnsupported,
   resolveOcrLlmAttempt,
 } = require("../dist/ocrLlmFallback");
@@ -32,6 +33,13 @@ test("isStructuredOutputUnsupported detects unsupported json_schema payloads", (
   assert.equal(isStructuredOutputUnsupported(422, "json_schema unsupported for this model"), true);
   assert.equal(isStructuredOutputUnsupported(500, "json_schema unsupported for this model"), false);
   assert.equal(isStructuredOutputUnsupported(400, "invalid API key"), false);
+});
+
+test("isRetryableAttemptFailure detects model availability errors", () => {
+  assert.equal(isRetryableAttemptFailure(404, "model gpt-5.2 does not exist"), true);
+  assert.equal(isRetryableAttemptFailure(400, "unsupported value for model"), true);
+  assert.equal(isRetryableAttemptFailure(401, "invalid API key"), false);
+  assert.equal(isRetryableAttemptFailure(500, "model unavailable"), false);
 });
 
 test("resolveOcrLlmAttempt falls back from unsupported json_schema to json_object", async () => {
@@ -90,6 +98,49 @@ test("resolveOcrLlmAttempt throws on non-fallback errors", async () => {
       }),
     /OpenAI responses parse failed \(401\)/
   );
+});
+
+test("resolveOcrLlmAttempt retries fallback model when primary model is unavailable", async () => {
+  const calls = [];
+  const output = await resolveOcrLlmAttempt({
+    primaryModel: "gpt-5.2",
+    fallbackModel: "gpt-5-mini",
+    execute: async (attempt) => {
+      calls.push(attempt);
+      if (attempt.model === "gpt-5.2") {
+        return {
+          ok: false,
+          status: 404,
+          bodyText: "The model `gpt-5.2` does not exist",
+          parsed: null,
+        };
+      }
+      if (attempt.model === "gpt-5-mini" && attempt.format === "json_object") {
+        return {
+          ok: true,
+          status: 200,
+          bodyText: "",
+          parsed: { fields: { cardNumber: "24" } },
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        bodyText: "",
+        parsed: null,
+      };
+    },
+  });
+
+  assert.deepEqual(calls, [
+    { model: "gpt-5.2", format: "json_schema" },
+    { model: "gpt-5.2", format: "json_object" },
+    { model: "gpt-5-mini", format: "json_schema" },
+    { model: "gpt-5-mini", format: "json_object" },
+  ]);
+  assert.equal(output?.attempt.model, "gpt-5-mini");
+  assert.equal(output?.attempt.format, "json_object");
+  assert.equal(output?.fallbackUsed, true);
 });
 
 test("resolveOcrLlmAttempt returns null when no attempt yields parsed payload", async () => {
