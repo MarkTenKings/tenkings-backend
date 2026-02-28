@@ -73,6 +73,23 @@ const pushUniqueToken = (target: string[], value: string) => {
   }
 };
 
+const queryHasSignal = (value: string): boolean => {
+  const query = normalizeWhitespace(value);
+  if (!query) {
+    return false;
+  }
+  const tokenCount = query.split(/\s+/).filter(Boolean).length;
+  return tokenCount >= 3 && /[a-z]/i.test(query);
+};
+
+const fallbackQueryFromText = (value: string | null): string => {
+  const query = normalizeWhitespace(value ?? "");
+  if (!query) {
+    return "";
+  }
+  return query.split(/\s+/).slice(0, 18).join(" ").trim();
+};
+
 const buildCompSearchQuery = (card: {
   customTitle: string | null;
   ocrText: string | null;
@@ -271,9 +288,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
       if (card) {
         const useTaxonomyQuery = flags.kingsreviewQuery || !flags.allowLegacyFallback;
-        const generated = useTaxonomyQuery ? await buildCompSearchQueryV2(card) : buildCompSearchQuery(card);
-        if (generated) {
-          query = generated;
+        const taxonomyGenerated = useTaxonomyQuery ? await buildCompSearchQueryV2(card) : "";
+        const legacyGenerated = buildCompSearchQuery(card);
+        const candidateQueries = useTaxonomyQuery
+          ? [taxonomyGenerated, legacyGenerated, rawQuery]
+          : [legacyGenerated, taxonomyGenerated, rawQuery];
+        const selected = candidateQueries.find((candidate) => queryHasSignal(candidate));
+        if (selected) {
+          query = selected;
+        } else {
+          query =
+            fallbackQueryFromText(card.customTitle) ||
+            fallbackQueryFromText(card.ocrText) ||
+            normalizeWhitespace(rawQuery);
         }
       }
     }

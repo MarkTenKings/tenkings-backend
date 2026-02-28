@@ -4745,3 +4745,89 @@
 ### Deployment Status
 - Not deployed in this step.
 - No migration/restart/destructive operations executed.
+
+## 2026-02-27 - OCR Quality Incident Triage (Prod): Missing Vision Key in Processing Service
+
+### Trigger
+- Operator reported post-deploy OCR quality collapse and asked whether Google Vision + GPT path was still active.
+
+### Findings
+- `processing-service` runtime env on droplet had missing OCR keys at runtime:
+  - `GOOGLE_VISION_API_KEY` absent (`len=0`) inside container before fix.
+  - `OCR_LLM_MODEL` / `OCR_LLM_FALLBACK_MODEL` also unset in processing container env.
+- Recent OCR suggestion audit rows from production DB still showed Next.js suggest path active with:
+  - `source=google-vision+llm`
+  - `llmModel=gpt-5`
+- Recent bad-card sample had `photoOcr` showing `FRONT` and `TILT` empty-text (`tokenCount=0`) while `BACK` was populated, explaining poor field extraction on that card.
+
+### Action Executed (Prod)
+- Restored `GOOGLE_VISION_API_KEY` in droplet file:
+  - `/root/tenkings-backend/env/processing-service.env`
+- Rebuilt/recreated processing service:
+  - `docker compose up -d --build --force-recreate processing-service`
+- Post-restart runtime verification inside container:
+  - `has_GOOGLE_VISION_API_KEY=yes`
+  - `GOOGLE_VISION_API_KEY_len=39`
+
+### Post-Action Verification Snapshot
+- Latest 3 OCR suggestion rows (field-level) remained visible and model-tagged as:
+  - `google-vision|gpt-5`
+- Latest row (2026-02-27T18:46:12.831Z) extracted:
+  - `playerName=Devin Vassell`, `year=2025`, `manufacturer=Topps`, `sport=Basketball`.
+- One earlier failing row (2026-02-27T11:41:29.546Z) showed:
+  - `FRONT tokenCount=0`, `TILT tokenCount=0`, `BACK tokenCount=176`.
+
+### Notes
+- No schema/data migration executed.
+- Vercel env/model change was not executed in this step.
+
+## 2026-02-28 - AGENTS Startup Context Sync (Docs-Only, Session Kickoff #4)
+
+### Summary
+- Re-read all mandatory startup files listed in `AGENTS.md`.
+- Confirmed current branch/commit context on workstation: `main` at `ca7c806`.
+- This session performed append-only handoff doc sync; no runtime code-path behavior was changed.
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `git status -sb` reported `## main...origin/main` with pre-existing local modifications.
+- `git branch --show-current` returned `main`.
+- `git rev-parse --short HEAD` returned `ca7c806`.
+
+### Operations/Safety
+- No deploy/restart/migration executed.
+- No DB operations executed.
+- No destructive actions executed.
+
+## 2026-02-28 - Recovery Pass (Pipeline Stability + Taxonomy Reliability, Code Complete, Not Deployed)
+
+### Summary
+- Applied a recovery-focused hardening pass to protect the honed Add Card -> OCR/LLM -> KingsReview workflow while preserving Taxonomy V2 integration.
+- Made taxonomy constraints non-destructive in OCR suggestion flow so confident field values are preserved when taxonomy scope/pool is missing or unresolved.
+- Hardened KingsReview enqueue query generation with taxonomy-to-legacy fallback ordering and final text fallback to avoid empty-query dead ends.
+- Hardened Taxonomy V2 ingest/backfill reliability by adding configurable transaction timeout options and replacing per-row taxonomy-map upserts with chunked SQL upserts.
+- Switched Taxonomy V2 legacy-fallback default to safety-first (`allowLegacyFallback=true` unless explicitly disabled).
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/taxonomyV2Flags.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2Core.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/api/admin/kingsreview/enqueue.ts --file lib/server/taxonomyV2Core.ts --file lib/server/taxonomyV2Flags.ts` passed.
+- `pnpm --filter @tenkings/processing-service run build` passed.
+
+### Deployment Status
+- Not deployed in this step.
+- No restart or migration executed.
+
+### Operations/Safety
+- No destructive DB/set operations executed.

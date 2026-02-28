@@ -45,6 +45,25 @@ const SOURCE_PRECEDENCE: Record<TaxonomySourceKind, number> = {
 type TaxonomyTx = any;
 const taxonomyDb = prisma as any;
 
+function readPositiveIntFromEnv(name: string, fallback: number) {
+  const raw = Number.parseInt(String(process.env[name] ?? ""), 10);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return fallback;
+  }
+  return raw;
+}
+
+const TAXONOMY_TX_TIMEOUT_MS = readPositiveIntFromEnv("TAXONOMY_V2_TX_TIMEOUT_MS", 120_000);
+const TAXONOMY_TX_MAX_WAIT_MS = readPositiveIntFromEnv("TAXONOMY_V2_TX_MAX_WAIT_MS", 10_000);
+const TAXONOMY_BRIDGE_UPSERT_CHUNK = readPositiveIntFromEnv("TAXONOMY_V2_BRIDGE_UPSERT_CHUNK", 400);
+
+function taxonomyTxOptions() {
+  return {
+    timeout: TAXONOMY_TX_TIMEOUT_MS,
+    maxWait: TAXONOMY_TX_MAX_WAIT_MS,
+  };
+}
+
 type TaxonomyIngestParams = {
   setId: string;
   ingestionJobId: string;
@@ -829,21 +848,21 @@ async function upsertCompatibilityBridge(params: {
 
   const scopeProgramByParallel = new Map<string, string>();
   scopes.forEach((scope: { parallelId: string; programId: string }) => {
-    if (!scopeProgramByParallel.has(scope.parallelId)) {
-      scopeProgramByParallel.set(scope.parallelId, scope.programId);
+    const parallelId = normalizeParallelId(scope.parallelId);
+    if (!scopeProgramByParallel.has(parallelId)) {
+      scopeProgramByParallel.set(parallelId, normalizeProgramId(scope.programId));
     }
   });
 
   const programByCardNumber = new Map<string, string>();
   cards.forEach((card: { cardNumber: string; programId: string }) => {
-    if (!programByCardNumber.has(card.cardNumber)) {
-      programByCardNumber.set(card.cardNumber, card.programId);
+    const cardNumber = normalizeTaxonomyCardNumber(card.cardNumber);
+    if (cardNumber && !programByCardNumber.has(cardNumber)) {
+      programByCardNumber.set(cardNumber, normalizeProgramId(card.programId));
     }
   });
 
-  let bridges = 0;
-
-  for (const variant of variants) {
+  const rows = variants.map((variant) => {
     const cardNumber = normalizeTaxonomyCardNumber(variant.cardNumber);
     const parallelId = normalizeParallelId(variant.parallelId);
     const programIdFromCard = cardNumber ? programByCardNumber.get(cardNumber) ?? null : null;
@@ -857,32 +876,64 @@ async function upsertCompatibilityBridge(params: {
       parallelId,
     });
 
-    await params.tx.cardVariantTaxonomyMap.upsert({
-      where: {
-        cardVariantId: variant.id,
-      },
-      create: {
-        cardVariantId: variant.id,
-        setId,
-        programId,
-        cardNumber,
-        variationId: null,
-        parallelId,
-        canonicalKey,
-      },
-      update: {
-        setId,
-        programId,
-        cardNumber,
-        variationId: null,
-        parallelId,
-        canonicalKey,
-      },
-    });
-    bridges += 1;
+    return {
+      cardVariantId: variant.id,
+      setId,
+      programId,
+      cardNumber,
+      parallelId,
+      canonicalKey,
+    };
+  });
+
+  if (rows.length < 1) {
+    return 0;
   }
 
-  return bridges;
+  const chunkSize = Math.max(50, Math.min(2000, TAXONOMY_BRIDGE_UPSERT_CHUNK));
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    const chunk = rows.slice(index, index + chunkSize);
+    const values: Array<string | null> = [];
+    const placeholders = chunk
+      .map((row, rowIndex) => {
+        const base = rowIndex * 6;
+        values.push(
+          row.cardVariantId,
+          row.setId,
+          row.programId,
+          row.cardNumber,
+          row.parallelId,
+          row.canonicalKey
+        );
+        return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, null, $${base + 5}, $${base + 6})`;
+      })
+      .join(", ");
+
+    await params.tx.$executeRawUnsafe(
+      `insert into "CardVariantTaxonomyMap" (
+         "cardVariantId",
+         "setId",
+         "programId",
+         "cardNumber",
+         "variationId",
+         "parallelId",
+         "canonicalKey"
+       )
+       values ${placeholders}
+       on conflict ("cardVariantId")
+       do update set
+         "setId" = excluded."setId",
+         "programId" = excluded."programId",
+         "cardNumber" = excluded."cardNumber",
+         "variationId" = excluded."variationId",
+         "parallelId" = excluded."parallelId",
+         "canonicalKey" = excluded."canonicalKey",
+         "updatedAt" = now()`,
+      ...values
+    );
+  }
+
+  return rows.length;
 }
 
 export async function backfillTaxonomyV2FromLegacyVariants(params: {
@@ -1041,7 +1092,7 @@ export async function backfillTaxonomyV2FromLegacyVariants(params: {
       sourceId: source.id,
       counts,
     } satisfies TaxonomyLegacyBackfillResult;
-  });
+  }, taxonomyTxOptions());
 }
 
 function dedupeAdapterOutput(output: TaxonomyAdapterOutput): TaxonomyAdapterOutput {
@@ -1199,7 +1250,7 @@ export async function ingestTaxonomyV2FromIngestionJob(params: TaxonomyIngestPar
         },
         skippedReason: adapterResult.skippedReason,
       } satisfies TaxonomyIngestResult;
-    });
+    }, taxonomyTxOptions());
   }
 
   const output = adapterResult.output;
@@ -1348,7 +1399,7 @@ export async function ingestTaxonomyV2FromIngestionJob(params: TaxonomyIngestPar
       artifactType: source.artifactType,
       counts,
     } satisfies TaxonomyIngestResult;
-  });
+  }, taxonomyTxOptions());
 }
 
 async function resolveProgramForSet(params: { setId: string; program: string }) {

@@ -49,6 +49,7 @@ export function readTaxonomyV2Flags(): TaxonomyV2Flags {
     matcher: resolveFlag("TAXONOMY_V2_MATCHER", defaultOn),
     kingsreviewQuery: resolveFlag("TAXONOMY_V2_KINGSREVIEW_QUERY", defaultOn),
     forceLegacy: false,
-    allowLegacyFallback: resolveFlag("TAXONOMY_V2_ALLOW_LEGACY_FALLBACK", false),
+    // Safety-first default: keep legacy continuity unless explicitly disabled.
+    allowLegacyFallback: resolveFlag("TAXONOMY_V2_ALLOW_LEGACY_FALLBACK", true),
   };
 }

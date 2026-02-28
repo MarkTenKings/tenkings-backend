@@ -3088,3 +3088,62 @@ Build Set Ops UI flow with:
 
 ### Deploy Status
 - Not deployed in this update.
+
+## OCR Incident Follow-Up (2026-02-27): Runtime Key Drift + Field-Level Evidence
+
+### What Happened
+- Operator observed OCR queue recovery but poor OCR extraction quality after mobile Add Card recovery.
+- Investigation confirmed production drift in droplet worker env:
+  - `processing-service` container was running without `GOOGLE_VISION_API_KEY`.
+
+### What Was Fixed
+- Restored `GOOGLE_VISION_API_KEY` to `/root/tenkings-backend/env/processing-service.env`.
+- Rebuilt/restarted processing worker (`processing-service`) and verified key present in runtime env.
+
+### Evidence Highlights
+- Container runtime check after restart:
+  - `has_GOOGLE_VISION_API_KEY=yes`
+  - `GOOGLE_VISION_API_KEY_len=39`
+- Latest OCR suggest audits still indicate Next.js OCR+LLM path active:
+  - `source=google-vision+llm`
+  - `model=google-vision|gpt-5`
+- Recent poor-card audit had `FRONT/TILT` OCR empty while `BACK` OCR populated, consistent with bad front/tilt capture text quality rather than full-path outage.
+
+### Remaining Action
+- Confirm desired production model string for OCR LLM (`OCR_LLM_MODEL`): currently observed in audit as `gpt-5`.
+- If operator intends a different model (e.g., `gpt-5.3`), update Vercel env and redeploy Next.js app, then re-check 3 fresh cards.
+
+## Session Update (2026-02-28, AGENTS Startup Context Sync #4)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Branch/runtime context checked from workstation repo:
+  - branch: `main`
+  - HEAD: `ca7c806`
+  - working tree already had pre-existing local edits in handoff docs before this sync update.
+- Session scope was docs synchronization only; no product code/runtime behavior changes were made.
+- No deploy, restart, migration, or DB operation was executed in this session.
+
+## Recovery Pass Update (2026-02-28, Code Complete, Not Deployed)
+- Objective: restore stability in honed Add Card/OCR/KingsReview flow while keeping Taxonomy V2 + Odds integrated with safe fallback behavior.
+- Implemented:
+  - Taxonomy flag safety default:
+    - `allowLegacyFallback` now defaults to `true` unless explicitly disabled via env.
+  - Taxonomy ingest/backfill reliability:
+    - added configurable transaction timing (`TAXONOMY_V2_TX_TIMEOUT_MS`, `TAXONOMY_V2_TX_MAX_WAIT_MS`).
+    - replaced per-row `CardVariantTaxonomyMap` upsert loop with chunked SQL upsert path (`TAXONOMY_V2_BRIDGE_UPSERT_CHUNK`) to reduce interactive transaction timeout risk.
+  - OCR taxonomy constraints hardening (`/api/admin/cards/[cardId]/ocr-suggest`):
+    - taxonomy constraint failures/no-scope now preserve confident OCR fields instead of force-clearing `setName/insertSet/parallel`.
+    - unresolved-but-confident taxonomy labels are preserved with audit status rather than destructive nulling.
+  - KingsReview enqueue fallback hardening (`/api/admin/kingsreview/enqueue`):
+    - taxonomy query generation now falls back to legacy query generation and then text fallback (`customTitle`/`ocrText`) before returning `query is required`.
+- Local validation:
+  - Next.js typecheck: pass.
+  - Targeted lint for touched APIs/libs: pass.
+  - Processing-service build: pass.
+- Runtime/deploy state:
+  - No deploy/restart/migration run in this step.
+  - Production verification pending deploy.

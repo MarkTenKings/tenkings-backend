@@ -1320,9 +1320,9 @@ async function constrainTaxonomyFields(params: {
   };
 
   if (!year || !manufacturer) {
-    fields.setName = null;
-    fields.insertSet = null;
-    fields.parallel = null;
+    fieldStatus.setName = fields.setName ? "kept" : "cleared_no_set_scope";
+    fieldStatus.insertSet = fields.insertSet ? "kept" : "cleared_no_set_scope";
+    fieldStatus.parallel = fields.parallel ? "kept" : "cleared_no_set_scope";
     return {
       selectedSetId: null,
       queryHints,
@@ -1334,11 +1334,7 @@ async function constrainTaxonomyFields(params: {
         insertOptions: [],
         parallelOptions: [],
       },
-      fieldStatus: {
-        setName: "cleared_no_set_scope",
-        insertSet: "cleared_no_set_scope",
-        parallel: "cleared_no_set_scope",
-      },
+      fieldStatus,
     };
   }
 
@@ -1365,14 +1361,20 @@ async function constrainTaxonomyFields(params: {
       ? "cleared_low_confidence"
       : "cleared_no_set_scope";
   } else {
-    const resolvedSet = resolveCanonicalOption(setOptions, rawSetName, 1.05);
-    if (resolvedSet) {
-      fields.setName = resolvedSet;
-      selectedSetId = resolvedSet;
-      fieldStatus.setName = "kept";
+    if (setOptions.length < 1) {
+      fields.setName = rawSetName;
+      fieldStatus.setName = "cleared_no_set_scope";
     } else {
-      fields.setName = null;
-      fieldStatus.setName = "cleared_out_of_pool";
+      const resolvedSet = resolveCanonicalOption(setOptions, rawSetName, 1.05);
+      if (resolvedSet) {
+        fields.setName = resolvedSet;
+        selectedSetId = resolvedSet;
+        fieldStatus.setName = "kept";
+      } else {
+        // Preserve confident raw set values when taxonomy cannot confidently map them.
+        fields.setName = rawSetName;
+        fieldStatus.setName = "cleared_out_of_pool";
+      }
     }
   }
 
@@ -1382,35 +1384,40 @@ async function constrainTaxonomyFields(params: {
   const scopedParallelOptions = selectedSetId
     ? pool.parallelOptions.filter((entry) => entry.setIds.includes(selectedSetId)).map((entry) => entry.label)
     : [];
+  const globalInsertOptions = pool.insertOptions.map((entry) => entry.label);
+  const globalParallelOptions = pool.parallelOptions.map((entry) => entry.label);
 
   const applyScopedField = (
     field: "insertSet" | "parallel",
-    options: string[]
+    options: string[],
+    globalOptions: string[]
   ) => {
     const rawValue = coerceNullableString(fields[field]);
     const score = confidence[field];
-    if (!selectedSetId || options.length < 1) {
-      fields[field] = null;
-      fieldStatus[field] = "cleared_no_set_scope";
-      return;
-    }
     if (!rawValue || score == null || score < TAXONOMY_FIELD_THRESHOLD[field]) {
       fields[field] = null;
       fieldStatus[field] = "cleared_low_confidence";
       return;
     }
-    const resolved = resolveCanonicalOption(options, rawValue, 0.9);
+    const candidateOptions = options.length > 0 ? options : globalOptions;
+    if (candidateOptions.length < 1) {
+      fields[field] = rawValue;
+      fieldStatus[field] = "cleared_no_set_scope";
+      return;
+    }
+    const resolved = resolveCanonicalOption(candidateOptions, rawValue, 0.9);
     if (resolved) {
       fields[field] = resolved;
       fieldStatus[field] = "kept";
       return;
     }
-    fields[field] = null;
+    // Preserve confident raw values when taxonomy cannot map.
+    fields[field] = rawValue;
     fieldStatus[field] = "cleared_out_of_pool";
   };
 
-  applyScopedField("insertSet", scopedInsertOptions);
-  applyScopedField("parallel", scopedParallelOptions);
+  applyScopedField("insertSet", scopedInsertOptions, globalInsertOptions);
+  applyScopedField("parallel", scopedParallelOptions, globalParallelOptions);
 
   return {
     selectedSetId,
@@ -2070,9 +2077,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     } catch (error) {
       console.warn("Failed to constrain taxonomy suggestions", error);
-      fields.setName = null;
-      fields.insertSet = null;
-      fields.parallel = null;
+      const fallbackFieldStatus: TaxonomyConstraintAudit["fieldStatus"] = {
+        setName: fields.setName ? "kept" : "cleared_no_set_scope",
+        insertSet: fields.insertSet ? "kept" : "cleared_no_set_scope",
+        parallel: fields.parallel ? "kept" : "cleared_no_set_scope",
+      };
       taxonomyConstraintAudit = {
         selectedSetId: null,
         queryHints,
@@ -2084,11 +2093,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           insertOptions: [],
           parallelOptions: [],
         },
-        fieldStatus: {
-          setName: "cleared_no_set_scope",
-          insertSet: "cleared_no_set_scope",
-          parallel: "cleared_no_set_scope",
-        },
+        fieldStatus: fallbackFieldStatus,
       };
     }
 
