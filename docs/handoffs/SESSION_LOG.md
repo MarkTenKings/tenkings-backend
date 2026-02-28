@@ -5113,3 +5113,40 @@
 ### Operations/Safety
 - No schema migration executed.
 - No destructive DB/set operation executed.
+
+## 2026-02-28 - OCR Model Target Auto-Upgrade (Code Complete)
+
+### Summary
+- Added compatibility shim so legacy env value `OCR_LLM_MODEL=gpt-5` is auto-promoted to `gpt-5.2`.
+- Prevents stale env config from pinning OCR parser to older model target.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file pages/admin/uploads.tsx --file pages/api/admin/ai-ops/overview.ts` passed (existing `no-img-element` warnings only).
+
+### Commit
+- `5ad79be` - `fix(ocr): auto-upgrade legacy gpt-5 env target to gpt-5.2`
+
+## 2026-02-28 - Planned Action: Deploy OCR Model Target Auto-Upgrade (5ad79be)
+
+### Planned Action
+- Push commit `5ad79be` to `origin/main` so production runtime uses GPT-5.2 target even when legacy `gpt-5` env remains configured.
+
+### Safety
+- No schema migration planned.
+- No destructive DB/set operation planned.
+
+## 2026-02-28 - OCR Model Target Auto-Upgrade Deploy Result (Commit 5ad79be)
+
+### Deploy Evidence
+- Workstation branch `main` pushed to remote:
+  - `git push origin main` -> `9c5acf2..5ad79be`.
+- Commit is on Vercel production deploy path (`collect.tenkings.co` web runtime).
+
+### Operations/Safety
+- No schema migration executed.
+- No destructive DB/set operation executed.

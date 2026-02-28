@@ -3312,3 +3312,22 @@ Build Set Ops UI flow with:
 ### Deploy State
 - Commit pushed to `origin/main`: `56736ff`.
 - Runtime verification now depends on fresh production Add Card captures.
+
+## OCR Model Target Compatibility Patch (2026-02-28, Commit 5ad79be)
+
+### Why
+- Production may still carry legacy env value `OCR_LLM_MODEL=gpt-5`.
+- Without normalization, that can keep OCR parser on older target despite recovery rollout.
+
+### Change
+- Added model target normalization:
+  - if env model is blank or `gpt-5`, runtime promotes target to `gpt-5.2`.
+- Applied in:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+
+### Validation
+- Next.js typecheck + targeted lint passed.
+
+### Deploy State
+- Commit pushed to `origin/main`: `5ad79be`.
