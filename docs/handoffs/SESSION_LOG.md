@@ -4951,3 +4951,17 @@
 - Requires web app deploy surface refresh (Next.js runtime) for production behavior.
 - No schema migration executed.
 - No destructive DB/set operation executed.
+
+## 2026-02-28 - Web Runtime Deploy Result (Commit 87cdeb2)
+
+### Deploy Evidence
+- Workstation branch `main` pushed to remote:
+  - commit `87cdeb2` on `origin/main`.
+- Production site remains Vercel-hosted (`server: Vercel`), so Next.js/API runtime picks this change via normal Vercel deployment path.
+
+### Notes
+- No droplet service rebuild/restart required for this specific change set (frontend/API code path).
+- Post-push production behavior verification requires fresh operator Add Card run:
+  - background OCR suggest generation,
+  - first-screen set picker behavior,
+  - player/set suggestion quality.

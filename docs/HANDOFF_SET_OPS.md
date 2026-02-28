@@ -3218,3 +3218,7 @@ Build Set Ops UI flow with:
 - New cards should have OCR suggestions generated in background right after full photo finalize.
 - First-screen set pickers should remain populated even when OCR hints are imperfect.
 - Manual set entry should reliably bind to intended set scope and feed insert/parallel options consistently.
+
+### Deploy Status
+- Commit `87cdeb2` pushed to `origin/main` for Next.js runtime deployment.
+- Verification pending on fresh production capture flow (operator test run).
