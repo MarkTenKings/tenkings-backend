@@ -46,6 +46,11 @@ type IntakeFrontUploadPayload = {
   assetId: string;
   batchId: string;
 };
+type IntakeFrontUploadError = Error & {
+  assetId?: string;
+  batchId?: string;
+  stage?: "presign" | "upload" | "complete";
+};
 
 type IntakeRequiredFields = {
   category: IntakeCategory;
@@ -1690,7 +1695,11 @@ export default function AdminUploads() {
 
       if (!uploadRes.ok) {
         const text = await uploadRes.text().catch(() => "");
-        throw new Error(text || "Failed to store file");
+        const error = new Error(text || "Failed to store file") as IntakeFrontUploadError;
+        error.assetId = presignPayload.assetId;
+        error.batchId = presignPayload.batchId;
+        error.stage = "upload";
+        throw error;
       }
 
       const completeRes = await fetch(resolveApiUrl("/api/admin/uploads/complete"), {
@@ -1710,10 +1719,38 @@ export default function AdminUploads() {
 
       if (!completeRes.ok) {
         const payload = await completeRes.json().catch(() => ({}));
-        throw new Error(payload?.message ?? "Failed to record upload");
+        const error = new Error(payload?.message ?? "Failed to record upload") as IntakeFrontUploadError;
+        error.assetId = presignPayload.assetId;
+        error.batchId = presignPayload.batchId;
+        error.stage = "complete";
+        throw error;
       }
 
       return presignPayload;
+    },
+    [isRemoteApi, resolveApiUrl, session?.token]
+  );
+
+  const ensureFrontAssetQueued = useCallback(
+    async (assetId: string): Promise<boolean> => {
+      const token = session?.token;
+      if (!token || !assetId) {
+        return false;
+      }
+      try {
+        const response = await fetch(resolveApiUrl("/api/admin/uploads/complete"), {
+          method: "POST",
+          mode: isRemoteApi ? "cors" : "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            ...buildAdminHeaders(token),
+          },
+          body: JSON.stringify({ assetId }),
+        });
+        return response.ok;
+      } catch {
+        return false;
+      }
     },
     [isRemoteApi, resolveApiUrl, session?.token]
   );
@@ -2656,9 +2693,19 @@ export default function AdminUploads() {
           const frontUpload = await frontUploadPromise;
           targetCardId = frontUpload.assetId;
         } catch (error) {
-          const message = error instanceof Error ? error.message : "Front upload failed";
-          setIntakeError(`A captured card could not be queued: ${message}`);
-          return;
+          const recoverable = error as IntakeFrontUploadError;
+          if (recoverable?.assetId) {
+            targetCardId = recoverable.assetId;
+            const queued = await ensureFrontAssetQueued(recoverable.assetId);
+            if (!queued) {
+              const message = recoverable.message || "Front upload finalize failed";
+              setIntakeError(`Captured card recovered but queue finalize retry failed: ${message}`);
+            }
+          } else {
+            const message = error instanceof Error ? error.message : "Front upload failed";
+            setIntakeError(`A captured card could not be queued: ${message}`);
+            return;
+          }
         }
       }
 
@@ -2687,7 +2734,7 @@ export default function AdminUploads() {
       setQueuedReviewCardIds((prev) => (prev.includes(targetCardId) ? prev : [...prev, targetCardId]));
       void warmOcrSuggestionsInBackground(targetCardId);
     },
-    [uploadQueuedPhoto, warmOcrSuggestionsInBackground]
+    [ensureFrontAssetQueued, uploadQueuedPhoto, warmOcrSuggestionsInBackground]
   );
 
   const confirmIntakeCapture = useCallback(
