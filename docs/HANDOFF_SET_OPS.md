@@ -3147,3 +3147,20 @@ Build Set Ops UI flow with:
 - Runtime/deploy state:
   - No deploy/restart/migration run in this step.
   - Production verification pending deploy.
+
+## Recovery Pass Deploy Update (2026-02-28, Deploy Complete)
+- Deployed commit `8fab793` to production droplet (`/root/tenkings-backend`, branch `main`).
+- Droplet sync evidence:
+  - pre-sync HEAD `ca7c806`
+  - post-sync HEAD `8fab793` via `git pull --ff-only`.
+- Runtime action executed:
+  - `cd /root/tenkings-backend/infra`
+  - `docker compose restart`
+  - `docker compose ps` confirmed core stack services `Up`.
+- Health evidence after restart:
+  - `bytebot-lite-service` workers online and processing jobs.
+  - `processing-service` workers online and OCR/CLASSIFY/VALUATION jobs completing.
+- Admin endpoint smoke limitation:
+  - operator-key auth smoke could not be executed because `OPERATOR_API_KEY` is not configured in production bytebot env (`len=0`), so authenticated API checks require bearer session token path.
+- No migration run.
+- No destructive DB/set operation run.

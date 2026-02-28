@@ -4831,3 +4831,48 @@
 
 ### Operations/Safety
 - No destructive DB/set operations executed.
+
+## 2026-02-28 - Planned Action: Recovery Patch Production Deploy
+
+### Planned Action
+- Deploy commit `8fab793` (`main`) to production runtime.
+- Sync droplet repo to latest `main`, restart services, and run post-deploy sanity checks for:
+  - OCR suggestion endpoint behavior,
+  - KingsReview enqueue query fallback behavior,
+  - taxonomy options/fallback behavior.
+
+### Safety
+- No migration planned.
+- No destructive DB operations planned.
+
+## 2026-02-28 - Recovery Patch Deploy Result (Commit 8fab793, Droplet Restart Complete)
+
+### Deploy/Restart Evidence
+- Droplet repo before sync:
+  - branch: `main`
+  - HEAD: `ca7c806`
+- Droplet sync:
+  - `git pull --ff-only` fast-forwarded `ca7c806..8fab793`.
+  - Files updated included:
+    - `frontend/nextjs-app/lib/server/taxonomyV2Core.ts`
+    - `frontend/nextjs-app/lib/server/taxonomyV2Flags.ts`
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+    - handoff docs
+- Droplet repo after sync:
+  - HEAD: `8fab793`
+- Runtime restart:
+  - `cd /root/tenkings-backend/infra && docker compose restart`
+  - `docker compose ps` showed all core services `Up` (including `bytebot-lite-service`, `processing-service`, `caddy`, `postgres`, and service stack peers).
+
+### Post-Restart Runtime Health Evidence
+- `docker compose logs --tail=80 bytebot-lite-service processing-service` showed:
+  - bytebot-lite worker + reference worker online,
+  - teach server listening,
+  - jobs picked/completed after restart,
+  - processing-service workers online and OCR/CLASSIFY/VALUATION jobs completing.
+
+### API Smoke Notes
+- Authenticated admin endpoint smoke via `x-operator-key` could not run because production bytebot env had no operator key configured:
+  - `OPERATOR_API_KEY` runtime length `0`.
+- No migration or destructive DB operation was executed.
