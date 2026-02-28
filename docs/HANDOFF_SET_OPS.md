@@ -3222,3 +3222,31 @@ Build Set Ops UI flow with:
 ### Deploy Status
 - Commit `87cdeb2` pushed to `origin/main` for Next.js runtime deployment.
 - Verification pending on fresh production capture flow (operator test run).
+
+## Add Card Queue Error Recovery (2026-02-28)
+
+### Operator-Reported Incident
+- During fast capture, red error appeared: `A captured card could not be queued`.
+- This blocked end-to-end operator testing before player-name quality validation could proceed.
+
+### Root Cause (Code Path)
+- In `finalizeCapturedCardInBackground`, any rejection from front upload promise was treated as terminal.
+- If upload had already created `assetId` but failed during `/uploads/complete`, the card was not recovered/queued.
+
+### Fix Implemented
+- File: `frontend/nextjs-app/pages/admin/uploads.tsx`
+- Added structured front-upload error type carrying `assetId`/`stage`.
+- On recoverable failure (`assetId` exists), fallback now retries queue finalize via `/api/admin/uploads/complete` using `assetId`.
+- Keeps fast-capture behavior while preventing dropped cards due to finalize race/failure.
+
+### Validation
+- Next.js typecheck passed.
+- Targeted lint passed (existing `no-img-element` warnings only).
+
+### Deploy State
+- Commit `56de728` pushed to `origin/main` (`git push origin main` successful).
+- Deploy surface is web runtime (Vercel path), no droplet rebuild required for this patch.
+
+### Current Residual Risk
+- Non-recoverable presign/upload failures with no `assetId` still correctly fail hard and show error (expected behavior).
+- OCR/player extraction quality still requires fresh production capture verification after queue recovery patch.

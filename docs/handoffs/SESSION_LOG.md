@@ -4965,3 +4965,50 @@
   - background OCR suggest generation,
   - first-screen set picker behavior,
   - player/set suggestion quality.
+
+## 2026-02-28 - Add Card Queue Recovery Hotfix (Code Complete)
+
+### Trigger
+- Operator reported new red error during capture flow: `A captured card could not be queued`.
+
+### Summary
+- Hardened fast-capture background finalization path so a front upload can be recovered when finalize/queue step fails after `assetId` has already been created.
+- Added structured front-upload errors carrying `assetId` + `stage` so recovery logic can retry queue finalize instead of dropping the card.
+- Added `ensureFrontAssetQueued(assetId)` retry path that re-calls `/api/admin/uploads/complete` with minimal payload.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx` passed (existing `no-img-element` warnings only).
+
+### Commit
+- `56de728` - `fix(add-card): recover front upload queue finalize in background flow`
+
+## 2026-02-28 - Planned Action: Deploy Queue Recovery Hotfix (Commit 56de728)
+
+### Planned Action
+- Push commit `56de728` to `origin/main` so Vercel web runtime picks the Add Card queue-recovery fix.
+- Validate production by running fresh fast-capture intake and confirming queue error no longer appears.
+
+### Safety
+- No schema migration planned.
+- No destructive DB/set operation planned.
+
+## 2026-02-28 - Queue Recovery Deploy Result (Commit 56de728)
+
+### Deploy Evidence
+- Workstation branch `main` pushed to remote:
+  - `git push origin main` -> `675fb19..56de728`.
+- Remote repo now contains queue-recovery hotfix on `origin/main`.
+
+### Runtime Notes
+- This fix is in Next.js admin upload flow; Vercel deploy surface applies (same as prior web-runtime pushes).
+- No droplet container rebuild/restart required for this specific patch.
+
+### Remaining Verification
+- Operator must run a fresh Add Card fast-capture pass (front/back/tilt) and confirm:
+  1. no red `could not be queued` error,
+  2. card reaches review queue,
+  3. OCR suggestion data appears automatically in background.
