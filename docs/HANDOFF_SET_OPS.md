@@ -3164,3 +3164,32 @@ Build Set Ops UI flow with:
   - operator-key auth smoke could not be executed because `OPERATOR_API_KEY` is not configured in production bytebot env (`len=0`), so authenticated API checks require bearer session token path.
 - No migration run.
 - No destructive DB/set operation run.
+
+## OCR Recovery Update (2026-02-28, Deployed)
+
+### What Changed
+- Commit `26399fb` deployed to production runtime.
+- OCR worker improvements (`backend/processing-service`):
+  - Google Vision mode changed to `DOCUMENT_TEXT_DETECTION`.
+  - OCR now aggregates text across front + back + tilt images when available.
+  - OCR payload/audit now stores per-image OCR context under `ocrJson`.
+- Add Card review UX improvement (`frontend/nextjs-app/pages/admin/uploads.tsx`):
+  - when loading a queued card that has required photos but no suggestion yet, UI now auto-triggers `/api/admin/cards/[cardId]/ocr-suggest`.
+
+### Why
+- Production cards were reaching `READY` with low-quality single-image OCR text and missing `ocrSuggestionJson` on fresh records.
+- This degraded player/manufacturer/year extraction quality and made review experience appear "gibberish".
+
+### Production Evidence Collected
+- Deploy runtime now at `HEAD 26399fb` on droplet.
+- `processing-service` and `bytebot-lite-service` rebuilt/recreated and healthy.
+- Pre-deploy records remain visible with:
+  - poor `ocrText` snippets,
+  - `has_back=true`, `has_tilt=true`, but `has_suggest=false`.
+- These rows are historical relative to this deploy; fresh post-deploy card capture is required for behavioral verification.
+
+### Next Validation Step
+- Run a fresh Add Card capture (front/back/tilt) after this deploy and verify:
+  1. `ocrText` reflects card text from multiple sides,
+  2. player/manufacturer/year extraction quality is restored,
+  3. queued-card load auto-runs OCR suggest when suggestion data is missing.

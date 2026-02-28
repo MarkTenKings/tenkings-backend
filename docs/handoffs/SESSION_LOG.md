@@ -4876,3 +4876,51 @@
 - Authenticated admin endpoint smoke via `x-operator-key` could not run because production bytebot env had no operator key configured:
   - `OPERATOR_API_KEY` runtime length `0`.
 - No migration or destructive DB operation was executed.
+
+## 2026-02-28 - Planned Action: OCR Recovery Deploy (Commit 26399fb)
+
+### Planned Action
+- Deploy commit `26399fb` (`main`) to production runtime.
+- Rebuild/restart services required for OCR regression recovery:
+  - `processing-service` (worker OCR pipeline)
+  - `bytebot-lite-service` (admin uploads OCR auto-trigger behavior)
+- Validate post-deploy with production evidence:
+  - service runtime commit + container health
+  - processing logs for multi-image OCR execution
+  - DB sample for fresh cards (`ocrText` quality + `ocrSuggestionJson` population path)
+
+### Scope of Recovery
+- Switch worker OCR to Google Vision `DOCUMENT_TEXT_DETECTION`.
+- OCR worker now combines front + back + tilt text when available.
+- Add-card review flow now auto-triggers `/ocr-suggest` when queued card has required photos but no suggestion yet.
+
+### Safety
+- No schema migration planned.
+- No destructive DB/set operation planned.
+
+## 2026-02-28 - OCR Recovery Deploy Result (Commit 26399fb)
+
+### Deploy/Restart Evidence
+- Droplet repo sync:
+  - pre-sync HEAD `8fab793`
+  - `git pull --ff-only` fast-forwarded to `26399fb`
+  - post-sync HEAD `26399fb`
+- Runtime rebuild/recreate executed:
+  - `cd /root/tenkings-backend/infra`
+  - `docker compose up -d --build --force-recreate processing-service bytebot-lite-service`
+- `docker compose ps` confirmed both updated services running:
+  - `infra-processing-service-1` (new container)
+  - `infra-bytebot-lite-service-1` (new container)
+
+### Post-Deploy Runtime Evidence
+- Processing service logs after restart:
+  - `[processing-service] starting 5 worker(s)`
+  - workers `1..5` online with poll loop active.
+- Droplet DB snapshot after deploy (latest cards):
+  - recent records still show poor historical `ocrText` and `ocrSuggestionJson=false` for cards captured before this deploy.
+  - recent records confirm required intake photos exist (`has_back=true`, `has_tilt=true`) on those same cards.
+
+### Smoke Notes
+- Direct manual SQL OCR-job smoke insert using omitted `id` failed due DB constraint (`ProcessingJob.id` has no default in current prod schema).
+- No schema migration executed.
+- No destructive DB/set operation executed.
