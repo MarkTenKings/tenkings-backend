@@ -5150,3 +5150,34 @@
 ### Operations/Safety
 - No schema migration executed.
 - No destructive DB/set operation executed.
+
+## 2026-03-02 - MacBook Codex App Onboarding Session (Docs-Only)
+
+### Summary
+- Re-read required startup docs listed in `AGENTS.md`.
+- Reviewed current handoff state and prepared operator guidance for moving to Codex App on MacBook Pro with multi-agent workflows.
+- Captured current repository state for traceability and corrected stale workstation-path docs to match runtime evidence on MacBook.
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `AGENTS.md`
+
+### Repo State Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `fd7e496`
+
+### Files Updated
+- `docs/context/MASTER_PRODUCT_CONTEXT.md` (updated `repo_root_workstation` + verification date)
+- `docs/runbooks/DEPLOY_RUNBOOK.md` (updated workstation `cd` path + verification date)
+- `docs/HANDOFF_SET_OPS.md` (updated workstation path under deploy/runtime notes)
+- `docs/handoffs/SESSION_LOG.md` (this session entry)
+
+### Operations/Safety
+- No application code changes were made in this session.
+- No deploy/restart/migration commands executed.
+- No DB operations or destructive set operations executed.

@@ -1,6 +1,6 @@
 # Deploy Runbook (Source of Truth for Commands)
 
-last_verified_at: 2026-02-21
+last_verified_at: 2026-03-02
 owner: Mark
 
 ## Rules
@@ -10,7 +10,7 @@ owner: Mark
 
 ## Workstation Deploy Flow
 ```bash
-cd /home/mark/tenkings/ten-kings-mystery-packs-clean
+cd /Users/markthomas/tenkings/ten-kings-mystery-packs-clean
 git status -sb
 git branch --show-current
 git fetch --all --prune

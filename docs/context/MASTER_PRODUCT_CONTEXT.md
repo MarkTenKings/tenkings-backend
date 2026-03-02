@@ -1,8 +1,8 @@
 # Ten Kings Master Product Context
 
-last_verified_at: 2026-02-21
+last_verified_at: 2026-03-02
 verified_by: Mark + Codex
-repo_root_workstation: /home/mark/tenkings/ten-kings-mystery-packs-clean
+repo_root_workstation: /Users/markthomas/tenkings/ten-kings-mystery-packs-clean
 repo_root_droplet: /root/tenkings-backend
 default_branch: main
 active_feature_branch_example: chore/seed-timeout-hardening

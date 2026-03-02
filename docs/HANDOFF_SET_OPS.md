@@ -57,7 +57,7 @@
 
 ## Deploy/Runtime Notes
 - Droplet path: `/root/tenkings-backend`
-- Workstation path: `/home/mark/tenkings/ten-kings-mystery-packs-clean`
+- Workstation path: `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`
 - Infra commands from: `/root/tenkings-backend/infra`
 - Typical service refresh used: `docker compose restart`
 - Important: restart alone may not pick code changes if images are stale; rebuild/recreate may be required.
@@ -3331,3 +3331,20 @@ Build Set Ops UI flow with:
 
 ### Deploy State
 - Commit pushed to `origin/main`: `5ad79be`.
+
+## Session Update (2026-03-02, MacBook Codex App Onboarding Guidance)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Verified local repo state before this handoff update:
+  - branch: `main`
+  - HEAD: `fd7e496`
+  - status: `## main...origin/main`
+- Session scope:
+  - docs/context review and operator guidance for new MacBook Codex App + multi-agent usage.
+- Docs alignment:
+  - updated stale workstation path references to `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` in startup/deploy context docs.
+- No code/runtime behavior changes, deploys, restarts, migrations, or DB operations were executed in this session.
