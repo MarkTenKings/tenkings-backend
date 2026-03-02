@@ -258,6 +258,8 @@ const TIER_LABELS: Record<string, string> = {
   TIER_500: "$500 Pack",
 };
 
+const ADD_CARD_INTAKE_REVIEW_STAGE = "READY_FOR_HUMAN_REVIEW" as const;
+
 const CAMERA_STORAGE_KEY = "tenkings.adminUploads.cameraDeviceId";
 const OCR_QUEUE_STORAGE_KEY = "tenkings.adminUploads.ocrQueue";
 const OCR_DRAFT_STORAGE_KEY = "tenkings.adminUploads.ocrDraft";
@@ -1648,7 +1650,7 @@ export default function AdminUploads() {
           fileName: optimizedFile.name,
           size: optimizedFile.size,
           mimeType: optimizedFile.type || file.type,
-          reviewStage: "ADD_ITEMS",
+          reviewStage: ADD_CARD_INTAKE_REVIEW_STAGE,
         }),
       });
 

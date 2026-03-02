@@ -1340,6 +1340,24 @@ export default function KingsReview() {
       if (payload?.matchedCardNumber) {
         setVariantCardNumber(payload.matchedCardNumber);
       }
+      if (payload?.ok === false) {
+        setActiveCard((prev) =>
+          prev
+            ? {
+                ...prev,
+                variantDecision: {
+                  selectedParallelId: prev.variantDecision?.selectedParallelId ?? prev.variantId ?? null,
+                  confidence: prev.variantDecision?.confidence ?? prev.variantConfidence ?? null,
+                  humanOverride: prev.variantDecision?.humanOverride ?? false,
+                  humanNotes: prev.variantDecision?.humanNotes ?? null,
+                  candidates: Array.isArray(payload.candidates) ? payload.candidates : [],
+                },
+              }
+            : prev
+        );
+        setError(payload?.message ?? "No confident variant match");
+        return;
+      }
       if (payload?.candidates?.length) {
         const top = payload.candidates[0];
         setActiveCard((prev) =>

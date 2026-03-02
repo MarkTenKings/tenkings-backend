@@ -23,6 +23,12 @@ interface PresignResponse {
   acl?: string | null;
 }
 
+const REVIEW_STAGE_VALUES = Object.values(CardReviewStage);
+const REVIEW_STAGE_SET = new Set<string>(REVIEW_STAGE_VALUES);
+const LEGACY_REVIEW_STAGE_ALIASES: Record<string, CardReviewStage> = {
+  ADD_ITEMS: CardReviewStage.READY_FOR_HUMAN_REVIEW,
+};
+
 const handler: NextApiHandler<PresignResponse | { message: string }> = async function handler(
   req: NextApiRequest,
   res: NextApiResponse<PresignResponse | { message: string }>
@@ -65,6 +71,25 @@ const handler: NextApiHandler<PresignResponse | { message: string }> = async fun
       return res.status(400).json({ message: "reviewStage must be a string when provided" });
     }
 
+    const reviewStageRaw = typeof reviewStage === "string" ? reviewStage.trim() : "";
+    if (typeof reviewStage === "string" && !reviewStageRaw) {
+      return res.status(400).json({ message: "reviewStage cannot be empty when provided" });
+    }
+    const reviewStageAlias =
+      reviewStageRaw && Object.prototype.hasOwnProperty.call(LEGACY_REVIEW_STAGE_ALIASES, reviewStageRaw)
+        ? LEGACY_REVIEW_STAGE_ALIASES[reviewStageRaw]
+        : undefined;
+    if (reviewStageRaw && !REVIEW_STAGE_SET.has(reviewStageRaw) && !reviewStageAlias) {
+      return res.status(400).json({
+        message: `reviewStage must be one of: ${REVIEW_STAGE_VALUES.join(", ")}, ADD_ITEMS`,
+      });
+    }
+    const reviewStageValue = reviewStageRaw
+      ? REVIEW_STAGE_SET.has(reviewStageRaw)
+        ? (reviewStageRaw as CardReviewStage)
+        : reviewStageAlias
+      : undefined;
+
     const assetId = randomUUID().replace(/-/g, "");
     const storageKey = buildStorageKey(admin.user.id, assetId, fileName);
     const mode = getStorageMode();
@@ -91,12 +116,6 @@ const handler: NextApiHandler<PresignResponse | { message: string }> = async fun
         },
       });
     });
-
-    const reviewStageValue =
-      typeof reviewStage === "string" &&
-      Object.values(CardReviewStage).includes(reviewStage as CardReviewStage)
-        ? (reviewStage as CardReviewStage)
-        : undefined;
 
     await prisma.$transaction(async (tx) => {
       await tx.cardAsset.create({

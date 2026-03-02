@@ -68,6 +68,12 @@ type SeedJob = {
   logs: string[];
 };
 
+type ReferenceStatus = {
+  total: number;
+  pending: number;
+  processed: number;
+};
+
 type SetOpsPermissions = {
   reviewer: boolean;
   approver: boolean;
@@ -369,6 +375,7 @@ export default function SetOpsReviewPage() {
   const [editableRows, setEditableRows] = useState<DraftRow[]>([]);
 
   const [seedJobs, setSeedJobs] = useState<SeedJob[]>([]);
+  const [referenceStatus, setReferenceStatus] = useState<ReferenceStatus | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [accessBusy, setAccessBusy] = useState(false);
@@ -532,6 +539,7 @@ export default function SetOpsReviewPage() {
       setVersions([]);
       setEditableRows([]);
       setSeedJobs([]);
+      setReferenceStatus(null);
     }
   }, [adminHeaders, canReview, isAdmin, selectedJobId, session?.token]);
 
@@ -582,6 +590,34 @@ export default function SetOpsReviewPage() {
     [adminHeaders, canApprove, isAdmin, session?.token]
   );
 
+  const fetchReferenceStatus = useCallback(
+    async (setId: string) => {
+      if (!session?.token || !isAdmin || !setId) {
+        setReferenceStatus(null);
+        return;
+      }
+      const params = new URLSearchParams({ setId });
+      const response = await fetch(`/api/admin/variants/reference/status?${params.toString()}`, {
+        headers: adminHeaders,
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        total?: number;
+        pending?: number;
+        processed?: number;
+      };
+      if (!response.ok) {
+        throw new Error(payload.message ?? "Failed to load reference status");
+      }
+      setReferenceStatus({
+        total: Number(payload.total ?? 0),
+        pending: Number(payload.pending ?? 0),
+        processed: Number(payload.processed ?? 0),
+      });
+    },
+    [adminHeaders, isAdmin, session?.token]
+  );
+
   useEffect(() => {
     if (!session?.token || !isAdmin) return;
     if (autoLoadedRef.current) return;
@@ -615,6 +651,16 @@ export default function SetOpsReviewPage() {
         setBusy(false);
       });
   }, [fetchIngestionJobs, isAdmin, loadAccess, session?.token]);
+
+  useEffect(() => {
+    if (!selectedSetId) {
+      setReferenceStatus(null);
+      return;
+    }
+    void fetchReferenceStatus(selectedSetId).catch(() => {
+      setReferenceStatus(null);
+    });
+  }, [fetchReferenceStatus, selectedSetId]);
 
   useEffect(() => {
     const stepFromQuery = parseReviewStep(router.query.step);
@@ -1119,6 +1165,7 @@ export default function SetOpsReviewPage() {
       } else {
         setSeedJobs([]);
       }
+      await fetchReferenceStatus(selectedJob.setId);
       await fetchIngestionJobs();
       setStatus(
         `Built draft from ${selectedJobId} (${payload.summary?.rowCount ?? 0} rows, blocking=${payload.summary?.blockingErrorCount ?? 0}).`
@@ -1133,6 +1180,7 @@ export default function SetOpsReviewPage() {
     adminHeaders,
     fetchDraft,
     fetchIngestionJobs,
+    fetchReferenceStatus,
     fetchSeedJobs,
     canApprove,
     canReview,
@@ -1291,6 +1339,7 @@ export default function SetOpsReviewPage() {
       }
 
       await fetchSeedJobs(selectedSetId);
+      await fetchReferenceStatus(selectedSetId);
       setStatus(`Seed run ${payload.job?.id ?? ""} started.`);
     } catch (seedError) {
       setError(seedError instanceof Error ? seedError.message : "Failed to start seed run");
@@ -1301,9 +1350,83 @@ export default function SetOpsReviewPage() {
     adminHeaders,
     canApprove,
     fetchSeedJobs,
+    fetchReferenceStatus,
     isAdmin,
     latestApprovedVersionId,
     latestVersion?.id,
+    selectedSetId,
+    session?.token,
+  ]);
+
+  const seedOddsReferenceImages = useCallback(async () => {
+    if (!session?.token || !isAdmin || !selectedSetId) return;
+    if (!canApprove) {
+      setError("Set Ops approver role required");
+      return;
+    }
+    if (datasetType !== "PARALLEL_DB") {
+      setError("Select dataset type ODDS LIST before running parallel/odds reference seeding.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const requestBody: Record<string, unknown> = {
+        setId: selectedSetId,
+        datasetType: "PARALLEL_DB",
+      };
+      if (latestApprovedVersionId) {
+        requestBody.draftVersionId = latestApprovedVersionId;
+      }
+
+      const response = await fetch("/api/admin/set-ops/seed/reference", {
+        method: "POST",
+        headers: {
+          ...adminHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(requestBody),
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        summary?: {
+          targetCount: number;
+          processed: number;
+          inserted: number;
+          skipped: number;
+          failed: number;
+        };
+      };
+      if (!response.ok || !payload.summary) {
+        throw new Error(payload.message ?? "Failed to seed reference images");
+      }
+
+      const summary = payload.summary;
+      if (summary.failed > 0) {
+        setStatus(
+          `Reference seed completed with partial failures (${summary.processed}/${summary.targetCount}, inserted=${summary.inserted}, skipped=${summary.skipped}, failed=${summary.failed}).`
+        );
+      } else {
+        setStatus(
+          `Reference seed complete (${summary.processed}/${summary.targetCount}, inserted=${summary.inserted}, skipped=${summary.skipped}).`
+        );
+      }
+      await fetchReferenceStatus(selectedSetId);
+    } catch (seedError) {
+      setError(seedError instanceof Error ? seedError.message : "Failed to seed reference images");
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    adminHeaders,
+    canApprove,
+    datasetType,
+    fetchReferenceStatus,
+    isAdmin,
+    latestApprovedVersionId,
     selectedSetId,
     session?.token,
   ]);
@@ -1336,6 +1459,7 @@ export default function SetOpsReviewPage() {
         }
 
         await fetchSeedJobs(selectedSetId);
+        await fetchReferenceStatus(selectedSetId);
         setStatus(`${action === "cancel" ? "Cancelled" : "Retried"} seed job ${payload.job?.id ?? jobId}.`);
       } catch (seedActionError) {
         setError(seedActionError instanceof Error ? seedActionError.message : `Failed to ${action} seed job`);
@@ -1343,7 +1467,7 @@ export default function SetOpsReviewPage() {
         setBusy(false);
       }
     },
-    [adminHeaders, canApprove, fetchSeedJobs, isAdmin, selectedSetId, session?.token]
+    [adminHeaders, canApprove, fetchReferenceStatus, fetchSeedJobs, isAdmin, selectedSetId, session?.token]
   );
 
   const showMissingConfig =
@@ -1461,6 +1585,7 @@ export default function SetOpsReviewPage() {
                   canReview ? fetchIngestionJobs() : Promise.resolve(),
                   canReview && selectedSetId ? fetchDraft(selectedSetId, datasetType) : Promise.resolve(),
                   canApprove && selectedSetId ? fetchSeedJobs(selectedSetId) : Promise.resolve(),
+                  selectedSetId ? fetchReferenceStatus(selectedSetId) : Promise.resolve(),
                 ])
                   .then(() => setStatus("Workspace refreshed."))
                   .catch((refreshError) =>
@@ -1889,6 +2014,7 @@ export default function SetOpsReviewPage() {
                 setLatestApprovedVersionId(null);
                 setEditableRows([]);
                 setSeedJobs([]);
+                setReferenceStatus(null);
                 setStatus("Cleared selected ingestion job.");
               }}
               className="h-10 rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
@@ -2159,13 +2285,47 @@ export default function SetOpsReviewPage() {
             </button>
             <button
               type="button"
+              disabled={busy || !canApprove || !selectedSetId || datasetType !== "PARALLEL_DB"}
+              onClick={() => void seedOddsReferenceImages()}
+              className="h-10 rounded-xl border border-emerald-400/50 bg-emerald-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-60"
+            >
+              Seed ODDS LIST References
+            </button>
+            <button
+              type="button"
               disabled={busy || !canApprove || !selectedSetId}
               onClick={() => void fetchSeedJobs(selectedSetId)}
               className="h-10 rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
             >
               Refresh Seed Jobs
             </button>
+            <Link
+              href={{
+                pathname: "/admin/variants",
+                query: selectedSetId ? { setId: selectedSetId } : {},
+              }}
+              className={`inline-flex h-10 items-center rounded-xl border px-4 text-xs font-semibold uppercase tracking-[0.16em] transition ${
+                selectedSetId
+                  ? "border-violet-400/50 bg-violet-500/20 text-violet-100 hover:bg-violet-500/30"
+                  : "pointer-events-none border-white/20 text-slate-500 opacity-60"
+              }`}
+            >
+              Open Reference Seeding
+            </Link>
           </div>
+          {datasetType !== "PARALLEL_DB" && (
+            <p className="mt-3 text-xs text-amber-200">
+              Switch to dataset type <span className="font-semibold">ODDS LIST</span> in Step 2 to seed parallel/odds
+              reference images from Set Ops.
+            </p>
+          )}
+
+          {selectedSetId && (
+            <p className="mt-3 text-xs text-slate-300">
+              Reference status for set: Total {referenceStatus?.total ?? "-"} · Pending {referenceStatus?.pending ?? "-"} · Processed{" "}
+              {referenceStatus?.processed ?? "-"}
+            </p>
+          )}
 
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full border-separate border-spacing-0 text-left text-xs text-slate-200">

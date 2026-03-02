@@ -5201,3 +5201,179 @@
 ### Notes
 - Session remained docs/status-only by request.
 - Next work should prioritize safe validation and planning actions before any runtime changes.
+
+## 2026-03-02 - Deep-Dive Analysis: Add Card/OCR/LLM/KingsReview/Set Ops (Docs + Code Audit)
+
+### Summary
+- Completed a deep-dive audit across recent handoff logs, commit history, and current code paths for:
+  - Add Card capture/queueing
+  - OCR worker + OCR suggest API
+  - OpenAI LLM "baby brain" path
+  - Human review and KingsReview enqueue flow
+  - PhotoRoom processing
+  - SerpApi/eBay sold comps and multi-source comps worker
+  - Inventory-ready workflow
+  - Set checklist + odds/parallel ingestion/taxonomy paths
+- Focus was reconnect/health verification after taxonomy v2 disruption and subsequent recovery sessions.
+
+### Repo State Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `6b6a390`
+- `git log --oneline -n 60` reviewed for recovery timeline (`8fab793`, `26399fb`, `87cdeb2`, `56de728`, `56736ff`, `5ad79be`, `64f8cf1`).
+
+### Evidence Sources Reviewed
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- Key APIs/UI/workers in:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+  - `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+  - `frontend/nextjs-app/lib/server/variantMatcher.ts`
+  - `backend/processing-service/src/index.ts`
+  - `backend/processing-service/src/processors/vision.ts`
+  - `backend/bytebot-lite-service/src/index.ts`
+  - `backend/bytebot-lite-service/src/sources/ebay.ts`
+  - `frontend/nextjs-app/pages/api/admin/inventory-ready/*.ts`
+  - `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+  - `frontend/nextjs-app/pages/api/admin/set-ops/drafts/build.ts`
+  - `frontend/nextjs-app/pages/api/admin/set-ops/ingestion/index.ts`
+  - `packages/database/prisma/schema.prisma`
+
+### Findings Captured For Operator Report
+- Add Card fast-capture + background finalize path is present and queue-recovery retry exists.
+- OCR suggest requires all three intake photos (`FRONT/BACK/TILT`) before non-pending output.
+- Google Vision + OpenAI Responses path is wired with explicit model routing/fallback and reasoning-effort compatibility handling.
+- KingsReview enqueue still hardcodes `sources=["ebay_sold"]` even when UI submits broader source lists.
+- Set/taxonomy option loading includes SQL fallback and legacy fallback controls; matcher hard-stop behavior is gated by taxonomy flags.
+- Inventory-ready stage transition still enforces valuation requirement.
+- Set Ops draft normalization includes odds/serial/format fields and PARALLEL_DB blocking validation.
+
+### Operations/Safety
+- No app code edits were made in this deep-dive step.
+- No deploy/restart/migration commands were run.
+- No live destructive DB/set operation was run.
+
+## 2026-03-02 - Agent D End-to-End Harmony Verification Audit (Read-Only + Evidence)
+
+### Summary
+- Re-read required startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Captured startup repository context:
+  - `git status -sb` -> `## main...origin/main` and pre-existing `M docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `6b6a390`
+- Completed requested harmony audit for:
+  1. set-ops ingestion -> draft -> approval -> seed
+  2. reference-seed coverage in set-ops flow
+  3. Add Card capture queue + background finalize + OCR readiness
+  4. OCR/LLM output into card detail review
+  5. human-corrected details -> KingsReview enqueue query
+  6. variant matcher configured vs missing embedding behavior
+
+### Validation Command Evidence
+- `pnpm --filter @tenkings/shared test` could not execute in this shell: `pnpm: command not found`.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` could not execute in this shell: `pnpm: command not found`.
+- Environment check also returned:
+  - `node: command not found`
+  - `npm: command not found`
+
+### Audit Findings
+- Pass: Set-ops ingestion->draft->approval->seed workflow is wired end-to-end across APIs/UI and seed executor.
+- Fail: Standard set-ops seed path does not seed reference-image rows; it only seeds `cardVariant` and computes queue counts from existing references.
+  - `frontend/nextjs-app/lib/server/setOpsSeed.ts` updates/creates variants and taxonomy map but never inserts `cardVariantReferenceImage`.
+  - Reference image row insertion in set-ops code exists only in replace-flow preservation/restore (`frontend/nextjs-app/lib/server/setOpsReplace.ts`), not normal seed.
+- Pass: Add Card capture queue/background finalize/OCR readiness flow is present:
+  - front upload completion enqueues OCR (`/api/admin/uploads/complete`)
+  - background finalize recovers queueing and warms OCR suggestions (`/admin/uploads`)
+  - OCR worker loop processes queued OCR jobs (`backend/processing-service`).
+- Pass: OCR/LLM suggestions are persisted and fed into card review surfaces via `ocrSuggestionJson`.
+- Pass: Human-edited metadata drives KingsReview query generation before enqueue.
+- Pass: Variant matcher returns semantic-match path when embedding service is configured and metadata fallback candidates when missing/unavailable.
+
+### Operations/Safety
+- No deploy/restart/migration commands were run.
+- No destructive DB operations were run.
+- No destructive set operations were run.
+
+## 2026-03-02 - Variant Matcher Fallback Hardening (Embedding Missing)
+
+### Summary
+- Updated `runVariantMatch` to avoid hard failure when the variant embedding service is missing or unavailable.
+- Preserved existing embedding/cosine ranking path when embeddings are available.
+- Added deterministic metadata fallback ranking path that scores in-scope variants using available hints:
+  - card scope/card-number context
+  - program hint
+  - variation/parallel hint
+  - numbered denominator hint
+- Taxonomy matcher scope rules remain enforced before ranking, unchanged.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/variantMatcher.ts`
+
+### Validation Evidence
+- Required commands were attempted:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/variantMatcher.ts`
+- Both commands failed in this environment due missing toolchain binaries:
+  - `pnpm: command not found`
+  - `corepack: command not found`
+  - `node: command not found`
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+
+## 2026-03-02 - Add Card Intake Stage-Contract Fix (Agent A)
+
+### Summary
+- Re-read required startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Captured startup repository context:
+  - `git status -sb` -> `## main...origin/main` with pre-existing `M docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `6b6a390`
+- Fixed Add Card intake presign stage contract so client uses valid review stage value.
+- Hardened uploads presign API stage parsing so invalid/legacy stage input is rejected explicitly instead of being silently ignored.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/uploads/presign.ts`
+
+### Validation Evidence
+- Required commands attempted:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/uploads/presign.ts`
+- Direct execution failed in this shell: `pnpm: command not found`.
+- Retry via host Node/NPM wrapper (`npm exec pnpm`) failed due restricted network/package fetch:
+  - `npm error network request to https://registry.npmjs.org/pnpm failed, reason: getaddrinfo ENOTFOUND registry.npmjs.org`
+
+### Operations/Safety
+- No deploy/restart/migration commands were run.
+- No destructive data or set operations were run.
+
+## 2026-03-02 - Integration Patch: Legacy Review Stage + Robust Legacy SetId Filter
+
+### Summary
+- Updated uploads presign validation to keep strict stage validation while accepting legacy `reviewStage=ADD_ITEMS` by mapping it to `READY_FOR_HUMAN_REVIEW`.
+- Updated reference status API set filter to support legacy set label variants by matching candidate `setId` values derived from raw query, normalized query, and common HTML-entity variants (`&`, `&amp;`, `&#038;`, `&#38;`).
+- Preserved existing Agent B/C behavior; no rollback/revert of other agent work was performed.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/uploads/presign.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/status.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation/Operations
+- Validation commands attempted in this environment still fail due missing toolchain binaries (`pnpm`/`node` unavailable in shell).
+- No deploy/restart/migration commands were run.
+- No destructive DB/set operations were run.
