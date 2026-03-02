@@ -9,6 +9,13 @@ type ResponseBody =
       matchedSetId: string;
       matchedCardNumber: string;
     }
+  | {
+      ok: false;
+      message: string;
+      candidates: Array<{ parallelId: string; confidence: number; reason: string }>;
+      matchedSetId: string;
+      matchedCardNumber: string;
+    }
   | { message: string };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
@@ -34,6 +41,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       variation: variation ? String(variation) : null,
     });
     if (!result.ok) {
+      if (result.candidates?.length && result.matchedSetId && result.matchedCardNumber) {
+        return res.status(200).json({
+          ok: false,
+          message: result.message,
+          candidates: result.candidates,
+          matchedSetId: result.matchedSetId,
+          matchedCardNumber: result.matchedCardNumber,
+        });
+      }
       return res.status(404).json({ message: result.message });
     }
 

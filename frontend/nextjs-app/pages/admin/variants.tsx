@@ -693,13 +693,15 @@ export default function AdminVariants() {
       let seedTargets: SeedTargetRow[] = [];
       let targetSource = "variant rows";
 
-      // First try set-ops approved rows so we can process full checklist cardinality (e.g., 204 rows).
+      // Preserve checklist-first behavior, but merge PARALLEL_DB odds rows so parallel coverage is additive.
       try {
         const draftSources: Array<{ datasetType?: "PLAYER_WORKSHEET" | "PARALLEL_DB"; label: string }> = [
           { datasetType: "PLAYER_WORKSHEET", label: "set-ops player worksheet rows" },
           { datasetType: "PARALLEL_DB", label: "set-ops parallel db rows" },
           { label: "set-ops latest draft rows" },
         ];
+        const mergedTargets = new Map<string, SeedTargetRow>();
+        const sourceLabels: string[] = [];
 
         for (const source of draftSources) {
           const params = new URLSearchParams({ setId: targetSetId });
@@ -717,10 +719,24 @@ export default function AdminVariants() {
           const draftRows = Array.isArray(draftPayload?.latestVersion?.rows) ? draftPayload.latestVersion.rows : [];
           const extracted = extractSeedTargetsFromDraftRows(draftRows, targetSetId);
           if (extracted.length > 0) {
-            seedTargets = extracted;
-            targetSource = source.label;
-            break;
+            sourceLabels.push(source.label);
+            for (const target of extracted) {
+              const key = `${target.cardNumber.toUpperCase()}::${target.parallelId.toLowerCase()}`;
+              const existing = mergedTargets.get(key);
+              if (!existing) {
+                mergedTargets.set(key, target);
+                continue;
+              }
+              if (!existing.playerSeed && target.playerSeed) {
+                mergedTargets.set(key, target);
+              }
+            }
           }
+        }
+
+        if (mergedTargets.size > 0) {
+          seedTargets = Array.from(mergedTargets.values());
+          targetSource = sourceLabels.join(" + ");
         }
       } catch {
         // Fall back to variant table path below.

@@ -27,6 +27,15 @@ export type VariantMatchResult =
 
 const MIN_MATCH_CONFIDENCE = 0.78;
 const MIN_MATCH_MARGIN = 0.05;
+const MAX_CANDIDATES = 5;
+
+type VariantRow = {
+  setId: string;
+  parallelId: string;
+  cardNumber: string;
+  keywords: string[];
+  oddsInfo: string | null;
+};
 
 async function computeFoilScore(imageUrl: string) {
   try {
@@ -163,6 +172,257 @@ function cosine(a: number[], b: number[]) {
   return dot / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
+function sanitizeMatcherText(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function tokenizeMatcherText(value: string): string[] {
+  return sanitizeMatcherText(value)
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .map((token) => token.trim())
+    .filter(Boolean);
+}
+
+function normalizeMatcherKey(value: string): string {
+  return tokenizeMatcherText(value).join(" ");
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function extractDenominator(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const match = value.match(/\/\s*(\d{1,4})\b/);
+  return match?.[1] ?? null;
+}
+
+function sortCandidates(candidates: VariantCandidate[]): VariantCandidate[] {
+  return [...candidates].sort((a, b) => b.confidence - a.confidence || a.parallelId.localeCompare(b.parallelId));
+}
+
+function buildVariantSearchableText(variant: VariantRow): string {
+  return [variant.parallelId, variant.oddsInfo ?? "", ...variant.keywords].join(" ");
+}
+
+function scoreHintText(params: {
+  hint: string | null | undefined;
+  searchableLower: string;
+  searchableKey: string;
+  searchableTokens: Set<string>;
+  reasonPrefix: string;
+  exactBoost: number;
+  partialBoost: number;
+  tokenBoost: number;
+  tokenBoostCap: number;
+}): { boost: number; reasons: string[] } {
+  const hint = sanitizeMatcherText(params.hint);
+  if (!hint) {
+    return { boost: 0, reasons: [] };
+  }
+  const hintLower = hint.toLowerCase();
+  const hintKey = normalizeMatcherKey(hint);
+  let boost = 0;
+  const reasons: string[] = [];
+
+  if (hintKey && params.searchableKey === hintKey) {
+    boost += params.exactBoost;
+    reasons.push(`${params.reasonPrefix}-exact`);
+  } else if (
+    hintLower.length >= 3 &&
+    (params.searchableLower.includes(hintLower) ||
+      hintLower.includes(params.searchableLower) ||
+      (hintKey &&
+        (params.searchableKey.includes(hintKey) ||
+          hintKey.includes(params.searchableKey))))
+  ) {
+    boost += params.partialBoost;
+    reasons.push(`${params.reasonPrefix}-partial`);
+  }
+
+  const hintTokens = Array.from(new Set(tokenizeMatcherText(hint).filter((token) => token.length >= 2)));
+  if (hintTokens.length > 0) {
+    let overlap = 0;
+    for (const token of hintTokens) {
+      if (params.searchableTokens.has(token)) {
+        overlap += 1;
+      }
+    }
+    if (overlap > 0) {
+      boost += Math.min(params.tokenBoostCap, overlap * params.tokenBoost);
+      reasons.push(`${params.reasonPrefix}-token`);
+    }
+  }
+
+  return { boost, reasons };
+}
+
+function buildMetadataFallbackCandidates(params: {
+  variants: VariantRow[];
+  cardNumber: string;
+  programHint?: string | null;
+  variationHint?: string | null;
+  targetDenominator: string | null;
+  taxonomyScoped: boolean;
+  fallbackReason: string;
+}): VariantCandidate[] {
+  if (params.variants.length < 1) {
+    return [];
+  }
+  const normalizedCardNumber = sanitizeMatcherText(params.cardNumber).toUpperCase();
+  const denominatorRegex = params.targetDenominator
+    ? new RegExp(`/\\s*${escapeRegExp(params.targetDenominator)}\\b`, "i")
+    : null;
+  const hasAnyDenominator = /\/\s*\d{1,4}\b/i;
+  const singleCandidate = params.variants.length === 1;
+
+  const candidates = params.variants.map((variant) => {
+    const searchableText = buildVariantSearchableText(variant);
+    const searchableLower = searchableText.toLowerCase();
+    const searchableKey = normalizeMatcherKey(searchableText);
+    const searchableTokens = new Set(tokenizeMatcherText(searchableText));
+    const variantCardNumber = sanitizeMatcherText(variant.cardNumber).toUpperCase();
+    let confidence = 0.34;
+    const reasonParts = ["metadata", params.fallbackReason];
+
+    if (params.taxonomyScoped) {
+      reasonParts.push("taxonomy-scope");
+    }
+    if (singleCandidate) {
+      confidence += 0.54;
+      reasonParts.push("single-candidate");
+    }
+    if (normalizedCardNumber && normalizedCardNumber !== "ALL") {
+      if (variantCardNumber === normalizedCardNumber) {
+        confidence += 0.07;
+        reasonParts.push("card-exact");
+      } else if (variantCardNumber === "ALL") {
+        confidence += 0.02;
+        reasonParts.push("card-all");
+      }
+    }
+
+    const programScore = scoreHintText({
+      hint: params.programHint,
+      searchableLower,
+      searchableKey,
+      searchableTokens,
+      reasonPrefix: "program",
+      exactBoost: 0.2,
+      partialBoost: 0.14,
+      tokenBoost: 0.03,
+      tokenBoostCap: 0.12,
+    });
+    confidence += programScore.boost;
+    reasonParts.push(...programScore.reasons);
+
+    const variationScore = scoreHintText({
+      hint: params.variationHint,
+      searchableLower,
+      searchableKey,
+      searchableTokens,
+      reasonPrefix: "parallel",
+      exactBoost: 0.25,
+      partialBoost: 0.18,
+      tokenBoost: 0.035,
+      tokenBoostCap: 0.15,
+    });
+    confidence += variationScore.boost;
+    reasonParts.push(...variationScore.reasons);
+
+    if (denominatorRegex) {
+      if (denominatorRegex.test(searchableText)) {
+        confidence += 0.22;
+        reasonParts.push("numbered-denominator");
+      } else if (hasAnyDenominator.test(searchableText)) {
+        confidence -= 0.05;
+        reasonParts.push("numbered-mismatch");
+      }
+    }
+
+    confidence = Math.min(0.97, Math.max(0.05, confidence));
+
+    return {
+      parallelId: variant.parallelId,
+      confidence: Number(confidence.toFixed(3)),
+      reason: Array.from(new Set(reasonParts)).join("|"),
+    };
+  });
+
+  return sortCandidates(candidates).slice(0, MAX_CANDIDATES);
+}
+
+async function buildEmbeddingCandidates(params: {
+  variants: VariantRow[];
+  cardVectors: number[][];
+  targetDenominator: string | null;
+  taxonomyScoped: boolean;
+}): Promise<VariantCandidate[]> {
+  if (params.variants.length < 1) {
+    return [];
+  }
+
+  const denominatorRegex = params.targetDenominator
+    ? new RegExp(`/\\s*${escapeRegExp(params.targetDenominator)}\\b`, "i")
+    : null;
+  const candidates: VariantCandidate[] = [];
+
+  for (const variant of params.variants) {
+    const variantCardNumber = sanitizeMatcherText(variant.cardNumber) || "ALL";
+    const referenceWhere: any =
+      variantCardNumber.toUpperCase() === "ALL"
+        ? { setId: variant.setId, parallelId: variant.parallelId }
+        : {
+            setId: variant.setId,
+            parallelId: variant.parallelId,
+            OR: [{ cardNumber: variantCardNumber }, { cardNumber: "ALL" }, { cardNumber: null }],
+          };
+    const refs = await prisma.cardVariantReferenceImage.findMany({
+      where: referenceWhere,
+      take: 5,
+      orderBy: [{ qualityScore: "desc" }, { createdAt: "desc" }],
+    });
+
+    let bestScore = 0;
+    for (const ref of refs) {
+      const embeddings = Array.isArray(ref.cropEmbeddings) ? (ref.cropEmbeddings as any[]) : [];
+      let refScore = 0;
+      let refCount = 0;
+      for (const emb of embeddings) {
+        const vec = emb?.vector;
+        if (!Array.isArray(vec) || vec.length === 0) continue;
+        let best = 0;
+        for (const cardVec of params.cardVectors) {
+          const score = cosine(cardVec, vec);
+          if (score > best) best = score;
+        }
+        refScore += best;
+        refCount += 1;
+      }
+      if (refCount > 0) {
+        const avg = refScore / refCount;
+        if (avg > bestScore) bestScore = avg;
+      }
+    }
+
+    let confidence = bestScore;
+    const reasonParts = params.taxonomyScoped ? ["cosine", "taxonomy-scope"] : ["cosine"];
+    if (denominatorRegex && denominatorRegex.test(buildVariantSearchableText(variant))) {
+      confidence = Math.min(1, confidence + 0.03);
+      reasonParts.push("numbered-denominator-boost");
+    }
+
+    candidates.push({
+      parallelId: variant.parallelId,
+      confidence: Number(confidence.toFixed(3)),
+      reason: reasonParts.join("|"),
+    });
+  }
+
+  return sortCandidates(candidates).slice(0, MAX_CANDIDATES);
+}
+
 export async function runVariantMatch(params: {
   cardAssetId: string;
   setId: string;
@@ -198,13 +458,7 @@ export async function runVariantMatch(params: {
   }
 
   let matchedSetId = "";
-  let variants: Array<{
-    setId: string;
-    parallelId: string;
-    cardNumber: string;
-    keywords: string[];
-    oddsInfo: string | null;
-  }> = [];
+  let variants: VariantRow[] = [];
   for (const setId of scopedSetCandidates) {
     const rows = await findVariants({ setId, cardNumber: cardNumberInput === "ALL" ? "" : cardNumberInput });
     if (rows.length > 0) {
@@ -271,95 +525,71 @@ export async function runVariantMatch(params: {
   const tiltPhoto = cardAsset.photos?.find((photo) => photo.kind === "TILT")?.imageUrl ?? null;
   const foilSourceUrl = tiltPhoto || cardAsset.imageUrl;
   const foilScore = await computeFoilScore(foilSourceUrl);
-  const embeddingService = process.env.VARIANT_EMBEDDING_URL ?? "";
-  if (!embeddingService) {
-    return { ok: false, message: "Variant embedding service is not configured" };
-  }
-
-  const extractDenominator = (value: string | null | undefined) => {
-    if (!value) return null;
-    const match = value.match(/\/\s*(\d{1,4})\b/);
-    return match?.[1] ?? null;
-  };
-
-  const embedRes = await fetch(embeddingService, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ imageUrl: cardAsset.imageUrl, mode: "card" }),
-  });
-  const embedPayload = await embedRes.json().catch(() => null);
-  const cardVectors: number[][] = Array.isArray(embedPayload?.embeddings)
-    ? embedPayload.embeddings.map((entry: any) => entry.vector).filter((vec: any) => Array.isArray(vec))
-    : [];
-
-  if (cardVectors.length === 0) {
-    return { ok: false, message: "Card embedding could not be computed" };
-  }
-
   const targetDenominator = extractDenominator(numberedInput);
+  const embeddingService = sanitizeMatcherText(process.env.VARIANT_EMBEDDING_URL);
   let candidates: VariantCandidate[] = [];
-  for (const variant of variants) {
-    const variantCardNumber = String(variant.cardNumber || "ALL").trim() || "ALL";
-    const referenceWhere: any =
-      variantCardNumber === "ALL"
-        ? { setId: variant.setId, parallelId: variant.parallelId }
-        : {
-            setId: variant.setId,
-            parallelId: variant.parallelId,
-            OR: [{ cardNumber: variantCardNumber }, { cardNumber: "ALL" }, { cardNumber: null }],
-          };
-    const refs = await prisma.cardVariantReferenceImage.findMany({
-      where: referenceWhere,
-      take: 5,
-      orderBy: [{ qualityScore: "desc" }, { createdAt: "desc" }],
+
+  if (!embeddingService) {
+    candidates = buildMetadataFallbackCandidates({
+      variants,
+      cardNumber: cardNumberInput,
+      programHint: params.program,
+      variationHint: params.variation,
+      targetDenominator,
+      taxonomyScoped,
+      fallbackReason: "embedding-missing",
     });
+  } else {
+    try {
+      const embedRes = await fetch(embeddingService, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageUrl: cardAsset.imageUrl, mode: "card" }),
+      });
+      const embedPayload = await embedRes.json().catch(() => null);
+      const cardVectors: number[][] = Array.isArray(embedPayload?.embeddings)
+        ? embedPayload.embeddings.map((entry: any) => entry.vector).filter((vec: any) => Array.isArray(vec))
+        : [];
 
-    let bestScore = 0;
-    for (const ref of refs) {
-      const embeddings = Array.isArray(ref.cropEmbeddings) ? (ref.cropEmbeddings as any[]) : [];
-      let refScore = 0;
-      let refCount = 0;
-      for (const emb of embeddings) {
-        const vec = emb?.vector;
-        if (!Array.isArray(vec) || vec.length === 0) continue;
-        let best = 0;
-        for (const cardVec of cardVectors) {
-          const score = cosine(cardVec, vec);
-          if (score > best) best = score;
-        }
-        refScore += best;
-        refCount += 1;
+      if (cardVectors.length > 0) {
+        candidates = await buildEmbeddingCandidates({
+          variants,
+          cardVectors,
+          targetDenominator,
+          taxonomyScoped,
+        });
+      } else {
+        candidates = buildMetadataFallbackCandidates({
+          variants,
+          cardNumber: cardNumberInput,
+          programHint: params.program,
+          variationHint: params.variation,
+          targetDenominator,
+          taxonomyScoped,
+          fallbackReason: embedRes.ok ? "embedding-empty" : "embedding-unavailable",
+        });
       }
-      if (refCount > 0) {
-        const avg = refScore / refCount;
-        if (avg > bestScore) bestScore = avg;
-      }
+    } catch {
+      candidates = buildMetadataFallbackCandidates({
+        variants,
+        cardNumber: cardNumberInput,
+        programHint: params.program,
+        variationHint: params.variation,
+        targetDenominator,
+        taxonomyScoped,
+        fallbackReason: "embedding-unavailable",
+      });
     }
-
-    let confidence = bestScore;
-    let reason = taxonomyScoped ? "cosine|taxonomy-scope" : "cosine";
-    if (targetDenominator) {
-      const searchable = [
-        variant.parallelId,
-        variant.oddsInfo ?? "",
-        ...variant.keywords,
-      ]
-        .join(" ")
-        .toLowerCase();
-      if (searchable.includes(`/${targetDenominator}`)) {
-        confidence = Math.min(1, confidence + 0.03);
-        reason = "cosine|numbered-denominator-boost";
-      }
-    }
-
-    candidates.push({
-      parallelId: variant.parallelId,
-      confidence: Number(confidence.toFixed(3)),
-      reason,
-    });
   }
 
-  candidates = candidates.sort((a, b) => b.confidence - a.confidence).slice(0, 5);
+  if (candidates.length < 1) {
+    return {
+      ok: false,
+      message: "No variant candidates could be ranked",
+      matchedSetId,
+      matchedCardNumber: cardNumberInput,
+    };
+  }
 
   if (foilScore != null) {
     candidates = candidates.map((candidate) => ({
