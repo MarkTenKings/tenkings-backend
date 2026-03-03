@@ -322,6 +322,8 @@ export default function SetOpsReviewPage() {
   const [payloadFileName, setPayloadFileName] = useState<string | null>(null);
   const [payloadRowCount, setPayloadRowCount] = useState<number>(0);
   const [payloadLoading, setPayloadLoading] = useState(false);
+  const [bulkCsvFile, setBulkCsvFile] = useState<File | null>(null);
+  const [bulkZipFile, setBulkZipFile] = useState<File | null>(null);
 
   const [ingestionJobs, setIngestionJobs] = useState<IngestionJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string>("");
@@ -784,6 +786,70 @@ export default function SetOpsReviewPage() {
     },
     [adminHeaders, canReview, queueDatasetMode, setIdInput]
   );
+
+  const runBulkVariantImport = useCallback(async () => {
+    if (!session?.token || !isAdmin) return;
+    if (!canReview) {
+      setError("Set Ops reviewer role required");
+      return;
+    }
+    if (!bulkCsvFile) {
+      setError("CSV file is required for bulk import.");
+      return;
+    }
+
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+
+    try {
+      const form = new FormData();
+      form.append("csv", bulkCsvFile);
+      if (bulkZipFile) {
+        form.append("zip", bulkZipFile);
+      }
+
+      const response = await fetch("/api/admin/variants/bulk-import", {
+        method: "POST",
+        headers: {
+          ...adminHeaders,
+        },
+        body: form,
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        variantsUpserted?: number;
+        imagesImported?: number;
+        imagesSkipped?: number;
+      };
+      if (!response.ok) {
+        throw new Error(payload.message ?? "Bulk import failed");
+      }
+
+      setStatus(
+        `Bulk import complete: variants=${payload.variantsUpserted ?? 0}, images imported=${payload.imagesImported ?? 0}, images skipped=${payload.imagesSkipped ?? 0}.`
+      );
+      setBulkCsvFile(null);
+      setBulkZipFile(null);
+
+      if (selectedSetId) {
+        await fetchReferenceStatus(selectedSetId).catch(() => undefined);
+      }
+    } catch (bulkImportError) {
+      setError(bulkImportError instanceof Error ? bulkImportError.message : "Bulk import failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [
+    adminHeaders,
+    bulkCsvFile,
+    bulkZipFile,
+    canReview,
+    fetchReferenceStatus,
+    isAdmin,
+    selectedSetId,
+    session?.token,
+  ]);
 
   const buildDraftFromJob = useCallback(async () => {
     if (!session?.token || !isAdmin || !selectedJobId || !selectedJob) return;
@@ -1391,6 +1457,56 @@ export default function SetOpsReviewPage() {
               {payloadLoading ? "Parsing..." : `Queue ${formatDatasetMode(queueDatasetMode)}`}
             </button>
           </form>
+
+          <div className="mt-4 rounded-xl border border-white/10 bg-night-950/40 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Bulk Import (CSV + ZIP)</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  Directly upserts variant rows and optional reference images using the existing bulk import endpoint.
+                </p>
+              </div>
+              <a
+                href="/templates/variant-template.csv"
+                className="text-[10px] uppercase tracking-[0.2em] text-sky-300 hover:text-sky-200"
+              >
+                Download Template
+              </a>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-3">
+              <label className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.2em] text-slate-200">
+                Upload CSV
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  className="hidden"
+                  disabled={busy || !canReview}
+                  onChange={(event) => setBulkCsvFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <label className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.2em] text-slate-200">
+                Upload ZIP (optional)
+                <input
+                  type="file"
+                  accept=".zip,application/zip"
+                  className="hidden"
+                  disabled={busy || !canReview}
+                  onChange={(event) => setBulkZipFile(event.target.files?.[0] ?? null)}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={() => void runBulkVariantImport()}
+                disabled={busy || !canReview}
+                className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.2em] text-emerald-100 disabled:opacity-60"
+              >
+                Run Bulk Import
+              </button>
+            </div>
+            <p className="mt-3 text-[10px] uppercase tracking-[0.2em] text-slate-500">
+              CSV: {bulkCsvFile?.name ?? "none"} · ZIP: {bulkZipFile?.name ?? "none"}
+            </p>
+          </div>
 
           <div className="mt-5 overflow-x-auto">
             <table className="min-w-full border-separate border-spacing-0 text-left text-sm text-slate-200">

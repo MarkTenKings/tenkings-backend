@@ -5665,3 +5665,24 @@
 ### Operations/Safety
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
+
+## 2026-03-03 - Set Ops Review Bulk Import Bridge (CSV + ZIP)
+
+### Summary
+- Added a bulk import block to `/admin/set-ops-review` Step 1 (Ingestion Queue) so operators can run the existing variants bulk import flow from Set Ops.
+- New UI accepts CSV plus optional ZIP and calls existing endpoint `POST /api/admin/variants/bulk-import`.
+- Reused existing backend behavior (no endpoint/schema changes) to reduce regression risk while preserving import capability if `/admin/variants` is retired later.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx` passed.
+- `pnpm --filter @tenkings/shared test` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Locked image seeder/reference files were not modified.
