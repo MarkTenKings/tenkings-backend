@@ -5377,3 +5377,87 @@
 - Validation commands attempted in this environment still fail due missing toolchain binaries (`pnpm`/`node` unavailable in shell).
 - No deploy/restart/migration commands were run.
 - No destructive DB/set operations were run.
+
+## 2026-03-03 - Taxonomy Enrichments + CSV Path Publish-Boundary Guards (v1)
+
+### Summary
+- Re-read required startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Implemented additive taxonomy schema enrichments for long-term reference ingestion:
+  - `SetCard`: `team`, `isRookie`, `metadataJson`, and index `@@index([setId, team])`
+  - `SetParallel`: `visualCuesJson`
+  - `SetOddsByFormat`: `oddsNumeric`
+- Added Prisma migration scaffold:
+  - `packages/database/prisma/migrations/20260303123000_taxonomy_reference_enrichments/migration.sql`
+- Extended taxonomy adapter/core ingestion typing and writes to carry enriched fields:
+  - card team/rookie/metadata
+  - parallel visual cues
+  - odds numeric parsing/upsert
+- Added approval-aware taxonomy read guards for CSV-ingestion publish-boundary behavior in matcher/set-ops lookup surfaces (`sourceId is null` OR `ingestion job status = APPROVED`).
+- Extended draft raw-payload parsing to support structured CSV-converted payload shapes (`programs[]`, `odds[]`, `formats[]`) while preserving existing row-based payload handling.
+- Fixed SQL alias regressions introduced during guard updates in `setOpsVariantIdentity.ts` (`ORDER BY` alias mismatches).
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260303123000_taxonomy_reference_enrichments/migration.sql`
+- `frontend/nextjs-app/lib/server/taxonomyV2AdapterTypes.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2ManufacturerAdapter.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2Core.ts`
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+- `frontend/nextjs-app/lib/server/setOpsVariantIdentity.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database run generate` passed.
+- `pnpm --filter @tenkings/database build` passed.
+- `pnpm --filter @tenkings/shared test` passed.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDrafts.ts --file lib/server/setOpsVariantIdentity.ts --file lib/server/taxonomyV2AdapterTypes.ts --file lib/server/taxonomyV2Core.ts --file lib/server/taxonomyV2ManufacturerAdapter.ts --file lib/server/variantOptionPool.ts` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Image seeder/reference seeding surfaces were intentionally left unchanged in this phase.
+
+## 2026-03-03 - Reviewer Follow-up Fixes (High + Medium Findings)
+
+### Summary
+- Addressed read-only reviewer findings from this phase.
+- Fixed structured payload parsing so `programs[]` and `odds[]` are no longer mixed across dataset types:
+  - `PLAYER_WORKSHEET` consumes structured `programs[]`
+  - `PARALLEL_DB` consumes structured `odds[]`
+  - structured payloads now return parsed rows directly (no fallback coercion to a single raw record)
+- Fixed publish-boundary inconsistency in taxonomy delegate paths for option-pool loading:
+  - program card counts now come from an approval-filtered `SetCard.groupBy` query
+  - scope rows now resolve parallel labels through an approval-filtered `SetParallel` lookup
+  - delegate path behavior now aligns with SQL fallback approval filtering
+- Fixed rookie null/unknown semantics to avoid coercing unknown to false:
+  - `SetCard.isRookie` changed to nullable (`Boolean?`)
+  - create/update/upsert logic now preserves `null` when unknown
+  - rookie conflicts now trigger only when both sides are explicit and differ
+- Updated migration scaffold to match nullable `isRookie` behavior.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2Core.ts`
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260303123000_taxonomy_reference_enrichments/migration.sql`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database run generate` passed.
+- `pnpm --filter @tenkings/database build` passed.
+- `pnpm --filter @tenkings/shared test` passed.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDrafts.ts --file lib/server/variantOptionPool.ts --file lib/server/taxonomyV2Core.ts --file lib/server/setOpsVariantIdentity.ts` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Image seeder/reference seeding surfaces remained unchanged.

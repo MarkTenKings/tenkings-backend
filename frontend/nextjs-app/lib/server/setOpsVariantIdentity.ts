@@ -1,4 +1,4 @@
-import { prisma } from "@tenkings/database";
+import { prisma, SetIngestionJobStatus } from "@tenkings/database";
 import { normalizeCardNumber, normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
 import { buildTaxonomyCanonicalKey, normalizeParallelId } from "./taxonomyV2Utils";
 
@@ -123,24 +123,38 @@ export async function loadSetOpsVariantIdentityContext(params: {
       },
     }),
     prisma.$queryRawUnsafe<IdentityVariantMapRow[]>(
-      `select "cardVariantId", "canonicalKey", "programId"
-         from "CardVariantTaxonomyMap"
+      `select m."cardVariantId", m."canonicalKey", m."programId"
+         from "CardVariantTaxonomyMap" m
         where "setId" in (${inClause})
-        order by "createdAt" asc`,
+        order by m."createdAt" asc`,
       ...setIdCandidates
     ),
     prisma.$queryRawUnsafe<IdentityCardProgramRow[]>(
-      `select "setId", "cardNumber", "programId"
-         from "SetCard"
-        where "setId" in (${inClause})
-        order by "createdAt" asc`,
+      `select c."setId", c."cardNumber", c."programId"
+         from "SetCard" c
+         left join "SetTaxonomySource" cs on cs."id" = c."sourceId"
+         left join "SetIngestionJob" cj on cj."id" = cs."ingestionJobId"
+        where c."setId" in (${inClause})
+          and (
+            c."sourceId" is null
+            or cs."ingestionJobId" is null
+            or cj."status" = '${SetIngestionJobStatus.APPROVED}'
+          )
+        order by c."createdAt" asc`,
       ...setIdCandidates
     ),
     prisma.$queryRawUnsafe<IdentityParallelProgramRow[]>(
-      `select "setId", "parallelId", "programId"
-         from "SetParallelScope"
-        where "setId" in (${inClause})
-        order by "createdAt" asc`,
+      `select s."setId", s."parallelId", s."programId"
+         from "SetParallelScope" s
+         left join "SetTaxonomySource" ss on ss."id" = s."sourceId"
+         left join "SetIngestionJob" sj on sj."id" = ss."ingestionJobId"
+        where s."setId" in (${inClause})
+          and (
+            s."sourceId" is null
+            or ss."ingestionJobId" is null
+            or sj."status" = '${SetIngestionJobStatus.APPROVED}'
+          )
+        order by s."createdAt" asc`,
       ...setIdCandidates
     ),
   ])) as [IdentityVariantRow[], IdentityVariantMapRow[], IdentityCardProgramRow[], IdentityParallelProgramRow[]];

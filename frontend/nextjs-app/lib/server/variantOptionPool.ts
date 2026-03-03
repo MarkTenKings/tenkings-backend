@@ -1,4 +1,4 @@
-import { prisma } from "@tenkings/database";
+import { prisma, SetIngestionJobStatus } from "@tenkings/database";
 import { readTaxonomyV2Flags } from "./taxonomyV2Flags";
 import { loadVariantScopeSetIds, resolveSetIdByIdentity, resolveVariantSetIdsForScope } from "./variantSetScope";
 const taxonomyDb = prisma as any;
@@ -345,32 +345,64 @@ function buildSqlInClause(values: string[]) {
   return values.map((_, index) => `$${index + 1}`).join(", ");
 }
 
+function publishedTaxonomyWhereInput() {
+  return {
+    OR: [
+      { sourceId: null },
+      {
+        source: {
+          is: {
+            OR: [
+              { ingestionJobId: null },
+              { ingestionJob: { status: SetIngestionJobStatus.APPROVED } },
+            ],
+          },
+        },
+      },
+    ],
+  } as const;
+}
+
 async function loadTaxonomyProgramsForOptionPool(setIds: string[]): Promise<TaxonomyProgramPoolRow[]> {
   if (setIds.length < 1) return [];
 
   if (supportsTaxonomyDelegateReads()) {
-    const programs = (await taxonomyDb.setProgram.findMany({
-      where: {
-        setId: { in: setIds },
-      },
-      select: {
-        setId: true,
-        programId: true,
-        label: true,
-        _count: {
-          select: {
-            cards: true,
-          },
+    const [programs, cardCounts] = (await Promise.all([
+      taxonomyDb.setProgram.findMany({
+        where: {
+          setId: { in: setIds },
+          ...publishedTaxonomyWhereInput(),
         },
-      },
-      orderBy: [{ setId: "asc" }, { label: "asc" }],
-    })) as Array<{ setId: string; programId: string; label: string; _count: { cards: number } }>;
+        select: {
+          setId: true,
+          programId: true,
+          label: true,
+        },
+        orderBy: [{ setId: "asc" }, { label: "asc" }],
+      }),
+      taxonomyDb.setCard.groupBy({
+        by: ["setId", "programId"],
+        where: {
+          setId: { in: setIds },
+          ...publishedTaxonomyWhereInput(),
+        },
+        _count: { _all: true },
+      }),
+    ])) as [
+      Array<{ setId: string; programId: string; label: string }>,
+      Array<{ setId: string; programId: string; _count: { _all: number } }>
+    ];
+
+    const cardCountByProgramKey = new Map<string, number>();
+    for (const row of cardCounts) {
+      cardCountByProgramKey.set(`${row.setId}::${row.programId}`, Number(row._count?._all ?? 0));
+    }
 
     return programs.map((row) => ({
       setId: row.setId,
       programId: row.programId,
       label: row.label,
-      cardCount: Number(row._count?.cards ?? 0),
+      cardCount: cardCountByProgramKey.get(`${row.setId}::${row.programId}`) ?? 0,
     }));
   }
 
@@ -389,10 +421,29 @@ async function loadTaxonomyProgramsForOptionPool(setIds: string[]): Promise<Taxo
        p."label" as "label",
        coalesce(count(c."id"), 0)::int as "cardCount"
      from "SetProgram" p
+     left join "SetTaxonomySource" ps
+       on ps."id" = p."sourceId"
+     left join "SetIngestionJob" pj
+       on pj."id" = ps."ingestionJobId"
      left join "SetCard" c
        on c."setId" = p."setId"
       and c."programId" = p."programId"
+      and (
+        c."sourceId" is null
+        or exists (
+          select 1
+          from "SetTaxonomySource" cs
+          left join "SetIngestionJob" cj on cj."id" = cs."ingestionJobId"
+          where cs."id" = c."sourceId"
+            and (cs."ingestionJobId" is null or cj."status" = 'APPROVED')
+        )
+      )
      where p."setId" in (${inClause})
+      and (
+        p."sourceId" is null
+        or ps."ingestionJobId" is null
+        or pj."status" = 'APPROVED'
+      )
      group by p."setId", p."programId", p."label"
      order by p."setId" asc, p."label" asc`,
     ...setIds
@@ -408,25 +459,48 @@ async function loadTaxonomyScopeRowsForOptionPool(setIds: string[]): Promise<Tax
     const rows = (await taxonomyDb.setParallelScope.findMany({
       where: {
         setId: { in: setIds },
+        ...publishedTaxonomyWhereInput(),
       },
       select: {
         setId: true,
         programId: true,
-        parallel: {
-          select: {
-            label: true,
-          },
-        },
+        parallelId: true,
       },
       orderBy: [{ setId: "asc" }],
       take: 5000,
-    })) as Array<{ setId: string; programId: string; parallel: { label: string } }>;
+    })) as Array<{ setId: string; programId: string; parallelId: string }>;
 
-    return rows.map((row) => ({
-      setId: row.setId,
-      programId: row.programId,
-      parallelLabel: row.parallel?.label ?? "",
-    }));
+    const parallelIds = Array.from(new Set(rows.map((row) => row.parallelId).filter(Boolean)));
+    if (parallelIds.length < 1) {
+      return [];
+    }
+
+    const parallels = (await taxonomyDb.setParallel.findMany({
+      where: {
+        setId: { in: setIds },
+        parallelId: { in: parallelIds },
+        ...publishedTaxonomyWhereInput(),
+      },
+      select: {
+        setId: true,
+        parallelId: true,
+        label: true,
+      },
+      take: 5000,
+    })) as Array<{ setId: string; parallelId: string; label: string }>;
+
+    const parallelLabelByKey = new Map<string, string>();
+    for (const row of parallels) {
+      parallelLabelByKey.set(`${row.setId}::${row.parallelId}`, row.label || "");
+    }
+
+    return rows
+      .map((row) => ({
+        setId: row.setId,
+        programId: row.programId,
+        parallelLabel: parallelLabelByKey.get(`${row.setId}::${row.parallelId}`) || "",
+      }))
+      .filter((row) => row.parallelLabel.length > 0);
   }
 
   const inClause = buildSqlInClause(setIds);
@@ -445,7 +519,25 @@ async function loadTaxonomyScopeRowsForOptionPool(setIds: string[]): Promise<Tax
      inner join "SetParallel" p
        on p."setId" = s."setId"
       and p."parallelId" = s."parallelId"
+     left join "SetTaxonomySource" ss
+       on ss."id" = s."sourceId"
+     left join "SetIngestionJob" sj
+       on sj."id" = ss."ingestionJobId"
+     left join "SetTaxonomySource" ps
+       on ps."id" = p."sourceId"
+     left join "SetIngestionJob" pj
+       on pj."id" = ps."ingestionJobId"
      where s."setId" in (${inClause})
+      and (
+        s."sourceId" is null
+        or ss."ingestionJobId" is null
+        or sj."status" = 'APPROVED'
+      )
+      and (
+        p."sourceId" is null
+        or ps."ingestionJobId" is null
+        or pj."status" = 'APPROVED'
+      )
      order by s."setId" asc
      limit 5000`,
     ...setIds
@@ -460,7 +552,10 @@ async function loadTaxonomyCardCountsForOptionPool(setIds: string[]): Promise<Ar
   if (supportsTaxonomyDelegateReads()) {
     const rows = (await taxonomyDb.setCard.groupBy({
       by: ["setId"],
-      where: { setId: { in: setIds } },
+      where: {
+        setId: { in: setIds },
+        ...publishedTaxonomyWhereInput(),
+      },
       _count: { _all: true },
     })) as Array<{ setId: string; _count: { _all: number } }>;
 
@@ -476,7 +571,16 @@ async function loadTaxonomyCardCountsForOptionPool(setIds: string[]): Promise<Ar
        c."setId" as "setId",
        count(*)::int as "count"
      from "SetCard" c
+     left join "SetTaxonomySource" cs
+       on cs."id" = c."sourceId"
+     left join "SetIngestionJob" cj
+       on cj."id" = cs."ingestionJobId"
      where c."setId" in (${inClause})
+      and (
+        c."sourceId" is null
+        or cs."ingestionJobId" is null
+        or cj."status" = 'APPROVED'
+      )
      group by c."setId"`,
     ...setIds
   );

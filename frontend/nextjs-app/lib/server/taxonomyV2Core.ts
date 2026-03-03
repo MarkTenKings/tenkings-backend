@@ -2,6 +2,7 @@ import {
   prisma,
   type Prisma,
   type SetDatasetType,
+  SetIngestionJobStatus,
 } from "@tenkings/database";
 import {
   buildTaxonomyCanonicalKey,
@@ -121,6 +122,41 @@ function dedupeByKey<T>(items: T[], keyBuilder: (value: T) => string): T[] {
     output.push(item);
   }
   return output;
+}
+
+function toJsonInput(value: unknown): Prisma.InputJsonValue | null {
+  if (value == null) return null;
+  try {
+    return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+  } catch {
+    return null;
+  }
+}
+
+function jsonSignature(value: unknown): string {
+  try {
+    return JSON.stringify(value ?? null);
+  } catch {
+    return "null";
+  }
+}
+
+function publishedTaxonomySourceWhere(): Prisma.SetTaxonomySourceWhereInput {
+  return {
+    OR: [
+      { ingestionJobId: null },
+      { ingestionJob: { status: SetIngestionJobStatus.APPROVED } },
+    ],
+  };
+}
+
+function publishedTaxonomyRecordWhere() {
+  return {
+    OR: [
+      { sourceId: null },
+      { source: { is: publishedTaxonomySourceWhere() } },
+    ],
+  } as const;
 }
 
 async function queueAmbiguity(params: {
@@ -367,11 +403,17 @@ async function upsertCard(params: {
     select: {
       id: true,
       playerName: true,
+      team: true,
+      isRookie: true,
+      metadataJson: true,
       sourceId: true,
     },
   });
 
   const incomingPlayerName = sanitizeTaxonomyText(params.input.playerName) || null;
+  const incomingTeam = sanitizeTaxonomyText(params.input.team) || null;
+  const incomingIsRookie = typeof params.input.isRookie === "boolean" ? params.input.isRookie : null;
+  const incomingMetadata = toJsonInput(params.input.metadata);
 
   if (!existing) {
     await params.tx.setCard.create({
@@ -380,24 +422,54 @@ async function upsertCard(params: {
         programId,
         cardNumber,
         playerName: incomingPlayerName,
+        team: incomingTeam,
+        isRookie: incomingIsRookie,
+        metadataJson: incomingMetadata,
         sourceId: params.sourceId,
       },
     });
     return { created: true, conflict: false, ambiguity: false };
   }
 
-  if (incomingPlayerName && existing.playerName && normalizeLabelKey(existing.playerName) !== normalizeLabelKey(incomingPlayerName)) {
+  const hasPlayerConflict =
+    incomingPlayerName &&
+    existing.playerName &&
+    normalizeLabelKey(existing.playerName) !== normalizeLabelKey(incomingPlayerName);
+  const hasTeamConflict = incomingTeam && existing.team && normalizeLabelKey(existing.team) !== normalizeLabelKey(incomingTeam);
+  const hasRookieConflict =
+    incomingIsRookie != null && existing.isRookie != null && incomingIsRookie !== existing.isRookie;
+  const hasMetadataConflict = Boolean(
+    incomingMetadata && existing.metadataJson && jsonSignature(existing.metadataJson) !== jsonSignature(incomingMetadata)
+  );
+
+  if (hasPlayerConflict || hasTeamConflict || hasRookieConflict || hasMetadataConflict) {
     const existingSourceKind = await getSourceKind(params.tx, existing.sourceId);
     await createConflict({
       tx: params.tx,
       setId: params.setId,
       entityType: TaxonomyEntityType.CARD,
       entityKey: `${params.setId}::${programId}::${cardNumber}`,
-      conflictField: "playerName",
+      conflictField: hasPlayerConflict
+        ? "playerName"
+        : hasTeamConflict
+        ? "team"
+        : hasRookieConflict
+        ? "isRookie"
+        : "metadataJson",
       existingSourceId: existing.sourceId,
       incomingSourceId: params.sourceId,
-      existingValue: { playerName: existing.playerName },
-      incomingValue: { playerName: incomingPlayerName },
+      existingValue: {
+        playerName: existing.playerName,
+        team: existing.team,
+        isRookie: existing.isRookie,
+        metadataJson: existing.metadataJson,
+      },
+      incomingValue: {
+        playerName: incomingPlayerName,
+        team: incomingTeam,
+        isRookie: incomingIsRookie,
+        metadataJson: incomingMetadata,
+      },
       preferredSourceKind: preferredSourceKind({
         existingSourceKind,
         incomingSourceKind: params.sourceKind,
@@ -406,7 +478,13 @@ async function upsertCard(params: {
     return { created: false, conflict: true, ambiguity: false };
   }
 
-  if (!existing.playerName && incomingPlayerName) {
+  const shouldUpdate =
+    (!existing.playerName && incomingPlayerName) ||
+    (!existing.team && incomingTeam) ||
+    (existing.isRookie == null && incomingIsRookie != null) ||
+    (!existing.metadataJson && incomingMetadata);
+
+  if (shouldUpdate) {
     await params.tx.setCard.update({
       where: {
         setId_programId_cardNumber: {
@@ -416,7 +494,10 @@ async function upsertCard(params: {
         },
       },
       data: {
-        playerName: incomingPlayerName,
+        playerName: existing.playerName || incomingPlayerName,
+        team: existing.team || incomingTeam,
+        isRookie: existing.isRookie ?? incomingIsRookie,
+        metadataJson: existing.metadataJson || incomingMetadata,
         sourceId: existing.sourceId ?? params.sourceId,
       },
     });
@@ -543,9 +624,12 @@ async function upsertParallel(params: {
       serialDenominator: true,
       serialText: true,
       finishFamily: true,
+      visualCuesJson: true,
       sourceId: true,
     },
   });
+
+  const incomingVisualCues = toJsonInput(params.input.visualCues);
 
   if (!existing) {
     await params.tx.setParallel.create({
@@ -556,6 +640,7 @@ async function upsertParallel(params: {
         serialDenominator: params.input.serialDenominator ?? null,
         serialText: sanitizeTaxonomyText(params.input.serialText) || null,
         finishFamily: sanitizeTaxonomyText(params.input.finishFamily) || null,
+        visualCuesJson: incomingVisualCues,
         sourceId: params.sourceId,
       },
     });
@@ -571,15 +656,26 @@ async function upsertParallel(params: {
     Boolean(existing.finishFamily) &&
     Boolean(params.input.finishFamily) &&
     normalizeLabelKey(existing.finishFamily ?? "") !== normalizeLabelKey(params.input.finishFamily ?? "");
+  const hasVisualCueConflict = Boolean(
+    existing.visualCuesJson &&
+      incomingVisualCues &&
+      jsonSignature(existing.visualCuesJson) !== jsonSignature(incomingVisualCues)
+  );
 
-  if (hasLabelConflict || hasSerialConflict || hasFinishConflict) {
+  if (hasLabelConflict || hasSerialConflict || hasFinishConflict || hasVisualCueConflict) {
     const existingSourceKind = await getSourceKind(params.tx, existing.sourceId);
     await createConflict({
       tx: params.tx,
       setId: params.setId,
       entityType: TaxonomyEntityType.PARALLEL,
       entityKey: `${params.setId}::${parallelId}`,
-      conflictField: hasLabelConflict ? "label" : hasSerialConflict ? "serialDenominator" : "finishFamily",
+      conflictField: hasLabelConflict
+        ? "label"
+        : hasSerialConflict
+        ? "serialDenominator"
+        : hasFinishConflict
+        ? "finishFamily"
+        : "visualCuesJson",
       existingSourceId: existing.sourceId,
       incomingSourceId: params.sourceId,
       existingValue: {
@@ -587,12 +683,14 @@ async function upsertParallel(params: {
         serialDenominator: existing.serialDenominator,
         serialText: existing.serialText,
         finishFamily: existing.finishFamily,
+        visualCuesJson: existing.visualCuesJson,
       },
       incomingValue: {
         label,
         serialDenominator: params.input.serialDenominator ?? null,
         serialText: sanitizeTaxonomyText(params.input.serialText) || null,
         finishFamily: sanitizeTaxonomyText(params.input.finishFamily) || null,
+        visualCuesJson: incomingVisualCues,
       },
       preferredSourceKind: preferredSourceKind({
         existingSourceKind,
@@ -608,7 +706,8 @@ async function upsertParallel(params: {
   const shouldUpdate =
     (existing.serialDenominator == null && params.input.serialDenominator != null) ||
     (!existing.serialText && nextSerialText) ||
-    (!existing.finishFamily && nextFinishFamily);
+    (!existing.finishFamily && nextFinishFamily) ||
+    (!existing.visualCuesJson && incomingVisualCues);
 
   if (shouldUpdate) {
     await params.tx.setParallel.update({
@@ -622,6 +721,7 @@ async function upsertParallel(params: {
         serialDenominator: existing.serialDenominator ?? params.input.serialDenominator ?? null,
         serialText: existing.serialText || nextSerialText,
         finishFamily: existing.finishFamily || nextFinishFamily,
+        visualCuesJson: existing.visualCuesJson || incomingVisualCues,
         sourceId: existing.sourceId ?? params.sourceId,
       },
     });
@@ -722,6 +822,8 @@ async function upsertOdds(params: {
   if (!oddsText) {
     return { created: false, conflict: false, ambiguity: false };
   }
+  const parsedOddsNumeric = Number(params.input.oddsNumeric);
+  const incomingOddsNumeric = Number.isFinite(parsedOddsNumeric) && parsedOddsNumeric > 0 ? parsedOddsNumeric : null;
 
   const rawProgramLabel = sanitizeTaxonomyText(params.input.programLabel || "");
   const rawParallelLabel = sanitizeTaxonomyText(params.input.parallelLabel || "");
@@ -772,6 +874,7 @@ async function upsertOdds(params: {
     select: {
       id: true,
       oddsText: true,
+      oddsNumeric: true,
       sourceId: true,
     },
   });
@@ -786,30 +889,52 @@ async function upsertOdds(params: {
         formatKey,
         channelKey,
         oddsText,
+        oddsNumeric: incomingOddsNumeric,
         sourceId: params.sourceId,
       },
     });
     return { created: true, conflict: false, ambiguity: false };
   }
 
-  if (normalizeLabelKey(existing.oddsText) !== normalizeLabelKey(oddsText)) {
+  const hasOddsTextConflict = normalizeLabelKey(existing.oddsText) !== normalizeLabelKey(oddsText);
+  const hasOddsNumericConflict =
+    incomingOddsNumeric != null &&
+    existing.oddsNumeric != null &&
+    Number(existing.oddsNumeric) !== Number(incomingOddsNumeric);
+
+  if (hasOddsTextConflict || hasOddsNumericConflict) {
     const existingSourceKind = await getSourceKind(params.tx, existing.sourceId);
     await createConflict({
       tx: params.tx,
       setId: params.setId,
       entityType: TaxonomyEntityType.ODDS_ROW,
       entityKey: `${params.setId}::${oddsKey}`,
-      conflictField: "oddsText",
+      conflictField: hasOddsTextConflict ? "oddsText" : "oddsNumeric",
       existingSourceId: existing.sourceId,
       incomingSourceId: params.sourceId,
-      existingValue: { oddsText: existing.oddsText },
-      incomingValue: { oddsText },
+      existingValue: { oddsText: existing.oddsText, oddsNumeric: existing.oddsNumeric },
+      incomingValue: { oddsText, oddsNumeric: incomingOddsNumeric },
       preferredSourceKind: preferredSourceKind({
         existingSourceKind,
         incomingSourceKind: params.sourceKind,
       }),
     });
     return { created: false, conflict: true, ambiguity: false };
+  }
+
+  if (existing.oddsNumeric == null && incomingOddsNumeric != null) {
+    await params.tx.setOddsByFormat.update({
+      where: {
+        setId_oddsKey: {
+          setId: params.setId,
+          oddsKey,
+        },
+      },
+      data: {
+        oddsNumeric: incomingOddsNumeric,
+        sourceId: existing.sourceId ?? params.sourceId,
+      },
+    });
   }
 
   return { created: false, conflict: false, ambiguity: false };
@@ -1408,19 +1533,21 @@ async function resolveProgramForSet(params: { setId: string; program: string }) 
 
   const programIdCandidate = normalizeProgramId(normalizedProgramInput);
 
-  const direct = await taxonomyDb.setProgram.findUnique({
+  const direct = await taxonomyDb.setProgram.findFirst({
     where: {
-      setId_programId: {
-        setId: params.setId,
-        programId: programIdCandidate,
-      },
+      setId: params.setId,
+      programId: programIdCandidate,
+      ...publishedTaxonomyRecordWhere(),
     },
     select: { programId: true, label: true },
   });
   if (direct) return direct;
 
   const programs = (await taxonomyDb.setProgram.findMany({
-    where: { setId: params.setId },
+    where: {
+      setId: params.setId,
+      ...publishedTaxonomyRecordWhere(),
+    },
     select: { programId: true, label: true },
     take: 200,
   })) as Array<{ programId: string; label: string }>;
@@ -1444,13 +1571,12 @@ async function resolveVariationForSet(params: {
   if (!variationInput) return null;
 
   const variationId = normalizeVariationId(variationInput);
-  const direct = await taxonomyDb.setVariation.findUnique({
+  const direct = await taxonomyDb.setVariation.findFirst({
     where: {
-      setId_programId_variationId: {
-        setId: params.setId,
-        programId: params.programId,
-        variationId,
-      },
+      setId: params.setId,
+      programId: params.programId,
+      variationId,
+      ...publishedTaxonomyRecordWhere(),
     },
     select: { variationId: true, label: true },
   });
@@ -1460,6 +1586,7 @@ async function resolveVariationForSet(params: {
     where: {
       setId: params.setId,
       programId: params.programId,
+      ...publishedTaxonomyRecordWhere(),
     },
     select: { variationId: true, label: true },
     take: 200,
@@ -1496,7 +1623,12 @@ export async function resolveTaxonomyScopeForMatcher(params: {
     };
   }
 
-  const taxonomyCount = await taxonomyDb.setProgram.count({ where: { setId } });
+  const taxonomyCount = await taxonomyDb.setProgram.count({
+    where: {
+      setId,
+      ...publishedTaxonomyRecordWhere(),
+    },
+  });
   if (taxonomyCount < 1) {
     return {
       hasTaxonomy: false,
@@ -1520,6 +1652,7 @@ export async function resolveTaxonomyScopeForMatcher(params: {
       where: {
         setId,
         cardNumber: normalizedCardNumber,
+        ...publishedTaxonomyRecordWhere(),
       },
       select: { programId: true },
     })) as Array<{ programId: string }>;
@@ -1558,6 +1691,7 @@ export async function resolveTaxonomyScopeForMatcher(params: {
       setId,
       ...(effectiveProgramIds ? { programId: { in: effectiveProgramIds } } : {}),
       ...(resolvedVariationId ? { variationId: resolvedVariationId } : {}),
+      ...publishedTaxonomyRecordWhere(),
     },
     select: {
       parallel: {
@@ -1603,7 +1737,12 @@ export async function resolveTaxonomyProgramAndVariation(params: {
     };
   }
 
-  const taxonomyCount = await taxonomyDb.setProgram.count({ where: { setId } });
+  const taxonomyCount = await taxonomyDb.setProgram.count({
+    where: {
+      setId,
+      ...publishedTaxonomyRecordWhere(),
+    },
+  });
   if (taxonomyCount < 1) {
     return {
       setId,
@@ -1652,6 +1791,7 @@ export async function resolveScopedParallelToken(params: {
   const candidateRows = (await taxonomyDb.setParallel.findMany({
     where: {
       setId,
+      ...publishedTaxonomyRecordWhere(),
     },
     select: {
       parallelId: true,
@@ -1686,6 +1826,7 @@ export async function resolveScopedParallelToken(params: {
       programId: params.programId,
       parallelId: match.parallelId,
       ...(params.variationId ? { variationId: params.variationId } : {}),
+      ...publishedTaxonomyRecordWhere(),
     },
     select: { id: true },
   });

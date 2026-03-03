@@ -12,6 +12,9 @@ export type TaxonomyCardInput = {
   programLabel: string;
   cardNumber: string;
   playerName?: string | null;
+  team?: string | null;
+  isRookie?: boolean | null;
+  metadata?: Record<string, unknown> | null;
   rowIndex?: number | null;
 };
 
@@ -27,6 +30,7 @@ export type TaxonomyParallelInput = {
   serialDenominator?: number | null;
   serialText?: string | null;
   finishFamily?: string | null;
+  visualCues?: Record<string, unknown> | null;
   rowIndex?: number | null;
 };
 
@@ -41,6 +45,7 @@ export type TaxonomyScopeInput = {
 
 export type TaxonomyOddsInput = {
   oddsText: string;
+  oddsNumeric?: number | null;
   programLabel?: string | null;
   parallelLabel?: string | null;
   formatKey?: string | null;

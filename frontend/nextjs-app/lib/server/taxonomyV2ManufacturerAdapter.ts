@@ -77,6 +77,8 @@ function inferProgramClass(label: string | null): string | null {
 }
 
 const ODDS_TOKEN_RE = /\b\d+\s*:\s*[\d,]+\b/i;
+const ODDS_RATIO_RE = /^\s*1\s*:\s*([\d,]+(?:\.\d+)?)\s*$/i;
+const ODDS_NUMBER_RE = /^\s*([\d,]+(?:\.\d+)?)\s*$/;
 const PARSER_NOISE_TOKENS = [
   "glyphslib",
   "msfontlib",
@@ -88,6 +90,22 @@ const PARSER_NOISE_TOKENS = [
   "cyrl",
   "latn",
   "greek",
+] as const;
+const BORDER_COLOR_TOKENS = [
+  "gold",
+  "silver",
+  "red",
+  "blue",
+  "green",
+  "purple",
+  "orange",
+  "black",
+  "white",
+  "pink",
+  "teal",
+  "aqua",
+  "bronze",
+  "yellow",
 ] as const;
 
 function extractOddsToken(value: unknown): string {
@@ -114,6 +132,59 @@ function looksLikeOddsRow(record: RowRecord) {
   if (serialText || parseSerialDenominator(serialText) != null) return true;
   const format = firstText(record, ["format", "packType", "boxType", "productFormat"]);
   return Boolean(format && (record.odds || record.oddsInfo || record.packOdds));
+}
+
+function coerceBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  const text = sanitizeTaxonomyText(value).toLowerCase();
+  if (!text) return null;
+  if (["1", "true", "yes", "y", "rookie", "rc"].includes(text)) return true;
+  if (["0", "false", "no", "n"].includes(text)) return false;
+  return null;
+}
+
+function parseOddsNumeric(value: unknown, oddsText: string | null): number | null {
+  const direct = Number(value);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  const text = sanitizeTaxonomyText(value || oddsText || "");
+  if (!text || text === "-") return null;
+  const ratio = text.match(ODDS_RATIO_RE);
+  if (ratio?.[1]) {
+    const parsed = Number(ratio[1].replace(/,/g, ""));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  const raw = text.match(ODDS_NUMBER_RE);
+  if (raw?.[1]) {
+    const parsed = Number(raw[1].replace(/,/g, ""));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+  return null;
+}
+
+function buildVisualCues(params: {
+  parallelLabel: string;
+  finishFamily: string | null;
+  serialDenominator: number | null;
+  serialText: string | null;
+}): Record<string, unknown> | null {
+  const cues: Record<string, unknown> = {};
+  const label = sanitizeTaxonomyText(params.parallelLabel).toLowerCase();
+  if (params.finishFamily) {
+    cues.finish_family = sanitizeTaxonomyText(params.finishFamily).toLowerCase();
+    cues.foil_type = sanitizeTaxonomyText(params.finishFamily).toLowerCase();
+  }
+  if (params.serialDenominator != null) {
+    cues.serial_denominator = params.serialDenominator;
+    cues.serial_location = "back";
+  }
+  if (params.serialText) {
+    cues.serial_text = sanitizeTaxonomyText(params.serialText);
+  }
+  const borderColor = BORDER_COLOR_TOKENS.find((token) => label.includes(token));
+  if (borderColor) {
+    cues.border_color = borderColor;
+  }
+  return Object.keys(cues).length > 0 ? cues : null;
 }
 
 function inferArtifactType(params: {
@@ -226,6 +297,13 @@ export function buildManufacturerTaxonomyAdapterOutput(
     const rawParallel = normalizeParallelLabel(firstText(row, ["parallel", "parallelId", "parallel_id", "parallelName", "parallelType"]));
     const rawVariation = firstText(row, ["variation", "variationName", "variant", "variationType"]);
     const playerName = firstText(row, ["playerName", "player", "playerSeed", "name"]);
+    const team = firstText(row, ["team", "teamName", "team_name", "club", "franchise"]) || null;
+    const isRookie = coerceBoolean(row.isRookie ?? row.rookie ?? row.rookieFlag ?? row.rc);
+    const metadata =
+      asRecord(row.metadataJson) ??
+      asRecord(row.metadata) ??
+      asRecord(row.cardMetadata) ??
+      null;
     const codePrefix = firstText(row, ["codePrefix", "prefix", "programPrefix", "setPrefix"]) || null;
 
     const oddsText =
@@ -247,6 +325,12 @@ export function buildManufacturerTaxonomyAdapterOutput(
     const variationLabel = sanitizeTaxonomyText(rawVariation);
     const nextParallelLabel = sanitizeTaxonomyText(rawParallel);
     const parallelLabel = looksLikeParserNoiseText(nextParallelLabel) ? "" : nextParallelLabel;
+    const visualCues = buildVisualCues({
+      parallelLabel,
+      finishFamily,
+      serialDenominator,
+      serialText,
+    });
 
     if (!isOddsDataset && (programLabel || cardNumber || parallelLabel || variationLabel)) {
       hasChecklistSignals = true;
@@ -270,6 +354,9 @@ export function buildManufacturerTaxonomyAdapterOutput(
           programLabel,
           cardNumber,
           playerName: playerName || null,
+          team,
+          isRookie,
+          metadata,
           rowIndex: index,
         });
       } else {
@@ -310,6 +397,7 @@ export function buildManufacturerTaxonomyAdapterOutput(
         serialDenominator,
         serialText,
         finishFamily,
+        visualCues,
         rowIndex: index,
       });
     }
@@ -344,6 +432,7 @@ export function buildManufacturerTaxonomyAdapterOutput(
     }
 
     const oddsRowText = sanitizeTaxonomyText(oddsText || serialText || "");
+    const oddsNumeric = parseOddsNumeric(row.oddsNumeric, oddsRowText || null);
     if (oddsRowText) {
       const oddsKey = [
         programLabel.toLowerCase(),
@@ -354,6 +443,7 @@ export function buildManufacturerTaxonomyAdapterOutput(
       ].join("::");
       addUniqueByKey(oddsRows, oddsSeen, oddsKey, {
         oddsText: oddsRowText,
+        oddsNumeric,
         programLabel: programLabel || null,
         parallelLabel: parallelLabel || null,
         formatKey,

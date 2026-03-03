@@ -789,6 +789,9 @@ model SetCard {
   programId  String
   cardNumber String
   playerName String?
+  team       String?
+  isRookie   Boolean?
+  metadataJson Json?
   sourceId   String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -798,6 +801,7 @@ model SetCard {
 
   @@unique([setId, programId, cardNumber])
   @@index([setId, cardNumber])
+  @@index([setId, team])
 }
 
 model SetVariation {
@@ -827,6 +831,7 @@ model SetParallel {
   serialDenominator Int?
   serialText        String?
   finishFamily      String?
+  visualCuesJson    Json?
   sourceId          String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -871,6 +876,7 @@ model SetOddsByFormat {
   formatKey  String?
   channelKey String?
   oddsText   String
+  oddsNumeric Float?
   sourceId   String?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt

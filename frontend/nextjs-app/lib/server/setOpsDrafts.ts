@@ -48,9 +48,16 @@ export type SetOpsTaxonomyIngestRow = {
   parallel: string;
   playerName: string;
   playerSeed: string;
+  team?: string | null;
+  isRookie?: boolean | null;
+  metadataJson?: Record<string, unknown> | null;
   odds: string | null;
+  oddsNumeric?: number | null;
   serial: string | null;
+  finishFamily?: string | null;
+  visualCues?: Record<string, unknown> | null;
   format: string | null;
+  channel?: string | null;
   sourceUrl: string | null;
 };
 
@@ -89,7 +96,15 @@ const rowSignalFields = [
   "playerSeed",
   "playerName",
   "player",
+  "team",
+  "teamName",
+  "team_name",
+  "rookie",
+  "isRookie",
+  "parsedProgram",
+  "parsedParallel",
   "odds",
+  "oddsNumeric",
   "oddsInfo",
   "packOdds",
   "serial",
@@ -113,7 +128,7 @@ function isEffectivelyEmptyDraftRow(record: Record<string, unknown>) {
   });
 }
 
-function parseRawRows(rawPayload: unknown): Record<string, unknown>[] {
+function parseRawRows(rawPayload: unknown, datasetType: SetDatasetType): Record<string, unknown>[] {
   let input = rawPayload;
   if (typeof input === "string") {
     try {
@@ -129,6 +144,99 @@ function parseRawRows(rawPayload: unknown): Record<string, unknown>[] {
 
   const record = asRecord(input);
   if (!record) return [];
+
+  const structuredPrograms = Array.isArray(record.programs) ? record.programs : null;
+  const structuredOdds = Array.isArray(record.odds) ? record.odds : null;
+  if (structuredPrograms || structuredOdds) {
+    const includePrograms = datasetType === SetDatasetType.PLAYER_WORKSHEET;
+    const includeOdds = datasetType === SetDatasetType.PARALLEL_DB;
+    const rows: Record<string, unknown>[] = [];
+    const sourceUrl = firstString(record, ["sourceUrl", "url", "source"]) || null;
+    const rootSetId = firstString(record, ["setId", "set", "setName", "set_name"]) || null;
+    const formatMap = new Map<string, { formatKey: string | null; channelKey: string | null }>();
+    if (Array.isArray(record.formats)) {
+      for (const value of record.formats) {
+        const entry = asRecord(value);
+        if (!entry) continue;
+        const key = firstString(entry, ["formatKey", "columnHeader", "key", "name"]);
+        if (!key) continue;
+        formatMap.set(key, {
+          formatKey: firstString(entry, ["formatKey", "columnHeader", "key", "name"]) || null,
+          channelKey: firstString(entry, ["channelKey", "channel"]) || null,
+        });
+      }
+    }
+
+    if (structuredPrograms && includePrograms) {
+      for (const programValue of structuredPrograms) {
+        const program = asRecord(programValue);
+        if (!program) continue;
+        const programLabel = firstString(program, ["label", "program", "programLabel", "subset", "cardType"]);
+        const cards = Array.isArray(program.cards) ? program.cards : [];
+        for (const cardValue of cards) {
+          const card = asRecord(cardValue);
+          if (!card) continue;
+          rows.push({
+            setId: firstString(card, ["setId", "set", "setName", "set_name"]) || rootSetId,
+            cardNumber: firstString(card, ["cardNumber", "card_number", "cardNo", "number", "card"]),
+            playerName: firstString(card, ["playerName", "player", "name"]),
+            playerSeed: firstString(card, ["playerSeed", "playerName", "player", "name"]),
+            team: firstString(card, ["team", "teamName", "team_name"]),
+            isRookie: card.isRookie ?? card.rookie ?? card.rookieFlag ?? null,
+            metadataJson: asRecord(card.metadataJson) ?? asRecord(card.metadata) ?? null,
+            cardType: programLabel,
+            program: programLabel,
+            programLabel,
+            sourceUrl,
+          });
+        }
+      }
+    }
+
+    if (structuredOdds && includeOdds) {
+      for (const oddValue of structuredOdds) {
+        const odd = asRecord(oddValue);
+        if (!odd) continue;
+        const parsedProgram = firstString(odd, ["parsedProgram", "program", "programLabel", "cardType"]);
+        const parsedParallel = firstString(odd, ["parsedParallel", "parallel", "parallelId", "parallel_id"]);
+        const fallbackCardType = firstString(odd, ["cardType", "card_type"]);
+        const serialDenominator = Number(odd.serialDenominator);
+        const serialText =
+          firstString(odd, ["serialText", "serial", "serial_number"]) ||
+          (Number.isFinite(serialDenominator) && serialDenominator > 0 ? `/${serialDenominator}` : "");
+        const finishFamily = firstString(odd, ["finishFamily", "finish", "foil", "surface"]) || null;
+        const visualCues = asRecord(odd.visualCues) ?? asRecord(odd.visualCuesJson) ?? null;
+        const values = asRecord(odd.values);
+        if (values) {
+          for (const [formatRaw, oddsValue] of Object.entries(values)) {
+            const mapped = formatMap.get(formatRaw) ?? null;
+            const oddsRecord = asRecord(oddsValue);
+            const oddsText =
+              firstString(oddsRecord ?? {}, ["text", "odds", "oddsText"]) || (oddsRecord ? "" : String(oddsValue ?? "").trim());
+            const numericRaw = oddsRecord?.numeric ?? oddsRecord?.oddsNumeric ?? null;
+            const oddsNumeric = Number(numericRaw);
+            rows.push({
+              setId: rootSetId,
+              cardType: parsedProgram || fallbackCardType,
+              program: parsedProgram || fallbackCardType,
+              programLabel: parsedProgram || fallbackCardType,
+              parallel: parsedParallel || fallbackCardType,
+              odds: oddsText,
+              oddsNumeric: Number.isFinite(oddsNumeric) ? oddsNumeric : null,
+              serial: serialText || null,
+              finishFamily,
+              visualCues: visualCues ?? null,
+              format: mapped?.formatKey ?? formatRaw,
+              channel: mapped?.channelKey ?? (firstString(oddsRecord ?? {}, ["channelKey", "channel"]) || null),
+              sourceUrl,
+            });
+          }
+        }
+      }
+    }
+
+    return rows;
+  }
 
   const nested =
     (Array.isArray(record.rows) ? record.rows : null) ??
@@ -165,8 +273,12 @@ function normalizeOddsValue(value: string | null | undefined) {
   const text = String(value ?? "").trim();
   if (!text) return null;
   const match = text.match(/\d+\s*:\s*[\d,]+/);
-  if (!match) return null;
-  return match[0].replace(/\s+/g, "");
+  if (match) {
+    return match[0].replace(/\s+/g, "");
+  }
+  const numeric = text.match(/^\d[\d,]*(?:\.\d+)?$/);
+  if (!numeric) return null;
+  return numeric[0].replace(/,/g, "");
 }
 
 export function normalizeDraftRows(params: {
@@ -175,7 +287,7 @@ export function normalizeDraftRows(params: {
   rawPayload: unknown;
 }) {
   const fallbackSetId = normalizeSetLabel(params.fallbackSetId);
-  const rows = parseRawRows(params.rawPayload).filter((row) => !isEffectivelyEmptyDraftRow(row));
+  const rows = parseRawRows(params.rawPayload, params.datasetType).filter((row) => !isEffectivelyEmptyDraftRow(row));
   const seenKeys = new Set<string>();
 
   const normalizedRows = rows.map((raw, index): SetOpsDraftRow => {
@@ -307,9 +419,25 @@ export function buildTaxonomyIngestRows(rows: SetOpsDraftRow[]): SetOpsTaxonomyI
       parallel: row.parallel,
       playerName: row.playerSeed,
       playerSeed: row.playerSeed,
+      team: firstString(row.raw, ["team", "teamName", "team_name"]) || null,
+      isRookie:
+        typeof row.raw.isRookie === "boolean"
+          ? row.raw.isRookie
+          : typeof row.raw.rookie === "boolean"
+          ? row.raw.rookie
+          : typeof row.raw.isRookie === "string"
+          ? ["true", "1", "yes", "rookie", "rc"].includes(row.raw.isRookie.toLowerCase())
+          : typeof row.raw.rookie === "string"
+          ? ["true", "1", "yes", "rookie", "rc"].includes(row.raw.rookie.toLowerCase())
+          : null,
+      metadataJson: asRecord(row.raw.metadataJson) ?? asRecord(row.raw.metadata) ?? asRecord(row.raw.cardMetadata) ?? null,
       odds: row.odds,
+      oddsNumeric: Number.isFinite(Number(row.raw.oddsNumeric)) ? Number(row.raw.oddsNumeric) : null,
       serial: row.serial,
+      finishFamily: firstString(row.raw, ["finishFamily", "finish", "foil", "surface"]) || null,
+      visualCues: asRecord(row.raw.visualCues) ?? asRecord(row.raw.visualCuesJson) ?? null,
       format: row.format,
+      channel: firstString(row.raw, ["channel", "channelKey"]) || null,
       sourceUrl: row.sourceUrl,
     }));
 }
