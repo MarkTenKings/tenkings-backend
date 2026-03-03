@@ -1079,14 +1079,10 @@ export default function SetOpsReviewPage() {
     session?.token,
   ]);
 
-  const seedOddsReferenceImages = useCallback(async () => {
+  const seedReferenceImagesForDataset = useCallback(async (targetDatasetType: DatasetType, datasetLabel: string) => {
     if (!session?.token || !isAdmin || !selectedSetId) return;
     if (!canApprove) {
       setError("Set Ops approver role required");
-      return;
-    }
-    if (datasetType !== "PARALLEL_DB") {
-      setError("Select dataset type ODDS LIST before running parallel/odds reference seeding.");
       return;
     }
 
@@ -1097,9 +1093,9 @@ export default function SetOpsReviewPage() {
     try {
       const requestBody: Record<string, unknown> = {
         setId: selectedSetId,
-        datasetType: "PARALLEL_DB",
+        datasetType: targetDatasetType,
       };
-      if (latestApprovedVersionId) {
+      if (latestApprovedVersionId && datasetType === targetDatasetType) {
         requestBody.draftVersionId = latestApprovedVersionId;
       }
 
@@ -1128,16 +1124,16 @@ export default function SetOpsReviewPage() {
       const summary = payload.summary;
       if (summary.failed > 0) {
         setStatus(
-          `Reference seed completed with partial failures (${summary.processed}/${summary.targetCount}, inserted=${summary.inserted}, skipped=${summary.skipped}, failed=${summary.failed}).`
+          `${datasetLabel} reference seed completed with partial failures (${summary.processed}/${summary.targetCount}, inserted=${summary.inserted}, skipped=${summary.skipped}, failed=${summary.failed}).`
         );
       } else {
         setStatus(
-          `Reference seed complete (${summary.processed}/${summary.targetCount}, inserted=${summary.inserted}, skipped=${summary.skipped}).`
+          `${datasetLabel} reference seed complete (${summary.processed}/${summary.targetCount}, inserted=${summary.inserted}, skipped=${summary.skipped}).`
         );
       }
       await fetchReferenceStatus(selectedSetId);
     } catch (seedError) {
-      setError(seedError instanceof Error ? seedError.message : "Failed to seed reference images");
+      setError(seedError instanceof Error ? seedError.message : `Failed to seed ${datasetLabel} references`);
     } finally {
       setBusy(false);
     }
@@ -1839,12 +1835,20 @@ export default function SetOpsReviewPage() {
               onClick={() => void startSeedRun()}
               className="h-10 rounded-xl border border-sky-400/50 bg-sky-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-sky-100 transition hover:bg-sky-500/30 disabled:opacity-60"
             >
-              Start Seed Run
+              Sync Set Variant Records
             </button>
             <button
               type="button"
-              disabled={busy || !canApprove || !selectedSetId || datasetType !== "PARALLEL_DB"}
-              onClick={() => void seedOddsReferenceImages()}
+              disabled={busy || !canApprove || !selectedSetId}
+              onClick={() => void seedReferenceImagesForDataset("PLAYER_WORKSHEET", "SET CHECKLIST")}
+              className="h-10 rounded-xl border border-amber-400/50 bg-amber-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-amber-100 transition hover:bg-amber-500/30 disabled:opacity-60"
+            >
+              Seed SET CHECKLIST References
+            </button>
+            <button
+              type="button"
+              disabled={busy || !canApprove || !selectedSetId}
+              onClick={() => void seedReferenceImagesForDataset("PARALLEL_DB", "ODDS LIST")}
               className="h-10 rounded-xl border border-emerald-400/50 bg-emerald-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-60"
             >
               Seed ODDS LIST References
@@ -1871,12 +1875,9 @@ export default function SetOpsReviewPage() {
               Open Reference QA
             </Link>
           </div>
-          {datasetType !== "PARALLEL_DB" && (
-            <p className="mt-3 text-xs text-amber-200">
-              Switch to dataset type <span className="font-semibold">ODDS LIST</span> in Step 2 to seed parallel/odds
-              reference images from Set Ops.
-            </p>
-          )}
+          <p className="mt-3 text-xs text-slate-300">
+            Step order: sync set variant records first, then seed SET CHECKLIST and ODDS LIST references.
+          </p>
 
           {selectedSetId && (
             <p className="mt-3 text-xs text-slate-300">

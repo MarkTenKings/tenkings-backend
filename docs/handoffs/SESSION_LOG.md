@@ -5734,3 +5734,27 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
 - Backend matcher/reference APIs and image seeder internals were not modified.
+
+## 2026-03-03 - Set Ops Review Reference Seeding Parity (SET CHECKLIST + ODDS LIST)
+
+### Summary
+- Updated `/admin/set-ops-review` Step 3 to support SerpApi/eBay reference seeding for both dataset workflows from the same screen:
+  - `Seed SET CHECKLIST References` (`PLAYER_WORKSHEET`)
+  - `Seed ODDS LIST References` (`PARALLEL_DB`)
+- Replaced ODDS-only client guard with a shared dataset-aware reference seed handler.
+- Renamed seed-job button label from `Start Seed Run` to `Sync Set Variant Records` for clearer purpose.
+- Updated Step 3 helper copy to clarify execution order: sync variant records first, then seed references for both datasets.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx` passed.
+- `pnpm --filter @tenkings/shared test` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Backend matcher/reference APIs and image seeder internals were not modified.
