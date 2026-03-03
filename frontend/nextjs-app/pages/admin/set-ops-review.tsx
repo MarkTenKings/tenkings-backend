@@ -94,26 +94,9 @@ type AccessResponse =
       message: string;
     };
 
-type DiscoveryResult = {
-  id: string;
-  title: string;
-  url: string;
-  snippet: string;
-  provider: string;
-  domain: string;
-  setIdGuess: string;
-  score: number;
-  discoveredAt: string;
-};
-
-type ReviewStepId = "source-intake" | "ingestion-queue" | "draft-approval" | "seed-monitor";
+type ReviewStepId = "ingestion-queue" | "draft-approval" | "seed-monitor";
 
 const REVIEW_STEPS: Array<{ id: ReviewStepId; label: string; description: string }> = [
-  {
-    id: "source-intake",
-    label: "Source Intake",
-    description: "Discover sources and import URL/file payloads.",
-  },
   {
     id: "ingestion-queue",
     label: "Ingestion Queue",
@@ -295,22 +278,6 @@ function estimateRowCount(value: unknown): number {
   return 0;
 }
 
-function buildSetIdFromDiscoveryInputs(params: {
-  year: string;
-  manufacturer: string;
-  sport: string;
-  query: string;
-}) {
-  const normalize = (value: string) => value.trim().replace(/\s+/g, " ");
-  const year = normalize(params.year);
-  const manufacturer = normalize(params.manufacturer);
-  const sport = normalize(params.sport);
-  const query = normalize(params.query);
-  const genericQuery = /^(cards?|trading cards?|checklist|set|sets)$/i.test(query);
-  const queryPart = query && !genericQuery ? query : "";
-  return [year, manufacturer, sport, queryPart].filter(Boolean).join(" ");
-}
-
 const combinedDatasetImportOrder: DatasetType[] = ["PARALLEL_DB", "PLAYER_WORKSHEET"];
 
 function expandDatasetMode(mode: CombinedDatasetMode): DatasetType[] {
@@ -355,15 +322,6 @@ export default function SetOpsReviewPage() {
   const [payloadFileName, setPayloadFileName] = useState<string | null>(null);
   const [payloadRowCount, setPayloadRowCount] = useState<number>(0);
   const [payloadLoading, setPayloadLoading] = useState(false);
-  const [discoveryYearInput, setDiscoveryYearInput] = useState(String(new Date().getFullYear()));
-  const [discoveryManufacturerInput, setDiscoveryManufacturerInput] = useState("");
-  const [discoverySportInput, setDiscoverySportInput] = useState("");
-  const [discoveryQueryInput, setDiscoveryQueryInput] = useState("");
-  const [discoverySetIdOverrideInput, setDiscoverySetIdOverrideInput] = useState("");
-  const [discoverySourceUrlInput, setDiscoverySourceUrlInput] = useState("");
-  const [discoveryBusy, setDiscoveryBusy] = useState(false);
-  const [discoveryResults, setDiscoveryResults] = useState<DiscoveryResult[]>([]);
-  const [discoveryImportBusyId, setDiscoveryImportBusyId] = useState<string | null>(null);
 
   const [ingestionJobs, setIngestionJobs] = useState<IngestionJob[]>([]);
   const [selectedJobId, setSelectedJobId] = useState<string>("");
@@ -382,7 +340,7 @@ export default function SetOpsReviewPage() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<SetOpsPermissions | null>(null);
-  const [activeStep, setActiveStep] = useState<ReviewStepId>("source-intake");
+  const [activeStep, setActiveStep] = useState<ReviewStepId>("ingestion-queue");
 
   const selectedJob = useMemo(
     () => ingestionJobs.find((job) => job.id === selectedJobId) ?? null,
@@ -390,16 +348,6 @@ export default function SetOpsReviewPage() {
   );
   const canReview = Boolean(permissions?.reviewer);
   const canApprove = Boolean(permissions?.approver);
-  const discoverySetIdSuggestion = useMemo(
-    () =>
-      buildSetIdFromDiscoveryInputs({
-        year: discoveryYearInput,
-        manufacturer: discoveryManufacturerInput,
-        sport: discoverySportInput,
-        query: discoveryQueryInput,
-      }),
-    [discoveryManufacturerInput, discoveryQueryInput, discoverySportInput, discoveryYearInput]
-  );
 
   const blockingErrorCount = useMemo(
     () => editableRows.flatMap((row) => row.errors).filter((issue) => issue.blocking).length,
@@ -409,23 +357,11 @@ export default function SetOpsReviewPage() {
 
   const stepCompletion = useMemo<Record<ReviewStepId, boolean>>(
     () => ({
-      "source-intake":
-        discoveryResults.length > 0 || Boolean(discoverySourceUrlInput.trim()) || Boolean(discoverySetIdOverrideInput.trim()),
       "ingestion-queue": ingestionJobs.length > 0 || Boolean(selectedJobId),
       "draft-approval": Boolean(latestApprovedVersionId || (latestVersion?.id && blockingErrorCount === 0)),
       "seed-monitor": seedJobs.some((job) => job.status === "COMPLETE"),
     }),
-    [
-      blockingErrorCount,
-      discoveryResults.length,
-      discoverySetIdOverrideInput,
-      discoverySourceUrlInput,
-      ingestionJobs.length,
-      latestApprovedVersionId,
-      latestVersion?.id,
-      seedJobs,
-      selectedJobId,
-    ]
+    [blockingErrorCount, ingestionJobs.length, latestApprovedVersionId, latestVersion?.id, seedJobs, selectedJobId]
   );
 
   const activeStepIndex = useMemo(() => REVIEW_STEPS.findIndex((step) => step.id === activeStep), [activeStep]);
@@ -847,287 +783,6 @@ export default function SetOpsReviewPage() {
       }
     },
     [adminHeaders, canReview, queueDatasetMode, setIdInput]
-  );
-
-  const runDiscoverySearch = useCallback(
-    async (event?: FormEvent<HTMLFormElement>) => {
-      event?.preventDefault();
-      if (!session?.token || !isAdmin) return;
-      if (!canReview) {
-        setError("Set Ops reviewer role required");
-        return;
-      }
-
-      setDiscoveryBusy(true);
-      setError(null);
-      setStatus(null);
-
-      try {
-        const params = new URLSearchParams({ limit: "20" });
-        if (discoveryYearInput.trim()) params.set("year", discoveryYearInput.trim());
-        if (discoveryManufacturerInput.trim()) params.set("manufacturer", discoveryManufacturerInput.trim());
-        if (discoverySportInput.trim()) params.set("sport", discoverySportInput.trim());
-        if (discoveryQueryInput.trim()) params.set("q", discoveryQueryInput.trim());
-
-        const response = await fetch(`/api/admin/set-ops/discovery/search?${params.toString()}`, {
-          headers: adminHeaders,
-        });
-        const payload = (await response.json().catch(() => ({}))) as {
-          message?: string;
-          results?: DiscoveryResult[];
-          total?: number;
-        };
-        if (!response.ok) {
-          throw new Error(payload.message ?? "Failed to search online set sources");
-        }
-
-        const nextResults = payload.results ?? [];
-        setDiscoveryResults(nextResults);
-        setDiscoverySetIdOverrideInput(discoverySetIdSuggestion || nextResults[0]?.setIdGuess || "");
-        setDiscoverySourceUrlInput(nextResults[0]?.url || "");
-        setStatus(`Found ${payload.total ?? nextResults.length} source candidates.`);
-      } catch (searchError) {
-        setDiscoveryResults([]);
-        setError(searchError instanceof Error ? searchError.message : "Failed to search online set sources");
-      } finally {
-        setDiscoveryBusy(false);
-      }
-    },
-    [
-      adminHeaders,
-      canReview,
-      discoveryManufacturerInput,
-      discoveryQueryInput,
-      discoverySetIdSuggestion,
-      discoverySportInput,
-      discoveryYearInput,
-      isAdmin,
-      session?.token,
-    ]
-  );
-
-  const importDiscoveredResult = useCallback(
-    async (result: DiscoveryResult, datasetMode: CombinedDatasetMode) => {
-      if (!session?.token || !isAdmin) return;
-      if (!canReview) {
-        setError("Set Ops reviewer role required");
-        return;
-      }
-
-      setDiscoveryImportBusyId(result.id);
-      setError(null);
-      setStatus(null);
-
-      try {
-        const datasetPlan = expandDatasetMode(datasetMode);
-        const requestedSetId =
-          discoverySetIdOverrideInput.trim() || discoverySetIdSuggestion || result.setIdGuess || undefined;
-        const importedJobs: IngestionJob[] = [];
-        let totalRows = 0;
-
-        for (const datasetTypeForImport of datasetPlan) {
-          const response = await fetch("/api/admin/set-ops/discovery/import", {
-            method: "POST",
-            headers: {
-              ...adminHeaders,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              setId: requestedSetId,
-              datasetType: datasetTypeForImport,
-              sourceUrl: result.url,
-              sourceProvider: result.provider,
-              sourceTitle: result.title,
-              parserVersion: `source-discovery-v1`,
-              discoveryQuery: {
-                year: discoveryYearInput.trim() || null,
-                manufacturer: discoveryManufacturerInput.trim() || null,
-                sport: discoverySportInput.trim() || null,
-                query: discoveryQueryInput.trim() || null,
-                datasetMode,
-              },
-            }),
-          });
-          const payload = (await response.json().catch(() => ({}))) as {
-            message?: string;
-            job?: IngestionJob;
-            preview?: { rowCount?: number; setId?: string };
-          };
-          if (!response.ok || !payload.job) {
-            if (importedJobs.length > 0) {
-              setStatus(
-                `Imported ${importedJobs.length} of ${datasetPlan.length} datasets before failure (${importedJobs
-                  .map((job) => `${job.datasetType}:${job.id.slice(0, 8)}`)
-                  .join(", ")}).`
-              );
-            }
-            throw new Error(payload.message ?? "Failed to import discovered source");
-          }
-          importedJobs.push(payload.job);
-          totalRows += Number(payload.preview?.rowCount ?? 0);
-        }
-
-        await fetchIngestionJobs();
-        const latestJob = importedJobs[importedJobs.length - 1];
-        if (latestJob) {
-          setSelectedJobId(latestJob.id);
-          setSelectedSetId(latestJob.setId);
-          setDatasetType(latestJob.datasetType as DatasetType);
-          setQueueDatasetMode(latestJob.datasetType as CombinedDatasetMode);
-          setSetIdInput(latestJob.setId);
-          setSourceUrlInput(latestJob.sourceUrl ?? result.url);
-          setDiscoverySourceUrlInput(latestJob.sourceUrl ?? result.url);
-        }
-
-        if (importedJobs.length === 1) {
-          setStatus(
-            `Imported ${totalRows.toLocaleString()} rows from ${result.provider} and queued ingestion job ${importedJobs[0]?.id}.`
-          );
-        } else {
-          setStatus(
-            `Imported ${totalRows.toLocaleString()} rows from ${result.provider} and queued ${importedJobs.length} jobs (${importedJobs
-              .map((job) => `${job.datasetType}:${job.id.slice(0, 8)}`)
-              .join(", ")}).`
-          );
-        }
-        setActiveStepWithUrl("ingestion-queue");
-      } catch (importError) {
-        setError(importError instanceof Error ? importError.message : "Failed to import discovered source");
-      } finally {
-        setDiscoveryImportBusyId(null);
-      }
-    },
-    [
-      adminHeaders,
-      canReview,
-      discoveryManufacturerInput,
-      discoveryQueryInput,
-      discoverySetIdOverrideInput,
-      discoverySetIdSuggestion,
-      discoverySportInput,
-      discoveryYearInput,
-      fetchIngestionJobs,
-      isAdmin,
-      session?.token,
-      setActiveStepWithUrl,
-    ]
-  );
-
-  const importDirectSourceUrl = useCallback(
-    async (datasetMode: CombinedDatasetMode) => {
-      if (!session?.token || !isAdmin) return;
-      if (!canReview) {
-        setError("Set Ops reviewer role required");
-        return;
-      }
-      const sourceUrl = discoverySourceUrlInput.trim();
-      if (!sourceUrl) {
-        setError("Paste a source URL before import.");
-        return;
-      }
-      if (!/^https?:\/\//i.test(sourceUrl)) {
-        setError("Source URL must start with http:// or https://");
-        return;
-      }
-
-      const busyId = `direct:${datasetMode}`;
-      setDiscoveryImportBusyId(busyId);
-      setError(null);
-      setStatus(null);
-
-      try {
-        const datasetPlan = expandDatasetMode(datasetMode);
-        const requestedSetId = discoverySetIdOverrideInput.trim() || discoverySetIdSuggestion || undefined;
-        const importedJobs: IngestionJob[] = [];
-        let totalRows = 0;
-
-        for (const datasetTypeForImport of datasetPlan) {
-          const response = await fetch("/api/admin/set-ops/discovery/import", {
-            method: "POST",
-            headers: {
-              ...adminHeaders,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              setId: requestedSetId,
-              datasetType: datasetTypeForImport,
-              sourceUrl,
-              sourceProvider: "MANUAL_SOURCE_URL",
-              sourceTitle: requestedSetId || sourceUrl,
-              parserVersion: "source-discovery-v1",
-              discoveryQuery: {
-                year: discoveryYearInput.trim() || null,
-                manufacturer: discoveryManufacturerInput.trim() || null,
-                sport: discoverySportInput.trim() || null,
-                query: discoveryQueryInput.trim() || null,
-                datasetMode,
-              },
-            }),
-          });
-
-          const payload = (await response.json().catch(() => ({}))) as {
-            message?: string;
-            job?: IngestionJob;
-            preview?: { rowCount?: number };
-          };
-          if (!response.ok || !payload.job) {
-            if (importedJobs.length > 0) {
-              setStatus(
-                `Imported ${importedJobs.length} of ${datasetPlan.length} datasets before failure (${importedJobs
-                  .map((job) => `${job.datasetType}:${job.id.slice(0, 8)}`)
-                  .join(", ")}).`
-              );
-            }
-            throw new Error(payload.message ?? "Failed to import source URL");
-          }
-          importedJobs.push(payload.job);
-          totalRows += Number(payload.preview?.rowCount ?? 0);
-        }
-
-        await fetchIngestionJobs();
-        const latestJob = importedJobs[importedJobs.length - 1];
-        if (latestJob) {
-          setSelectedJobId(latestJob.id);
-          setSelectedSetId(latestJob.setId);
-          setDatasetType(latestJob.datasetType as DatasetType);
-          setQueueDatasetMode(latestJob.datasetType as CombinedDatasetMode);
-          setSetIdInput(latestJob.setId);
-          setSourceUrlInput(latestJob.sourceUrl ?? sourceUrl);
-        }
-
-        if (importedJobs.length === 1) {
-          setStatus(
-            `Imported ${totalRows.toLocaleString()} rows from direct URL and queued ingestion job ${importedJobs[0]?.id}.`
-          );
-        } else {
-          setStatus(
-            `Imported ${totalRows.toLocaleString()} rows from direct URL and queued ${importedJobs.length} jobs (${importedJobs
-              .map((job) => `${job.datasetType}:${job.id.slice(0, 8)}`)
-              .join(", ")}).`
-          );
-        }
-        setActiveStepWithUrl("ingestion-queue");
-      } catch (importError) {
-        setError(importError instanceof Error ? importError.message : "Failed to import source URL");
-      } finally {
-        setDiscoveryImportBusyId(null);
-      }
-    },
-    [
-      adminHeaders,
-      canReview,
-      discoveryManufacturerInput,
-      discoveryQueryInput,
-      discoverySetIdOverrideInput,
-      discoverySetIdSuggestion,
-      discoverySourceUrlInput,
-      discoverySportInput,
-      discoveryYearInput,
-      fetchIngestionJobs,
-      isAdmin,
-      session?.token,
-      setActiveStepWithUrl,
-    ]
   );
 
   const buildDraftFromJob = useCallback(async () => {
@@ -1556,7 +1211,7 @@ export default function SetOpsReviewPage() {
           <p className="text-xs uppercase tracking-[0.3em] text-violet-300">Set Ops</p>
           <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Ingest & Draft Workspace</h1>
           <p className="max-w-3xl text-sm text-slate-300">
-            Guided stepper flow: source intake, ingestion queue, draft approval, then seed monitor. Existing APIs/actions are unchanged.
+            Guided stepper flow: ingestion queue, draft approval, then seed monitor. Existing APIs/actions are unchanged.
           </p>
           <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em]">
             <span className={`rounded-full border px-2 py-1 ${canReview ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
@@ -1641,225 +1296,7 @@ export default function SetOpsReviewPage() {
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-white">1. Source Intake</h2>
-              <p className="mt-1 text-xs text-slate-400">
-                Search the web by year/manufacturer/sport, then import a discovered source directly into ingestion queue.
-              </p>
-            </div>
-            {activeStep !== "source-intake" && (
-              <button
-                type="button"
-                onClick={() => setActiveStepWithUrl("source-intake")}
-                className="rounded-lg border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40"
-              >
-                Open Step
-              </button>
-            )}
-          </div>
-          {activeStep === "source-intake" ? (
-            <>
-          <form className="mt-4 grid gap-3 md:grid-cols-4" onSubmit={runDiscoverySearch}>
-            <input
-              value={discoveryYearInput}
-              onChange={(event) => setDiscoveryYearInput(event.target.value)}
-              disabled={!canReview || discoveryBusy}
-              placeholder="Year (ex: 2020)"
-              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
-            />
-            <input
-              value={discoveryManufacturerInput}
-              onChange={(event) => setDiscoveryManufacturerInput(event.target.value)}
-              disabled={!canReview || discoveryBusy}
-              placeholder="Manufacturer (ex: Panini)"
-              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
-            />
-            <input
-              value={discoverySportInput}
-              onChange={(event) => setDiscoverySportInput(event.target.value)}
-              disabled={!canReview || discoveryBusy}
-              placeholder="Sport (ex: Baseball)"
-              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
-            />
-            <input
-              value={discoveryQueryInput}
-              onChange={(event) => setDiscoveryQueryInput(event.target.value)}
-              disabled={!canReview || discoveryBusy}
-              placeholder="Extra query (optional)"
-              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
-            />
-            <button
-              type="submit"
-              disabled={!canReview || discoveryBusy}
-              className="h-11 rounded-xl border border-sky-400/60 bg-sky-500/20 px-4 text-xs font-semibold uppercase tracking-[0.18em] text-sky-100 transition hover:bg-sky-500/30 disabled:opacity-60"
-            >
-              {discoveryBusy ? "Searching..." : "Search Sources"}
-            </button>
-          </form>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-4">
-            <input
-              value={discoverySetIdOverrideInput}
-              onChange={(event) => setDiscoverySetIdOverrideInput(event.target.value)}
-              disabled={!canReview || discoveryBusy}
-              placeholder={
-                discoverySetIdSuggestion
-                  ? `Set ID override (optional). Suggested: ${discoverySetIdSuggestion}`
-                  : "Set ID override (optional)"
-              }
-              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70 md:col-span-2"
-            />
-            <input
-              value={discoverySourceUrlInput}
-              onChange={(event) => setDiscoverySourceUrlInput(event.target.value)}
-              disabled={!canReview || discoveryBusy}
-              placeholder="Paste exact checklist/source URL here for direct import"
-              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70 md:col-span-2"
-            />
-            <button
-              type="button"
-              disabled={busy || !canReview || Boolean(discoveryImportBusyId?.startsWith("direct:")) || !discoverySourceUrlInput.trim()}
-              onClick={() => void importDirectSourceUrl("PARALLEL_DB")}
-              className="h-11 rounded-xl border border-violet-400/50 bg-violet-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-violet-100 transition hover:bg-violet-500/30 disabled:opacity-60"
-            >
-              {discoveryImportBusyId === "direct:PARALLEL_DB" ? "Importing..." : "Import URL as ODDS LIST"}
-            </button>
-            <button
-              type="button"
-              disabled={busy || !canReview || Boolean(discoveryImportBusyId?.startsWith("direct:")) || !discoverySourceUrlInput.trim()}
-              onClick={() => void importDirectSourceUrl("PLAYER_WORKSHEET")}
-              className="h-11 rounded-xl border border-gold-500/50 bg-gold-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-gold-100 transition hover:bg-gold-500/30 disabled:opacity-60"
-            >
-              {discoveryImportBusyId === "direct:PLAYER_WORKSHEET" ? "Importing..." : "Import URL as SET CHECKLIST"}
-            </button>
-            <button
-              type="button"
-              disabled={busy || !canReview || Boolean(discoveryImportBusyId?.startsWith("direct:")) || !discoverySourceUrlInput.trim()}
-              onClick={() => void importDirectSourceUrl("COMBINED")}
-              className="h-11 rounded-xl border border-emerald-500/50 bg-emerald-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-60"
-            >
-              {discoveryImportBusyId === "direct:COMBINED" ? "Importing..." : "Import URL as SET CHECKLIST + ODDS LIST"}
-            </button>
-            <button
-              type="button"
-              disabled={!canReview}
-              onClick={() => {
-                setDiscoverySetIdOverrideInput(discoverySetIdSuggestion);
-                setStatus(discoverySetIdSuggestion ? `Set ID override set to ${discoverySetIdSuggestion}.` : "Set ID override cleared.");
-              }}
-              className="h-11 rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
-            >
-              Use Suggested Set ID
-            </button>
-            <button
-              type="button"
-              disabled={!canReview}
-              onClick={() => {
-                setDiscoverySetIdOverrideInput("");
-                setDiscoverySourceUrlInput("");
-              }}
-              className="h-11 rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
-            >
-              Clear URL/Override
-            </button>
-          </div>
-
-          <div className="mt-5 overflow-x-auto">
-            <table className="min-w-full border-separate border-spacing-0 text-left text-sm text-slate-200">
-              <thead>
-                <tr>
-                  <th className="border-b border-white/10 px-2 py-2 text-slate-300">Provider</th>
-                  <th className="border-b border-white/10 px-2 py-2 text-slate-300">Title</th>
-                  <th className="border-b border-white/10 px-2 py-2 text-slate-300">Set Guess</th>
-                  <th className="border-b border-white/10 px-2 py-2 text-slate-300">Source</th>
-                  <th className="border-b border-white/10 px-2 py-2 text-slate-300">Import</th>
-                </tr>
-              </thead>
-              <tbody>
-                {discoveryResults.map((result) => (
-                  <tr key={result.id}>
-                    <td className="border-b border-white/5 px-2 py-2 text-xs">{result.provider}</td>
-                    <td className="border-b border-white/5 px-2 py-2">
-                      <p className="font-medium text-white">{result.title}</p>
-                    </td>
-                    <td className="border-b border-white/5 px-2 py-2 text-xs">{result.setIdGuess || "-"}</td>
-                    <td className="border-b border-white/5 px-2 py-2 text-xs">
-                      <a href={result.url} target="_blank" rel="noreferrer" className="text-sky-300 hover:text-sky-200">
-                        Open Source
-                      </a>
-                    </td>
-                    <td className="border-b border-white/5 px-2 py-2">
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          disabled={!canReview}
-                          onClick={() => {
-                            setDiscoverySourceUrlInput(result.url);
-                            if (!discoverySetIdOverrideInput.trim() && result.setIdGuess) {
-                              setDiscoverySetIdOverrideInput(result.setIdGuess);
-                            }
-                            setStatus("Loaded source URL into direct import box. You can edit it before importing.");
-                          }}
-                          className="rounded border border-white/30 bg-white/5 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-slate-100 disabled:opacity-60"
-                        >
-                          Use URL
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy || !canReview || discoveryImportBusyId === result.id}
-                          onClick={() => void importDiscoveredResult(result, "PARALLEL_DB")}
-                          className="rounded border border-violet-400/50 bg-violet-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-violet-100 disabled:opacity-60"
-                        >
-                          {discoveryImportBusyId === result.id ? "Importing..." : "Import ODDS LIST"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy || !canReview || discoveryImportBusyId === result.id}
-                          onClick={() => void importDiscoveredResult(result, "PLAYER_WORKSHEET")}
-                          className="rounded border border-gold-500/50 bg-gold-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-gold-100 disabled:opacity-60"
-                        >
-                          {discoveryImportBusyId === result.id ? "Importing..." : "Import SET CHECKLIST"}
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy || !canReview || discoveryImportBusyId === result.id}
-                          onClick={() => void importDiscoveredResult(result, "COMBINED")}
-                          className="rounded border border-emerald-500/50 bg-emerald-500/20 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-emerald-100 disabled:opacity-60"
-                        >
-                          {discoveryImportBusyId === result.id ? "Importing..." : "Import SET CHECKLIST + ODDS LIST"}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {discoveryResults.length === 0 && !discoveryBusy && (
-                  <tr>
-                    <td colSpan={5} className="px-2 py-6 text-center text-sm text-slate-400">
-                      No source candidates yet. Run a discovery search above.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-4 flex justify-end">
-            <button
-              type="button"
-              onClick={() => setActiveStepWithUrl("ingestion-queue")}
-              className="h-10 rounded-xl border border-gold-500/50 bg-gold-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-gold-100 transition hover:bg-gold-500/30"
-            >
-              Continue to Step 2
-            </button>
-          </div>
-            </>
-          ) : (
-            <p className="mt-3 text-xs text-slate-400">Step collapsed. Reopen to run discovery and source imports.</p>
-          )}
-        </section>
-
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold text-white">2. Ingestion Queue</h2>
+              <h2 className="text-lg font-semibold text-white">1. Ingestion Queue</h2>
               <p className="mt-1 text-xs text-slate-400">Queue/import jobs, choose a job, then build draft from the selected row.</p>
             </div>
             {activeStep !== "ingestion-queue" && (
@@ -2041,7 +1478,7 @@ export default function SetOpsReviewPage() {
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-white">3. Draft & Approval</h2>
+              <h2 className="text-lg font-semibold text-white">2. Draft & Approval</h2>
               <p className="mt-1 text-xs text-slate-400">Selected set: {selectedSetId || "-"}</p>
               <p className="mt-1 text-xs text-slate-400">Blocking errors: {blockingErrorCount}</p>
             </div>
@@ -2259,7 +1696,7 @@ export default function SetOpsReviewPage() {
         <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-white">4. Seed Monitor</h2>
+              <h2 className="text-lg font-semibold text-white">3. Seed Monitor</h2>
               <p className="mt-1 text-xs text-slate-400">Start and monitor seed jobs for the selected set.</p>
             </div>
             {activeStep !== "seed-monitor" && (

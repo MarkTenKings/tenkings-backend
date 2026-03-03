@@ -5619,6 +5619,29 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed in this coding session.
 
+## 2026-03-03 - Set Ops Review UI Cleanup (Remove Source Intake Discovery Step)
+
+### Summary
+- Removed the `Source Intake` discovery/import step from `/admin/set-ops-review` to reduce clutter and confusion.
+- Stepper now starts at `Ingestion Queue` and flows through:
+  - `Ingestion Queue`
+  - `Draft & Approval`
+  - `Seed Monitor`
+- Removed all discovery-search/import UI state and handlers (`search web`, discovered links table, direct URL import controls).
+- Kept file upload parsing in `Ingestion Queue` (CSV/JSON/PDF upload remains available).
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed in this coding session.
+
 ## 2026-03-03 - AGENTS Startup Context Sync (Docs Read + Repo State)
 
 ### Summary
