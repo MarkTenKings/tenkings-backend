@@ -102,6 +102,8 @@ type SetIdOption = {
   hasChecklist: boolean;
   hasOdds: boolean;
   updatedAt: string | null;
+  variantCount: number;
+  referenceCount: number;
 };
 
 type ReviewStepId = "ingestion-queue" | "draft-approval" | "seed-monitor";
@@ -338,6 +340,13 @@ function formatConnectionBadgeClass(status: string | null, connected: boolean) {
   return "border-amber-400/50 bg-amber-500/10 text-amber-200";
 }
 
+function isRecentlyUpdated(value: string | null, hours: number) {
+  if (!value) return false;
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp <= hours * 60 * 60 * 1000;
+}
+
 export default function SetOpsReviewPage() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
@@ -399,12 +408,16 @@ export default function SetOpsReviewPage() {
   const isOddsDataset = datasetType === "PARALLEL_DB";
   const normalizedSetIdInput = useMemo(() => normalizeSetIdLookup(setIdInput), [setIdInput]);
   const visibleSetIdOptions = useMemo(() => {
-    if (!normalizedSetIdInput) {
-      return setIdOptions.slice(0, 20);
-    }
-    return setIdOptions
-      .filter((option) => normalizeSetIdLookup(option.setId).startsWith(normalizedSetIdInput))
-      .slice(0, 20);
+    const filtered = (normalizedSetIdInput
+      ? setIdOptions.filter((option) => normalizeSetIdLookup(option.setId).startsWith(normalizedSetIdInput))
+      : setIdOptions
+    ).filter((option) => {
+      const hasActiveTaxonomy = option.hasChecklist || option.hasOdds;
+      const hasSeededData = option.variantCount > 0 || option.referenceCount > 0;
+      const recentlyUpdatedPendingOnly = !hasActiveTaxonomy && !hasSeededData && isRecentlyUpdated(option.updatedAt, 72);
+      return hasActiveTaxonomy || hasSeededData || recentlyUpdatedPendingOnly;
+    });
+    return filtered.slice(0, 20);
   }, [normalizedSetIdInput, setIdOptions]);
   const hasExactSetIdMatch = useMemo(
     () => Boolean(normalizedSetIdInput && setIdOptions.some((option) => normalizeSetIdLookup(option.setId) === normalizedSetIdInput)),

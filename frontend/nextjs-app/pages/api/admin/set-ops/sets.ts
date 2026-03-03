@@ -27,7 +27,7 @@ type SetSummaryRow = {
 
 function isDatasetConnected(status: string | null) {
   if (!status) return false;
-  return !["FAILED", "REJECTED"].includes(status.toUpperCase());
+  return status.toUpperCase() === "APPROVED";
 }
 
 type ResponseBody =

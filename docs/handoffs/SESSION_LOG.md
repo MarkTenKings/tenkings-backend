@@ -5783,3 +5783,23 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
 - Seeder/reference locked files were not modified.
+
+## 2026-03-03 - Set ID Dropdown Stale Pending Cleanup
+
+### Summary
+- Refined Set ID combo suggestion behavior in `/admin/set-ops-review` to reduce stale clutter after historical deletes/import attempts.
+- Changed dataset "connected" semantics in `/api/admin/set-ops/sets` to require `APPROVED` status (pending no longer treated as connected).
+- Updated Set ID suggestion filtering to hide stale pending-only options by default unless recently updated; keeps active/seeded sets visible.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/sets.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/sets.ts` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
