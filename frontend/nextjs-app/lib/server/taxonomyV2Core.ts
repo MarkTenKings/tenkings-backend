@@ -1514,7 +1514,15 @@ export async function ingestTaxonomyV2FromIngestionJob(params: TaxonomyIngestPar
       counts.ambiguities += 1;
     }
 
-    counts.bridges = await upsertCompatibilityBridge({ tx: db, setId });
+    let shouldMaterializeBridges = !params.ingestionJobId;
+    if (params.ingestionJobId) {
+      const ingestionJob = await db.setIngestionJob.findUnique({
+        where: { id: params.ingestionJobId },
+        select: { status: true },
+      });
+      shouldMaterializeBridges = ingestionJob?.status === SetIngestionJobStatus.APPROVED;
+    }
+    counts.bridges = shouldMaterializeBridges ? await upsertCompatibilityBridge({ tx: db, setId }) : 0;
 
     return {
       applied: true,

@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma, SetAuditStatus, SetSeedJobStatus, type Prisma } from "@tenkings/database";
+import { prisma, SetApprovalDecision, SetAuditStatus, SetSeedJobStatus, type Prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../../../../lib/server/admin";
 import {
   canPerformSetOpsRole,
@@ -71,6 +71,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     if (!existing.draftVersionId) {
       return res.status(400).json({ message: "Seed job is missing draftVersionId" });
+    }
+
+    const approvalLink = await prisma.setApproval.findFirst({
+      where: {
+        draftId: existing.draftId,
+        draftVersionId: existing.draftVersionId,
+        decision: SetApprovalDecision.APPROVED,
+      },
+      select: { id: true },
+    });
+
+    if (!approvalLink) {
+      return res.status(400).json({ message: "Retry requires an approved draft version" });
     }
 
     const draftVersion = await prisma.setDraftVersion.findUnique({

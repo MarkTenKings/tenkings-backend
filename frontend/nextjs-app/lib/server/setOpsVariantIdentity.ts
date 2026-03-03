@@ -11,6 +11,7 @@ type IdentityVariantRow = {
 
 type IdentityVariantMapRow = {
   cardVariantId: string;
+  setId: string;
   canonicalKey: string;
   programId: string | null;
 };
@@ -123,7 +124,7 @@ export async function loadSetOpsVariantIdentityContext(params: {
       },
     }),
     prisma.$queryRawUnsafe<IdentityVariantMapRow[]>(
-      `select m."cardVariantId", m."canonicalKey", m."programId"
+      `select m."cardVariantId", m."setId", m."canonicalKey", m."programId"
          from "CardVariantTaxonomyMap" m
         where "setId" in (${inClause})
         order by m."createdAt" asc`,
@@ -166,6 +167,7 @@ export async function loadSetOpsVariantIdentityContext(params: {
   const programIdsByScopedCardKey = new Map<string, string[]>();
   const programIdsByScopedParallelKey = new Map<string, string[]>();
   const variantById = new Map<string, IdentityVariantRow>();
+  const allowedProgramIdsBySetLookup = new Map<string, Set<string>>();
 
   for (const row of variants) {
     variantById.set(row.id, row);
@@ -175,7 +177,32 @@ export async function loadSetOpsVariantIdentityContext(params: {
     }
   }
 
+  for (const row of cards) {
+    const setLookupKey = normalizeSetLookupKey(row.setId);
+    const entry = allowedProgramIdsBySetLookup.get(setLookupKey) ?? new Set<string>();
+    entry.add(String(row.programId || "").trim());
+    allowedProgramIdsBySetLookup.set(setLookupKey, entry);
+  }
+
+  for (const row of scopes) {
+    const setLookupKey = normalizeSetLookupKey(row.setId);
+    const entry = allowedProgramIdsBySetLookup.get(setLookupKey) ?? new Set<string>();
+    entry.add(String(row.programId || "").trim());
+    allowedProgramIdsBySetLookup.set(setLookupKey, entry);
+  }
+
   for (const row of variantMaps) {
+    const setLookupKey = normalizeSetLookupKey(row.setId || normalizedSetId);
+    const allowedPrograms = allowedProgramIdsBySetLookup.get(setLookupKey) ?? null;
+    const rowProgramId = String(row.programId || "").trim();
+    // Fail closed: if no approved/legacy program context exists for this set, ignore canonical map rows.
+    if (!allowedPrograms || allowedPrograms.size < 1) {
+      continue;
+    }
+    if (!rowProgramId || !allowedPrograms.has(rowProgramId)) {
+      continue;
+    }
+
     const canonicalKey = String(row.canonicalKey || "").trim();
     if (!canonicalKey) continue;
 

@@ -5516,3 +5516,55 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
 - Locked image seeder/reference files were not modified.
+
+## 2026-03-03 - Phase 3 Implementation (Publish-Boundary Enforcement)
+
+### Summary
+- Implemented additional publish-boundary enforcement across remaining downstream paths.
+- `taxonomyV2Core` bridge materialization is now approval-gated:
+  - compatibility bridge upserts (`CardVariantTaxonomyMap`) run only when ingestion job status is `APPROVED` (or when no ingestion job context exists, e.g. legacy/backfill).
+  - prevents pre-approval taxonomy ingest from mutating active compatibility bridge mappings.
+- `setOpsVariantIdentity` now filters canonical variant-map usage by approved taxonomy program context:
+  - map rows whose `programId` is not present in approved/legacy `SetCard`/`SetParallelScope` program sets are ignored.
+  - reduces risk of pre-approval mapping leakage influencing seed identity resolution.
+- `seed/jobs/[jobId]/retry` now requires an approved draft-version link before retry execution.
+  - blocks retries on non-approved draft versions.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/taxonomyV2Core.ts`
+- `frontend/nextjs-app/lib/server/setOpsVariantIdentity.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/jobs/[jobId]/retry.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/taxonomyV2Core.ts --file lib/server/setOpsVariantIdentity.ts --file 'pages/api/admin/set-ops/seed/jobs/[jobId]/retry.ts' --file lib/server/setOpsCsvContract.ts --file pages/api/admin/set-ops/ingestion/index.ts --file pages/api/admin/set-ops/drafts/build.ts --file lib/server/setOpsDrafts.ts` passed.
+- `pnpm --filter @tenkings/shared test` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Locked image seeder/reference files were not modified.
+
+## 2026-03-03 - Phase 3 Reviewer Follow-up (Fail-Closed Canonical Map Guard)
+
+### Summary
+- Addressed reviewer high finding in `setOpsVariantIdentity`.
+- Changed canonical map filtering to fail closed:
+  - if approved/legacy program context is missing for a set, canonical map rows are ignored
+  - if canonical map row has missing/non-allowed `programId`, row is ignored.
+- This removes the prior fail-open behavior that could allow stale/pre-approval canonical map influence.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsVariantIdentity.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared test` passed.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsVariantIdentity.ts --file lib/server/taxonomyV2Core.ts --file 'pages/api/admin/set-ops/seed/jobs/[jobId]/retry.ts'` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Locked image seeder/reference files were not modified.
