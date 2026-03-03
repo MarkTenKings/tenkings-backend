@@ -3348,3 +3348,47 @@ Build Set Ops UI flow with:
 - Docs alignment:
   - updated stale workstation path references to `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` in startup/deploy context docs.
 - No code/runtime behavior changes, deploys, restarts, migrations, or DB operations were executed in this session.
+
+## Session Update (2026-03-03, Set Ops Workflow Consolidation + Safety UX)
+
+### What Landed (Prod-Facing Workflow)
+- Set Ops ingestion/review path now serves as the primary operator workflow for set data import:
+  - `/admin/set-ops-review` Step 1 handles queueing/uploads and bulk import bridge.
+  - `/admin/set-ops-review` Step 3 supports reference seeding for both datasets:
+    - `SET CHECKLIST` (`PLAYER_WORKSHEET`)
+    - `ODDS LIST` (`PARALLEL_DB`)
+- Legacy Source Intake discovery block on Set Ops Review was removed to reduce clutter/confusion.
+- `/admin/variants` was reduced to a moved/legacy page; operational flow split to:
+  - Set Ops Review for import/seed jobs
+  - Variant Ref QA for reference image curation.
+
+### Data Pipeline Guardrails Added
+- CSV contract adaptation/validation is enforced for SET_LIST vs ODDS_LIST payload shape.
+- Draft normalization is dataset-scoped (program rows do not bleed into odds-only validation and vice versa).
+- Quality gate can fail low-quality imports before progressing to review.
+- Publish-boundary hardening was applied across identity/matcher paths to prevent pending/unapproved leakage into active resolution paths.
+
+### Operator UX Safety Improvements (Latest)
+- Step 1 `Set ID` changed from free-text only to searchable combo behavior:
+  - type-to-search existing Set IDs,
+  - select existing Set ID,
+  - inline `Create New Set ID` action in the same control.
+- Set suggestions now include dataset connection visibility:
+  - checklist status badge,
+  - odds status badge.
+- Goal: reduce human typo risk and ensure SET+ODDS imports converge on a single normalized Set ID.
+
+### Current Known Workflow Rules
+- SET and ODDS datasets are linked by the same normalized `setId` value.
+- Filenames do not link datasets; Set ID does.
+- Recommended operator sequence per set:
+  1. Queue/build/approve `SET CHECKLIST`
+  2. Queue/build/approve `ODDS LIST`
+  3. `Sync Set Variant Records`
+  4. Seed references for both dataset types
+  5. Validate in Variant Ref QA / downstream Add Card + KingsReview flows.
+
+### Remaining Focus
+- Continue production fixture testing with Perplexity-generated CSV pairs across multiple sets.
+- Monitor OCR/set/parallel suggestion quality after broader ingestion coverage.
+- Keep image seeder/reference locked paths stable unless explicitly scoped for change.

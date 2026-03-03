@@ -5758,3 +5758,28 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
 - Backend matcher/reference APIs and image seeder internals were not modified.
+
+## 2026-03-03 - Set ID Combo Field (Search Existing + Create New + SET/ODDS Status)
+
+### Summary
+- Upgraded Step 1 `Set ID` in `/admin/set-ops-review` from plain text input to an inline searchable combo field.
+- Added live Set ID suggestions (type-to-filter) backed by `/api/admin/set-ops/sets`.
+- Added inline `Create New Set ID` action in the same dropdown when no exact Set ID match exists.
+- Added per-Set suggestion badges showing dataset connection state for:
+  - `SET CHECKLIST`
+  - `ODDS LIST`
+- Hardened queue submit to normalize/require non-empty Set ID before ingestion job creation.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `frontend/nextjs-app/pages/api/admin/set-ops/sets.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/sets.ts` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Seeder/reference locked files were not modified.

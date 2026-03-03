@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { Prisma } from "@prisma/client";
-import { prisma, SetAuditStatus } from "@tenkings/database";
+import { prisma, SetAuditStatus, SetDatasetType } from "@tenkings/database";
 import { normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../lib/server/admin";
 import {
@@ -19,7 +19,16 @@ type SetSummaryRow = {
   lastSeedStatus: string | null;
   lastSeedAt: string | null;
   updatedAt: string | null;
+  checklistStatus: string | null;
+  oddsStatus: string | null;
+  hasChecklist: boolean;
+  hasOdds: boolean;
 };
+
+function isDatasetConnected(status: string | null) {
+  if (!status) return false;
+  return !["FAILED", "REJECTED"].includes(status.toUpperCase());
+}
 
 type ResponseBody =
   | {
@@ -63,7 +72,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         }
       : undefined;
 
-    const [variantCounts, referenceCounts, drafts, seedJobs] = await Promise.all([
+    const [variantCounts, referenceCounts, drafts, seedJobs, ingestionJobs] = await Promise.all([
       prisma.cardVariant.groupBy({
         by: ["setId"],
         where: whereBySetId,
@@ -103,6 +112,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         },
         take: Math.max(limit * 8, 500),
       }),
+      prisma.setIngestionJob.findMany({
+        where: q
+          ? {
+              setId: {
+                contains: q,
+                mode: Prisma.QueryMode.insensitive,
+              },
+            }
+          : undefined,
+        orderBy: [{ createdAt: "desc" }],
+        select: {
+          setId: true,
+          datasetType: true,
+          status: true,
+          updatedAt: true,
+        },
+        take: Math.max(limit * 16, 1000),
+      }),
     ]);
 
     const variantBySet = new Map<string, number>();
@@ -131,11 +158,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
     }
 
+    const ingestionBySet = new Map<
+      string,
+      {
+        checklistStatus: string | null;
+        checklistUpdatedAt: Date | null;
+        oddsStatus: string | null;
+        oddsUpdatedAt: Date | null;
+      }
+    >();
+
+    for (const job of ingestionJobs) {
+      const existing = ingestionBySet.get(job.setId) ?? {
+        checklistStatus: null,
+        checklistUpdatedAt: null,
+        oddsStatus: null,
+        oddsUpdatedAt: null,
+      };
+      if (job.datasetType === SetDatasetType.PLAYER_WORKSHEET && !existing.checklistStatus) {
+        existing.checklistStatus = job.status;
+        existing.checklistUpdatedAt = job.updatedAt;
+      }
+      if (job.datasetType === SetDatasetType.PARALLEL_DB && !existing.oddsStatus) {
+        existing.oddsStatus = job.status;
+        existing.oddsUpdatedAt = job.updatedAt;
+      }
+      ingestionBySet.set(job.setId, existing);
+    }
+
     const setIds = new Set<string>();
     for (const setId of variantBySet.keys()) setIds.add(setId);
     for (const setId of referenceBySet.keys()) setIds.add(setId);
     for (const setId of draftBySet.keys()) setIds.add(setId);
     for (const setId of seedBySet.keys()) setIds.add(setId);
+    for (const setId of ingestionBySet.keys()) setIds.add(setId);
 
     const rows: SetSummaryRow[] = [];
 
@@ -147,9 +203,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
 
       const lastSeed = seedBySet.get(setId) ?? null;
+      const ingestion = ingestionBySet.get(setId) ?? {
+        checklistStatus: null,
+        checklistUpdatedAt: null,
+        oddsStatus: null,
+        oddsUpdatedAt: null,
+      };
       const updatedCandidates = [draft?.updatedAt ?? null, lastSeed?.createdAt ?? null].filter(
         (value): value is Date => value instanceof Date
       );
+      if (ingestion.checklistUpdatedAt instanceof Date) updatedCandidates.push(ingestion.checklistUpdatedAt);
+      if (ingestion.oddsUpdatedAt instanceof Date) updatedCandidates.push(ingestion.oddsUpdatedAt);
       const updatedAt = updatedCandidates.length
         ? new Date(Math.max(...updatedCandidates.map((value) => value.getTime()))).toISOString()
         : null;
@@ -164,6 +228,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         lastSeedStatus: lastSeed?.status ?? null,
         lastSeedAt: lastSeed?.createdAt ? lastSeed.createdAt.toISOString() : null,
         updatedAt,
+        checklistStatus: ingestion.checklistStatus,
+        oddsStatus: ingestion.oddsStatus,
+        hasChecklist: isDatasetConnected(ingestion.checklistStatus),
+        hasOdds: isDatasetConnected(ingestion.oddsStatus),
       });
     }
 

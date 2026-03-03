@@ -94,6 +94,16 @@ type AccessResponse =
       message: string;
     };
 
+type SetIdOption = {
+  setId: string;
+  label: string;
+  checklistStatus: string | null;
+  oddsStatus: string | null;
+  hasChecklist: boolean;
+  hasOdds: boolean;
+  updatedAt: string | null;
+};
+
 type ReviewStepId = "ingestion-queue" | "draft-approval" | "seed-monitor";
 
 const REVIEW_STEPS: Array<{ id: ReviewStepId; label: string; description: string }> = [
@@ -301,6 +311,33 @@ function formatDatasetTypeValue(value: string) {
   return normalized || "-";
 }
 
+function normalizeSetIdLookup(value: string | null | undefined) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function formatConnectionBadgeLabel(status: string | null) {
+  const normalized = String(status || "").trim().toUpperCase();
+  if (!normalized) return "MISSING";
+  if (normalized === "APPROVED") return "APPROVED";
+  if (normalized === "REVIEW_REQUIRED" || normalized === "PARSED" || normalized === "QUEUED") return "PENDING";
+  if (normalized === "FAILED" || normalized === "REJECTED") return "REUPLOAD";
+  return normalized;
+}
+
+function formatConnectionBadgeClass(status: string | null, connected: boolean) {
+  const normalized = String(status || "").trim().toUpperCase();
+  if (normalized === "FAILED" || normalized === "REJECTED") {
+    return "border-rose-400/50 bg-rose-500/10 text-rose-200";
+  }
+  if (connected) {
+    return "border-emerald-400/50 bg-emerald-500/10 text-emerald-200";
+  }
+  return "border-amber-400/50 bg-amber-500/10 text-amber-200";
+}
+
 export default function SetOpsReviewPage() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
@@ -311,10 +348,14 @@ export default function SetOpsReviewPage() {
 
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
   const autoLoadedRef = useRef(false);
+  const setIdBlurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [datasetType, setDatasetType] = useState<DatasetType>("PARALLEL_DB");
   const [queueDatasetMode, setQueueDatasetMode] = useState<CombinedDatasetMode>("PARALLEL_DB");
   const [setIdInput, setSetIdInput] = useState("");
+  const [setIdOptions, setSetIdOptions] = useState<SetIdOption[]>([]);
+  const [setIdOptionsBusy, setSetIdOptionsBusy] = useState(false);
+  const [showSetIdOptions, setShowSetIdOptions] = useState(false);
   const [sourceUrlInput, setSourceUrlInput] = useState("");
   const [parserVersionInput, setParserVersionInput] = useState("manual-v1");
   const [rawPayloadInput, setRawPayloadInput] = useState("[]");
@@ -356,6 +397,20 @@ export default function SetOpsReviewPage() {
     [editableRows]
   );
   const isOddsDataset = datasetType === "PARALLEL_DB";
+  const normalizedSetIdInput = useMemo(() => normalizeSetIdLookup(setIdInput), [setIdInput]);
+  const visibleSetIdOptions = useMemo(() => {
+    if (!normalizedSetIdInput) {
+      return setIdOptions.slice(0, 20);
+    }
+    return setIdOptions
+      .filter((option) => normalizeSetIdLookup(option.setId).startsWith(normalizedSetIdInput))
+      .slice(0, 20);
+  }, [normalizedSetIdInput, setIdOptions]);
+  const hasExactSetIdMatch = useMemo(
+    () => Boolean(normalizedSetIdInput && setIdOptions.some((option) => normalizeSetIdLookup(option.setId) === normalizedSetIdInput)),
+    [normalizedSetIdInput, setIdOptions]
+  );
+  const canCreateNewSetId = Boolean(normalizedSetIdInput) && !hasExactSetIdMatch;
 
   const stepCompletion = useMemo<Record<ReviewStepId, boolean>>(
     () => ({
@@ -481,6 +536,64 @@ export default function SetOpsReviewPage() {
     }
   }, [adminHeaders, canReview, isAdmin, selectedJobId, session?.token]);
 
+  const fetchSetIdOptions = useCallback(
+    async (query: string) => {
+      if (!session?.token || !isAdmin || !canReview) return;
+      setSetIdOptionsBusy(true);
+      try {
+        const params = new URLSearchParams({
+          limit: "80",
+          includeArchived: "true",
+        });
+        const normalizedQuery = query.trim();
+        if (normalizedQuery) {
+          params.set("q", normalizedQuery);
+        }
+        const response = await fetch(`/api/admin/set-ops/sets?${params.toString()}`, {
+          headers: adminHeaders,
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+          sets?: SetIdOption[];
+        };
+        if (!response.ok) {
+          throw new Error(payload.message ?? "Failed to load Set ID options");
+        }
+        setSetIdOptions(payload.sets ?? []);
+      } catch {
+        setSetIdOptions([]);
+      } finally {
+        setSetIdOptionsBusy(false);
+      }
+    },
+    [adminHeaders, canReview, isAdmin, session?.token]
+  );
+
+  const selectSetIdOption = useCallback(
+    (nextSetId: string, isCreateNew: boolean) => {
+      const cleaned = nextSetId.trim().replace(/\s+/g, " ");
+      if (!cleaned) return;
+      setSetIdInput(cleaned);
+      setShowSetIdOptions(false);
+      if (setIdBlurTimerRef.current) {
+        clearTimeout(setIdBlurTimerRef.current);
+        setIdBlurTimerRef.current = null;
+      }
+      if (isCreateNew) {
+        setStatus(`Creating new Set ID: ${cleaned}. Queue SET CHECKLIST and ODDS LIST with this exact Set ID.`);
+        return;
+      }
+      const selected = setIdOptions.find((option) => normalizeSetIdLookup(option.setId) === normalizeSetIdLookup(cleaned)) ?? null;
+      if (!selected) return;
+      setStatus(
+        `Selected ${selected.setId}. SET CHECKLIST: ${formatConnectionBadgeLabel(
+          selected.checklistStatus
+        )}. ODDS LIST: ${formatConnectionBadgeLabel(selected.oddsStatus)}.`
+      );
+    },
+    [setIdOptions]
+  );
+
   const fetchDraft = useCallback(
     async (setId: string, nextDatasetType: DatasetType) => {
       if (!session?.token || !isAdmin || !canReview || !setId) return;
@@ -591,6 +704,26 @@ export default function SetOpsReviewPage() {
   }, [fetchIngestionJobs, isAdmin, loadAccess, session?.token]);
 
   useEffect(() => {
+    if (!session?.token || !isAdmin || !canReview) {
+      setSetIdOptions([]);
+      return;
+    }
+    const timeout = setTimeout(() => {
+      void fetchSetIdOptions(setIdInput);
+    }, 180);
+    return () => clearTimeout(timeout);
+  }, [canReview, fetchSetIdOptions, isAdmin, session?.token, setIdInput]);
+
+  useEffect(
+    () => () => {
+      if (setIdBlurTimerRef.current) {
+        clearTimeout(setIdBlurTimerRef.current);
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
     if (!selectedSetId) {
       setReferenceStatus(null);
       return;
@@ -620,6 +753,10 @@ export default function SetOpsReviewPage() {
       setStatus(null);
 
       try {
+        const requestedSetId = setIdInput.trim().replace(/\s+/g, " ");
+        if (!requestedSetId) {
+          throw new Error("Set ID is required.");
+        }
         const parsedPayload = JSON.parse(rawPayloadInput || "[]");
         const rowCount = estimateRowCount(parsedPayload);
         if (rowCount < 1) {
@@ -638,7 +775,7 @@ export default function SetOpsReviewPage() {
               "Content-Type": "application/json",
             },
             body: JSON.stringify({
-              setId: setIdInput,
+              setId: requestedSetId,
               datasetType: datasetTypeForImport,
               sourceUrl: sourceUrlInput || null,
               parserVersion: parserVersionInput || "manual-v1",
@@ -687,6 +824,7 @@ export default function SetOpsReviewPage() {
           );
         }
         await fetchIngestionJobs();
+        await fetchSetIdOptions(latestJob?.setId ?? requestedSetId);
         setActiveStepWithUrl("ingestion-queue");
       } catch (createError) {
         setError(createError instanceof Error ? createError.message : "Failed to enqueue ingestion job");
@@ -697,6 +835,7 @@ export default function SetOpsReviewPage() {
     [
       adminHeaders,
       fetchIngestionJobs,
+      fetchSetIdOptions,
       canReview,
       isAdmin,
       parserVersionInput,
@@ -1379,13 +1518,77 @@ export default function SetOpsReviewPage() {
           {activeStep === "ingestion-queue" ? (
             <>
           <form className="mt-4 grid gap-3 md:grid-cols-2" onSubmit={createIngestionJob}>
-            <input
-              value={setIdInput}
-              onChange={(event) => setSetIdInput(event.target.value)}
-              disabled={!canReview}
-              placeholder="Set ID"
-              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
-            />
+            <div className="relative">
+              <input
+                value={setIdInput}
+                onChange={(event) => {
+                  setSetIdInput(event.target.value);
+                  setShowSetIdOptions(true);
+                }}
+                onFocus={() => setShowSetIdOptions(true)}
+                onBlur={() => {
+                  setIdBlurTimerRef.current = setTimeout(() => {
+                    setShowSetIdOptions(false);
+                  }, 120);
+                }}
+                disabled={!canReview}
+                placeholder="Set ID (type to find existing or create new)"
+                className="h-11 w-full rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
+              />
+              {showSetIdOptions && canReview && (
+                <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-72 overflow-y-auto rounded-xl border border-white/15 bg-night-950/95 p-2 shadow-2xl backdrop-blur">
+                  {canCreateNewSetId && (
+                    <button
+                      type="button"
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => selectSetIdOption(setIdInput, true)}
+                      className="mb-2 w-full rounded-lg border border-gold-400/50 bg-gold-500/10 px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.14em] text-gold-100 transition hover:bg-gold-500/20"
+                    >
+                      Create New Set ID: {setIdInput.trim().replace(/\s+/g, " ")}
+                    </button>
+                  )}
+
+                  {setIdOptionsBusy ? (
+                    <p className="px-2 py-2 text-xs text-slate-400">Searching Set IDs...</p>
+                  ) : visibleSetIdOptions.length > 0 ? (
+                    visibleSetIdOptions.map((option) => (
+                      <button
+                        key={option.setId}
+                        type="button"
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={() => selectSetIdOption(option.setId, false)}
+                        className="mb-1 w-full rounded-lg border border-white/10 bg-night-900/70 px-3 py-2 text-left transition hover:border-white/30 hover:bg-night-900"
+                      >
+                        <p className="text-sm font-medium text-white">{option.setId}</p>
+                        <div className="mt-1 flex flex-wrap gap-1.5">
+                          <span
+                            className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${formatConnectionBadgeClass(
+                              option.checklistStatus,
+                              option.hasChecklist
+                            )}`}
+                          >
+                            SET CHECKLIST {formatConnectionBadgeLabel(option.checklistStatus)}
+                          </span>
+                          <span
+                            className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${formatConnectionBadgeClass(
+                              option.oddsStatus,
+                              option.hasOdds
+                            )}`}
+                          >
+                            ODDS LIST {formatConnectionBadgeLabel(option.oddsStatus)}
+                          </span>
+                        </div>
+                      </button>
+                    ))
+                  ) : (
+                    <p className="px-2 py-2 text-xs text-slate-400">No matching Set IDs found.</p>
+                  )}
+                </div>
+              )}
+              <p className="mt-1 px-1 text-[10px] uppercase tracking-[0.15em] text-slate-500">
+                Type to search existing Set IDs. Select one, or choose create new.
+              </p>
+            </div>
             <select
               value={queueDatasetMode}
               onChange={(event) => setQueueDatasetMode(event.target.value as CombinedDatasetMode)}
