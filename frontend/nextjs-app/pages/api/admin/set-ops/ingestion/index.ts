@@ -117,20 +117,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (req.method === "GET") {
       const setId = normalizeSetLabel(typeof req.query.setId === "string" ? req.query.setId : "");
       const status = String(req.query.status ?? "").trim().toUpperCase();
+      const statusGroup = String(req.query.statusGroup ?? "").trim().toLowerCase();
       const datasetType = String(req.query.datasetType ?? "").trim().toUpperCase();
       const limit = Math.min(500, Math.max(1, Number(req.query.limit ?? 200) || 200));
 
-      const where: {
-        setId?: string;
-        status?: SetIngestionJobStatus;
-        datasetType?: SetDatasetType;
-      } = {};
+      const where: Prisma.SetIngestionJobWhereInput = {};
 
       if (setId) {
         where.setId = setId;
       }
       if (status && status in SetIngestionJobStatus) {
         where.status = status as SetIngestionJobStatus;
+      } else if (statusGroup === "pending") {
+        where.status = {
+          in: [SetIngestionJobStatus.QUEUED, SetIngestionJobStatus.PARSED, SetIngestionJobStatus.REVIEW_REQUIRED],
+        };
       }
       if (datasetType && datasetType in SetDatasetType) {
         where.datasetType = datasetType as SetDatasetType;

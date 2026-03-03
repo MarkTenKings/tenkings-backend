@@ -5686,3 +5686,24 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
 - Locked image seeder/reference files were not modified.
+
+## 2026-03-03 - Set Ops Review Pending-Only Ingestion Queue Filter
+
+### Summary
+- Updated ingestion queue loading in `/admin/set-ops-review` to request pending jobs only.
+- Added ingestion API support for `statusGroup=pending` to return jobs in `QUEUED`, `PARSED`, and `REVIEW_REQUIRED`.
+- Added UI hint on Step 1 that the queue is pending-only to reduce confusion from historical ingestion jobs.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/ingestion/index.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/ingestion/index.ts` passed.
+- `pnpm --filter @tenkings/shared test` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.

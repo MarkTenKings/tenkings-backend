@@ -457,7 +457,7 @@ export default function SetOpsReviewPage() {
 
   const fetchIngestionJobs = useCallback(async () => {
     if (!session?.token || !isAdmin || !canReview) return;
-    const params = new URLSearchParams({ limit: "120" });
+    const params = new URLSearchParams({ limit: "120", statusGroup: "pending" });
     const response = await fetch(`/api/admin/set-ops/ingestion?${params.toString()}`, {
       headers: adminHeaders,
     });
@@ -1363,7 +1363,12 @@ export default function SetOpsReviewPage() {
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-white">1. Ingestion Queue</h2>
-              <p className="mt-1 text-xs text-slate-400">Queue/import jobs, choose a job, then build draft from the selected row.</p>
+              <p className="mt-1 text-xs text-slate-400">
+                Queue/import jobs, choose a job, then build draft from the selected row.
+              </p>
+              <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                Showing pending jobs only (queued / parsed / review required).
+              </p>
             </div>
             {activeStep !== "ingestion-queue" && (
               <button
