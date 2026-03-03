@@ -6,6 +6,7 @@ import { requireAdminSession, toErrorResponse, type AdminSession } from "../../.
 import {
   canPerformSetOpsRole,
   computeSetDeleteImpact,
+  performSetDelete,
   roleDeniedMessage,
   writeSetOpsAuditEvent,
 } from "../../../../../lib/server/setOps";
@@ -58,8 +59,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (!rawSetId) {
       return res.status(400).json({ message: "setId is required" });
     }
-    const setIdCandidates = Array.from(new Set([rawSetId, setId].filter(Boolean)));
-
     await ensureNoActiveSetReplaceJob(rawSetId);
 
     const expectedPhrase = buildSetDeleteConfirmationPhrase(confirmationSetId);
@@ -80,23 +79,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const impact = await computeSetDeleteImpact(tx as unknown as Parameters<typeof computeSetDeleteImpact>[0], rawSetId);
-
-      await tx.cardVariantReferenceImage.deleteMany({
-        where: {
-          setId: { in: setIdCandidates },
-        },
-      });
-      await tx.cardVariant.deleteMany({
-        where: {
-          setId: { in: setIdCandidates },
-        },
-      });
-      await tx.setDraft.deleteMany({
-        where: {
-          setId: { in: setIdCandidates },
-        },
-      });
+      const impact = await performSetDelete(
+        tx as unknown as Parameters<typeof computeSetDeleteImpact>[0],
+        rawSetId
+      );
 
       const audit = await tx.setAuditEvent.create({
         data: {
@@ -106,7 +92,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           setId: confirmationSetId,
           reason: payload.reason || null,
           metadataJson: {
-            setIdCandidates,
             rowsDeleted: impact.rowsToDelete,
             totalRowsDeleted: impact.totalRowsToDelete,
             auditEventsForSet: impact.auditEventsForSet,

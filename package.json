@@ -33,6 +33,7 @@
     "variants:sports:backfill-ref-quality": "node scripts/variant-db/backfill-reference-quality-gate.js",
     "variants:sports:coverage-gaps": "node scripts/variant-db/list-reference-coverage-gaps.js",
     "variants:sports:run": "node scripts/variant-db/run-sports-live.js",
+    "set-ops:delete-all-except": "node scripts/set-ops/delete-sets-except.js",
     "vercel:build": "bash scripts/vercel-build.sh",
     "packs:mint": "node scripts/mint-pack-inventory.js"
   }

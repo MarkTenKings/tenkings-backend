@@ -5568,3 +5568,77 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
 - Locked image seeder/reference files were not modified.
+
+## 2026-03-03 - Set Cleanup Utility (Delete All Sets Except One)
+
+### Summary
+- Added a dedicated Set Ops cleanup script for bulk deletion across set-scoped tables while preserving one explicit keep set.
+- Script is safety-gated for destructive operations:
+  - default mode is dry-run only
+  - execute mode requires both `--execute` and an exact typed `--confirm` phrase (`DELETE ALL SETS EXCEPT <keep-set>`).
+- Added root npm command alias for easier operator usage.
+- Scope of deletion includes set variants/references, ingestion/draft/taxonomy rows, replace jobs, set-scoped audit rows, and set-keyed OCR memory/template rows so deleted sets stop appearing across Set Ops and related admin surfaces.
+
+### Files Updated
+- `scripts/set-ops/delete-sets-except.js` (new)
+- `package.json`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `node scripts/set-ops/delete-sets-except.js --help` passed.
+- `pnpm run set-ops:delete-all-except -- --help` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed in this coding session.
+
+## 2026-03-03 - Set Ops Delete Hardening (Single + Bulk UI Backing)
+
+### Summary
+- Hardened Set Ops deletion so UI single-delete and existing multi-select bulk-delete remove set-scoped data across all major tables, not only variants/drafts.
+- Added shared server-side delete executor (`performSetDelete`) and expanded dry-run impact counts to include:
+  - replace jobs
+  - taxonomy sources/programs/cards/variations/parallels/scopes/odds/conflicts/ambiguities
+  - audit rows
+  - OCR set-scoped memory/template/event rows
+- Updated Set Admin delete modal messaging and impact breakdown to reflect full deletion scope.
+- Existing UI controls already supported individual delete and multi-select bulk delete; this change upgrades backend deletion coverage and user-visible impact detail.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOps.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/delete/confirm.ts`
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared test` passed.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops.tsx --file pages/api/admin/set-ops/delete/confirm.ts --file lib/server/setOps.ts` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed in this coding session.
+
+## 2026-03-03 - AGENTS Startup Context Sync (Docs Read + Repo State)
+
+### Summary
+- Re-read required startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Captured current repository context:
+  - `git status -sb` -> `## main...origin/main` with existing local changes:
+    - `M docs/handoffs/SESSION_LOG.md`
+    - `M frontend/nextjs-app/lib/server/setOps.ts`
+    - `M frontend/nextjs-app/pages/admin/set-ops.tsx`
+    - `M frontend/nextjs-app/pages/api/admin/set-ops/delete/confirm.ts`
+    - `M package.json`
+    - `?? scripts/set-ops/`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `4a6b77a`
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.

@@ -23,12 +23,28 @@ type DeleteImpact = {
   setId: string;
   rowsToDelete: {
     cardVariants: number;
+    cardVariantTaxonomyMaps: number;
     referenceImages: number;
     drafts: number;
     draftVersions: number;
     approvals: number;
     ingestionJobs: number;
     seedJobs: number;
+    setReplaceJobs: number;
+    taxonomySources: number;
+    programs: number;
+    cards: number;
+    variations: number;
+    parallels: number;
+    parallelScopes: number;
+    oddsRows: number;
+    taxonomyConflicts: number;
+    taxonomyAmbiguities: number;
+    auditEvents: number;
+    ocrFeedbackEvents: number;
+    ocrFeedbackMemoryRows: number;
+    ocrRegionTemplates: number;
+    ocrRegionTeachEvents: number;
   };
   totalRowsToDelete: number;
   auditEventsForSet: number;
@@ -1346,7 +1362,7 @@ export default function SetOpsPage() {
               <p className="text-xs uppercase tracking-[0.22em] text-rose-300">Danger Zone</p>
               <h2 className="mt-2 text-2xl font-semibold text-white">Delete Set</h2>
               <p className="mt-2 text-sm text-slate-300">
-                This permanently deletes variant/reference and Set Ops workflow rows for:
+                This permanently deletes set-scoped rows (variants, references, taxonomy, workflow, and OCR memory rows) for:
               </p>
               <p className="mt-2 break-all text-sm font-semibold text-rose-200">{deleteTarget.setId}</p>
 
@@ -1358,13 +1374,28 @@ export default function SetOpsPage() {
                     <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Dry-Run Impact</p>
                     <div className="mt-2 grid gap-2 text-sm text-slate-200 sm:grid-cols-2">
                       <p>Card Variants: {deleteImpact?.rowsToDelete.cardVariants ?? 0}</p>
+                      <p>Variant Taxonomy Maps: {deleteImpact?.rowsToDelete.cardVariantTaxonomyMaps ?? 0}</p>
                       <p>Reference Images: {deleteImpact?.rowsToDelete.referenceImages ?? 0}</p>
                       <p>Set Drafts: {deleteImpact?.rowsToDelete.drafts ?? 0}</p>
                       <p>Draft Versions: {deleteImpact?.rowsToDelete.draftVersions ?? 0}</p>
                       <p>Approvals: {deleteImpact?.rowsToDelete.approvals ?? 0}</p>
                       <p>Ingestion Jobs: {deleteImpact?.rowsToDelete.ingestionJobs ?? 0}</p>
                       <p>Seed Jobs: {deleteImpact?.rowsToDelete.seedJobs ?? 0}</p>
-                      <p>Audit Events (retained): {deleteImpact?.auditEventsForSet ?? 0}</p>
+                      <p>Set Replace Jobs: {deleteImpact?.rowsToDelete.setReplaceJobs ?? 0}</p>
+                      <p>Taxonomy Sources: {deleteImpact?.rowsToDelete.taxonomySources ?? 0}</p>
+                      <p>Taxonomy Programs: {deleteImpact?.rowsToDelete.programs ?? 0}</p>
+                      <p>Taxonomy Cards: {deleteImpact?.rowsToDelete.cards ?? 0}</p>
+                      <p>Taxonomy Variations: {deleteImpact?.rowsToDelete.variations ?? 0}</p>
+                      <p>Taxonomy Parallels: {deleteImpact?.rowsToDelete.parallels ?? 0}</p>
+                      <p>Taxonomy Parallel Scopes: {deleteImpact?.rowsToDelete.parallelScopes ?? 0}</p>
+                      <p>Taxonomy Odds Rows: {deleteImpact?.rowsToDelete.oddsRows ?? 0}</p>
+                      <p>Taxonomy Conflicts: {deleteImpact?.rowsToDelete.taxonomyConflicts ?? 0}</p>
+                      <p>Taxonomy Ambiguities: {deleteImpact?.rowsToDelete.taxonomyAmbiguities ?? 0}</p>
+                      <p>Set Audit Events: {deleteImpact?.rowsToDelete.auditEvents ?? 0}</p>
+                      <p>OCR Feedback Events: {deleteImpact?.rowsToDelete.ocrFeedbackEvents ?? 0}</p>
+                      <p>OCR Memory Rows: {deleteImpact?.rowsToDelete.ocrFeedbackMemoryRows ?? 0}</p>
+                      <p>OCR Region Templates: {deleteImpact?.rowsToDelete.ocrRegionTemplates ?? 0}</p>
+                      <p>OCR Region Teach Events: {deleteImpact?.rowsToDelete.ocrRegionTeachEvents ?? 0}</p>
                     </div>
                     <p className="mt-2 text-sm font-semibold text-rose-200">
                       Total rows to delete: {deleteImpact?.totalRowsToDelete ?? 0}

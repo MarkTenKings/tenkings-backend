@@ -28,12 +28,28 @@ export type SetOpsAuditEventInput = {
 
 export type SetDeleteImpactCounts = {
   cardVariants: number;
+  cardVariantTaxonomyMaps: number;
   referenceImages: number;
   drafts: number;
   draftVersions: number;
   approvals: number;
   ingestionJobs: number;
   seedJobs: number;
+  setReplaceJobs: number;
+  taxonomySources: number;
+  programs: number;
+  cards: number;
+  variations: number;
+  parallels: number;
+  parallelScopes: number;
+  oddsRows: number;
+  taxonomyConflicts: number;
+  taxonomyAmbiguities: number;
+  auditEvents: number;
+  ocrFeedbackEvents: number;
+  ocrFeedbackMemoryRows: number;
+  ocrRegionTemplates: number;
+  ocrRegionTeachEvents: number;
 };
 
 export type SetDeleteImpact = {
@@ -44,9 +60,58 @@ export type SetDeleteImpact = {
 };
 
 type SetOpsDbClient = Pick<
-  typeof prisma,
-  "setDraft" | "setDraftVersion" | "setApproval" | "setIngestionJob" | "setSeedJob" | "setAuditEvent" | "cardVariant" | "cardVariantReferenceImage"
+  Prisma.TransactionClient,
+  | "setDraft"
+  | "setDraftVersion"
+  | "setApproval"
+  | "setIngestionJob"
+  | "setSeedJob"
+  | "setAuditEvent"
+  | "cardVariant"
+  | "cardVariantTaxonomyMap"
+  | "cardVariantReferenceImage"
+  | "setReplaceJob"
+  | "setTaxonomySource"
+  | "setProgram"
+  | "setCard"
+  | "setVariation"
+  | "setParallel"
+  | "setParallelScope"
+  | "setOddsByFormat"
+  | "setTaxonomyConflict"
+  | "setTaxonomyAmbiguityQueue"
+  | "ocrFeedbackEvent"
+  | "ocrFeedbackMemoryAggregate"
+  | "ocrRegionTemplate"
+  | "ocrRegionTeachEvent"
 >;
+
+const asEntityVariants = (value: string) => {
+  if (!value.includes("&")) return [];
+  return [value.replace(/&/g, "&amp;"), value.replace(/&/g, "&#038;"), value.replace(/&/g, "&#38;")];
+};
+
+function buildSetDeleteTargets(setId: string) {
+  const normalizedSetId = normalizeSetLabel(setId);
+  const rawSetId = String(setId || "").trim();
+
+  const setIdCandidates = Array.from(
+    new Set(
+      [rawSetId, normalizedSetId]
+        .filter(Boolean)
+        .flatMap((candidate) => [candidate, ...asEntityVariants(candidate)])
+        .map((candidate) => normalizeSetLabel(candidate))
+        .filter(Boolean)
+    )
+  );
+  const setIdKeyCandidates = Array.from(new Set(setIdCandidates.map((candidate) => candidate.toLowerCase())));
+
+  return {
+    setId: normalizedSetId || rawSetId,
+    setIdCandidates,
+    setIdKeyCandidates,
+  };
+}
 
 const ROLE_ENV: Record<SetOpsRole, { ids: string; phones: string }> = {
   reviewer: { ids: "SET_OPS_REVIEWER_USER_IDS", phones: "SET_OPS_REVIEWER_PHONES" },
@@ -160,20 +225,34 @@ export async function writeSetOpsAuditEvent(input: SetOpsAuditEventInput) {
 }
 
 export async function computeSetDeleteImpact(db: SetOpsDbClient, setId: string): Promise<SetDeleteImpact> {
-  const normalizedSetId = normalizeSetLabel(setId);
-  const rawSetId = String(setId || "").trim();
-  const setIdCandidates = Array.from(new Set([rawSetId, normalizedSetId].filter(Boolean)));
+  const { setId: normalizedSetId, setIdCandidates, setIdKeyCandidates } = buildSetDeleteTargets(setId);
   if (setIdCandidates.length < 1) {
     return {
-      setId: normalizedSetId || rawSetId,
+      setId: normalizedSetId,
       rowsToDelete: {
         cardVariants: 0,
+        cardVariantTaxonomyMaps: 0,
         referenceImages: 0,
         drafts: 0,
         draftVersions: 0,
         approvals: 0,
         ingestionJobs: 0,
         seedJobs: 0,
+        setReplaceJobs: 0,
+        taxonomySources: 0,
+        programs: 0,
+        cards: 0,
+        variations: 0,
+        parallels: 0,
+        parallelScopes: 0,
+        oddsRows: 0,
+        taxonomyConflicts: 0,
+        taxonomyAmbiguities: 0,
+        auditEvents: 0,
+        ocrFeedbackEvents: 0,
+        ocrFeedbackMemoryRows: 0,
+        ocrRegionTemplates: 0,
+        ocrRegionTeachEvents: 0,
       },
       totalRowsToDelete: 0,
       auditEventsForSet: 0,
@@ -187,32 +266,210 @@ export async function computeSetDeleteImpact(db: SetOpsDbClient, setId: string):
   const draftIds = drafts.map((draft) => draft.id);
   const draftFilter = draftIds.length ? { in: draftIds } : null;
 
-  const [cardVariants, referenceImages, draftCount, draftVersions, approvals, ingestionJobs, seedJobs, auditEventsForSet] =
-    await Promise.all([
-      db.cardVariant.count({ where: { setId: { in: setIdCandidates } } }),
-      db.cardVariantReferenceImage.count({ where: { setId: { in: setIdCandidates } } }),
-      db.setDraft.count({ where: { setId: { in: setIdCandidates } } }),
-      draftFilter ? db.setDraftVersion.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
-      draftFilter ? db.setApproval.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
-      draftFilter ? db.setIngestionJob.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
-      draftFilter ? db.setSeedJob.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
-      db.setAuditEvent.count({ where: { setId: { in: setIdCandidates } } }),
-    ]);
+  const [
+    cardVariants,
+    cardVariantTaxonomyMaps,
+    referenceImages,
+    draftCount,
+    draftVersions,
+    approvals,
+    ingestionJobs,
+    seedJobs,
+    setReplaceJobs,
+    taxonomySources,
+    programs,
+    cards,
+    variations,
+    parallels,
+    parallelScopes,
+    oddsRows,
+    taxonomyConflicts,
+    taxonomyAmbiguities,
+    auditEventsForSet,
+    ocrFeedbackEvents,
+    ocrFeedbackMemoryRows,
+    ocrRegionTemplates,
+    ocrRegionTeachEvents,
+  ] = await Promise.all([
+    db.cardVariant.count({ where: { setId: { in: setIdCandidates } } }),
+    db.cardVariantTaxonomyMap.count({ where: { setId: { in: setIdCandidates } } }),
+    db.cardVariantReferenceImage.count({ where: { setId: { in: setIdCandidates } } }),
+    db.setDraft.count({ where: { setId: { in: setIdCandidates } } }),
+    draftFilter ? db.setDraftVersion.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
+    draftFilter ? db.setApproval.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
+    draftFilter ? db.setIngestionJob.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
+    draftFilter ? db.setSeedJob.count({ where: { draftId: draftFilter } }) : Promise.resolve(0),
+    db.setReplaceJob.count({ where: { setId: { in: setIdCandidates } } }),
+    db.setTaxonomySource.count({ where: { setId: { in: setIdCandidates } } }),
+    db.setProgram.count({ where: { setId: { in: setIdCandidates } } }),
+    db.setCard.count({ where: { setId: { in: setIdCandidates } } }),
+    db.setVariation.count({ where: { setId: { in: setIdCandidates } } }),
+    db.setParallel.count({ where: { setId: { in: setIdCandidates } } }),
+    db.setParallelScope.count({ where: { setId: { in: setIdCandidates } } }),
+    db.setOddsByFormat.count({ where: { setId: { in: setIdCandidates } } }),
+    db.setTaxonomyConflict.count({ where: { setId: { in: setIdCandidates } } }),
+    db.setTaxonomyAmbiguityQueue.count({ where: { setId: { in: setIdCandidates } } }),
+    db.setAuditEvent.count({ where: { setId: { in: setIdCandidates } } }),
+    db.ocrFeedbackEvent.count({ where: { setId: { in: setIdCandidates } } }),
+    db.ocrFeedbackMemoryAggregate.count({
+      where: {
+        OR: [{ setId: { in: setIdCandidates } }, { setIdKey: { in: setIdKeyCandidates } }],
+      },
+    }),
+    db.ocrRegionTemplate.count({
+      where: {
+        OR: [{ setId: { in: setIdCandidates } }, { setIdKey: { in: setIdKeyCandidates } }],
+      },
+    }),
+    db.ocrRegionTeachEvent.count({
+      where: {
+        OR: [{ setId: { in: setIdCandidates } }, { setIdKey: { in: setIdKeyCandidates } }],
+      },
+    }),
+  ]);
 
   const rowsToDelete: SetDeleteImpactCounts = {
     cardVariants,
+    cardVariantTaxonomyMaps,
     referenceImages,
     drafts: draftCount,
     draftVersions,
     approvals,
     ingestionJobs,
     seedJobs,
+    setReplaceJobs,
+    taxonomySources,
+    programs,
+    cards,
+    variations,
+    parallels,
+    parallelScopes,
+    oddsRows,
+    taxonomyConflicts,
+    taxonomyAmbiguities,
+    auditEvents: auditEventsForSet,
+    ocrFeedbackEvents,
+    ocrFeedbackMemoryRows,
+    ocrRegionTemplates,
+    ocrRegionTeachEvents,
   };
   const totalRowsToDelete = Object.values(rowsToDelete).reduce((sum, count) => sum + count, 0);
   return {
-    setId: normalizedSetId || rawSetId,
+    setId: normalizedSetId,
     rowsToDelete,
     totalRowsToDelete,
     auditEventsForSet,
   };
+}
+
+export async function performSetDelete(db: SetOpsDbClient, setId: string): Promise<SetDeleteImpact> {
+  const impact = await computeSetDeleteImpact(db, setId);
+  const { setIdCandidates, setIdKeyCandidates } = buildSetDeleteTargets(setId);
+
+  if (setIdCandidates.length < 1) {
+    return impact;
+  }
+
+  await db.cardVariantReferenceImage.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.cardVariantTaxonomyMap.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.cardVariant.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setReplaceJob.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setTaxonomyAmbiguityQueue.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setTaxonomyConflict.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setOddsByFormat.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setParallelScope.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setVariation.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setCard.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setParallel.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setProgram.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setTaxonomySource.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setIngestionJob.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setDraft.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.setAuditEvent.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.ocrFeedbackEvent.deleteMany({
+    where: {
+      setId: { in: setIdCandidates },
+    },
+  });
+  await db.ocrFeedbackMemoryAggregate.deleteMany({
+    where: {
+      OR: [{ setId: { in: setIdCandidates } }, { setIdKey: { in: setIdKeyCandidates } }],
+    },
+  });
+  await db.ocrRegionTemplate.deleteMany({
+    where: {
+      OR: [{ setId: { in: setIdCandidates } }, { setIdKey: { in: setIdKeyCandidates } }],
+    },
+  });
+  await db.ocrRegionTeachEvent.deleteMany({
+    where: {
+      OR: [{ setId: { in: setIdCandidates } }, { setIdKey: { in: setIdKeyCandidates } }],
+    },
+  });
+
+  return impact;
 }
