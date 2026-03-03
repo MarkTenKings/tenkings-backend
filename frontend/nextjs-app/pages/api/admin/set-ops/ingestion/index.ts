@@ -8,6 +8,7 @@ import {
   roleDeniedMessage,
   writeSetOpsAuditEvent,
 } from "../../../../../lib/server/setOps";
+import { adaptCsvContractPayloadForIngestion, CsvContractValidationError } from "../../../../../lib/server/setOpsCsvContract";
 
 const createJobSchema = z.object({
   setId: z.string().min(1),
@@ -168,6 +169,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         return res.status(400).json({ message: "setId is required" });
       }
 
+      const csvContract = adaptCsvContractPayloadForIngestion({
+        datasetType: payload.datasetType,
+        rawPayload: payload.rawPayload,
+        sourceUrl: payload.sourceUrl ?? null,
+        parserVersion: payload.parserVersion,
+      });
+
+      if (csvContract.adapted && csvContract.quality?.decision === "REJECT") {
+        return res.status(422).json({
+          message: `CSV quality score ${csvContract.quality.score} is below minimum threshold (70). Resolve CSV issues before queueing ingestion.`,
+        });
+      }
+
       const draft = await prisma.setDraft.upsert({
         where: { setId },
         update: {
@@ -188,13 +202,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           draftId: draft.id,
           datasetType: payload.datasetType,
           sourceUrl: payload.sourceUrl ? payload.sourceUrl.trim() : null,
-          rawPayload: payload.rawPayload as Prisma.InputJsonValue,
+          rawPayload: csvContract.rawPayload as Prisma.InputJsonValue,
           parserVersion: payload.parserVersion,
           status: SetIngestionJobStatus.QUEUED,
           parseSummaryJson: {
             sourceProvider: payload.sourceProvider || "MANUAL_UPLOAD",
             sourceQuery: payload.sourceQuery ?? null,
             sourceFetchMeta: payload.sourceFetchMeta ?? null,
+            csvContract:
+              csvContract.adapted && csvContract.contractType
+                ? {
+                    adapted: true,
+                    contractType: csvContract.contractType,
+                    rowCount: csvContract.rowCount,
+                    quality: csvContract.quality,
+                    summary: csvContract.summary,
+                  }
+                : null,
           } as Prisma.InputJsonValue,
           createdById: admin.user.id,
         },
@@ -227,6 +251,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           parserVersion: payload.parserVersion,
           hasSourceUrl: Boolean(payload.sourceUrl),
           sourceProvider: payload.sourceProvider || "MANUAL_UPLOAD",
+          csvContract:
+            csvContract.adapted && csvContract.contractType
+              ? {
+                  contractType: csvContract.contractType,
+                  rowCount: csvContract.rowCount,
+                  qualityDecision: csvContract.quality?.decision ?? null,
+                  qualityScore: csvContract.quality?.score ?? null,
+                }
+              : null,
         },
       });
 
@@ -247,18 +280,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(405).json({ message: "Method not allowed" });
   } catch (error) {
     const isValidation = error instanceof z.ZodError;
+    const isCsvValidation = error instanceof CsvContractValidationError;
 
     await writeSetOpsAuditEvent({
       req,
       admin,
       action: "set_ops.ingestion.error",
-      status: isValidation ? SetAuditStatus.DENIED : SetAuditStatus.FAILURE,
+      status: isValidation || isCsvValidation ? SetAuditStatus.DENIED : SetAuditStatus.FAILURE,
       setId: attemptedSetId || null,
       reason: error instanceof Error ? error.message : "Unknown failure",
     });
 
     if (isValidation) {
       return res.status(400).json({ message: error.issues[0]?.message ?? "Invalid payload" });
+    }
+    if (isCsvValidation) {
+      return res.status(error.status).json({ message: error.message });
     }
 
     const response = toErrorResponse(error);

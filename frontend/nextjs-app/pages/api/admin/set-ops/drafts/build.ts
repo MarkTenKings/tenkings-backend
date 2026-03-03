@@ -13,6 +13,7 @@ import {
   createDraftVersionPayload,
   normalizeDraftRows,
 } from "../../../../../lib/server/setOpsDrafts";
+import { evaluateDraftQuality } from "../../../../../lib/server/setOpsCsvContract";
 import { readTaxonomyV2Flags } from "../../../../../lib/server/taxonomyV2Flags";
 import { ingestTaxonomyV2FromIngestionJob, type TaxonomyIngestResult } from "../../../../../lib/server/taxonomyV2Core";
 
@@ -115,6 +116,52 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       fallbackSetId: setId,
       rawPayload: job.rawPayload,
     });
+    const existingParseSummary = asRecord(job.parseSummaryJson) ?? {};
+    const csvContractSummary = asRecord(existingParseSummary.csvContract);
+    const quality = evaluateDraftQuality({
+      datasetType: job.datasetType,
+      rows: normalized.rows,
+      summary: normalized.summary,
+      precheckQuality: asRecord(csvContractSummary?.quality ?? null),
+    });
+
+    if (quality.decision === "REJECT") {
+      await prisma.setIngestionJob.update({
+        where: { id: job.id },
+        data: {
+          draftId,
+          status: SetIngestionJobStatus.FAILED,
+          parsedAt: new Date(),
+          parseSummaryJson: {
+            ...existingParseSummary,
+            rowCount: normalized.summary.rowCount,
+            errorCount: normalized.summary.errorCount,
+            blockingErrorCount: normalized.summary.blockingErrorCount,
+            qualityGate: quality,
+            qualityGateFailed: true,
+          } as Prisma.InputJsonValue,
+        },
+      });
+
+      await writeSetOpsAuditEvent({
+        req,
+        admin,
+        action: "set_ops.draft.build",
+        status: SetAuditStatus.DENIED,
+        setId,
+        draftId,
+        ingestionJobId: job.id,
+        reason: `Quality score ${quality.score} below threshold`,
+        metadata: {
+          qualityGate: quality,
+        },
+      });
+
+      return res.status(422).json({
+        message: `Quality score ${quality.score} is below minimum threshold (70). Import was marked FAILED.`,
+      });
+    }
+
     const taxonomyRows = buildTaxonomyIngestRows(normalized.rows);
 
     const taxonomyFlags = readTaxonomyV2Flags();
@@ -202,7 +249,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       },
     });
 
-    const existingParseSummary = asRecord(job.parseSummaryJson) ?? {};
     await prisma.setIngestionJob.update({
       where: { id: job.id },
       data: {
@@ -216,6 +262,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           errorCount: versionPayload.errorCount,
           blockingErrorCount: versionPayload.blockingErrorCount,
           draftVersionId: version.id,
+          qualityGate: quality,
+          qualityGateFailed: false,
           taxonomyIngest:
             taxonomyIngest && taxonomyFlags.ingest
               ? {
@@ -246,6 +294,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         rowCount: version.rowCount,
         errorCount: version.errorCount,
         blockingErrorCount: version.blockingErrorCount,
+        qualityGate: quality,
         taxonomyIngest:
           taxonomyIngest && taxonomyFlags.ingest
             ? {

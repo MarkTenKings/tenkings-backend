@@ -207,30 +207,35 @@ function parseRawRows(rawPayload: unknown, datasetType: SetDatasetType): Record<
         const finishFamily = firstString(odd, ["finishFamily", "finish", "foil", "surface"]) || null;
         const visualCues = asRecord(odd.visualCues) ?? asRecord(odd.visualCuesJson) ?? null;
         const values = asRecord(odd.values);
-        if (values) {
-          for (const [formatRaw, oddsValue] of Object.entries(values)) {
-            const mapped = formatMap.get(formatRaw) ?? null;
-            const oddsRecord = asRecord(oddsValue);
-            const oddsText =
-              firstString(oddsRecord ?? {}, ["text", "odds", "oddsText"]) || (oddsRecord ? "" : String(oddsValue ?? "").trim());
-            const numericRaw = oddsRecord?.numeric ?? oddsRecord?.oddsNumeric ?? null;
-            const oddsNumeric = Number(numericRaw);
-            rows.push({
-              setId: rootSetId,
-              cardType: parsedProgram || fallbackCardType,
-              program: parsedProgram || fallbackCardType,
-              programLabel: parsedProgram || fallbackCardType,
-              parallel: parsedParallel || fallbackCardType,
-              odds: oddsText,
-              oddsNumeric: Number.isFinite(oddsNumeric) ? oddsNumeric : null,
-              serial: serialText || null,
-              finishFamily,
-              visualCues: visualCues ?? null,
-              format: mapped?.formatKey ?? formatRaw,
-              channel: mapped?.channelKey ?? (firstString(oddsRecord ?? {}, ["channelKey", "channel"]) || null),
-              sourceUrl,
-            });
+        const entries: Array<[string, unknown]> = values
+          ? Object.entries(values)
+          : [[firstString(odd, ["format", "formatKey", "columnHeader"]) || "default", odd]];
+        for (const [formatRaw, oddsValue] of entries) {
+          const mapped = formatMap.get(formatRaw) ?? null;
+          const oddsRecord = asRecord(oddsValue);
+          const oddsText =
+            firstString(oddsRecord ?? {}, ["text", "odds", "oddsText"]) || (oddsRecord ? "" : String(oddsValue ?? "").trim());
+          const numericRaw = oddsRecord?.numeric ?? oddsRecord?.oddsNumeric ?? null;
+          const oddsNumeric = Number(numericRaw);
+          const hasOdds = oddsText.length > 0 && oddsText !== "-";
+          if (!hasOdds && !serialText) {
+            continue;
           }
+          rows.push({
+            setId: rootSetId,
+            cardType: parsedProgram || fallbackCardType,
+            program: parsedProgram || fallbackCardType,
+            programLabel: parsedProgram || fallbackCardType,
+            parallel: parsedParallel || fallbackCardType,
+            odds: hasOdds ? oddsText : null,
+            oddsNumeric: Number.isFinite(oddsNumeric) ? oddsNumeric : null,
+            serial: serialText || null,
+            finishFamily,
+            visualCues: visualCues ?? null,
+            format: mapped?.formatKey ?? formatRaw,
+            channel: mapped?.channelKey ?? (firstString(oddsRecord ?? {}, ["channelKey", "channel"]) || null),
+            sourceUrl,
+          });
         }
       }
     }

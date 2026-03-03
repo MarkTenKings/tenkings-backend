@@ -5461,3 +5461,58 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
 - Image seeder/reference seeding surfaces remained unchanged.
+
+## 2026-03-03 - Phase 2 Implementation (CSV Contract Adapter + Quality Gate)
+
+### Summary
+- Implemented Phase 2 architecture items for CSV ingestion path:
+  - Added strict server-side CSV contract adapter (`SET_LIST`, `ODDS_LIST`) that converts canonical CSV row arrays into structured `rawPayload` objects.
+  - Enforced dataset-type contract matching at ingestion create time:
+    - `SET_LIST` requires `PLAYER_WORKSHEET`
+    - `ODDS_LIST` requires `PARALLEL_DB`
+  - Added pre-queue CSV quality scoring (`PASS`/`WARN`/`REJECT`) and blocked queueing for `REJECT` (<70 threshold) in ingestion API.
+  - Added draft-build quality gate before transition to `REVIEW_REQUIRED`; jobs below threshold are marked `FAILED`.
+  - Persisted quality metadata in `parseSummaryJson` and audit metadata.
+- Hardened structured odds expansion in draft parsing:
+  - skip placeholder `"-"` odds entries unless serial info exists
+  - support fallback structured odds entries even when `odds[].values` shape is absent.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts` (new)
+- `frontend/nextjs-app/pages/api/admin/set-ops/ingestion/index.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/drafts/build.ts`
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/ingestion/index.ts --file pages/api/admin/set-ops/drafts/build.ts --file lib/server/setOpsDrafts.ts --file lib/server/setOpsCsvContract.ts` passed.
+- `pnpm --filter @tenkings/shared test` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Locked image seeder/reference files were not modified in this phase.
+
+## 2026-03-03 - Phase 2 Reviewer Follow-up (Contract Detection + 4xx Validation)
+
+### Summary
+- Addressed reviewer follow-up findings for Phase 2.
+- Tightened ODDS CSV contract detection to avoid false positives:
+  - now requires `card_type` + odds-like format headers + odds-like cell values in sampled rows
+  - excludes known non-odds columns from odds-format detection.
+- Added explicit CSV contract validation error class and wired ingestion API to return validation responses (`400`) instead of generic server-error path.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/ingestion/index.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsCsvContract.ts --file pages/api/admin/set-ops/ingestion/index.ts` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Locked image seeder/reference files were not modified.
