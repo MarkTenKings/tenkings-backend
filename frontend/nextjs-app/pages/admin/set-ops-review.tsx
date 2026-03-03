@@ -1859,7 +1859,7 @@ export default function SetOpsReviewPage() {
             </button>
             <Link
               href={{
-                pathname: "/admin/variants",
+                pathname: "/admin/variant-ref-qa",
                 query: selectedSetId ? { setId: selectedSetId } : {},
               }}
               className={`inline-flex h-10 items-center rounded-xl border px-4 text-xs font-semibold uppercase tracking-[0.16em] transition ${
@@ -1868,7 +1868,7 @@ export default function SetOpsReviewPage() {
                   : "pointer-events-none border-white/20 text-slate-500 opacity-60"
               }`}
             >
-              Open Reference Seeding
+              Open Reference QA
             </Link>
           </div>
           {datasetType !== "PARALLEL_DB" && (

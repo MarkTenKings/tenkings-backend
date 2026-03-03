@@ -5707,3 +5707,30 @@
 ### Operations/Safety
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
+
+## 2026-03-03 - Variants UI Cleanup (Workflow Move to Set Ops + Ref QA)
+
+### Summary
+- Converted `/admin/variants` into a legacy compatibility page that clearly routes operators to:
+  - `/admin/set-ops-review` for ingestion/import/seeding
+  - `/admin/variant-ref-qa` for reference image review/curation
+- Updated Set Ops Review Step 3 link from legacy `/admin/variants` to `/admin/variant-ref-qa`.
+- Updated Variant Ref QA top-back link to `/admin/set-ops-review`.
+- Updated admin home label from `Variants` to `Variants (Moved)`.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/variants.tsx`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+- `frontend/nextjs-app/pages/admin/index.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/variants.tsx --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx --file pages/admin/index.tsx` passed (existing non-blocking `@next/next/no-img-element` warnings remain in `variant-ref-qa.tsx`).
+- `pnpm --filter @tenkings/shared test` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Backend matcher/reference APIs and image seeder internals were not modified.

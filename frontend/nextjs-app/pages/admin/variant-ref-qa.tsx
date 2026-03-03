@@ -609,8 +609,8 @@ export default function VariantRefQaPage() {
       </Head>
       <div className="flex flex-1 flex-col gap-6 px-6 py-8">
         <div className="flex items-center justify-between gap-4">
-          <Link href="/admin/variants" className="text-xs uppercase tracking-[0.28em] text-slate-400 hover:text-white">
-            ← Variants
+          <Link href="/admin/set-ops-review" className="text-xs uppercase tracking-[0.28em] text-slate-400 hover:text-white">
+            ← Set Ops Review
           </Link>
           <h1 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">Variant Ref QA</h1>
           <span className="text-xs uppercase tracking-[0.24em] text-slate-500">Clean bad reference images</span>
