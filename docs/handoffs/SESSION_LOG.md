@@ -5874,3 +5874,89 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
 - Image seeder/reference locked files were not modified.
+
+## 2026-03-04 - Seed Monitor Context Persistence After Approval
+
+### Summary
+- Fixed `/admin/set-ops-review` Step 3 buttons becoming disabled after successful approval.
+- Root cause: pending-queue refresh removed the approved ingestion job and cleared selected set/draft context, which disabled seed actions.
+- Updated queue refresh behavior to clear only stale selected job ID while preserving active set workspace context.
+- Updated Step 3 actions (`Sync Set Variant Records`, reference seeding, refresh, QA link) to use active Set ID context (`selectedSetId` fallback to typed Set ID input), reducing operator dead-ends.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Image seeder/reference locked files were not modified.
+
+## 2026-03-04 - Auto Variant Sync on Approval + Step 3 Simplification
+
+### Summary
+- Implemented automatic `CardVariant` sync during `APPROVED` action in `/api/admin/set-ops/approval`.
+- Approval flow now triggers seed sync server-side (create `SetSeedJob` + run `runSeedJob`) and returns sync outcome in approval response.
+- Added guarded failure behavior so approval remains successful even if auto-sync encounters an error; sync failure is returned as warning and audit logged.
+- Removed manual `Sync Set Variant Records` button from `/admin/set-ops-review` Step 3.
+- Updated Step 3 copy to reflect new workflow: variant sync auto-runs on approve; operator only seeds checklist/odds references.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/approval.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/approval.ts` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Image seeder/reference locked files were not modified.
+
+## 2026-03-04 - Set Ops Review Step Label Cleanup
+
+### Summary
+- Corrected step navigation button labels in `/admin/set-ops-review` to match actual step numbers:
+  - Step 1 button: `Continue to Step 2`
+  - Step 2 button: `Continue to Step 3`
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/approval.ts` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+
+## 2026-03-04 - Approval Hard Gate on Auto Variant Sync Failure
+
+### Summary
+- Tightened approval semantics so `APPROVED` is now blocked when auto variant sync fails.
+- Updated `/api/admin/set-ops/approval` flow:
+  - Auto variant sync runs before approval record/status writes.
+  - Any sync failure now returns `409` (`Approve blocked: variant sync failed ...`).
+  - Draft/ingestion approval statuses are NOT written on sync failure.
+- Successful sync still proceeds to write approval + draft + ingestion status updates.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/approval.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/approval.ts --file pages/admin/set-ops-review.tsx` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Image seeder/reference locked files were not modified.

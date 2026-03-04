@@ -578,12 +578,6 @@ export default function SetOpsReviewPage() {
     setIngestionJobs(nextJobs);
     if (selectedJobId && !nextJobs.some((job) => job.id === selectedJobId)) {
       setSelectedJobId("");
-      setSelectedSetId("");
-      setLatestVersion(null);
-      setVersions([]);
-      setEditableRows([]);
-      setSeedJobs([]);
-      setReferenceStatus(null);
     }
   }, [activeQueueSetId, adminHeaders, canReview, isAdmin, selectedJobId, session?.token, showAllPendingJobs]);
 
@@ -1213,6 +1207,21 @@ export default function SetOpsReviewPage() {
           message?: string;
           diffSummary?: { added: number; removed: number; changed: number; unchanged: number };
           blockingErrorCount?: number;
+          variantSync?:
+            | {
+                jobId: string;
+                status: string;
+                processed: number;
+                inserted: number;
+                updated: number;
+                failed: number;
+                skipped: number;
+                queueCount: number;
+                durationMs: number;
+                errorMessage: string | null;
+              }
+            | null;
+          variantSyncWarning?: string | null;
         };
         if (!response.ok) {
           throw new Error(payload.message ?? "Approval request failed");
@@ -1220,11 +1229,22 @@ export default function SetOpsReviewPage() {
 
         await fetchDraft(selectedSetId, datasetType);
         await fetchIngestionJobs();
-        setStatus(
-          `${decision} complete (blocking=${payload.blockingErrorCount ?? 0}, added=${payload.diffSummary?.added ?? 0}, changed=${payload.diffSummary?.changed ?? 0}).`
-        );
         if (decision === "APPROVED") {
+          await fetchSeedJobs(selectedSetId);
+          await fetchReferenceStatus(selectedSetId);
+          const variantSyncStatus = payload.variantSync
+            ? `variant sync ${payload.variantSync.status.toLowerCase()} (processed=${payload.variantSync.processed}, inserted=${payload.variantSync.inserted}, updated=${payload.variantSync.updated}, failed=${payload.variantSync.failed}, queue=${payload.variantSync.queueCount})`
+            : payload.variantSyncWarning
+            ? `variant sync warning: ${payload.variantSyncWarning}`
+            : "variant sync queued";
+          setStatus(
+            `${decision} complete (blocking=${payload.blockingErrorCount ?? 0}, added=${payload.diffSummary?.added ?? 0}, changed=${payload.diffSummary?.changed ?? 0}; ${variantSyncStatus}).`
+          );
           setActiveStepWithUrl("seed-monitor");
+        } else {
+          setStatus(
+            `${decision} complete (blocking=${payload.blockingErrorCount ?? 0}, added=${payload.diffSummary?.added ?? 0}, changed=${payload.diffSummary?.changed ?? 0}).`
+          );
         }
       } catch (approvalError) {
         setError(approvalError instanceof Error ? approvalError.message : "Approval request failed");
@@ -1238,6 +1258,8 @@ export default function SetOpsReviewPage() {
       datasetType,
       fetchDraft,
       fetchIngestionJobs,
+      fetchReferenceStatus,
+      fetchSeedJobs,
       isAdmin,
       latestVersion?.id,
       selectedSetId,
@@ -1246,59 +1268,9 @@ export default function SetOpsReviewPage() {
     ]
   );
 
-  const startSeedRun = useCallback(async () => {
-    if (!session?.token || !isAdmin || !selectedSetId) return;
-    if (!canApprove) {
-      setError("Set Ops approver role required");
-      return;
-    }
-
-    setBusy(true);
-    setError(null);
-    setStatus(null);
-
-    try {
-      const response = await fetch("/api/admin/set-ops/seed/jobs", {
-        method: "POST",
-        headers: {
-          ...adminHeaders,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          setId: selectedSetId,
-          draftVersionId: latestApprovedVersionId ?? latestVersion?.id,
-        }),
-      });
-      const payload = (await response.json().catch(() => ({}))) as {
-        message?: string;
-        job?: SeedJob;
-      };
-      if (!response.ok) {
-        throw new Error(payload.message ?? "Failed to start seed run");
-      }
-
-      await fetchSeedJobs(selectedSetId);
-      await fetchReferenceStatus(selectedSetId);
-      setStatus(`Seed run ${payload.job?.id ?? ""} started.`);
-    } catch (seedError) {
-      setError(seedError instanceof Error ? seedError.message : "Failed to start seed run");
-    } finally {
-      setBusy(false);
-    }
-  }, [
-    adminHeaders,
-    canApprove,
-    fetchSeedJobs,
-    fetchReferenceStatus,
-    isAdmin,
-    latestApprovedVersionId,
-    latestVersion?.id,
-    selectedSetId,
-    session?.token,
-  ]);
-
   const seedReferenceImagesForDataset = useCallback(async (targetDatasetType: DatasetType, datasetLabel: string) => {
-    if (!session?.token || !isAdmin || !selectedSetId) return;
+    const targetSetId = activeQueueSetId;
+    if (!session?.token || !isAdmin || !targetSetId) return;
     if (!canApprove) {
       setError("Set Ops approver role required");
       return;
@@ -1310,7 +1282,7 @@ export default function SetOpsReviewPage() {
 
     try {
       const requestBody: Record<string, unknown> = {
-        setId: selectedSetId,
+        setId: targetSetId,
         datasetType: targetDatasetType,
       };
       if (latestApprovedVersionId && datasetType === targetDatasetType) {
@@ -1349,7 +1321,7 @@ export default function SetOpsReviewPage() {
           `${datasetLabel} reference seed complete (${summary.processed}/${summary.targetCount}, inserted=${summary.inserted}, skipped=${summary.skipped}).`
         );
       }
-      await fetchReferenceStatus(selectedSetId);
+      await fetchReferenceStatus(targetSetId);
     } catch (seedError) {
       setError(seedError instanceof Error ? seedError.message : `Failed to seed ${datasetLabel} references`);
     } finally {
@@ -1361,14 +1333,15 @@ export default function SetOpsReviewPage() {
     datasetType,
     fetchReferenceStatus,
     isAdmin,
+    activeQueueSetId,
     latestApprovedVersionId,
-    selectedSetId,
     session?.token,
   ]);
 
   const runSeedAction = useCallback(
     async (jobId: string, action: "cancel" | "retry") => {
-      if (!session?.token || !isAdmin || !selectedSetId) return;
+      const targetSetId = activeQueueSetId;
+      if (!session?.token || !isAdmin || !targetSetId) return;
       if (!canApprove) {
         setError("Set Ops approver role required");
         return;
@@ -1393,8 +1366,8 @@ export default function SetOpsReviewPage() {
           throw new Error(payload.message ?? `Failed to ${action} seed job`);
         }
 
-        await fetchSeedJobs(selectedSetId);
-        await fetchReferenceStatus(selectedSetId);
+        await fetchSeedJobs(targetSetId);
+        await fetchReferenceStatus(targetSetId);
         setStatus(`${action === "cancel" ? "Cancelled" : "Retried"} seed job ${payload.job?.id ?? jobId}.`);
       } catch (seedActionError) {
         setError(seedActionError instanceof Error ? seedActionError.message : `Failed to ${action} seed job`);
@@ -1402,7 +1375,7 @@ export default function SetOpsReviewPage() {
         setBusy(false);
       }
     },
-    [adminHeaders, canApprove, fetchReferenceStatus, fetchSeedJobs, isAdmin, selectedSetId, session?.token]
+    [adminHeaders, canApprove, fetchReferenceStatus, fetchSeedJobs, isAdmin, activeQueueSetId, session?.token]
   );
 
   const showMissingConfig =
@@ -1879,7 +1852,7 @@ export default function SetOpsReviewPage() {
               disabled={!selectedSetId}
               className="h-10 rounded-xl border border-gold-500/50 bg-gold-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-gold-100 transition hover:bg-gold-500/30 disabled:opacity-60"
             >
-              Continue to Step 3
+              Continue to Step 2
             </button>
           </div>
             </>
@@ -2182,7 +2155,7 @@ export default function SetOpsReviewPage() {
               disabled={!selectedSetId}
               className="h-10 rounded-xl border border-gold-500/50 bg-gold-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-gold-100 transition hover:bg-gold-500/30 disabled:opacity-60"
             >
-              Continue to Step 4
+              Continue to Step 3
             </button>
           </div>
             </>
@@ -2212,15 +2185,7 @@ export default function SetOpsReviewPage() {
           <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
-              disabled={busy || !canApprove || !selectedSetId}
-              onClick={() => void startSeedRun()}
-              className="h-10 rounded-xl border border-sky-400/50 bg-sky-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-sky-100 transition hover:bg-sky-500/30 disabled:opacity-60"
-            >
-              Sync Set Variant Records
-            </button>
-            <button
-              type="button"
-              disabled={busy || !canApprove || !selectedSetId}
+              disabled={busy || !canApprove || !activeQueueSetId}
               onClick={() => void seedReferenceImagesForDataset("PLAYER_WORKSHEET", "SET CHECKLIST")}
               className="h-10 rounded-xl border border-amber-400/50 bg-amber-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-amber-100 transition hover:bg-amber-500/30 disabled:opacity-60"
             >
@@ -2228,7 +2193,7 @@ export default function SetOpsReviewPage() {
             </button>
             <button
               type="button"
-              disabled={busy || !canApprove || !selectedSetId}
+              disabled={busy || !canApprove || !activeQueueSetId}
               onClick={() => void seedReferenceImagesForDataset("PARALLEL_DB", "ODDS LIST")}
               className="h-10 rounded-xl border border-emerald-400/50 bg-emerald-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-60"
             >
@@ -2236,8 +2201,11 @@ export default function SetOpsReviewPage() {
             </button>
             <button
               type="button"
-              disabled={busy || !canApprove || !selectedSetId}
-              onClick={() => void fetchSeedJobs(selectedSetId)}
+              disabled={busy || !canApprove || !activeQueueSetId}
+              onClick={() => {
+                if (!activeQueueSetId) return;
+                void fetchSeedJobs(activeQueueSetId);
+              }}
               className="h-10 rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
             >
               Refresh Seed Jobs
@@ -2245,10 +2213,10 @@ export default function SetOpsReviewPage() {
             <Link
               href={{
                 pathname: "/admin/variant-ref-qa",
-                query: selectedSetId ? { setId: selectedSetId } : {},
+                query: activeQueueSetId ? { setId: activeQueueSetId } : {},
               }}
               className={`inline-flex h-10 items-center rounded-xl border px-4 text-xs font-semibold uppercase tracking-[0.16em] transition ${
-                selectedSetId
+                activeQueueSetId
                   ? "border-violet-400/50 bg-violet-500/20 text-violet-100 hover:bg-violet-500/30"
                   : "pointer-events-none border-white/20 text-slate-500 opacity-60"
               }`}
@@ -2257,10 +2225,10 @@ export default function SetOpsReviewPage() {
             </Link>
           </div>
           <p className="mt-3 text-xs text-slate-300">
-            Step order: sync set variant records first, then seed SET CHECKLIST and ODDS LIST references.
+            Variant sync now auto-runs on APPROVE. Next: seed SET CHECKLIST and ODDS LIST references.
           </p>
 
-          {selectedSetId && (
+          {activeQueueSetId && (
             <p className="mt-3 text-xs text-slate-300">
               Reference status for set: Total {referenceStatus?.total ?? "-"} · Pending {referenceStatus?.pending ?? "-"} · Processed{" "}
               {referenceStatus?.processed ?? "-"}

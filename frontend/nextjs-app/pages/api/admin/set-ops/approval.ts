@@ -1,6 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { z } from "zod";
-import { prisma, SetApprovalDecision, SetAuditStatus, SetIngestionJobStatus, type Prisma } from "@tenkings/database";
+import {
+  prisma,
+  SetApprovalDecision,
+  SetAuditStatus,
+  SetIngestionJobStatus,
+  SetSeedJobStatus,
+  type Prisma,
+} from "@tenkings/database";
 import { normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse, type AdminSession } from "../../../../lib/server/admin";
 import {
@@ -9,6 +16,8 @@ import {
   writeSetOpsAuditEvent,
 } from "../../../../lib/server/setOps";
 import { extractDraftRows, summarizeDraftDiff } from "../../../../lib/server/setOpsDrafts";
+import { runSeedJob } from "../../../../lib/server/setOpsSeed";
+import { ensureNoActiveSetReplaceJob } from "../../../../lib/server/setOpsReplace";
 
 const approvalSchema = z.object({
   setId: z.string().min(1),
@@ -29,6 +38,20 @@ type ResponseBody =
       draftStatus: string;
       diffSummary: ReturnType<typeof summarizeDraftDiff>;
       blockingErrorCount: number;
+      variantSync:
+        | {
+            jobId: string;
+            status: string;
+            processed: number;
+            inserted: number;
+            updated: number;
+            failed: number;
+            skipped: number;
+            queueCount: number;
+            durationMs: number;
+            errorMessage: string | null;
+          }
+        | null;
       audit: { id: string; status: string; action: string; createdAt: string } | null;
     }
   | { message: string };
@@ -140,6 +163,159 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const nextRows = extractDraftRows(draftVersion.dataJson);
     const diffSummary = summarizeDraftDiff(previousRows, nextRows);
 
+    let variantSync: {
+      jobId: string;
+      status: string;
+      processed: number;
+      inserted: number;
+      updated: number;
+      failed: number;
+      skipped: number;
+      queueCount: number;
+      durationMs: number;
+      errorMessage: string | null;
+    } | null = null;
+
+    if (payload.decision === SetApprovalDecision.APPROVED) {
+      await ensureNoActiveSetReplaceJob(setId);
+
+      const seedJob = await prisma.setSeedJob.create({
+        data: {
+          draftId: draft.id,
+          draftVersionId: draftVersion.id,
+          status: SetSeedJobStatus.QUEUED,
+          requestedById: admin.user.id,
+          runArgsJson: {
+            setId,
+            draftVersionId: draftVersion.id,
+            triggeredBy: "approval",
+          } as Prisma.InputJsonValue,
+          progressJson: {
+            processed: 0,
+            total: 0,
+            inserted: 0,
+            updated: 0,
+            failed: 0,
+            skipped: 0,
+          } as Prisma.InputJsonValue,
+          logsJson: ["seed:queued", "seed:trigger=approval"] as Prisma.InputJsonValue,
+        },
+        select: {
+          id: true,
+        },
+      });
+
+      try {
+        const summary = await runSeedJob({
+          jobId: seedJob.id,
+          setId,
+          draftDataJson: draftVersion.dataJson,
+        });
+
+        const refreshedSeed = await prisma.setSeedJob.findUnique({
+          where: { id: seedJob.id },
+          select: {
+            id: true,
+            status: true,
+            queueCount: true,
+            errorMessage: true,
+          },
+        });
+
+        variantSync = {
+          jobId: seedJob.id,
+          status: refreshedSeed?.status ?? summary.status,
+          processed: summary.processed,
+          inserted: summary.inserted,
+          updated: summary.updated,
+          failed: summary.failed,
+          skipped: summary.skipped,
+          queueCount: refreshedSeed?.queueCount ?? summary.queueCount,
+          durationMs: summary.durationMs,
+          errorMessage: refreshedSeed?.errorMessage ?? null,
+        };
+
+        const syncFailed =
+          variantSync.status !== SetSeedJobStatus.COMPLETE ||
+          variantSync.failed > 0 ||
+          Boolean(variantSync.errorMessage);
+
+        if (syncFailed) {
+          const failureMessage =
+            variantSync.errorMessage ||
+            `Auto-sync failed (status=${variantSync.status}, failed=${variantSync.failed}).`;
+
+          await writeSetOpsAuditEvent({
+            req,
+            admin,
+            action: "set_ops.seed.jobs.start",
+            status: SetAuditStatus.FAILURE,
+            setId,
+            draftId: draft.id,
+            draftVersionId: draftVersion.id,
+            seedJobId: seedJob.id,
+            reason: failureMessage,
+            metadata: {
+              trigger: "approval",
+              status: variantSync.status,
+              processed: variantSync.processed,
+              inserted: variantSync.inserted,
+              updated: variantSync.updated,
+              failed: variantSync.failed,
+              skipped: variantSync.skipped,
+              queueCount: variantSync.queueCount,
+              durationMs: variantSync.durationMs,
+            },
+          });
+
+          return res.status(409).json({
+            message: `Approve blocked: variant sync failed. ${failureMessage}`,
+          });
+        }
+
+        await writeSetOpsAuditEvent({
+          req,
+          admin,
+          action: "set_ops.seed.jobs.start",
+          status: SetAuditStatus.SUCCESS,
+          setId,
+          draftId: draft.id,
+          draftVersionId: draftVersion.id,
+          seedJobId: seedJob.id,
+          metadata: {
+            trigger: "approval",
+            status: variantSync.status,
+            processed: variantSync.processed,
+            inserted: variantSync.inserted,
+            updated: variantSync.updated,
+            failed: variantSync.failed,
+            skipped: variantSync.skipped,
+            queueCount: variantSync.queueCount,
+            durationMs: variantSync.durationMs,
+          },
+        });
+      } catch (seedError) {
+        const failureMessage = seedError instanceof Error ? seedError.message : "Variant sync failed after approval.";
+        await writeSetOpsAuditEvent({
+          req,
+          admin,
+          action: "set_ops.seed.jobs.start",
+          status: SetAuditStatus.FAILURE,
+          setId,
+          draftId: draft.id,
+          draftVersionId: draftVersion.id,
+          seedJobId: seedJob.id,
+          reason: failureMessage,
+          metadata: {
+            trigger: "approval",
+          },
+        });
+        return res.status(409).json({
+          message: `Approve blocked: variant sync failed. ${failureMessage}`,
+        });
+      }
+    }
+
     const approval = await prisma.setApproval.create({
       data: {
         draftId: draft.id,
@@ -194,6 +370,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         decision: payload.decision,
         diffSummary,
         blockingErrorCount,
+        variantSync: variantSync
+          ? {
+              jobId: variantSync.jobId,
+              status: variantSync.status,
+              failed: variantSync.failed,
+            }
+          : null,
       },
     });
 
@@ -208,6 +391,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       draftStatus,
       diffSummary,
       blockingErrorCount,
+      variantSync,
       audit: audit
         ? {
             id: audit.id,
