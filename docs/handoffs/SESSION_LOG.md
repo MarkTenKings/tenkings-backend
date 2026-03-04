@@ -6013,3 +6013,21 @@
 ### Operations/Safety
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
+
+## 2026-03-04 - Step 3 Reference Seeding Dedupe Removal + Active-Set Queue Default
+
+### Summary
+- Removed Step 3 reference-seed target dedupe for `/api/admin/set-ops/seed/reference` so approved draft rows are seeded at row-level (no collapse across same card/parallel/player triples).
+- Kept existing blockers (blocking row errors, missing required odds/serial for `PARALLEL_DB`) but stopped collapsing otherwise-eligible rows.
+- Tightened Step 1 ingestion queue scope behavior on `/admin/set-ops-review`:
+  - selecting a Set ID now forces `Show Active Set Only` mode,
+  - queueing ingestion now refreshes pending jobs scoped to that active set,
+  - added UI note: `Default view: active set only.`
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/reference.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/seed/reference.ts --file pages/admin/set-ops-review.tsx` passed.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` exited successfully in this workspace run.

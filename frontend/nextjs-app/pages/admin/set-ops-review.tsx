@@ -580,9 +580,11 @@ export default function SetOpsReviewPage() {
     }
   }, [adminHeaders, isAdmin, session?.token]);
 
-  const fetchIngestionJobs = useCallback(async () => {
+  const fetchIngestionJobs = useCallback(async (options?: { setIdOverride?: string | null; showAllOverride?: boolean }) => {
     if (!session?.token || !isAdmin || !canReview) return;
-    if (!showAllPendingJobs && !activeQueueSetId) {
+    const scopedSetId = (options?.setIdOverride ?? activeQueueSetId)?.trim() || "";
+    const showAll = options?.showAllOverride ?? showAllPendingJobs;
+    if (!showAll && !scopedSetId) {
       setIngestionJobs([]);
       if (selectedJobId) {
         setSelectedJobId("");
@@ -590,8 +592,8 @@ export default function SetOpsReviewPage() {
       return;
     }
     const params = new URLSearchParams({ limit: "120", statusGroup: "pending" });
-    if (!showAllPendingJobs && activeQueueSetId) {
-      params.set("setId", activeQueueSetId);
+    if (!showAll && scopedSetId) {
+      params.set("setId", scopedSetId);
     }
     const response = await fetch(`/api/admin/set-ops/ingestion?${params.toString()}`, {
       headers: adminHeaders,
@@ -647,6 +649,7 @@ export default function SetOpsReviewPage() {
     (nextSetId: string, isCreateNew: boolean) => {
       const cleaned = nextSetId.trim().replace(/\s+/g, " ");
       if (!cleaned) return;
+      setShowAllPendingJobs(false);
       setSetIdInput(cleaned);
       setShowSetIdOptions(false);
       if (setIdBlurTimerRef.current) {
@@ -906,6 +909,7 @@ export default function SetOpsReviewPage() {
           setDatasetType(latestJob.datasetType as DatasetType);
           setQueueDatasetMode(latestJob.datasetType as CombinedDatasetMode);
           setSetIdInput(latestJob.setId);
+          setShowAllPendingJobs(false);
           setSourceUrlInput(latestJob.sourceUrl ?? sourceUrlInput);
         }
         if (createdJobs.length === 1) {
@@ -917,7 +921,10 @@ export default function SetOpsReviewPage() {
               .join(", ")}).`
           );
         }
-        await fetchIngestionJobs();
+        await fetchIngestionJobs({
+          setIdOverride: latestJob?.setId ?? requestedSetId,
+          showAllOverride: false,
+        });
         await fetchSetIdOptions(latestJob?.setId ?? requestedSetId);
         setActiveStepWithUrl("ingestion-queue");
       } catch (createError) {
@@ -1694,6 +1701,9 @@ export default function SetOpsReviewPage() {
               </p>
               <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-slate-500">
                 Showing pending jobs only (queued / parsed / review required).
+              </p>
+              <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                Default view: active set only.
               </p>
               <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-slate-500">
                 {showAllPendingJobs

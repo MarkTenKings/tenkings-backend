@@ -99,7 +99,6 @@ function buildSeedTargets(params: {
   datasetType: SetDatasetType;
   rows: ReturnType<typeof extractDraftRows>;
 }): SeedTarget[] {
-  const seen = new Set<string>();
   const targets: SeedTarget[] = [];
 
   for (const row of params.rows) {
@@ -120,10 +119,6 @@ function buildSeedTargets(params: {
       playerSeed,
     });
     if (!query) continue;
-
-    const key = `${cardNumber.toUpperCase()}::${parallelId.toLowerCase()}::${String(playerSeed || "").toLowerCase()}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
 
     targets.push({
       cardNumber,
