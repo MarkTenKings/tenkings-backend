@@ -182,11 +182,9 @@ export function buildReferenceSeedQuery(params: {
   const cleanedPlayer = primarySeedPlayerLabel(params.playerSeed);
   const normalizedCardNumber = normalizeCardNumber(String(params.cardNumber ?? "")) || "ALL";
   const cardToken = normalizedCardNumber !== "ALL" ? `#${normalizedCardNumber}` : "";
-  return [cleanedPlayer, cleanedSetId, cardToken, String(params.parallelId || "").trim()]
-    .filter(Boolean)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const cleanedParallel = String(params.parallelId || "").trim();
+  const parallelToken = /^base$/i.test(cleanedParallel) ? "" : cleanedParallel;
+  return [cleanedPlayer, cleanedSetId, cardToken, parallelToken].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
 }
 
 function buildSearchQueries(params: {

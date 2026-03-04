@@ -5960,3 +5960,56 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
 - Image seeder/reference locked files were not modified.
+
+## 2026-03-04 - Step 3 Seed Row Stability + Step 1 Pending Queue Noise Reduction
+
+### Summary
+- Stabilized Step 3 seed-job table visibility during reference seeding:
+  - After `Seed SET CHECKLIST References` / `Seed ODDS LIST References`, UI now refreshes seed jobs for the active set so the current sync row remains visible.
+- Reduced Step 1 stale queue clutter:
+  - Pending ingestion table now stays empty when no active Set ID is selected (unless operator explicitly enables `Show All Pending`).
+  - This prevents old unrelated pending jobs from dominating the workspace by default.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+
+## 2026-03-04 - Step 3 Reference Seeding UX Restoration (Live Tracker + Images/Card)
+
+### Summary
+- Restored missing Step 3 reference-seeding controls that existed in legacy variants workflow:
+  - Added `Images Per Card` control (1-50) for SerpApi seeding.
+  - Added optional `SerpApi TBS` input for search tuning.
+  - Added live browser-driven seed progress tracker per dataset:
+    - total targets
+    - completed
+    - inserted
+    - skipped
+    - failed
+  - Added in-flight unload warning while browser-driven seeding is running.
+- Added `previewOnly` mode to `/api/admin/set-ops/seed/reference` so UI can fetch approved target list first, then run per-target seeding with live progress updates.
+- Fixed checklist auto-sync behavior: Set seed job now defaults missing checklist parallel values to `base` instead of skipping rows.
+- Improved base-query quality for base checklist seeding by omitting literal `base` token from search query construction.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/reference.ts`
+- `frontend/nextjs-app/lib/server/setOpsSeed.ts`
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/set-ops/seed/reference.ts --file lib/server/setOpsSeed.ts --file lib/server/referenceSeed.ts` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.

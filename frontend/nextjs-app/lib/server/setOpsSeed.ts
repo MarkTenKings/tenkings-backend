@@ -128,17 +128,19 @@ export async function runSeedJob(params: {
     }
 
     const blockingErrors = blockingErrorCount(row);
-    if (blockingErrors > 0 || !row.parallel) {
+    if (blockingErrors > 0) {
       skipped += 1;
-      logs.push(`seed:skip index=${row.index} reason=blocking_error_or_missing_parallel`);
+      logs.push(`seed:skip index=${row.index} reason=blocking_error`);
       continue;
     }
+
+    const seedParallelId = row.parallel || "base";
 
     try {
       const identity = resolveSetOpsVariantIdentity({
         context: identityContext,
         cardNumber: row.cardNumber,
-        parallelId: row.parallel,
+        parallelId: seedParallelId,
       });
       const cardNumber = identity.cardNumber;
       const parallelId = identity.parallelLabel;

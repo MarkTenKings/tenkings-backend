@@ -28,6 +28,7 @@ const seedSchema = z.object({
   setId: z.string().min(1),
   datasetType: z.nativeEnum(SetDatasetType).default(SetDatasetType.PARALLEL_DB),
   draftVersionId: z.string().min(1).optional(),
+  previewOnly: z.coerce.boolean().optional().default(false),
   limit: z.coerce.number().int().min(1).max(50).optional(),
   tbs: z.string().trim().max(64).optional(),
   gl: z.string().trim().max(16).optional(),
@@ -42,6 +43,20 @@ type SeedTarget = {
 };
 
 type ResponseBody =
+  | {
+      targets: Array<{
+        cardNumber: string;
+        parallelId: string;
+        playerSeed: string | null;
+        query: string;
+      }>;
+      summary: {
+        setId: string;
+        datasetType: SetDatasetType;
+        draftVersionId: string;
+        targetCount: number;
+      };
+    }
   | {
       summary: {
         setId: string;
@@ -93,7 +108,8 @@ function buildSeedTargets(params: {
     if (params.datasetType === SetDatasetType.PARALLEL_DB && !row.odds && !row.serial) continue;
 
     const cardNumber = normalizeCardNumber(row.cardNumber ?? "") || "ALL";
-    const parallelId = canonicalSeedParallel(row.parallel, cardNumber);
+    const fallbackParallel = params.datasetType === SetDatasetType.PLAYER_WORKSHEET ? "base" : "";
+    const parallelId = canonicalSeedParallel(row.parallel || fallbackParallel, cardNumber);
     if (!parallelId) continue;
 
     const playerSeed = primarySeedPlayerLabel(row.playerSeed || row.cardType || "") || null;
@@ -199,6 +215,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     if (targets.length < 1) {
       return res.status(400).json({ message: "No eligible draft rows found for reference seeding." });
+    }
+
+    if (payload.previewOnly) {
+      return res.status(200).json({
+        targets: targets.map((target) => ({
+          cardNumber: target.cardNumber,
+          parallelId: target.parallelId,
+          playerSeed: target.playerSeed,
+          query: target.query,
+        })),
+        summary: {
+          setId,
+          datasetType: payload.datasetType,
+          draftVersionId: approvedVersion.draftVersion.id,
+          targetCount: targets.length,
+        },
+      });
     }
 
     let processed = 0;

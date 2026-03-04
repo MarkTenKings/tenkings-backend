@@ -108,6 +108,20 @@ type SetIdOption = {
 };
 
 type ReviewStepId = "ingestion-queue" | "draft-approval" | "seed-monitor";
+type ReferenceSeedTarget = {
+  cardNumber: string;
+  parallelId: string;
+  playerSeed: string | null;
+  query: string;
+};
+type ReferenceSeedProgress = {
+  datasetLabel: string;
+  total: number;
+  completed: number;
+  inserted: number;
+  skipped: number;
+  failed: number;
+};
 
 const REVIEW_STEPS: Array<{ id: ReviewStepId; label: string; description: string }> = [
   {
@@ -376,6 +390,8 @@ function rowIsRookie(row: DraftRow) {
   return ["true", "1", "yes", "rookie", "rc"].includes(text);
 }
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default function SetOpsReviewPage() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
@@ -416,6 +432,9 @@ export default function SetOpsReviewPage() {
 
   const [seedJobs, setSeedJobs] = useState<SeedJob[]>([]);
   const [referenceStatus, setReferenceStatus] = useState<ReferenceStatus | null>(null);
+  const [referenceSeedLimitInput, setReferenceSeedLimitInput] = useState("20");
+  const [referenceSeedTbsInput, setReferenceSeedTbsInput] = useState("");
+  const [referenceSeedProgress, setReferenceSeedProgress] = useState<ReferenceSeedProgress | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [accessBusy, setAccessBusy] = useState(false);
@@ -434,6 +453,9 @@ export default function SetOpsReviewPage() {
   }, [selectedSetId, setIdInput]);
   const canReview = Boolean(permissions?.reviewer);
   const canApprove = Boolean(permissions?.approver);
+  const referenceSeedInFlight = Boolean(
+    referenceSeedProgress && referenceSeedProgress.total > 0 && referenceSeedProgress.completed < referenceSeedProgress.total
+  );
 
   const blockingErrorCount = useMemo(
     () => editableRows.flatMap((row) => row.errors).filter((issue) => issue.blocking).length,
@@ -560,6 +582,13 @@ export default function SetOpsReviewPage() {
 
   const fetchIngestionJobs = useCallback(async () => {
     if (!session?.token || !isAdmin || !canReview) return;
+    if (!showAllPendingJobs && !activeQueueSetId) {
+      setIngestionJobs([]);
+      if (selectedJobId) {
+        setSelectedJobId("");
+      }
+      return;
+    }
     const params = new URLSearchParams({ limit: "120", statusGroup: "pending" });
     if (!showAllPendingJobs && activeQueueSetId) {
       params.set("setId", activeQueueSetId);
@@ -785,6 +814,18 @@ export default function SetOpsReviewPage() {
       setReferenceStatus(null);
     });
   }, [fetchReferenceStatus, selectedSetId]);
+
+  useEffect(() => {
+    if (!referenceSeedInFlight || typeof window === "undefined") return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [referenceSeedInFlight]);
 
   useEffect(() => {
     const stepFromQuery = parseReviewStep(router.query.step);
@@ -1284,6 +1325,7 @@ export default function SetOpsReviewPage() {
       const requestBody: Record<string, unknown> = {
         setId: targetSetId,
         datasetType: targetDatasetType,
+        previewOnly: true,
       };
       if (latestApprovedVersionId && datasetType === targetDatasetType) {
         requestBody.draftVersionId = latestApprovedVersionId;
@@ -1301,28 +1343,122 @@ export default function SetOpsReviewPage() {
         message?: string;
         summary?: {
           targetCount: number;
-          processed: number;
-          inserted: number;
-          skipped: number;
-          failed: number;
+          draftVersionId: string;
         };
+        targets?: ReferenceSeedTarget[];
       };
-      if (!response.ok || !payload.summary) {
+      if (!response.ok || !payload.summary || !Array.isArray(payload.targets)) {
         throw new Error(payload.message ?? "Failed to seed reference images");
       }
 
-      const summary = payload.summary;
-      if (summary.failed > 0) {
+      const targets = payload.targets;
+      if (targets.length < 1) {
+        throw new Error("No eligible targets found for reference seeding.");
+      }
+
+      const normalizedLimit = Math.min(50, Math.max(1, Number(referenceSeedLimitInput) || 20));
+      let completed = 0;
+      let inserted = 0;
+      let skipped = 0;
+      let failed = 0;
+      const failureMessages: string[] = [];
+
+      setReferenceSeedProgress({
+        datasetLabel,
+        total: targets.length,
+        completed: 0,
+        inserted: 0,
+        skipped: 0,
+        failed: 0,
+      });
+
+      for (const target of targets) {
+        let success = false;
+        let lastFailureMessage = "";
+
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          try {
+            const seedResponse = await fetch("/api/admin/variants/reference/seed", {
+              method: "POST",
+              headers: {
+                ...adminHeaders,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                setId: targetSetId,
+                cardNumber: target.cardNumber,
+                parallelId: target.parallelId,
+                playerSeed: target.playerSeed ?? undefined,
+                query: target.query,
+                limit: normalizedLimit,
+                tbs: referenceSeedTbsInput.trim() || undefined,
+              }),
+            });
+            const seedPayload = (await seedResponse.json().catch(() => ({}))) as {
+              message?: string;
+              inserted?: number;
+              skipped?: number;
+            };
+            if (!seedResponse.ok) {
+              lastFailureMessage = String(seedPayload.message || `HTTP ${seedResponse.status}`).trim();
+              if (attempt < 2 && (seedResponse.status === 429 || seedResponse.status >= 500)) {
+                await wait(250 * attempt);
+                continue;
+              }
+              break;
+            }
+            inserted += Number(seedPayload.inserted ?? 0);
+            skipped += Number(seedPayload.skipped ?? 0);
+            success = true;
+            break;
+          } catch (seedError) {
+            lastFailureMessage = seedError instanceof Error ? seedError.message : "Unknown seed failure";
+            if (attempt < 2) {
+              await wait(250 * attempt);
+              continue;
+            }
+            break;
+          }
+        }
+
+        if (!success) {
+          failed += 1;
+          if (failureMessages.length < 8) {
+            failureMessages.push(
+              `${target.cardNumber} ${target.parallelId}${target.playerSeed ? ` (${target.playerSeed})` : ""}: ${
+                lastFailureMessage || "unknown error"
+              }`
+            );
+          }
+        }
+
+        completed += 1;
+        setReferenceSeedProgress({
+          datasetLabel,
+          total: targets.length,
+          completed,
+          inserted,
+          skipped,
+          failed,
+        });
+      }
+
+      if (failed > 0) {
         setStatus(
-          `${datasetLabel} reference seed completed with partial failures (${summary.processed}/${summary.targetCount}, inserted=${summary.inserted}, skipped=${summary.skipped}, failed=${summary.failed}).`
+          `${datasetLabel} reference seed completed with partial failures (${completed}/${targets.length}, inserted=${inserted}, skipped=${skipped}, failed=${failed}).${
+            failureMessages.length ? ` Examples: ${failureMessages.join(" | ")}` : ""
+          }`
         );
       } else {
         setStatus(
-          `${datasetLabel} reference seed complete (${summary.processed}/${summary.targetCount}, inserted=${summary.inserted}, skipped=${summary.skipped}).`
+          `${datasetLabel} reference seed complete (${completed}/${targets.length}, inserted=${inserted}, skipped=${skipped}).`
         );
       }
+
+      await fetchSeedJobs(targetSetId);
       await fetchReferenceStatus(targetSetId);
     } catch (seedError) {
+      setReferenceSeedProgress(null);
       setError(seedError instanceof Error ? seedError.message : `Failed to seed ${datasetLabel} references`);
     } finally {
       setBusy(false);
@@ -1332,9 +1468,12 @@ export default function SetOpsReviewPage() {
     canApprove,
     datasetType,
     fetchReferenceStatus,
+    fetchSeedJobs,
     isAdmin,
     activeQueueSetId,
     latestApprovedVersionId,
+    referenceSeedLimitInput,
+    referenceSeedTbsInput,
     session?.token,
   ]);
 
@@ -2182,6 +2321,33 @@ export default function SetOpsReviewPage() {
           </div>
           {activeStep === "seed-monitor" ? (
             <>
+          <div className="mt-4 grid gap-3 md:grid-cols-[180px_1fr]">
+            <label className="flex flex-col gap-1 text-[11px] uppercase tracking-[0.18em] text-slate-300">
+              Images Per Card
+              <input
+                type="number"
+                min={1}
+                max={50}
+                step={1}
+                value={referenceSeedLimitInput}
+                onChange={(event) => setReferenceSeedLimitInput(event.target.value)}
+                className="h-10 rounded-xl border border-white/10 bg-night-800 px-3 text-sm text-white"
+                disabled={busy || !canApprove}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-[11px] uppercase tracking-[0.18em] text-slate-300">
+              SerpApi TBS (Optional)
+              <input
+                type="text"
+                value={referenceSeedTbsInput}
+                onChange={(event) => setReferenceSeedTbsInput(event.target.value)}
+                placeholder="e.g. isz:l"
+                className="h-10 rounded-xl border border-white/10 bg-night-800 px-3 text-sm text-white"
+                disabled={busy || !canApprove}
+              />
+            </label>
+          </div>
+
           <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
@@ -2227,6 +2393,20 @@ export default function SetOpsReviewPage() {
           <p className="mt-3 text-xs text-slate-300">
             Variant sync now auto-runs on APPROVE. Next: seed SET CHECKLIST and ODDS LIST references.
           </p>
+          {referenceSeedProgress && (
+            <div className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2">
+              <p className="text-xs uppercase tracking-[0.16em] text-emerald-100">
+                Live Seed Progress ({referenceSeedProgress.datasetLabel}): {referenceSeedProgress.completed}/
+                {referenceSeedProgress.total} targets · inserted {referenceSeedProgress.inserted} · skipped{" "}
+                {referenceSeedProgress.skipped} · failed {referenceSeedProgress.failed}
+              </p>
+              {referenceSeedInFlight && (
+                <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-amber-200">
+                  Seed run is browser-driven. Keep this tab open until it finishes.
+                </p>
+              )}
+            </div>
+          )}
 
           {activeQueueSetId && (
             <p className="mt-3 text-xs text-slate-300">
