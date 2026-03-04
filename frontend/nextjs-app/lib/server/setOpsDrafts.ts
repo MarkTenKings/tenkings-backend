@@ -323,6 +323,11 @@ export function normalizeDraftRows(params: {
       listingId = normalizeListingId(fallbackListing);
     }
 
+    const duplicateParallelKey =
+      params.datasetType === SetDatasetType.PLAYER_WORKSHEET
+        ? normalizeParallelLabel(parallel || cardType || firstString(raw, ["subset", "program", "programLabel", "cardType"]))
+        : parallel;
+
     const errors: DraftValidationIssue[] = [];
     const warnings: string[] = [];
 
@@ -367,7 +372,7 @@ export function normalizeDraftRows(params: {
     const duplicateKey = buildSetOpsDuplicateKey({
       setId: normalizedSetId || fallbackSetId,
       cardNumber,
-      parallel,
+      parallel: duplicateParallelKey,
       playerSeed,
       listingId,
     });

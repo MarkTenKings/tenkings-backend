@@ -5850,3 +5850,27 @@
 ### Operations/Safety
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
+
+## 2026-03-04 - Checklist Draft Duplicate-Key Guard Fix (Subset/Variation Rows)
+
+### Summary
+- Fixed false blocking errors in `/admin/set-ops-review` Step 2 for `SET CHECKLIST` drafts where base rows and subset/variation rows share the same card number and player.
+- Root cause: duplicate-key detection used the same effective key for checklist rows when `parallel` was blank, so rows like:
+  - `BASE CARDS I`
+  - `BASE CARDS I GOLDEN MIRROR IMAGE VARIATION`
+  could collide and be flagged as duplicates.
+- Updated duplicate-key derivation in `normalizeDraftRows` for `PLAYER_WORKSHEET` to include dataset context fallback (`subset/program/cardType`) when `parallel` is empty.
+- `PARALLEL_DB` duplicate-key behavior remains unchanged.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDrafts.ts --file pages/admin/set-ops-review.tsx` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- Image seeder/reference locked files were not modified.
