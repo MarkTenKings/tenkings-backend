@@ -42,6 +42,7 @@ type DraftRow = {
   duplicateKey: string;
   errors: Array<{ field: string; message: string; blocking: boolean }>;
   warnings: string[];
+  raw: Record<string, unknown>;
 };
 
 type DraftVersion = {
@@ -347,6 +348,34 @@ function isRecentlyUpdated(value: string | null, hours: number) {
   return Date.now() - timestamp <= hours * 60 * 60 * 1000;
 }
 
+function rowRawString(row: DraftRow, keys: string[]) {
+  for (const key of keys) {
+    const value = row.raw?.[key];
+    if (value == null) continue;
+    const text = String(value).trim();
+    if (!text) continue;
+    return text;
+  }
+  return "";
+}
+
+function rowTeamName(row: DraftRow) {
+  return rowRawString(row, ["team", "teamName", "team_name"]);
+}
+
+function rowSubsetLabel(row: DraftRow) {
+  return row.cardType ?? rowRawString(row, ["subset", "program", "programLabel", "cardType"]) ?? "";
+}
+
+function rowIsRookie(row: DraftRow) {
+  const raw = row.raw ?? {};
+  const boolValue = raw.isRookie ?? raw.rookie ?? null;
+  if (typeof boolValue === "boolean") return boolValue;
+  const text = String(boolValue ?? "").trim().toLowerCase();
+  if (!text) return false;
+  return ["true", "1", "yes", "rookie", "rc"].includes(text);
+}
+
 export default function SetOpsReviewPage() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
@@ -365,6 +394,7 @@ export default function SetOpsReviewPage() {
   const [setIdOptions, setSetIdOptions] = useState<SetIdOption[]>([]);
   const [setIdOptionsBusy, setSetIdOptionsBusy] = useState(false);
   const [showSetIdOptions, setShowSetIdOptions] = useState(false);
+  const [showAllPendingJobs, setShowAllPendingJobs] = useState(false);
   const [sourceUrlInput, setSourceUrlInput] = useState("");
   const [parserVersionInput, setParserVersionInput] = useState("manual-v1");
   const [rawPayloadInput, setRawPayloadInput] = useState("[]");
@@ -398,6 +428,10 @@ export default function SetOpsReviewPage() {
     () => ingestionJobs.find((job) => job.id === selectedJobId) ?? null,
     [ingestionJobs, selectedJobId]
   );
+  const activeQueueSetId = useMemo(() => {
+    const value = (selectedSetId || setIdInput || "").trim().replace(/\s+/g, " ");
+    return value || null;
+  }, [selectedSetId, setIdInput]);
   const canReview = Boolean(permissions?.reviewer);
   const canApprove = Boolean(permissions?.approver);
 
@@ -481,6 +515,7 @@ export default function SetOpsReviewPage() {
           duplicateKey: `manual-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
           errors: [],
           warnings: [],
+          raw: {},
         },
       ];
     });
@@ -526,6 +561,9 @@ export default function SetOpsReviewPage() {
   const fetchIngestionJobs = useCallback(async () => {
     if (!session?.token || !isAdmin || !canReview) return;
     const params = new URLSearchParams({ limit: "120", statusGroup: "pending" });
+    if (!showAllPendingJobs && activeQueueSetId) {
+      params.set("setId", activeQueueSetId);
+    }
     const response = await fetch(`/api/admin/set-ops/ingestion?${params.toString()}`, {
       headers: adminHeaders,
     });
@@ -547,7 +585,7 @@ export default function SetOpsReviewPage() {
       setSeedJobs([]);
       setReferenceStatus(null);
     }
-  }, [adminHeaders, canReview, isAdmin, selectedJobId, session?.token]);
+  }, [activeQueueSetId, adminHeaders, canReview, isAdmin, selectedJobId, session?.token, showAllPendingJobs]);
 
   const fetchSetIdOptions = useCallback(
     async (query: string) => {
@@ -726,6 +764,14 @@ export default function SetOpsReviewPage() {
     }, 180);
     return () => clearTimeout(timeout);
   }, [canReview, fetchSetIdOptions, isAdmin, session?.token, setIdInput]);
+
+  useEffect(() => {
+    if (!autoLoadedRef.current) return;
+    if (!session?.token || !isAdmin || !canReview) return;
+    void fetchIngestionJobs().catch((loadError) => {
+      setError(loadError instanceof Error ? loadError.message : "Failed to load ingestion queue");
+    });
+  }, [activeQueueSetId, canReview, fetchIngestionJobs, isAdmin, session?.token, showAllPendingJobs]);
 
   useEffect(
     () => () => {
@@ -1085,18 +1131,38 @@ export default function SetOpsReviewPage() {
         body: JSON.stringify({
           setId: selectedSetId,
           datasetType,
-          rows: editableRows.map((row) => ({
-            setId: row.setId,
-            cardNumber: row.cardNumber,
-            parallel: row.parallel,
-            cardType: row.cardType,
-            odds: row.odds,
-            serial: row.serial,
-            format: row.format,
-            playerSeed: row.playerSeed,
-            listingId: row.listingId,
-            sourceUrl: row.sourceUrl,
-          })),
+          rows: editableRows.map((row) => {
+            if (datasetType === "PLAYER_WORKSHEET") {
+              const team = rowTeamName(row);
+              const subset = rowSubsetLabel(row);
+              const rookie = rowIsRookie(row);
+              return {
+                setId: row.setId,
+                cardNumber: row.cardNumber,
+                playerSeed: row.playerSeed,
+                playerName: row.playerSeed,
+                team,
+                teamName: team,
+                cardType: subset || null,
+                subset: subset || null,
+                isRookie: rookie,
+                rookie: rookie ? "Rookie" : "",
+                sourceUrl: row.sourceUrl,
+              };
+            }
+            return {
+              setId: row.setId,
+              cardNumber: row.cardNumber,
+              parallel: row.parallel,
+              cardType: row.cardType,
+              odds: row.odds,
+              serial: row.serial,
+              format: row.format,
+              playerSeed: row.playerSeed,
+              listingId: row.listingId,
+              sourceUrl: row.sourceUrl,
+            };
+          }),
         }),
       });
       const payload = (await response.json().catch(() => ({}))) as {
@@ -1517,16 +1583,30 @@ export default function SetOpsReviewPage() {
               <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-slate-500">
                 Showing pending jobs only (queued / parsed / review required).
               </p>
+              <p className="mt-1 text-[11px] uppercase tracking-[0.14em] text-slate-500">
+                {showAllPendingJobs
+                  ? "Scope: all pending sets"
+                  : `Scope: ${activeQueueSetId ? `active set (${activeQueueSetId})` : "all pending sets (no active set selected yet)"}`}
+              </p>
             </div>
-            {activeStep !== "ingestion-queue" && (
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => setActiveStepWithUrl("ingestion-queue")}
+                onClick={() => setShowAllPendingJobs((prev) => !prev)}
                 className="rounded-lg border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40"
               >
-                Open Step
+                {showAllPendingJobs ? "Show Active Set Only" : "Show All Pending"}
               </button>
-            )}
+              {activeStep !== "ingestion-queue" && (
+                <button
+                  type="button"
+                  onClick={() => setActiveStepWithUrl("ingestion-queue")}
+                  className="rounded-lg border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40"
+                >
+                  Open Step
+                </button>
+              )}
+            </div>
           </div>
           {activeStep === "ingestion-queue" ? (
             <>
@@ -1881,11 +1961,11 @@ export default function SetOpsReviewPage() {
               <thead>
                 <tr>
                   <th className="border-b border-white/10 px-2 py-2">#</th>
-                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Card Type" : "Card #"}</th>
-                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Parallel Name" : "Parallel"}</th>
-                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Odds" : "Player Seed"}</th>
-                  <th className="border-b border-white/10 px-2 py-2">Listing ID</th>
-                  <th className="border-b border-white/10 px-2 py-2">Source URL</th>
+                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Card Type" : "Card_Number"}</th>
+                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Parallel Name" : "Player_Name"}</th>
+                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Odds" : "Team_Name"}</th>
+                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Listing ID" : "Subset"}</th>
+                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Source URL" : "Rookie"}</th>
                   <th className="border-b border-white/10 px-2 py-2">Issues</th>
                   <th className="border-b border-white/10 px-2 py-2">Actions</th>
                 </tr>
@@ -1895,91 +1975,176 @@ export default function SetOpsReviewPage() {
                   <tr key={`${row.duplicateKey}-${row.index}`}>
                     <td className="border-b border-white/5 px-2 py-2">{row.index + 1}</td>
                     <td className="border-b border-white/5 px-2 py-2">
-                      <input
-                        value={isOddsDataset ? row.cardType ?? row.playerSeed ?? "" : row.cardNumber ?? ""}
-                        onChange={(event) => {
-                          const next = event.target.value;
-                          setEditableRows((prev) => {
-                            const copy = [...prev];
-                            if (isOddsDataset) {
+                      {isOddsDataset ? (
+                        <input
+                          value={row.cardType ?? row.playerSeed ?? ""}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            setEditableRows((prev) => {
+                              const copy = [...prev];
                               copy[rowIndex] = { ...copy[rowIndex], cardType: next || null, playerSeed: next };
-                            } else {
+                              return copy;
+                            });
+                          }}
+                          disabled={!canReview}
+                          className="h-8 w-48 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        />
+                      ) : (
+                        <input
+                          value={row.cardNumber ?? ""}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            setEditableRows((prev) => {
+                              const copy = [...prev];
                               copy[rowIndex] = { ...copy[rowIndex], cardNumber: next || null };
-                            }
-                            return copy;
-                          });
-                        }}
-                        disabled={!canReview}
-                        className={`h-8 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none ${
-                          isOddsDataset ? "w-48" : "w-24"
-                        }`}
-                      />
+                              return copy;
+                            });
+                          }}
+                          disabled={!canReview}
+                          className="h-8 w-24 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        />
+                      )}
                     </td>
                     <td className="border-b border-white/5 px-2 py-2">
-                      <input
-                        value={row.parallel ?? ""}
-                        onChange={(event) => {
-                          const next = event.target.value;
-                          setEditableRows((prev) => {
-                            const copy = [...prev];
-                            copy[rowIndex] = { ...copy[rowIndex], parallel: next };
-                            return copy;
-                          });
-                        }}
-                        disabled={!canReview}
-                        className="h-8 w-48 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
-                      />
+                      {isOddsDataset ? (
+                        <input
+                          value={row.parallel ?? ""}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            setEditableRows((prev) => {
+                              const copy = [...prev];
+                              copy[rowIndex] = { ...copy[rowIndex], parallel: next };
+                              return copy;
+                            });
+                          }}
+                          disabled={!canReview}
+                          className="h-8 w-48 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        />
+                      ) : (
+                        <input
+                          value={row.playerSeed ?? ""}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            setEditableRows((prev) => {
+                              const copy = [...prev];
+                              copy[rowIndex] = {
+                                ...copy[rowIndex],
+                                playerSeed: next,
+                                raw: { ...copy[rowIndex].raw, playerName: next, playerSeed: next },
+                              };
+                              return copy;
+                            });
+                          }}
+                          disabled={!canReview}
+                          className="h-8 w-48 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        />
+                      )}
                     </td>
                     <td className="border-b border-white/5 px-2 py-2">
-                      <input
-                        value={isOddsDataset ? row.odds ?? row.cardNumber ?? "" : row.playerSeed ?? ""}
-                        onChange={(event) => {
-                          const next = event.target.value;
-                          setEditableRows((prev) => {
-                            const copy = [...prev];
-                            if (isOddsDataset) {
+                      {isOddsDataset ? (
+                        <input
+                          value={row.odds ?? row.cardNumber ?? ""}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            setEditableRows((prev) => {
+                              const copy = [...prev];
                               copy[rowIndex] = { ...copy[rowIndex], odds: next || null, cardNumber: null };
-                            } else {
-                              copy[rowIndex] = { ...copy[rowIndex], playerSeed: next };
-                            }
-                            return copy;
-                          });
-                        }}
-                        disabled={!canReview}
-                        className={`h-8 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none ${
-                          isOddsDataset ? "w-24" : "w-40"
-                        }`}
-                      />
+                              return copy;
+                            });
+                          }}
+                          disabled={!canReview}
+                          className="h-8 w-24 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        />
+                      ) : (
+                        <input
+                          value={rowTeamName(row)}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            setEditableRows((prev) => {
+                              const copy = [...prev];
+                              copy[rowIndex] = {
+                                ...copy[rowIndex],
+                                raw: { ...copy[rowIndex].raw, team: next, teamName: next },
+                              };
+                              return copy;
+                            });
+                          }}
+                          disabled={!canReview}
+                          className="h-8 w-52 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        />
+                      )}
                     </td>
                     <td className="border-b border-white/5 px-2 py-2">
-                      <input
-                        value={row.listingId ?? ""}
-                        onChange={(event) => {
-                          const next = event.target.value;
-                          setEditableRows((prev) => {
-                            const copy = [...prev];
-                            copy[rowIndex] = { ...copy[rowIndex], listingId: next || null };
-                            return copy;
-                          });
-                        }}
-                        disabled={!canReview}
-                        className="h-8 w-36 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
-                      />
+                      {isOddsDataset ? (
+                        <input
+                          value={row.listingId ?? ""}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            setEditableRows((prev) => {
+                              const copy = [...prev];
+                              copy[rowIndex] = { ...copy[rowIndex], listingId: next || null };
+                              return copy;
+                            });
+                          }}
+                          disabled={!canReview}
+                          className="h-8 w-36 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        />
+                      ) : (
+                        <input
+                          value={rowSubsetLabel(row)}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            setEditableRows((prev) => {
+                              const copy = [...prev];
+                              copy[rowIndex] = {
+                                ...copy[rowIndex],
+                                cardType: next || null,
+                                raw: { ...copy[rowIndex].raw, subset: next, program: next, programLabel: next, cardType: next },
+                              };
+                              return copy;
+                            });
+                          }}
+                          disabled={!canReview}
+                          className="h-8 w-52 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        />
+                      )}
                     </td>
                     <td className="border-b border-white/5 px-2 py-2">
-                      <input
-                        value={row.sourceUrl ?? ""}
-                        onChange={(event) => {
-                          const next = event.target.value;
-                          setEditableRows((prev) => {
-                            const copy = [...prev];
-                            copy[rowIndex] = { ...copy[rowIndex], sourceUrl: next || null };
-                            return copy;
-                          });
-                        }}
-                        disabled={!canReview}
-                        className="h-8 w-56 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
-                      />
+                      {isOddsDataset ? (
+                        <input
+                          value={row.sourceUrl ?? ""}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            setEditableRows((prev) => {
+                              const copy = [...prev];
+                              copy[rowIndex] = { ...copy[rowIndex], sourceUrl: next || null };
+                              return copy;
+                            });
+                          }}
+                          disabled={!canReview}
+                          className="h-8 w-56 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        />
+                      ) : (
+                        <select
+                          value={rowIsRookie(row) ? "Rookie" : ""}
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            setEditableRows((prev) => {
+                              const copy = [...prev];
+                              copy[rowIndex] = {
+                                ...copy[rowIndex],
+                                raw: { ...copy[rowIndex].raw, isRookie: next === "Rookie", rookie: next },
+                              };
+                              return copy;
+                            });
+                          }}
+                          disabled={!canReview}
+                          className="h-8 w-28 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
+                        >
+                          <option value="">-</option>
+                          <option value="Rookie">Rookie</option>
+                        </select>
+                      )}
                     </td>
                     <td className="border-b border-white/5 px-2 py-2 text-[11px]">
                       {row.errors.length > 0 && (

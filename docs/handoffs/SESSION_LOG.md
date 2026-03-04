@@ -5803,3 +5803,50 @@
 ### Operations/Safety
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
+
+## 2026-03-03 - Ingestion Queue Scoped View (Active Set by Default)
+
+### Summary
+- Updated `/admin/set-ops-review` Step 1 ingestion queue behavior to reduce stale cross-set clutter during active imports.
+- Pending queue now scopes to the active Set ID (`selectedSetId` or Set ID input) by default.
+- Added operator toggle button:
+  - `Show All Pending` (workspace-wide)
+  - `Show Active Set Only` (focused mode)
+- Added scope hint text in Step 1 header so operators understand why rows are shown/hidden.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+
+## 2026-03-03 - Draft Table Mapping Alignment for SET CHECKLIST CSV
+
+### Summary
+- Updated Step 2 draft table in `/admin/set-ops-review` to render dataset-specific columns.
+- For `SET CHECKLIST` (`PLAYER_WORKSHEET`), table now aligns with Perplexity CSV contract order/labels:
+  - `Card_Number`, `Player_Name`, `Team_Name`, `Subset`, `Rookie`
+- For `ODDS LIST` (`PARALLEL_DB`), existing odds-focused columns remain unchanged.
+- Updated draft version save payload mapping for checklist rows so edited values persist with expected semantics:
+  - player name -> `playerName`/`playerSeed`
+  - team -> `team`/`teamName`
+  - subset -> `subset`/`cardType`
+  - rookie -> `isRookie`/`rookie`
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx` passed.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
