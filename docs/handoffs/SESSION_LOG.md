@@ -6411,3 +6411,9 @@
   - Plan: deploy highest-variant eBay image URL selection + QA preview higher-res fallback.
   - Scope: `frontend/nextjs-app/lib/server/referenceSeed.ts`, `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`.
   - DB: no migration required.
+
+  ## 2026-03-05 - Deploy Result (seed image quality patch)
+  - Droplet updated via `git pull --ff-only` on `main`.
+  - Services rebuilt/recreated via `docker compose up -d --build --force-recreate`.
+  - Evidence: droplet `git rev-parse --short HEAD` matched pushed commit; `docker compose ps` showed services Up/
+  healthy.
