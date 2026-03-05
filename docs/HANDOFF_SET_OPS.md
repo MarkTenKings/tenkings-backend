@@ -3416,3 +3416,18 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/referenceSeed.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing `no-img-element` warnings only)
 - No deploy/restart/migration commands were executed in this session step.
+
+## Session Update (2026-03-05, Parallel List CSV Ingestion Fix)
+- Scope limited to PARALLEL LIST ingestion path (`PARALLEL_DB` dataset) only; SET LIST pipeline unchanged.
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts` updates:
+  - stop treating `Parallel` column as odds format column,
+  - read `Parallel` explicitly as parsed parallel label,
+  - keep full `Card_Type` when explicit parallel column is present.
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts` updates:
+  - stop expanding one structured odds row into one draft row per odds format,
+  - use one draft row per CSV row with primary odds selected from per-format values,
+  - remove synthetic fallback listing-id generation from `format|odds|serial`.
+- Validation run:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsCsvContract.ts --file lib/server/setOpsDrafts.ts` (pass)
+- No deploy/restart/migration commands were executed in this session step.

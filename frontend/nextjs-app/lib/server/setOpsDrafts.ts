@@ -210,6 +210,13 @@ function parseRawRows(rawPayload: unknown, datasetType: SetDatasetType): Record<
         const entries: Array<[string, unknown]> = values
           ? Object.entries(values)
           : [[firstString(odd, ["format", "formatKey", "columnHeader"]) || "default", odd]];
+        const oddsByFormat: Array<{
+          format: string | null;
+          channel: string | null;
+          oddsText: string;
+          oddsNumeric: number | null;
+        }> = [];
+
         for (const [formatRaw, oddsValue] of entries) {
           const mapped = formatMap.get(formatRaw) ?? null;
           const oddsRecord = asRecord(oddsValue);
@@ -218,25 +225,38 @@ function parseRawRows(rawPayload: unknown, datasetType: SetDatasetType): Record<
           const numericRaw = oddsRecord?.numeric ?? oddsRecord?.oddsNumeric ?? null;
           const oddsNumeric = Number(numericRaw);
           const hasOdds = oddsText.length > 0 && oddsText !== "-";
-          if (!hasOdds && !serialText) {
+          if (!hasOdds) {
             continue;
           }
-          rows.push({
-            setId: rootSetId,
-            cardType: parsedProgram || fallbackCardType,
-            program: parsedProgram || fallbackCardType,
-            programLabel: parsedProgram || fallbackCardType,
-            parallel: parsedParallel || fallbackCardType,
-            odds: hasOdds ? oddsText : null,
-            oddsNumeric: Number.isFinite(oddsNumeric) ? oddsNumeric : null,
-            serial: serialText || null,
-            finishFamily,
-            visualCues: visualCues ?? null,
+          oddsByFormat.push({
             format: mapped?.formatKey ?? formatRaw,
             channel: mapped?.channelKey ?? (firstString(oddsRecord ?? {}, ["channelKey", "channel"]) || null),
-            sourceUrl,
+            oddsText,
+            oddsNumeric: Number.isFinite(oddsNumeric) ? oddsNumeric : null,
           });
         }
+
+        const primaryOdds = oddsByFormat[0] ?? null;
+        if (!primaryOdds && !serialText) {
+          continue;
+        }
+
+        rows.push({
+          setId: rootSetId,
+          cardType: parsedProgram || fallbackCardType,
+          program: parsedProgram || fallbackCardType,
+          programLabel: parsedProgram || fallbackCardType,
+          parallel: parsedParallel || fallbackCardType,
+          odds: primaryOdds?.oddsText ?? null,
+          oddsNumeric: primaryOdds?.oddsNumeric ?? null,
+          serial: serialText || null,
+          finishFamily,
+          visualCues: visualCues ?? null,
+          format: primaryOdds?.format ?? null,
+          channel: primaryOdds?.channel ?? null,
+          oddsByFormat,
+          sourceUrl,
+        });
       }
     }
 
@@ -319,10 +339,6 @@ export function normalizeDraftRows(params: {
     let listingId = normalizeListingId(
       firstString(raw, ["listingId", "sourceListingId", "source_listing_id", "listing", "url", "sourceUrl"])
     );
-    if (!listingId && params.datasetType === SetDatasetType.PARALLEL_DB) {
-      const fallbackListing = [format || "", odds || "", serial || ""].filter(Boolean).join(" | ");
-      listingId = normalizeListingId(fallbackListing);
-    }
 
     const duplicateParallelKey =
       params.datasetType === SetDatasetType.PLAYER_WORKSHEET

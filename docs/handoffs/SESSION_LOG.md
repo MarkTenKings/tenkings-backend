@@ -6417,3 +6417,31 @@
   - Services rebuilt/recreated via `docker compose up -d --build --force-recreate`.
   - Evidence: droplet `git rev-parse --short HEAD` matched pushed commit; `docker compose ps` showed services Up/
   healthy.
+
+## 2026-03-05 - Parallel List CSV Ingestion Fix (PARALLEL_DB only)
+
+### Summary
+- Fixed PARALLEL LIST CSV parsing path without changing SET LIST pipeline behavior.
+- Corrected contract parsing so `Parallel` is no longer treated as an odds-format column.
+- Explicitly maps CSV `Parallel` column to parsed parallel label.
+- Keeps full `Card_Type` label as program/card type when explicit parallel column is present (no marker-based split in that case).
+- Fixed draft normalization path to avoid generating synthetic `listingId` values from format/odds/serial text.
+- Fixed structured odds expansion so one PARALLEL CSV row now creates one draft row (instead of one row per odds-format column).
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; Node engine warning only)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsCsvContract.ts --file lib/server/setOpsDrafts.ts` (pass)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+
+  ## 2026-03-05 - Planned Deploy (parallel list csv ingestion fix)
+  - Plan: deploy PARALLEL_DB ingestion fixes only (parallel column mapping, one-row-per-csv-row, no synthetic listingId
+  fallback).
+  - Scope: `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`, `frontend/nextjs-app/lib/server/setOpsDrafts.ts`.
+  - DB: no migration required.

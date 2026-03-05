@@ -47,7 +47,8 @@ const CSV_HEADER_ALIASES = {
   team: ["team", "team_name", "teamname", "club", "franchise"],
   subset: ["subset", "program", "program_label", "programlabel", "card_type", "cardtype"],
   rookie: ["rookie", "is_rookie", "isrookie", "rc"],
-  cardType: ["card_type", "cardtype", "parallel", "parallel_name", "parallelname"],
+  cardType: ["card_type", "cardtype"],
+  parallel: ["parallel", "parallel_name", "parallelname", "parallel_type", "paralleltype"],
 } as const;
 
 const PARALLEL_SPLIT_MARKERS = [
@@ -448,16 +449,32 @@ function createOddsStructuredPayload(params: {
   parserVersion?: string | null;
 }) {
   const first = params.rows[0];
-  const formatHeaders = Object.keys(first.original).filter((header) => normalizeHeader(header) !== "card_type");
-  const formats = formatHeaders.map((columnHeader) => {
+  const normalizedHeaderToOriginal = new Map<string, string>();
+  for (const header of Object.keys(first.original)) {
+    const normalizedHeader = normalizeHeader(header);
+    if (!normalizedHeaderToOriginal.has(normalizedHeader)) {
+      normalizedHeaderToOriginal.set(normalizedHeader, header);
+    }
+  }
+
+  const formatHeaders = Array.from(normalizedHeaderToOriginal.entries())
+    .filter(([normalizedHeader]) => {
+      if (normalizedHeader === "card_type" || normalizedHeader === "cardtype") return false;
+      if (NON_ODDS_COLUMNS.has(normalizedHeader)) return false;
+      return true;
+    })
+    .map(([normalizedHeader, columnHeader]) => ({ normalizedHeader, columnHeader }));
+
+  const formats = formatHeaders.map(({ normalizedHeader, columnHeader }) => {
     const mapped = mapFormatKeyAndChannel(columnHeader);
     return {
       columnHeader,
+      normalizedHeader,
       formatKey: mapped.formatKey,
       channelKey: mapped.channelKey,
     };
   });
-  const headerByFormatKey = new Map(formats.map((entry) => [entry.formatKey, entry.columnHeader]));
+  const headerByFormatKey = new Map(formats.map((entry) => [entry.formatKey, entry.normalizedHeader]));
 
   let totalRows = 0;
   let duplicateRows = 0;
@@ -472,16 +489,20 @@ function createOddsStructuredPayload(params: {
 
   for (const row of params.rows) {
     const cardType = readAliasValue(row, CSV_HEADER_ALIASES.cardType);
+    const parallelFromColumn = readAliasValue(row, CSV_HEADER_ALIASES.parallel);
     if (!cardType) continue;
     totalRows += 1;
-    const duplicateKey = cardType.toLowerCase();
+    const split = splitProgramAndParallel(cardType);
+    const parsedProgram = compact(parallelFromColumn ? cardType : split.parsedProgram || cardType);
+    const parsedParallel = compact(parallelFromColumn || split.parsedParallel || "BASE") || "BASE";
+
+    const duplicateKey = `${cardType.toLowerCase()}::${parsedParallel.toLowerCase()}`;
     if (duplicateKeys.has(duplicateKey)) {
       duplicateRows += 1;
     } else {
       duplicateKeys.add(duplicateKey);
     }
 
-    const split = splitProgramAndParallel(cardType);
     const serialDenominator = parseSerialDenominator(cardType);
     if (/\/\s*\d{1,5}\b|\b1\s*\/\s*1\b/i.test(cardType)) {
       serialPatternRows += 1;
@@ -489,16 +510,14 @@ function createOddsStructuredPayload(params: {
         serialParsedRows += 1;
       }
     }
-    if (split.parsedProgram) {
+    if (parsedProgram) {
       parsedProgramRows += 1;
     }
 
     const values: Record<string, { text: string; numeric: number | null }> = {};
     for (const format of formats) {
-      const originalHeader = headerByFormatKey.get(format.formatKey) || format.columnHeader;
-      const text = sanitizeOddsText(
-        compact((row.original[originalHeader] as string | undefined) ?? row.normalized[normalizeHeader(originalHeader)] ?? "")
-      );
+      const normalizedHeader = headerByFormatKey.get(format.formatKey) || format.normalizedHeader;
+      const text = sanitizeOddsText(compact(row.normalized[normalizedHeader] ?? ""));
       totalCells += 1;
       if (text && text !== "-") {
         filledCells += 1;
@@ -511,10 +530,10 @@ function createOddsStructuredPayload(params: {
 
     oddsEntries.push({
       cardType,
-      parsedProgram: split.parsedProgram || cardType,
-      parsedParallel: split.parsedParallel || "BASE",
+      parsedProgram: parsedProgram || cardType,
+      parsedParallel: parsedParallel || "BASE",
       serialDenominator,
-      finishFamily: inferFinishFamily(split.parsedParallel || cardType),
+      finishFamily: inferFinishFamily(parsedParallel || cardType),
       values,
     });
   }
