@@ -6445,3 +6445,11 @@
   fallback).
   - Scope: `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`, `frontend/nextjs-app/lib/server/setOpsDrafts.ts`.
   - DB: no migration required.
+
+  ## 2026-03-05 - Deploy Result (parallel list csv ingestion fix)
+  - Droplet updated via `git pull --ff-only` on `main`.
+  - Services rebuilt/recreated via `docker compose up -d --build --force-recreate`.
+  - Evidence captured from droplet:
+    - `git rev-parse --short HEAD`
+    - `git log --oneline -n 5`
+    - `docker compose ps`
