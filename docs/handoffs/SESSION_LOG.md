@@ -6259,3 +6259,34 @@
   - Droplet updated with `git pull --ff-only` on `main`.
   - Services redeployed via `docker compose up -d --build --force-recreate`.
   - Evidence captured from: `git log --oneline -n 5` and `docker compose ps`.
+
+## 2026-03-05 - Seed Throughput + Failure-Rate Hardening (approved 3-item patch)
+
+### Summary
+- Implemented requested 3-part fix set:
+  1. UI now posts `programId` in seed chunk payload targets.
+  2. Target processing moved off browser per-target loop to chunked server-side processing with controlled concurrency.
+  3. Added stronger retry/backoff behavior and reduced product-detail lookup bottlenecks for faster fallback.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/reference.ts`
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+
+### Key Behavior Changes
+- `/admin/set-ops-review` now runs reference seeding in server chunks (`/api/admin/set-ops/seed/reference`) instead of per-target browser POSTs to `/api/admin/variants/reference/seed`.
+- Server seed endpoint supports scoped chunk controls (`startIndex`, `maxTargets`) and controlled concurrency (`concurrency`), with up to 3 attempts per target and jittered backoff.
+- Posted chunk targets include `programId`, avoiding implicit fallback to `base` during seeded identity resolution.
+- SerpApi retry delays increased for 429/5xx patterns; aggregated listing and product-lookup caps tuned for better speed/coverage tradeoff.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/seed/reference.ts --file pages/admin/set-ops-review.tsx --file lib/server/referenceSeed.ts` (pass)
+
+  ## 2026-03-05 - Planned Deploy (seed speed/failure/programId patch)
+  - Deploying seed pipeline updates: UI->server chunked seeding, server concurrency, stronger backoff/retry, and
+  programId target posting.
+
+  ## 2026-03-05 - Deploy Result (seed speed/failure/programId patch)
+  - Pulled latest main on droplet and rebuilt/recreated services.
+  - Evidence captured via `git log --oneline -n 5` and `docker compose ps`.
