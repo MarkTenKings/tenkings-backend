@@ -6341,3 +6341,30 @@
   - Droplet updated via `git pull --ff-only` on `main`.
   - Services rebuilt/recreated via `docker compose up -d --build --force-recreate`.
   - Evidence captured from `git log --oneline -n 5` and `docker compose ps`.
+
+## 2026-03-05 - Reference Seed Throughput Mode (first ebay_product image + no app dedupe + CVRI unique-drop migration)
+
+### Summary
+- Updated reference seeding to use the first image from each `ebay_product` response without resolution/thumbnail quality filtering.
+- Removed app-level dedupe in reference seeding flow:
+  - no query dedupe
+  - no listing/image dedupe
+  - no existing-row prefilter by `rawImageUrl`/`sourceListingId`.
+- Added defensive Prisma migration to remove any non-primary DB unique constraints/indexes on `CardVariantReferenceImage` to prevent DB-level dedupe conflicts.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+- `packages/database/prisma/migrations/20260305201500_cvri_drop_unique_constraints/migration.sql`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/referenceSeed.ts` (pass)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive set/data operations were executed.
+
+  ## 2026-03-05 - Planned Deploy (CVRI no-dedupe seed mode + migration)
+  - Plan: deploy reference seeding changes (first ebay_product image, app dedupe removed) and apply migration
+  `20260305201500_cvri_drop_unique_constraints`.
+  - Scope: `frontend/nextjs-app/lib/server/referenceSeed.ts` and Prisma migration only.

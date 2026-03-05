@@ -7,7 +7,6 @@ type SeedListingCandidate = {
   sourceListingId: string | null;
   sourceProductId: string | null;
   listingTitle: string | null;
-  fallbackImageUrl: string;
   score: number;
 };
 
@@ -50,9 +49,6 @@ export class ReferenceSeedError extends Error {
 const SERPAPI_ENDPOINT = "https://serpapi.com/search.json";
 const EBAY_ENGINE = "ebay";
 const EBAY_PRODUCT_ENGINE = "ebay_product";
-const MIN_ACCEPTABLE_IMAGE_SIZE = 300;
-const PRODUCT_IMAGE_CACHE_MAX = 20_000;
-const PRODUCT_IMAGE_CACHE_TTL_MS = 1000 * 60 * 60 * 6;
 const NOISE_TITLE_TOKENS = [
   "box",
   "blaster",
@@ -84,13 +80,6 @@ const CARD_PREFIX_PARALLEL_MAP: Record<string, string> = {
 };
 const ROOKIE_PARALLEL_RE = /^(rookie|rc)(?:\s+cards?)?$/i;
 
-type CachedProductImage = {
-  imageUrl: string | null;
-  cachedAt: number;
-};
-
-const productImageCache = new Map<string, CachedProductImage>();
-
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function serpRetryDelayMs(attempt: number, statusCode: number | null, reason: "http" | "rate" | "server") {
@@ -112,39 +101,6 @@ function emptyReasonCounts(): SeedReferenceReasonCounts {
     filtered_out: 0,
     network: 0,
   };
-}
-
-function pruneProductImageCache() {
-  if (productImageCache.size <= PRODUCT_IMAGE_CACHE_MAX) return;
-  const overflow = productImageCache.size - PRODUCT_IMAGE_CACHE_MAX;
-  let removed = 0;
-  for (const key of productImageCache.keys()) {
-    productImageCache.delete(key);
-    removed += 1;
-    if (removed >= overflow) break;
-  }
-}
-
-function getCachedProductImage(productId: string) {
-  const key = String(productId || "").trim();
-  if (!key) return undefined;
-  const cached = productImageCache.get(key);
-  if (!cached) return undefined;
-  if (Date.now() - cached.cachedAt > PRODUCT_IMAGE_CACHE_TTL_MS) {
-    productImageCache.delete(key);
-    return undefined;
-  }
-  return cached.imageUrl;
-}
-
-function setCachedProductImage(productId: string, imageUrl: string | null) {
-  const key = String(productId || "").trim();
-  if (!key) return;
-  productImageCache.set(key, {
-    imageUrl: imageUrl ? String(imageUrl).trim() : null,
-    cachedAt: Date.now(),
-  });
-  pruneProductImageCache();
 }
 
 function normalizeText(value: string | null | undefined) {
@@ -189,159 +145,51 @@ function canonicalEbayListingUrl(url: string | null | undefined) {
   return `https://www.ebay.com/itm/${listingId}`;
 }
 
-function upgradeEbayImageUrl(url: string) {
-  const normalized = String(url || "").trim();
-  if (!normalized) return "";
-  // eBay CDN image paths often include an s-l### token that can be upgraded to larger sizes.
-  if (/i\.ebayimg\.com/i.test(normalized)) {
-    return normalized.replace(/s-l\d{2,4}/gi, "s-l1600");
+function firstUrl(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    return /^https?:\/\//i.test(normalized) ? normalized : "";
   }
-  return normalized;
-}
-
-function isThumbnailLike(url: string) {
-  const lower = String(url || "").trim().toLowerCase();
-  if (!lower) return false;
-  const sizeToken = lower.match(/s-l(\d{2,4})/i);
-  if (sizeToken?.[1]) {
-    const size = Number(sizeToken[1]);
-    // eBay image urls frequently include "thumbs" in the path even for usable listing media.
-    // Treat explicit medium/large sizes as usable regardless of path tokens.
-    if (Number.isFinite(size) && size >= MIN_ACCEPTABLE_IMAGE_SIZE) return false;
-    if (Number.isFinite(size) && size > 0 && size < MIN_ACCEPTABLE_IMAGE_SIZE) return true;
-  }
-  if (/(^|[/?._-])(thumb|thumbnail|small|tiny)($|[/?._-])/.test(lower)) return true;
-  return false;
-}
-
-function dedupeUrls(values: Array<string | null | undefined>) {
-  const seen = new Set<string>();
-  const output: string[] = [];
-  for (const value of values) {
-    const normalized = String(value || "").trim();
-    if (!normalized) continue;
-    const key = normalized.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    output.push(normalized);
-  }
-  return output;
-}
-
-function flattenUrlValues(value: unknown): string[] {
-  if (!value) return [];
-  if (typeof value === "string") return [value];
   if (Array.isArray(value)) {
-    return value.flatMap((entry) => flattenUrlValues(entry));
+    for (const entry of value) {
+      const candidate = firstUrl(entry);
+      if (candidate) return candidate;
+    }
+    return "";
   }
   if (typeof value === "object") {
-    return Object.values(value as Record<string, unknown>).flatMap((entry) => flattenUrlValues(entry));
-  }
-  return [];
-}
-
-function extractImageSizeToken(url: string) {
-  const sizeToken = String(url || "").trim().match(/s-l(\d{2,4})/i);
-  if (!sizeToken?.[1]) return 0;
-  const parsed = Number(sizeToken[1]);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function extractProductMediaUrls(payload: any) {
-  const productResults = payload?.product_results ?? payload ?? {};
-  const mediaEntries = Array.isArray(productResults?.media) ? productResults.media : [];
-  const urls: Array<{ url: string; sizeHint: number }> = [];
-
-  for (const mediaEntry of mediaEntries) {
-    const imageEntries = Array.isArray(mediaEntry?.image)
-      ? mediaEntry.image
-      : mediaEntry?.image
-        ? [mediaEntry.image]
-        : [];
-    for (const imageEntry of imageEntries) {
-      if (typeof imageEntry === "string") {
-        urls.push({ url: imageEntry, sizeHint: extractImageSizeToken(imageEntry) });
-        continue;
-      }
-      const link = String(imageEntry?.link || "").trim();
-      if (!link) continue;
-      const width = Number(imageEntry?.size?.width ?? 0);
-      const height = Number(imageEntry?.size?.height ?? 0);
-      const sizeHint = Math.max(
-        Number.isFinite(width) ? width : 0,
-        Number.isFinite(height) ? height : 0,
-        extractImageSizeToken(link)
-      );
-      urls.push({ url: link, sizeHint });
+    const record = value as Record<string, unknown>;
+    const direct = String(record.link ?? record.url ?? "").trim();
+    if (direct && /^https?:\/\//i.test(direct)) return direct;
+    for (const nested of Object.values(record)) {
+      const candidate = firstUrl(nested);
+      if (candidate) return candidate;
     }
   }
-
-  return urls;
+  return "";
 }
 
-function pickProductImageUrl(payload: any) {
+function firstProductMediaImageUrl(payload: any) {
   const productResults = payload?.product_results ?? payload ?? {};
-  const mediaUrls = extractProductMediaUrls(payload);
-  const candidateUrls = dedupeUrls([
-    ...mediaUrls.map((entry) => entry.url),
-    ...flattenUrlValues(productResults?.image),
-    ...flattenUrlValues(productResults?.images),
-    ...flattenUrlValues(productResults?.product?.image),
-    ...flattenUrlValues(productResults?.product?.images),
-    ...flattenUrlValues(productResults?.thumbnail),
-    ...flattenUrlValues(productResults?.thumbnail_images),
-  ]);
-
-  const mediaSizeHints = new Map<string, number>();
-  for (const entry of mediaUrls) {
-    const key = String(entry.url || "").trim().toLowerCase();
-    if (!key) continue;
-    const previous = mediaSizeHints.get(key) ?? 0;
-    mediaSizeHints.set(key, Math.max(previous, Number(entry.sizeHint) || 0));
-  }
-
-  const ranked = candidateUrls
-    .map((value) => {
-      const rawUrl = String(value || "").trim();
-      if (!rawUrl || !/^https?:\/\//i.test(rawUrl)) return null;
-      const upgraded = upgradeEbayImageUrl(rawUrl);
-      if (isThumbnailLike(upgraded)) return null;
-      const mediaSizeHint = mediaSizeHints.get(rawUrl.toLowerCase()) ?? 0;
-      const sizeToken = extractImageSizeToken(rawUrl);
-      return {
-        upgraded,
-        size: Math.max(mediaSizeHint, sizeToken),
-      };
-    })
-    .filter((entry): entry is { upgraded: string; size: number } => Boolean(entry))
-    .sort((a, b) => b.size - a.size);
-
-  return ranked[0]?.upgraded || "";
-}
-
-function pickImageUrl(result: any) {
-  // Hard requirement: use only main/high-res listing images for reference seeding.
-  // Thumbnail-origin fields are allowed only when they can be upgraded to high-res.
-  const candidates = [
-    result?.original_image,
-    result?.main_image,
-    result?.image,
-    result?.image_url,
-    result?.product?.image,
-    result?.img,
-    result?.gallery_url,
-    result?.thumbnail,
-    Array.isArray(result?.thumbnails) ? result.thumbnails[0] : null,
-    Array.isArray(result?.thumbnail_images) ? result.thumbnail_images[0] : null,
-    Array.isArray(result?.images) ? result.images[0] : null,
-  ];
-  for (const candidate of candidates) {
-    const value = String(candidate || "").trim();
-    if (!value) continue;
-    const upgraded = upgradeEbayImageUrl(value);
-    if (!isThumbnailLike(upgraded)) return upgraded;
+  const mediaEntries = Array.isArray(productResults?.media) ? productResults.media : [];
+  for (const mediaEntry of mediaEntries) {
+    const candidate = firstUrl(mediaEntry?.image);
+    if (candidate) return candidate;
   }
   return "";
+}
+
+function firstProductImageUrl(payload: any) {
+  const productResults = payload?.product_results ?? payload ?? {};
+  return (
+    firstProductMediaImageUrl(payload) ||
+    firstUrl(productResults?.image) ||
+    firstUrl(productResults?.images) ||
+    firstUrl(productResults?.product?.image) ||
+    firstUrl(productResults?.product?.images) ||
+    ""
+  );
 }
 
 function extractListings(data: any) {
@@ -353,18 +201,11 @@ function extractListings(data: any) {
   return [];
 }
 
-function dedupeQueries(values: string[]) {
-  const seen = new Set<string>();
-  const output: string[] = [];
-  for (const value of values) {
-    const normalized = String(value || "").replace(/\s+/g, " ").trim();
-    if (!normalized) continue;
-    const key = normalized.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    output.push(normalized);
-  }
-  return output;
+function normalizeQueries(values: string[], maxCount: number) {
+  return values
+    .map((value) => String(value || "").replace(/\s+/g, " ").trim())
+    .filter((value) => value.length > 0)
+    .slice(0, maxCount);
 }
 
 type SearchQueryStage = {
@@ -525,30 +366,30 @@ function buildSearchQueryStages(params: {
       .replace(/\s+/g, " ")
       .trim();
 
-  const strict = dedupeQueries([
+  const strict = normalizeQueries([
     baseQuery,
     mk(player, setClean, cardHash, parallel),
     mk(player, setClean, cardCompact, parallel),
     mk(player, setClean, cardSpaced, parallel),
     mk(setClean, cardHash, parallel),
     mk(setClean, cardCompact, parallel),
-  ]).slice(0, 6);
+  ], 6);
 
-  const medium = dedupeQueries([
+  const medium = normalizeQueries([
     mk(player, setClean, parallel),
     mk(player, setClean, cardHash),
     mk(player, setClean, cardCompact),
     mk(setClean, parallel),
-  ]).slice(0, 5);
+  ], 5);
 
-  const loose = dedupeQueries([
+  const loose = normalizeQueries([
     // Final fallback when set labels are noisy in source data.
     mk(player, cardHash, parallel),
     mk(player, cardCompact, parallel),
     mk(player, cardSpaced, parallel),
     mk(player, parallel),
     mk(cardHash, parallel),
-  ]).slice(0, 5);
+  ], 5);
 
   const stages: SearchQueryStage[] = [];
   if (strict.length) stages.push({ stage: "strict", queries: strict });
@@ -646,7 +487,6 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
   }
 
   const aggregatedListings: any[] = [];
-  const aggregatedListingKeys = new Set<string>();
   const maxAggregatedListings = Math.max(80, safeLimit * 20);
   const desiredListingCount = Math.min(maxAggregatedListings, Math.max(40, safeLimit * 8));
   const searchQueryStages = buildSearchQueryStages({
@@ -676,26 +516,7 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
       });
       const queryListings = extractListings(queryData);
       for (const listing of queryListings) {
-        const listingId =
-          parseEbayListingId(
-            listing?.link ||
-              listing?.product_link ||
-              listing?.url ||
-              listing?.item_url ||
-              listing?.view_item_url ||
-              listing?.item_web_url ||
-              listing?.product?.link ||
-              null
-          ) ||
-          parseSerpProductId(listing?.product_id || null) ||
-          parseSerpProductId(listing?.serpapi_link || null) ||
-          null;
-        const key =
-          (listingId && `id:${listingId}`) ||
-          (typeof listing?.link === "string" && listing.link.trim() ? `url:${listing.link.trim()}` : "") ||
-          "";
-        if (!key || aggregatedListingKeys.has(key)) continue;
-        aggregatedListingKeys.add(key);
+        if (!listing || typeof listing !== "object") continue;
         aggregatedListings.push(listing);
         if (aggregatedListings.length >= maxAggregatedListings) break;
       }
@@ -736,9 +557,20 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
         parseSerpProductId(result?.serpapi_link || null) ||
         parseSerpProductId(result?.link || null) ||
         null;
-      const sourceListingId = parseEbayListingId(rawSourceUrl) || sourceProductId;
+      const sourceListingId =
+        parseEbayListingId(
+          result?.link ||
+            result?.product_link ||
+            result?.url ||
+            result?.item_url ||
+            result?.view_item_url ||
+            result?.item_web_url ||
+            result?.product?.link ||
+            rawSourceUrl ||
+            null
+        ) ||
+        sourceProductId;
       const sourceUrl = rawSourceUrl || (sourceListingId ? canonicalEbayListingUrl(sourceListingId) : null);
-      const fallbackImageUrl = pickImageUrl(result);
       const listingTitle = typeof result?.title === "string" ? String(result.title).trim() : null;
       const score = scoreListing({
         title: listingTitle || "",
@@ -751,18 +583,12 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
         sourceUrl,
         sourceListingId,
         sourceProductId,
-        fallbackImageUrl,
         listingTitle,
         score,
       } satisfies SeedListingCandidate;
     })
     .sort((a: SeedListingCandidate, b: SeedListingCandidate) => b.score - a.score);
-  const listingCandidates = mappedCandidates.filter((row: SeedListingCandidate) => row.sourceUrl && row.sourceListingId);
-  let filteredOutCandidates = Math.max(0, mappedCandidates.length - listingCandidates.length);
 
-  const seenListing = new Set<string>();
-  const seenImage = new Set<string>();
-  const lookedUpProductIds = new Set<string>();
   const rows: Array<{
     setId: string;
     programId: string;
@@ -778,54 +604,31 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
   const maxProductLookups = Math.max(8, Math.min(24, safeLimit * 4));
   let productLookupCount = 0;
 
-  for (const row of listingCandidates) {
+  for (const row of mappedCandidates) {
     if (rows.length >= safeLimit) break;
-    if (!row.sourceUrl || !row.sourceListingId) continue;
-    if (seenListing.has(row.sourceListingId)) {
-      filteredOutCandidates += 1;
-      continue;
-    }
 
     let rawImageUrl = "";
-    const canLookupProduct = Boolean(row.sourceProductId) && productLookupCount < maxProductLookups;
-    if (canLookupProduct && row.sourceProductId) {
-      const cached = getCachedProductImage(row.sourceProductId);
-      if (cached !== undefined) {
-        rawImageUrl = cached || "";
-      } else if (!lookedUpProductIds.has(row.sourceProductId)) {
-        lookedUpProductIds.add(row.sourceProductId);
-        productLookupCount += 1;
-        const productParams = new URLSearchParams({
-          engine: EBAY_PRODUCT_ENGINE,
-          product_id: row.sourceProductId,
-          api_key: apiKey,
-        });
-        try {
-          const { payload } = await fetchSerpApiPayload(productParams, { allowNoResults: true });
-          rawImageUrl = pickProductImageUrl(payload);
-          setCachedProductImage(row.sourceProductId, rawImageUrl || null);
-        } catch {
-          rawImageUrl = "";
-        }
-      } else {
+    const productLookupId = row.sourceProductId || row.sourceListingId;
+    const canLookupProduct = Boolean(productLookupId) && productLookupCount < maxProductLookups;
+    if (canLookupProduct && productLookupId) {
+      productLookupCount += 1;
+      const productParams = new URLSearchParams({
+        engine: EBAY_PRODUCT_ENGINE,
+        product_id: productLookupId,
+        api_key: apiKey,
+      });
+      try {
+        const { payload } = await fetchSerpApiPayload(productParams, { allowNoResults: true });
+        rawImageUrl = firstProductImageUrl(payload);
+      } catch {
         rawImageUrl = "";
       }
     }
 
     if (!rawImageUrl) {
-      rawImageUrl = row.fallbackImageUrl;
-    }
-    if (!rawImageUrl) {
       noMediaCandidates += 1;
       continue;
     }
-    if (seenImage.has(rawImageUrl)) {
-      filteredOutCandidates += 1;
-      continue;
-    }
-
-    seenListing.add(row.sourceListingId);
-    seenImage.add(rawImageUrl);
     rows.push({
       setId: normalizedSetId,
       programId: normalizedProgramId,
@@ -841,73 +644,26 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
 
   if (rows.length === 0) {
     const reasonCounts = emptyReasonCounts();
-    reasonCounts[noMediaCandidates > 0 ? "no_media" : "filtered_out"] = safeLimit;
+    reasonCounts[noMediaCandidates > 0 ? "no_media" : "no_hits"] = safeLimit;
     return { inserted: 0, skipped: safeLimit, reasonCounts };
   }
 
-  const existingRows = await prisma.cardVariantReferenceImage.findMany({
-    where: {
-      setId: normalizedSetId,
-      programId: normalizedProgramId,
-      cardNumber: normalizedCardNumber,
-      parallelId: normalizedParallelId,
-      OR: [
-        {
-          sourceListingId: {
-            in: rows
-              .map((row: { sourceListingId: string | null }) => String(row.sourceListingId || "").trim())
-              .filter(Boolean),
-          },
-        },
-        {
-          rawImageUrl: {
-            in: rows.map((row: { rawImageUrl: string }) => row.rawImageUrl),
-          },
-        },
-      ],
-    },
-    select: {
-      sourceListingId: true,
-      rawImageUrl: true,
-    },
-  });
-  const existingUrls = new Set(existingRows.map((row: { rawImageUrl: string }) => row.rawImageUrl));
-  const existingListingIds = new Set(
-    existingRows
-      .map((row: { sourceListingId?: string | null }) => String(row.sourceListingId || "").trim())
-      .filter(Boolean)
-  );
-  const rowsToInsert = rows.filter((row: { rawImageUrl: string; sourceListingId: string | null }) => {
-    if (existingUrls.has(row.rawImageUrl)) return false;
-    const listingId = String(row.sourceListingId || "").trim();
-    if (listingId && existingListingIds.has(listingId)) return false;
-    return true;
-  });
-
-  if (rowsToInsert.length > 0) {
-    await prisma.cardVariantReferenceImage.createMany({ data: rowsToInsert });
-  }
+  const createResult = await prisma.cardVariantReferenceImage.createMany({ data: rows });
 
   const reasonCounts = emptyReasonCounts();
-  const duplicateSkips = rows.length - rowsToInsert.length;
-  if (duplicateSkips > 0) {
-    reasonCounts.filtered_out += duplicateSkips;
-  }
   const missingSlots = Math.max(0, safeLimit - rows.length);
   if (missingSlots > 0) {
     if (aggregatedListings.length < safeLimit) {
       reasonCounts.no_hits += missingSlots;
     } else if (noMediaCandidates > 0) {
       reasonCounts.no_media += missingSlots;
-    } else if (filteredOutCandidates > 0) {
-      reasonCounts.filtered_out += missingSlots;
     } else {
       reasonCounts.no_hits += missingSlots;
     }
   }
   return {
-    inserted: rowsToInsert.length,
-    skipped: Math.max(0, safeLimit - rows.length) + duplicateSkips,
+    inserted: Number(createResult.count ?? 0),
+    skipped: Math.max(0, safeLimit - rows.length),
     reasonCounts,
   };
 }
