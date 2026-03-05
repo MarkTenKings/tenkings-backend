@@ -3,6 +3,7 @@ import { prisma } from "@tenkings/database";
 import { readTaxonomyV2Flags } from "./taxonomyV2Flags";
 import { resolveTaxonomyScopeForMatcher } from "./taxonomyV2Core";
 import { filterSetIdsByScopeIdentity, loadVariantScopeSetIds } from "./variantSetScope";
+import { normalizeProgramId } from "./taxonomyV2Utils";
 
 export type VariantCandidate = {
   parallelId: string;
@@ -31,6 +32,7 @@ const MAX_CANDIDATES = 5;
 
 type VariantRow = {
   setId: string;
+  programId: string;
   parallelId: string;
   cardNumber: string;
   keywords: string[];
@@ -123,11 +125,13 @@ async function filterScopeSetCandidates(setIds: string[], includeLegacyReviewReq
   return filterSetIdsByScopeIdentity(uniqueSetIds, scopeSetIds.scopeSetIds);
 }
 
-async function findVariants(params: { setId: string; cardNumber?: string | null }) {
+async function findVariants(params: { setId: string; cardNumber?: string | null; programId?: string | null }) {
   const setId = params.setId.trim();
   const cardNumber = params.cardNumber?.trim() || "";
+  const normalizedProgramId = params.programId ? normalizeProgramId(params.programId) : "";
   const whereExact = {
     setId,
+    ...(normalizedProgramId ? { programId: normalizedProgramId } : {}),
     ...(cardNumber ? { cardNumber } : {}),
   };
   let variants = await prisma.cardVariant.findMany({
@@ -136,6 +140,7 @@ async function findVariants(params: { setId: string; cardNumber?: string | null 
     take: 25,
     select: {
       setId: true,
+      programId: true,
       cardNumber: true,
       parallelId: true,
       keywords: true,
@@ -144,11 +149,30 @@ async function findVariants(params: { setId: string; cardNumber?: string | null 
   });
   if (variants.length === 0) {
     variants = await prisma.cardVariant.findMany({
-      where: { setId, cardNumber: "ALL" },
+      where: { setId, ...(normalizedProgramId ? { programId: normalizedProgramId } : {}), cardNumber: "ALL" },
       orderBy: [{ parallelId: "asc" }],
       take: 25,
       select: {
         setId: true,
+        programId: true,
+        cardNumber: true,
+        parallelId: true,
+        keywords: true,
+        oddsInfo: true,
+      },
+    });
+  }
+  if (variants.length === 0 && normalizedProgramId) {
+    variants = await prisma.cardVariant.findMany({
+      where: {
+        setId,
+        ...(cardNumber ? { cardNumber } : {}),
+      },
+      orderBy: [{ parallelId: "asc" }],
+      take: 25,
+      select: {
+        setId: true,
+        programId: true,
         cardNumber: true,
         parallelId: true,
         keywords: true,
@@ -203,7 +227,7 @@ function sortCandidates(candidates: VariantCandidate[]): VariantCandidate[] {
 }
 
 function buildVariantSearchableText(variant: VariantRow): string {
-  return [variant.parallelId, variant.oddsInfo ?? "", ...variant.keywords].join(" ");
+  return [variant.programId, variant.parallelId, variant.oddsInfo ?? "", ...variant.keywords].join(" ");
 }
 
 function scoreHintText(params: {
@@ -372,9 +396,10 @@ async function buildEmbeddingCandidates(params: {
     const variantCardNumber = sanitizeMatcherText(variant.cardNumber) || "ALL";
     const referenceWhere: any =
       variantCardNumber.toUpperCase() === "ALL"
-        ? { setId: variant.setId, parallelId: variant.parallelId }
+        ? { setId: variant.setId, programId: variant.programId, parallelId: variant.parallelId }
         : {
             setId: variant.setId,
+            programId: variant.programId,
             parallelId: variant.parallelId,
             OR: [{ cardNumber: variantCardNumber }, { cardNumber: "ALL" }, { cardNumber: null }],
           };
@@ -460,11 +485,16 @@ export async function runVariantMatch(params: {
   let matchedSetId = "";
   let variants: VariantRow[] = [];
   for (const setId of scopedSetCandidates) {
-    const rows = await findVariants({ setId, cardNumber: cardNumberInput === "ALL" ? "" : cardNumberInput });
+    const rows = await findVariants({
+      setId,
+      programId: params.program,
+      cardNumber: cardNumberInput === "ALL" ? "" : cardNumberInput,
+    });
     if (rows.length > 0) {
       matchedSetId = setId;
       variants = rows.map((row) => ({
         setId: row.setId,
+        programId: row.programId,
         parallelId: row.parallelId,
         cardNumber: row.cardNumber,
         keywords: Array.isArray(row.keywords) ? row.keywords : [],

@@ -9,6 +9,7 @@ import { extractDraftRows } from "../../../../lib/server/setOpsDrafts";
 type VariantRow = {
   id: string;
   setId: string;
+  programId: string;
   cardNumber: string;
   parallelId: string;
   parallelFamily: string | null;
@@ -119,6 +120,11 @@ function normalizeCardToken(value: string | null | undefined) {
   return normalized || "ALL";
 }
 
+function normalizeProgramToken(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  return raw || "base";
+}
+
 function dbCardValuesForVariant(cardNumber: string | null | undefined) {
   const normalized = normalizeCardToken(cardNumber);
   const raw = String(cardNumber || "").trim();
@@ -142,14 +148,20 @@ function dbCardValuesForVariant(cardNumber: string | null | undefined) {
   return output;
 }
 
-function keyForRef(setId: string, cardNumber: string | null | undefined, parallelId: string) {
+function keyForRef(
+  setId: string,
+  programId: string | null | undefined,
+  cardNumber: string | null | undefined,
+  parallelId: string
+) {
   const normalizedSet = normalizeSetLabel(setId) || String(setId || "").trim();
+  const normalizedProgram = normalizeProgramToken(programId);
   const normalizedParallel =
     canonicalParallelLabel(parallelId, cardNumber) ||
     normalizeParallelLabel(parallelId) ||
     String(parallelId || "").trim();
   const card = cardNumber == null ? "__NULL__" : normalizeCardToken(cardNumber);
-  return `${normalizedSet}::${card}::${normalizedParallel}`;
+  return `${normalizedSet}::${normalizedProgram}::${card}::${normalizedParallel}`;
 }
 
 function normalizePlayerLabel(value: string | null | undefined) {
@@ -168,26 +180,28 @@ function joinPlayerLabels(labels: Set<string>) {
 }
 
 function filterLegacyAllVariants(variants: any[]) {
-  const specificBySetParallel = new Set<string>();
+  const specificBySetProgramParallel = new Set<string>();
   for (const variant of variants) {
     if (normalizeCardToken(variant.cardNumber) === "ALL") continue;
     const setKey = (normalizeSetLabel(variant.setId) || String(variant.setId || "").trim()).toLowerCase();
+    const programKey = normalizeProgramToken(variant.programId).toLowerCase();
     const parallelKey =
       (canonicalParallelLabel(variant.parallelId, variant.cardNumber) ||
         normalizeParallelLabel(variant.parallelId) ||
         String(variant.parallelId || "").trim()).toLowerCase();
-    specificBySetParallel.add(`${setKey}::${parallelKey}`);
+    specificBySetProgramParallel.add(`${setKey}::${programKey}::${parallelKey}`);
   }
   return variants.filter((variant) => {
     const card = normalizeCardToken(variant.cardNumber);
     if (card !== "ALL") return true;
     const setKey = (normalizeSetLabel(variant.setId) || String(variant.setId || "").trim()).toLowerCase();
+    const programKey = normalizeProgramToken(variant.programId).toLowerCase();
     const parallelKey =
       (canonicalParallelLabel(variant.parallelId, variant.cardNumber) ||
         normalizeParallelLabel(variant.parallelId) ||
         String(variant.parallelId || "").trim()).toLowerCase();
-    const key = `${setKey}::${parallelKey}`;
-    return !specificBySetParallel.has(key);
+    const key = `${setKey}::${programKey}::${parallelKey}`;
+    return !specificBySetProgramParallel.has(key);
   });
 }
 
@@ -203,6 +217,7 @@ function toRow(
   return {
     id: variant.id,
     setId: variant.setId,
+    programId: normalizeProgramToken(variant.programId),
     cardNumber: variant.cardNumber,
     parallelId: variant.parallelId,
     parallelFamily: variant.parallelFamily ?? null,
@@ -224,6 +239,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (req.method === "GET") {
       const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
       const setIdFilter = typeof req.query.setId === "string" ? req.query.setId.trim() : "";
+      const programIdFilter = typeof req.query.programId === "string" ? req.query.programId.trim() : "";
       const take = Math.min(2000, Math.max(1, Number(req.query.limit ?? 1000) || 1000));
       const gapOnly = String(req.query.gapOnly || "").trim().toLowerCase() === "true";
       const approvedOnly = String(req.query.approvedOnly || "").trim().toLowerCase() === "true";
@@ -258,10 +274,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       if (setIdFilter) {
         whereClauses.push({ setId: setIdFilter });
       }
+      if (programIdFilter) {
+        whereClauses.push({ programId: normalizeProgramToken(programIdFilter) });
+      }
       if (q) {
         whereClauses.push({
           OR: [
             { setId: { contains: q, mode: Prisma.QueryMode.insensitive } },
+            { programId: { contains: q, mode: Prisma.QueryMode.insensitive } },
             { cardNumber: { contains: q, mode: Prisma.QueryMode.insensitive } },
             { parallelId: { contains: q, mode: Prisma.QueryMode.insensitive } },
           ],
@@ -276,30 +296,40 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       const variants = await prisma.cardVariant.findMany({
         where,
-        orderBy: [{ setId: "asc" }, { cardNumber: "asc" }, { parallelId: "asc" }],
+        orderBy: [{ setId: "asc" }, { programId: "asc" }, { cardNumber: "asc" }, { parallelId: "asc" }],
         take,
       });
       const filteredVariants = filterLegacyAllVariants(variants);
       const keys = filteredVariants.map((variant) => ({
         setId: variant.setId,
+        programId: normalizeProgramToken((variant as any).programId),
         cardNumber: variant.cardNumber,
         parallelId: variant.parallelId,
       }));
-      const countOrMap = new Map<string, { setId: string; cardNumber: string | null; parallelId: string }>();
+      const countOrMap = new Map<
+        string,
+        { setId: string; programId: string; cardNumber: string | null; parallelId: string }
+      >();
       for (const key of keys) {
         const setIds = setIdCandidates(key.setId);
+        const programs = uniqueStrings([key.programId]);
         const parallels = parallelCandidates(key.parallelId, key.cardNumber);
         const cards = dbCardValuesForVariant(key.cardNumber);
         for (const setId of setIds) {
-          for (const parallelId of parallels) {
-            for (const cardNumber of cards) {
-              const rowKey = `${setId.toLowerCase()}::${cardNumber == null ? "__NULL__" : String(cardNumber).toLowerCase()}::${parallelId.toLowerCase()}`;
-              if (!countOrMap.has(rowKey)) {
-                countOrMap.set(rowKey, {
-                  setId,
-                  cardNumber: cardNumber == null ? null : String(cardNumber),
-                  parallelId,
-                });
+          for (const programId of programs) {
+            for (const parallelId of parallels) {
+              for (const cardNumber of cards) {
+                const rowKey = `${setId.toLowerCase()}::${programId.toLowerCase()}::${
+                  cardNumber == null ? "__NULL__" : String(cardNumber).toLowerCase()
+                }::${parallelId.toLowerCase()}`;
+                if (!countOrMap.has(rowKey)) {
+                  countOrMap.set(rowKey, {
+                    setId,
+                    programId,
+                    cardNumber: cardNumber == null ? null : String(cardNumber),
+                    parallelId,
+                  });
+                }
               }
             }
           }
@@ -308,7 +338,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const countOr = Array.from(countOrMap.values());
       const referenceCounts = countOr.length
         ? await prisma.cardVariantReferenceImage.groupBy({
-            by: ["setId", "cardNumber", "parallelId"],
+            by: ["setId", "programId", "cardNumber", "parallelId"],
             where: { OR: countOr },
             _count: { _all: true },
           })
@@ -325,9 +355,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
                 },
               ],
             } as any),
-            distinct: ["setId", "cardNumber", "parallelId"],
+            distinct: ["setId", "programId", "cardNumber", "parallelId"],
             select: ({
               setId: true,
+              programId: true,
               cardNumber: true,
               parallelId: true,
             } as any),
@@ -342,9 +373,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           latestRefs = await prisma.cardVariantReferenceImage.findMany({
             where: { OR: countOr },
             orderBy: [{ updatedAt: "desc" }],
-            distinct: ["setId", "cardNumber", "parallelId"],
+            distinct: ["setId", "programId", "cardNumber", "parallelId"],
             select: ({
               setId: true,
+              programId: true,
               cardNumber: true,
               parallelId: true,
               playerSeed: true,
@@ -358,9 +390,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           latestRefs = await prisma.cardVariantReferenceImage.findMany({
             where: { OR: countOr },
             orderBy: [{ updatedAt: "desc" }],
-            distinct: ["setId", "cardNumber", "parallelId"],
+            distinct: ["setId", "programId", "cardNumber", "parallelId"],
             select: ({
               setId: true,
+              programId: true,
               cardNumber: true,
               parallelId: true,
               playerSeed: true,
@@ -373,16 +406,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       const countByKey = new Map<string, number>();
       for (const row of referenceCounts) {
-        const key = keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId);
+        const key = keyForRef(row.setId, (row as any).programId ?? "base", (row as any).cardNumber ?? null, row.parallelId);
         const current = countByKey.get(key) ?? 0;
         countByKey.set(key, current + row._count._all);
       }
       const qaDoneByKey = new Map<string, number>();
       for (const row of qaDoneRows) {
         const setId = String((row as any)?.setId || "").trim();
+        const programId = String((row as any)?.programId || "").trim();
         const parallelId = String((row as any)?.parallelId || "").trim();
-        if (!setId || !parallelId) continue;
-        qaDoneByKey.set(keyForRef(setId, (row as any)?.cardNumber ?? null, parallelId), 1);
+        if (!setId || !programId || !parallelId) continue;
+        qaDoneByKey.set(keyForRef(setId, programId, (row as any)?.cardNumber ?? null, parallelId), 1);
       }
       const previewByKey = new Map<string, string>();
       const refPlayerByKey = new Map<string, string>();
@@ -401,7 +435,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           }
         }
         if (!preview) continue;
-        const key = keyForRef(row.setId, (row as any).cardNumber ?? null, row.parallelId);
+        const key = keyForRef(row.setId, (row as any).programId ?? "base", (row as any).cardNumber ?? null, row.parallelId);
         previewByKey.set(key, preview);
         const refPlayerLabel = normalizePlayerLabel((row as any).playerSeed);
         if (refPlayerLabel) {
@@ -476,9 +510,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             const rows = extractDraftRows(version.dataJson);
             for (const row of rows) {
               if (normalizeSetLabel(row.setId) !== normalizedSetId) continue;
+              const programId = normalizeProgramToken(
+                row.cardType ||
+                  String((row.raw?.cardType ?? row.raw?.program ?? row.raw?.programLabel ?? row.raw?.subset ?? "") || "")
+              );
               const playerLabel = normalizePlayerLabel(row.playerSeed);
               if (!playerLabel) continue;
-              const key = keyForRef(normalizedSetId, row.cardNumber, row.parallel);
+              const key = keyForRef(normalizedSetId, programId, row.cardNumber, row.parallel);
               if (!playersByVariantKey.has(key)) {
                 playersByVariantKey.set(key, new Set<string>());
               }
@@ -498,32 +536,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const rows = filteredVariants.map((variant) => {
         const candidateCards = dbCardValuesForVariant(variant.cardNumber);
         const exactCard = normalizeCardToken(variant.cardNumber);
+        const variantProgramId = normalizeProgramToken((variant as any).programId);
         const exactCount =
-          countByKey.get(keyForRef(variant.setId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)) ?? 0;
+          countByKey.get(
+            keyForRef(variant.setId, variantProgramId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)
+          ) ?? 0;
         const legacyCount =
-          (countByKey.get(keyForRef(variant.setId, "ALL", variant.parallelId)) ?? 0) +
-          (countByKey.get(keyForRef(variant.setId, null, variant.parallelId)) ?? 0);
+          (countByKey.get(keyForRef(variant.setId, variantProgramId, "ALL", variant.parallelId)) ?? 0) +
+          (countByKey.get(keyForRef(variant.setId, variantProgramId, null, variant.parallelId)) ?? 0);
         const referenceCount = exactCount > 0 ? exactCount : legacyCount;
         const exactDoneCount =
-          qaDoneByKey.get(keyForRef(variant.setId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)) ?? 0;
+          qaDoneByKey.get(
+            keyForRef(variant.setId, variantProgramId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)
+          ) ?? 0;
         const legacyDoneCount =
-          (qaDoneByKey.get(keyForRef(variant.setId, "ALL", variant.parallelId)) ?? 0) +
-          (qaDoneByKey.get(keyForRef(variant.setId, null, variant.parallelId)) ?? 0);
+          (qaDoneByKey.get(keyForRef(variant.setId, variantProgramId, "ALL", variant.parallelId)) ?? 0) +
+          (qaDoneByKey.get(keyForRef(variant.setId, variantProgramId, null, variant.parallelId)) ?? 0);
         const qaDoneCount = exactDoneCount > 0 ? exactDoneCount : legacyDoneCount;
         const previewImageUrl =
           previewByKey.get(
-            keyForRef(variant.setId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)
+            keyForRef(variant.setId, variantProgramId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)
           ) ||
-          candidateCards.map((card) => previewByKey.get(keyForRef(variant.setId, card, variant.parallelId)) || null).find(Boolean) ||
+          candidateCards
+            .map((card) => previewByKey.get(keyForRef(variant.setId, variantProgramId, card, variant.parallelId)) || null)
+            .find(Boolean) ||
           null;
         const playerLabel =
-          draftPlayerByKey.get(keyForRef(variant.setId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)) ||
+          draftPlayerByKey.get(
+            keyForRef(variant.setId, variantProgramId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)
+          ) ||
           candidateCards
-            .map((card) => draftPlayerByKey.get(keyForRef(variant.setId, card, variant.parallelId)) || null)
+            .map((card) => draftPlayerByKey.get(keyForRef(variant.setId, variantProgramId, card, variant.parallelId)) || null)
             .find(Boolean) ||
-          refPlayerByKey.get(keyForRef(variant.setId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)) ||
+          refPlayerByKey.get(
+            keyForRef(variant.setId, variantProgramId, exactCard === "ALL" ? "ALL" : exactCard, variant.parallelId)
+          ) ||
           candidateCards
-            .map((card) => refPlayerByKey.get(keyForRef(variant.setId, card, variant.parallelId)) || null)
+            .map((card) => refPlayerByKey.get(keyForRef(variant.setId, variantProgramId, card, variant.parallelId)) || null)
             .find(Boolean) ||
           null;
         return toRow(variant, {
@@ -542,6 +591,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         if (diff !== 0) return diff;
         return (
           a.setId.localeCompare(b.setId) ||
+          a.programId.localeCompare(b.programId) ||
           a.cardNumber.localeCompare(b.cardNumber) ||
           a.parallelId.localeCompare(b.parallelId)
         );
@@ -551,13 +601,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     if (req.method === "POST") {
-      const { setId, cardNumber, parallelId, parallelFamily, keywords, oddsInfo } = req.body ?? {};
+      const { setId, programId, cardNumber, parallelId, parallelFamily, keywords, oddsInfo } = req.body ?? {};
       if (!setId || !cardNumber || !parallelId) {
         return res.status(400).json({ message: "Missing required fields." });
       }
       const variant = await prisma.cardVariant.create({
         data: {
           setId: String(setId).trim(),
+          programId: normalizeProgramToken(programId),
           cardNumber: String(cardNumber).trim(),
           parallelId: String(parallelId).trim(),
           parallelFamily: parallelFamily ? String(parallelFamily).trim() : null,
@@ -571,7 +622,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     if (req.method === "PUT") {
-      const { id, setId, cardNumber, parallelId, parallelFamily, keywords, oddsInfo } = req.body ?? {};
+      const { id, setId, programId, cardNumber, parallelId, parallelFamily, keywords, oddsInfo } = req.body ?? {};
       if (!id) {
         return res.status(400).json({ message: "Missing variant id." });
       }
@@ -579,6 +630,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         where: { id: String(id) },
         data: {
           ...(setId ? { setId: String(setId).trim() } : {}),
+          ...(programId !== undefined ? { programId: normalizeProgramToken(programId) } : {}),
           ...(cardNumber ? { cardNumber: String(cardNumber).trim() } : {}),
           ...(parallelId ? { parallelId: String(parallelId).trim() } : {}),
           ...(parallelFamily !== undefined

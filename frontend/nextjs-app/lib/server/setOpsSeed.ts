@@ -6,6 +6,7 @@ import {
   buildCanonicalVariantIdentityLookupKey,
   buildPreferredSetOpsVariantIdentityLookupKey,
   loadSetOpsVariantIdentityContext,
+  normalizeVariantProgramIdForIdentity,
   resolveSetOpsVariantIdentity,
 } from "./setOpsVariantIdentity";
 
@@ -35,13 +36,14 @@ async function computeQueueCount(setId: string) {
     where: { setId },
     select: {
       id: true,
+      programId: true,
       cardNumber: true,
       parallelId: true,
     },
   });
 
   const grouped = await prisma.cardVariantReferenceImage.groupBy({
-    by: ["cardNumber", "parallelId"],
+    by: ["programId", "cardNumber", "parallelId"],
     where: { setId },
     _count: { _all: true },
   });
@@ -50,6 +52,7 @@ async function computeQueueCount(setId: string) {
   for (const row of grouped) {
     const identity = resolveSetOpsVariantIdentity({
       context: identityContext,
+      programId: row.programId,
       cardNumber: row.cardNumber,
       parallelId: row.parallelId,
     });
@@ -61,6 +64,7 @@ async function computeQueueCount(setId: string) {
   for (const variant of variants) {
     const identity = resolveSetOpsVariantIdentity({
       context: identityContext,
+      programId: variant.programId,
       cardNumber: variant.cardNumber,
       parallelId: variant.parallelId,
     });
@@ -135,13 +139,19 @@ export async function runSeedJob(params: {
     }
 
     const seedParallelId = row.parallel || "base";
+    const seedProgramHint =
+      row.cardType ||
+      String((row.raw?.cardType ?? row.raw?.program ?? row.raw?.programLabel ?? row.raw?.subset ?? "") || "").trim() ||
+      "base";
 
     try {
       const identity = resolveSetOpsVariantIdentity({
         context: identityContext,
+        programId: seedProgramHint,
         cardNumber: row.cardNumber,
         parallelId: seedParallelId,
       });
+      const programId = normalizeVariantProgramIdForIdentity(identity.preferredProgramId ?? identity.programId);
       const cardNumber = identity.cardNumber;
       const parallelId = identity.parallelLabel;
 
@@ -159,8 +169,9 @@ export async function runSeedJob(params: {
       if (!resolvedVariantId) {
         const existing = await prisma.cardVariant.findUnique({
           where: {
-            setId_cardNumber_parallelId: {
+            setId_programId_cardNumber_parallelId: {
               setId,
+              programId,
               cardNumber,
               parallelId,
             },
@@ -176,6 +187,7 @@ export async function runSeedJob(params: {
         const created = await prisma.cardVariant.create({
           data: {
             setId,
+            programId,
             cardNumber,
             parallelId,
             keywords: [],
@@ -279,7 +291,9 @@ export async function runSeedJob(params: {
     ? SetSeedJobStatus.FAILED
     : SetSeedJobStatus.COMPLETE;
 
-  logs.push(`seed:finish status=${status} processed=${processed} inserted=${inserted} updated=${updated} failed=${failed}`);
+  logs.push(
+    `seed:finish status=${status} processed=${processed} inserted=${inserted} updated=${updated} failed=${failed} refGap=${queueCount}`
+  );
 
   await prisma.setSeedJob.update({
     where: { id: params.jobId },

@@ -313,8 +313,8 @@ function expandDatasetMode(mode: CombinedDatasetMode): DatasetType[] {
 }
 
 function formatDatasetLabel(mode: CombinedDatasetMode) {
-  if (mode === "COMBINED") return "SET CHECKLIST + ODDS LIST";
-  return mode === "PARALLEL_DB" ? "ODDS LIST" : "SET CHECKLIST";
+  if (mode === "COMBINED") return "SET LIST + PARALLEL LIST";
+  return mode === "PARALLEL_DB" ? "PARALLEL LIST" : "SET LIST";
 }
 
 function formatDatasetMode(mode: CombinedDatasetMode) {
@@ -657,15 +657,15 @@ export default function SetOpsReviewPage() {
         setIdBlurTimerRef.current = null;
       }
       if (isCreateNew) {
-        setStatus(`Creating new Set ID: ${cleaned}. Queue SET CHECKLIST and ODDS LIST with this exact Set ID.`);
+        setStatus(`Creating new Set ID: ${cleaned}. Queue SET LIST and PARALLEL LIST with this exact Set ID.`);
         return;
       }
       const selected = setIdOptions.find((option) => normalizeSetIdLookup(option.setId) === normalizeSetIdLookup(cleaned)) ?? null;
       if (!selected) return;
       setStatus(
-        `Selected ${selected.setId}. SET CHECKLIST: ${formatConnectionBadgeLabel(
+        `Selected ${selected.setId}. SET LIST: ${formatConnectionBadgeLabel(
           selected.checklistStatus
-        )}. ODDS LIST: ${formatConnectionBadgeLabel(selected.oddsStatus)}.`
+        )}. PARALLEL LIST: ${formatConnectionBadgeLabel(selected.oddsStatus)}.`
       );
     },
     [setIdOptions]
@@ -1281,7 +1281,7 @@ export default function SetOpsReviewPage() {
           await fetchSeedJobs(selectedSetId);
           await fetchReferenceStatus(selectedSetId);
           const variantSyncStatus = payload.variantSync
-            ? `variant sync ${payload.variantSync.status.toLowerCase()} (processed=${payload.variantSync.processed}, inserted=${payload.variantSync.inserted}, updated=${payload.variantSync.updated}, failed=${payload.variantSync.failed}, queue=${payload.variantSync.queueCount})`
+            ? `variant sync ${payload.variantSync.status.toLowerCase()} (processed=${payload.variantSync.processed}, inserted=${payload.variantSync.inserted}, updated=${payload.variantSync.updated}, failed=${payload.variantSync.failed}, refGap=${payload.variantSync.queueCount})`
             : payload.variantSyncWarning
             ? `variant sync warning: ${payload.variantSyncWarning}`
             : "variant sync queued";
@@ -1782,7 +1782,7 @@ export default function SetOpsReviewPage() {
                               option.hasChecklist
                             )}`}
                           >
-                            SET CHECKLIST {formatConnectionBadgeLabel(option.checklistStatus)}
+                            SET LIST {formatConnectionBadgeLabel(option.checklistStatus)}
                           </span>
                           <span
                             className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${formatConnectionBadgeClass(
@@ -1790,7 +1790,7 @@ export default function SetOpsReviewPage() {
                               option.hasOdds
                             )}`}
                           >
-                            ODDS LIST {formatConnectionBadgeLabel(option.oddsStatus)}
+                            PARALLEL LIST {formatConnectionBadgeLabel(option.oddsStatus)}
                           </span>
                         </div>
                       </button>
@@ -1810,9 +1810,9 @@ export default function SetOpsReviewPage() {
               disabled={!canReview}
               className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
             >
-              <option value="PARALLEL_DB">ODDS LIST</option>
-              <option value="PLAYER_WORKSHEET">SET CHECKLIST</option>
-              <option value="COMBINED">SET CHECKLIST + ODDS LIST</option>
+              <option value="PARALLEL_DB">PARALLEL LIST</option>
+              <option value="PLAYER_WORKSHEET">SET LIST</option>
+              <option value="COMBINED">SET LIST + PARALLEL LIST</option>
             </select>
             <input
               value={sourceUrlInput}
@@ -2086,7 +2086,7 @@ export default function SetOpsReviewPage() {
                   <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Card Type" : "Card_Number"}</th>
                   <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Parallel Name" : "Player_Name"}</th>
                   <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Odds" : "Team_Name"}</th>
-                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Listing ID" : "Subset"}</th>
+                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Listing ID" : "Card Type"}</th>
                   <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Source URL" : "Rookie"}</th>
                   <th className="border-b border-white/10 px-2 py-2">Issues</th>
                   <th className="border-b border-white/10 px-2 py-2">Actions</th>
@@ -2362,18 +2362,18 @@ export default function SetOpsReviewPage() {
             <button
               type="button"
               disabled={busy || !canApprove || !activeQueueSetId}
-              onClick={() => void seedReferenceImagesForDataset("PLAYER_WORKSHEET", "SET CHECKLIST")}
+              onClick={() => void seedReferenceImagesForDataset("PLAYER_WORKSHEET", "SET LIST")}
               className="h-10 rounded-xl border border-amber-400/50 bg-amber-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-amber-100 transition hover:bg-amber-500/30 disabled:opacity-60"
             >
-              Seed SET CHECKLIST References
+              Seed SET LIST References
             </button>
             <button
               type="button"
               disabled={busy || !canApprove || !activeQueueSetId}
-              onClick={() => void seedReferenceImagesForDataset("PARALLEL_DB", "ODDS LIST")}
+              onClick={() => void seedReferenceImagesForDataset("PARALLEL_DB", "PARALLEL LIST")}
               className="h-10 rounded-xl border border-emerald-400/50 bg-emerald-500/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-emerald-100 transition hover:bg-emerald-500/30 disabled:opacity-60"
             >
-              Seed ODDS LIST References
+              Seed PARALLEL LIST References
             </button>
             <button
               type="button"
@@ -2401,7 +2401,7 @@ export default function SetOpsReviewPage() {
             </Link>
           </div>
           <p className="mt-3 text-xs text-slate-300">
-            Variant sync now auto-runs on APPROVE. Next: seed SET CHECKLIST and ODDS LIST references.
+            Variant sync now auto-runs on APPROVE. Next: seed SET LIST and PARALLEL LIST references.
           </p>
           {referenceSeedProgress && (
             <div className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2">
@@ -2432,7 +2432,7 @@ export default function SetOpsReviewPage() {
                   <th className="border-b border-white/10 px-2 py-2">Job</th>
                   <th className="border-b border-white/10 px-2 py-2">Status</th>
                   <th className="border-b border-white/10 px-2 py-2">Progress</th>
-                  <th className="border-b border-white/10 px-2 py-2">Queue</th>
+                  <th className="border-b border-white/10 px-2 py-2">Ref Gap (&lt;2 refs)</th>
                   <th className="border-b border-white/10 px-2 py-2">Created</th>
                   <th className="border-b border-white/10 px-2 py-2">Completed</th>
                   <th className="border-b border-white/10 px-2 py-2">Actions</th>

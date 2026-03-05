@@ -17,6 +17,7 @@ type SetRow = {
 type VariantRow = {
   id: string;
   setId: string;
+  programId: string;
   cardNumber: string;
   parallelId: string;
   parallelFamily: string | null;
@@ -29,6 +30,7 @@ type VariantRow = {
 type ReferenceRow = {
   id: string;
   setId: string;
+  programId: string;
   cardNumber: string | null;
   parallelId: string;
   displayLabel: string;
@@ -106,6 +108,7 @@ export default function VariantRefQaPage() {
   const [setSearch, setSetSearch] = useState("");
   const [setRows, setSetRows] = useState<SetRow[]>([]);
   const [selectedSetFilter, setSelectedSetFilter] = useState("");
+  const [selectedProgramFilter, setSelectedProgramFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [gapOnly, setGapOnly] = useState(false);
   const [minRefs, setMinRefs] = useState(2);
@@ -113,6 +116,7 @@ export default function VariantRefQaPage() {
   const [variants, setVariants] = useState<VariantRow[]>([]);
   const [refs, setRefs] = useState<ReferenceRow[]>([]);
   const [selectedSetId, setSelectedSetId] = useState("");
+  const [selectedProgramId, setSelectedProgramId] = useState("");
   const [selectedCardNumber, setSelectedCardNumber] = useState("");
   const [selectedParallelId, setSelectedParallelId] = useState("");
   const [newRefType, setNewRefType] = useState<"front" | "back">("front");
@@ -169,6 +173,9 @@ export default function VariantRefQaPage() {
       if (selectedSetFilter.trim()) {
         params.set("setId", selectedSetFilter.trim());
       }
+      if (selectedProgramFilter !== "all") {
+        params.set("programId", selectedProgramFilter);
+      }
       const res = await fetch(`/api/admin/variants?${params.toString()}`, {
         headers: { ...adminHeaders },
       });
@@ -184,7 +191,7 @@ export default function VariantRefQaPage() {
     } finally {
       setBusy(false);
     }
-  }, [adminHeaders, gapOnly, minRefs, query, selectedSetFilter, session?.token]);
+  }, [adminHeaders, gapOnly, minRefs, query, selectedProgramFilter, selectedSetFilter, session?.token]);
 
   const displayedVariants = useMemo(() => {
     if (variantTypeFilter === "all") return variants;
@@ -195,6 +202,18 @@ export default function VariantRefQaPage() {
     });
   }, [variantTypeFilter, variants]);
 
+  const availableProgramFilters = useMemo(() => {
+    const values = Array.from(
+      new Set(
+        variants
+          .map((variant) => String(variant.programId || "").trim())
+          .filter(Boolean)
+          .sort((a, b) => a.localeCompare(b))
+      )
+    );
+    return ["all", ...values];
+  }, [variants]);
+
   const queueStats = useMemo(() => {
     const total = displayedVariants.length;
     const done = displayedVariants.filter((variant) => (variant.qaDoneCount || 0) > 0).length;
@@ -203,16 +222,17 @@ export default function VariantRefQaPage() {
   }, [displayedVariants]);
 
   const selectedVariant = useMemo(() => {
-    if (!selectedSetId || !selectedParallelId) return null;
+    if (!selectedSetId || !selectedProgramId || !selectedParallelId) return null;
     return (
       variants.find(
         (variant) =>
           variant.setId === selectedSetId &&
+          variant.programId === selectedProgramId &&
           variant.parallelId === selectedParallelId &&
           variant.cardNumber === selectedCardNumber
       ) ?? null
     );
-  }, [selectedCardNumber, selectedParallelId, selectedSetId, variants]);
+  }, [selectedCardNumber, selectedParallelId, selectedProgramId, selectedSetId, variants]);
 
   useEffect(() => {
     if (!session?.token) return;
@@ -226,7 +246,7 @@ export default function VariantRefQaPage() {
       setSelectedSetFilter((prev) => (prev === querySetId ? prev : querySetId));
     }
     if (queryProgramId) {
-      setQuery((prev) => (prev ? prev : queryProgramId));
+      setSelectedProgramFilter(queryProgramId);
     }
   }, [queryProgramId, querySetId, router.isReady]);
 
@@ -236,31 +256,40 @@ export default function VariantRefQaPage() {
   }, [loadVariants, selectedSetFilter, session?.token]);
 
   useEffect(() => {
+    if (selectedProgramFilter === "all") return;
+    if (availableProgramFilters.includes(selectedProgramFilter)) return;
+    setSelectedProgramFilter("all");
+  }, [availableProgramFilters, selectedProgramFilter]);
+
+  useEffect(() => {
     if (!selectedSetFilter) return;
     if (!selectedSetId) return;
     if (selectedSetId === selectedSetFilter) return;
     setSelectedSetId("");
+    setSelectedProgramId("");
     setSelectedCardNumber("");
     setSelectedParallelId("");
     setRefs([]);
     setSelectedRefIds([]);
   }, [selectedSetFilter, selectedSetId]);
 
-  const loadRefs = useCallback(async (setId?: string, parallelId?: string, cardNumber?: string) => {
+  const loadRefs = useCallback(
+    async (setId?: string, programId?: string, parallelId?: string, cardNumber?: string) => {
     if (!session?.token) return;
     const currentSetId = (setId ?? selectedSetId).trim();
+    const currentProgramId = (programId ?? selectedProgramId).trim();
     const currentParallelId = (parallelId ?? selectedParallelId).trim();
     const currentCardNumber = (cardNumber ?? selectedCardNumber).trim();
-    if (!currentSetId || !currentParallelId) {
+    if (!currentSetId || !currentProgramId || !currentParallelId) {
       setStatus({ type: "error", message: "Select a variant first." });
       return;
     }
     setBusy(true);
     try {
       const res = await fetch(
-        `/api/admin/variants/reference?setId=${encodeURIComponent(currentSetId)}&cardNumber=${encodeURIComponent(
-          currentCardNumber
-        )}&parallelId=${encodeURIComponent(currentParallelId)}&limit=500`,
+        `/api/admin/variants/reference?setId=${encodeURIComponent(currentSetId)}&programId=${encodeURIComponent(
+          currentProgramId
+        )}&cardNumber=${encodeURIComponent(currentCardNumber)}&parallelId=${encodeURIComponent(currentParallelId)}&limit=500`,
         { headers: { ...adminHeaders } }
       );
       const payload = await res.json().catch(() => ({}));
@@ -276,7 +305,9 @@ export default function VariantRefQaPage() {
     } finally {
       setBusy(false);
     }
-  }, [adminHeaders, selectedCardNumber, selectedParallelId, selectedSetId, session?.token]);
+  },
+    [adminHeaders, selectedCardNumber, selectedParallelId, selectedProgramId, selectedSetId, session?.token]
+  );
 
   const clearSetExternalRefs = useCallback(async () => {
     if (!session?.token) return;
@@ -301,8 +332,8 @@ export default function VariantRefQaPage() {
         throw new Error(payload?.message ?? "Failed to clear external references");
       }
       setSelectedRefIds([]);
-      if (selectedSetId && selectedSetId === setId && selectedParallelId) {
-        await loadRefs(selectedSetId, selectedParallelId, selectedCardNumber);
+      if (selectedSetId && selectedSetId === setId && selectedProgramId && selectedParallelId) {
+        await loadRefs(selectedSetId, selectedProgramId, selectedParallelId, selectedCardNumber);
       } else {
         setRefs([]);
       }
@@ -322,6 +353,7 @@ export default function VariantRefQaPage() {
     loadVariants,
     selectedCardNumber,
     selectedParallelId,
+    selectedProgramId,
     selectedSetFilter,
     selectedSetId,
     session?.token,
@@ -329,10 +361,12 @@ export default function VariantRefQaPage() {
 
   const chooseVariant = async (variant: VariantRow) => {
     setSelectedSetFilter(variant.setId);
+    setSelectedProgramFilter(variant.programId || "all");
     setSelectedSetId(variant.setId);
+    setSelectedProgramId(variant.programId);
     setSelectedCardNumber(variant.cardNumber);
     setSelectedParallelId(variant.parallelId);
-    await loadRefs(variant.setId, variant.parallelId, variant.cardNumber);
+    await loadRefs(variant.setId, variant.programId, variant.parallelId, variant.cardNumber);
   };
 
   const deleteRef = async (id: string) => {
@@ -421,6 +455,42 @@ export default function VariantRefQaPage() {
     }
   };
 
+  const processAllForVariant = async () => {
+    if (!selectedSetId.trim() || !selectedProgramId.trim() || !selectedParallelId.trim()) {
+      setStatus({ type: "error", message: "Select a variant first." });
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch("/api/admin/variants/reference/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders },
+        body: JSON.stringify({
+          setId: selectedSetId.trim(),
+          programId: selectedProgramId.trim(),
+          cardNumber: selectedCardNumber.trim() || "ALL",
+          parallelId: selectedParallelId.trim(),
+        }),
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "PhotoRoom all processing failed");
+      }
+      await loadRefs();
+      setStatus({
+        type: "success",
+        message: `PhotoRoom processed ${payload?.processed ?? 0}, skipped ${payload?.skipped ?? 0} for this variant.`,
+      });
+    } catch (error) {
+      setStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "PhotoRoom all processing failed",
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const promoteSelected = async () => {
     if (!selectedRefIds.length) {
       setStatus({ type: "error", message: "Select at least one reference image." });
@@ -437,11 +507,14 @@ export default function VariantRefQaPage() {
       if (!res.ok) {
         throw new Error(payload?.message ?? "Promote to owned failed");
       }
-      await loadRefs();
+      setGapOnly(false);
+      await loadRefs(selectedSetId, selectedProgramId, selectedParallelId, selectedCardNumber);
       await loadVariants();
       setStatus({
         type: "success",
-        message: `Saved ${payload?.promoted ?? 0} refs. Already owned ${payload?.alreadyOwned ?? 0}. Skipped ${payload?.skipped ?? 0}.`,
+        message: `Saved ${payload?.promoted ?? 0} refs. Already owned ${payload?.alreadyOwned ?? 0}. Skipped ${
+          payload?.skipped ?? 0
+        }.`,
       });
     } catch (error) {
       setStatus({
@@ -455,7 +528,7 @@ export default function VariantRefQaPage() {
 
   const uploadReplacement = useCallback(async (file: File) => {
     if (!session?.token) return;
-    if (!selectedSetId.trim() || !selectedParallelId.trim()) {
+    if (!selectedSetId.trim() || !selectedProgramId.trim() || !selectedParallelId.trim()) {
       setStatus({ type: "error", message: "Select a variant first." });
       return;
     }
@@ -490,6 +563,7 @@ export default function VariantRefQaPage() {
         headers: { "Content-Type": "application/json", ...adminHeaders },
         body: JSON.stringify({
           setId: selectedSetId.trim(),
+          programId: selectedProgramId.trim(),
           parallelId: selectedParallelId.trim(),
           cardNumber: selectedCardNumber.trim() || "ALL",
           playerSeed: selectedVariant?.playerLabel || null,
@@ -504,7 +578,7 @@ export default function VariantRefQaPage() {
         throw new Error(payload?.message ?? "Failed to save reference");
       }
       setStatus({ type: "success", message: "Replacement reference uploaded." });
-      await loadRefs(selectedSetId.trim(), selectedParallelId.trim());
+      await loadRefs(selectedSetId.trim(), selectedProgramId.trim(), selectedParallelId.trim(), selectedCardNumber.trim());
       await loadVariants();
     } catch (error) {
       setStatus({ type: "error", message: error instanceof Error ? error.message : "Upload failed" });
@@ -518,6 +592,7 @@ export default function VariantRefQaPage() {
     newRefType,
     selectedCardNumber,
     selectedParallelId,
+    selectedProgramId,
     selectedSetId,
     selectedVariant?.playerLabel,
     session?.token,
@@ -532,7 +607,7 @@ export default function VariantRefQaPage() {
   };
 
   useEffect(() => {
-    if (!selectedSetId || !selectedParallelId) return;
+    if (!selectedSetId || !selectedProgramId || !selectedParallelId) return;
     const handler = (event: ClipboardEvent) => {
       const files = Array.from(event.clipboardData?.files || []);
       const imageFromFiles = files.find((file) => file.type.startsWith("image/"));
@@ -550,12 +625,12 @@ export default function VariantRefQaPage() {
     };
     window.addEventListener("paste", handler);
     return () => window.removeEventListener("paste", handler);
-  }, [selectedSetId, selectedParallelId, selectedCardNumber, uploadReplacement]);
+  }, [selectedCardNumber, selectedParallelId, selectedProgramId, selectedSetId, uploadReplacement]);
 
   useEffect(() => {
-    if (!selectedSetId || !selectedParallelId) return;
-    void loadRefs(selectedSetId, selectedParallelId, selectedCardNumber);
-  }, [loadRefs, selectedCardNumber, selectedParallelId, selectedSetId]);
+    if (!selectedSetId || !selectedProgramId || !selectedParallelId) return;
+    void loadRefs(selectedSetId, selectedProgramId, selectedParallelId, selectedCardNumber);
+  }, [loadRefs, selectedCardNumber, selectedParallelId, selectedProgramId, selectedSetId]);
 
   if (loading) {
     return (
@@ -704,6 +779,17 @@ export default function VariantRefQaPage() {
               <option value="insert">Inserts</option>
               <option value="parallel">Parallels</option>
             </select>
+            <select
+              value={selectedProgramFilter}
+              onChange={(event) => setSelectedProgramFilter(event.target.value)}
+              className="rounded-full border border-white/20 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.22em] text-slate-200"
+            >
+              {availableProgramFilters.map((program) => (
+                <option key={program} value={program}>
+                  {program === "all" ? "All Card Types" : program}
+                </option>
+              ))}
+            </select>
             <label className="inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-2 text-[11px] uppercase tracking-[0.22em] text-slate-200">
               <input
                 type="checkbox"
@@ -725,12 +811,15 @@ export default function VariantRefQaPage() {
             </label>
           </div>
           <p className="mt-3 text-xs uppercase tracking-[0.22em] text-slate-400">
-            Queue:{" "}
+            Variant Buckets (Card Type + Card # + Parallel):{" "}
             <span className="text-emerald-200">
               {queueStats.remaining} remaining
             </span>{" "}
             · <span className="text-slate-200">{queueStats.done} done</span> ·{" "}
             <span className="text-slate-200">{queueStats.total} total</span>
+          </p>
+          <p className="mt-1 text-[11px] uppercase tracking-[0.2em] text-slate-500">
+            This queue is variant-level, not raw checklist row count.
           </p>
           <p className="mt-2 text-[11px] uppercase tracking-[0.2em] text-slate-500">
             Tip: after switching to eBay-only seeding, use <span className="text-rose-200">Clear External Refs (Set)</span>{" "}
@@ -741,6 +830,7 @@ export default function VariantRefQaPage() {
               <thead className="bg-night-800/80 text-[10px] uppercase tracking-[0.26em] text-slate-500">
                 <tr>
                   <th className="px-3 py-2">Set</th>
+                  <th className="px-3 py-2">Card Type</th>
                   <th className="px-3 py-2">Card #</th>
                   <th className="px-3 py-2">Parallel</th>
                   <th className="px-3 py-2">Player</th>
@@ -754,6 +844,7 @@ export default function VariantRefQaPage() {
                 {displayedVariants.map((variant) => {
                   const active =
                     variant.setId === selectedSetId &&
+                    variant.programId === selectedProgramId &&
                     variant.parallelId === selectedParallelId &&
                     variant.cardNumber === selectedCardNumber;
                   const done = (variant.qaDoneCount || 0) > 0;
@@ -765,6 +856,7 @@ export default function VariantRefQaPage() {
                     }`}
                   >
                     <td className="px-3 py-2">{decodeHtml(variant.setId)}</td>
+                    <td className="px-3 py-2">{variant.programId || "base"}</td>
                     <td className="px-3 py-2">{variant.cardNumber}</td>
                     <td className="px-3 py-2">{displayParallelLabel(variant.parallelId)}</td>
                     <td className="px-3 py-2 text-slate-300">{variant.playerLabel || "—"}</td>
@@ -811,7 +903,7 @@ export default function VariantRefQaPage() {
                 })}
                 {displayedVariants.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-3 py-6 text-center text-xs text-slate-500">
+                    <td colSpan={9} className="px-3 py-6 text-center text-xs text-slate-500">
                       No rows for this filter yet. Pick a set and click Load Variants.
                     </td>
                   </tr>
@@ -825,6 +917,7 @@ export default function VariantRefQaPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="text-xs uppercase tracking-[0.24em] text-slate-400">
               Selected: <span className="text-slate-200">{decodeHtml(selectedSetId) || "—"}</span> ·{" "}
+              <span className="text-slate-200">{selectedProgramId || "—"}</span> ·{" "}
               <span className="text-slate-200">{displayParallelLabel(selectedParallelId) || "—"}</span> ·{" "}
               <span className="text-slate-200">#{selectedCardNumber || "—"}</span> ·{" "}
               <span className="text-slate-200">{selectedVariant?.playerLabel || "—"}</span>
@@ -833,7 +926,7 @@ export default function VariantRefQaPage() {
               <button
                 type="button"
                 onClick={() => void loadRefs()}
-                disabled={busy || !selectedSetId || !selectedParallelId}
+                disabled={busy || !selectedSetId || !selectedProgramId || !selectedParallelId}
                 className="rounded-full border border-white/20 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-slate-200 disabled:opacity-60"
               >
                 Refresh Refs
@@ -844,7 +937,7 @@ export default function VariantRefQaPage() {
                 disabled={busy || selectedRefIds.length === 0}
                 className="rounded-full border border-violet-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-violet-200 disabled:opacity-60"
               >
-                Save Image
+                Save Selected to Owned
               </button>
               <button
                 type="button"
@@ -869,6 +962,14 @@ export default function VariantRefQaPage() {
                 className="rounded-full border border-sky-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-sky-200 disabled:opacity-60"
               >
                 Process Selected (PhotoRoom)
+              </button>
+              <button
+                type="button"
+                onClick={() => void processAllForVariant()}
+                disabled={busy || !selectedSetId || !selectedProgramId || !selectedParallelId}
+                className="rounded-full border border-cyan-400/60 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-cyan-200 disabled:opacity-60"
+              >
+                PhotoRoom All Images
               </button>
             </div>
           </div>
@@ -947,6 +1048,9 @@ export default function VariantRefQaPage() {
                     </p>
                     <p className="text-sm font-semibold text-white">
                       Card #: <span className="text-white">{ref.cardNumber || "—"}</span>
+                    </p>
+                    <p className="text-sm font-semibold text-white">
+                      Card Type: <span className="text-white">{ref.programId || selectedProgramId || "base"}</span>
                     </p>
                     <p className="text-sm font-semibold text-white">
                       Player: <span className="text-white">{playerLabel || "—"}</span>

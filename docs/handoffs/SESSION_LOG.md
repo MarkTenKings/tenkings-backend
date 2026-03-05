@@ -6031,3 +6031,109 @@
 ### Validation Evidence
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/seed/reference.ts --file pages/admin/set-ops-review.tsx` passed.
 - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` exited successfully in this workspace run.
+
+## 2026-03-04 - AGENTS Startup Context Sync + Codebase Architecture Review
+
+### Summary
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Performed a codebase architecture review across monorepo workspaces (`frontend`, `backend`, `packages`, `infra`) to map runtime flow and subsystem ownership.
+- Captured current workstation repo state for handoff continuity.
+
+### Repo State
+- `git status -sb`: `## main...origin/main`
+- branch: `main`
+- short HEAD: `aa7a4da`
+
+### Files Reviewed (Code)
+- Root/workspace config: `package.json`, `pnpm-workspace.yaml`, `README.md`
+- Infra/runtime: `infra/docker-compose.yml`
+- Core Next.js admin flows and APIs:
+  - `frontend/nextjs-app/pages/admin/index.tsx`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+  - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+  - `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+  - `frontend/nextjs-app/pages/api/admin/set-ops/*`
+  - `frontend/nextjs-app/pages/api/admin/variants/*`
+- Server libs:
+  - `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+  - `frontend/nextjs-app/lib/server/setOpsSeed.ts`
+  - `frontend/nextjs-app/lib/server/referenceSeed.ts`
+  - `frontend/nextjs-app/lib/server/taxonomyV2Core.ts`
+  - `frontend/nextjs-app/lib/server/variantMatcher.ts`
+  - `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+  - `frontend/nextjs-app/lib/server/setOpsVariantIdentity.ts`
+- Background workers/services:
+  - `backend/processing-service/src/index.ts`
+  - `backend/bytebot-lite-service/src/index.ts`
+- Data layer:
+  - `packages/database/prisma/schema.prisma`
+  - `packages/database/src/*`
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- No runtime environment changes were made.
+
+## 2026-03-04 - Docs Consistency Fix (Node Version Prerequisite)
+
+### Summary
+- Corrected `README.md` prerequisite Node version from `22.x` to `20.x` to match enforced workspace engine constraint in root `package.json`.
+
+### Files Updated
+- `README.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- Root engine constraint verified in `package.json`: `"node": "20.x"`.
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+
+## 2026-03-05 - Phase 1+2 Card_Type Identity + Parallel Prefetch (In Progress, No Deploy)
+
+### Summary
+- Implemented Phase 1 + Phase 2 in one pass for variant/reference identity keyed by `setId + programId(Card_Type) + cardNumber + parallelId`.
+- Added program-aware API/UI handling in Variant Ref QA and variants APIs; queue language now explicitly variant-bucket semantics.
+- Added background parallel reference prefetch endpoint and Add Card trigger path (confidence/correction driven).
+- Enforced high-res eBay image preference for reference seeding with no thumbnail fallback.
+- Added CSV ingestion normalization to support `Card_Type` naming and auto-fix malformed odds values (`1:,7` -> `1:7`).
+- Added Prisma migration scaffold for program-aware re-key/backfill of `CardVariant` and `CardVariantReferenceImage` plus new indexes/unique key.
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260305143000_variant_program_identity/migration.sql`
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+- `frontend/nextjs-app/lib/server/setOpsSeed.ts`
+- `frontend/nextjs-app/lib/server/variantMatcher.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+- `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/presign.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/process.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/prefetch.ts` (new)
+- plus related import/seed paths already touched in this workstream
+
+### Validation Evidence
+- Prisma client regenerate succeeded after schema/index-name fixes:
+  - `pnpm --filter @tenkings/database exec prisma generate`
+- App typecheck passes:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+- Targeted lint passes (warnings only where pre-existing image-tag warnings exist):
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file ...`
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+- DB blast-radius counts could not be executed in this environment because `DATABASE_URL` is not set locally.

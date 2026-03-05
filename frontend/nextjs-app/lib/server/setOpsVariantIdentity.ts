@@ -1,10 +1,11 @@
 import { prisma, SetIngestionJobStatus } from "@tenkings/database";
 import { normalizeCardNumber, normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
-import { buildTaxonomyCanonicalKey, normalizeParallelId } from "./taxonomyV2Utils";
+import { buildTaxonomyCanonicalKey, normalizeParallelId, normalizeProgramId } from "./taxonomyV2Utils";
 
 type IdentityVariantRow = {
   id: string;
   setId: string;
+  programId: string;
   cardNumber: string;
   parallelId: string;
 };
@@ -61,10 +62,19 @@ export function normalizeVariantParallelLabelForIdentity(parallelId: string | nu
   return normalizeParallelLabel(parallelId);
 }
 
-export function buildLegacyVariantIdentityKey(cardNumber: string | null | undefined, parallelId: string | null | undefined) {
+export function normalizeVariantProgramIdForIdentity(programId: string | null | undefined) {
+  return normalizeProgramId(String(programId || "").trim() || "base");
+}
+
+export function buildLegacyVariantIdentityKey(
+  cardNumber: string | null | undefined,
+  parallelId: string | null | undefined,
+  programId?: string | null
+) {
   const normalizedCardNumber = normalizeVariantCardNumberForIdentity(cardNumber);
   const normalizedParallelId = normalizeVariantParallelLabelForIdentity(parallelId).toLowerCase();
-  return `legacy::${normalizedCardNumber.toLowerCase()}::${normalizedParallelId}`;
+  const normalizedProgramId = programId == null ? "__any__" : normalizeVariantProgramIdForIdentity(programId).toLowerCase();
+  return `legacy::${normalizedProgramId}::${normalizedCardNumber.toLowerCase()}::${normalizedParallelId}`;
 }
 
 export function buildCanonicalVariantIdentityLookupKey(canonicalKey: string) {
@@ -89,6 +99,7 @@ export type SetOpsVariantIdentityContext = {
 };
 
 export type SetOpsResolvedVariantIdentity = {
+  programId: string;
   cardNumber: string;
   parallelLabel: string;
   parallelSlug: string;
@@ -119,6 +130,7 @@ export async function loadSetOpsVariantIdentityContext(params: {
       select: {
         id: true,
         setId: true,
+        programId: true,
         cardNumber: true,
         parallelId: true,
       },
@@ -171,9 +183,13 @@ export async function loadSetOpsVariantIdentityContext(params: {
 
   for (const row of variants) {
     variantById.set(row.id, row);
-    const legacyKey = buildLegacyVariantIdentityKey(row.cardNumber, row.parallelId);
-    if (!variantIdByLegacyKey.has(legacyKey)) {
-      variantIdByLegacyKey.set(legacyKey, row.id);
+    const specificLegacyKey = buildLegacyVariantIdentityKey(row.cardNumber, row.parallelId, row.programId);
+    const fallbackLegacyKey = buildLegacyVariantIdentityKey(row.cardNumber, row.parallelId, null);
+    if (!variantIdByLegacyKey.has(specificLegacyKey)) {
+      variantIdByLegacyKey.set(specificLegacyKey, row.id);
+    }
+    if (!variantIdByLegacyKey.has(fallbackLegacyKey)) {
+      variantIdByLegacyKey.set(fallbackLegacyKey, row.id);
     }
   }
 
@@ -208,8 +224,10 @@ export async function loadSetOpsVariantIdentityContext(params: {
 
     const variant = variantById.get(row.cardVariantId) || null;
     if (variant) {
-      const legacyKey = buildLegacyVariantIdentityKey(variant.cardNumber, variant.parallelId);
-      mapPushUnique(canonicalKeysByLegacyKey, legacyKey, canonicalKey);
+      const specificLegacyKey = buildLegacyVariantIdentityKey(variant.cardNumber, variant.parallelId, rowProgramId || variant.programId);
+      const fallbackLegacyKey = buildLegacyVariantIdentityKey(variant.cardNumber, variant.parallelId, null);
+      mapPushUnique(canonicalKeysByLegacyKey, specificLegacyKey, canonicalKey);
+      mapPushUnique(canonicalKeysByLegacyKey, fallbackLegacyKey, canonicalKey);
     }
 
     if (!preferredCanonicalKeyByVariantId.has(row.cardVariantId)) {
@@ -247,11 +265,16 @@ export async function loadSetOpsVariantIdentityContext(params: {
 
 function buildDerivedCanonicalKeys(params: {
   context: SetOpsVariantIdentityContext;
+  programIdHint?: string | null;
   cardNumber: string;
   parallelLabel: string;
 }) {
   const derivedProgramIds: string[] = [];
   const parallelSlug = normalizeParallelId(params.parallelLabel);
+
+  if (params.programIdHint) {
+    pushUnique(derivedProgramIds, normalizeVariantProgramIdForIdentity(params.programIdHint));
+  }
 
   for (const setLookupKey of params.context.setLookupKeys) {
     const cardPrograms = params.context.programIdsByScopedCardKey.get(scopedHintKey(setLookupKey, params.cardNumber)) || [];
@@ -294,20 +317,28 @@ function buildDerivedCanonicalKeys(params: {
 
 export function resolveSetOpsVariantIdentity(params: {
   context: SetOpsVariantIdentityContext;
+  programId?: string | null | undefined;
   cardNumber: string | null | undefined;
   parallelId: string | null | undefined;
 }): SetOpsResolvedVariantIdentity {
+  const programId = normalizeVariantProgramIdForIdentity(params.programId);
   const cardNumber = normalizeVariantCardNumberForIdentity(params.cardNumber);
   const parallelLabel = normalizeVariantParallelLabelForIdentity(params.parallelId);
-  const legacyFallbackKey = buildLegacyVariantIdentityKey(cardNumber, parallelLabel);
+  const specificLegacyKey = buildLegacyVariantIdentityKey(cardNumber, parallelLabel, programId);
+  const fallbackLegacyKey = buildLegacyVariantIdentityKey(cardNumber, parallelLabel, null);
+  const legacyFallbackKey = specificLegacyKey;
   const canonicalKeys: string[] = [];
 
-  for (const canonicalKey of params.context.canonicalKeysByLegacyKey.get(legacyFallbackKey) || []) {
+  for (const canonicalKey of params.context.canonicalKeysByLegacyKey.get(specificLegacyKey) || []) {
+    pushUnique(canonicalKeys, canonicalKey);
+  }
+  for (const canonicalKey of params.context.canonicalKeysByLegacyKey.get(fallbackLegacyKey) || []) {
     pushUnique(canonicalKeys, canonicalKey);
   }
 
   const { parallelSlug, derivedProgramIds, canonicalKeys: derivedCanonicalKeys } = buildDerivedCanonicalKeys({
     context: params.context,
+    programIdHint: programId,
     cardNumber,
     parallelLabel,
   });
@@ -324,6 +355,7 @@ export function resolveSetOpsVariantIdentity(params: {
     : derivedProgramIds[0] ?? null;
 
   return {
+    programId,
     cardNumber,
     parallelLabel,
     parallelSlug,

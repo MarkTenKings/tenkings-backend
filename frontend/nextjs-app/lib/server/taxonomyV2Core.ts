@@ -959,12 +959,12 @@ async function upsertCompatibilityBridge(params: {
     }),
     params.tx.cardVariant.findMany({
       where: { setId },
-      select: { id: true, setId: true, cardNumber: true, parallelId: true },
+      select: { id: true, setId: true, programId: true, cardNumber: true, parallelId: true },
     }),
   ])) as [
     Array<{ parallelId: string; programId: string }>,
     Array<{ cardNumber: string; programId: string }>,
-    Array<{ id: string; setId: string; cardNumber: string; parallelId: string }>
+    Array<{ id: string; setId: string; programId: string; cardNumber: string; parallelId: string }>
   ];
 
   if (variants.length < 1) {
@@ -992,7 +992,7 @@ async function upsertCompatibilityBridge(params: {
     const parallelId = normalizeParallelId(variant.parallelId);
     const programIdFromCard = cardNumber ? programByCardNumber.get(cardNumber) ?? null : null;
     const programIdFromScope = scopeProgramByParallel.get(parallelId) ?? null;
-    const programId = programIdFromCard ?? programIdFromScope ?? "base";
+    const programId = normalizeProgramId(variant.programId || programIdFromCard || programIdFromScope || "base");
 
     const canonicalKey = buildTaxonomyCanonicalKey({
       setId,

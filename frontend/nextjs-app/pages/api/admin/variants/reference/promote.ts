@@ -10,6 +10,7 @@ import { buildSiteUrl } from "../../../../../lib/server/urls";
 type ResponseBody =
   | {
       promoted: number;
+      alreadyOwned: number;
       skipped: number;
       ids: string[];
       message: string;
@@ -40,6 +41,7 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
     });
 
     let promoted = 0;
+    let alreadyOwned = 0;
     let skipped = 0;
     const promotedIds: string[] = [];
 
@@ -54,7 +56,7 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
               ownedStatus: "owned",
             } as any,
           });
-          promoted += 1;
+          alreadyOwned += 1;
           promotedIds.push(ref.id);
           continue;
         }
@@ -75,9 +77,9 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
           sourceBuffer = Buffer.from(await response.arrayBuffer());
         }
 
-        const storageKey = `variants/${ref.setId}/${ref.parallelId}/owned/${(ref as any).refType || "front"}-${Date.now()}-${crypto
-          .randomUUID()
-          .slice(0, 8)}.png`;
+        const storageKey = `variants/${ref.setId}/${String((ref as any).programId || "base").trim()}/${ref.parallelId}/owned/${
+          (ref as any).refType || "front"
+        }-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.png`;
         const uploadedUrl = await uploadBuffer(storageKey, sourceBuffer, "image/png");
         const normalized = normalizeStorageUrl(uploadedUrl) ?? uploadedUrl;
         const absolute = asAbsolute(normalized);
@@ -104,6 +106,7 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
 
     return res.status(200).json({
       promoted,
+      alreadyOwned,
       skipped,
       ids: promotedIds,
       message: "Promotion complete",

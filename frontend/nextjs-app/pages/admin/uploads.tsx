@@ -573,6 +573,10 @@ export default function AdminUploads() {
   const [ocrApplied, setOcrApplied] = useState(false);
   const [ocrMode, setOcrMode] = useState<null | "high" | "low">(null);
   const [ocrError, setOcrError] = useState<string | null>(null);
+  const [parallelPrefetchStatus, setParallelPrefetchStatus] = useState<null | "idle" | "loading" | "ready" | "error">(
+    null
+  );
+  const [parallelPrefetchMessage, setParallelPrefetchMessage] = useState<string | null>(null);
 
   const [cameraOpen, setCameraOpen] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
@@ -606,6 +610,8 @@ export default function AdminUploads() {
   const ocrAppliedFieldsRef = useRef<OcrApplyField[]>([]);
   const ocrOptionalBackupRef = useRef<IntakeOptionalFields | null>(null);
   const ocrAppliedOptionalFieldsRef = useRef<(keyof IntakeOptionalFields)[]>([]);
+  const parallelPrefetchKeyRef = useRef<string | null>(null);
+  const parallelPrefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const photoroomRequestedRef = useRef<string | null>(null);
   const restoredDraftRef = useRef(false);
   const teachRegionImageRefs = useRef<Record<TeachRegionSide, HTMLImageElement | null>>({
@@ -1492,6 +1498,13 @@ export default function AdminUploads() {
     setVariantScopeSummary(null);
     setVariantCatalog([]);
     setOptionPreviewUrls({});
+    setParallelPrefetchStatus(null);
+    setParallelPrefetchMessage(null);
+    parallelPrefetchKeyRef.current = null;
+    if (parallelPrefetchTimerRef.current) {
+      clearTimeout(parallelPrefetchTimerRef.current);
+      parallelPrefetchTimerRef.current = null;
+    }
     teachRegionImageRefs.current = {
       FRONT: null,
       BACK: null,
@@ -3261,6 +3274,98 @@ export default function AdminUploads() {
 
   const typedOcrAudit = useMemo(() => (ocrAudit as OcrAuditPayload | null) ?? null, [ocrAudit]);
 
+  useEffect(() => {
+    const token = session?.token;
+    if (!token || !isAdmin || intakeRequired.category !== "sport") {
+      return;
+    }
+
+    const setId = sanitizeNullableText(intakeOptional.productLine);
+    const cardType = sanitizeNullableText(intakeOptional.insertSet);
+    const playerName = sanitizeNullableText(intakeRequired.playerName);
+    const cardNumber = sanitizeNullableText(intakeOptional.cardNumber);
+    if (!setId || !cardType || !playerName) {
+      return;
+    }
+
+    const confidence = typedOcrAudit?.confidence ?? {};
+    const setConfidence = typeof confidence.setName === "number" ? confidence.setName : 0;
+    const cardTypeConfidence = typeof confidence.insertSet === "number" ? confidence.insertSet : 0;
+    const ocrReady = setConfidence >= 0.8 && cardTypeConfidence >= 0.8;
+    const correctedByUser = Boolean(
+      intakeTouched.playerName || intakeOptionalTouched.productLine || intakeOptionalTouched.insertSet || intakeOptionalTouched.cardNumber
+    );
+    if (!ocrReady && !correctedByUser) {
+      return;
+    }
+
+    const prefetchKey = [setId.toLowerCase(), cardType.toLowerCase(), playerName.toLowerCase(), (cardNumber || "ALL").toLowerCase()].join(
+      "::"
+    );
+    if (parallelPrefetchKeyRef.current === prefetchKey) {
+      return;
+    }
+    if (parallelPrefetchTimerRef.current) {
+      clearTimeout(parallelPrefetchTimerRef.current);
+      parallelPrefetchTimerRef.current = null;
+    }
+
+    parallelPrefetchTimerRef.current = setTimeout(() => {
+      parallelPrefetchKeyRef.current = prefetchKey;
+      setParallelPrefetchStatus("loading");
+      setParallelPrefetchMessage("Prefetching parallel reference images...");
+      void fetch("/api/admin/variants/reference/prefetch", {
+        method: "POST",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAdminHeaders(token),
+        },
+        body: JSON.stringify({
+          setId,
+          cardType,
+          playerName,
+          cardNumber: cardNumber || null,
+        }),
+      })
+        .then(async (response) => {
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok) {
+            throw new Error(payload?.message ?? "Parallel prefetch failed");
+          }
+          setParallelPrefetchStatus("ready");
+          setParallelPrefetchMessage(
+            `Parallel refs ready: ${payload?.parallelCount ?? 0} parallels (${payload?.inserted ?? 0} inserted).`
+          );
+        })
+        .catch((error) => {
+          setParallelPrefetchStatus("error");
+          setParallelPrefetchMessage(error instanceof Error ? error.message : "Parallel prefetch failed");
+        });
+    }, correctedByUser ? 600 : 250);
+
+    return () => {
+      if (parallelPrefetchTimerRef.current) {
+        clearTimeout(parallelPrefetchTimerRef.current);
+        parallelPrefetchTimerRef.current = null;
+      }
+    };
+  }, [
+    intakeOptional.cardNumber,
+    intakeOptional.insertSet,
+    intakeOptional.productLine,
+    intakeOptionalTouched.cardNumber,
+    intakeOptionalTouched.insertSet,
+    intakeOptionalTouched.productLine,
+    intakeRequired.category,
+    intakeRequired.playerName,
+    intakeTouched.playerName,
+    isAdmin,
+    isRemoteApi,
+    session?.token,
+    typedOcrAudit?.confidence,
+  ]);
+
   const optionDetailByLabel = useMemo(() => {
     const map = new Map<string, VariantOptionItem>();
     variantOptionItems.forEach((item) => {
@@ -4674,6 +4779,19 @@ export default function AdminUploads() {
                       : "Tap to try OCR autofill"}
                     {ocrSummary ? ` · ${ocrSummary}` : ""}
                   </span>
+                  {parallelPrefetchMessage ? (
+                    <span
+                      className={`text-[10px] normal-case tracking-normal ${
+                        parallelPrefetchStatus === "error"
+                          ? "text-rose-300"
+                          : parallelPrefetchStatus === "ready"
+                          ? "text-emerald-200"
+                          : "text-sky-200"
+                      }`}
+                    >
+                      {parallelPrefetchMessage}
+                    </span>
+                  ) : null}
                   {ocrStatus === "error" && ocrError?.includes("Card asset not ready") ? (
                     <span className="text-[10px] normal-case tracking-normal text-slate-400">
                       Card ID: {intakeCardId ?? "none"} · Front: {intakeFrontPreview ? "yes" : "no"} · Back:{" "}

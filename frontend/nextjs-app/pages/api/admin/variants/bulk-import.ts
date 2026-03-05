@@ -29,6 +29,7 @@ const REQUIRED_HEADERS = ["setId", "cardNumber", "parallelId"];
 
 type ParsedRow = {
   setId: string;
+  programId: string;
   cardNumber: string;
   parallelId: string;
   parallelFamily?: string | null;
@@ -163,6 +164,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const row = rows[i];
       if (!row || row.length === 0) continue;
       const setId = row[headerIndex("setId")]?.trim();
+      const programId = (headerIndex("programId") !== -1 ? row[headerIndex("programId")]?.trim() : "") || "base";
       const cardNumber = row[headerIndex("cardNumber")]?.trim();
       const parallelId = row[headerIndex("parallelId")]?.trim();
       if (!setId || !cardNumber || !parallelId) {
@@ -185,6 +187,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         : undefined;
       parsed.push({
         setId,
+        programId,
         cardNumber,
         parallelId,
         parallelFamily: parallelFamily ? parallelFamily : null,
@@ -202,8 +205,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       try {
         await prisma.cardVariant.upsert({
           where: {
-            setId_cardNumber_parallelId: {
+            setId_programId_cardNumber_parallelId: {
               setId: entry.setId,
+              programId: entry.programId,
               cardNumber: entry.cardNumber,
               parallelId: entry.parallelId,
             },
@@ -215,6 +219,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           },
           create: {
             setId: entry.setId,
+            programId: entry.programId,
             cardNumber: entry.cardNumber,
             parallelId: entry.parallelId,
             parallelFamily: entry.parallelFamily ?? null,
@@ -259,6 +264,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         await prisma.cardVariantReferenceImage.create({
           data: {
             setId: match.setId,
+            programId: match.programId,
             cardNumber: match.cardNumber,
             parallelId: match.parallelId,
             rawImageUrl: publicUrl,

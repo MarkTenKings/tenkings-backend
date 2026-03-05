@@ -21,6 +21,7 @@ import {
   ReferenceSeedError,
   seedVariantReferenceImages,
 } from "../../../../../lib/server/referenceSeed";
+import { normalizeProgramId } from "../../../../../lib/server/taxonomyV2Utils";
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -36,18 +37,22 @@ const seedSchema = z.object({
 });
 
 type SeedTarget = {
+  programId: string;
   cardNumber: string;
   parallelId: string;
   playerSeed: string | null;
+  cardType: string | null;
   query: string;
 };
 
 type ResponseBody =
   | {
       targets: Array<{
+        programId: string;
         cardNumber: string;
         parallelId: string;
         playerSeed: string | null;
+        cardType: string | null;
         query: string;
       }>;
       summary: {
@@ -112,18 +117,28 @@ function buildSeedTargets(params: {
     if (!parallelId) continue;
 
     const playerSeed = primarySeedPlayerLabel(row.playerSeed || row.cardType || "") || null;
+    const cardType =
+      String(
+        row.cardType ||
+          (row.raw?.cardType ?? row.raw?.program ?? row.raw?.programLabel ?? row.raw?.subset ?? "") ||
+          ""
+      ).trim() || null;
+    const programId = normalizeProgramId(cardType || "base");
     const query = buildReferenceSeedQuery({
       setId: params.setId,
       cardNumber,
+      cardType,
       parallelId,
       playerSeed,
     });
     if (!query) continue;
 
     targets.push({
+      programId,
       cardNumber,
       parallelId,
       playerSeed,
+      cardType,
       query,
     });
   }
@@ -215,9 +230,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (payload.previewOnly) {
       return res.status(200).json({
         targets: targets.map((target) => ({
+          programId: target.programId,
           cardNumber: target.cardNumber,
           parallelId: target.parallelId,
           playerSeed: target.playerSeed,
+          cardType: target.cardType,
           query: target.query,
         })),
         summary: {
@@ -243,6 +260,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         try {
           const seed = await seedVariantReferenceImages({
             setId,
+            programId: target.programId,
             cardNumber: target.cardNumber,
             parallelId: target.parallelId,
             playerSeed: target.playerSeed,

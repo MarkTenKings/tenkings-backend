@@ -1,5 +1,6 @@
 import { prisma } from "@tenkings/database";
 import { normalizeCardNumber, normalizeParallelLabel, normalizePlayerSeed, normalizeSetLabel } from "@tenkings/shared";
+import { normalizeProgramId } from "./taxonomyV2Utils";
 
 type SeedImageRow = {
   rawImageUrl: string;
@@ -11,6 +12,7 @@ type SeedImageRow = {
 
 export type SeedReferenceInput = {
   setId: string;
+  programId?: string | null;
   cardNumber?: string | null;
   parallelId: string;
   playerSeed?: string | null;
@@ -102,21 +104,43 @@ function canonicalEbayListingUrl(url: string | null | undefined) {
   return `https://www.ebay.com/itm/${listingId}`;
 }
 
+function upgradeEbayImageUrl(url: string) {
+  const normalized = String(url || "").trim();
+  if (!normalized) return "";
+  // eBay CDN image paths often include an s-l### token that can be upgraded to larger sizes.
+  if (/i\.ebayimg\.com/i.test(normalized)) {
+    return normalized.replace(/s-l\d{2,4}/gi, "s-l1600");
+  }
+  return normalized;
+}
+
+function isThumbnailLike(url: string) {
+  const lower = String(url || "").trim().toLowerCase();
+  if (!lower) return false;
+  if (/(^|[/?._-])(thumb|thumbnail|small|tiny)($|[/?._-])/.test(lower)) return true;
+  const sizeToken = lower.match(/s-l(\d{2,4})/i);
+  if (sizeToken?.[1]) {
+    const size = Number(sizeToken[1]);
+    if (Number.isFinite(size) && size > 0 && size < 500) return true;
+  }
+  return false;
+}
+
 function pickImageUrl(result: any) {
+  // Hard requirement: use only main/high-res listing images for reference seeding.
+  // Never fall back to thumbnail fields.
   const candidates = [
-    result?.thumbnail,
-    Array.isArray(result?.thumbnails) ? result.thumbnails[0] : null,
-    Array.isArray(result?.thumbnail_images) ? result.thumbnail_images[0] : null,
-    result?.image,
-    result?.main_image,
     result?.original_image,
+    result?.main_image,
+    result?.image,
     result?.image_url,
-    result?.img,
-    result?.gallery_url,
+    Array.isArray(result?.images) ? result.images[0] : null,
   ];
   for (const candidate of candidates) {
     const value = String(candidate || "").trim();
-    if (value) return value;
+    if (!value) continue;
+    const upgraded = upgradeEbayImageUrl(value);
+    if (!isThumbnailLike(upgraded)) return upgraded;
   }
   return "";
 }
@@ -172,6 +196,7 @@ export function canonicalSeedParallel(parallelValue: string | null | undefined, 
 export function buildReferenceSeedQuery(params: {
   setId: string;
   cardNumber: string | null | undefined;
+  cardType?: string | null | undefined;
   parallelId: string;
   playerSeed: string | null | undefined;
 }) {
@@ -180,11 +205,16 @@ export function buildReferenceSeedQuery(params: {
     .replace(/\s+/g, " ")
     .trim();
   const cleanedPlayer = primarySeedPlayerLabel(params.playerSeed);
+  const cleanedCardType = String(params.cardType || "").replace(/\s+/g, " ").trim();
   const normalizedCardNumber = normalizeCardNumber(String(params.cardNumber ?? "")) || "ALL";
   const cardToken = normalizedCardNumber !== "ALL" ? `#${normalizedCardNumber}` : "";
   const cleanedParallel = String(params.parallelId || "").trim();
   const parallelToken = /^base$/i.test(cleanedParallel) ? "" : cleanedParallel;
-  return [cleanedPlayer, cleanedSetId, cardToken, parallelToken].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  return [cleanedPlayer, cleanedSetId, cleanedCardType, cardToken, parallelToken]
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function buildSearchQueries(params: {
@@ -279,7 +309,7 @@ function scoreListing(params: {
 }
 
 export async function seedVariantReferenceImages(params: SeedReferenceInput): Promise<SeedReferenceResult> {
-  const { setId, cardNumber, parallelId, playerSeed, query, limit, tbs, gl, hl } = params;
+  const { setId, programId, cardNumber, parallelId, playerSeed, query, limit, tbs, gl, hl } = params;
   if (!setId || !parallelId || !query) {
     throw new ReferenceSeedError(400, "setId, parallelId, and query are required.");
   }
@@ -291,6 +321,7 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
 
   const safeLimit = Math.min(50, Math.max(1, Number(limit ?? 20) || 20));
   const normalizedSetId = normalizeSetLabel(String(setId || "").trim());
+  const normalizedProgramId = normalizeProgramId(String(programId || "").trim() || "base");
   const normalizedCardNumber = normalizeCardNumber(String(cardNumber ?? "")) || "ALL";
   const normalizedParallelId = canonicalSeedParallel(String(parallelId || "").trim(), normalizedCardNumber);
   const normalizedPlayerSeed = normalizePlayerSeed(String(playerSeed || "").trim());
@@ -461,6 +492,7 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
     .slice(0, safeLimit)
     .map((row: SeedImageRow) => ({
       setId: normalizedSetId,
+      programId: normalizedProgramId,
       cardNumber: normalizedCardNumber,
       parallelId: normalizedParallelId,
       sourceListingId: row.sourceListingId,
@@ -477,6 +509,7 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
   const existingRows = await prisma.cardVariantReferenceImage.findMany({
     where: {
       setId: normalizedSetId,
+      programId: normalizedProgramId,
       cardNumber: normalizedCardNumber,
       parallelId: normalizedParallelId,
       OR: [

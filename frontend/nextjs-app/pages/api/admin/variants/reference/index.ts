@@ -3,10 +3,12 @@ import { prisma } from "@tenkings/database";
 import { normalizeCardNumber, normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../../../../lib/server/storage";
+import { normalizeProgramId } from "../../../../../lib/server/taxonomyV2Utils";
 
 type ReferenceRow = {
   id: string;
   setId: string;
+  programId: string;
   cardNumber: string | null;
   parallelId: string;
   displayLabel: string;
@@ -144,6 +146,15 @@ function cardCandidates(value: string | null | undefined, options?: { includeLeg
   return output;
 }
 
+function programCandidates(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  const normalized = normalizeProgramId(raw || "base");
+  if (raw) {
+    return uniqueStrings([normalized]);
+  }
+  return uniqueStrings([normalized]);
+}
+
 function toRow(reference: any): ReferenceRow {
   const rawPlayerSeed = String(reference.playerSeed || "").trim();
   const playerLabel = rawPlayerSeed ? rawPlayerSeed.split("::")[0]?.trim() || "" : "";
@@ -154,6 +165,7 @@ function toRow(reference: any): ReferenceRow {
   return {
     id: reference.id,
     setId: reference.setId,
+    programId: normalizeProgramId(String(reference.programId || "").trim() || "base"),
     cardNumber: reference.cardNumber != null ? String(reference.cardNumber) : null,
     parallelId: resolvedParallelId,
     displayLabel,
@@ -199,6 +211,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     if (req.method === "GET") {
       const setId = typeof req.query.setId === "string" ? req.query.setId.trim() : "";
+      const programId = typeof req.query.programId === "string" ? req.query.programId.trim() : "";
       const parallelId = typeof req.query.parallelId === "string" ? req.query.parallelId.trim() : "";
       const cardNumber = typeof req.query.cardNumber === "string" ? req.query.cardNumber.trim() : "";
       const refType = typeof req.query.refType === "string" ? req.query.refType.trim().toLowerCase() : "";
@@ -211,6 +224,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           andClauses.push({ setId: setIds[0] });
         } else if (setIds.length > 1) {
           andClauses.push({ setId: { in: setIds } });
+        }
+      }
+      if (programId) {
+        const programs = programCandidates(programId);
+        if (programs.length === 1) {
+          andClauses.push({ programId: programs[0] });
+        } else if (programs.length > 1) {
+          andClauses.push({ programId: { in: programs } });
         }
       }
       if (parallelId) {
@@ -271,6 +292,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           select: ({
             id: true,
             setId: true,
+            programId: true,
             cardNumber: true,
             parallelId: true,
             refType: true,
@@ -325,6 +347,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (req.method === "POST") {
       const {
         setId,
+        programId,
         cardNumber,
         parallelId,
         refType,
@@ -341,6 +364,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         return res.status(400).json({ message: "Missing required fields." });
       }
 
+      const normalizedProgramId = normalizeProgramId(String(programId || "").trim() || "base");
       const normalizedCardNumber = cardNumber ? String(cardNumber).trim() : "ALL";
       const normalizedRefType = String(refType || "front").trim().toLowerCase() === "back" ? "back" : "front";
       const normalizedSourceUrl = sourceUrl ? String(sourceUrl).trim() : null;
@@ -351,7 +375,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const normalizedPairKey = pairKey
         ? String(pairKey).trim()
         : derivedListingId
-        ? `${String(setId).trim()}::${String(parallelId).trim()}::${normalizedPlayerSeed || "NA"}::${derivedListingId}`
+        ? `${String(setId).trim()}::${normalizedProgramId}::${String(parallelId).trim()}::${
+            normalizedPlayerSeed || "NA"
+          }::${derivedListingId}`
         : null;
 
       let reference: any;
@@ -359,6 +385,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         reference = await prisma.cardVariantReferenceImage.create({
           data: ({
             setId: String(setId).trim(),
+            programId: normalizedProgramId,
             cardNumber: normalizedCardNumber,
             parallelId: String(parallelId).trim(),
             refType: normalizedRefType,
@@ -434,6 +461,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     if (req.method === "DELETE") {
       const setId = typeof req.query.setId === "string" ? req.query.setId.trim() : "";
       if (setId) {
+        const programId = typeof req.query.programId === "string" ? req.query.programId.trim() : "";
         const parallelId = typeof req.query.parallelId === "string" ? req.query.parallelId.trim() : "";
         const cardNumber = typeof req.query.cardNumber === "string" ? req.query.cardNumber.trim() : "";
         const includeOwned = String(req.query.includeOwned ?? "")
@@ -448,6 +476,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           where.setId = { in: setIds };
         } else {
           where.setId = setId;
+        }
+        if (programId) {
+          const programs = programCandidates(programId);
+          if (programs.length === 1) {
+            where.programId = programs[0];
+          } else if (programs.length > 1) {
+            where.programId = { in: programs };
+          }
         }
         if (parallelId) {
           const parallels = parallelCandidates(parallelId, cardNumber || undefined);

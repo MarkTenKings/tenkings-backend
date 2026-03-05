@@ -19,6 +19,7 @@ import {
   buildPreferredSetOpsVariantIdentityLookupKey,
   buildSetOpsVariantIdentityLookupKeys,
   loadSetOpsVariantIdentityContext,
+  normalizeVariantProgramIdForIdentity,
   normalizeVariantCardNumberForIdentity,
   normalizeVariantParallelLabelForIdentity,
   resolveSetOpsVariantIdentity,
@@ -199,23 +200,30 @@ function buildAcceptedVariantKeyMap(params: {
   rows: PreparedSetReplace["normalizedRows"];
   identityContext: SetOpsVariantIdentityContext;
 }) {
-  const keys = new Map<string, { cardNumber: string; parallelId: string }>();
+  const keys = new Map<string, { programId: string; cardNumber: string; parallelId: string }>();
   for (const row of params.rows) {
     if (hasBlockingErrors(row.errors) || !row.parallel) {
       continue;
     }
+    const rowProgramHint =
+      row.cardType ||
+      String((row.raw?.cardType ?? row.raw?.program ?? row.raw?.programLabel ?? row.raw?.subset ?? "") || "").trim() ||
+      "base";
     const identity = resolveSetOpsVariantIdentity({
       context: params.identityContext,
+      programId: rowProgramHint,
       cardNumber: row.cardNumber,
       parallelId: row.parallel,
     });
-    const cardNumber = normalizeVariantCardNumberForIdentity(row.cardNumber);
-    const parallelId = normalizeVariantParallelLabelForIdentity(row.parallel);
+    const programId = normalizeVariantProgramIdForIdentity(identity.preferredProgramId ?? identity.programId);
+    const cardNumber = normalizeVariantCardNumberForIdentity(identity.cardNumber);
+    const parallelId = normalizeVariantParallelLabelForIdentity(identity.parallelLabel);
     if (!parallelId) {
       continue;
     }
     for (const identityKey of buildSetOpsVariantIdentityLookupKeys(identity)) {
       keys.set(identityKey, {
+        programId,
         cardNumber,
         parallelId,
       });
@@ -225,6 +233,7 @@ function buildAcceptedVariantKeyMap(params: {
 }
 
 type PreservedReferenceImageRow = {
+  programId: string;
   cardNumber: string | null;
   parallelId: string;
   refType: string;
@@ -244,6 +253,7 @@ type PreservedReferenceImageRow = {
   qualityGateScore: number | null;
   qualityGateStatus: string | null;
   qualityGateReasonsJson: Prisma.JsonValue | null;
+  canonicalProgramId: string;
   canonicalCardNumber: string;
   canonicalParallelId: string;
 };
@@ -260,6 +270,7 @@ async function restorePreservedReferenceImages(params: { setId: string; rows: Pr
     const inserted = await prisma.cardVariantReferenceImage.createMany({
       data: chunk.map((row) => ({
         setId: params.setId,
+        programId: row.canonicalProgramId,
         cardNumber: row.canonicalCardNumber,
         parallelId: row.canonicalParallelId,
         refType: row.refType,
@@ -775,6 +786,7 @@ export async function prepareSetReplacePreview(params: {
       },
     },
     select: {
+      programId: true,
       cardNumber: true,
       parallelId: true,
     },
@@ -785,6 +797,7 @@ export async function prepareSetReplacePreview(params: {
       buildPreferredSetOpsVariantIdentityLookupKey(
         resolveSetOpsVariantIdentity({
           context: identityContext,
+          programId: row.programId,
           cardNumber: row.cardNumber,
           parallelId: row.parallelId,
         })
@@ -792,15 +805,20 @@ export async function prepareSetReplacePreview(params: {
     )
   );
   const incomingKeySet = new Set(
-    acceptedRows.map((row) =>
-      buildPreferredSetOpsVariantIdentityLookupKey(
+    acceptedRows.map((row) => {
+      const rowProgramHint =
+        row.cardType ||
+        String((row.raw?.cardType ?? row.raw?.program ?? row.raw?.programLabel ?? row.raw?.subset ?? "") || "").trim() ||
+        "base";
+      return buildPreferredSetOpsVariantIdentityLookupKey(
         resolveSetOpsVariantIdentity({
           context: identityContext,
+          programId: rowProgramHint,
           cardNumber: row.cardNumber,
           parallelId: row.parallel,
         })
-      )
-    )
+      );
+    })
   );
 
   const toAdd = Array.from(incomingKeySet).filter((key) => !existingKeySet.has(key)).sort((a, b) => a.localeCompare(b));
@@ -1239,6 +1257,7 @@ export async function runSetReplaceJob(params: {
         },
       },
       select: {
+        programId: true,
         cardNumber: true,
         parallelId: true,
         refType: true,
@@ -1267,6 +1286,7 @@ export async function runSetReplaceJob(params: {
     for (const row of existingReferenceImages) {
       const identity = resolveSetOpsVariantIdentity({
         context: identityContext,
+        programId: row.programId,
         cardNumber: row.cardNumber,
         parallelId: row.parallelId,
       });
@@ -1275,6 +1295,7 @@ export async function runSetReplaceJob(params: {
         .find((candidate) => Boolean(candidate));
       if (!matchedVariant) continue;
       preservedReferenceImages.push({
+        programId: row.programId,
         cardNumber: row.cardNumber,
         parallelId: row.parallelId,
         refType: row.refType,
@@ -1294,6 +1315,7 @@ export async function runSetReplaceJob(params: {
         qualityGateScore: row.qualityGateScore,
         qualityGateStatus: row.qualityGateStatus,
         qualityGateReasonsJson: row.qualityGateReasonsJson,
+        canonicalProgramId: matchedVariant.programId,
         canonicalCardNumber: matchedVariant.cardNumber,
         canonicalParallelId: matchedVariant.parallelId,
       });

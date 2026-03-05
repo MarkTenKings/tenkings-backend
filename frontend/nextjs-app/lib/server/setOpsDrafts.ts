@@ -277,11 +277,12 @@ function looksLikeMarkupNoise(value: string | null | undefined) {
 function normalizeOddsValue(value: string | null | undefined) {
   const text = String(value ?? "").trim();
   if (!text) return null;
-  const match = text.match(/\d+\s*:\s*[\d,]+/);
+  const cleaned = text.replace(/(\d)\s*:\s*,\s*(\d)/g, "$1:$2");
+  const match = cleaned.match(/\d+\s*:\s*[\d,]+/);
   if (match) {
     return match[0].replace(/\s+/g, "");
   }
-  const numeric = text.match(/^\d[\d,]*(?:\.\d+)?$/);
+  const numeric = cleaned.match(/^\d[\d,]*(?:\.\d+)?$/);
   if (!numeric) return null;
   return numeric[0].replace(/,/g, "");
 }

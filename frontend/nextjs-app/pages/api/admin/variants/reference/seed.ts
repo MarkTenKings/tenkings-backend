@@ -15,9 +15,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       return res.status(405).json({ message: "Method not allowed" });
     }
 
-    const { setId, cardNumber, parallelId, playerSeed, query, limit, tbs, gl, hl } = req.body ?? {};
+    const { setId, programId, cardNumber, parallelId, playerSeed, query, limit, tbs, gl, hl } = req.body ?? {};
     const result = await seedVariantReferenceImages({
       setId,
+      programId,
       cardNumber,
       parallelId,
       playerSeed,

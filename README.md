@@ -3,7 +3,7 @@
 > Generated from `docs/TENKINGS_BLUEPRINT.md`. All services and the operator console live in this workspace.
 
 ## Prerequisites
-- Node.js 22.x (via nvm recommended)
+- Node.js 20.x (via nvm recommended)
 - Docker Desktop or compatible runtime
 
 ## Getting Started

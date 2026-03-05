@@ -4,10 +4,10 @@ import {
   getStorageMode,
   presignUploadUrl,
   publicUrlFor,
-  writeLocalFile,
 } from "../../../../../lib/server/storage";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { withAdminCors } from "../../../../../lib/server/cors";
+import { normalizeProgramId } from "../../../../../lib/server/taxonomyV2Utils";
 
 export const config = {
   api: {
@@ -44,14 +44,15 @@ export default withAdminCors(async function handler(
       return res.status(405).json({ message: "Method not allowed" });
     }
 
-    const { setId, parallelId, fileName, contentType } = req.body ?? {};
+    const { setId, programId, parallelId, fileName, contentType } = req.body ?? {};
     if (!setId || !parallelId || !fileName) {
       return res.status(400).json({ message: "Missing setId, parallelId, or fileName." });
     }
 
     const safeName = sanitizeFileName(String(fileName));
     const keySuffix = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}-${safeName}`;
-    const storageKey = `variants/${String(setId).trim()}/${String(parallelId).trim()}/${keySuffix}`;
+    const normalizedProgramId = normalizeProgramId(String(programId || "").trim() || "base");
+    const storageKey = `variants/${String(setId).trim()}/${normalizedProgramId}/${String(parallelId).trim()}/${keySuffix}`;
     const mode = getStorageMode();
     const publicUrl = publicUrlFor(storageKey);
 

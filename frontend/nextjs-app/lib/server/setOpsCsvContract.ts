@@ -1,7 +1,7 @@
 import { SetDatasetType } from "@tenkings/database";
 import type { SetOpsDraftRow, SetOpsDraftSummary } from "./setOpsDrafts";
 
-type CsvContractType = "SET_LIST" | "ODDS_LIST";
+type CsvContractType = "SET_LIST" | "PARALLEL_LIST";
 type CsvQualityDecision = "PASS" | "WARN" | "REJECT";
 
 type CsvQualityMetric = {
@@ -138,7 +138,7 @@ function slugify(value: string) {
 }
 
 function parseOddsNumeric(oddsText: string): number | null {
-  const text = compact(oddsText).replace(/,/g, "");
+  const text = sanitizeOddsText(oddsText).replace(/,/g, "");
   if (!text || text === "-") return null;
   const ratio = text.match(/^1\s*:\s*([\d.]+)$/i);
   if (ratio?.[1]) {
@@ -157,7 +157,7 @@ function looksLikeOddsHeader(header: string) {
 }
 
 function looksLikeOddsCell(value: string) {
-  const text = compact(value).toLowerCase();
+  const text = sanitizeOddsText(value).toLowerCase();
   if (!text) return false;
   if (["-", "—", "n/a", "na", "none"].includes(text)) return true;
   if (/^\d+\s*:\s*[\d,]+(?:\.\d+)?$/.test(text)) return true;
@@ -195,7 +195,10 @@ function detectContractType(rows: CanonicalCsvRow[]): CsvContractType | null {
   const headers = new Set<string>();
   Object.keys(rows[0].normalized).forEach((key) => headers.add(key));
   const hasSetList =
-    headers.has("card_number") && headers.has("player_name") && headers.has("team") && headers.has("subset");
+    headers.has("card_number") &&
+    headers.has("player_name") &&
+    headers.has("team") &&
+    (headers.has("subset") || headers.has("card_type") || headers.has("program"));
   if (hasSetList) {
     return "SET_LIST";
   }
@@ -219,10 +222,17 @@ function detectContractType(rows: CanonicalCsvRow[]): CsvContractType | null {
       oddsLikeCellCount >= requiredOddsCells &&
       (sampledCellCount < 1 || oddsLikeCellCount / sampledCellCount >= 0.1);
     if (hasOddsSignals) {
-      return "ODDS_LIST";
+      return "PARALLEL_LIST";
     }
   }
   return null;
+}
+
+function sanitizeOddsText(value: string | null | undefined) {
+  const compacted = compact(value ?? "");
+  if (!compacted) return "";
+  // Common OCR/PDF extraction issue: "1:,7" should be "1:7".
+  return compacted.replace(/(\d)\s*:\s*,\s*(\d)/g, "$1:$2");
 }
 
 function normalizeCsvArray(rawPayload: unknown): CanonicalCsvRow[] {
@@ -395,11 +405,11 @@ function createSetListStructuredPayload(params: {
       note: `${Math.round(playerCoverage * 100)}%`,
     },
     {
-      key: "subset_distribution",
+      key: "card_type_distribution",
       weight: 15,
       score: clamp((programEntries.length >= 2 ? 0.5 : 0) + (baseRatio >= 0.4 ? 0.5 : 0)),
       passed: programEntries.length >= 2 && baseRatio >= 0.4,
-      note: `${programEntries.length} subsets, base ${Math.round(baseRatio * 100)}%`,
+      note: `${programEntries.length} card types, base ${Math.round(baseRatio * 100)}%`,
     },
     {
       key: "duplicate_check",
@@ -486,7 +496,9 @@ function createOddsStructuredPayload(params: {
     const values: Record<string, { text: string; numeric: number | null }> = {};
     for (const format of formats) {
       const originalHeader = headerByFormatKey.get(format.formatKey) || format.columnHeader;
-      const text = compact((row.original[originalHeader] as string | undefined) ?? row.normalized[normalizeHeader(originalHeader)] ?? "");
+      const text = sanitizeOddsText(
+        compact((row.original[originalHeader] as string | undefined) ?? row.normalized[normalizeHeader(originalHeader)] ?? "")
+      );
       totalCells += 1;
       if (text && text !== "-") {
         filledCells += 1;
@@ -554,14 +566,14 @@ function createOddsStructuredPayload(params: {
       sourceKind: "OFFICIAL_ODDS",
       sourceUrl: params.sourceUrl || null,
       parserVersion: params.parserVersion || "csv-contract-v1",
-      contractType: "ODDS_LIST",
+      contractType: "PARALLEL_LIST",
       formats,
       odds: oddsEntries,
     },
     rowCount: totalRows,
     quality: buildQualityReport(metrics),
     summary: {
-      contractType: "ODDS_LIST",
+      contractType: "PARALLEL_LIST",
       rowCount: totalRows,
       totalCells,
       filledCells,
@@ -606,8 +618,8 @@ export function adaptCsvContractPayloadForIngestion(params: {
   if (contractType === "SET_LIST" && params.datasetType !== SetDatasetType.PLAYER_WORKSHEET) {
     throw new CsvContractValidationError("SET_LIST CSV requires datasetType=PLAYER_WORKSHEET.");
   }
-  if (contractType === "ODDS_LIST" && params.datasetType !== SetDatasetType.PARALLEL_DB) {
-    throw new CsvContractValidationError("ODDS_LIST CSV requires datasetType=PARALLEL_DB.");
+  if (contractType === "PARALLEL_LIST" && params.datasetType !== SetDatasetType.PARALLEL_DB) {
+    throw new CsvContractValidationError("PARALLEL_LIST CSV requires datasetType=PARALLEL_DB.");
   }
 
   if (contractType === "SET_LIST") {
@@ -701,11 +713,11 @@ export function evaluateDraftQuality(params: {
     metrics.push(assessMetric("player_name_coverage", 20, playerCoverage, 0.95, `${Math.round(playerCoverage * 100)}%`));
     metrics.push(
       assessMetric(
-        "subset_distribution",
+        "card_type_distribution",
         15,
         subsetScore,
         1,
-        `${programCounts.size} subsets, base ${Math.round(baseRatio * 100)}%`
+        `${programCounts.size} card types, base ${Math.round(baseRatio * 100)}%`
       )
     );
   } else {

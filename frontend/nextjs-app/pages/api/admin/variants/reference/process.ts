@@ -7,6 +7,7 @@ import { withAdminCors } from "../../../../../lib/server/cors";
 import { uploadBuffer, managedStorageKeyFromUrl, readStorageBuffer } from "../../../../../lib/server/storage";
 import { buildSiteUrl } from "../../../../../lib/server/urls";
 import { photoroomQueue } from "../../../../../lib/server/queues";
+import { normalizeProgramId } from "../../../../../lib/server/taxonomyV2Utils";
 
 const PHOTOROOM_ENDPOINT = "https://image-api.photoroom.com/v2/edit";
 
@@ -76,28 +77,48 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
     const ids = Array.isArray(req.body?.ids)
       ? req.body.ids.map((id: unknown) => String(id || "").trim()).filter(Boolean)
       : [];
-    if (!ids.length) {
-      return res.status(400).json({ message: "ids[] is required" });
+
+    const setId = String(req.body?.setId || "").trim();
+    const programId = String(req.body?.programId || "").trim();
+    const parallelId = String(req.body?.parallelId || "").trim();
+    const cardNumber = String(req.body?.cardNumber || "").trim();
+    const scopedMode = Boolean(setId && parallelId);
+    if (!ids.length && !scopedMode) {
+      return res.status(400).json({ message: "Provide ids[] or scope (setId + parallelId)." });
     }
 
     let refs: any[] = [];
+    const normalizedProgramId = normalizeProgramId(programId || "base");
+    const normalizedCardNumber = cardNumber || "ALL";
+    const scopeWhere = {
+      setId,
+      programId: normalizedProgramId,
+      parallelId,
+      OR: [{ cardNumber: normalizedCardNumber }, { cardNumber: "ALL" }, { cardNumber: null }],
+    };
+    const where = ids.length
+      ? { id: { in: ids } }
+      : scopeWhere;
     try {
       refs = await prisma.cardVariantReferenceImage.findMany({
-        where: { id: { in: ids } },
+        where: where as any,
         select: ({
           id: true,
           setId: true,
+          programId: true,
           parallelId: true,
           refType: true,
           storageKey: true,
           rawImageUrl: true,
           cropUrls: true,
         } as any),
+        orderBy: [{ qualityScore: "desc" }, { createdAt: "desc" }],
+        take: ids.length ? undefined : 500,
       });
     } catch {
       // Backward-compatible fallback when storageKey column/schema is not live.
       refs = await prisma.cardVariantReferenceImage.findMany({
-        where: { id: { in: ids } },
+        where: (ids.length ? { id: { in: ids } } : { setId, parallelId }) as any,
         select: ({
           id: true,
           setId: true,
@@ -106,6 +127,8 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
           rawImageUrl: true,
           cropUrls: true,
         } as any),
+        orderBy: [{ qualityScore: "desc" }, { createdAt: "desc" }],
+        take: ids.length ? undefined : 500,
       });
     }
 
@@ -140,9 +163,10 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
             }
           }
           const processedBuffer = await runPhotoroom(sourceBuffer, apiKey);
-          const storageKey = `variants/${ref.setId}/${ref.parallelId}/processed/${ref.refType || "front"}-${Date.now()}-${crypto
-            .randomUUID()
-            .slice(0, 8)}.png`;
+          const refProgramId = normalizeProgramId(String((ref as any).programId || normalizedProgramId || "base").trim());
+          const storageKey = `variants/${ref.setId}/${refProgramId}/${ref.parallelId}/processed/${
+            ref.refType || "front"
+          }-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.png`;
           await uploadBuffer(storageKey, processedBuffer, "image/png");
           const existingCropUrls = Array.isArray((ref as any).cropUrls)
             ? ((ref as any).cropUrls as string[]).filter(Boolean)

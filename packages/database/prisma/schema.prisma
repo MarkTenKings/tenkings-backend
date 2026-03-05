@@ -1093,6 +1093,7 @@ model CardAsset {
 model CardVariant {
   id             String                  @id @default(uuid())
   setId          String
+  programId      String                  @default("base")
   cardNumber     String
   parallelId     String
   parallelFamily String?
@@ -1102,8 +1103,9 @@ model CardVariant {
   updatedAt      DateTime                @updatedAt
   taxonomyMap    CardVariantTaxonomyMap?
 
-  @@unique([setId, cardNumber, parallelId])
+  @@unique([setId, programId, cardNumber, parallelId])
   @@index([setId, cardNumber])
+  @@index([setId, programId, cardNumber])
 }
 
 model CardVariantTaxonomyMap {
@@ -1126,6 +1128,7 @@ model CardVariantTaxonomyMap {
 model CardVariantReferenceImage {
   id                     String    @id @default(uuid())
   setId                  String
+  programId              String    @default("base")
   cardNumber             String?
   parallelId             String
   refType                String    @default("front")
@@ -1152,11 +1155,16 @@ model CardVariantReferenceImage {
   @@index([setId, cardNumber, parallelId])
   @@index([setId, parallelId, refType])
   @@index([setId, cardNumber, parallelId, refType])
+  @@index([setId, programId, parallelId])
+  @@index([setId, programId, cardNumber, parallelId], map: "CVRI_set_prog_card_parallel_idx")
+  @@index([setId, programId, parallelId, refType], map: "CVRI_set_prog_parallel_ref_idx")
+  @@index([setId, programId, cardNumber, parallelId, refType], map: "CVRI_set_prog_card_parallel_ref_idx")
   @@index([pairKey])
   @@index([sourceListingId])
   @@index([storageKey])
   @@index([qaStatus, ownedStatus])
   @@index([setId, parallelId, qualityGateStatus])
+  @@index([setId, programId, parallelId, qualityGateStatus], map: "CVRI_set_prog_parallel_qgate_idx")
 }
 
 model CardVariantDecision {
