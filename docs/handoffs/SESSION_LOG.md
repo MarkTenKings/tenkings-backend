@@ -6191,3 +6191,29 @@
 ### Operations/Safety
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
+
+## 2026-03-05 - SerpApi eBay 2-Step High-Res Seeding (Search -> Product)
+
+### Summary
+- Updated reference seeding to resolve images via a 2-step SerpApi flow:
+  1. `engine=ebay` search to find candidate listings.
+  2. `engine=ebay_product` per candidate `product_id` to fetch larger product media images.
+- Product-detail images are now preferred for insertion; fallback uses existing upgraded search-image logic only when product images are unavailable.
+- This applies to all seeding paths that call `seedVariantReferenceImages` (SET LIST, PARALLEL LIST, and on-demand prefetch).
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/referenceSeed.ts` (pass)
+
+### Notes
+- Node engine warning (`wanted node 20.x`) still present in this local environment; does not block build/lint.
+
+### 2026-03-05 Follow-up
+- Finalized `referenceSeed.ts` with shared SerpApi retry helper and `engine=ebay_product` image resolution path (using `product_id`) before fallback.
+
+  ## 2026-03-05 - Planned Deploy (2-step SerpApi image resolution)
+  - Plan: deploy reference seeding update that uses ebay search -> ebay_product detail calls for higher-res images.
+  - Scope: SET LIST seeding, PARALLEL LIST seeding, on-demand prefetch (shared reference seeding path).

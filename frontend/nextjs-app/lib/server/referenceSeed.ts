@@ -2,11 +2,12 @@ import { prisma } from "@tenkings/database";
 import { normalizeCardNumber, normalizeParallelLabel, normalizePlayerSeed, normalizeSetLabel } from "@tenkings/shared";
 import { normalizeProgramId } from "./taxonomyV2Utils";
 
-type SeedImageRow = {
-  rawImageUrl: string;
+type SeedListingCandidate = {
   sourceUrl: string | null;
   sourceListingId: string | null;
+  sourceProductId: string | null;
   listingTitle: string | null;
+  fallbackImageUrl: string;
   score: number;
 };
 
@@ -40,6 +41,7 @@ export class ReferenceSeedError extends Error {
 
 const SERPAPI_ENDPOINT = "https://serpapi.com/search.json";
 const EBAY_ENGINE = "ebay";
+const EBAY_PRODUCT_ENGINE = "ebay_product";
 const NOISE_TITLE_TOKENS = [
   "box",
   "blaster",
@@ -98,6 +100,15 @@ function parseEbayListingId(url: string | null | undefined) {
   return null;
 }
 
+function parseSerpProductId(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  if (/^\d{8,20}$/.test(raw)) return raw;
+  const queryMatch = raw.match(/[?&]product_id=(\d{8,20})(?:[&#]|$)/i);
+  if (queryMatch?.[1]) return queryMatch[1];
+  return null;
+}
+
 function canonicalEbayListingUrl(url: string | null | undefined) {
   const listingId = parseEbayListingId(url);
   if (!listingId) return null;
@@ -127,6 +138,68 @@ function isThumbnailLike(url: string) {
   }
   if (/(^|[/?._-])(thumb|thumbnail|small|tiny)($|[/?._-])/.test(lower)) return true;
   return false;
+}
+
+function dedupeUrls(values: Array<string | null | undefined>) {
+  const seen = new Set<string>();
+  const output: string[] = [];
+  for (const value of values) {
+    const normalized = String(value || "").trim();
+    if (!normalized) continue;
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    output.push(normalized);
+  }
+  return output;
+}
+
+function flattenUrlValues(value: unknown): string[] {
+  if (!value) return [];
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => flattenUrlValues(entry));
+  }
+  if (typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).flatMap((entry) => flattenUrlValues(entry));
+  }
+  return [];
+}
+
+function extractImageSizeToken(url: string) {
+  const sizeToken = String(url || "").trim().match(/s-l(\d{2,4})/i);
+  if (!sizeToken?.[1]) return 0;
+  const parsed = Number(sizeToken[1]);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function pickProductImageUrl(payload: any) {
+  const candidateUrls = dedupeUrls([
+    ...flattenUrlValues(payload?.media?.image),
+    ...flattenUrlValues(payload?.media?.images),
+    ...flattenUrlValues(payload?.image),
+    ...flattenUrlValues(payload?.images),
+    ...flattenUrlValues(payload?.product?.image),
+    ...flattenUrlValues(payload?.product?.images),
+    ...flattenUrlValues(payload?.thumbnail),
+    ...flattenUrlValues(payload?.thumbnail_images),
+  ]);
+
+  const ranked = candidateUrls
+    .map((value) => {
+      const rawUrl = String(value || "").trim();
+      if (!rawUrl || !/^https?:\/\//i.test(rawUrl)) return null;
+      const upgraded = upgradeEbayImageUrl(rawUrl);
+      if (isThumbnailLike(upgraded)) return null;
+      return {
+        upgraded,
+        size: extractImageSizeToken(rawUrl),
+      };
+    })
+    .filter((entry): entry is { upgraded: string; size: number } => Boolean(entry))
+    .sort((a, b) => b.size - a.size);
+
+  return ranked[0]?.upgraded || "";
 }
 
 function pickImageUrl(result: any) {
@@ -175,6 +248,77 @@ function dedupeQueries(values: string[]) {
     output.push(normalized);
   }
   return output;
+}
+
+async function fetchSerpApiPayload(
+  queryParams: URLSearchParams,
+  options: {
+    allowNoResults?: boolean;
+  } = {}
+) {
+  const allowNoResults = options.allowNoResults === true;
+  let requestError = "";
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(`${SERPAPI_ENDPOINT}?${queryParams.toString()}`);
+      if (!response.ok) {
+        const bodyText = await response.text().catch(() => "");
+        requestError = `SerpApi request failed (${response.status})${bodyText ? `: ${bodyText.slice(0, 180)}` : ""}`;
+        if (attempt < 3 && (response.status === 429 || response.status >= 500)) {
+          await wait(300 * attempt);
+          continue;
+        }
+        throw new ReferenceSeedError(502, requestError);
+      }
+
+      const payload = await response.json();
+      const topLevelError = String(
+        payload?.error ||
+          payload?.message ||
+          payload?.errors?.[0]?.message ||
+          payload?.errors?.[0] ||
+          ""
+      ).trim();
+      if (topLevelError) {
+        const noResults = /hasn'?t returned any results|no results/i.test(topLevelError);
+        if (allowNoResults && noResults) {
+          return { payload: { organic_results: [] }, noResults: true };
+        }
+        requestError = topLevelError;
+        const retryable = /rate|limit|timeout|temporar|try again|busy|thrott|quota|capacity/i.test(requestError);
+        if (attempt < 3 && retryable) {
+          await wait(300 * attempt);
+          continue;
+        }
+        throw new ReferenceSeedError(502, requestError);
+      }
+
+      const metadataStatus = String(payload?.search_metadata?.status || "").trim();
+      if (metadataStatus && metadataStatus !== "Success") {
+        requestError = String(payload?.search_metadata?.error || "SerpApi returned error.").trim();
+        const retryable = /rate|limit|timeout|temporar|try again|busy|thrott/i.test(requestError);
+        if (attempt < 3 && retryable) {
+          await wait(300 * attempt);
+          continue;
+        }
+        throw new ReferenceSeedError(502, requestError || "SerpApi returned error.");
+      }
+
+      return { payload, noResults: false };
+    } catch (error) {
+      if (error instanceof ReferenceSeedError) {
+        throw error;
+      }
+      requestError = error instanceof Error ? error.message : "SerpApi request failed.";
+      if (attempt < 3) {
+        continue;
+      }
+      throw new ReferenceSeedError(502, requestError);
+    }
+  }
+
+  throw new ReferenceSeedError(502, requestError || "SerpApi request failed.");
 }
 
 export function primarySeedPlayerLabel(value: string | null | undefined) {
@@ -351,7 +495,6 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
   }
 
   let data: any = null;
-  let requestError = "";
   const searchQueries = buildSearchQueries({
     query: normalizedQuery,
     setId: normalizedSetId,
@@ -373,72 +516,9 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
     if (gl) queryParams.set("gl", String(gl).trim());
     if (hl) queryParams.set("hl", String(hl).trim());
 
-    let queryData: any = null;
-    let queryNoResults = false;
-
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
-      try {
-        const response = await fetch(`${SERPAPI_ENDPOINT}?${queryParams.toString()}`);
-        if (!response.ok) {
-          const bodyText = await response.text().catch(() => "");
-          requestError = `SerpApi request failed (${response.status})${bodyText ? `: ${bodyText.slice(0, 180)}` : ""}`;
-          if (attempt < 3 && (response.status === 429 || response.status >= 500)) {
-            await wait(300 * attempt);
-            continue;
-          }
-          throw new ReferenceSeedError(502, requestError);
-        }
-
-        const payload = await response.json();
-        const topLevelError = String(
-          payload?.error ||
-            payload?.message ||
-            payload?.errors?.[0]?.message ||
-            payload?.errors?.[0] ||
-            ""
-        ).trim();
-        if (topLevelError) {
-          const noResults = /hasn'?t returned any results|no results/i.test(topLevelError);
-          if (noResults) {
-            queryNoResults = true;
-            queryData = { organic_results: [] };
-            break;
-          }
-          requestError = topLevelError;
-          const retryable = /rate|limit|timeout|temporar|try again|busy|thrott|quota|capacity/i.test(requestError);
-          if (attempt < 3 && retryable) {
-            await wait(300 * attempt);
-            continue;
-          }
-          throw new ReferenceSeedError(502, requestError);
-        }
-
-        const metadataStatus = String(payload?.search_metadata?.status || "").trim();
-        if (metadataStatus && metadataStatus !== "Success") {
-          requestError = String(payload?.search_metadata?.error || "SerpApi returned error.").trim();
-          const retryable = /rate|limit|timeout|temporar|try again|busy|thrott/i.test(requestError);
-          if (attempt < 3 && retryable) {
-            await wait(300 * attempt);
-            continue;
-          }
-          throw new ReferenceSeedError(502, requestError || "SerpApi returned error.");
-        }
-
-        queryData = payload;
-        break;
-      } catch (error) {
-        if (error instanceof ReferenceSeedError) {
-          throw error;
-        }
-        requestError = error instanceof Error ? error.message : "SerpApi request failed.";
-        if (attempt < 3) {
-          continue;
-        }
-        throw new ReferenceSeedError(502, requestError);
-      }
-    }
-
-    if (!queryData) continue;
+    const { payload: queryData, noResults: queryNoResults } = await fetchSerpApiPayload(queryParams, {
+      allowNoResults: true,
+    });
     const queryListings = extractListings(queryData);
     if (queryListings.length > 0) {
       data = queryData;
@@ -454,20 +534,9 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
   }
 
   const listings = extractListings(data);
-  const seenListing = new Set<string>();
-  const seenImage = new Set<string>();
-  const rows: Array<{
-    setId: string;
-    cardNumber: string;
-    parallelId: string;
-    sourceListingId: string | null;
-    playerSeed: string | null;
-    listingTitle: string | null;
-    rawImageUrl: string;
-    sourceUrl: string | null;
-  }> = listings
+  const listingCandidates = listings
     .map((result: any) => {
-      const sourceUrl = canonicalEbayListingUrl(
+      const rawSourceUrl = canonicalEbayListingUrl(
         result?.link ||
           result?.product_link ||
           result?.url ||
@@ -477,8 +546,14 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
           result?.product?.link ||
           null
       );
-      const sourceListingId = parseEbayListingId(sourceUrl);
-      const rawImageUrl = pickImageUrl(result);
+      const sourceProductId =
+        parseSerpProductId(result?.product_id || null) ||
+        parseSerpProductId(result?.serpapi_link || null) ||
+        parseSerpProductId(result?.link || null) ||
+        null;
+      const sourceListingId = parseEbayListingId(rawSourceUrl) || sourceProductId;
+      const sourceUrl = sourceListingId ? canonicalEbayListingUrl(sourceListingId) : rawSourceUrl;
+      const fallbackImageUrl = pickImageUrl(result);
       const listingTitle = typeof result?.title === "string" ? String(result.title).trim() : null;
       const score = scoreListing({
         title: listingTitle || "",
@@ -490,22 +565,62 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
       return {
         sourceUrl,
         sourceListingId,
-        rawImageUrl,
+        sourceProductId,
+        fallbackImageUrl,
         listingTitle,
         score,
-      } satisfies SeedImageRow;
+      } satisfies SeedListingCandidate;
     })
-    .filter((row: SeedImageRow) => row.sourceUrl && row.sourceListingId && row.rawImageUrl)
-    .sort((a: SeedImageRow, b: SeedImageRow) => b.score - a.score)
-    .filter((row: SeedImageRow) => {
-      if (row.sourceListingId && seenListing.has(row.sourceListingId)) return false;
-      if (seenImage.has(row.rawImageUrl)) return false;
-      if (row.sourceListingId) seenListing.add(row.sourceListingId);
-      seenImage.add(row.rawImageUrl);
-      return true;
-    })
-    .slice(0, safeLimit)
-    .map((row: SeedImageRow) => ({
+    .filter((row: SeedListingCandidate) => row.sourceUrl && row.sourceListingId)
+    .sort((a: SeedListingCandidate, b: SeedListingCandidate) => b.score - a.score);
+
+  const seenListing = new Set<string>();
+  const seenImage = new Set<string>();
+  const rows: Array<{
+    setId: string;
+    programId: string;
+    cardNumber: string;
+    parallelId: string;
+    sourceListingId: string | null;
+    playerSeed: string | null;
+    listingTitle: string | null;
+    rawImageUrl: string;
+    sourceUrl: string | null;
+  }> = [];
+  const maxProductLookups = Math.max(8, Math.min(40, safeLimit * 5));
+  let productLookupCount = 0;
+
+  for (const row of listingCandidates) {
+    if (rows.length >= safeLimit) break;
+    if (!row.sourceUrl || !row.sourceListingId) continue;
+    if (seenListing.has(row.sourceListingId)) continue;
+
+    let rawImageUrl = "";
+    const canLookupProduct = Boolean(row.sourceProductId) && productLookupCount < maxProductLookups;
+    if (canLookupProduct && row.sourceProductId) {
+      productLookupCount += 1;
+      const productParams = new URLSearchParams({
+        engine: EBAY_PRODUCT_ENGINE,
+        product_id: row.sourceProductId,
+        api_key: apiKey,
+      });
+      try {
+        const { payload } = await fetchSerpApiPayload(productParams, { allowNoResults: true });
+        rawImageUrl = pickProductImageUrl(payload);
+      } catch {
+        rawImageUrl = "";
+      }
+    }
+
+    if (!rawImageUrl) {
+      rawImageUrl = row.fallbackImageUrl;
+    }
+    if (!rawImageUrl) continue;
+    if (seenImage.has(rawImageUrl)) continue;
+
+    seenListing.add(row.sourceListingId);
+    seenImage.add(rawImageUrl);
+    rows.push({
       setId: normalizedSetId,
       programId: normalizedProgramId,
       cardNumber: normalizedCardNumber,
@@ -513,9 +628,10 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
       sourceListingId: row.sourceListingId,
       playerSeed: normalizedPlayerSeed || null,
       listingTitle: row.listingTitle,
-      rawImageUrl: row.rawImageUrl,
+      rawImageUrl,
       sourceUrl: row.sourceUrl,
-    }));
+    });
+  }
 
   if (rows.length === 0) {
     return { inserted: 0, skipped: 1 };
