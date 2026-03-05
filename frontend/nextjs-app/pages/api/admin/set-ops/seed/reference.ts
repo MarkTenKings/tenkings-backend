@@ -61,6 +61,13 @@ type SeedTarget = {
   query: string;
 };
 
+type SeedReasonCounts = {
+  no_hits: number;
+  no_media: number;
+  filtered_out: number;
+  network: number;
+};
+
 type ResponseBody =
   | {
       targets: Array<{
@@ -94,6 +101,7 @@ type ResponseBody =
         inserted: number;
         skipped: number;
         failed: number;
+        reasonCounts: SeedReasonCounts;
         failures: string[];
       };
       audit: { id: string; status: string; action: string; createdAt: string } | null;
@@ -209,6 +217,40 @@ function seedRetryDelayMs(attempt: number, statusCode: number | null) {
   const jitter = Math.floor(Math.random() * 250);
   const exponential = base * Math.pow(2, Math.max(0, attempt - 1));
   return Math.min(6000, exponential + jitter);
+}
+
+function emptySeedReasonCounts(): SeedReasonCounts {
+  return {
+    no_hits: 0,
+    no_media: 0,
+    filtered_out: 0,
+    network: 0,
+  };
+}
+
+function coerceSeedReasonCounts(value: unknown): SeedReasonCounts {
+  const record = asRecord(value);
+  if (!record) return emptySeedReasonCounts();
+  return {
+    no_hits: Math.max(0, Number(record.no_hits ?? 0) || 0),
+    no_media: Math.max(0, Number(record.no_media ?? 0) || 0),
+    filtered_out: Math.max(0, Number(record.filtered_out ?? 0) || 0),
+    network: Math.max(0, Number(record.network ?? 0) || 0),
+  };
+}
+
+function mergeSeedReasonCounts(target: SeedReasonCounts, incoming: SeedReasonCounts) {
+  target.no_hits += incoming.no_hits;
+  target.no_media += incoming.no_media;
+  target.filtered_out += incoming.filtered_out;
+  target.network += incoming.network;
+}
+
+function isNetworkFailure(error: unknown, statusCode: number | null) {
+  if (statusCode === 429) return true;
+  if (statusCode != null && statusCode >= 500) return true;
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /network|timeout|fetch|econn|socket|temporar|thrott|serpapi request failed/i.test(message);
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
@@ -336,6 +378,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       skipped: number;
       failed: boolean;
       failureMessage: string;
+      reasonCounts: SeedReasonCounts;
       target: SeedTarget;
     }> = new Array(scopedTargets.length);
 
@@ -361,6 +404,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             skipped: Number(seed.skipped ?? 0),
             failed: false,
             failureMessage: "",
+            reasonCounts: coerceSeedReasonCounts(seed.reasonCounts),
             target,
           };
         } catch (error) {
@@ -375,6 +419,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             skipped: 0,
             failed: true,
             failureMessage: lastFailureMessage || "unknown error",
+            reasonCounts: {
+              ...emptySeedReasonCounts(),
+              network: isNetworkFailure(error, statusCode) ? 1 : 0,
+            },
             target,
           };
         }
@@ -384,6 +432,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         skipped: 0,
         failed: true,
         failureMessage: lastFailureMessage || "unknown error",
+        reasonCounts: {
+          ...emptySeedReasonCounts(),
+          network: 1,
+        },
         target,
       };
     };
@@ -403,12 +455,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     let inserted = 0;
     let skipped = 0;
     let failed = 0;
+    const reasonCounts = emptySeedReasonCounts();
     const failures: string[] = [];
     for (const outcome of outcomes) {
       if (!outcome) continue;
       processed += 1;
       inserted += outcome.inserted;
       skipped += outcome.skipped;
+      mergeSeedReasonCounts(reasonCounts, outcome.reasonCounts);
       if (outcome.failed) {
         failed += 1;
         if (failures.length < 8) {
@@ -441,6 +495,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         inserted,
         skipped,
         failed,
+        reasonCounts,
         failures,
       },
     });
@@ -458,6 +513,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         inserted,
         skipped,
         failed,
+        reasonCounts,
         failures,
       },
       audit: audit

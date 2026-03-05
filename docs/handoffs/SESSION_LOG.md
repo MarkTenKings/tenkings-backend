@@ -6307,3 +6307,32 @@
 ### Validation Evidence
 - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/seed/reference.ts` (pass)
+
+## 2026-03-05 - Seed Quality Hardening (high-res media extraction + staged fallback + reason telemetry)
+
+### Summary
+- Hardened reference seeding to improve high-res hit rate and visibility into skips/failures.
+- `referenceSeed.ts` now explicitly extracts product images from `ebay_product -> product_results.media` and selects the largest available image candidate.
+- Relaxed thumbnail filter to allow medium/large listing media (`s-l300+`) while still blocking true low-size thumbnail-only URLs.
+- Reworked query generation into staged fallback tiers (`strict -> medium -> loose`) to preserve precision first and only broaden when needed.
+- Added in-memory product image cache for `product_id` lookups to avoid repeated `ebay_product` calls across targets and improve throughput.
+- Added structured reason counters (`no_hits`, `no_media`, `filtered_out`, `network`) from seed core -> set-ops seed API -> Seed Monitor UI.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/reference.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/referenceSeed.ts --file pages/api/admin/set-ops/seed/reference.ts --file pages/admin/set-ops-review.tsx` (pass)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+
+  ## 2026-03-05 - Planned Deploy (seed quality hardening)
+  - Plan: deploy seed quality hardening (high-res product media extraction, staged query fallback, seed reason
+  telemetry).
+  - Scope: reference seeding + set-ops seed API/UI only.
+  - DB: no migration required.

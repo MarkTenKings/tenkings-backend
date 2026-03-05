@@ -116,6 +116,12 @@ type ReferenceSeedTarget = {
   cardType: string | null;
   query: string;
 };
+type ReferenceSeedReasonCounts = {
+  no_hits: number;
+  no_media: number;
+  filtered_out: number;
+  network: number;
+};
 type ReferenceSeedProgress = {
   datasetLabel: string;
   total: number;
@@ -123,6 +129,7 @@ type ReferenceSeedProgress = {
   inserted: number;
   skipped: number;
   failed: number;
+  reasonCounts: ReferenceSeedReasonCounts;
 };
 
 const REVIEW_STEPS: Array<{ id: ReviewStepId; label: string; description: string }> = [
@@ -165,6 +172,41 @@ function toJsonPreview(value: unknown) {
   } catch {
     return "{}";
   }
+}
+
+function emptyReferenceSeedReasonCounts(): ReferenceSeedReasonCounts {
+  return {
+    no_hits: 0,
+    no_media: 0,
+    filtered_out: 0,
+    network: 0,
+  };
+}
+
+function coerceReferenceSeedReasonCounts(value: unknown): ReferenceSeedReasonCounts {
+  const record = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return {
+    no_hits: Math.max(0, Number(record.no_hits ?? 0) || 0),
+    no_media: Math.max(0, Number(record.no_media ?? 0) || 0),
+    filtered_out: Math.max(0, Number(record.filtered_out ?? 0) || 0),
+    network: Math.max(0, Number(record.network ?? 0) || 0),
+  };
+}
+
+function mergeReferenceSeedReasonCounts(
+  current: ReferenceSeedReasonCounts,
+  incoming: ReferenceSeedReasonCounts
+): ReferenceSeedReasonCounts {
+  return {
+    no_hits: current.no_hits + incoming.no_hits,
+    no_media: current.no_media + incoming.no_media,
+    filtered_out: current.filtered_out + incoming.filtered_out,
+    network: current.network + incoming.network,
+  };
+}
+
+function formatReferenceSeedReasonCounts(value: ReferenceSeedReasonCounts) {
+  return `reasons: no_hits=${value.no_hits}, no_media=${value.no_media}, filtered_out=${value.filtered_out}, network=${value.network}`;
 }
 
 function normalizeObjectRows(value: unknown): Array<Record<string, unknown>> {
@@ -1370,6 +1412,7 @@ export default function SetOpsReviewPage() {
       let inserted = 0;
       let skipped = 0;
       let failed = 0;
+      let reasonCounts = emptyReferenceSeedReasonCounts();
       const failureMessages: string[] = [];
 
       setReferenceSeedProgress({
@@ -1379,6 +1422,7 @@ export default function SetOpsReviewPage() {
         inserted: 0,
         skipped: 0,
         failed: 0,
+        reasonCounts: emptyReferenceSeedReasonCounts(),
       });
 
       for (let startIndex = 0; startIndex < targets.length; startIndex += serverChunkSize) {
@@ -1416,6 +1460,7 @@ export default function SetOpsReviewPage() {
             inserted?: number;
             skipped?: number;
             failed?: number;
+            reasonCounts?: ReferenceSeedReasonCounts;
             failures?: string[];
           };
         };
@@ -1426,6 +1471,10 @@ export default function SetOpsReviewPage() {
         inserted += Number(seedPayload.summary.inserted ?? 0);
         skipped += Number(seedPayload.summary.skipped ?? 0);
         failed += Number(seedPayload.summary.failed ?? 0);
+        reasonCounts = mergeReferenceSeedReasonCounts(
+          reasonCounts,
+          coerceReferenceSeedReasonCounts(seedPayload.summary.reasonCounts)
+        );
         if (Array.isArray(seedPayload.summary.failures)) {
           for (const failure of seedPayload.summary.failures) {
             if (failureMessages.length >= 8) break;
@@ -1443,6 +1492,7 @@ export default function SetOpsReviewPage() {
           inserted,
           skipped,
           failed,
+          reasonCounts,
         });
       }
 
@@ -1450,11 +1500,13 @@ export default function SetOpsReviewPage() {
         setStatus(
           `${datasetLabel} reference seed completed with partial failures (${completed}/${targets.length}, inserted=${inserted}, skipped=${skipped}, failed=${failed}).${
             failureMessages.length ? ` Examples: ${failureMessages.join(" | ")}` : ""
-          }`
+          } ${formatReferenceSeedReasonCounts(reasonCounts)}`
         );
       } else {
         setStatus(
-          `${datasetLabel} reference seed complete (${completed}/${targets.length}, inserted=${inserted}, skipped=${skipped}).`
+          `${datasetLabel} reference seed complete (${completed}/${targets.length}, inserted=${inserted}, skipped=${skipped}). ${formatReferenceSeedReasonCounts(
+            reasonCounts
+          )}`
         );
       }
 
@@ -2405,6 +2457,9 @@ export default function SetOpsReviewPage() {
                 Live Seed Progress ({referenceSeedProgress.datasetLabel}): {referenceSeedProgress.completed}/
                 {referenceSeedProgress.total} targets · inserted {referenceSeedProgress.inserted} · skipped{" "}
                 {referenceSeedProgress.skipped} · failed {referenceSeedProgress.failed}
+              </p>
+              <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-emerald-200">
+                {formatReferenceSeedReasonCounts(referenceSeedProgress.reasonCounts)}
               </p>
               {referenceSeedInFlight && (
                 <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-amber-200">
