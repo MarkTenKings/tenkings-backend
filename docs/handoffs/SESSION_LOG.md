@@ -6290,3 +6290,20 @@
   ## 2026-03-05 - Deploy Result (seed speed/failure/programId patch)
   - Pulled latest main on droplet and rebuilt/recreated services.
   - Evidence captured via `git log --oneline -n 5` and `docker compose ps`.
+
+## 2026-03-05 - Hotfix: chunked seed scoped-target slicing
+
+### Issue
+- `/api/admin/set-ops/seed/reference` returned `No scoped targets found for reference seeding` during chunked runs.
+- Root cause: API re-sliced already pre-chunked posted targets using `startIndex`, producing empty arrays for chunk index > 0.
+
+### Fix
+- Detect posted target mode and skip additional `startIndex` slicing in that mode.
+- Keep `startIndex` as request metadata only.
+
+### File Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/reference.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/set-ops/seed/reference.ts` (pass)

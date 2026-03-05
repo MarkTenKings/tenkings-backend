@@ -297,7 +297,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           query: string;
         }>)
       : [];
-    const targets = postedTargets.length > 0 ? postedTargets : derivedTargets;
+    const usingPostedTargets = postedTargets.length > 0;
+    const targets = usingPostedTargets ? postedTargets : derivedTargets;
 
     if (targets.length < 1) {
       return res.status(400).json({ message: "No eligible draft rows found for reference seeding." });
@@ -322,9 +323,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
-    const startIndex = Math.max(0, Number(payload.startIndex ?? 0) || 0);
+    const requestStartIndex = Math.max(0, Number(payload.startIndex ?? 0) || 0);
     const maxTargets = payload.maxTargets ? Math.max(1, Number(payload.maxTargets)) : targets.length;
-    const scopedTargets = targets.slice(startIndex, startIndex + maxTargets);
+    const scopedTargets = usingPostedTargets ? targets : targets.slice(requestStartIndex, requestStartIndex + maxTargets);
     if (scopedTargets.length < 1) {
       return res.status(400).json({ message: "No scoped targets found for reference seeding." });
     }
@@ -433,7 +434,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       metadata: {
         datasetType: payload.datasetType,
         targetCount: targets.length,
-        startIndex,
+        startIndex: requestStartIndex,
         scopedTargetCount: scopedTargets.length,
         concurrency: workerCount,
         processed,
@@ -451,7 +452,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         draftVersionId: approvedVersion.draftVersion.id,
         targetCount: targets.length,
         scopedTargetCount: scopedTargets.length,
-        startIndex,
+        startIndex: requestStartIndex,
         concurrency: workerCount,
         processed,
         inserted,

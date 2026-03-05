@@ -75,6 +75,18 @@ const ROOKIE_PARALLEL_RE = /^(rookie|rc)(?:\s+cards?)?$/i;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function serpRetryDelayMs(attempt: number, statusCode: number | null, reason: "http" | "rate" | "server") {
+  const base =
+    statusCode === 429 || reason === "rate"
+      ? 900
+      : reason === "server"
+        ? 600
+        : 350;
+  const jitter = Math.floor(Math.random() * 250);
+  const exponential = base * Math.pow(2, Math.max(0, attempt - 1));
+  return Math.min(6000, exponential + jitter);
+}
+
 function normalizeText(value: string | null | undefined) {
   return String(value || "")
     .toLowerCase()
@@ -268,7 +280,13 @@ async function fetchSerpApiPayload(
         const bodyText = await response.text().catch(() => "");
         requestError = `SerpApi request failed (${response.status})${bodyText ? `: ${bodyText.slice(0, 180)}` : ""}`;
         if (attempt < 3 && (response.status === 429 || response.status >= 500)) {
-          await wait(300 * attempt);
+          await wait(
+            serpRetryDelayMs(
+              attempt,
+              response.status,
+              response.status === 429 ? "rate" : "server"
+            )
+          );
           continue;
         }
         throw new ReferenceSeedError(502, requestError);
@@ -290,7 +308,7 @@ async function fetchSerpApiPayload(
         requestError = topLevelError;
         const retryable = /rate|limit|timeout|temporar|try again|busy|thrott|quota|capacity/i.test(requestError);
         if (attempt < 3 && retryable) {
-          await wait(300 * attempt);
+          await wait(serpRetryDelayMs(attempt, null, "rate"));
           continue;
         }
         throw new ReferenceSeedError(502, requestError);
@@ -301,7 +319,7 @@ async function fetchSerpApiPayload(
         requestError = String(payload?.search_metadata?.error || "SerpApi returned error.").trim();
         const retryable = /rate|limit|timeout|temporar|try again|busy|thrott/i.test(requestError);
         if (attempt < 3 && retryable) {
-          await wait(300 * attempt);
+          await wait(serpRetryDelayMs(attempt, null, "rate"));
           continue;
         }
         throw new ReferenceSeedError(502, requestError || "SerpApi returned error.");
@@ -314,6 +332,7 @@ async function fetchSerpApiPayload(
       }
       requestError = error instanceof Error ? error.message : "SerpApi request failed.";
       if (attempt < 3) {
+        await wait(serpRetryDelayMs(attempt, null, "http"));
         continue;
       }
       throw new ReferenceSeedError(502, requestError);
@@ -506,7 +525,7 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
 
   const aggregatedListings: any[] = [];
   const aggregatedListingKeys = new Set<string>();
-  const maxAggregatedListings = Math.max(120, safeLimit * 40);
+  const maxAggregatedListings = Math.max(80, safeLimit * 20);
   const searchQueries = buildSearchQueries({
     query: normalizedQuery,
     setId: normalizedSetId,
@@ -616,7 +635,7 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
     rawImageUrl: string;
     sourceUrl: string | null;
   }> = [];
-  const maxProductLookups = Math.max(40, Math.min(200, safeLimit * 30));
+  const maxProductLookups = Math.max(8, Math.min(24, safeLimit * 4));
   let productLookupCount = 0;
 
   for (const row of listingCandidates) {
