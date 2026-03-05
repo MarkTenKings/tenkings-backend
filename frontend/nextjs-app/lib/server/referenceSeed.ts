@@ -504,7 +504,9 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
     throw new ReferenceSeedError(400, "setId and parallelId must normalize to non-empty values.");
   }
 
-  let data: any = null;
+  const aggregatedListings: any[] = [];
+  const aggregatedListingKeys = new Set<string>();
+  const maxAggregatedListings = Math.max(120, safeLimit * 40);
   const searchQueries = buildSearchQueries({
     query: normalizedQuery,
     setId: normalizedSetId,
@@ -519,32 +521,49 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
       _nkw: searchQuery,
       q: searchQuery,
       _sop: "12",
-      _ipg: String(selectEbayPageSize(safeLimit * 3)),
+      _ipg: String(selectEbayPageSize(Math.max(200, safeLimit * 20))),
       api_key: apiKey,
     });
     if (tbs) queryParams.set("tbs", String(tbs).trim());
     if (gl) queryParams.set("gl", String(gl).trim());
     if (hl) queryParams.set("hl", String(hl).trim());
 
-    const { payload: queryData, noResults: queryNoResults } = await fetchSerpApiPayload(queryParams, {
+    const { payload: queryData } = await fetchSerpApiPayload(queryParams, {
       allowNoResults: true,
     });
     const queryListings = extractListings(queryData);
-    if (queryListings.length > 0) {
-      data = queryData;
-      break;
+    for (const listing of queryListings) {
+      const listingId =
+        parseEbayListingId(
+          listing?.link ||
+            listing?.product_link ||
+            listing?.url ||
+            listing?.item_url ||
+            listing?.view_item_url ||
+            listing?.item_web_url ||
+            listing?.product?.link ||
+            null
+        ) ||
+        parseSerpProductId(listing?.product_id || null) ||
+        parseSerpProductId(listing?.serpapi_link || null) ||
+        null;
+      const key =
+        (listingId && `id:${listingId}`) ||
+        (typeof listing?.link === "string" && listing.link.trim() ? `url:${listing.link.trim()}` : "") ||
+        "";
+      if (!key || aggregatedListingKeys.has(key)) continue;
+      aggregatedListingKeys.add(key);
+      aggregatedListings.push(listing);
+      if (aggregatedListings.length >= maxAggregatedListings) break;
     }
-    if (queryNoResults) {
-      continue;
-    }
+    if (aggregatedListings.length >= maxAggregatedListings) break;
   }
 
-  if (!data) {
+  if (aggregatedListings.length === 0) {
     return { inserted: 0, skipped: 1 };
   }
 
-  const listings = extractListings(data);
-  const listingCandidates = listings
+  const listingCandidates = aggregatedListings
     .map((result: any) => {
       const rawSourceUrl = canonicalEbayListingUrl(
         result?.link ||
@@ -597,7 +616,7 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
     rawImageUrl: string;
     sourceUrl: string | null;
   }> = [];
-  const maxProductLookups = Math.max(8, Math.min(40, safeLimit * 5));
+  const maxProductLookups = Math.max(40, Math.min(200, safeLimit * 30));
   let productLookupCount = 0;
 
   for (const row of listingCandidates) {

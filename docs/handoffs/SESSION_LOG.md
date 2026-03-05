@@ -6243,3 +6243,14 @@
 ### 2026-03-05 Additional Hardening
 - Updated eBay `_ipg` request sizing to supported values only (`25|50|100|200`) via `selectEbayPageSize`.
 - Purpose: avoid invalid page-size behavior while preserving broad search coverage.
+
+### 2026-03-05 Coverage Tuning (post-user live test)
+- Removed early-stop-on-first-query behavior; now aggregates unique listings across multiple fallback queries.
+- Increased search result page size to max supported (`_ipg=200`) for seeding lookups.
+- Increased product-detail lookup budget per target to reduce underfill on high-res-only mode.
+- Goal: reduce skipped image slots and improve high-res fill rate.
+
+  ## 2026-03-05 - Planned Deploy (reference seeding hotfixes)
+  - Deploying `referenceSeed.ts` fixes: skip-all URL handling, 2-step SerpApi ebay->ebay_product high-res flow, and
+  coverage tuning.
+  - No DB migration required.
