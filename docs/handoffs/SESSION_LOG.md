@@ -6169,3 +6169,25 @@
 ### Operations/Safety
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
+
+## 2026-03-05 - Seeding Regression Fix (all-skipped from eBay results)
+
+### Summary
+- Identified regression causing rapid `inserted 0 / skipped N / failed 0` on SET LIST seeding after high-res enforcement.
+- Root cause: image candidate extraction no longer considered eBay thumbnail-origin fields, and many SerpApi eBay responses expose image URLs only via those keys.
+- Fix: restore thumbnail-origin keys as candidate sources but keep strict acceptance rule:
+  - candidate URL is upgraded (`s-l###` -> `s-l1600`) first
+  - final URL is accepted only if not thumbnail-like after upgrade
+- Outcome: preserves “no low-res thumbnails stored” while recovering insertions from common eBay response shapes.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/referenceSeed.ts`
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.

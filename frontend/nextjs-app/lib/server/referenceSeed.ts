@@ -131,12 +131,18 @@ function isThumbnailLike(url: string) {
 
 function pickImageUrl(result: any) {
   // Hard requirement: use only main/high-res listing images for reference seeding.
-  // Never fall back to thumbnail fields.
+  // Thumbnail-origin fields are allowed only when they can be upgraded to high-res.
   const candidates = [
     result?.original_image,
     result?.main_image,
     result?.image,
     result?.image_url,
+    result?.product?.image,
+    result?.img,
+    result?.gallery_url,
+    result?.thumbnail,
+    Array.isArray(result?.thumbnails) ? result.thumbnails[0] : null,
+    Array.isArray(result?.thumbnail_images) ? result.thumbnail_images[0] : null,
     Array.isArray(result?.images) ? result.images[0] : null,
   ];
   for (const candidate of candidates) {
