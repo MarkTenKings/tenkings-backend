@@ -6336,3 +6336,8 @@
   telemetry).
   - Scope: reference seeding + set-ops seed API/UI only.
   - DB: no migration required.
+
+  ## 2026-03-05 - Deploy Result (seed quality hardening)
+  - Droplet updated via `git pull --ff-only` on `main`.
+  - Services rebuilt/recreated via `docker compose up -d --build --force-recreate`.
+  - Evidence captured from `git log --oneline -n 5` and `docker compose ps`.
