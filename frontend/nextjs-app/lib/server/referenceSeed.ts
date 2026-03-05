@@ -110,7 +110,9 @@ function parseSerpProductId(value: string | null | undefined) {
 }
 
 function canonicalEbayListingUrl(url: string | null | undefined) {
-  const listingId = parseEbayListingId(url);
+  const raw = String(url || "").trim();
+  if (!raw) return null;
+  const listingId = /^\d{8,20}$/.test(raw) ? raw : parseEbayListingId(raw);
   if (!listingId) return null;
   return `https://www.ebay.com/itm/${listingId}`;
 }
@@ -414,6 +416,14 @@ function buildSearchQueries(params: {
   return candidates.slice(0, 10);
 }
 
+function selectEbayPageSize(limit: number) {
+  const target = Math.max(1, Math.trunc(limit));
+  if (target <= 25) return 25;
+  if (target <= 50) return 50;
+  if (target <= 100) return 100;
+  return 200;
+}
+
 function scoreListing(params: {
   title: string;
   setId: string;
@@ -509,7 +519,7 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
       _nkw: searchQuery,
       q: searchQuery,
       _sop: "12",
-      _ipg: String(Math.max(30, Math.min(240, safeLimit * 3))),
+      _ipg: String(selectEbayPageSize(safeLimit * 3)),
       api_key: apiKey,
     });
     if (tbs) queryParams.set("tbs", String(tbs).trim());
@@ -552,7 +562,7 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
         parseSerpProductId(result?.link || null) ||
         null;
       const sourceListingId = parseEbayListingId(rawSourceUrl) || sourceProductId;
-      const sourceUrl = sourceListingId ? canonicalEbayListingUrl(sourceListingId) : rawSourceUrl;
+      const sourceUrl = rawSourceUrl || (sourceListingId ? canonicalEbayListingUrl(sourceListingId) : null);
       const fallbackImageUrl = pickImageUrl(result);
       const listingTitle = typeof result?.title === "string" ? String(result.title).trim() : null;
       const score = scoreListing({

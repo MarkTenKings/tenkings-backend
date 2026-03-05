@@ -6222,3 +6222,24 @@
   - Deployed to droplet via git pull + docker compose up -d --build --force-recreate.
   - Evidence: docker compose ps healthy; commit present on droplet main.
   - Next validation: run SET LIST seed + PARALLEL LIST seed and confirm higher-res images in Variant Ref QA.
+
+## 2026-03-05 - Hotfix: all-seeded-rows skipping due to source URL nulling
+
+### Issue
+- After 2-step SerpApi update, SET/PARALLEL seeding rapidly skipped all rows.
+- Root cause: source URL construction passed bare listing IDs through URL parsing, yielding `null` and filtering out candidates.
+
+### Fix
+- Updated `canonicalEbayListingUrl` to accept numeric listing IDs directly.
+- Updated source URL selection to prefer parsed `rawSourceUrl` and fallback to canonical URL from listing ID.
+
+### File Updated
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/referenceSeed.ts` (pass)
+
+### 2026-03-05 Additional Hardening
+- Updated eBay `_ipg` request sizing to supported values only (`25|50|100|200`) via `selectEbayPageSize`.
+- Purpose: avoid invalid page-size behavior while preserving broad search coverage.
