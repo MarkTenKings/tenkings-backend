@@ -145,36 +145,76 @@ function canonicalEbayListingUrl(url: string | null | undefined) {
   return `https://www.ebay.com/itm/${listingId}`;
 }
 
-function firstUrl(value: unknown): string {
-  if (!value) return "";
+function collectHttpUrls(value: unknown, urls: string[], visited: Set<unknown>) {
+  if (!value) return;
   if (typeof value === "string") {
     const normalized = value.trim();
-    return /^https?:\/\//i.test(normalized) ? normalized : "";
+    if (/^https?:\/\//i.test(normalized)) {
+      urls.push(normalized);
+    }
+    return;
   }
   if (Array.isArray(value)) {
     for (const entry of value) {
-      const candidate = firstUrl(entry);
-      if (candidate) return candidate;
+      collectHttpUrls(entry, urls, visited);
     }
-    return "";
+    return;
   }
   if (typeof value === "object") {
+    if (visited.has(value)) return;
+    visited.add(value);
     const record = value as Record<string, unknown>;
-    const direct = String(record.link ?? record.url ?? "").trim();
-    if (direct && /^https?:\/\//i.test(direct)) return direct;
+    collectHttpUrls(record.link, urls, visited);
+    collectHttpUrls(record.url, urls, visited);
+    collectHttpUrls(record.src, urls, visited);
+    collectHttpUrls(record.image, urls, visited);
+    collectHttpUrls(record.images, urls, visited);
+    collectHttpUrls(record.image_url, urls, visited);
+    collectHttpUrls(record.imageUrl, urls, visited);
     for (const nested of Object.values(record)) {
-      const candidate = firstUrl(nested);
-      if (candidate) return candidate;
+      collectHttpUrls(nested, urls, visited);
     }
   }
-  return "";
+}
+
+function parseEbayImageSize(url: string) {
+  const match = url.match(/(?:^|[/?._-])s-l(\d{2,5})(?:[._/?-]|$)/i);
+  if (!match?.[1]) return 0;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function upscaleEbayImageUrl(url: string) {
+  const size = parseEbayImageSize(url);
+  if (size <= 0 || size >= 1600) return url;
+  return url.replace(/s-l\d{2,5}/gi, "s-l1600");
+}
+
+function bestUrl(value: unknown): string {
+  if (!value) return "";
+  const urls: string[] = [];
+  collectHttpUrls(value, urls, new Set<unknown>());
+  if (urls.length === 0) return "";
+  let best = "";
+  let bestScore = -1;
+  const seen = new Set<string>();
+  for (const url of urls) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const score = parseEbayImageSize(url);
+    if (score > bestScore) {
+      best = url;
+      bestScore = score;
+    }
+  }
+  return best ? upscaleEbayImageUrl(best) : "";
 }
 
 function firstProductMediaImageUrl(payload: any) {
   const productResults = payload?.product_results ?? payload ?? {};
   const mediaEntries = Array.isArray(productResults?.media) ? productResults.media : [];
   for (const mediaEntry of mediaEntries) {
-    const candidate = firstUrl(mediaEntry?.image);
+    const candidate = bestUrl(mediaEntry?.image);
     if (candidate) return candidate;
   }
   return "";
@@ -184,10 +224,10 @@ function firstProductImageUrl(payload: any) {
   const productResults = payload?.product_results ?? payload ?? {};
   return (
     firstProductMediaImageUrl(payload) ||
-    firstUrl(productResults?.image) ||
-    firstUrl(productResults?.images) ||
-    firstUrl(productResults?.product?.image) ||
-    firstUrl(productResults?.product?.images) ||
+    bestUrl(productResults?.image) ||
+    bestUrl(productResults?.images) ||
+    bestUrl(productResults?.product?.image) ||
+    bestUrl(productResults?.product?.images) ||
     ""
   );
 }

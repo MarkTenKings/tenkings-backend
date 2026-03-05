@@ -5329,6 +5329,26 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
 
+## 2026-03-05 - Reference Seed Image Quality Patch (highest-variant selection)
+
+### Summary
+- Addressed grainy seeded previews while image/listing source remained correct.
+- Updated eBay product-image extraction to select the highest-size URL variant found in each image payload (instead of first URL encountered).
+- Added eBay size-token upscaling (`s-l###` -> `s-l1600`) for selected seeded image URLs when a lower token is returned.
+- Updated Variant Ref QA preview selection to use `rawImageUrl` when it is clearly higher-resolution than `cropUrls[0]` (for eBay `s-l###` URLs).
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; Node engine warning only)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/referenceSeed.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing `no-img-element` warnings)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+
 ## 2026-03-02 - Add Card Intake Stage-Contract Fix (Agent A)
 
 ### Summary
@@ -6368,3 +6388,26 @@
   - Plan: deploy reference seeding changes (first ebay_product image, app dedupe removed) and apply migration
   `20260305201500_cvri_drop_unique_constraints`.
   - Scope: `frontend/nextjs-app/lib/server/referenceSeed.ts` and Prisma migration only.
+
+## 2026-03-05 - Agent Startup Context Sync (Docs + Repo State)
+
+### Summary
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Captured local repo state evidence:
+  - `git status -sb`: `## main...origin/main`
+  - `git branch --show-current`: `main`
+  - `git rev-parse --short HEAD`: `48ff8ab`
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.
+
+  ## 2026-03-05 - Planned Deploy (seed image quality patch)
+  - Plan: deploy highest-variant eBay image URL selection + QA preview higher-res fallback.
+  - Scope: `frontend/nextjs-app/lib/server/referenceSeed.ts`, `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`.
+  - DB: no migration required.

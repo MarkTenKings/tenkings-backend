@@ -3392,3 +3392,27 @@ Build Set Ops UI flow with:
 - Continue production fixture testing with Perplexity-generated CSV pairs across multiple sets.
 - Monitor OCR/set/parallel suggestion quality after broader ingestion coverage.
 - Keep image seeder/reference locked paths stable unless explicitly scoped for change.
+
+## Session Update (2026-03-05, Agent Startup Context Sync)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Verified local repo state in this session:
+  - branch: `main`
+  - HEAD: `48ff8ab`
+  - status: `## main...origin/main`
+- No code/runtime changes, deploys, restarts, migrations, or DB operations were executed in this session.
+
+## Session Update (2026-03-05, Reference Seed Image Quality Patch)
+- Updated `frontend/nextjs-app/lib/server/referenceSeed.ts` image selection logic to:
+  - gather all URL variants from eBay product image payloads,
+  - pick the highest `s-l###` size variant (instead of first discovered URL),
+  - upscale selected lower-size eBay image tokens to `s-l1600`.
+- Updated `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx` preview selection to prefer `rawImageUrl` when it is clearly higher-resolution than `cropUrls[0]` based on eBay size tokens.
+- Validation run:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/referenceSeed.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing `no-img-element` warnings only)
+- No deploy/restart/migration commands were executed in this session step.

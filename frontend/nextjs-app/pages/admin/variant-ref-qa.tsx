@@ -92,6 +92,28 @@ function sourceHostFromUrl(value: string | null | undefined) {
   }
 }
 
+function parseEbayImageSizeFromUrl(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return 0;
+  const match = raw.match(/(?:^|[/?._-])s-l(\d{2,5})(?:[._/?-]|$)/i);
+  if (!match?.[1]) return 0;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function pickPreviewUrl(ref: ReferenceRow) {
+  const crop = String(ref.cropUrls?.[0] || "").trim();
+  const raw = String(ref.rawImageUrl || "").trim();
+  if (!crop) return raw;
+  if (!raw) return crop;
+  const cropSize = parseEbayImageSizeFromUrl(crop);
+  const rawSize = parseEbayImageSizeFromUrl(raw);
+  if (rawSize > 0 && cropSize > 0 && rawSize > cropSize) {
+    return raw;
+  }
+  return crop;
+}
+
 function readQueryValue(value: string | string[] | undefined) {
   const raw = Array.isArray(value) ? value[0] : value;
   return typeof raw === "string" ? raw.trim() : "";
@@ -1004,7 +1026,7 @@ export default function VariantRefQaPage() {
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {refs.map((ref) => {
               const checked = selectedRefIds.includes(ref.id);
-              const preview = ref.cropUrls?.[0] || ref.rawImageUrl;
+              const preview = pickPreviewUrl(ref);
               const playerLabelFromRef = String(ref.playerSeed || "").trim().split("::")[0]?.trim() || null;
               const playerLabel = playerLabelFromRef || selectedVariant?.playerLabel || null;
               const sourceHost = sourceHostFromUrl(ref.sourceUrl);
