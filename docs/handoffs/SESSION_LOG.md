@@ -6217,3 +6217,8 @@
   ## 2026-03-05 - Planned Deploy (2-step SerpApi image resolution)
   - Plan: deploy reference seeding update that uses ebay search -> ebay_product detail calls for higher-res images.
   - Scope: SET LIST seeding, PARALLEL LIST seeding, on-demand prefetch (shared reference seeding path).
+
+  ## 2026-03-05 - Deploy Result (2-step SerpApi image resolution)
+  - Deployed to droplet via git pull + docker compose up -d --build --force-recreate.
+  - Evidence: docker compose ps healthy; commit present on droplet main.
+  - Next validation: run SET LIST seed + PARALLEL LIST seed and confirm higher-res images in Variant Ref QA.
