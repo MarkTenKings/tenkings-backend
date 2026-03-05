@@ -109,9 +109,11 @@ type SetIdOption = {
 
 type ReviewStepId = "ingestion-queue" | "draft-approval" | "seed-monitor";
 type ReferenceSeedTarget = {
+  programId: string;
   cardNumber: string;
   parallelId: string;
   playerSeed: string | null;
+  cardType: string | null;
   query: string;
 };
 type ReferenceSeedProgress = {
@@ -389,8 +391,6 @@ function rowIsRookie(row: DraftRow) {
   if (!text) return false;
   return ["true", "1", "yes", "rookie", "rc"].includes(text);
 }
-
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export default function SetOpsReviewPage() {
   const router = useRouter();
@@ -1364,6 +1364,8 @@ export default function SetOpsReviewPage() {
       }
 
       const normalizedLimit = Math.min(50, Math.max(1, Number(referenceSeedLimitInput) || 20));
+      const serverChunkSize = 24;
+      const serverConcurrency = 6;
       let completed = 0;
       let inserted = 0;
       let skipped = 0;
@@ -1379,67 +1381,61 @@ export default function SetOpsReviewPage() {
         failed: 0,
       });
 
-      for (const target of targets) {
-        let success = false;
-        let lastFailureMessage = "";
-
-        for (let attempt = 1; attempt <= 2; attempt += 1) {
-          try {
-            const seedResponse = await fetch("/api/admin/variants/reference/seed", {
-              method: "POST",
-              headers: {
-                ...adminHeaders,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                setId: targetSetId,
-                cardNumber: target.cardNumber,
-                parallelId: target.parallelId,
-                playerSeed: target.playerSeed ?? undefined,
-                query: target.query,
-                limit: normalizedLimit,
-                tbs: referenceSeedTbsInput.trim() || undefined,
-              }),
-            });
-            const seedPayload = (await seedResponse.json().catch(() => ({}))) as {
-              message?: string;
-              inserted?: number;
-              skipped?: number;
-            };
-            if (!seedResponse.ok) {
-              lastFailureMessage = String(seedPayload.message || `HTTP ${seedResponse.status}`).trim();
-              if (attempt < 2 && (seedResponse.status === 429 || seedResponse.status >= 500)) {
-                await wait(250 * attempt);
-                continue;
-              }
-              break;
-            }
-            inserted += Number(seedPayload.inserted ?? 0);
-            skipped += Number(seedPayload.skipped ?? 0);
-            success = true;
-            break;
-          } catch (seedError) {
-            lastFailureMessage = seedError instanceof Error ? seedError.message : "Unknown seed failure";
-            if (attempt < 2) {
-              await wait(250 * attempt);
-              continue;
-            }
-            break;
+      for (let startIndex = 0; startIndex < targets.length; startIndex += serverChunkSize) {
+        const chunkTargets = targets.slice(startIndex, startIndex + serverChunkSize);
+        const seedResponse = await fetch("/api/admin/set-ops/seed/reference", {
+          method: "POST",
+          headers: {
+            ...adminHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            setId: targetSetId,
+            datasetType: targetDatasetType,
+            draftVersionId: payload.summary.draftVersionId,
+            previewOnly: false,
+            startIndex,
+            maxTargets: serverChunkSize,
+            concurrency: serverConcurrency,
+            targets: chunkTargets.map((target) => ({
+              programId: target.programId,
+              cardNumber: target.cardNumber,
+              parallelId: target.parallelId,
+              playerSeed: target.playerSeed ?? undefined,
+              cardType: target.cardType ?? undefined,
+              query: target.query,
+            })),
+            limit: normalizedLimit,
+            tbs: referenceSeedTbsInput.trim() || undefined,
+          }),
+        });
+        const seedPayload = (await seedResponse.json().catch(() => ({}))) as {
+          message?: string;
+          summary?: {
+            processed?: number;
+            inserted?: number;
+            skipped?: number;
+            failed?: number;
+            failures?: string[];
+          };
+        };
+        if (!seedResponse.ok || !seedPayload.summary) {
+          throw new Error(seedPayload.message ?? "Reference seed chunk failed");
+        }
+        completed += Number(seedPayload.summary.processed ?? 0);
+        inserted += Number(seedPayload.summary.inserted ?? 0);
+        skipped += Number(seedPayload.summary.skipped ?? 0);
+        failed += Number(seedPayload.summary.failed ?? 0);
+        if (Array.isArray(seedPayload.summary.failures)) {
+          for (const failure of seedPayload.summary.failures) {
+            if (failureMessages.length >= 8) break;
+            const normalizedFailure = String(failure || "").trim();
+            if (!normalizedFailure) continue;
+            if (failureMessages.includes(normalizedFailure)) continue;
+            failureMessages.push(normalizedFailure);
           }
         }
 
-        if (!success) {
-          failed += 1;
-          if (failureMessages.length < 8) {
-            failureMessages.push(
-              `${target.cardNumber} ${target.parallelId}${target.playerSeed ? ` (${target.playerSeed})` : ""}: ${
-                lastFailureMessage || "unknown error"
-              }`
-            );
-          }
-        }
-
-        completed += 1;
         setReferenceSeedProgress({
           datasetLabel,
           total: targets.length,

@@ -30,7 +30,23 @@ const seedSchema = z.object({
   datasetType: z.nativeEnum(SetDatasetType).default(SetDatasetType.PARALLEL_DB),
   draftVersionId: z.string().min(1).optional(),
   previewOnly: z.coerce.boolean().optional().default(false),
+  targets: z
+    .array(
+      z.object({
+        programId: z.string().trim().min(1).optional(),
+        cardNumber: z.string().trim().min(1),
+        parallelId: z.string().trim().min(1),
+        playerSeed: z.string().trim().optional().nullable(),
+        cardType: z.string().trim().optional().nullable(),
+        query: z.string().trim().min(1),
+      })
+    )
+    .max(500)
+    .optional(),
   limit: z.coerce.number().int().min(1).max(50).optional(),
+  startIndex: z.coerce.number().int().min(0).optional().default(0),
+  maxTargets: z.coerce.number().int().min(1).max(500).optional(),
+  concurrency: z.coerce.number().int().min(1).max(16).optional().default(6),
   tbs: z.string().trim().max(64).optional(),
   gl: z.string().trim().max(16).optional(),
   hl: z.string().trim().max(16).optional(),
@@ -60,6 +76,9 @@ type ResponseBody =
         datasetType: SetDatasetType;
         draftVersionId: string;
         targetCount: number;
+        scopedTargetCount?: number;
+        startIndex?: number;
+        concurrency?: number;
       };
     }
   | {
@@ -68,6 +87,9 @@ type ResponseBody =
         datasetType: SetDatasetType;
         draftVersionId: string;
         targetCount: number;
+        scopedTargetCount?: number;
+        startIndex?: number;
+        concurrency?: number;
         processed: number;
         inserted: number;
         skipped: number;
@@ -146,6 +168,49 @@ function buildSeedTargets(params: {
   return targets;
 }
 
+function normalizePostedSeedTargets(
+  postedTargets: Array<{
+    programId?: string;
+    cardNumber: string;
+    parallelId: string;
+    playerSeed?: string | null;
+    cardType?: string | null;
+    query: string;
+  }>
+): SeedTarget[] {
+  const normalized: SeedTarget[] = [];
+  for (const row of postedTargets) {
+    const cardNumber = normalizeCardNumber(row.cardNumber ?? "") || "ALL";
+    const parallelId = canonicalSeedParallel(row.parallelId, cardNumber);
+    if (!parallelId) continue;
+    const cardType = String(row.cardType || "").trim() || null;
+    const playerSeed = primarySeedPlayerLabel(row.playerSeed || cardType || "") || null;
+    const programId = normalizeProgramId(String(row.programId || cardType || "base"));
+    const query = String(row.query || "").trim();
+    if (!query) continue;
+    normalized.push({
+      programId,
+      cardNumber,
+      parallelId,
+      playerSeed,
+      cardType,
+      query,
+    });
+  }
+  return normalized;
+}
+
+function isRetryableSeedStatus(statusCode: number | null) {
+  return statusCode === 429 || statusCode === null || (statusCode != null && statusCode >= 500);
+}
+
+function seedRetryDelayMs(attempt: number, statusCode: number | null) {
+  const base = statusCode === 429 ? 900 : 350;
+  const jitter = Math.floor(Math.random() * 250);
+  const exponential = base * Math.pow(2, Math.max(0, attempt - 1));
+  return Math.min(6000, exponential + jitter);
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -217,11 +282,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
 
     const rows = extractDraftRows(approvedVersion.draftVersion.dataJson);
-    const targets = buildSeedTargets({
+    const derivedTargets = buildSeedTargets({
       setId,
       datasetType: payload.datasetType,
       rows,
     });
+    const postedTargets = Array.isArray(payload.targets)
+      ? normalizePostedSeedTargets(payload.targets as Array<{
+          programId?: string;
+          cardNumber: string;
+          parallelId: string;
+          playerSeed?: string | null;
+          cardType?: string | null;
+          query: string;
+        }>)
+      : [];
+    const targets = postedTargets.length > 0 ? postedTargets : derivedTargets;
 
     if (targets.length < 1) {
       return res.status(400).json({ message: "No eligible draft rows found for reference seeding." });
@@ -246,17 +322,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       });
     }
 
-    let processed = 0;
-    let inserted = 0;
-    let skipped = 0;
-    let failed = 0;
-    const failures: string[] = [];
+    const startIndex = Math.max(0, Number(payload.startIndex ?? 0) || 0);
+    const maxTargets = payload.maxTargets ? Math.max(1, Number(payload.maxTargets)) : targets.length;
+    const scopedTargets = targets.slice(startIndex, startIndex + maxTargets);
+    if (scopedTargets.length < 1) {
+      return res.status(400).json({ message: "No scoped targets found for reference seeding." });
+    }
 
-    for (const target of targets) {
-      let success = false;
+    const workerCount = Math.min(Math.max(1, Number(payload.concurrency ?? 6) || 6), scopedTargets.length);
+    const outcomes: Array<{
+      inserted: number;
+      skipped: number;
+      failed: boolean;
+      failureMessage: string;
+      target: SeedTarget;
+    }> = new Array(scopedTargets.length);
+
+    let cursor = 0;
+    const runOne = async (target: SeedTarget) => {
       let lastFailureMessage = "";
-
-      for (let attempt = 1; attempt <= 2; attempt += 1) {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
         try {
           const seed = await seedVariantReferenceImages({
             setId,
@@ -270,34 +355,70 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             gl: payload.gl,
             hl: payload.hl,
           });
-          inserted += Number(seed.inserted ?? 0);
-          skipped += Number(seed.skipped ?? 0);
-          success = true;
-          break;
+          return {
+            inserted: Number(seed.inserted ?? 0),
+            skipped: Number(seed.skipped ?? 0),
+            failed: false,
+            failureMessage: "",
+            target,
+          };
         } catch (error) {
           lastFailureMessage = error instanceof Error ? error.message : "Unknown seed failure";
           const statusCode = error instanceof ReferenceSeedError ? error.status : null;
-          const retryable = statusCode === 429 || statusCode === null || (statusCode != null && statusCode >= 500);
-          if (attempt < 2 && retryable) {
-            await wait(250 * attempt);
+          if (attempt < 3 && isRetryableSeedStatus(statusCode)) {
+            await wait(seedRetryDelayMs(attempt, statusCode));
             continue;
           }
-          break;
+          return {
+            inserted: 0,
+            skipped: 0,
+            failed: true,
+            failureMessage: lastFailureMessage || "unknown error",
+            target,
+          };
         }
       }
+      return {
+        inserted: 0,
+        skipped: 0,
+        failed: true,
+        failureMessage: lastFailureMessage || "unknown error",
+        target,
+      };
+    };
 
-      if (!success) {
+    await Promise.all(
+      Array.from({ length: workerCount }, async () => {
+        while (true) {
+          const index = cursor;
+          cursor += 1;
+          if (index >= scopedTargets.length) break;
+          outcomes[index] = await runOne(scopedTargets[index]);
+        }
+      })
+    );
+
+    let processed = 0;
+    let inserted = 0;
+    let skipped = 0;
+    let failed = 0;
+    const failures: string[] = [];
+    for (const outcome of outcomes) {
+      if (!outcome) continue;
+      processed += 1;
+      inserted += outcome.inserted;
+      skipped += outcome.skipped;
+      if (outcome.failed) {
         failed += 1;
         if (failures.length < 8) {
+          const target = outcome.target;
           failures.push(
             `${target.cardNumber} ${target.parallelId}${target.playerSeed ? ` (${target.playerSeed})` : ""}: ${
-              lastFailureMessage || "unknown error"
+              outcome.failureMessage
             }`
           );
         }
       }
-
-      processed += 1;
     }
 
     const audit = await writeSetOpsAuditEvent({
@@ -312,6 +433,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       metadata: {
         datasetType: payload.datasetType,
         targetCount: targets.length,
+        startIndex,
+        scopedTargetCount: scopedTargets.length,
+        concurrency: workerCount,
         processed,
         inserted,
         skipped,
@@ -326,6 +450,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         datasetType: payload.datasetType,
         draftVersionId: approvedVersion.draftVersion.id,
         targetCount: targets.length,
+        scopedTargetCount: scopedTargets.length,
+        startIndex,
+        concurrency: workerCount,
         processed,
         inserted,
         skipped,
