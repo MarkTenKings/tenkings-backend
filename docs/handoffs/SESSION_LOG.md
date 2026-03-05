@@ -6137,3 +6137,35 @@
 - No deploy/restart/migration commands were executed.
 - No destructive DB/set operations were executed.
 - DB blast-radius counts could not be executed in this environment because `DATABASE_URL` is not set locally.
+
+## 2026-03-05 - Production Incident Note (Approve blocked, missing CardVariant.programId)
+
+### Summary
+- Observed runtime error during Set Ops approve in production:
+  - `Approve blocked: variant sync failed ... The column CardVariant.programId does not exist in the current database.`
+- Root cause is schema/code drift: app code expects `programId` on `CardVariant`, but production DB migration for program-aware identity was not applied.
+
+### Required Ops Action (No destructive operations)
+- Apply pending Prisma migration in production via runbook DB migration flow, then re-test approve.
+- No deploy/restart/migration commands were executed from this workstation during this note; commands were provided to operator.
+
+## 2026-03-05 - Reference Seeding Hotfix (All-Skipped Runs)
+
+### Summary
+- Addressed production symptom where SET LIST seeding showed `inserted 0 / skipped N / failed 0` for all targets.
+- Root behavior in code: no-result/empty-candidate searches are counted as skips, not failures.
+- Added resilience in reference query strategy and image filtering:
+  - Search fallback now includes player/card/parallel queries without strict set token dependency.
+  - Thumbnail detection no longer rejects high-res eBay URLs solely due `thumb` path token when explicit image size token is large (`s-l500+`).
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/referenceSeed.ts`
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No destructive DB/set operations were executed.

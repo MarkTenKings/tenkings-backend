@@ -117,12 +117,15 @@ function upgradeEbayImageUrl(url: string) {
 function isThumbnailLike(url: string) {
   const lower = String(url || "").trim().toLowerCase();
   if (!lower) return false;
-  if (/(^|[/?._-])(thumb|thumbnail|small|tiny)($|[/?._-])/.test(lower)) return true;
   const sizeToken = lower.match(/s-l(\d{2,4})/i);
   if (sizeToken?.[1]) {
     const size = Number(sizeToken[1]);
+    // eBay image urls frequently include "thumbs" in the path even for high-res assets.
+    // Treat explicit large sizes as usable regardless of path tokens.
+    if (Number.isFinite(size) && size >= 500) return false;
     if (Number.isFinite(size) && size > 0 && size < 500) return true;
   }
+  if (/(^|[/?._-])(thumb|thumbnail|small|tiny)($|[/?._-])/.test(lower)) return true;
   return false;
 }
 
@@ -247,12 +250,18 @@ function buildSearchQueries(params: {
     baseQuery,
     mk(player, setClean, cardHash, parallel),
     mk(player, setClean, cardCompact, parallel),
+    mk(player, setClean, cardSpaced, parallel),
     mk(player, setClean, parallel),
     mk(setClean, cardHash, parallel),
     mk(setClean, cardCompact, parallel),
+    // Fallback when set labels are noisy/typoed in source data.
+    mk(player, cardHash, parallel),
+    mk(player, cardCompact, parallel),
+    mk(player, cardSpaced, parallel),
+    mk(player, parallel),
   ]);
 
-  return candidates.slice(0, 6);
+  return candidates.slice(0, 10);
 }
 
 function scoreListing(params: {
