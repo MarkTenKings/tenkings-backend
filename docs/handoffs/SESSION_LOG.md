@@ -6254,3 +6254,8 @@
   - Deploying `referenceSeed.ts` fixes: skip-all URL handling, 2-step SerpApi ebay->ebay_product high-res flow, and
   coverage tuning.
   - No DB migration required.
+
+  ## 2026-03-05 - Deploy Result (reference seeding hotfixes)
+  - Droplet updated with `git pull --ff-only` on `main`.
+  - Services redeployed via `docker compose up -d --build --force-recreate`.
+  - Evidence captured from: `git log --oneline -n 5` and `docker compose ps`.
