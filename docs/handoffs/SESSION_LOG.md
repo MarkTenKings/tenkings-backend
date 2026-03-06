@@ -6700,3 +6700,10 @@
     - frontend/nextjs-app/pages/api/admin/variants/reference/index.ts
     - frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts
   - DB: no migration required.
+  ## 2026-03-06 - Deploy Result (NoSuchKey final blocker fix)
+  - Droplet updated via `git pull --ff-only` on `main`.
+  - Services rebuilt/recreated via `docker compose up -d --build --force-recreate`.
+  - Evidence captured:
+    - `git rev-parse --short HEAD`
+    - `git log --oneline -n 5`
+    - `docker compose ps`
