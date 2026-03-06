@@ -3,7 +3,7 @@ import { prisma, SetApprovalDecision } from "@tenkings/database";
 import { Prisma } from "@prisma/client";
 import { normalizeCardNumber, normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
-import { getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../../../lib/server/storage";
+import { getPublicPrefix, getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../../../lib/server/storage";
 import { extractDraftRows } from "../../../../lib/server/setOpsDrafts";
 
 type VariantRow = {
@@ -64,7 +64,14 @@ function keyFromStoredImage(value: string | null | undefined) {
   if (/^https?:\/\//i.test(input)) {
     return managedStorageKeyFromUrl(input);
   }
-  return input;
+  const withoutLeadingSlash = input.replace(/^\/+/, "");
+  const publicPrefix = getPublicPrefix()
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (publicPrefix && withoutLeadingSlash.startsWith(`${publicPrefix}/`)) {
+    return withoutLeadingSlash.slice(publicPrefix.length + 1);
+  }
+  return withoutLeadingSlash;
 }
 
 function uniqueStrings(values: Array<string | null | undefined>) {
@@ -426,7 +433,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         const rawImageUrl = String((row as any).rawImageUrl || "");
         const storageKey = String((row as any).storageKey || "").trim();
         let preview = cropUrls[0] || rawImageUrl;
-        const keyForPreview = storageKey || keyFromStoredImage(preview);
+        const keyForPreview = keyFromStoredImage(preview) || keyFromStoredImage(rawImageUrl) || storageKey || null;
         if (mode === "s3" && keyForPreview) {
           try {
             preview = await presignReadUrl(keyForPreview, 60 * 30);

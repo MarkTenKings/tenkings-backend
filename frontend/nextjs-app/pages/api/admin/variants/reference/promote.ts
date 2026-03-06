@@ -83,13 +83,15 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
 
     for (const ref of refs) {
       try {
-        const currentKey = (ref as any).storageKey ? String((ref as any).storageKey).trim() : "";
-        if (currentKey) {
+        const currentKey = toManagedKey((ref as any).storageKey ? String((ref as any).storageKey).trim() : "");
+        const currentBuffer = currentKey ? await readStorageBuffer(currentKey).catch(() => null) : null;
+        if (currentBuffer) {
           await prisma.cardVariantReferenceImage.update({
             where: { id: ref.id },
             data: {
               qaStatus: "keep",
               ownedStatus: "owned",
+              storageKey: currentKey,
             } as any,
           });
           alreadyOwned += 1;

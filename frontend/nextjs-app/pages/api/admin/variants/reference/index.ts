@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { normalizeCardNumber, normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
-import { getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../../../../lib/server/storage";
+import { getPublicPrefix, getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../../../../lib/server/storage";
 import { normalizeProgramId } from "../../../../../lib/server/taxonomyV2Utils";
 
 type ReferenceRow = {
@@ -202,7 +202,14 @@ function keyFromStoredImage(value: string | null | undefined) {
   if (/^https?:\/\//i.test(input)) {
     return managedStorageKeyFromUrl(input);
   }
-  return input;
+  const withoutLeadingSlash = input.replace(/^\/+/, "");
+  const publicPrefix = getPublicPrefix()
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (publicPrefix && withoutLeadingSlash.startsWith(`${publicPrefix}/`)) {
+    return withoutLeadingSlash.slice(publicPrefix.length + 1);
+  }
+  return withoutLeadingSlash;
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
@@ -313,7 +320,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         references.map(async (reference) => {
           const row = toRow(reference);
           if (mode === "s3") {
-            const rawKey = row.storageKey || keyFromStoredImage(row.rawImageUrl);
+            const rawKey =
+              keyFromStoredImage(row.rawImageUrl) ||
+              keyFromStoredImage(Array.isArray(row.cropUrls) ? row.cropUrls[0] : null) ||
+              row.storageKey ||
+              null;
             if (rawKey) {
               try {
                 row.rawImageUrl = await presignReadUrl(rawKey, 60 * 30);

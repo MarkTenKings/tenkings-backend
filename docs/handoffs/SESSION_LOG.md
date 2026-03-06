@@ -6647,3 +6647,56 @@
     - `git rev-parse --short HEAD`
     - `git log --oneline -n 5`
     - `docker compose ps`
+
+## 2026-03-06 - Hotfix (NoSuchKey in Variant Ref QA after auto-promote)
+
+### Root Cause
+- QA ref API key extraction (`keyFromStoredImage`) could pass non-normalized non-HTTP paths through as-is, causing bad S3 presign keys in some path shapes.
+- Promote path treated any existing `storageKey` as valid (`alreadyOwned`) without verifying object existence, allowing stale/missing keys to remain marked done.
+
+### Code Changes
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+  - hardened `keyFromStoredImage` for non-HTTP values:
+    - strips leading slash,
+    - strips configured public prefix (`CARD_STORAGE_PUBLIC_PREFIX`) when present,
+    - returns normalized storage key for presign.
+- `frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts`
+  - verifies existing `storageKey` object can be read before marking `alreadyOwned`.
+  - if missing/unreadable, falls through to source-candidate recovery + re-upload path.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/promote.ts --file pages/api/admin/variants/reference/process.ts --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx` (pass; existing `no-img-element` warnings)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+
+## 2026-03-06 - Reviewer-discovered blocker fix (variants API stale-key presign path)
+
+### Root Cause Addendum
+- `variants` API (`/api/admin/variants`) still had legacy key extraction logic that passed non-normalized non-HTTP paths through unchanged.
+- In S3 mode, variant preview presign prioritized `storageKey` over parsed preview URL key.
+- If `storageKey` was stale/missing, presign still produced a signed URL that resolved to `NoSuchKey`.
+
+### Code Changes
+- `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+  - normalized non-HTTP key extraction with public-prefix stripping (`getPublicPrefix`).
+  - changed preview presign key selection to prefer parsed preview/raw keys before fallback to `storageKey`.
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+  - changed raw presign key selection to prefer parsed `rawImageUrl`/`cropUrls[0]` keys before fallback to `storageKey`.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/promote.ts --file pages/api/admin/variants/reference/process.ts --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx` (pass; existing `no-img-element` warnings)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+  ## 2026-03-06 - Planned Deploy (NoSuchKey final blocker fix)
+  - Plan: deploy variants/reference presign key normalization and stale-key recovery fixes.
+  - Scope:
+    - frontend/nextjs-app/pages/api/admin/variants/index.ts
+    - frontend/nextjs-app/pages/api/admin/variants/reference/index.ts
+    - frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts
+  - DB: no migration required.

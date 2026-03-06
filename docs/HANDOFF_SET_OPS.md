@@ -3517,3 +3517,28 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing image-element warnings)
 - No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-06, NoSuchKey Hotfix)
+- Fixed `NoSuchKey` regression path observed on Variant Ref QA after auto pipeline completion.
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`:
+  - normalized non-HTTP stored image paths before presign (strip leading slash and public prefix).
+- `frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts`:
+  - validates existing `storageKey` object existence before treating ref as already owned.
+  - stale keys now recover via source-candidate fallback and re-upload path.
+- Validation rerun:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/promote.ts --file pages/api/admin/variants/reference/process.ts --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx` (pass; existing image-element warnings)
+- No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-06, Reviewer-discovered blocker fix)
+- Additional `NoSuchKey` blocker found and fixed in variants preview API path.
+- `frontend/nextjs-app/pages/api/admin/variants/index.ts`:
+  - normalized non-HTTP stored image paths before presign,
+  - changed presign key precedence to prefer parsed preview/raw keys before fallback `storageKey`.
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`:
+  - changed raw image presign key precedence to parsed `rawImageUrl`/`cropUrls[0]` before `storageKey` fallback.
+- Rationale: avoid signing stale/missing storage keys when valid persisted preview/raw paths are present.
+- Validation rerun:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/promote.ts --file pages/api/admin/variants/reference/process.ts --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx` (pass; existing image-element warnings)
+- No deploy/restart/migration actions executed in this step.
