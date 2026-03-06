@@ -199,17 +199,28 @@ function parseListingId(url: string | null | undefined) {
 function keyFromStoredImage(value: string | null | undefined) {
   const input = String(value || "").trim();
   if (!input) return null;
+  const keyFromPublicPath = (pathname: string) => {
+    const withoutLeadingSlash = String(pathname || "").replace(/^\/+/, "");
+    if (!withoutLeadingSlash) return null;
+    const publicPrefix = getPublicPrefix()
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "");
+    if (publicPrefix && withoutLeadingSlash.startsWith(`${publicPrefix}/`)) {
+      return withoutLeadingSlash.slice(publicPrefix.length + 1);
+    }
+    return withoutLeadingSlash;
+  };
   if (/^https?:\/\//i.test(input)) {
-    return managedStorageKeyFromUrl(input);
+    const managedFromUrl = managedStorageKeyFromUrl(input);
+    if (managedFromUrl) return managedFromUrl;
+    try {
+      const parsed = new URL(input);
+      return keyFromPublicPath(parsed.pathname);
+    } catch {
+      return null;
+    }
   }
-  const withoutLeadingSlash = input.replace(/^\/+/, "");
-  const publicPrefix = getPublicPrefix()
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
-  if (publicPrefix && withoutLeadingSlash.startsWith(`${publicPrefix}/`)) {
-    return withoutLeadingSlash.slice(publicPrefix.length + 1);
-  }
-  return withoutLeadingSlash;
+  return keyFromPublicPath(input);
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
@@ -323,7 +334,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
             const rawKey =
               keyFromStoredImage(row.rawImageUrl) ||
               keyFromStoredImage(Array.isArray(row.cropUrls) ? row.cropUrls[0] : null) ||
-              row.storageKey ||
+              keyFromStoredImage(row.storageKey) ||
               null;
             if (rawKey) {
               try {

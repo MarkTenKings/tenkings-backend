@@ -6707,3 +6707,30 @@
     - `git rev-parse --short HEAD`
     - `git log --oneline -n 5`
     - `docker compose ps`
+
+## 2026-03-06 - Reviewer follow-up (absolute app URL key parsing)
+
+### Finding Addressed
+- `keyFromStoredImage` in variants/reference APIs did not recover storage keys from absolute non-managed HTTP URLs (for example app-host `/uploads/cards/...` paths), causing fallback to stale keys and potential `NoSuchKey` presigns.
+
+### Code Changes
+- `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+  - `keyFromStoredImage` now falls back to URL pathname parsing for HTTP inputs not recognized by managed host matcher.
+  - preview key fallback now parses `storageKey` via `keyFromStoredImage` instead of using raw string.
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+  - same HTTP pathname fallback logic in `keyFromStoredImage`.
+  - raw-key fallback now parses `row.storageKey` via `keyFromStoredImage`.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/promote.ts --file pages/api/admin/variants/reference/process.ts --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx` (pass; existing `no-img-element` warnings)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+  ## 2026-03-06 - Planned Deploy (NoSuchKey absolute-URL/key-precedence final fix)
+  - Plan: deploy final variants/reference key parsing + presign precedence fixes.
+  - Scope:
+    - frontend/nextjs-app/pages/api/admin/variants/index.ts
+    - frontend/nextjs-app/pages/api/admin/variants/reference/index.ts
+  - DB: no migration required.

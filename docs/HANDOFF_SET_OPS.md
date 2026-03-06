@@ -3542,3 +3542,16 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/promote.ts --file pages/api/admin/variants/reference/process.ts --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx` (pass; existing image-element warnings)
 - No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-06, Reviewer Follow-up - Absolute URL Key Parsing)
+- Added final key-recovery fallback in both variants APIs for absolute app-host URLs:
+  - parse HTTP URL pathname when managed-host extraction does not match,
+  - normalize via public-prefix stripping to derive storage key.
+- Updated fallbacks to parse `storageKey` through key-normalizer instead of passing raw value to presign.
+- Files:
+  - `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+- Validation rerun:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/promote.ts --file pages/api/admin/variants/reference/process.ts --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx` (pass; existing image-element warnings)
+- No deploy/restart/migration actions executed in this step.

@@ -61,17 +61,28 @@ const PARALLEL_CANONICAL_TO_ALIAS: Record<string, string> = Object.entries(PARAL
 function keyFromStoredImage(value: string | null | undefined) {
   const input = String(value || "").trim();
   if (!input) return null;
+  const keyFromPublicPath = (pathname: string) => {
+    const withoutLeadingSlash = String(pathname || "").replace(/^\/+/, "");
+    if (!withoutLeadingSlash) return null;
+    const publicPrefix = getPublicPrefix()
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "");
+    if (publicPrefix && withoutLeadingSlash.startsWith(`${publicPrefix}/`)) {
+      return withoutLeadingSlash.slice(publicPrefix.length + 1);
+    }
+    return withoutLeadingSlash;
+  };
   if (/^https?:\/\//i.test(input)) {
-    return managedStorageKeyFromUrl(input);
+    const managedFromUrl = managedStorageKeyFromUrl(input);
+    if (managedFromUrl) return managedFromUrl;
+    try {
+      const parsed = new URL(input);
+      return keyFromPublicPath(parsed.pathname);
+    } catch {
+      return null;
+    }
   }
-  const withoutLeadingSlash = input.replace(/^\/+/, "");
-  const publicPrefix = getPublicPrefix()
-    .replace(/^\/+/, "")
-    .replace(/\/+$/, "");
-  if (publicPrefix && withoutLeadingSlash.startsWith(`${publicPrefix}/`)) {
-    return withoutLeadingSlash.slice(publicPrefix.length + 1);
-  }
-  return withoutLeadingSlash;
+  return keyFromPublicPath(input);
 }
 
 function uniqueStrings(values: Array<string | null | undefined>) {
@@ -433,7 +444,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         const rawImageUrl = String((row as any).rawImageUrl || "");
         const storageKey = String((row as any).storageKey || "").trim();
         let preview = cropUrls[0] || rawImageUrl;
-        const keyForPreview = keyFromStoredImage(preview) || keyFromStoredImage(rawImageUrl) || storageKey || null;
+        const keyForPreview =
+          keyFromStoredImage(preview) || keyFromStoredImage(rawImageUrl) || keyFromStoredImage(storageKey) || null;
         if (mode === "s3" && keyForPreview) {
           try {
             preview = await presignReadUrl(keyForPreview, 60 * 30);
