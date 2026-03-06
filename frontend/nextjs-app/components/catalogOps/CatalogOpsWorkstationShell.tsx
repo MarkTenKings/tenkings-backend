@@ -5,7 +5,6 @@ import AppShell from "../AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
-import { readCatalogOpsFlags } from "../../lib/catalogOpsFlags";
 
 type SetOpsPermissions = {
   reviewer: boolean;
@@ -42,33 +41,28 @@ const SURFACE_CONFIG: Record<
   {
     label: string;
     path: string;
-    flagKey: "overviewV2" | "ingestStepper" | "variantStudio" | "aiQuality";
-    legacyPath: string;
+    standalonePath: string;
   }
 > = {
   overview: {
     label: "Overview",
     path: "/admin/catalog-ops",
-    flagKey: "overviewV2",
-    legacyPath: "/admin/set-ops",
+    standalonePath: "/admin/set-ops",
   },
   "ingest-draft": {
     label: "Ingest & Draft",
     path: "/admin/catalog-ops/ingest-draft",
-    flagKey: "ingestStepper",
-    legacyPath: "/admin/set-ops-review",
+    standalonePath: "/admin/set-ops-review",
   },
   "variant-studio": {
     label: "Variant Studio",
     path: "/admin/catalog-ops/variant-studio",
-    flagKey: "variantStudio",
-    legacyPath: "/admin/variants",
+    standalonePath: "/admin/variant-ref-qa",
   },
   "ai-quality": {
     label: "AI Quality",
     path: "/admin/catalog-ops/ai-quality",
-    flagKey: "aiQuality",
-    legacyPath: "/admin/ai-ops",
+    standalonePath: "/admin/ai-ops",
   },
 };
 
@@ -130,10 +124,7 @@ export default function CatalogOpsWorkstationShell({ surface, title, subtitle, c
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
     [session?.user.id, session?.user.phone]
   );
-
-  const flags = useMemo(() => readCatalogOpsFlags(), []);
   const surfaceConfig = SURFACE_CONFIG[surface];
-  const surfaceEnabled = flags.workstation && flags[surfaceConfig.flagKey];
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
   const [permissions, setPermissions] = useState<SetOpsPermissions | null>(null);
   const [accessBusy, setAccessBusy] = useState(false);
@@ -180,10 +171,9 @@ export default function CatalogOpsWorkstationShell({ surface, title, subtitle, c
     return () => controller.abort();
   }, [adminHeaders, isAdmin, session]);
 
-  const legacyLinks = [
+  const standaloneLinks = [
     { label: "Set Ops", href: buildHref("/admin/set-ops") },
     { label: "Set Ops Review", href: buildHref("/admin/set-ops-review") },
-    { label: "Variants", href: buildHref("/admin/variants") },
     { label: "Variant Ref QA", href: buildHref("/admin/variant-ref-qa") },
     { label: "AI Ops", href: buildHref("/admin/ai-ops") },
   ];
@@ -255,7 +245,7 @@ export default function CatalogOpsWorkstationShell({ surface, title, subtitle, c
         <header className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="space-y-1">
-              <p className="text-[10px] uppercase tracking-[0.34em] text-violet-300">Catalog Ops Workstation</p>
+              <p className="text-[10px] uppercase tracking-[0.34em] text-amber-200">Catalog Ops Compatibility</p>
               <h1 className="font-heading text-3xl uppercase tracking-[0.16em] text-white">{title}</h1>
               <p className="text-sm text-slate-300">{subtitle}</p>
             </div>
@@ -294,7 +284,7 @@ export default function CatalogOpsWorkstationShell({ surface, title, subtitle, c
 
         <div className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
           <aside className="rounded-3xl border border-white/10 bg-night-900/70 p-4 shadow-card">
-            <p className="mb-3 text-xs uppercase tracking-[0.3em] text-slate-400">Workstation</p>
+            <p className="mb-3 text-xs uppercase tracking-[0.3em] text-slate-400">Compatibility Routes</p>
             <nav className="flex flex-col gap-2">
               {Object.values(SURFACE_CONFIG).map((item) => {
                 const active = item.path === surfaceConfig.path;
@@ -314,8 +304,8 @@ export default function CatalogOpsWorkstationShell({ surface, title, subtitle, c
               })}
             </nav>
             <div className="mt-5 space-y-2 border-t border-white/10 pt-4">
-              <p className="text-xs uppercase tracking-[0.28em] text-slate-500">Legacy Links</p>
-              {legacyLinks.map((item) => (
+              <p className="text-xs uppercase tracking-[0.28em] text-slate-500">Standalone Pages</p>
+              {standaloneLinks.map((item) => (
                 <Link key={item.href} href={item.href} className="block text-sm text-slate-300 underline hover:text-white">
                   {item.label}
                 </Link>
@@ -324,6 +314,14 @@ export default function CatalogOpsWorkstationShell({ surface, title, subtitle, c
           </aside>
 
           <main className="space-y-4">
+            <section className="rounded-3xl border border-amber-400/30 bg-amber-500/10 p-4 shadow-card">
+              <p className="text-[10px] uppercase tracking-[0.32em] text-amber-200">Compatibility Mode</p>
+              <p className="mt-2 text-sm text-slate-200">
+                Catalog Ops no longer embeds the real operating surfaces. Use these routes to hand off into the
+                standalone admin pages without duplicated controls or squashed tables.
+              </p>
+            </section>
+
             <section className="rounded-3xl border border-white/10 bg-night-900/70 p-4 shadow-card">
               <div className="flex flex-wrap items-center gap-2">
                 {contextItems.map((item) => (
@@ -336,37 +334,28 @@ export default function CatalogOpsWorkstationShell({ surface, title, subtitle, c
                 ))}
               </div>
               <div className="mt-3 flex flex-wrap gap-3">
-                <Link href={buildHref(surfaceConfig.legacyPath)} className="text-xs uppercase tracking-[0.24em] text-gold-200 underline hover:text-gold-100">
-                  Open Legacy Surface
+                <Link
+                  href={buildHref(surfaceConfig.standalonePath)}
+                  className="text-xs uppercase tracking-[0.24em] text-gold-200 underline hover:text-gold-100"
+                >
+                  Open Standalone Page
                 </Link>
                 <Link
-                  href={buildHref("/admin/catalog-ops", { tab: "overview" })}
+                  href={buildHref("/admin/catalog-ops", {
+                    setId: undefined,
+                    programId: undefined,
+                    jobId: undefined,
+                    tab: undefined,
+                    queueFilter: undefined,
+                  })}
                   className="text-xs uppercase tracking-[0.24em] text-slate-300 underline hover:text-white"
                 >
-                  Reset View Context
+                  Reset Compatibility Context
                 </Link>
               </div>
             </section>
 
-            {!surfaceEnabled ? (
-              <section className="rounded-3xl border border-amber-400/40 bg-amber-500/10 p-6">
-                <p className="text-xs uppercase tracking-[0.3em] text-amber-200">Surface disabled by feature flag</p>
-                <h2 className="mt-2 font-heading text-2xl uppercase tracking-[0.14em] text-white">{surfaceConfig.label}</h2>
-                <p className="mt-2 text-sm text-amber-100/90">
-                  Enable <code className="font-mono">CATALOG_OPS_WORKSTATION</code> and this surface flag to use the shell route in this environment.
-                </p>
-                <div className="mt-4">
-                  <Link
-                    href={buildHref(surfaceConfig.legacyPath)}
-                    className="inline-flex rounded-full border border-amber-300/60 px-4 py-2 text-xs uppercase tracking-[0.24em] text-amber-100 transition hover:border-amber-200 hover:text-white"
-                  >
-                    Open Legacy Route
-                  </Link>
-                </div>
-              </section>
-            ) : (
-              children({ context, buildHref })
-            )}
+            {children({ context, buildHref })}
           </main>
         </div>
       </div>

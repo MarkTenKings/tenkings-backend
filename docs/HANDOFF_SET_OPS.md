@@ -3590,3 +3590,30 @@ Build Set Ops UI flow with:
   - `PATH=/opt/homebrew/bin:$PATH pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
   - `PATH=/opt/homebrew/bin:$PATH pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts` (pass)
 - No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-06, Admin UI cleanup and Catalog Ops de-duplication)
+- Cleaned the `/admin` launchpad so it points at the canonical standalone surfaces instead of duplicate routes.
+- Removed `Catalog Ops (New)` and `Variants (Moved)` from admin home navigation.
+- Repurposed Catalog Ops routes into compatibility routing pages instead of embedded duplicate workspaces:
+  - `/admin/catalog-ops`
+  - `/admin/catalog-ops/ingest-draft`
+  - `/admin/catalog-ops/variant-studio`
+  - `/admin/catalog-ops/ai-quality`
+- Added shared compatibility notice component:
+  - `frontend/nextjs-app/components/catalogOps/CatalogOpsCompatibilityNotice.tsx`
+- Updated `frontend/nextjs-app/components/catalogOps/CatalogOpsWorkstationShell.tsx` to:
+  - present Catalog Ops as compatibility mode,
+  - drop feature-flag gating for these compatibility routes,
+  - point variant-studio to `Variant Ref QA` as the canonical destination,
+  - preserve/reset context safely.
+- Tightened `/admin/variants` into a minimal retired-workflow compatibility page.
+- Polished the canonical standalone pages without changing workflow logic:
+  - `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+  - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+  - `frontend/nextjs-app/pages/admin/set-ops.tsx`
+  - `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx --file pages/admin/variants.tsx --file pages/admin/catalog-ops/index.tsx --file pages/admin/catalog-ops/ingest-draft.tsx --file pages/admin/catalog-ops/variant-studio.tsx --file pages/admin/catalog-ops/ai-quality.tsx --file pages/admin/variant-ref-qa.tsx --file pages/admin/set-ops-review.tsx --file pages/admin/set-ops.tsx --file pages/admin/ai-ops.tsx --file components/catalogOps/CatalogOpsWorkstationShell.tsx --file components/catalogOps/CatalogOpsCompatibilityNotice.tsx` (pass; only existing `@next/next/no-img-element` warnings in `pages/admin/variant-ref-qa.tsx`)
+- No deploy/restart/migration actions executed in this step.
+- No API contracts, DB operations, or destructive set actions were changed.

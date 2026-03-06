@@ -6823,3 +6823,89 @@
   - hard-refresh Variant Ref QA performed
   - Hank Aaron ref image loaded in prod
   - clicked image URL no longer showed `%2520` in the set segment
+
+## 2026-03-06 - Admin UI cleanup and Catalog Ops de-duplication
+
+### Summary
+- Cleaned up the `/admin` launchpad so operators land on the canonical standalone pages instead of duplicate routes.
+- Removed `Catalog Ops (New)` and `Variants (Moved)` from the admin home surface.
+- Converted Catalog Ops routes into compatibility handoff pages instead of embedded duplicate workstations:
+  - `/admin/catalog-ops`
+  - `/admin/catalog-ops/ingest-draft`
+  - `/admin/catalog-ops/variant-studio`
+  - `/admin/catalog-ops/ai-quality`
+- Kept compatibility routes alive for old bookmarks, but made the standalone pages the explicit operating surfaces.
+- Retained `/admin/variants` as a minimal compatibility route only.
+
+### UI/Route Changes
+- `frontend/nextjs-app/pages/admin/index.tsx`
+  - replaced flat gold-pill button wall with grouped launchpad sections:
+    - card intake,
+    - set workflows,
+    - monitoring.
+  - removed obsolete duplicate destinations from the home grid.
+- `frontend/nextjs-app/components/catalogOps/CatalogOpsWorkstationShell.tsx`
+  - repurposed shell as a compatibility layer,
+  - removed feature-flag gating from these compatibility routes,
+  - renamed shell messaging from workstation language to compatibility routing language,
+  - updated variant-studio standalone target to `Variant Ref QA`,
+  - added clear reset-context behavior.
+- Added `frontend/nextjs-app/components/catalogOps/CatalogOpsCompatibilityNotice.tsx`
+  - shared routing/deprecation panel used by all Catalog Ops compatibility pages.
+- `frontend/nextjs-app/pages/admin/catalog-ops/index.tsx`
+  - replaced duplicate set-ops overview surface with canonical routing actions.
+- `frontend/nextjs-app/pages/admin/catalog-ops/ingest-draft.tsx`
+  - replaced embedded iframe stepper with direct routing actions into `Set Ops Review` steps.
+- `frontend/nextjs-app/pages/admin/catalog-ops/variant-studio.tsx`
+  - removed duplicated subtabs/embedded surfaces,
+  - redirected operator intent toward `Variant Ref QA`, `Set Ops Review`, and `Set Ops`.
+- `frontend/nextjs-app/pages/admin/catalog-ops/ai-quality.tsx`
+  - removed duplicate AI quality dashboard surface,
+  - routed operators to `AI Ops`, `Add Cards`, and `KingsReview`.
+- `frontend/nextjs-app/pages/admin/variants.tsx`
+  - tightened route into a small retired-workflow compatibility notice.
+
+### Canonical Page Polish
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+  - added clearer header hierarchy and section labels,
+  - tightened selected-state/action area,
+  - lightened ref cards,
+  - added `loading="lazy"` / `decoding="async"` on existing `<img>` usage.
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+  - converted page top into a compact header card,
+  - tightened stepper hierarchy,
+  - kept all queue/draft/seed actions unchanged.
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+  - converted top area into a compact header card with clearer quick links,
+  - preserved archive/replace/delete/search logic.
+- `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+  - tightened dashboard header and page width,
+  - kept monitoring/eval/retry behavior unchanged.
+
+### Validation Evidence
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx --file pages/admin/variants.tsx --file pages/admin/catalog-ops/index.tsx --file pages/admin/catalog-ops/ingest-draft.tsx --file pages/admin/catalog-ops/variant-studio.tsx --file pages/admin/catalog-ops/ai-quality.tsx --file pages/admin/variant-ref-qa.tsx --file pages/admin/set-ops-review.tsx --file pages/admin/set-ops.tsx --file pages/admin/ai-ops.tsx --file components/catalogOps/CatalogOpsWorkstationShell.tsx --file components/catalogOps/CatalogOpsCompatibilityNotice.tsx` (pass; only existing `@next/next/no-img-element` warnings in `pages/admin/variant-ref-qa.tsx`)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No API contracts, DB operations, or destructive set actions were changed.
+- This was a UI/layout/routing-surface cleanup only; existing page workflows remain on their standalone routes.
+
+## 2026-03-06 - Planned Deploy (admin UI cleanup and Catalog Ops de-duplication)
+
+### Plan
+- Deploy admin UI cleanup that removes duplicate Catalog Ops/Variants surfaces from the launchpad and keeps standalone admin pages as the canonical operator routes.
+- Scope:
+  - frontend/nextjs-app/pages/admin/index.tsx
+  - frontend/nextjs-app/pages/admin/variants.tsx
+  - frontend/nextjs-app/pages/admin/variant-ref-qa.tsx
+  - frontend/nextjs-app/pages/admin/set-ops-review.tsx
+  - frontend/nextjs-app/pages/admin/set-ops.tsx
+  - frontend/nextjs-app/pages/admin/ai-ops.tsx
+  - frontend/nextjs-app/pages/admin/catalog-ops/index.tsx
+  - frontend/nextjs-app/pages/admin/catalog-ops/ingest-draft.tsx
+  - frontend/nextjs-app/pages/admin/catalog-ops/variant-studio.tsx
+  - frontend/nextjs-app/pages/admin/catalog-ops/ai-quality.tsx
+  - frontend/nextjs-app/components/catalogOps/CatalogOpsWorkstationShell.tsx
+  - frontend/nextjs-app/components/catalogOps/CatalogOpsCompatibilityNotice.tsx
+- DB: no migration required.

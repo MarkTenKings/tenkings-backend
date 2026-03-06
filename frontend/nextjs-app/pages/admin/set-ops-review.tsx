@@ -1948,60 +1948,68 @@ export default function SetOpsReviewPage() {
         <meta name="robots" content="noindex" />
       </Head>
 
-      <div className="flex flex-1 flex-col gap-8 px-6 py-10">
-        <header className="space-y-3">
-          <p className="text-xs uppercase tracking-[0.3em] text-violet-300">Set Ops</p>
-          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Ingest & Draft Workspace</h1>
-          <p className="max-w-3xl text-sm text-slate-300">
-            Guided stepper flow: ingestion queue, draft approval, then seed monitor. Existing APIs/actions are unchanged.
-          </p>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em]">
-            <span className={`rounded-full border px-2 py-1 ${canReview ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
-              reviewer: {canReview ? "yes" : "no"}
-            </span>
-            <span className={`rounded-full border px-2 py-1 ${canApprove ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
-              approver: {canApprove ? "yes" : "no"}
-            </span>
-            {accessBusy && <span className="text-slate-400">loading roles...</span>}
-          </div>
-          <div className="flex flex-wrap gap-4">
-            <Link
-              className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
-              href="/admin/set-ops"
-            >
-              ← Back to Set Admin
-            </Link>
-            <button
-              type="button"
-              disabled={busy || accessBusy}
-              onClick={() => {
-                setBusy(true);
-                setError(null);
-                setStatus(null);
-                void Promise.all([
-                  canReview ? fetchIngestionJobs() : Promise.resolve(),
-                  canReview && selectedSetId ? fetchDraft(selectedSetId, datasetType) : Promise.resolve(),
-                  canApprove && selectedSetId ? fetchSeedJobs(selectedSetId) : Promise.resolve(),
-                  selectedSetId ? fetchReferenceStatus(selectedSetId) : Promise.resolve(),
-                ])
-                  .then(() => setStatus("Workspace refreshed."))
-                  .catch((refreshError) =>
-                    setError(refreshError instanceof Error ? refreshError.message : "Failed to refresh workspace")
-                  )
-                  .finally(() => setBusy(false));
-              }}
-              className="inline-flex rounded-lg border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
-            >
-              Refresh
-            </button>
+      <div className="mx-auto flex w-full max-w-[1540px] flex-1 flex-col gap-6 px-4 py-6 lg:px-6">
+        <header className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-3">
+              <p className="text-xs uppercase tracking-[0.3em] text-violet-300">Set Ops Review</p>
+              <h1 className="font-heading text-3xl uppercase tracking-[0.16em] text-white">Ingest & Draft Workspace</h1>
+              <p className="max-w-3xl text-sm text-slate-300">
+                Guided stepper flow for ingestion queue, draft approval, and seed monitoring. Existing APIs and actions stay unchanged.
+              </p>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em]">
+                <span className={`rounded-full border px-2 py-1 ${canReview ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+                  reviewer: {canReview ? "yes" : "no"}
+                </span>
+                <span className={`rounded-full border px-2 py-1 ${canApprove ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+                  approver: {canApprove ? "yes" : "no"}
+                </span>
+                {accessBusy && <span className="text-slate-400">loading roles...</span>}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                className="inline-flex rounded-xl border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 hover:text-white"
+                href="/admin/set-ops"
+              >
+                ← Back to Set Admin
+              </Link>
+              <button
+                type="button"
+                disabled={busy || accessBusy}
+                onClick={() => {
+                  setBusy(true);
+                  setError(null);
+                  setStatus(null);
+                  void Promise.all([
+                    canReview ? fetchIngestionJobs() : Promise.resolve(),
+                    canReview && selectedSetId ? fetchDraft(selectedSetId, datasetType) : Promise.resolve(),
+                    canApprove && selectedSetId ? fetchSeedJobs(selectedSetId) : Promise.resolve(),
+                    selectedSetId ? fetchReferenceStatus(selectedSetId) : Promise.resolve(),
+                  ])
+                    .then(() => setStatus("Workspace refreshed."))
+                    .catch((refreshError) =>
+                      setError(refreshError instanceof Error ? refreshError.message : "Failed to refresh workspace")
+                    )
+                    .finally(() => setBusy(false));
+                }}
+                className="inline-flex rounded-xl border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
+              >
+                Refresh
+              </button>
+            </div>
           </div>
         </header>
 
         {status && <p className="text-xs text-emerald-300">{status}</p>}
         {error && <p className="text-xs text-rose-300">{error}</p>}
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+          <div className="mb-4">
+            <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">Workspace Stages</p>
+            <p className="mt-1 text-xs text-slate-400">Use the step cards to jump between queue intake, draft approval, and seed monitoring.</p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {REVIEW_STEPS.map((step, index) => {
               const isActive = step.id === activeStep;
               const isComplete = stepCompletion[step.id];
@@ -2035,7 +2043,7 @@ export default function SetOpsReviewPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
+        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-white">1. Ingestion Queue</h2>
@@ -2353,7 +2361,7 @@ export default function SetOpsReviewPage() {
           )}
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
+        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-white">2. Draft & Approval</h2>
@@ -2620,7 +2628,7 @@ export default function SetOpsReviewPage() {
           )}
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
+        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-white">3. Seed Monitor</h2>

@@ -709,16 +709,30 @@ export default function VariantRefQaPage() {
         <title>Ten Kings · Variant Ref QA</title>
         <meta name="robots" content="noindex" />
       </Head>
-      <div className="flex flex-1 flex-col gap-6 px-6 py-8">
-        <div className="flex items-center justify-between gap-4">
-          <Link href="/admin/set-ops-review" className="text-xs uppercase tracking-[0.28em] text-slate-400 hover:text-white">
-            ← Set Ops Review
-          </Link>
-          <h1 className="font-heading text-2xl uppercase tracking-[0.18em] text-white">Variant Ref QA</h1>
-          <span className="text-xs uppercase tracking-[0.24em] text-slate-500">Clean bad reference images</span>
-        </div>
+      <div className="mx-auto flex w-full max-w-[1540px] flex-1 flex-col gap-5 px-4 py-6 lg:px-6">
+        <header className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-2">
+              <Link href="/admin/set-ops-review" className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 hover:text-white">
+                ← Set Ops Review
+              </Link>
+              <p className="text-[10px] uppercase tracking-[0.34em] text-violet-300">Reference QA</p>
+              <h1 className="font-heading text-3xl uppercase tracking-[0.16em] text-white">Variant Ref QA</h1>
+              <p className="max-w-3xl text-sm text-slate-300">
+                Load a seeded set, narrow the variant bucket, then process, promote, or replace refs from the canonical QA surface.
+              </p>
+            </div>
+            <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.22em] text-emerald-200">
+              Canonical Surface
+            </span>
+          </div>
+        </header>
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
+        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+          <div className="mb-3">
+            <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">1. Set Scope</p>
+            <p className="mt-1 text-xs text-slate-400">Load a seeded set, then keep the active set pinned while you work the queue.</p>
+          </div>
           <div className="flex flex-wrap items-end gap-2">
             <label className="flex min-w-[260px] flex-1 flex-col gap-2 text-xs uppercase tracking-[0.22em] text-slate-400">
               Set Search
@@ -770,6 +784,10 @@ export default function VariantRefQaPage() {
                 </button>
               );
             })}
+          </div>
+          <div className="mt-5">
+            <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">2. Variant Queue Filters</p>
+            <p className="mt-1 text-xs text-slate-400">Filter the selected set before loading the variant buckets you want to QA.</p>
           </div>
           <div className="mt-4 flex flex-wrap items-end gap-2">
             <label className="flex min-w-[320px] flex-1 flex-col gap-2 text-xs uppercase tracking-[0.22em] text-slate-400">
@@ -919,6 +937,8 @@ export default function VariantRefQaPage() {
                             src={variant.previewImageUrl}
                             alt={`${displayParallelLabel(variant.parallelId)} thumb`}
                             className="h-10 w-10 rounded-md object-cover"
+                            loading="lazy"
+                            decoding="async"
                           />
                         </a>
                       ) : (
@@ -940,14 +960,17 @@ export default function VariantRefQaPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
+        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="text-xs uppercase tracking-[0.24em] text-slate-400">
-              Selected: <span className="text-slate-200">{decodeHtml(selectedSetId) || "—"}</span> ·{" "}
-              <span className="text-slate-200">{selectedProgramId || "—"}</span> ·{" "}
-              <span className="text-slate-200">{displayParallelLabel(selectedParallelId) || "—"}</span> ·{" "}
-              <span className="text-slate-200">#{selectedCardNumber || "—"}</span> ·{" "}
-              <span className="text-slate-200">{selectedVariant?.playerLabel || "—"}</span>
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">3. Ref Actions</p>
+              <p className="mt-2 text-xs uppercase tracking-[0.24em] text-slate-400">
+                Selected: <span className="text-slate-200">{decodeHtml(selectedSetId) || "—"}</span> ·{" "}
+                <span className="text-slate-200">{selectedProgramId || "—"}</span> ·{" "}
+                <span className="text-slate-200">{displayParallelLabel(selectedParallelId) || "—"}</span> ·{" "}
+                <span className="text-slate-200">#{selectedCardNumber || "—"}</span> ·{" "}
+                <span className="text-slate-200">{selectedVariant?.playerLabel || "—"}</span>
+              </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -1037,7 +1060,7 @@ export default function VariantRefQaPage() {
               const sourceHost = sourceHostFromUrl(ref.sourceUrl);
               const isEbaySource = sourceHost.endsWith("ebay.com");
               return (
-                <article key={ref.id} className="rounded-xl border border-white/10 bg-night-800/60 p-3">
+                <article key={ref.id} className="rounded-2xl border border-white/10 bg-night-800/55 p-3 shadow-card">
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <label className="inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-slate-400">
                       <input
@@ -1066,10 +1089,12 @@ export default function VariantRefQaPage() {
                         src={preview}
                         alt={`${ref.displayLabel || ref.parallelId} ref`}
                         className="h-full w-full object-contain"
+                        loading="lazy"
+                        decoding="async"
                       />
                     </div>
                   </a>
-                  <div className="mt-3 space-y-2 text-[11px] text-slate-400">
+                  <div className="mt-3 grid gap-1.5 text-[11px] text-slate-400">
                     <p className="text-sm font-semibold text-white">
                       Label: <span className="text-white">{ref.displayLabel || ref.parallelId}</span>
                     </p>

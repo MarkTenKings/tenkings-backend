@@ -516,9 +516,15 @@ export default function AiOpsPage() {
         <section className="rounded-3xl border border-white/10 bg-night-800/65 p-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
+              <Link href="/admin" className="inline-flex text-[10px] uppercase tracking-[0.28em] text-slate-400 transition hover:text-white">
+                ← Admin Home
+              </Link>
               <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Live OCR/LLM Health</p>
               <h1 className="mt-2 font-heading text-3xl uppercase tracking-[0.12em] text-white">AI Ops Dashboard</h1>
-              <p className="mt-2 text-sm text-slate-300">Generated {toDateTime(data?.generatedAt)}.</p>
+              <p className="mt-2 max-w-3xl text-sm text-slate-300">
+                Canonical monitoring surface for OCR and LLM health, eval readiness, teach telemetry, and the quick attention queue.
+              </p>
+              <p className="mt-2 text-sm text-slate-400">Generated {toDateTime(data?.generatedAt)}.</p>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
@@ -1151,7 +1157,7 @@ export default function AiOpsPage() {
         <title>Ten Kings · AI Ops</title>
         <meta name="robots" content="noindex" />
       </Head>
-      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-6 px-6 py-10">
+      <div className="mx-auto flex w-full max-w-[1480px] flex-1 flex-col gap-6 px-4 py-6 lg:px-6">
         {sessionLoading ? (
           <div className="flex flex-1 items-center justify-center">
             <p className="text-sm uppercase tracking-[0.28em] text-slate-400">Checking access...</p>

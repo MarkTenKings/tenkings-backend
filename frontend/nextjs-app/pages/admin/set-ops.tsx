@@ -1107,69 +1107,75 @@ export default function SetOpsPage() {
         <meta name="robots" content="noindex" />
       </Head>
 
-      <div className="flex flex-1 flex-col gap-8 px-6 py-10">
-        <header className="space-y-3">
-          <p className="text-xs uppercase tracking-[0.3em] text-violet-300">Set Ops</p>
-          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Set Admin Control Panel</h1>
-          <p className="max-w-3xl text-sm text-slate-300">
-            Search active sets, inspect variant/reference footprint, and track the latest draft and seed state from production APIs.
-          </p>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em]">
-            <span className={`rounded-full border px-2 py-1 ${canReview ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
-              reviewer: {canReview ? "yes" : "no"}
-            </span>
-            <span className={`rounded-full border px-2 py-1 ${canApprove ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
-              approver: {canApprove ? "yes" : "no"}
-            </span>
-            <span className={`rounded-full border px-2 py-1 ${canArchive ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
-              admin: {canArchive ? "yes" : "no"}
-            </span>
-            <span className={`rounded-full border px-2 py-1 ${canDelete ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
-              delete: {canDelete ? "yes" : "no"}
-            </span>
-            <span
-              className={`rounded-full border px-2 py-1 ${
-                replaceWizardEnabled
-                  ? canReplace
-                    ? "border-gold-500/60 text-gold-200"
-                    : "border-amber-400/40 text-amber-200"
-                  : "border-white/20 text-slate-400"
-              }`}
-            >
-              replace: {replaceWizardEnabled ? (canReplace ? "ready" : "roles missing") : "flag off"}
-            </span>
-            {accessBusy && <span className="text-slate-400">loading roles...</span>}
+      <div className="mx-auto flex w-full max-w-[1540px] flex-1 flex-col gap-6 px-4 py-6 lg:px-6">
+        <header className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-3">
+              <p className="text-xs uppercase tracking-[0.3em] text-violet-300">Set Ops</p>
+              <h1 className="font-heading text-3xl uppercase tracking-[0.16em] text-white">Set Admin Control Panel</h1>
+              <p className="max-w-3xl text-sm text-slate-300">
+                Search active sets, inspect footprint, and track the latest draft and seed state from the production APIs.
+              </p>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em]">
+                <span className={`rounded-full border px-2 py-1 ${canReview ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+                  reviewer: {canReview ? "yes" : "no"}
+                </span>
+                <span className={`rounded-full border px-2 py-1 ${canApprove ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+                  approver: {canApprove ? "yes" : "no"}
+                </span>
+                <span className={`rounded-full border px-2 py-1 ${canArchive ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+                  admin: {canArchive ? "yes" : "no"}
+                </span>
+                <span className={`rounded-full border px-2 py-1 ${canDelete ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+                  delete: {canDelete ? "yes" : "no"}
+                </span>
+                <span
+                  className={`rounded-full border px-2 py-1 ${
+                    replaceWizardEnabled
+                      ? canReplace
+                        ? "border-gold-500/60 text-gold-200"
+                        : "border-amber-400/40 text-amber-200"
+                      : "border-white/20 text-slate-400"
+                  }`}
+                >
+                  replace: {replaceWizardEnabled ? (canReplace ? "ready" : "roles missing") : "flag off"}
+                </span>
+                {accessBusy && <span className="text-slate-400">loading roles...</span>}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                className="inline-flex rounded-xl border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 hover:text-white"
+                href="/admin"
+              >
+                ← Back to Console
+              </Link>
+              <Link
+                className="inline-flex rounded-xl border border-violet-400/40 bg-violet-500/10 px-3 py-2 text-xs uppercase tracking-[0.18em] text-violet-200 transition hover:bg-violet-500/20"
+                href="/admin/set-ops-review"
+              >
+                Open Review Workspace →
+              </Link>
+            </div>
           </div>
-          <Link
-            className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 transition hover:text-white"
-            href="/admin"
-          >
-            ← Back to console
-          </Link>
-          <Link
-            className="inline-flex text-xs uppercase tracking-[0.28em] text-violet-300 transition hover:text-violet-100"
-            href="/admin/set-ops-review"
-          >
-            Open Review Workspace →
-          </Link>
         </header>
 
         <section className="grid gap-4 sm:grid-cols-3">
-          <article className="rounded-2xl border border-white/10 bg-night-900/60 p-4">
+          <article className="rounded-2xl border border-white/10 bg-night-900/60 p-4 shadow-card">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Set Rows</p>
             <p className="mt-2 text-2xl font-semibold text-white">{total}</p>
           </article>
-          <article className="rounded-2xl border border-white/10 bg-night-900/60 p-4">
+          <article className="rounded-2xl border border-white/10 bg-night-900/60 p-4 shadow-card">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Variant Count</p>
             <p className="mt-2 text-2xl font-semibold text-white">{variantTotal.toLocaleString()}</p>
           </article>
-          <article className="rounded-2xl border border-white/10 bg-night-900/60 p-4">
+          <article className="rounded-2xl border border-white/10 bg-night-900/60 p-4 shadow-card">
             <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Reference Count</p>
             <p className="mt-2 text-2xl font-semibold text-white">{referenceTotal.toLocaleString()}</p>
           </article>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-4 md:p-6">
+        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-4 shadow-card md:p-6">
           <form className="mb-5 flex flex-col gap-3 md:flex-row md:items-center" onSubmit={onSearch}>
             <input
               value={queryInput}

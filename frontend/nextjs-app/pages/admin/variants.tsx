@@ -73,38 +73,35 @@ export default function AdminVariantsLegacyPage() {
         <title>Ten Kings · Variants (Moved)</title>
         <meta name="robots" content="noindex" />
       </Head>
-      <div className="flex flex-1 flex-col gap-6 px-6 py-10">
-        <div className="space-y-3">
-          <p className="text-xs uppercase tracking-[0.3em] text-violet-300">Variants</p>
-          <h1 className="font-heading text-4xl uppercase tracking-[0.18em] text-white">Workflow Moved</h1>
-          <p className="max-w-3xl text-sm text-slate-300">
-            Variant ingestion, bulk import, and seeding now run through Set Ops Review. Reference image cleanup and
-            manual curation run through Variant Ref QA.
+      <div className="mx-auto flex w-full max-w-5xl flex-1 flex-col gap-5 px-4 py-6 lg:px-6">
+        <section className="rounded-3xl border border-amber-400/30 bg-amber-500/10 p-6 shadow-card">
+          <p className="text-[10px] uppercase tracking-[0.32em] text-amber-200">Compatibility Route</p>
+          <h1 className="mt-2 font-heading text-3xl uppercase tracking-[0.16em] text-white">Variants Workflow Retired</h1>
+          <p className="mt-3 max-w-3xl text-sm text-slate-300">
+            This route no longer hosts active work. Variant ingestion, bulk import, and seeding now run through Set Ops Review. Reference image cleanup and manual curation now run through Variant Ref QA.
           </p>
-        </div>
+        </section>
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5">
-          <div className="grid gap-3 md:grid-cols-2">
+        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+          <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Open The Canonical Pages</p>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
             <Link
               href={{ pathname: "/admin/set-ops-review", query: nextQuery }}
-              className="inline-flex items-center justify-center rounded-full border border-gold-500/60 bg-gold-500 px-5 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-night-900 transition hover:bg-gold-400"
+              className="inline-flex items-center justify-center rounded-2xl border border-gold-500/60 bg-gold-500 px-5 py-3 text-xs font-semibold uppercase tracking-[0.24em] text-night-900 transition hover:bg-gold-400"
             >
               Go to Set Ops Review
             </Link>
             <Link
               href={{ pathname: "/admin/variant-ref-qa", query: nextQuery }}
-              className="inline-flex items-center justify-center rounded-full border border-sky-400/60 bg-sky-500/20 px-5 py-2 text-xs font-semibold uppercase tracking-[0.24em] text-sky-100 transition hover:bg-sky-500/30"
+              className="inline-flex items-center justify-center rounded-2xl border border-sky-400/60 bg-sky-500/20 px-5 py-3 text-xs font-semibold uppercase tracking-[0.24em] text-sky-100 transition hover:bg-sky-500/30"
             >
               Go to Variant Ref QA
             </Link>
           </div>
-          <div className="mt-4 text-xs text-slate-400">
+          <div className="mt-4 space-y-2 text-sm text-slate-300">
+            <p>This page remains live for old bookmarks only.</p>
             <p>
-              This page remains available as a compatibility route only. Primary operations should use Set Ops Review
-              and Variant Ref QA.
-            </p>
-            <p className="mt-2">
-              <Link href="/admin" className="text-slate-300 hover:text-white">
+              <Link href="/admin" className="text-slate-200 underline hover:text-white">
                 Return to Admin Home
               </Link>
             </p>
