@@ -3451,3 +3451,23 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsCsvContract.ts --file lib/server/setOpsDrafts.ts --file pages/admin/set-ops-review.tsx` (pass)
 - No deploy/restart/migration commands were executed in this session step.
+
+## Session Update (2026-03-05, Auto Promote Queue Gap Fix)
+- Investigated mismatch where Variant Ref QA showed many `Queue` rows even though images appeared PhotoRoom-processed.
+- Confirmed status semantics:
+  - `Queue/Done` is driven by `qaDoneCount` (requires `qaStatus=keep` or `ownedStatus=owned`), not by crop presence alone.
+- Root bug fixed in promotion path:
+  - processed refs had `cropUrls` entries stored as storage-key style values (for example `variants/...png`),
+  - auto promote attempted to fetch these like web URLs and skipped on failure,
+  - skipped refs remained `pending/external` => variants stayed `Queue`.
+- Patches:
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts`
+    - robustly resolve source image from crop/raw candidates,
+    - read managed storage keys directly (absolute URLs, local public-prefix URLs, raw key paths),
+    - fetch only as fallback.
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/process.ts`
+    - store processed `cropUrls` as normalized public/absolute URLs from `uploadBuffer` rather than key-only entries.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts` (pass)
+- No deploy/restart/migration actions executed in this step.

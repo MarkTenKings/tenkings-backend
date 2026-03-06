@@ -4,7 +4,13 @@ import { prisma } from "@tenkings/database";
 import { Prisma } from "@prisma/client";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { withAdminCors } from "../../../../../lib/server/cors";
-import { uploadBuffer, normalizeStorageUrl, readStorageBuffer, managedStorageKeyFromUrl } from "../../../../../lib/server/storage";
+import {
+  uploadBuffer,
+  normalizeStorageUrl,
+  readStorageBuffer,
+  managedStorageKeyFromUrl,
+  getPublicPrefix,
+} from "../../../../../lib/server/storage";
 import { buildSiteUrl } from "../../../../../lib/server/urls";
 
 type ResponseBody =
@@ -19,6 +25,22 @@ type ResponseBody =
 
 function asAbsolute(url: string) {
   return /^https?:\/\//i.test(url) ? url : buildSiteUrl(url);
+}
+
+function toManagedKey(value: string | null | undefined) {
+  const input = String(value || "").trim();
+  if (!input) return null;
+  if (/^https?:\/\//i.test(input)) {
+    return managedStorageKeyFromUrl(input);
+  }
+  const withoutLeadingSlash = input.replace(/^\/+/, "");
+  const publicPrefix = getPublicPrefix()
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
+  if (publicPrefix && withoutLeadingSlash.startsWith(`${publicPrefix}/`)) {
+    return withoutLeadingSlash.slice(publicPrefix.length + 1);
+  }
+  return withoutLeadingSlash;
 }
 
 export default withAdminCors(async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {
@@ -62,19 +84,30 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
         }
 
         let sourceBuffer: Buffer | null = null;
-        const managedRawKey = managedStorageKeyFromUrl(ref.rawImageUrl);
-        if (managedRawKey) {
-          sourceBuffer = await readStorageBuffer(managedRawKey).catch(() => null);
+        const sourceCandidates = [
+          ...(Array.isArray(ref.cropUrls) ? ref.cropUrls : []),
+          String(ref.rawImageUrl || "").trim(),
+        ]
+          .map((entry) => String(entry || "").trim())
+          .filter(Boolean);
+
+        for (const sourceCandidate of sourceCandidates) {
+          if (sourceBuffer) break;
+
+          const managedKey = toManagedKey(sourceCandidate);
+          if (managedKey) {
+            sourceBuffer = await readStorageBuffer(managedKey).catch(() => null);
+            if (sourceBuffer) break;
+          }
+
+          const response = await fetch(asAbsolute(sourceCandidate)).catch(() => null);
+          if (!response?.ok) continue;
+          sourceBuffer = Buffer.from(await response.arrayBuffer());
         }
 
         if (!sourceBuffer) {
-          const sourceUrl = ref.cropUrls?.[0] || ref.rawImageUrl;
-          const response = await fetch(asAbsolute(sourceUrl));
-          if (!response.ok) {
-            skipped += 1;
-            continue;
-          }
-          sourceBuffer = Buffer.from(await response.arrayBuffer());
+          skipped += 1;
+          continue;
         }
 
         const storageKey = `variants/${ref.setId}/${String((ref as any).programId || "base").trim()}/${ref.parallelId}/owned/${

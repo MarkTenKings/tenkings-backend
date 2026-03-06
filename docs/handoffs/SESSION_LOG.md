@@ -6502,3 +6502,35 @@
     - `git rev-parse --short HEAD`
     - `git log --oneline -n 5`
     - `docker compose ps`
+
+## 2026-03-05 - Auto Promote Queue Gap Fix (processed refs stuck as Queue)
+
+### Root Cause
+- Variant Ref QA marks a variant `Done` only when at least one ref has `qaStatus=keep` or `ownedStatus=owned`.
+- Post-seed auto pipeline did run PhotoRoom processing, but promote skipped many refs because processed `cropUrls[0]` entries were stored as storage keys (for example `variants/...png`) and promote tried to fetch them as web URLs.
+- When that fetch failed, promote incremented `skipped` and did not set owned/keep, leaving variants in `Queue` despite processed-looking images.
+
+### Code Changes
+- `frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts`
+  - Added robust source resolution for promotion:
+    - tries `cropUrls` and `rawImageUrl` candidates,
+    - resolves managed storage keys from absolute URLs, public-prefix local URLs, and raw key-style paths,
+    - reads from storage directly when possible,
+    - falls back to HTTP fetch only when needed.
+- `frontend/nextjs-app/pages/api/admin/variants/reference/process.ts`
+  - Changed processed `cropUrls` write path to store public/absolute URL output from `uploadBuffer` (normalized) instead of raw storage-key-only entry.
+  - Keeps backward-compatible filtering to avoid duplicate key/url entries.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; Node engine warning only)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts` (pass)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+  ## 2026-03-05 - Planned Deploy (auto promote queue gap fix)
+  - Plan: deploy process/promote fix for refs stuck in Queue after auto PhotoRoom pipeline.
+  - Scope:
+    - frontend/nextjs-app/pages/api/admin/variants/reference/process.ts
+    - frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts
+  - DB: no migration required.

@@ -4,7 +4,12 @@ import { prisma } from "@tenkings/database";
 import { Prisma } from "@prisma/client";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
 import { withAdminCors } from "../../../../../lib/server/cors";
-import { uploadBuffer, managedStorageKeyFromUrl, readStorageBuffer } from "../../../../../lib/server/storage";
+import {
+  uploadBuffer,
+  managedStorageKeyFromUrl,
+  normalizeStorageUrl,
+  readStorageBuffer,
+} from "../../../../../lib/server/storage";
 import { buildSiteUrl } from "../../../../../lib/server/urls";
 import { photoroomQueue } from "../../../../../lib/server/queues";
 import { normalizeProgramId } from "../../../../../lib/server/taxonomyV2Utils";
@@ -167,11 +172,16 @@ export default withAdminCors(async function handler(req: NextApiRequest, res: Ne
           const storageKey = `variants/${ref.setId}/${refProgramId}/${ref.parallelId}/processed/${
             ref.refType || "front"
           }-${Date.now()}-${crypto.randomUUID().slice(0, 8)}.png`;
-          await uploadBuffer(storageKey, processedBuffer, "image/png");
+          const uploaded = await uploadBuffer(storageKey, processedBuffer, "image/png");
+          const normalizedUploaded = normalizeStorageUrl(uploaded) ?? uploaded;
+          const cropUrl = asAbsolute(normalizedUploaded);
           const existingCropUrls = Array.isArray((ref as any).cropUrls)
             ? ((ref as any).cropUrls as string[]).filter(Boolean)
             : [];
-          const nextCropUrls = [storageKey, ...existingCropUrls.filter((entry) => entry !== storageKey)].slice(0, 6);
+          const nextCropUrls = [
+            cropUrl,
+            ...existingCropUrls.filter((entry) => entry !== cropUrl && entry !== storageKey),
+          ].slice(0, 6);
           await prisma.cardVariantReferenceImage.update({
             where: { id: ref.id },
             data: {
