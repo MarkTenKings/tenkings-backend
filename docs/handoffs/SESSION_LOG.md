@@ -6997,6 +6997,25 @@
 - No deploy/restart/migration commands were executed.
 - No workflow/API/DB logic was changed.
 
+## 2026-03-06 - Admin launch card polish pass
+
+### Summary
+- Removed the remaining outer gray launch-card shell so the poster/video media now forms the visible card container.
+- Moved launch-card titles into the upper-left overlay region of the media itself.
+- Updated title typography to use a slightly larger, more condensed display treatment.
+- Normalized `Set Workflows` to the same desktop card width as `Card Intake` by moving that section to the same 4-column desktop grid.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/index.tsx`
+
+### Validation Evidence
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx` (pass)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No workflow/API/DB logic was changed.
+
 ## 2026-03-06 - Planned Deploy (admin home real media launch cards)
 
 ### Plan
@@ -7006,4 +7025,19 @@
   - frontend/nextjs-app/public/admin/launch/*
   - docs/HANDOFF_SET_OPS.md
   - docs/handoffs/SESSION_LOG.md
+- DB: no migration required.
+
+## 2026-03-06 - Planned Deploy (admin launch-card polish)
+
+### Plan
+- Deploy `/admin` launch-card polish pass.
+- Scope:
+  - frontend/nextjs-app/pages/admin/index.tsx
+  - docs/HANDOFF_SET_OPS.md
+  - docs/handoffs/SESSION_LOG.md
+- Changes:
+  - remove outer gray launch-card shell
+  - move titles into upper-left media overlay
+  - tighten title typography
+  - normalize Set Workflows to the same desktop card width as Card Intake
 - DB: no migration required.

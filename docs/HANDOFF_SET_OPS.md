@@ -3659,3 +3659,17 @@ Build Set Ops UI flow with:
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx` (pass)
 - No deploy/restart/migration actions executed in this step.
 - No workflow/API/DB logic changed; this was a `/admin` launch-surface media upgrade only.
+
+## Session Update (2026-03-06, Admin home launch-card polish)
+- Applied a follow-up visual polish pass to `/admin` launch cards:
+  - removed the remaining outer gray shell so the media itself is the visible card,
+  - moved titles into the upper-left media overlay,
+  - switched title treatment to a slightly larger condensed display style,
+  - changed `Set Workflows` to the same 4-column desktop card width as `Card Intake`.
+- File updated:
+  - `frontend/nextjs-app/pages/admin/index.tsx`
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx` (pass)
+- No deploy/restart/migration actions executed in this step.
+- No workflow/API/DB logic changed; this was a `/admin` presentation-only refinement.

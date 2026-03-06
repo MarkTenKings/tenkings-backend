@@ -57,7 +57,7 @@ const ADMIN_SECTIONS: AdminSection[] = [
   },
   {
     title: "Set Workflows",
-    desktopColumns: 3,
+    desktopColumns: 4,
     routes: [
       {
         label: "Set Ops Review",
@@ -175,47 +175,55 @@ function AdminLaunchCard({
       onMouseLeave={stopMotion}
       onFocus={startMotion}
       onBlur={stopMotion}
-      className="group relative flex min-h-[320px] flex-col overflow-hidden rounded-[30px] border border-white/10 bg-[#151515] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.28)] transition duration-500 hover:-translate-y-1 hover:border-white/20 hover:bg-[#191919] focus-visible:-translate-y-1 focus-visible:border-white/24 focus-visible:bg-[#191919] focus-visible:outline-none"
+      className="group relative aspect-[16/10] overflow-hidden rounded-[30px] border border-white/10 bg-[#101010] shadow-[0_24px_60px_rgba(0,0,0,0.28)] transition duration-500 hover:-translate-y-1 hover:border-white/20 focus-visible:-translate-y-1 focus-visible:border-white/24 focus-visible:outline-none"
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_58%)]" />
-      <span className="relative z-10 text-[13px] font-semibold uppercase tracking-[0.34em] text-white">{route.label}</span>
-      <div className="relative mt-5 flex flex-1 items-center justify-center overflow-hidden rounded-[24px] border border-white/5 bg-[linear-gradient(180deg,#191919,#121212)]">
-        <Image
-          src={route.posterSrc}
-          alt=""
-          fill
-          priority={route.priority}
-          sizes="(min-width: 1280px) 24vw, (min-width: 768px) 45vw, 92vw"
-          className={[
-            "object-cover transition duration-700",
-            posterLive ? "grayscale-0 brightness-100" : "grayscale brightness-[0.78]",
-            showMotion ? "scale-[1.03] opacity-0" : "scale-100 opacity-100",
-          ].join(" ")}
-        />
-        <video
-          ref={videoRef}
-          muted
-          loop
-          playsInline
-          preload="metadata"
-          poster={route.posterSrc}
-          autoPlay={touchMotion && !reduceMotion}
-          onCanPlay={() => setVideoReady(true)}
-          className={[
-            "absolute inset-0 h-full w-full object-cover transition duration-700",
-            showMotion ? "scale-[1.03] opacity-100" : "scale-100 opacity-0",
-          ].join(" ")}
-        >
-          <source src={route.videoSrc} type="video/mp4" />
-        </video>
-        <div
-          className={[
-            "pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.12),transparent_55%)] transition duration-700",
-            showMotion ? "opacity-100" : "opacity-65",
-          ].join(" ")}
-        />
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/45 to-transparent" />
+      <Image
+        src={route.posterSrc}
+        alt=""
+        fill
+        priority={route.priority}
+        sizes="(min-width: 1280px) 24vw, (min-width: 768px) 45vw, 92vw"
+        className={[
+          "object-cover transition duration-700",
+          posterLive ? "grayscale-0 brightness-[1.02]" : "grayscale brightness-[0.74]",
+          showMotion ? "scale-[1.03] opacity-0" : "scale-100 opacity-100",
+        ].join(" ")}
+      />
+      <video
+        ref={videoRef}
+        muted
+        loop
+        playsInline
+        preload="metadata"
+        poster={route.posterSrc}
+        autoPlay={touchMotion && !reduceMotion}
+        onCanPlay={() => setVideoReady(true)}
+        className={[
+          "absolute inset-0 h-full w-full object-cover transition duration-700",
+          showMotion ? "scale-[1.03] opacity-100" : "scale-100 opacity-0",
+        ].join(" ")}
+      >
+        <source src={route.videoSrc} type="video/mp4" />
+      </video>
+      <div
+        className={[
+          "pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.12),transparent_55%)] transition duration-700",
+          showMotion ? "opacity-100" : "opacity-55",
+        ].join(" ")}
+      />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/72 via-black/18 to-black/42" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/50 to-transparent" />
+      <div className="absolute left-5 top-5 z-10 max-w-[78%]">
+        <span className="font-heading text-[1.45rem] uppercase tracking-[0.14em] text-white drop-shadow-[0_10px_24px_rgba(0,0,0,0.75)] sm:text-[1.55rem]">
+          {route.label}
+        </span>
       </div>
+      <div
+        className={[
+          "pointer-events-none absolute inset-0 rounded-[30px] ring-1 ring-inset transition duration-700",
+          showMotion ? "ring-white/14" : "ring-white/8",
+        ].join(" ")}
+      />
     </Link>
   );
 }
