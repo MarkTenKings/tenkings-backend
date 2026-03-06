@@ -1,107 +1,229 @@
 import Head from "next/head";
+import Image from "next/image";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 
-type AdminDestinationTone = "gold" | "emerald" | "sky" | "violet";
-
 type AdminDestination = {
   label: string;
   href: string;
-  description: string;
-  tone?: AdminDestinationTone;
+  posterSrc: string;
+  videoSrc: string;
+  priority?: boolean;
 };
 
 type AdminSection = {
   title: string;
-  description: string;
+  desktopColumns: 3 | 4;
   routes: AdminDestination[];
 };
 
 const ADMIN_SECTIONS: AdminSection[] = [
   {
     title: "Card Intake",
-    description: "Move cards through intake, review, inventory-ready checks, and physical assignment.",
+    desktopColumns: 4,
     routes: [
       {
         label: "Add Cards",
         href: "/admin/uploads",
-        description: "Upload new cards, kick off OCR, and start the intake path.",
+        posterSrc: "/admin/launch/add-cards-poster.jpg",
+        videoSrc: "/admin/launch/add-cards.mp4",
+        priority: true,
       },
       {
         label: "KingsReview",
         href: "/admin/kingsreview",
-        description: "Handle downstream human review decisions and move cards through manual checkpoints.",
-        tone: "sky",
+        posterSrc: "/admin/launch/kingsreview-poster.jpg",
+        videoSrc: "/admin/launch/kingsreview.mp4",
+        priority: true,
       },
       {
         label: "Inventory Ready",
         href: "/admin/inventory-ready",
-        description: "Review cards that are ready for inventory-facing operations.",
-        tone: "emerald",
+        posterSrc: "/admin/launch/inventory-ready-poster.jpg",
+        videoSrc: "/admin/launch/inventory-ready.mp4",
+        priority: true,
       },
       {
         label: "Assigned Locations",
         href: "/admin/location-batches",
-        description: "Inspect and manage cards that already have assigned storage or operational locations.",
-        tone: "violet",
+        posterSrc: "/admin/launch/assigned-locations-poster.jpg",
+        videoSrc: "/admin/launch/assigned-locations.mp4",
+        priority: true,
       },
     ],
   },
   {
     title: "Set Workflows",
-    description: "Use these standalone pages for ingest, draft approval, set administration, and reference-image QA.",
+    desktopColumns: 3,
     routes: [
       {
         label: "Set Ops Review",
         href: "/admin/set-ops-review",
-        description: "Queue source files, build and approve drafts, then monitor seed jobs in the guided stepper workflow.",
+        posterSrc: "/admin/launch/set-ops-review-poster.jpg",
+        videoSrc: "/admin/launch/set-ops-review.mp4",
       },
       {
         label: "Variant Ref QA",
         href: "/admin/variant-ref-qa",
-        description: "Filter seeded variant buckets, process and promote refs, and clean bad reference images.",
-        tone: "sky",
+        posterSrc: "/admin/launch/variant-ref-qa-poster.jpg",
+        videoSrc: "/admin/launch/variant-ref-qa.mp4",
       },
       {
         label: "Set Ops",
         href: "/admin/set-ops",
-        description: "Search active sets, inspect footprint, and run archive, replace, or delete flows from the set control panel.",
-        tone: "emerald",
+        posterSrc: "/admin/launch/set-ops-poster.jpg",
+        videoSrc: "/admin/launch/set-ops.mp4",
       },
     ],
   },
   {
     title: "Monitoring",
-    description: "Use the dedicated monitoring surface for OCR and LLM health, eval coverage, and attention queues.",
+    desktopColumns: 4,
     routes: [
       {
         label: "AI Ops",
         href: "/admin/ai-ops",
-        description: "Monitor AI pipeline health, manage eval cases, and retry cards that need intervention.",
-        tone: "violet",
+        posterSrc: "/admin/launch/ai-ops-poster.jpg",
+        videoSrc: "/admin/launch/ai-ops.mp4",
       },
     ],
   },
 ];
 
-function destinationCardClass(tone: AdminDestinationTone = "gold") {
-  switch (tone) {
-    case "emerald":
-      return "border-emerald-400/35 bg-emerald-500/10 hover:border-emerald-300/60 hover:bg-emerald-500/15";
-    case "sky":
-      return "border-sky-400/35 bg-sky-500/10 hover:border-sky-300/60 hover:bg-sky-500/15";
-    case "violet":
-      return "border-violet-400/35 bg-violet-500/10 hover:border-violet-300/60 hover:bg-violet-500/15";
-    default:
-      return "border-gold-500/35 bg-gold-500/10 hover:border-gold-400/60 hover:bg-gold-500/15";
+function sectionGridClass(columns: AdminSection["desktopColumns"]) {
+  if (columns === 4) {
+    return "grid gap-4 md:grid-cols-2 xl:grid-cols-4";
   }
+  return "grid gap-4 md:grid-cols-2 xl:grid-cols-3";
+}
+
+function bindMediaQueryChange(mediaQuery: MediaQueryList, listener: () => void) {
+  if (typeof mediaQuery.addEventListener === "function") {
+    mediaQuery.addEventListener("change", listener);
+    return () => mediaQuery.removeEventListener("change", listener);
+  }
+
+  mediaQuery.addListener(listener);
+  return () => mediaQuery.removeListener(listener);
+}
+
+function AdminLaunchCard({
+  route,
+  touchMotion,
+  reduceMotion,
+}: {
+  route: AdminDestination;
+  touchMotion: boolean;
+  reduceMotion: boolean;
+}) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [active, setActive] = useState(false);
+  const [videoReady, setVideoReady] = useState(false);
+
+  const posterLive = touchMotion || active;
+  const showMotion = !reduceMotion && videoReady && posterLive;
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (touchMotion && !reduceMotion) {
+      const autoplay = video.play();
+      if (autoplay && typeof autoplay.catch === "function") {
+        autoplay.catch(() => undefined);
+      }
+      setActive(true);
+      return;
+    }
+
+    video.pause();
+    video.currentTime = 0;
+    setActive(false);
+  }, [touchMotion, reduceMotion, route.videoSrc]);
+
+  const startMotion = () => {
+    if (touchMotion || reduceMotion) return;
+    const video = videoRef.current;
+    if (!video) return;
+    video.currentTime = 0;
+    const playback = video.play();
+    if (playback && typeof playback.catch === "function") {
+      playback.catch(() => undefined);
+    }
+    setActive(true);
+  };
+
+  const stopMotion = () => {
+    if (touchMotion || reduceMotion) return;
+    const video = videoRef.current;
+    if (!video) {
+      setActive(false);
+      return;
+    }
+    video.pause();
+    video.currentTime = 0;
+    setActive(false);
+  };
+
+  return (
+    <Link
+      href={route.href}
+      onMouseEnter={startMotion}
+      onMouseLeave={stopMotion}
+      onFocus={startMotion}
+      onBlur={stopMotion}
+      className="group relative flex min-h-[320px] flex-col overflow-hidden rounded-[30px] border border-white/10 bg-[#151515] p-5 shadow-[0_24px_60px_rgba(0,0,0,0.28)] transition duration-500 hover:-translate-y-1 hover:border-white/20 hover:bg-[#191919] focus-visible:-translate-y-1 focus-visible:border-white/24 focus-visible:bg-[#191919] focus-visible:outline-none"
+    >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_58%)]" />
+      <span className="relative z-10 text-[13px] font-semibold uppercase tracking-[0.34em] text-white">{route.label}</span>
+      <div className="relative mt-5 flex flex-1 items-center justify-center overflow-hidden rounded-[24px] border border-white/5 bg-[linear-gradient(180deg,#191919,#121212)]">
+        <Image
+          src={route.posterSrc}
+          alt=""
+          fill
+          priority={route.priority}
+          sizes="(min-width: 1280px) 24vw, (min-width: 768px) 45vw, 92vw"
+          className={[
+            "object-cover transition duration-700",
+            posterLive ? "grayscale-0 brightness-100" : "grayscale brightness-[0.78]",
+            showMotion ? "scale-[1.03] opacity-0" : "scale-100 opacity-100",
+          ].join(" ")}
+        />
+        <video
+          ref={videoRef}
+          muted
+          loop
+          playsInline
+          preload="metadata"
+          poster={route.posterSrc}
+          autoPlay={touchMotion && !reduceMotion}
+          onCanPlay={() => setVideoReady(true)}
+          className={[
+            "absolute inset-0 h-full w-full object-cover transition duration-700",
+            showMotion ? "scale-[1.03] opacity-100" : "scale-100 opacity-0",
+          ].join(" ")}
+        >
+          <source src={route.videoSrc} type="video/mp4" />
+        </video>
+        <div
+          className={[
+            "pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.12),transparent_55%)] transition duration-700",
+            showMotion ? "opacity-100" : "opacity-65",
+          ].join(" ")}
+        />
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black/45 to-transparent" />
+      </div>
+    </Link>
+  );
 }
 
 export default function AdminHome() {
   const { session, loading, ensureSession, logout } = useSession();
+  const [touchMotion, setTouchMotion] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(false);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -111,6 +233,25 @@ export default function AdminHome() {
     typeof window !== "undefined" &&
     process.env.NEXT_PUBLIC_ADMIN_USER_IDS === undefined &&
     process.env.NEXT_PUBLIC_ADMIN_PHONES === undefined;
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return undefined;
+    const touchQuery = window.matchMedia("(hover: none), (pointer: coarse)");
+    const reduceQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const syncMediaModes = () => {
+      setTouchMotion(touchQuery.matches);
+      setReduceMotion(reduceQuery.matches);
+    };
+
+    syncMediaModes();
+
+    const removeTouchListener = bindMediaQueryChange(touchQuery, syncMediaModes);
+    const removeReduceListener = bindMediaQueryChange(reduceQuery, syncMediaModes);
+    return () => {
+      removeTouchListener();
+      removeReduceListener();
+    };
+  }, []);
 
   const renderContent = () => {
     if (loading) {
@@ -165,59 +306,17 @@ export default function AdminHome() {
     }
 
     return (
-      <div className="mx-auto flex w-full max-w-[1480px] flex-1 flex-col gap-6 px-4 py-6 lg:px-6">
-        <header className="rounded-3xl border border-white/10 bg-night-900/70 p-6 shadow-card">
-          <p className="text-[10px] uppercase tracking-[0.34em] text-violet-300">Admin Launchpad</p>
-          <h1 className="mt-2 font-heading text-3xl uppercase tracking-[0.16em] text-white">Canonical Operator Surfaces</h1>
-          <p className="mt-3 max-w-4xl text-sm text-slate-300">
-            Use the standalone admin pages below. Duplicate Catalog Ops and Variants compatibility routes have been removed from the launchpad to keep operators on the full-width working surfaces.
-          </p>
-        </header>
-
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.75fr)_320px]">
-          <div className="space-y-6">
-            {ADMIN_SECTIONS.map((section) => (
-              <section key={section.title} className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
-                <div className="mb-4">
-                  <p className="text-xs uppercase tracking-[0.28em] text-slate-400">{section.title}</p>
-                  <p className="mt-2 max-w-3xl text-sm text-slate-300">{section.description}</p>
-                </div>
-                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                  {section.routes.map((route) => (
-                    <Link
-                      key={route.href}
-                      href={route.href}
-                      className={`group rounded-2xl border p-4 shadow-card transition ${destinationCardClass(route.tone)}`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-white">{route.label}</p>
-                          <p className="mt-2 text-sm text-slate-200">{route.description}</p>
-                        </div>
-                        <span className="text-[10px] uppercase tracking-[0.24em] text-white/70 transition group-hover:text-white">
-                          Open
-                        </span>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
-              </section>
-            ))}
-          </div>
-
-          <aside className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
-            <p className="text-xs uppercase tracking-[0.28em] text-slate-400">Routing Notes</p>
-            <div className="mt-3 space-y-3 text-sm text-slate-300">
-              <p>Set Ops Review is the intake, draft, and seed workspace.</p>
-              <p>Variant Ref QA is the active home for reference cleanup and variants QA work.</p>
-              <p>Set Ops remains the set-level control panel for archive, replace, delete, and footprint checks.</p>
-              <p>AI Ops is the canonical monitoring surface for OCR, LLM, and eval health.</p>
+      <div className="mx-auto flex w-full max-w-[1700px] flex-1 flex-col gap-10 px-4 py-8 lg:px-6">
+        {ADMIN_SECTIONS.map((section) => (
+          <section key={section.title} className="space-y-4">
+            <p className="text-xs uppercase tracking-[0.34em] text-slate-400">{section.title}</p>
+            <div className={sectionGridClass(section.desktopColumns)}>
+              {section.routes.map((route) => (
+                <AdminLaunchCard key={route.href} route={route} touchMotion={touchMotion} reduceMotion={reduceMotion} />
+              ))}
             </div>
-            <div className="mt-5 rounded-2xl border border-amber-400/25 bg-amber-500/10 p-4 text-sm text-amber-100/90">
-              Legacy Catalog Ops and Variants routes still resolve for old bookmarks, but they now hand off into the standalone pages instead of duplicating the work surfaces.
-            </div>
-          </aside>
-        </div>
+          </section>
+        ))}
       </div>
     );
   };

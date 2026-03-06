@@ -3617,3 +3617,45 @@ Build Set Ops UI flow with:
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx --file pages/admin/variants.tsx --file pages/admin/catalog-ops/index.tsx --file pages/admin/catalog-ops/ingest-draft.tsx --file pages/admin/catalog-ops/variant-studio.tsx --file pages/admin/catalog-ops/ai-quality.tsx --file pages/admin/variant-ref-qa.tsx --file pages/admin/set-ops-review.tsx --file pages/admin/set-ops.tsx --file pages/admin/ai-ops.tsx --file components/catalogOps/CatalogOpsWorkstationShell.tsx --file components/catalogOps/CatalogOpsCompatibilityNotice.tsx` (pass; only existing `@next/next/no-img-element` warnings in `pages/admin/variant-ref-qa.tsx`)
 - No deploy/restart/migration actions executed in this step.
 - No API contracts, DB operations, or destructive set actions were changed.
+
+## Session Update (2026-03-06, Admin home media-card redesign)
+- Reworked `/admin` again to remove the remaining text-heavy launchpad chrome.
+- Removed:
+  - the `Canonical Operator Surfaces` hero section,
+  - the `Routing Notes` sidebar,
+  - descriptive card copy,
+  - `Open` labels inside the cards.
+- Replaced the admin home surface with:
+  - minimal section labels,
+  - uniform neutral launch cards,
+  - full-card click targets,
+  - stylized monochrome motion scenes that activate on interaction.
+- Interaction model:
+  - desktop/pointer devices use hover/focus/active to reveal color and motion,
+  - touch devices auto-switch to a subtle ambient-motion mode using `matchMedia("(hover: none), (pointer: coarse)")`.
+- File updated:
+  - `frontend/nextjs-app/pages/admin/index.tsx`
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx` (pass)
+- No deploy/restart/migration actions executed in this step.
+- No workflow/API/DB logic changed; this was a `/admin` presentation-only pass.
+
+## Session Update (2026-03-06, Admin home real media asset integration)
+- User supplied a complete launch-card asset pack from `/Users/markthomas/Downloads/tenkings-launch-cards`.
+- Verified the delivered pack contained:
+  - 8 poster JPGs at `1920x1200`
+  - 8 MP4 loops
+  - practical admin-safe file sizes (roughly `987K` to `3.4M`)
+- Copied the media into the app under:
+  - `frontend/nextjs-app/public/admin/launch/`
+- Updated `frontend/nextjs-app/pages/admin/index.tsx` so launch cards now use:
+  - real poster images in the default state,
+  - real video playback on hover/focus for desktop pointer devices,
+  - autoplay inline playback on touch/coarse-pointer devices,
+  - poster-only behavior when `prefers-reduced-motion` is enabled.
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx` (pass)
+- No deploy/restart/migration actions executed in this step.
+- No workflow/API/DB logic changed; this was a `/admin` launch-surface media upgrade only.
