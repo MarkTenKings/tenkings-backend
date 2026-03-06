@@ -6728,6 +6728,7 @@
 ### Operations/Safety
 - No deploy/restart/migration commands were executed in this coding step.
 - No destructive DB/set operations were executed.
+
   ## 2026-03-06 - Planned Deploy (NoSuchKey absolute-URL/key-precedence final fix)
   - Plan: deploy final variants/reference key parsing + presign precedence fixes.
   - Scope:
@@ -6741,3 +6742,84 @@
     - `git rev-parse --short HEAD`
     - `git log --oneline -n 5`
     - `docker compose ps`
+
+## 2026-03-06 - Agent Context Sync (Docs-Only)
+
+### Summary
+- Re-read required startup docs listed in `AGENTS.md`.
+- Confirmed workstation repo state before doc updates:
+  - `git status -sb`: `## main...origin/main`
+  - branch: `main`
+  - short `HEAD`: `08837d6`
+- No code edits beyond this handoff documentation update, and no runtime, deploy, restart, migration, or DB operations were executed.
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- User explicitly instructed not to run deploy/restart/migrate commands; none were run.
+- Existing set-ops runtime next steps remain unchanged from the prior handoff.
+
+## 2026-03-06 - Variant Ref QA double-encoded storage key fix
+
+### Summary
+- Investigated new user screenshot evidence from Variant Ref QA:
+  - inline images missing in the QA grid,
+  - clicked image URL returned `AccessDenied` / `Request has expired`,
+  - browser URL path visibly contained `%2520` in the set segment.
+- Identified a remaining key-normalization bug rather than a pure object-existence issue:
+  - managed/public URLs for owned images are stored with encoded spaces (`%20`),
+  - key extraction logic reused that encoded pathname as the S3 key,
+  - presign then encoded `%` again, producing `%2520` path segments in signed URLs.
+- This directly affects sets with spaces in `setId` such as `2025 Topps Sterling Baseball`.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/storage.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/process.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts`
+
+### Code Changes
+- Added shared `normalizeStorageKeyCandidate(...)` helper to decode public/managed path candidates before key reuse.
+- Updated `managedStorageKeyFromUrl(...)` to decode URL pathname before bucket/public-prefix stripping.
+- Updated variants/reference read APIs to decode public-path fallbacks before presigning.
+- Updated process/promote fallback key parsing to decode app/public path inputs before attempting managed storage reads.
+
+### Validation Evidence
+- `PATH=/opt/homebrew/bin:$PATH pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+- `PATH=/opt/homebrew/bin:$PATH pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts` (pass)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No DB mutation or destructive set operation was executed.
+
+## 2026-03-06 - Planned Deploy (variant ref QA double-encoded key fix)
+
+### Plan
+- Deploy managed storage key decoding fix for Variant Ref QA image presign/read paths.
+- Scope:
+  - frontend/nextjs-app/lib/server/storage.ts
+  - frontend/nextjs-app/pages/api/admin/variants/index.ts
+  - frontend/nextjs-app/pages/api/admin/variants/reference/index.ts
+  - frontend/nextjs-app/pages/api/admin/variants/reference/process.ts
+  - frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts
+- DB: no migration required.
+
+## 2026-03-06 - Deploy Result (variant ref QA double-encoded key fix)
+
+### Result
+- Workstation pushed `c26878b` to `origin/main`.
+- Droplet updated via `git pull --ff-only` to `c26878b` on `main`.
+- Services rebuilt/recreated via `docker compose up -d --build --force-recreate`.
+- Evidence captured:
+  - droplet `git rev-parse --short HEAD`: `c26878b`
+  - `docker compose ps`
+- Verification:
+  - hard-refresh Variant Ref QA performed
+  - Hank Aaron ref image loaded in prod
+  - clicked image URL no longer showed `%2520` in the set segment
