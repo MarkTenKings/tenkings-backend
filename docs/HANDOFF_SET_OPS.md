@@ -3555,3 +3555,38 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/promote.ts --file pages/api/admin/variants/reference/process.ts --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx` (pass; existing image-element warnings)
 - No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-06, Agent Context Sync)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Confirmed workstation repo state before doc updates:
+  - `git status -sb`: `## main...origin/main`
+  - branch: `main`
+  - `git rev-parse --short HEAD`: `08837d6`
+- No code/runtime changes, deploy/restart/migration actions, or DB operations were executed.
+- Existing product/runtime next actions remain unchanged.
+
+## Session Update (2026-03-06, Variant Ref QA double-encoded key fix)
+- User screenshot shifted the active symptom from generic `NoSuchKey` to an expired signed URL whose path contained `%2520` in the set segment.
+- Root cause identified in code:
+  - `normalizeStorageUrl(...)` stores managed absolute URLs with encoded spaces (`%20`).
+  - `managedStorageKeyFromUrl(...)` and local public-path fallback parsers were returning that encoded pathname as the storage key instead of decoding it back to the real object key.
+  - Presigning that encoded key produced signed URLs targeting `%2520` paths, which is consistent with the user screenshot and would fail for sets with spaces in `setId`.
+- Fix implemented:
+  - added shared `normalizeStorageKeyCandidate(...)` helper in `frontend/nextjs-app/lib/server/storage.ts` to decode managed/public path candidates safely.
+  - updated managed URL key extraction in `frontend/nextjs-app/lib/server/storage.ts` to decode pathname before bucket/public-prefix stripping.
+  - updated variants/reference read paths and process/promote fallback parsers to use the decoded key normalization helper.
+- Files:
+  - `frontend/nextjs-app/lib/server/storage.ts`
+  - `frontend/nextjs-app/pages/api/admin/variants/index.ts`
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/process.ts`
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts`
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/index.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts` (pass)
+- No deploy/restart/migration actions executed in this step.

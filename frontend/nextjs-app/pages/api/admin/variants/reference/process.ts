@@ -8,6 +8,7 @@ import {
   uploadBuffer,
   getPublicPrefix,
   managedStorageKeyFromUrl,
+  normalizeStorageKeyCandidate,
   normalizeStorageUrl,
   readStorageBuffer,
 } from "../../../../../lib/server/storage";
@@ -59,13 +60,13 @@ function asAbsolute(url: string) {
 }
 
 function keyFromPublicPath(pathname: string) {
-  const withoutLeadingSlash = String(pathname || "").replace(/^\/+/, "");
-  if (!withoutLeadingSlash) return null;
+  const normalizedPath = normalizeStorageKeyCandidate(pathname);
+  if (!normalizedPath) return null;
   const publicPrefix = getPublicPrefix()
     .replace(/^\/+/, "")
     .replace(/\/+$/, "");
-  if (publicPrefix && withoutLeadingSlash.startsWith(`${publicPrefix}/`)) {
-    return withoutLeadingSlash.slice(publicPrefix.length + 1);
+  if (publicPrefix && normalizedPath.startsWith(`${publicPrefix}/`)) {
+    return normalizedPath.slice(publicPrefix.length + 1);
   }
   return null;
 }

@@ -88,6 +88,16 @@ export function getPublicPrefix() {
   return publicPrefix;
 }
 
+export function normalizeStorageKeyCandidate(value: string | null | undefined) {
+  const withoutLeadingSlash = String(value || "").replace(/^\/+/, "");
+  if (!withoutLeadingSlash) return null;
+  try {
+    return decodeURIComponent(withoutLeadingSlash);
+  } catch {
+    return withoutLeadingSlash;
+  }
+}
+
 export function buildStorageKey(userId: string, assetId: string, fileName: string) {
   const base = sanitizeFileName(fileName);
   const safeAsset = assetId.replace(/[^a-zA-Z0-9_-]/g, "");
@@ -261,7 +271,7 @@ export function managedStorageKeyFromUrl(input: string | null | undefined) {
   try {
     const url = new URL(input);
     const host = url.host;
-    const pathname = url.pathname.replace(/^\/+/, "");
+    const pathname = normalizeStorageKeyCandidate(url.pathname);
     if (!pathname) return null;
 
     const publicBase = s3PublicBaseUrl ? new URL(s3PublicBaseUrl) : null;

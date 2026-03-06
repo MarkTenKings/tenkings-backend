@@ -2,7 +2,13 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { normalizeCardNumber, normalizeParallelLabel, normalizeSetLabel } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
-import { getPublicPrefix, getStorageMode, managedStorageKeyFromUrl, presignReadUrl } from "../../../../../lib/server/storage";
+import {
+  getPublicPrefix,
+  getStorageMode,
+  managedStorageKeyFromUrl,
+  normalizeStorageKeyCandidate,
+  presignReadUrl,
+} from "../../../../../lib/server/storage";
 import { normalizeProgramId } from "../../../../../lib/server/taxonomyV2Utils";
 
 type ReferenceRow = {
@@ -200,15 +206,15 @@ function keyFromStoredImage(value: string | null | undefined) {
   const input = String(value || "").trim();
   if (!input) return null;
   const keyFromPublicPath = (pathname: string) => {
-    const withoutLeadingSlash = String(pathname || "").replace(/^\/+/, "");
-    if (!withoutLeadingSlash) return null;
+    const normalizedPath = normalizeStorageKeyCandidate(pathname);
+    if (!normalizedPath) return null;
     const publicPrefix = getPublicPrefix()
       .replace(/^\/+/, "")
       .replace(/\/+$/, "");
-    if (publicPrefix && withoutLeadingSlash.startsWith(`${publicPrefix}/`)) {
-      return withoutLeadingSlash.slice(publicPrefix.length + 1);
+    if (publicPrefix && normalizedPath.startsWith(`${publicPrefix}/`)) {
+      return normalizedPath.slice(publicPrefix.length + 1);
     }
-    return withoutLeadingSlash;
+    return normalizedPath;
   };
   if (/^https?:\/\//i.test(input)) {
     const managedFromUrl = managedStorageKeyFromUrl(input);
