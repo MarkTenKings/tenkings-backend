@@ -6640,3 +6640,10 @@
     - frontend/nextjs-app/pages/admin/variant-ref-qa.tsx
     - frontend/nextjs-app/pages/admin/set-ops-review.tsx
   - DB: no migration required.
+  ## 2026-03-06 - Deploy Result (auto seed pipeline reliability hotfix bundle)
+  - Droplet updated via `git pull --ff-only` on `main`.
+  - Services rebuilt/recreated via `docker compose up -d --build --force-recreate`.
+  - Evidence captured:
+    - `git rev-parse --short HEAD`
+    - `git log --oneline -n 5`
+    - `docker compose ps`
