@@ -27,20 +27,34 @@ function asAbsolute(url: string) {
   return /^https?:\/\//i.test(url) ? url : buildSiteUrl(url);
 }
 
-function toManagedKey(value: string | null | undefined) {
-  const input = String(value || "").trim();
-  if (!input) return null;
-  if (/^https?:\/\//i.test(input)) {
-    return managedStorageKeyFromUrl(input);
-  }
-  const withoutLeadingSlash = input.replace(/^\/+/, "");
+function keyFromPublicPath(pathname: string) {
+  const withoutLeadingSlash = String(pathname || "").replace(/^\/+/, "");
+  if (!withoutLeadingSlash) return null;
   const publicPrefix = getPublicPrefix()
     .replace(/^\/+/, "")
     .replace(/\/+$/, "");
   if (publicPrefix && withoutLeadingSlash.startsWith(`${publicPrefix}/`)) {
     return withoutLeadingSlash.slice(publicPrefix.length + 1);
   }
-  return withoutLeadingSlash;
+  return null;
+}
+
+function toManagedKey(value: string | null | undefined) {
+  const input = String(value || "").trim();
+  if (!input) return null;
+  if (/^https?:\/\//i.test(input)) {
+    const managedFromUrl = managedStorageKeyFromUrl(input);
+    if (managedFromUrl) return managedFromUrl;
+    try {
+      const parsed = new URL(input);
+      return keyFromPublicPath(parsed.pathname);
+    } catch {
+      return null;
+    }
+  }
+  const fromPublicPath = keyFromPublicPath(input);
+  if (fromPublicPath) return fromPublicPath;
+  return input.replace(/^\/+/, "");
 }
 
 export default withAdminCors(async function handler(req: NextApiRequest, res: NextApiResponse<ResponseBody>) {

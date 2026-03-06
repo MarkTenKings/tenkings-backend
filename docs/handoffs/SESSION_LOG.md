@@ -6541,3 +6541,102 @@
     - `git rev-parse --short HEAD`
     - `git log --oneline -n 5`
     - `docker compose ps`
+
+## 2026-03-05 - Hotfix Follow-up (auto pipeline showed all Queue / preview looked unprocessed)
+
+### Root Cause Follow-up
+- Additional reliability gap identified in auto promote source resolution:
+  - some processed/ref URLs resolve as app public paths (or absolute app URLs) that were not always converted back to managed storage keys,
+  - this could lead to promote `skipped` and leave refs `pending/external` (`Queue`).
+- Additional UX mismatch identified in QA preview selection:
+  - preview logic could prefer raw eBay URL over processed crop when raw had `s-l###` token and crop did not,
+  - this made processed refs appear "not processed" visually.
+
+### Code Changes
+- `frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts`
+  - added `keyFromPublicPath` + stronger `toManagedKey` fallback:
+    - parse absolute URL pathname for public-prefix keys,
+    - handle local/public-prefix paths consistently before HTTP fallback.
+- `frontend/nextjs-app/pages/api/admin/variants/reference/process.ts`
+  - write processed `cropUrls` as normalized uploaded URL/path (not forced absolute host URL) to avoid host-mismatch artifacts.
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+  - preview selector now prefers non-eBay crop URL when raw is eBay, so PhotoRoom output is shown.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing `no-img-element` warnings)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+
+## 2026-03-05 - Reviewer Hardening Pass (seed pipeline navigation + collector visibility)
+
+### Findings Addressed
+- Browser-driven post-seed pipeline could be interrupted by in-app navigation before process/promote completed.
+- Auto pipeline could silently report success with `total=0` collected ids even when seed inserted refs.
+
+### Code Changes
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+  - added `seedPipelineInFlight` guard (`referenceSeedInFlight || postSeedPipelineInFlight`).
+  - disabled `Open Reference QA` link while seed/post-seed pipeline is in flight.
+  - kept unload guard tied to the combined in-flight state.
+  - added explicit warning/error when seed inserted refs but collector returns zero ids.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing `no-img-element` warnings)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+
+## 2026-03-05 - Reviewer Hardening Follow-up (process path-key parity)
+
+### Finding Addressed
+- `reference/process` had narrower managed-key resolution than `reference/promote`, which could cause reprocess skips when source URLs were app/public-path style.
+
+### Code Changes
+- `frontend/nextjs-app/pages/api/admin/variants/reference/process.ts`
+  - added `keyFromPublicPath` fallback and upgraded `toManagedKey` to handle:
+    - absolute app URLs via pathname extraction,
+    - local public-prefix paths,
+    - raw managed key paths.
+  - keeps HTTP fetch as fallback only.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing `no-img-element` warnings)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+
+## 2026-03-05 - Reviewer Hardening Follow-up (auto pipeline warning surfacing)
+
+### Finding Addressed
+- Auto pipeline could complete with low/zero effective work without obvious failure signal in UI status.
+
+### Code Changes
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+  - added warning aggregation after post-seed pipeline for:
+    - seeded refs but collector returned zero ids,
+    - `processed=0` when collected total > 0,
+    - `promoted+alreadyOwned=0` when collected total > 0.
+  - warnings are appended to status and emitted as error banner text for operator visibility.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing `no-img-element` warnings)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+  ## 2026-03-06 - Planned Deploy (auto seed pipeline reliability hotfix bundle)
+  - Plan: deploy auto seed/process/promote/preview reliability fixes and pipeline warning hardening.
+  - Scope:
+    - frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts
+    - frontend/nextjs-app/pages/api/admin/variants/reference/process.ts
+    - frontend/nextjs-app/pages/admin/variant-ref-qa.tsx
+    - frontend/nextjs-app/pages/admin/set-ops-review.tsx
+  - DB: no migration required.

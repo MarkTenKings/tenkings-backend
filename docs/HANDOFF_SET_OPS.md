@@ -3471,3 +3471,49 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts` (pass)
 - No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-05, Auto Pipeline Queue/Preview Hotfix)
+- Follow-up fix after report that all variants showed `Queue` and looked unprocessed.
+- Promotion reliability hardening (`frontend/nextjs-app/pages/api/admin/variants/reference/promote.ts`):
+  - added public-path key extraction fallback for absolute/local URLs,
+  - improved managed-key resolution before HTTP fetch.
+- Processed crop URL write adjustment (`frontend/nextjs-app/pages/api/admin/variants/reference/process.ts`):
+  - store normalized uploaded URL/path directly (avoid forced absolute host URL).
+- QA preview correctness update (`frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`):
+  - when crop is non-eBay and raw is eBay, prefer crop so PhotoRoom result is visible.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing image-element warnings)
+- No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-05, Reviewer Hardening Pass)
+- Added reliability hardening for auto seed pipeline orchestration in `frontend/nextjs-app/pages/admin/set-ops-review.tsx`:
+  - computed combined in-flight guard (`seedPipelineInFlight`) across seed + post-seed stages,
+  - disables `Open Reference QA` while pipeline is running to reduce accidental interruption,
+  - preserves unload warning on in-flight runs,
+  - surfaces explicit warning/error when seed inserts refs but post-seed collector finds zero ids.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing image-element warnings)
+- No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-05, Reviewer Hardening Follow-up)
+- Aligned managed-key resolution in `frontend/nextjs-app/pages/api/admin/variants/reference/process.ts` with `promote.ts`:
+  - added app/public-path key extraction fallback,
+  - handles absolute app URLs and local public-prefix paths before HTTP fallback.
+- Goal: avoid reprocess skips caused by host-dependent fetches for internally stored assets.
+- Validation rerun:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing image-element warnings)
+- No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-05, Reviewer Hardening Follow-up - Warning Surfacing)
+- Improved operator visibility in `frontend/nextjs-app/pages/admin/set-ops-review.tsx` by surfacing post-seed warnings when automation does little/no work:
+  - collector returns zero ids after non-zero seed inserts,
+  - PhotoRoom processed 0 refs after non-zero collection,
+  - promote marked 0 refs owned after non-zero collection.
+- Warnings now appear in status text and error banner to prevent silent false-success perception.
+- Validation rerun:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/promote.ts --file pages/admin/variant-ref-qa.tsx` (pass; existing image-element warnings)
+- No deploy/restart/migration actions executed in this step.

@@ -552,6 +552,7 @@ export default function SetOpsReviewPage() {
       postSeedPipelineProgress.total > 0 &&
       postSeedPipelineProgress.completed < postSeedPipelineProgress.total
   );
+  const seedPipelineInFlight = referenceSeedInFlight || postSeedPipelineInFlight;
 
   const blockingErrorCount = useMemo(
     () => editableRows.flatMap((row) => row.errors).filter((issue) => issue.blocking).length,
@@ -916,7 +917,7 @@ export default function SetOpsReviewPage() {
   }, [fetchReferenceStatus, selectedSetId]);
 
   useEffect(() => {
-    if ((!referenceSeedInFlight && !postSeedPipelineInFlight) || typeof window === "undefined") return;
+    if (!seedPipelineInFlight || typeof window === "undefined") return;
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
@@ -925,7 +926,7 @@ export default function SetOpsReviewPage() {
     return () => {
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [postSeedPipelineInFlight, referenceSeedInFlight]);
+  }, [seedPipelineInFlight]);
 
   useEffect(() => {
     const stepFromQuery = parseReviewStep(router.query.step);
@@ -1770,9 +1771,29 @@ export default function SetOpsReviewPage() {
           datasetLabel,
           targets,
         });
+        const warnings: string[] = [];
+        if (inserted > 0 && postSeedResult.total === 0) {
+          warnings.push(
+            `seeded ${inserted} refs, but auto pipeline collected 0 ids (keep this page open and retry seed or run Process/Promote in Variant Ref QA)`
+          );
+        }
+        if (postSeedResult.total > 0 && postSeedResult.processed === 0) {
+          warnings.push(
+            `PhotoRoom processed 0/${postSeedResult.total} refs (check PhotoRoom key/quota or source fetchability)`
+          );
+        }
+        if (postSeedResult.total > 0 && postSeedResult.promoted + postSeedResult.alreadyOwned === 0) {
+          warnings.push(
+            `promote marked 0/${postSeedResult.total} refs owned (check source resolution/storage access)`
+          );
+        }
+        const warningSuffix = warnings.length ? ` Warnings: ${warnings.join(" ; ")}.` : "";
         setStatus(
-          `${seedSummary} Auto pipeline done: PhotoRoom processed ${postSeedResult.processed}/${postSeedResult.total} (skipped ${postSeedResult.skipped}); promoted ${postSeedResult.promoted}, already owned ${postSeedResult.alreadyOwned}, skipped ${postSeedResult.promoteSkipped}.`
+          `${seedSummary} Auto pipeline done: PhotoRoom processed ${postSeedResult.processed}/${postSeedResult.total} (skipped ${postSeedResult.skipped}); promoted ${postSeedResult.promoted}, already owned ${postSeedResult.alreadyOwned}, skipped ${postSeedResult.promoteSkipped}.${warningSuffix}`
         );
+        if (warnings.length) {
+          setError(`Auto pipeline completed with warnings: ${warnings.join(" ; ")}.`);
+        }
       } catch (postSeedError) {
         setError(
           postSeedError instanceof Error
@@ -2678,7 +2699,7 @@ export default function SetOpsReviewPage() {
                 query: activeQueueSetId ? { setId: activeQueueSetId } : {},
               }}
               className={`inline-flex h-10 items-center rounded-xl border px-4 text-xs font-semibold uppercase tracking-[0.16em] transition ${
-                activeQueueSetId
+                activeQueueSetId && !seedPipelineInFlight
                   ? "border-violet-400/50 bg-violet-500/20 text-violet-100 hover:bg-violet-500/30"
                   : "pointer-events-none border-white/20 text-slate-500 opacity-60"
               }`}

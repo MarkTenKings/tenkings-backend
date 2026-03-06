@@ -106,6 +106,11 @@ function pickPreviewUrl(ref: ReferenceRow) {
   const raw = String(ref.rawImageUrl || "").trim();
   if (!crop) return raw;
   if (!raw) return crop;
+  const cropHost = sourceHostFromUrl(crop);
+  const rawHost = sourceHostFromUrl(raw);
+  if (!cropHost.endsWith("ebay.com") && rawHost.endsWith("ebay.com")) {
+    return crop;
+  }
   const cropSize = parseEbayImageSizeFromUrl(crop);
   const rawSize = parseEbayImageSizeFromUrl(raw);
   if (rawSize > 0 && cropSize > 0 && rawSize > cropSize) {
