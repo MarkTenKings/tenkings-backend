@@ -465,7 +465,16 @@ function createOddsStructuredPayload(params: {
     })
     .map(([normalizedHeader, columnHeader]) => ({ normalizedHeader, columnHeader }));
 
-  const formats = formatHeaders.map(({ normalizedHeader, columnHeader }) => {
+  const oddsFirstHeaders = formatHeaders.filter(
+    ({ normalizedHeader, columnHeader }) =>
+      normalizedHeader === "odds" ||
+      normalizedHeader.startsWith("odds_") ||
+      looksLikeOddsHeader(normalizedHeader) ||
+      looksLikeOddsHeader(columnHeader)
+  );
+  const selectedFormatHeaders = oddsFirstHeaders.length > 0 ? oddsFirstHeaders : formatHeaders;
+
+  const formats = selectedFormatHeaders.map(({ normalizedHeader, columnHeader }) => {
     const mapped = mapFormatKeyAndChannel(columnHeader);
     return {
       columnHeader,

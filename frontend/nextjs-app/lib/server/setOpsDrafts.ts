@@ -435,9 +435,14 @@ export function normalizeDraftRows(params: {
 }
 
 export function buildTaxonomyIngestRows(rows: SetOpsDraftRow[]): SetOpsTaxonomyIngestRow[] {
-  return rows
-    .filter((row) => row.errors.every((issue) => !issue.blocking))
-    .map((row) => ({
+  const output: SetOpsTaxonomyIngestRow[] = [];
+
+  for (const row of rows) {
+    if (row.errors.some((issue) => issue.blocking)) {
+      continue;
+    }
+
+    const base = {
       setId: row.setId,
       cardNumber: row.cardNumber,
       cardType: row.cardType,
@@ -458,15 +463,56 @@ export function buildTaxonomyIngestRows(rows: SetOpsDraftRow[]): SetOpsTaxonomyI
           ? ["true", "1", "yes", "rookie", "rc"].includes(row.raw.rookie.toLowerCase())
           : null,
       metadataJson: asRecord(row.raw.metadataJson) ?? asRecord(row.raw.metadata) ?? asRecord(row.raw.cardMetadata) ?? null,
-      odds: row.odds,
-      oddsNumeric: Number.isFinite(Number(row.raw.oddsNumeric)) ? Number(row.raw.oddsNumeric) : null,
       serial: row.serial,
       finishFamily: firstString(row.raw, ["finishFamily", "finish", "foil", "surface"]) || null,
       visualCues: asRecord(row.raw.visualCues) ?? asRecord(row.raw.visualCuesJson) ?? null,
+      sourceUrl: row.sourceUrl,
+    };
+
+    const oddsByFormatRaw = Array.isArray(row.raw.oddsByFormat) ? row.raw.oddsByFormat : [];
+    let pushedPerFormat = 0;
+    for (const oddsEntryRaw of oddsByFormatRaw) {
+      const oddsEntry = asRecord(oddsEntryRaw);
+      if (!oddsEntry) continue;
+      const oddsText = normalizeOddsValue(
+        firstString(oddsEntry, ["oddsText", "text", "odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"])
+      );
+      if (!oddsText && !row.serial) continue;
+      const numericRaw = Number(oddsEntry.oddsNumeric ?? oddsEntry.numeric ?? NaN);
+      const oddsNumeric = Number.isFinite(numericRaw) ? numericRaw : null;
+      const format =
+        normalizePlayerSeed(firstString(oddsEntry, ["format", "formatKey", "columnHeader"])) ||
+        row.format ||
+        null;
+      const channel =
+        normalizePlayerSeed(firstString(oddsEntry, ["channel", "channelKey"])) ||
+        firstString(row.raw, ["channel", "channelKey"]) ||
+        null;
+
+      output.push({
+        ...base,
+        odds: oddsText,
+        oddsNumeric,
+        format,
+        channel,
+      });
+      pushedPerFormat += 1;
+    }
+
+    if (pushedPerFormat > 0) {
+      continue;
+    }
+
+    output.push({
+      ...base,
+      odds: row.odds,
+      oddsNumeric: Number.isFinite(Number(row.raw.oddsNumeric)) ? Number(row.raw.oddsNumeric) : null,
       format: row.format,
       channel: firstString(row.raw, ["channel", "channelKey"]) || null,
-      sourceUrl: row.sourceUrl,
-    }));
+    });
+  }
+
+  return output;
 }
 
 export function createDraftVersionPayload(params: {

@@ -3431,3 +3431,23 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsCsvContract.ts --file lib/server/setOpsDrafts.ts` (pass)
 - No deploy/restart/migration commands were executed in this session step.
+
+## Session Update (2026-03-05, Parallel Cleanup + Auto Seed Pipeline)
+- Scope remained non-SET-path:
+  - no SET LIST ingestion/parser workflow changes.
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`:
+  - PARALLEL LIST draft table removed Listing ID + Source URL columns.
+  - odds cell now displays combined per-format odds from `raw.oddsByFormat`.
+  - Step 3 seed action now auto-runs post-seed pipeline:
+    1. collect seeded ref ids by target scopes,
+    2. batch PhotoRoom process,
+    3. batch promote-to-owned.
+  - Added live progress panel for collecting/processing/promoting stages.
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`:
+  - PARALLEL odds parser now prioritizes `Odds_*` headers and excludes non-odds fields.
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`:
+  - taxonomy ingest rows now expand per `raw.oddsByFormat` entry so per-format odds are persisted downstream (`SetOddsByFormat`).
+- Validation run:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsCsvContract.ts --file lib/server/setOpsDrafts.ts --file pages/admin/set-ops-review.tsx` (pass)
+- No deploy/restart/migration commands were executed in this session step.

@@ -132,6 +132,20 @@ type ReferenceSeedProgress = {
   reasonCounts: ReferenceSeedReasonCounts;
 };
 
+type PostSeedPipelineStage = "collecting" | "processing" | "promoting";
+
+type PostSeedPipelineProgress = {
+  datasetLabel: string;
+  stage: PostSeedPipelineStage;
+  total: number;
+  completed: number;
+  processed: number;
+  skipped: number;
+  promoted: number;
+  alreadyOwned: number;
+  promoteSkipped: number;
+};
+
 const REVIEW_STEPS: Array<{ id: ReviewStepId; label: string; description: string }> = [
   {
     id: "ingestion-queue",
@@ -434,6 +448,40 @@ function rowIsRookie(row: DraftRow) {
   return ["true", "1", "yes", "rookie", "rc"].includes(text);
 }
 
+function formatOddsLabel(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return "Odds";
+  return raw
+    .replace(/^odds[_\-\s]*/i, "")
+    .replace(/[_\-\s]*odds$/i, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
+}
+
+function rowOddsByFormatEntries(row: DraftRow): Array<{ label: string; oddsText: string }> {
+  const rawEntries = Array.isArray(row.raw?.oddsByFormat) ? row.raw.oddsByFormat : [];
+  const entries: Array<{ label: string; oddsText: string }> = [];
+  for (const value of rawEntries) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const record = value as Record<string, unknown>;
+    const oddsText = String(record.oddsText ?? record.text ?? record.odds ?? "").trim();
+    if (!oddsText) continue;
+    const formatLabel = formatOddsLabel(String(record.format ?? record.formatKey ?? record.columnHeader ?? ""));
+    entries.push({ label: formatLabel, oddsText });
+  }
+  return entries;
+}
+
+function rowOddsDisplay(row: DraftRow) {
+  const entries = rowOddsByFormatEntries(row);
+  if (entries.length < 1) {
+    return String(row.odds ?? row.cardNumber ?? "").trim();
+  }
+  return entries.map((entry) => `${entry.label}: ${entry.oddsText}`).join(" / ");
+}
+
 export default function SetOpsReviewPage() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
@@ -477,6 +525,7 @@ export default function SetOpsReviewPage() {
   const [referenceSeedLimitInput, setReferenceSeedLimitInput] = useState("20");
   const [referenceSeedTbsInput, setReferenceSeedTbsInput] = useState("");
   const [referenceSeedProgress, setReferenceSeedProgress] = useState<ReferenceSeedProgress | null>(null);
+  const [postSeedPipelineProgress, setPostSeedPipelineProgress] = useState<PostSeedPipelineProgress | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [accessBusy, setAccessBusy] = useState(false);
@@ -497,6 +546,11 @@ export default function SetOpsReviewPage() {
   const canApprove = Boolean(permissions?.approver);
   const referenceSeedInFlight = Boolean(
     referenceSeedProgress && referenceSeedProgress.total > 0 && referenceSeedProgress.completed < referenceSeedProgress.total
+  );
+  const postSeedPipelineInFlight = Boolean(
+    postSeedPipelineProgress &&
+      postSeedPipelineProgress.total > 0 &&
+      postSeedPipelineProgress.completed < postSeedPipelineProgress.total
   );
 
   const blockingErrorCount = useMemo(
@@ -795,6 +849,7 @@ export default function SetOpsReviewPage() {
     setBusy(true);
     setError(null);
     setStatus(null);
+    setPostSeedPipelineProgress(null);
     void loadAccess()
       .then((nextPermissions) => {
         if (!nextPermissions?.reviewer) {
@@ -861,7 +916,7 @@ export default function SetOpsReviewPage() {
   }, [fetchReferenceStatus, selectedSetId]);
 
   useEffect(() => {
-    if (!referenceSeedInFlight || typeof window === "undefined") return;
+    if ((!referenceSeedInFlight && !postSeedPipelineInFlight) || typeof window === "undefined") return;
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
@@ -870,7 +925,7 @@ export default function SetOpsReviewPage() {
     return () => {
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [referenceSeedInFlight]);
+  }, [postSeedPipelineInFlight, referenceSeedInFlight]);
 
   useEffect(() => {
     const stepFromQuery = parseReviewStep(router.query.step);
@@ -1244,6 +1299,7 @@ export default function SetOpsReviewPage() {
               format: row.format,
               playerSeed: row.playerSeed,
               listingId: row.listingId,
+              oddsByFormat: Array.isArray(row.raw?.oddsByFormat) ? row.raw.oddsByFormat : undefined,
               sourceUrl: row.sourceUrl,
             };
           }),
@@ -1356,6 +1412,207 @@ export default function SetOpsReviewPage() {
       session?.token,
       setActiveStepWithUrl,
     ]
+  );
+
+  const runPostSeedPipeline = useCallback(
+    async (params: { setId: string; datasetLabel: string; targets: ReferenceSeedTarget[] }) => {
+      const scopeMap = new Map<string, ReferenceSeedTarget>();
+      for (const target of params.targets) {
+        const key = [
+          String(target.programId || "base").trim().toLowerCase(),
+          String(target.cardNumber || "ALL").trim().toLowerCase(),
+          String(target.parallelId || "").trim().toLowerCase(),
+        ].join("::");
+        if (!key || scopeMap.has(key)) continue;
+        scopeMap.set(key, target);
+      }
+      const scopes = Array.from(scopeMap.values());
+
+      setPostSeedPipelineProgress({
+        datasetLabel: params.datasetLabel,
+        stage: "collecting",
+        total: scopes.length,
+        completed: 0,
+        processed: 0,
+        skipped: 0,
+        promoted: 0,
+        alreadyOwned: 0,
+        promoteSkipped: 0,
+      });
+
+      const collectedIds: string[] = [];
+      const seenIds = new Set<string>();
+      for (let index = 0; index < scopes.length; index += 1) {
+        const scope = scopes[index];
+        const search = new URLSearchParams({
+          setId: params.setId,
+          programId: scope.programId,
+          cardNumber: scope.cardNumber,
+          parallelId: scope.parallelId,
+          limit: "5000",
+        });
+        const response = await fetch(`/api/admin/variants/reference?${search.toString()}`, {
+          headers: {
+            ...adminHeaders,
+          },
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+          references?: Array<{ id?: string }>;
+        };
+        if (!response.ok) {
+          throw new Error(payload.message ?? "Failed to collect seeded reference ids");
+        }
+        const refs = Array.isArray(payload.references) ? payload.references : [];
+        for (const ref of refs) {
+          const id = String(ref?.id || "").trim();
+          if (!id || seenIds.has(id)) continue;
+          seenIds.add(id);
+          collectedIds.push(id);
+        }
+        setPostSeedPipelineProgress((previous) =>
+          previous
+            ? {
+                ...previous,
+                stage: "collecting",
+                completed: index + 1,
+              }
+            : previous
+        );
+      }
+
+      if (collectedIds.length < 1) {
+        setPostSeedPipelineProgress((previous) =>
+          previous
+            ? {
+                ...previous,
+                stage: "promoting",
+                total: 1,
+                completed: 1,
+              }
+            : previous
+        );
+        return {
+          total: 0,
+          processed: 0,
+          skipped: 0,
+          promoted: 0,
+          alreadyOwned: 0,
+          promoteSkipped: 0,
+        };
+      }
+
+      const processChunkSize = 80;
+      let processed = 0;
+      let skipped = 0;
+      setPostSeedPipelineProgress((previous) =>
+        previous
+          ? {
+              ...previous,
+              stage: "processing",
+              total: collectedIds.length,
+              completed: 0,
+              processed: 0,
+              skipped: 0,
+            }
+          : previous
+      );
+      for (let start = 0; start < collectedIds.length; start += processChunkSize) {
+        const chunk = collectedIds.slice(start, start + processChunkSize);
+        const response = await fetch("/api/admin/variants/reference/process", {
+          method: "POST",
+          headers: {
+            ...adminHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ids: chunk }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+          processed?: number;
+          skipped?: number;
+        };
+        if (!response.ok) {
+          throw new Error(payload.message ?? "Auto PhotoRoom processing failed");
+        }
+        processed += Number(payload.processed ?? 0);
+        skipped += Number(payload.skipped ?? 0);
+        setPostSeedPipelineProgress((previous) =>
+          previous
+            ? {
+                ...previous,
+                stage: "processing",
+                completed: Math.min(collectedIds.length, start + chunk.length),
+                processed,
+                skipped,
+              }
+            : previous
+        );
+      }
+
+      const promoteChunkSize = 150;
+      let promoted = 0;
+      let alreadyOwned = 0;
+      let promoteSkipped = 0;
+      setPostSeedPipelineProgress((previous) =>
+        previous
+          ? {
+              ...previous,
+              stage: "promoting",
+              total: collectedIds.length,
+              completed: 0,
+              promoted: 0,
+              alreadyOwned: 0,
+              promoteSkipped: 0,
+            }
+          : previous
+      );
+      for (let start = 0; start < collectedIds.length; start += promoteChunkSize) {
+        const chunk = collectedIds.slice(start, start + promoteChunkSize);
+        const response = await fetch("/api/admin/variants/reference/promote", {
+          method: "POST",
+          headers: {
+            ...adminHeaders,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ids: chunk }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as {
+          message?: string;
+          promoted?: number;
+          alreadyOwned?: number;
+          skipped?: number;
+        };
+        if (!response.ok) {
+          throw new Error(payload.message ?? "Auto promote failed");
+        }
+        promoted += Number(payload.promoted ?? 0);
+        alreadyOwned += Number(payload.alreadyOwned ?? 0);
+        promoteSkipped += Number(payload.skipped ?? 0);
+        setPostSeedPipelineProgress((previous) =>
+          previous
+            ? {
+                ...previous,
+                stage: "promoting",
+                completed: Math.min(collectedIds.length, start + chunk.length),
+                promoted,
+                alreadyOwned,
+                promoteSkipped,
+              }
+            : previous
+        );
+      }
+
+      return {
+        total: collectedIds.length,
+        processed,
+        skipped,
+        promoted,
+        alreadyOwned,
+        promoteSkipped,
+      };
+    },
+    [adminHeaders]
   );
 
   const seedReferenceImagesForDataset = useCallback(async (targetDatasetType: DatasetType, datasetLabel: string) => {
@@ -1496,24 +1753,40 @@ export default function SetOpsReviewPage() {
         });
       }
 
-      if (failed > 0) {
+      const seedSummary =
+        failed > 0
+          ? `${datasetLabel} reference seed completed with partial failures (${completed}/${targets.length}, inserted=${inserted}, skipped=${skipped}, failed=${failed}).${
+              failureMessages.length ? ` Examples: ${failureMessages.join(" | ")}` : ""
+            } ${formatReferenceSeedReasonCounts(reasonCounts)}`
+          : `${datasetLabel} reference seed complete (${completed}/${targets.length}, inserted=${inserted}, skipped=${skipped}). ${formatReferenceSeedReasonCounts(
+              reasonCounts
+            )}`;
+
+      setStatus(`${seedSummary} Running automatic PhotoRoom + promote pipeline...`);
+
+      try {
+        const postSeedResult = await runPostSeedPipeline({
+          setId: targetSetId,
+          datasetLabel,
+          targets,
+        });
         setStatus(
-          `${datasetLabel} reference seed completed with partial failures (${completed}/${targets.length}, inserted=${inserted}, skipped=${skipped}, failed=${failed}).${
-            failureMessages.length ? ` Examples: ${failureMessages.join(" | ")}` : ""
-          } ${formatReferenceSeedReasonCounts(reasonCounts)}`
+          `${seedSummary} Auto pipeline done: PhotoRoom processed ${postSeedResult.processed}/${postSeedResult.total} (skipped ${postSeedResult.skipped}); promoted ${postSeedResult.promoted}, already owned ${postSeedResult.alreadyOwned}, skipped ${postSeedResult.promoteSkipped}.`
         );
-      } else {
-        setStatus(
-          `${datasetLabel} reference seed complete (${completed}/${targets.length}, inserted=${inserted}, skipped=${skipped}). ${formatReferenceSeedReasonCounts(
-            reasonCounts
-          )}`
+      } catch (postSeedError) {
+        setError(
+          postSeedError instanceof Error
+            ? `Seed finished, but auto PhotoRoom/promote failed: ${postSeedError.message}`
+            : "Seed finished, but auto PhotoRoom/promote failed."
         );
+        setStatus(seedSummary);
       }
 
       await fetchSeedJobs(targetSetId);
       await fetchReferenceStatus(targetSetId);
     } catch (seedError) {
       setReferenceSeedProgress(null);
+      setPostSeedPipelineProgress(null);
       setError(seedError instanceof Error ? seedError.message : `Failed to seed ${datasetLabel} references`);
     } finally {
       setBusy(false);
@@ -1529,6 +1802,7 @@ export default function SetOpsReviewPage() {
     latestApprovedVersionId,
     referenceSeedLimitInput,
     referenceSeedTbsInput,
+    runPostSeedPipeline,
     session?.token,
   ]);
 
@@ -2134,14 +2408,16 @@ export default function SetOpsReviewPage() {
                   <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Card Type" : "Card_Number"}</th>
                   <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Parallel Name" : "Player_Name"}</th>
                   <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Odds" : "Team_Name"}</th>
-                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Listing ID" : "Card Type"}</th>
-                  <th className="border-b border-white/10 px-2 py-2">{isOddsDataset ? "Source URL" : "Rookie"}</th>
+                  {!isOddsDataset && <th className="border-b border-white/10 px-2 py-2">Card Type</th>}
+                  {!isOddsDataset && <th className="border-b border-white/10 px-2 py-2">Rookie</th>}
                   <th className="border-b border-white/10 px-2 py-2">Issues</th>
                   <th className="border-b border-white/10 px-2 py-2">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {editableRows.map((row, rowIndex) => (
+                {editableRows.map((row, rowIndex) => {
+                  const oddsDisplay = rowOddsDisplay(row);
+                  return (
                   <tr key={`${row.duplicateKey}-${row.index}`}>
                     <td className="border-b border-white/5 px-2 py-2">{row.index + 1}</td>
                     <td className="border-b border-white/5 px-2 py-2">
@@ -2212,19 +2488,9 @@ export default function SetOpsReviewPage() {
                     </td>
                     <td className="border-b border-white/5 px-2 py-2">
                       {isOddsDataset ? (
-                        <input
-                          value={row.odds ?? row.cardNumber ?? ""}
-                          onChange={(event) => {
-                            const next = event.target.value;
-                            setEditableRows((prev) => {
-                              const copy = [...prev];
-                              copy[rowIndex] = { ...copy[rowIndex], odds: next || null, cardNumber: null };
-                              return copy;
-                            });
-                          }}
-                          disabled={!canReview}
-                          className="h-8 w-24 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
-                        />
+                        <div className="max-w-[360px] whitespace-normal text-[11px] leading-5 text-slate-100">
+                          {oddsDisplay || "-"}
+                        </div>
                       ) : (
                         <input
                           value={rowTeamName(row)}
@@ -2244,22 +2510,8 @@ export default function SetOpsReviewPage() {
                         />
                       )}
                     </td>
-                    <td className="border-b border-white/5 px-2 py-2">
-                      {isOddsDataset ? (
-                        <input
-                          value={row.listingId ?? ""}
-                          onChange={(event) => {
-                            const next = event.target.value;
-                            setEditableRows((prev) => {
-                              const copy = [...prev];
-                              copy[rowIndex] = { ...copy[rowIndex], listingId: next || null };
-                              return copy;
-                            });
-                          }}
-                          disabled={!canReview}
-                          className="h-8 w-36 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
-                        />
-                      ) : (
+                    {!isOddsDataset && (
+                      <td className="border-b border-white/5 px-2 py-2">
                         <input
                           value={rowSubsetLabel(row)}
                           onChange={(event) => {
@@ -2277,24 +2529,10 @@ export default function SetOpsReviewPage() {
                           disabled={!canReview}
                           className="h-8 w-52 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
                         />
-                      )}
-                    </td>
-                    <td className="border-b border-white/5 px-2 py-2">
-                      {isOddsDataset ? (
-                        <input
-                          value={row.sourceUrl ?? ""}
-                          onChange={(event) => {
-                            const next = event.target.value;
-                            setEditableRows((prev) => {
-                              const copy = [...prev];
-                              copy[rowIndex] = { ...copy[rowIndex], sourceUrl: next || null };
-                              return copy;
-                            });
-                          }}
-                          disabled={!canReview}
-                          className="h-8 w-56 rounded border border-white/15 bg-night-950/70 px-2 text-xs text-white outline-none"
-                        />
-                      ) : (
+                      </td>
+                    )}
+                    {!isOddsDataset && (
+                      <td className="border-b border-white/5 px-2 py-2">
                         <select
                           value={rowIsRookie(row) ? "Rookie" : ""}
                           onChange={(event) => {
@@ -2314,8 +2552,8 @@ export default function SetOpsReviewPage() {
                           <option value="">-</option>
                           <option value="Rookie">Rookie</option>
                         </select>
-                      )}
-                    </td>
+                      </td>
+                    )}
                     <td className="border-b border-white/5 px-2 py-2 text-[11px]">
                       {row.errors.length > 0 && (
                         <p className="text-rose-300">{row.errors.filter((issue) => issue.blocking).length} blocking errors</p>
@@ -2334,10 +2572,10 @@ export default function SetOpsReviewPage() {
                       </button>
                     </td>
                   </tr>
-                ))}
+                )})}
                 {editableRows.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-2 py-6 text-center text-sm text-slate-400">
+                    <td colSpan={isOddsDataset ? 6 : 8} className="px-2 py-6 text-center text-sm text-slate-400">
                       No draft rows loaded yet.
                     </td>
                   </tr>
@@ -2464,6 +2702,28 @@ export default function SetOpsReviewPage() {
               {referenceSeedInFlight && (
                 <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-amber-200">
                   Seed run is browser-driven. Keep this tab open until it finishes.
+                </p>
+              )}
+            </div>
+          )}
+          {postSeedPipelineProgress && (
+            <div className="mt-3 rounded-xl border border-sky-400/30 bg-sky-500/10 px-3 py-2">
+              <p className="text-xs uppercase tracking-[0.16em] text-sky-100">
+                {postSeedPipelineProgress.stage === "collecting" &&
+                  `Collecting seeded refs (${postSeedPipelineProgress.datasetLabel}): ${postSeedPipelineProgress.completed}/${postSeedPipelineProgress.total} scopes`}
+                {postSeedPipelineProgress.stage === "processing" &&
+                  `Processing ${postSeedPipelineProgress.total} images through PhotoRoom... ${postSeedPipelineProgress.completed}/${postSeedPipelineProgress.total}`}
+                {postSeedPipelineProgress.stage === "promoting" &&
+                  `Promoting processed refs... ${postSeedPipelineProgress.completed}/${postSeedPipelineProgress.total}`}
+              </p>
+              <p className="mt-1 text-[11px] uppercase tracking-[0.16em] text-sky-200">
+                processed={postSeedPipelineProgress.processed}, process-skipped={postSeedPipelineProgress.skipped},
+                promoted={postSeedPipelineProgress.promoted}, already-owned={postSeedPipelineProgress.alreadyOwned},
+                promote-skipped={postSeedPipelineProgress.promoteSkipped}
+              </p>
+              {postSeedPipelineInFlight && (
+                <p className="mt-1 text-[11px] uppercase tracking-[0.18em] text-amber-200">
+                  Post-seed pipeline is browser-driven. Keep this tab open until it finishes.
                 </p>
               )}
             </div>

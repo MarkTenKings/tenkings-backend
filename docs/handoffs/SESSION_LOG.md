@@ -5349,6 +5349,35 @@
 - No deploy/restart/migration commands were executed in this coding step.
 - No destructive DB/set operations were executed.
 
+## 2026-03-05 - Parallel Pipeline Cleanup + Seed Automation (no SET pipeline changes)
+
+### Summary
+- Implemented requested Parallel-only upload/review cleanup:
+  - removed Listing ID and Source URL columns from PARALLEL LIST draft review table in Set Ops Review.
+  - PARALLEL LIST table now shows: row number, card type, parallel name, combined odds, issues, actions.
+- Fixed PARALLEL LIST odds parsing to preserve all odds columns:
+  - contract parser now prioritizes `Odds_*` columns and excludes non-odds columns (like `Parallel`) from odds-format extraction.
+  - structured draft rows retain per-format odds entries in `raw.oddsByFormat`.
+  - taxonomy ingest expansion now emits one odds ingest row per `oddsByFormat` entry, allowing per-format writes to `SetOddsByFormat`.
+- Added default post-seed automation in Step 3 (both SET LIST and PARALLEL LIST seed actions):
+  - after seed completes, automatically collect seeded ref IDs by set/program/card/parallel scopes,
+  - batch process refs via PhotoRoom,
+  - batch promote refs to owned (`ownedStatus=owned`, `qaStatus=keep`),
+  - show live progress indicator for collecting/processing/promoting stages.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; Node engine warning only)
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsCsvContract.ts --file lib/server/setOpsDrafts.ts --file pages/admin/set-ops-review.tsx` (pass)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed in this coding step.
+- No destructive DB/set operations were executed.
+
 ## 2026-03-02 - Add Card Intake Stage-Contract Fix (Agent A)
 
 ### Summary
@@ -6453,3 +6482,15 @@
     - `git rev-parse --short HEAD`
     - `git log --oneline -n 5`
     - `docker compose ps`
+
+  ## 2026-03-05 - Planned Deploy (parallel cleanup + auto seed pipeline)
+  - Plan: deploy Parallel pipeline cleanup + post-seed automation.
+  - Scope:
+    - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+    - `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`
+    - `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+  - Behavior:
+    - PARALLEL preview removes Listing ID/Source URL columns.
+    - `Odds_*` parsing retained per-format and passed into taxonomy ingest expansion.
+    - Seed action auto-runs PhotoRoom + promote pipeline with progress.
+  - DB: no migration required.
