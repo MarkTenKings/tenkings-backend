@@ -5,7 +5,7 @@ import { formatTkd } from "../lib/formatters";
 
 interface AppShellProps {
   children: React.ReactNode;
-  background?: "hero" | "default";
+  background?: "hero" | "default" | "gilded";
   hideHeader?: boolean;
   hideFooter?: boolean;
 }
@@ -29,14 +29,21 @@ export default function AppShell({ children, background = "default", hideHeader 
     ? "max-h-[420px] border-t border-white/5 bg-night-900/85 opacity-100 pointer-events-auto md:max-h-[80vh] md:border md:border-white/10 md:opacity-100 md:pointer-events-auto"
     : "max-h-0 opacity-0 pointer-events-none md:max-h-0 md:opacity-0 md:pointer-events-none";
 
+  const shellBackgroundClass =
+    background === "hero"
+      ? "bg-hero-gradient"
+      : background === "gilded"
+        ? "bg-[#0B0904] [background-image:radial-gradient(ellipse_700px_500px_at_50%_8%,rgba(110,75,15,0.22)_0%,transparent_100%),radial-gradient(ellipse_450px_450px_at_18%_80%,rgba(75,50,10,0.13)_0%,transparent_100%),radial-gradient(ellipse_380px_380px_at_88%_50%,rgba(65,45,8,0.09)_0%,transparent_100%)]"
+        : "bg-radial-night";
+
+  const shellOverlayClass = background === "gilded" ? "bg-transparent opacity-0" : "bg-radial-night opacity-80";
+
   return (
     <div
-      className={`min-h-screen w-full overflow-x-hidden bg-night-900 text-slate-100 ${
-        background === "hero" ? "bg-hero-gradient" : "bg-radial-night"
-      }`}
+      className={`min-h-screen w-full overflow-x-hidden bg-night-900 text-slate-100 ${shellBackgroundClass}`}
     >
       <div className="relative z-0 flex min-h-screen flex-col">
-        <div className="pointer-events-none absolute inset-0 bg-radial-night opacity-80" aria-hidden />
+        <div className={`pointer-events-none absolute inset-0 ${shellOverlayClass}`} aria-hidden />
         {!hideHeader && (
           <header className="sticky top-0 z-20 border-b border-white/5 bg-night-900/70 backdrop-blur">
             <nav className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">

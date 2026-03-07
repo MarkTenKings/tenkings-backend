@@ -7016,6 +7016,25 @@
 - No deploy/restart/migration commands were executed.
 - No workflow/API/DB logic was changed.
 
+## 2026-03-06 - Admin launch card border/background refinement
+
+### Summary
+- Removed the remaining visible launch-card outline treatment that was reading as a blue border in the UI.
+- Switched `/admin` to a CSS-only gilded-charcoal background treatment using layered radial gradients.
+- Tightened the title overlay slightly further by reducing letter spacing and increasing size/weight.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/index.tsx`
+- `frontend/nextjs-app/components/AppShell.tsx`
+
+### Validation Evidence
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx --file components/AppShell.tsx` (pass)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No workflow/API/DB logic was changed.
+
 ## 2026-03-06 - Planned Deploy (admin home real media launch cards)
 
 ### Plan
@@ -7040,4 +7059,19 @@
   - move titles into upper-left media overlay
   - tighten title typography
   - normalize Set Workflows to the same desktop card width as Card Intake
+- DB: no migration required.
+
+## 2026-03-06 - Planned Deploy (admin launch-card border/background refinement)
+
+### Plan
+- Deploy `/admin` launch-card border/background refinement.
+- Scope:
+  - frontend/nextjs-app/pages/admin/index.tsx
+  - frontend/nextjs-app/components/AppShell.tsx
+  - docs/HANDOFF_SET_OPS.md
+  - docs/handoffs/SESSION_LOG.md
+- Changes:
+  - remove visible launch-card outline that was reading as blue
+  - switch `/admin` to the CSS-only gilded-charcoal background
+  - tighten launch-card title overlay typography
 - DB: no migration required.

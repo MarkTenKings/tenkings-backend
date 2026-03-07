@@ -175,7 +175,7 @@ function AdminLaunchCard({
       onMouseLeave={stopMotion}
       onFocus={startMotion}
       onBlur={stopMotion}
-      className="group relative aspect-[16/10] overflow-hidden rounded-[30px] border border-white/10 bg-[#101010] shadow-[0_24px_60px_rgba(0,0,0,0.28)] transition duration-500 hover:-translate-y-1 hover:border-white/20 focus-visible:-translate-y-1 focus-visible:border-white/24 focus-visible:outline-none"
+      className="group relative aspect-[16/10] overflow-hidden rounded-[30px] bg-[#101010] shadow-[0_24px_60px_rgba(0,0,0,0.32)] transition duration-500 hover:-translate-y-1 hover:shadow-[0_28px_68px_rgba(0,0,0,0.38)] focus-visible:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8a6420]/55"
     >
       <Image
         src={route.posterSrc}
@@ -214,16 +214,10 @@ function AdminLaunchCard({
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/72 via-black/18 to-black/42" />
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/50 to-transparent" />
       <div className="absolute left-5 top-5 z-10 max-w-[78%]">
-        <span className="font-heading text-[1.45rem] uppercase tracking-[0.14em] text-white drop-shadow-[0_10px_24px_rgba(0,0,0,0.75)] sm:text-[1.55rem]">
+        <span className="font-heading text-[1.55rem] font-semibold uppercase leading-none tracking-[0.08em] text-white drop-shadow-[0_10px_24px_rgba(0,0,0,0.75)] sm:text-[1.7rem]">
           {route.label}
         </span>
       </div>
-      <div
-        className={[
-          "pointer-events-none absolute inset-0 rounded-[30px] ring-1 ring-inset transition duration-700",
-          showMotion ? "ring-white/14" : "ring-white/8",
-        ].join(" ")}
-      />
     </Link>
   );
 }
@@ -330,7 +324,7 @@ export default function AdminHome() {
   };
 
   return (
-    <AppShell>
+    <AppShell background="gilded">
       <Head>
         <title>Ten Kings · Admin</title>
         <meta name="robots" content="noindex" />

@@ -3673,3 +3673,17 @@ Build Set Ops UI flow with:
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx` (pass)
 - No deploy/restart/migration actions executed in this step.
 - No workflow/API/DB logic changed; this was a `/admin` presentation-only refinement.
+
+## Session Update (2026-03-06, Admin home gilded background + border cleanup)
+- Applied another `/admin` styling refinement pass:
+  - removed the launch-card outline treatment that was reading as blue in the browser,
+  - switched the page shell to a CSS-only gilded-charcoal radial-gradient background,
+  - tightened launch-card title typography again with slightly larger sizing and reduced spacing.
+- Files updated:
+  - `frontend/nextjs-app/pages/admin/index.tsx`
+  - `frontend/nextjs-app/components/AppShell.tsx`
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx --file components/AppShell.tsx` (pass)
+- No deploy/restart/migration actions executed in this step.
+- No workflow/API/DB logic changed; this was a `/admin` visual-only refinement.
