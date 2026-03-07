@@ -168,8 +168,8 @@ const REVIEW_STEPS: Array<{ id: ReviewStepId; label: string; description: string
   },
   {
     id: "seed-monitor",
-    label: "Seed Monitor",
-    description: "Start, watch, cancel, and retry seed jobs.",
+    label: "Optional Ref Seeding",
+    description: "Seed and monitor reference images only when you want cached QA coverage.",
   },
 ];
 
@@ -1394,7 +1394,7 @@ export default function SetOpsReviewPage() {
             ? `variant sync warning: ${payload.variantSyncWarning}`
             : "variant sync queued";
           setStatus(
-            `${decision} complete (blocking=${payload.blockingErrorCount ?? 0}, added=${payload.diffSummary?.added ?? 0}, changed=${payload.diffSummary?.changed ?? 0}; ${variantSyncStatus}).`
+            `${decision} complete (blocking=${payload.blockingErrorCount ?? 0}, added=${payload.diffSummary?.added ?? 0}, changed=${payload.diffSummary?.changed ?? 0}; ${variantSyncStatus}). Set is live for recognition now; reference seeding is optional.`
           );
           setActiveStepWithUrl("seed-monitor");
         } else {
@@ -2632,8 +2632,10 @@ export default function SetOpsReviewPage() {
         <section className={adminPanelClass("p-5")}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h2 className="text-lg font-semibold text-white">3. Seed Monitor</h2>
-              <p className="mt-1 text-xs text-slate-400">Start and monitor seed jobs for the selected set.</p>
+              <h2 className="text-lg font-semibold text-white">3. Optional Reference Seeding</h2>
+              <p className="mt-1 text-xs text-slate-400">
+                Approved sets are already live after variant sync. Seed references now only if you want cached QA/media coverage.
+              </p>
             </div>
             {activeStep !== "seed-monitor" && (
               <button
@@ -2675,6 +2677,12 @@ export default function SetOpsReviewPage() {
           </div>
 
           <div className="mt-4 flex flex-wrap gap-3">
+            <Link
+              href="/admin/uploads"
+              className="inline-flex h-10 items-center rounded-xl border border-white/20 px-4 text-xs font-semibold uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40"
+            >
+              Open Add Cards
+            </Link>
             <button
               type="button"
               disabled={busy || !canApprove || !activeQueueSetId}
@@ -2717,7 +2725,7 @@ export default function SetOpsReviewPage() {
             </Link>
           </div>
           <p className="mt-3 text-xs text-slate-300">
-            Variant sync now auto-runs on APPROVE. Next: seed SET LIST and PARALLEL LIST references.
+            Variant sync auto-runs on APPROVE, which makes the uploaded SET/PARALLEL data live for card recognition. Reference seeding is optional and can be run later; parallel refs can also prefetch on-demand during Add Cards.
           </p>
           {referenceSeedProgress && (
             <div className="mt-3 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2">

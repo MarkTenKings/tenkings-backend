@@ -8,7 +8,7 @@ import {
   readStorageBuffer,
   uploadBuffer,
 } from "../../../../../lib/server/storage";
-import { createThumbnailPng } from "../../../../../lib/server/images";
+import { createThumbnailPng, prepareImageForPhotoroom } from "../../../../../lib/server/images";
 import { withAdminCors } from "../../../../../lib/server/cors";
 import { photoroomQueue } from "../../../../../lib/server/queues";
 
@@ -21,8 +21,9 @@ type PhotoroomResult = {
 };
 
 async function runPhotoroom(buffer: Buffer, apiKey: string): Promise<Buffer> {
+  const preparedBuffer = await prepareImageForPhotoroom(buffer);
   const form = new FormData();
-  const blob = new Blob([buffer], { type: "image/png" });
+  const blob = new Blob([preparedBuffer], { type: "image/png" });
   form.append("imageFile", blob, "capture.png");
   form.append("removeBackground", "true");
   form.append("padding", "0.05");

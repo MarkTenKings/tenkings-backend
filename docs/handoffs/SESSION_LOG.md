@@ -7151,3 +7151,58 @@
   - `/admin` launch-card media/brand refinements
   - carried-forward visual treatment on Set Ops Review, Variant Ref QA, Set Ops, and AI Ops
 - DB: no migration required.
+
+## 2026-03-07 - PhotoRoom seed-processing hardening + optional seeding clarification
+
+### Summary
+- Investigated user-reported seed runs where reference seeding inserted rows, auto pipeline reported `PhotoRoom processed 0/N`, and promote still marked the same refs owned.
+- Confirmed the recent admin UI styling work did **not** touch the PhotoRoom/reference API path.
+- Root-cause hypothesis from code-path inspection:
+  - seeded refs can be fetched/promoted from their raw source URLs,
+  - but the PhotoRoom process path was forwarding external source bytes as `image/png` regardless of real source format,
+  - so PhotoRoom could reject those buffers while promote still succeeded by copying the source image into owned storage.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/images.ts`
+  - added `prepareImageForPhotoroom(...)` to normalize arbitrary source images to bounded PNG before PhotoRoom upload.
+- `frontend/nextjs-app/pages/api/admin/variants/reference/process.ts`
+  - now normalizes seeded source buffers before sending them to PhotoRoom.
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/photoroom.ts`
+  - now normalizes card asset/photo buffers before PhotoRoom upload.
+- `frontend/nextjs-app/pages/api/admin/kingsreview/photos/process.ts`
+  - now normalizes KingsReview photo buffers before PhotoRoom upload.
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+  - changed Step 3 wording from mandatory-feeling seed flow to explicit optional reference seeding,
+  - added `Open Add Cards` CTA,
+  - updated approval success text to state that approved + variant-sync data is already live for recognition.
+
+### Product/Workflow Note
+- The desired “upload SET/PARALLEL CSVs without mandatory image seeding” flow is already structurally supported after APPROVE + variant sync.
+- Add Cards already performs on-demand parallel reference prefetch via `/api/admin/variants/reference/prefetch`.
+- This pass made that optional-seeding behavior explicit in Set Ops Review instead of forcing operators to infer it.
+
+### Validation Evidence
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/cards/[cardId]/photoroom.ts --file pages/api/admin/kingsreview/photos/process.ts --file pages/admin/set-ops-review.tsx --file lib/server/images.ts` (pass)
+
+### Operations
+- No deploy/restart/migration commands executed in this step.
+
+## 2026-03-07 - Planned Deploy (PhotoRoom seed-processing fix + optional seeding UX)
+
+### Plan
+- Deploy PhotoRoom seed-processing hardening and Set Ops Review optional-seeding clarification.
+- Scope:
+  - frontend/nextjs-app/lib/server/images.ts
+  - frontend/nextjs-app/pages/api/admin/variants/reference/process.ts
+  - frontend/nextjs-app/pages/api/admin/cards/[cardId]/photoroom.ts
+  - frontend/nextjs-app/pages/api/admin/kingsreview/photos/process.ts
+  - frontend/nextjs-app/pages/admin/set-ops-review.tsx
+  - docs/HANDOFF_SET_OPS.md
+  - docs/handoffs/SESSION_LOG.md
+- Changes:
+  - normalize arbitrary seed/source images to PNG before PhotoRoom upload
+  - fix `processed 0 / skipped N` failure mode when source bytes are not already PNG
+  - clarify that approved + variant-sync data is live without mandatory reference seeding
+  - add direct `Open Add Cards` path from Step 3
+- DB: no migration required.

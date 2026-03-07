@@ -15,6 +15,7 @@ import {
 import { buildSiteUrl } from "../../../../../lib/server/urls";
 import { photoroomQueue } from "../../../../../lib/server/queues";
 import { normalizeProgramId } from "../../../../../lib/server/taxonomyV2Utils";
+import { prepareImageForPhotoroom } from "../../../../../lib/server/images";
 
 const PHOTOROOM_ENDPOINT = "https://image-api.photoroom.com/v2/edit";
 
@@ -28,8 +29,9 @@ type ResponseBody =
   | { message: string };
 
 async function runPhotoroom(buffer: Buffer, apiKey: string): Promise<Buffer> {
+  const preparedBuffer = await prepareImageForPhotoroom(buffer);
   const form = new FormData();
-  const blob = new Blob([buffer], { type: "image/png" });
+  const blob = new Blob([preparedBuffer], { type: "image/png" });
   form.append("imageFile", blob, "variant-ref.png");
   form.append("removeBackground", "true");
   form.append("padding", "0.04");

@@ -3730,3 +3730,37 @@ Build Set Ops UI flow with:
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx --file pages/admin/set-ops.tsx --file pages/admin/ai-ops.tsx --file components/admin/AdminPrimitives.tsx` (pass; only existing `no-img-element` warnings remain in `pages/admin/variant-ref-qa.tsx`)
 - No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-07, PhotoRoom seed-processing hardening + optional seeding clarification)
+- Investigated user-reported `SET LIST` / `PARALLEL LIST` seed runs where:
+  - reference seeding inserted rows,
+  - auto pipeline reported `PhotoRoom processed 0/N`,
+  - promote still marked the same refs owned.
+- Confirmed the recent admin UI styling work did **not** touch the PhotoRoom/reference APIs.
+- Identified the likely root cause in the PhotoRoom processing path:
+  - externally fetched seed images were being posted to PhotoRoom as `image/png` blobs regardless of original source format,
+  - large eBay/SerpApi seed runs can produce JPEG/WebP/AVIF-style source bytes,
+  - promote could still succeed because it only copied/fetched the original source image into owned storage,
+  - but PhotoRoom could reject those mismatched/raw source buffers, yielding `processed 0` / `skipped N`.
+- Hardened PhotoRoom input prep by adding a shared normalization step:
+  - `frontend/nextjs-app/lib/server/images.ts`
+    - added `prepareImageForPhotoroom(...)` using `sharp`
+    - normalizes incoming buffers to rotated, bounded PNG before upload to PhotoRoom
+- Applied the same safer PhotoRoom input preparation to:
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/process.ts`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/photoroom.ts`
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/photos/process.ts`
+- Also clarified Set Ops Review Step 3 so operators can onboard taxonomy without feeling forced to seed images immediately:
+  - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+    - renamed Step 3 from `Seed Monitor` to `Optional Reference Seeding`
+    - added explicit copy that approved + variant-sync data is already live for card recognition
+    - added `Open Add Cards` CTA from Step 3
+    - updated approval success status text to say reference seeding is optional
+- Important product-state note:
+  - the system already supports the user’s desired no-mandatory-seed flow after approval/variant sync,
+  - parallel reference prefetch is already on-demand from Add Cards via `/api/admin/variants/reference/prefetch`,
+  - this pass mainly fixed the failing PhotoRoom processing path and made the optional-seeding UX explicit.
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/cards/[cardId]/photoroom.ts --file pages/api/admin/kingsreview/photos/process.ts --file pages/admin/set-ops-review.tsx --file lib/server/images.ts` (pass)
+- No deploy/restart/migration actions executed in this step.
