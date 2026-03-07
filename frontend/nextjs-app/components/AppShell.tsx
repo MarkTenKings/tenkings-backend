@@ -5,12 +5,38 @@ import { formatTkd } from "../lib/formatters";
 
 interface AppShellProps {
   children: React.ReactNode;
-  background?: "hero" | "default" | "gilded";
+  background?: "hero" | "default" | "gilded" | "black";
+  brandVariant?: "default" | "collectibles";
   hideHeader?: boolean;
   hideFooter?: boolean;
 }
 
-export default function AppShell({ children, background = "default", hideHeader = false, hideFooter = false }: AppShellProps) {
+function CollectiblesBrandMark() {
+  return (
+    <div className="inline-flex flex-col items-center gap-1 leading-none">
+      <svg viewBox="0 0 64 40" aria-hidden="true" className="h-7 w-12 text-[#e2ca61]">
+        <path
+          d="M6 34 14 13l11 10L32 4l7 19 11-10 8 21-5 2-6-13-12 11-3-16-3 16-12-11-6 13Z"
+          fill="currentColor"
+        />
+      </svg>
+      <span className="bg-gradient-to-r from-[#c99e29] via-[#f0e274] to-[#c69523] bg-clip-text font-heading text-[1.55rem] tracking-[0.08em] text-transparent md:text-[1.75rem]">
+        TEN KINGS
+      </span>
+      <span className="bg-gradient-to-r from-[#c99e29] via-[#f0e274] to-[#c69523] bg-clip-text text-[0.52rem] font-semibold uppercase tracking-[0.34em] text-transparent md:text-[0.56rem]">
+        Collectibles
+      </span>
+    </div>
+  );
+}
+
+export default function AppShell({
+  children,
+  background = "default",
+  brandVariant = "default",
+  hideHeader = false,
+  hideFooter = false,
+}: AppShellProps) {
   const { session, ensureSession, logout } = useSession();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -32,11 +58,13 @@ export default function AppShell({ children, background = "default", hideHeader 
   const shellBackgroundClass =
     background === "hero"
       ? "bg-hero-gradient"
+      : background === "black"
+        ? "bg-black"
       : background === "gilded"
         ? "bg-[#0B0904] [background-image:radial-gradient(ellipse_700px_500px_at_50%_8%,rgba(110,75,15,0.22)_0%,transparent_100%),radial-gradient(ellipse_450px_450px_at_18%_80%,rgba(75,50,10,0.13)_0%,transparent_100%),radial-gradient(ellipse_380px_380px_at_88%_50%,rgba(65,45,8,0.09)_0%,transparent_100%)]"
         : "bg-radial-night";
 
-  const shellOverlayClass = background === "gilded" ? "bg-transparent opacity-0" : "bg-radial-night opacity-80";
+  const shellOverlayClass = background === "gilded" || background === "black" ? "bg-transparent opacity-0" : "bg-radial-night opacity-80";
 
   return (
     <div
@@ -47,8 +75,12 @@ export default function AppShell({ children, background = "default", hideHeader 
         {!hideHeader && (
           <header className="sticky top-0 z-20 border-b border-white/5 bg-night-900/70 backdrop-blur">
             <nav className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-5">
-              <Link href="/" className="font-heading text-3xl tracking-[0.18em] text-gold-500" onClick={handleCloseMenu}>
-                TEN KINGS
+              <Link
+                href="/"
+                className={brandVariant === "collectibles" ? "inline-flex items-center" : "font-heading text-3xl tracking-[0.18em] text-gold-500"}
+                onClick={handleCloseMenu}
+              >
+                {brandVariant === "collectibles" ? <CollectiblesBrandMark /> : "TEN KINGS"}
               </Link>
               <div className="flex items-center gap-3 text-slate-300">
                 <button

@@ -3687,3 +3687,46 @@ Build Set Ops UI flow with:
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx --file components/AppShell.tsx` (pass)
 - No deploy/restart/migration actions executed in this step.
 - No workflow/API/DB logic changed; this was a `/admin` visual-only refinement.
+
+## Session Update (2026-03-06, Admin solid-black shell + media-frame cleanup)
+- User rejected the gilded background and remaining shell feel around the launch cards.
+- Updated `/admin` again to:
+  - use a true solid-black shell,
+  - crop the poster/video media slightly to hide baked-in letterbox bars from the generated assets,
+  - treat the media frame as the actual card container,
+  - add a thin white border around the media frame,
+  - switch the admin header branding to a compact collectibles mark treatment.
+- Files updated:
+  - `frontend/nextjs-app/pages/admin/index.tsx`
+  - `frontend/nextjs-app/components/AppShell.tsx`
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx --file components/AppShell.tsx` (pass)
+- No deploy/restart/migration actions executed in this step.
+- No workflow/API/DB logic changed; this was a `/admin` visual-only refinement.
+
+## Session Update (2026-03-06, Canonical admin surface design carry-forward)
+- Continued the `/admin` home design system into the canonical operator pages instead of redesigning each page from scratch.
+- Added shared admin primitives in:
+  - `frontend/nextjs-app/components/admin/AdminPrimitives.tsx`
+- Primitive layer now standardizes:
+  - black page frame
+  - collectibles shell usage
+  - tighter white-framed page headers
+  - black/white major panels and subpanels
+  - stat-card styling
+  - black input/select/textarea controls
+- Applied the shared shell/primitives to:
+  - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+  - `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+  - `frontend/nextjs-app/pages/admin/set-ops.tsx`
+  - `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+- Scope was intentionally visual only:
+  - no route changes
+  - no API contract changes
+  - no workflow/state-machine changes
+  - no DB behavior changes
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx --file pages/admin/set-ops.tsx --file pages/admin/ai-ops.tsx --file components/admin/AdminPrimitives.tsx` (pass; only existing `no-img-element` warnings remain in `pages/admin/variant-ref-qa.tsx`)
+- No deploy/restart/migration actions executed in this step.

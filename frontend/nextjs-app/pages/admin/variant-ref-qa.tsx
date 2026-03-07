@@ -3,6 +3,14 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
+import {
+  ADMIN_PAGE_FRAME_CLASS,
+  AdminPageHeader,
+  adminInputClass,
+  adminPanelClass,
+  adminSelectClass,
+  adminSubpanelClass,
+} from "../../components/admin/AdminPrimitives";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
@@ -661,7 +669,7 @@ export default function VariantRefQaPage() {
 
   if (loading) {
     return (
-      <AppShell>
+      <AppShell background="black" brandVariant="collectibles">
         <div className="flex flex-1 items-center justify-center text-sm uppercase tracking-[0.3em] text-slate-400">
           Checking access…
         </div>
@@ -671,7 +679,7 @@ export default function VariantRefQaPage() {
 
   if (!session) {
     return (
-      <AppShell>
+      <AppShell background="black" brandVariant="collectibles">
         <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
           <p className="text-sm uppercase tracking-[0.3em] text-slate-400">Admin Access Only</p>
           <button
@@ -688,7 +696,7 @@ export default function VariantRefQaPage() {
 
   if (!isAdmin) {
     return (
-      <AppShell>
+      <AppShell background="black" brandVariant="collectibles">
         <div className="flex flex-1 flex-col items-center justify-center gap-4 text-center">
           <p className="text-sm uppercase tracking-[0.3em] text-rose-300">Access Denied</p>
           <button
@@ -704,31 +712,26 @@ export default function VariantRefQaPage() {
   }
 
   return (
-    <AppShell>
+    <AppShell background="black" brandVariant="collectibles">
       <Head>
         <title>Ten Kings · Variant Ref QA</title>
         <meta name="robots" content="noindex" />
       </Head>
-      <div className="mx-auto flex w-full max-w-[1540px] flex-1 flex-col gap-5 px-4 py-6 lg:px-6">
-        <header className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-2">
-              <Link href="/admin/set-ops-review" className="inline-flex text-xs uppercase tracking-[0.28em] text-slate-400 hover:text-white">
-                ← Set Ops Review
-              </Link>
-              <p className="text-[10px] uppercase tracking-[0.34em] text-violet-300">Reference QA</p>
-              <h1 className="font-heading text-3xl uppercase tracking-[0.16em] text-white">Variant Ref QA</h1>
-              <p className="max-w-3xl text-sm text-slate-300">
-                Load a seeded set, narrow the variant bucket, then process, promote, or replace refs from the canonical QA surface.
-              </p>
-            </div>
+      <div className={ADMIN_PAGE_FRAME_CLASS}>
+        <AdminPageHeader
+          backHref="/admin/set-ops-review"
+          backLabel="← Set Ops Review"
+          eyebrow="Reference QA"
+          title="Variant Ref QA"
+          description="Load a seeded set, narrow the variant bucket, then process, promote, or replace refs from the canonical QA surface."
+          badges={
             <span className="rounded-full border border-emerald-400/40 bg-emerald-500/10 px-3 py-1 text-[11px] uppercase tracking-[0.22em] text-emerald-200">
               Canonical Surface
             </span>
-          </div>
-        </header>
+          }
+        />
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+        <section className={adminPanelClass("p-5")}>
           <div className="mb-3">
             <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">1. Set Scope</p>
             <p className="mt-1 text-xs text-slate-400">Load a seeded set, then keep the active set pinned while you work the queue.</p>
@@ -740,7 +743,7 @@ export default function VariantRefQaPage() {
                 value={setSearch}
                 onChange={(event) => setSetSearch(event.target.value)}
                 placeholder="Search seeded sets..."
-                className="rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                className={adminInputClass("h-10")}
               />
             </label>
             <button
@@ -756,7 +759,7 @@ export default function VariantRefQaPage() {
               <select
                 value={selectedSetFilter}
                 onChange={(event) => setSelectedSetFilter(event.target.value)}
-                className="rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                className={adminSelectClass("h-10")}
               >
                 {setRows.map((row) => (
                   <option key={row.setId} value={row.setId}>
@@ -796,7 +799,7 @@ export default function VariantRefQaPage() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Player, card #, or parallel"
-                className="rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                className={adminInputClass("h-10")}
               />
             </label>
             <button
@@ -818,7 +821,7 @@ export default function VariantRefQaPage() {
             <select
               value={variantTypeFilter}
               onChange={(event) => setVariantTypeFilter(event.target.value as "all" | "insert" | "parallel")}
-              className="rounded-full border border-white/20 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.22em] text-slate-200"
+              className={adminSelectClass("h-10 rounded-full bg-black px-3 text-[11px] uppercase tracking-[0.22em] text-slate-200")}
             >
               <option value="all">All Types</option>
               <option value="insert">Inserts</option>
@@ -827,7 +830,7 @@ export default function VariantRefQaPage() {
             <select
               value={selectedProgramFilter}
               onChange={(event) => setSelectedProgramFilter(event.target.value)}
-              className="rounded-full border border-white/20 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.22em] text-slate-200"
+              className={adminSelectClass("h-10 rounded-full bg-black px-3 text-[11px] uppercase tracking-[0.22em] text-slate-200")}
             >
               {availableProgramFilters.map((program) => (
                 <option key={program} value={program}>
@@ -960,7 +963,7 @@ export default function VariantRefQaPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+        <section className={adminPanelClass("p-5")}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">3. Ref Actions</p>
@@ -1024,14 +1027,14 @@ export default function VariantRefQaPage() {
             </div>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-end gap-2 rounded-xl border border-white/10 bg-night-800/60 p-3">
+          <div className={adminSubpanelClass("mt-4 flex flex-wrap items-end gap-2 p-3")}>
             <label className="flex min-w-[260px] flex-1 flex-col gap-1 text-[10px] uppercase tracking-[0.22em] text-slate-500">
               Source URL (optional)
               <input
                 value={sourceUrl}
                 onChange={(event) => setSourceUrl(event.target.value)}
                 placeholder="https://www.ebay.com/itm/..."
-                className="rounded-lg border border-white/10 bg-night-900 px-3 py-2 text-xs text-white"
+                className="rounded-lg border border-white/10 bg-black px-3 py-2 text-xs text-white"
               />
             </label>
             <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.22em] text-slate-500">
@@ -1060,7 +1063,7 @@ export default function VariantRefQaPage() {
               const sourceHost = sourceHostFromUrl(ref.sourceUrl);
               const isEbaySource = sourceHost.endsWith("ebay.com");
               return (
-                <article key={ref.id} className="rounded-2xl border border-white/10 bg-night-800/55 p-3 shadow-card">
+                <article key={ref.id} className={adminSubpanelClass("p-3")}>
                   <div className="mb-2 flex items-center justify-between gap-2">
                     <label className="inline-flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-slate-400">
                       <input
@@ -1084,7 +1087,7 @@ export default function VariantRefQaPage() {
                     </button>
                   </div>
                   <a href={preview} target="_blank" rel="noreferrer" className="block">
-                    <div className="relative aspect-[9/16] w-full overflow-hidden rounded-lg bg-night-900/70">
+                    <div className="relative aspect-[9/16] w-full overflow-hidden rounded-lg bg-black">
                       <img
                         src={preview}
                         alt={`${ref.displayLabel || ref.parallelId} ref`}
@@ -1153,7 +1156,7 @@ export default function VariantRefQaPage() {
               );
             })}
             {refs.length === 0 && (
-              <div className="col-span-full rounded-xl border border-white/10 bg-night-800/40 p-6 text-center text-xs text-slate-500">
+              <div className={adminSubpanelClass("col-span-full p-6 text-center text-xs text-slate-500")}>
                 No reference images for selected variant.
               </div>
             )}

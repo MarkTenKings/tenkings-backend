@@ -7035,6 +7035,27 @@
 - No deploy/restart/migration commands were executed.
 - No workflow/API/DB logic was changed.
 
+## 2026-03-06 - Admin media frame cleanup + collectibles brand mark
+
+### Summary
+- Removed the remaining card-shell treatment so the media frame now reads as the actual container.
+- Cropped the poster/video media slightly inside the frame to hide source letterbox bars from the generated assets.
+- Switched `/admin` back to a true solid-black page shell.
+- Added a thin white media border for launch cards.
+- Replaced the admin header wordmark with a compact collectibles brand treatment.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/index.tsx`
+- `frontend/nextjs-app/components/AppShell.tsx`
+
+### Validation Evidence
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx --file components/AppShell.tsx` (pass)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No workflow/API/DB logic was changed.
+
 ## 2026-03-06 - Planned Deploy (admin home real media launch cards)
 
 ### Plan
@@ -7074,4 +7095,59 @@
   - remove visible launch-card outline that was reading as blue
   - switch `/admin` to the CSS-only gilded-charcoal background
   - tighten launch-card title overlay typography
+- DB: no migration required.
+
+## 2026-03-06 - Canonical Admin Surface Design Carry-Forward
+
+### Summary
+- Carried the new `/admin` visual language into the canonical operator pages without changing workflow logic:
+  - `/admin/set-ops-review`
+  - `/admin/variant-ref-qa`
+  - `/admin/set-ops`
+  - `/admin/ai-ops`
+- Added a shared admin primitive layer for:
+  - black shell-compatible page framing
+  - tighter page headers
+  - thin white framed panels/subpanels
+  - consistent stat-card styling
+  - shared black input/select/textarea controls
+- Switched the four canonical pages onto:
+  - `AppShell background="black"`
+  - `AppShell brandVariant="collectibles"`
+- Replaced the old `bg-night-900/70` / `bg-night-800/65` hero/panel treatment on the major surfaces with the new black/white framed treatment.
+
+### Files Updated
+- `frontend/nextjs-app/components/admin/AdminPrimitives.tsx`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+- `frontend/nextjs-app/pages/admin/set-ops.tsx`
+- `frontend/nextjs-app/pages/admin/ai-ops.tsx`
+
+### Validation Evidence
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/admin/variant-ref-qa.tsx --file pages/admin/set-ops.tsx --file pages/admin/ai-ops.tsx --file components/admin/AdminPrimitives.tsx` (pass; only existing `@next/next/no-img-element` warnings remain in `pages/admin/variant-ref-qa.tsx`)
+
+### Operations/Safety
+- No deploy/restart/migration commands were executed.
+- No API/DB workflow logic was changed; this was a shared admin UI surface pass only.
+
+## 2026-03-06 - Planned Deploy (batched admin UI refresh)
+
+### Plan
+- Deploy the batched admin UI refresh across `/admin` and the canonical operator pages.
+- Scope:
+  - frontend/nextjs-app/components/AppShell.tsx
+  - frontend/nextjs-app/components/admin/AdminPrimitives.tsx
+  - frontend/nextjs-app/pages/admin/index.tsx
+  - frontend/nextjs-app/pages/admin/set-ops-review.tsx
+  - frontend/nextjs-app/pages/admin/variant-ref-qa.tsx
+  - frontend/nextjs-app/pages/admin/set-ops.tsx
+  - frontend/nextjs-app/pages/admin/ai-ops.tsx
+  - docs/HANDOFF_SET_OPS.md
+  - docs/handoffs/SESSION_LOG.md
+- Changes:
+  - solid-black collectibles shell on admin surfaces
+  - shared black/white admin page primitives
+  - `/admin` launch-card media/brand refinements
+  - carried-forward visual treatment on Set Ops Review, Variant Ref QA, Set Ops, and AI Ops
 - DB: no migration required.

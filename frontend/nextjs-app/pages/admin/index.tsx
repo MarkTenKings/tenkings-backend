@@ -125,6 +125,7 @@ function AdminLaunchCard({
 
   const posterLive = touchMotion || active;
   const showMotion = !reduceMotion && videoReady && posterLive;
+  const mediaScaleClass = showMotion ? "scale-[1.12]" : "scale-[1.08]";
 
   useEffect(() => {
     const video = videoRef.current;
@@ -175,7 +176,7 @@ function AdminLaunchCard({
       onMouseLeave={stopMotion}
       onFocus={startMotion}
       onBlur={stopMotion}
-      className="group relative aspect-[16/10] overflow-hidden rounded-[30px] bg-[#101010] shadow-[0_24px_60px_rgba(0,0,0,0.32)] transition duration-500 hover:-translate-y-1 hover:shadow-[0_28px_68px_rgba(0,0,0,0.38)] focus-visible:-translate-y-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8a6420]/55"
+      className="group relative aspect-[16/10] overflow-hidden rounded-[30px] border border-white/30 bg-black shadow-[0_20px_50px_rgba(0,0,0,0.42)] transition duration-500 hover:-translate-y-1 hover:border-white/55 hover:shadow-[0_28px_68px_rgba(0,0,0,0.48)] focus-visible:-translate-y-1 focus-visible:border-white/60 focus-visible:outline-none"
     >
       <Image
         src={route.posterSrc}
@@ -184,9 +185,9 @@ function AdminLaunchCard({
         priority={route.priority}
         sizes="(min-width: 1280px) 24vw, (min-width: 768px) 45vw, 92vw"
         className={[
-          "object-cover transition duration-700",
+          `object-cover object-center transition duration-700 ${mediaScaleClass}`,
           posterLive ? "grayscale-0 brightness-[1.02]" : "grayscale brightness-[0.74]",
-          showMotion ? "scale-[1.03] opacity-0" : "scale-100 opacity-100",
+          showMotion ? "opacity-0" : "opacity-100",
         ].join(" ")}
       />
       <video
@@ -199,20 +200,21 @@ function AdminLaunchCard({
         autoPlay={touchMotion && !reduceMotion}
         onCanPlay={() => setVideoReady(true)}
         className={[
-          "absolute inset-0 h-full w-full object-cover transition duration-700",
-          showMotion ? "scale-[1.03] opacity-100" : "scale-100 opacity-0",
+          `absolute inset-0 h-full w-full object-cover object-center transition duration-700 ${mediaScaleClass}`,
+          showMotion ? "opacity-100" : "opacity-0",
         ].join(" ")}
       >
         <source src={route.videoSrc} type="video/mp4" />
       </video>
       <div
         className={[
-          "pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.12),transparent_55%)] transition duration-700",
-          showMotion ? "opacity-100" : "opacity-55",
+          "pointer-events-none absolute inset-0 transition duration-700",
+          showMotion
+            ? "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.08),transparent_55%)] opacity-100"
+            : "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_55%)] opacity-45",
         ].join(" ")}
       />
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/72 via-black/18 to-black/42" />
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-black/50 to-transparent" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/64 via-transparent to-black/22" />
       <div className="absolute left-5 top-5 z-10 max-w-[78%]">
         <span className="font-heading text-[1.55rem] font-semibold uppercase leading-none tracking-[0.08em] text-white drop-shadow-[0_10px_24px_rgba(0,0,0,0.75)] sm:text-[1.7rem]">
           {route.label}
@@ -324,7 +326,7 @@ export default function AdminHome() {
   };
 
   return (
-    <AppShell background="gilded">
+    <AppShell background="black" brandVariant="collectibles">
       <Head>
         <title>Ten Kings · Admin</title>
         <meta name="robots" content="noindex" />

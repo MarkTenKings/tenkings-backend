@@ -3,6 +3,15 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
+import {
+  ADMIN_PAGE_FRAME_CLASS,
+  AdminPageHeader,
+  adminInputClass,
+  adminPanelClass,
+  adminSelectClass,
+  adminSubpanelClass,
+  adminTextareaClass,
+} from "../../components/admin/AdminPrimitives";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
@@ -1931,7 +1940,7 @@ export default function SetOpsReviewPage() {
   const gate = renderGate();
   if (gate) {
     return (
-      <AppShell>
+      <AppShell background="black" brandVariant="collectibles">
         <Head>
           <title>Ten Kings · Set Ops Review</title>
           <meta name="robots" content="noindex" />
@@ -1942,69 +1951,61 @@ export default function SetOpsReviewPage() {
   }
 
   return (
-    <AppShell>
+    <AppShell background="black" brandVariant="collectibles">
       <Head>
         <title>Ten Kings · Set Ops Review</title>
         <meta name="robots" content="noindex" />
       </Head>
 
-      <div className="mx-auto flex w-full max-w-[1540px] flex-1 flex-col gap-6 px-4 py-6 lg:px-6">
-        <header className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="space-y-3">
-              <p className="text-xs uppercase tracking-[0.3em] text-violet-300">Set Ops Review</p>
-              <h1 className="font-heading text-3xl uppercase tracking-[0.16em] text-white">Ingest & Draft Workspace</h1>
-              <p className="max-w-3xl text-sm text-slate-300">
-                Guided stepper flow for ingestion queue, draft approval, and seed monitoring. Existing APIs and actions stay unchanged.
-              </p>
-              <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.16em]">
-                <span className={`rounded-full border px-2 py-1 ${canReview ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
-                  reviewer: {canReview ? "yes" : "no"}
-                </span>
-                <span className={`rounded-full border px-2 py-1 ${canApprove ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
-                  approver: {canApprove ? "yes" : "no"}
-                </span>
-                {accessBusy && <span className="text-slate-400">loading roles...</span>}
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Link
-                className="inline-flex rounded-xl border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.18em] text-slate-100 transition hover:border-white/40 hover:text-white"
-                href="/admin/set-ops"
-              >
-                ← Back to Set Admin
-              </Link>
-              <button
-                type="button"
-                disabled={busy || accessBusy}
-                onClick={() => {
-                  setBusy(true);
-                  setError(null);
-                  setStatus(null);
-                  void Promise.all([
-                    canReview ? fetchIngestionJobs() : Promise.resolve(),
-                    canReview && selectedSetId ? fetchDraft(selectedSetId, datasetType) : Promise.resolve(),
-                    canApprove && selectedSetId ? fetchSeedJobs(selectedSetId) : Promise.resolve(),
-                    selectedSetId ? fetchReferenceStatus(selectedSetId) : Promise.resolve(),
-                  ])
-                    .then(() => setStatus("Workspace refreshed."))
-                    .catch((refreshError) =>
-                      setError(refreshError instanceof Error ? refreshError.message : "Failed to refresh workspace")
-                    )
-                    .finally(() => setBusy(false));
-                }}
-                className="inline-flex rounded-xl border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
-              >
-                Refresh
-              </button>
-            </div>
-          </div>
-        </header>
+      <div className={ADMIN_PAGE_FRAME_CLASS}>
+        <AdminPageHeader
+          backHref="/admin/set-ops"
+          backLabel="← Back to Set Admin"
+          eyebrow="Set Ops Review"
+          title="Ingest & Draft Workspace"
+          description="Guided stepper flow for ingestion queue, draft approval, and seed monitoring. Existing APIs and actions stay unchanged."
+          badges={
+            <>
+              <span className={`rounded-full border px-2 py-1 ${canReview ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+                reviewer: {canReview ? "yes" : "no"}
+              </span>
+              <span className={`rounded-full border px-2 py-1 ${canApprove ? "border-emerald-400/50 text-emerald-200" : "border-white/20 text-slate-400"}`}>
+                approver: {canApprove ? "yes" : "no"}
+              </span>
+              {accessBusy ? <span className="text-slate-400">loading roles...</span> : null}
+            </>
+          }
+          actions={
+            <button
+              type="button"
+              disabled={busy || accessBusy}
+              onClick={() => {
+                setBusy(true);
+                setError(null);
+                setStatus(null);
+                void Promise.all([
+                  canReview ? fetchIngestionJobs() : Promise.resolve(),
+                  canReview && selectedSetId ? fetchDraft(selectedSetId, datasetType) : Promise.resolve(),
+                  canApprove && selectedSetId ? fetchSeedJobs(selectedSetId) : Promise.resolve(),
+                  selectedSetId ? fetchReferenceStatus(selectedSetId) : Promise.resolve(),
+                ])
+                  .then(() => setStatus("Workspace refreshed."))
+                  .catch((refreshError) =>
+                    setError(refreshError instanceof Error ? refreshError.message : "Failed to refresh workspace")
+                  )
+                  .finally(() => setBusy(false));
+              }}
+              className="inline-flex rounded-xl border border-white/20 px-3 py-2 text-xs uppercase tracking-[0.16em] text-slate-100 transition hover:border-white/40 disabled:opacity-60"
+            >
+              Refresh
+            </button>
+          }
+        />
 
         {status && <p className="text-xs text-emerald-300">{status}</p>}
         {error && <p className="text-xs text-rose-300">{error}</p>}
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+        <section className={adminPanelClass("p-5")}>
           <div className="mb-4">
             <p className="text-[10px] uppercase tracking-[0.28em] text-slate-400">Workspace Stages</p>
             <p className="mt-1 text-xs text-slate-400">Use the step cards to jump between queue intake, draft approval, and seed monitoring.</p>
@@ -2019,7 +2020,7 @@ export default function SetOpsReviewPage() {
                   key={step.id}
                   type="button"
                   onClick={() => setActiveStepWithUrl(step.id)}
-                  className={`rounded-2xl border p-3 text-left transition ${
+                  className={`${adminSubpanelClass("p-3 text-left transition")} ${
                     isActive
                       ? "border-gold-500/60 bg-gold-500/15"
                       : isComplete || isPast
@@ -2043,7 +2044,7 @@ export default function SetOpsReviewPage() {
           </div>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+        <section className={adminPanelClass("p-5")}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-white">1. Ingestion Queue</h2>
@@ -2099,10 +2100,10 @@ export default function SetOpsReviewPage() {
                 }}
                 disabled={!canReview}
                 placeholder="Set ID (type to find existing or create new)"
-                className="h-11 w-full rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
+                className={adminInputClass("w-full")}
               />
               {showSetIdOptions && canReview && (
-                <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-72 overflow-y-auto rounded-xl border border-white/15 bg-night-950/95 p-2 shadow-2xl backdrop-blur">
+                <div className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 max-h-72 overflow-y-auto rounded-xl border border-white/15 bg-black/95 p-2 shadow-2xl backdrop-blur">
                   {canCreateNewSetId && (
                     <button
                       type="button"
@@ -2159,7 +2160,7 @@ export default function SetOpsReviewPage() {
               value={queueDatasetMode}
               onChange={(event) => setQueueDatasetMode(event.target.value as CombinedDatasetMode)}
               disabled={!canReview}
-              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
+              className={adminSelectClass()}
             >
               <option value="PARALLEL_DB">PARALLEL LIST</option>
               <option value="PLAYER_WORKSHEET">SET LIST</option>
@@ -2170,16 +2171,16 @@ export default function SetOpsReviewPage() {
               onChange={(event) => setSourceUrlInput(event.target.value)}
               disabled={!canReview}
               placeholder="Source URL (optional)"
-              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
+              className={adminInputClass()}
             />
             <input
               value={parserVersionInput}
               onChange={(event) => setParserVersionInput(event.target.value)}
               disabled={!canReview}
               placeholder="Parser version"
-              className="h-11 rounded-xl border border-white/15 bg-night-950/70 px-3 text-sm text-white outline-none focus:border-gold-500/70"
+              className={adminInputClass()}
             />
-            <div className="md:col-span-2 rounded-xl border border-white/10 bg-night-950/40 p-3">
+            <div className={adminSubpanelClass("md:col-span-2 p-3")}>
               <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Upload Source File</p>
               <p className="mt-1 text-xs text-slate-400">
                 Upload CSV/JSON/PDF checklist or odds-list files. No manual JSON editing required.
@@ -2215,7 +2216,7 @@ export default function SetOpsReviewPage() {
                   onChange={(event) => setRawPayloadInput(event.target.value)}
                   disabled={!canReview}
                   rows={7}
-                  className="mt-3 w-full rounded-xl border border-white/15 bg-night-950/70 p-3 font-mono text-xs text-slate-100 outline-none focus:border-gold-500/70"
+                  className={adminTextareaClass("mt-3 w-full font-mono text-xs text-slate-100")}
                 />
               )}
             </div>
@@ -2228,7 +2229,7 @@ export default function SetOpsReviewPage() {
             </button>
           </form>
 
-          <div className="mt-4 rounded-xl border border-white/10 bg-night-950/40 p-4">
+          <div className={adminSubpanelClass("mt-4 p-4")}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Bulk Import (CSV + ZIP)</p>
@@ -2361,7 +2362,7 @@ export default function SetOpsReviewPage() {
           )}
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+        <section className={adminPanelClass("p-5")}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-white">2. Draft & Approval</h2>
@@ -2628,7 +2629,7 @@ export default function SetOpsReviewPage() {
           )}
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-night-900/70 p-5 shadow-card">
+        <section className={adminPanelClass("p-5")}>
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-white">3. Seed Monitor</h2>

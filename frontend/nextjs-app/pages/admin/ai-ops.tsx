@@ -2,6 +2,14 @@ import Head from "next/head";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
+import {
+  ADMIN_PAGE_FRAME_CLASS,
+  AdminPageHeader,
+  adminPanelClass,
+  adminStatCardClass,
+  adminSubpanelClass,
+  adminInputClass,
+} from "../../components/admin/AdminPrimitives";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
@@ -497,7 +505,7 @@ export default function AiOpsPage() {
   const renderMain = () => {
     if (!data && !loading) {
       return (
-        <div className="rounded-3xl border border-white/10 bg-night-800/65 p-6">
+        <div className={adminPanelClass("p-6")}>
           <p className="text-sm text-slate-300">Load OCR/LLM health and teach-memory metrics for the last 24 hours and 7 days.</p>
           {error ? <p className="mt-3 text-sm text-rose-300">{error}</p> : null}
           <button
@@ -513,20 +521,19 @@ export default function AiOpsPage() {
 
     return (
       <div className="space-y-6">
-        <section className="rounded-3xl border border-white/10 bg-night-800/65 p-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <Link href="/admin" className="inline-flex text-[10px] uppercase tracking-[0.28em] text-slate-400 transition hover:text-white">
-                ← Admin Home
-              </Link>
-              <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Live OCR/LLM Health</p>
-              <h1 className="mt-2 font-heading text-3xl uppercase tracking-[0.12em] text-white">AI Ops Dashboard</h1>
-              <p className="mt-2 max-w-3xl text-sm text-slate-300">
-                Canonical monitoring surface for OCR and LLM health, eval readiness, teach telemetry, and the quick attention queue.
-              </p>
+        <AdminPageHeader
+          backHref="/admin"
+          backLabel="← Admin Home"
+          eyebrow="Live OCR/LLM Health"
+          title="AI Ops Dashboard"
+          description={
+            <>
+              <p>Canonical monitoring surface for OCR and LLM health, eval readiness, teach telemetry, and the quick attention queue.</p>
               <p className="mt-2 text-sm text-slate-400">Generated {toDateTime(data?.generatedAt)}.</p>
-            </div>
-            <div className="flex flex-wrap gap-2">
+            </>
+          }
+          actions={
+            <>
               <button
                 type="button"
                 onClick={loadOverview}
@@ -555,29 +562,29 @@ export default function AiOpsPage() {
               >
                 Open KingsReview
               </Link>
-            </div>
-          </div>
+            </>
+          }
+        />
           {error ? <p className="mt-4 text-sm text-rose-300">{error}</p> : null}
-        </section>
 
         {data ? (
           <>
             <section className="grid gap-4 lg:grid-cols-3">
-              <article className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+              <article className={adminStatCardClass("p-4")}>
                 <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">OCR Provider</p>
                 <p className="mt-2 text-xl font-semibold text-white">{data.config.ocrProvider}</p>
               </article>
-              <article className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+              <article className={adminStatCardClass("p-4")}>
                 <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Primary LLM</p>
                 <p className="mt-2 text-xl font-semibold text-white">{data.config.primaryModel}</p>
               </article>
-              <article className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+              <article className={adminStatCardClass("p-4")}>
                 <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Fallback LLM</p>
                 <p className="mt-2 text-xl font-semibold text-white">{data.config.fallbackModel}</p>
               </article>
             </section>
 
-            <section className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+            <section className={adminPanelClass("p-4")}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Eval Gate</p>
@@ -614,24 +621,24 @@ export default function AiOpsPage() {
                     {toDateTime(data.evals.lastRun.completedAt ?? data.evals.lastRun.createdAt)}
                   </p>
                   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                    <div className={adminSubpanelClass("p-3 text-sm text-slate-200")}>
                       Set top-1: {toPercent(data.evals.lastRun.summary?.metrics?.setTop1AccuracyPct ?? null)}
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                    <div className={adminSubpanelClass("p-3 text-sm text-slate-200")}>
                       Insert/parallel top-1:{" "}
                       {toPercent(data.evals.lastRun.summary?.metrics?.insertParallelTop1AccuracyPct ?? null)}
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                    <div className={adminSubpanelClass("p-3 text-sm text-slate-200")}>
                       Insert/parallel top-3:{" "}
                       {toPercent(data.evals.lastRun.summary?.metrics?.insertParallelTop3AccuracyPct ?? null)}
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                    <div className={adminSubpanelClass("p-3 text-sm text-slate-200")}>
                       Unknown rate: {toPercent(data.evals.lastRun.summary?.metrics?.unknownRatePct ?? null)}
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                    <div className={adminSubpanelClass("p-3 text-sm text-slate-200")}>
                       Wrong-set rate: {toPercent(data.evals.lastRun.summary?.metrics?.wrongSetRatePct ?? null)}
                     </div>
-                    <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3 text-sm text-slate-200">
+                    <div className={adminSubpanelClass("p-3 text-sm text-slate-200")}>
                       Cross-set drift: {toPercent(data.evals.lastRun.summary?.metrics?.crossSetMemoryDriftPct ?? null)}
                     </div>
                   </div>
@@ -682,7 +689,7 @@ export default function AiOpsPage() {
                 </div>
               ) : null}
 
-              <div className="mt-6 rounded-2xl border border-white/10 bg-night-900/50 p-4">
+              <div className={adminSubpanelClass("mt-6 p-4")}>
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-xs uppercase tracking-[0.22em] text-slate-400">Gold Eval Cases</p>
                   <button
@@ -700,73 +707,73 @@ export default function AiOpsPage() {
                     value={newEvalCase.slug}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, slug: event.target.value }))}
                     placeholder="slug (ex: finest-no-limit-nl30)"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                   <input
                     value={newEvalCase.title}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, title: event.target.value }))}
                     placeholder="title"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                   <input
                     value={newEvalCase.cardAssetId}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, cardAssetId: event.target.value }))}
                     placeholder="cardAssetId"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                   <input
                     value={newEvalCase.expectedSetName}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, expectedSetName: event.target.value }))}
                     placeholder="expected setName"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                   <input
                     value={newEvalCase.expectedInsertSet}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, expectedInsertSet: event.target.value }))}
                     placeholder="expected insertSet (optional)"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                   <input
                     value={newEvalCase.expectedParallel}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, expectedParallel: event.target.value }))}
                     placeholder="expected parallel (optional)"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                   <input
                     value={newEvalCase.hintSetId}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintSetId: event.target.value }))}
                     placeholder="hint setId (optional)"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                   <input
                     value={newEvalCase.hintYear}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintYear: event.target.value }))}
                     placeholder="hint year"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                   <input
                     value={newEvalCase.hintManufacturer}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintManufacturer: event.target.value }))}
                     placeholder="hint manufacturer"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                   <input
                     value={newEvalCase.hintSport}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintSport: event.target.value }))}
                     placeholder="hint sport"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                   <input
                     value={newEvalCase.hintProductLine}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintProductLine: event.target.value }))}
                     placeholder="hint productLine"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                   <input
                     value={newEvalCase.hintLayoutClass}
                     onChange={(event) => setNewEvalCase((prev) => ({ ...prev, hintLayoutClass: event.target.value }))}
                     placeholder="hint layoutClass"
-                    className="rounded-lg border border-white/10 bg-night-950/70 px-3 py-2 text-sm text-slate-100 outline-none focus:border-gold-500/60"
+                    className={adminInputClass("h-auto rounded-lg py-2 text-slate-100")}
                   />
                 </div>
                 <div className="mt-3">
@@ -832,7 +839,7 @@ export default function AiOpsPage() {
               </div>
             </section>
 
-            <section className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+            <section className={adminPanelClass("p-4")}>
               <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Pipeline Health</p>
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full">
@@ -896,7 +903,7 @@ export default function AiOpsPage() {
             </section>
 
             <section className="grid gap-6 lg:grid-cols-2">
-              <article className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+              <article className={adminPanelClass("p-4")}>
                 <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Teach/Train Impact (7d)</p>
                 <div className="mt-3 space-y-2 text-sm text-slate-200">
                   <p>Lessons captured: {data.teach.lessons7d}</p>
@@ -926,7 +933,7 @@ export default function AiOpsPage() {
                 </div>
               </article>
 
-              <article className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+              <article className={adminPanelClass("p-4")}>
                 <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Model Behavior (7d)</p>
                 <div className="mt-3 grid gap-4 md:grid-cols-2">
                   <div>
@@ -963,20 +970,20 @@ export default function AiOpsPage() {
               </article>
             </section>
 
-            <section className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+            <section className={adminPanelClass("p-4")}>
               <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Teach Region Telemetry</p>
               <div className="mt-3 grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                <div className={adminSubpanelClass("p-3")}>
                   <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Template saves</p>
                   <p className="mt-1 text-sm text-slate-100">24h: {data.teachRegions.templateSaves24h}</p>
                   <p className="text-sm text-slate-100">7d: {data.teachRegions.templateSaves7d}</p>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                <div className={adminSubpanelClass("p-3")}>
                   <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Client errors</p>
                   <p className="mt-1 text-sm text-rose-200">24h: {data.teachRegions.clientErrors24h}</p>
                   <p className="text-sm text-rose-200">7d: {data.teachRegions.clientErrors7d}</p>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                <div className={adminSubpanelClass("p-3")}>
                   <p className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Snapshot coverage</p>
                   <p className="mt-1 text-sm text-slate-100">Snapshots (7d): {data.teachRegions.snapshots7d}</p>
                   <p className="text-sm text-slate-100">
@@ -986,7 +993,7 @@ export default function AiOpsPage() {
                 </div>
               </div>
               <div className="mt-4 grid gap-4 lg:grid-cols-2">
-                <article className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                <article className={adminSubpanelClass("p-3")}>
                   <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Recent Teach Region Saves</p>
                   <div className="mt-2 max-h-72 overflow-auto">
                     <table className="min-w-full">
@@ -1038,7 +1045,7 @@ export default function AiOpsPage() {
                     </table>
                   </div>
                 </article>
-                <article className="rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                <article className={adminSubpanelClass("p-3")}>
                   <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Recent Teach Region Client Errors</p>
                   <div className="mt-2 max-h-72 space-y-2 overflow-auto pr-1">
                     {data.teachRegions.recentClientErrors.length === 0 ? (
@@ -1061,7 +1068,7 @@ export default function AiOpsPage() {
               </div>
             </section>
 
-            <section className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+            <section className={adminPanelClass("p-4")}>
               <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Recent Human Corrections</p>
               <div className="mt-4 overflow-x-auto">
                 <table className="min-w-full">
@@ -1097,14 +1104,14 @@ export default function AiOpsPage() {
               </div>
             </section>
 
-            <section className="rounded-3xl border border-white/10 bg-night-800/65 p-4">
+            <section className={adminPanelClass("p-4")}>
               <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Quick Ops Attention Queue</p>
               <div className="mt-4 space-y-3">
                 {data.ops.attentionCards.length === 0 ? (
                   <p className="text-sm text-slate-400">No attention cards right now.</p>
                 ) : (
                   data.ops.attentionCards.map((card) => (
-                    <article key={card.id} className="rounded-2xl border border-white/10 bg-night-900/65 p-3">
+                    <article key={card.id} className={adminSubpanelClass("p-3")}>
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <p className="text-sm font-medium text-white">{card.fileName}</p>
@@ -1152,12 +1159,12 @@ export default function AiOpsPage() {
   };
 
   return (
-    <AppShell>
+    <AppShell background="black" brandVariant="collectibles">
       <Head>
         <title>Ten Kings · AI Ops</title>
         <meta name="robots" content="noindex" />
       </Head>
-      <div className="mx-auto flex w-full max-w-[1480px] flex-1 flex-col gap-6 px-4 py-6 lg:px-6">
+      <div className={ADMIN_PAGE_FRAME_CLASS}>
         {sessionLoading ? (
           <div className="flex flex-1 items-center justify-center">
             <p className="text-sm uppercase tracking-[0.28em] text-slate-400">Checking access...</p>
