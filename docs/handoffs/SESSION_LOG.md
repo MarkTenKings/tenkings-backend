@@ -7426,3 +7426,85 @@
 ### Operations
 - User reports the deterministic set-card resolver was deployed to prod and tested.
 - Despite deploy, the recognition issue remains unresolved.
+
+## 2026-03-08 - AGENTS startup context sync (no runtime changes)
+
+### Summary
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Captured repository state before doc updates:
+  - `git status -sb`: `## main...origin/main [ahead 1]`
+  - `git branch --show-current`: `main`
+  - `git rev-parse --short HEAD`: `de22c0e`
+- No code changes, DB operations, or runtime actions were executed in this session.
+
+### Operations
+- No deploy/restart/migration commands executed.
+
+### Carry-Forward
+- Latest unresolved runtime issue remains Add Card first-screen set recognition failures for some approved `2025-26 Topps Basketball` cards.
+- Most likely next investigation point remains back-photo OCR/card-number grounding in `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`.
+
+## 2026-03-08 - Add Card OCR card-number grounding + stale audit refresh
+
+### Summary
+- Implemented a deterministic OCR card-number grounding pass in `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`.
+- The OCR route now:
+  - scopes approved set candidates from `year + manufacturer + sport`,
+  - scans approved `SetCard.cardNumber` values against `BACK`, `FRONT`, `TILT`, and combined OCR text,
+  - prefers `BACK` + pattern matches,
+  - records grounding evidence in `audit.ocrCardNumberGrounding`,
+  - applies grounded `cardNumber` before `resolveScopedSetCard(...)`.
+- This is aimed directly at the current production issue where back OCR appears present on failing cards but `fields.cardNumber` is still not consistently populated before set/program resolution.
+
+### Review/UI Follow-up
+- Updated `frontend/nextjs-app/pages/admin/uploads.tsx` so loading a queued card no longer treats any existing OCR payload as final.
+- If stored OCR data exists but does not show a resolved set + grounded card number, the review screen now auto-refreshes `/ocr-suggest` with the scoped hints instead of freezing on stale warm-path results.
+- Explainability in Add Cards now surfaces:
+  - card-number grounding result/reason
+  - scoped set-card resolver result/reason
+
+### Regression Coverage
+- Added prefixed card-number normalization assertions in `packages/shared/tests/setOpsNormalizer.test.js`:
+  - `DD-11`
+  - `NS-27`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared test` => pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` => pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file pages/admin/uploads.tsx` => pass with existing `no-img-element` warnings only in `pages/admin/uploads.tsx`
+
+### Operations
+- No deploy/restart/migration commands executed.
+
+### Next Runtime Validation
+- Re-test the same known failing production cards from approved `2025-26 Topps Basketball`:
+  - `Cooper Flagg`
+  - `Devin Vassell`
+  - `Danny Wolf`
+- Confirm for each:
+  - `audit.ocrCardNumberGrounding.matched === true` or at least a clear failure reason
+  - first-screen `Product Set` resolves correctly
+  - explainability shows grounded card-number/set-card status instead of only generic unknown-pool messaging
+
+## 2026-03-08 - Planned Deploy (Add Card OCR card-number grounding)
+
+### Plan
+- Deploy the Add Card OCR card-number grounding + stale audit refresh changes.
+- Scope:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `packages/shared/tests/setOpsNormalizer.test.js`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Changes:
+  - ground `cardNumber` from scoped per-photo OCR text before set-card resolution
+  - write `audit.ocrCardNumberGrounding` for runtime inspection
+  - auto-refresh queued-card OCR when stored audit is unresolved/stale
+  - show grounding + resolver status in Add Card explainability
+  - preserve prefixed card-number normalization regression coverage
+- DB: no migration required.

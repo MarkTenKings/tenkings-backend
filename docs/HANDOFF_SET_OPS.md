@@ -3874,3 +3874,61 @@ Build Set Ops UI flow with:
 - Operational note:
   - user explicitly reported that the deterministic resolver patch was deployed and tested in prod
   - runtime behavior still indicates the Add Card funnel is not yet reliably honoring the intended `back OCR -> card number -> approved set/program` architecture
+
+## Session Update (2026-03-08, AGENTS startup context sync)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Captured repository state before doc updates:
+  - `git status -sb`: `## main...origin/main [ahead 1]`
+  - `git branch --show-current`: `main`
+  - `git rev-parse --short HEAD`: `de22c0e`
+- No code/runtime/DB changes were made in this session.
+- No deploy/restart/migration commands were run.
+- Carry-forward focus remains the unresolved Add Card back-photo OCR/card-number grounding issue described in the latest 2026-03-07 session updates.
+
+## Session Update (2026-03-08, Add Card OCR card-number grounding + stale audit refresh)
+- Implemented a deterministic OCR card-number grounding pass in:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- New behavior:
+  - builds approved set scope from `year + manufacturer + sport` query hints,
+  - scans scoped `SetCard.cardNumber` values against per-photo OCR text (`BACK`, `FRONT`, `TILT`, combined),
+  - prefers `BACK` matches and pattern matches over weaker compact-text matches,
+  - writes `audit.ocrCardNumberGrounding` with match status, side, score, and top candidates,
+  - applies grounded `cardNumber` before the existing `resolveScopedSetCard(...)` step.
+- This directly addresses the current production failure mode where Add Card often had usable back OCR text but did not reliably populate `fields.cardNumber` before deterministic set/program resolution.
+- Also updated `frontend/nextjs-app/pages/admin/uploads.tsx` so queued-card review no longer trusts any existing OCR audit blindly:
+  - if a stored OCR payload exists but does not show a resolved set + grounded card number, the review screen now auto-refreshes `/ocr-suggest` with current scoped hints instead of freezing on stale warm-path output,
+  - explainability panel now surfaces card-number grounding and scoped set-card resolver status/reasons.
+- Added prefixed card-number regression coverage in:
+  - `packages/shared/tests/setOpsNormalizer.test.js`
+  - verifies `DD-11` and `NS-27` remain stable through normalization.
+- Local validation:
+  - `pnpm --filter @tenkings/shared test` (pass)
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file pages/admin/uploads.tsx` (pass; existing `no-img-element` warnings only in `pages/admin/uploads.tsx`)
+- No deploy/restart/migration commands were run in this step.
+- Next runtime validation should re-test the same failing `2025-26 Topps Basketball` cards (`Cooper Flagg`, `Devin Vassell`, `Danny Wolf`) and confirm:
+  - `audit.ocrCardNumberGrounding.matched === true` on back-OCR-driven cards,
+  - `Product Set` resolves on the first review screen,
+  - explainability shows grounded card number + scoped set-card resolver outcome.
+
+## Session Update (2026-03-08, Planned Deploy - Add Card OCR card-number grounding)
+- Planned production deploy scope:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `packages/shared/tests/setOpsNormalizer.test.js`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Changes being deployed:
+  - deterministic scoped OCR card-number grounding from per-photo OCR text,
+  - stale OCR audit auto-refresh on queued-card review when set/card grounding is still unresolved,
+  - Add Card explainability surfacing card-number grounding and set-card resolver reasons,
+  - prefixed card-number normalization regression coverage (`DD-11`, `NS-27`).
+- DB: no migration required.
+- Runtime validation plan after deploy:
+  - re-test `Cooper Flagg`, `Devin Vassell`, and `Danny Wolf` cards from approved `2025-26 Topps Basketball`
+  - confirm first-screen `Product Set` resolution and inspect `audit.ocrCardNumberGrounding`.

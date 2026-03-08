@@ -41,6 +41,8 @@ test("normalizeCardNumber normalizes legacy ALL/NULL and common noise", () => {
   assert.equal(normalizeCardNumber(" all "), "ALL");
   assert.equal(normalizeCardNumber(" NULL "), null);
   assert.equal(normalizeCardNumber(" # 113a "), "113A");
+  assert.equal(normalizeCardNumber(" dd-11 "), "DD-11");
+  assert.equal(normalizeCardNumber(" ns-27 "), "NS-27");
   assert.equal(normalizeCardNumber(""), null);
 });
 

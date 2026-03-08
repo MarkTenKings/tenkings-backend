@@ -155,6 +155,36 @@ type OcrAuditPayload = {
     matchedCardNumber?: string;
     topCandidate?: { parallelId?: string; confidence?: number; reason?: string | null } | null;
   };
+  ocrCardNumberGrounding?: {
+    matched?: boolean;
+    reason?: string;
+    scannedRowCount?: number;
+    candidateCount?: number;
+    cardNumber?: string | null;
+    setId?: string | null;
+    programId?: string | null;
+    programLabel?: string | null;
+    playerName?: string | null;
+    teamName?: string | null;
+    sourceSide?: "FRONT" | "BACK" | "TILT" | "COMBINED" | null;
+    matchType?: "pattern" | "compact" | null;
+    evidenceText?: string | null;
+    score?: number;
+    runnerUpScore?: number | null;
+  };
+  setCardResolution?: {
+    matched?: boolean;
+    reason?: string;
+    candidateCount?: number;
+    setId?: string | null;
+    programId?: string | null;
+    programLabel?: string | null;
+    cardNumber?: string | null;
+    playerName?: string | null;
+    teamName?: string | null;
+    score?: number;
+    runnerUpScore?: number | null;
+  };
   taxonomyConstraints?: {
     fieldStatus?: Partial<
       Record<
@@ -427,6 +457,66 @@ const resolveHydratedProductLine = (params: {
   }
 
   return "";
+};
+
+const humanizeOcrAuditReason = (reason: string | null | undefined): string => {
+  switch (reason) {
+    case "missing_scope_hints":
+      return "missing year/manufacturer scope";
+    case "missing_card_number":
+      return "missing grounded card number";
+    case "card_number_not_found_in_scope":
+      return "card number not found in approved set scope";
+    case "ambiguous_card_number_scope":
+      return "card number maps to multiple approved set candidates";
+    case "unresolved_best_candidate":
+      return "best approved set candidate was not decisive";
+    case "no_scoped_sets":
+      return "no approved set scope available";
+    case "no_scoped_set_cards":
+      return "no approved set cards available in scope";
+    case "no_card_number_evidence_in_scope":
+      return "no approved card number found in OCR text";
+    case "weak_card_number_evidence":
+      return "card-number OCR evidence was too weak";
+    case "ambiguous_card_number_evidence":
+      return "multiple card-number OCR matches were too close";
+    case "scoped_ocr_card_number_match":
+      return "scoped OCR card-number match";
+    case "single_set_card_match":
+      return "single approved set match";
+    case "scored_card_match":
+      return "best approved set-card match";
+    default:
+      return sanitizeNullableText(reason).replace(/_/g, " ") || "unknown";
+  }
+};
+
+const shouldRefreshLoadedOcrSuggestions = (params: {
+  audit: OcrAuditPayload | null;
+  category: "sport" | "tcg";
+  hasRequiredIntakePhotos: boolean;
+  year: string;
+  manufacturer: string;
+}): boolean => {
+  if (params.category !== "sport" || !params.hasRequiredIntakePhotos) {
+    return false;
+  }
+  if (!sanitizeNullableText(params.year) || !sanitizeNullableText(params.manufacturer)) {
+    return false;
+  }
+  const audit = params.audit;
+  if (!audit) {
+    return false;
+  }
+  const fields = audit.fields ?? {};
+  const setStatus = audit.taxonomyConstraints?.fieldStatus?.setName ?? null;
+  const hasSet = Boolean(sanitizeNullableText(fields.setName));
+  const hasCardNumber = Boolean(sanitizeNullableText(fields.cardNumber));
+  const setResolved = setStatus === "kept" && hasSet;
+  const setCardResolved = audit.setCardResolution?.matched === true;
+  const groundedCardNumber = audit.ocrCardNumberGrounding?.matched === true;
+  return !(setResolved && hasCardNumber && (setCardResolved || groundedCardNumber));
 };
 
 const humanizeRequestFailure = (error: unknown, fallback: string): string => {
@@ -2017,10 +2107,11 @@ export default function AdminUploads() {
       const backPhoto = photos.find((photo: any) => photo?.kind === "BACK") ?? null;
       const tiltPhoto = photos.find((photo: any) => photo?.kind === "TILT") ?? null;
       const hasRequiredIntakePhotos = Boolean(backPhoto?.imageUrl) && Boolean(tiltPhoto?.imageUrl);
-      const hasExistingOcrSuggestions = Boolean(payload.ocrSuggestions?.data);
-      const ocrFields = (payload.ocrSuggestions?.data?.fields ?? {}) as Record<string, string | null>;
+      const existingOcrAudit = (payload.ocrSuggestions?.data as OcrAuditPayload | null) ?? null;
+      const hasExistingOcrSuggestions = Boolean(existingOcrAudit);
+      const ocrFields = (existingOcrAudit?.fields ?? {}) as Record<string, string | null>;
       const taxonomyFieldStatus = (
-        payload.ocrSuggestions?.data?.taxonomyConstraints?.fieldStatus ?? {}
+        existingOcrAudit?.taxonomyConstraints?.fieldStatus ?? {}
       ) as Partial<Record<"setName" | "insertSet" | "parallel", "kept" | "cleared_low_confidence" | "cleared_out_of_pool" | "cleared_no_set_scope">>;
       const normalized = (payload.classificationNormalized ?? {}) as Record<string, any>;
       const attributes = (payload.classification ?? {}) as Record<string, any>;
@@ -2111,7 +2202,7 @@ export default function AdminUploads() {
       );
       setIntakeTouched({});
       setIntakeOptionalTouched({});
-      setOcrAudit((payload.ocrSuggestions?.data as Record<string, unknown> | null) ?? null);
+      setOcrAudit((existingOcrAudit as Record<string, unknown> | null) ?? null);
       setTeachBusy(false);
       setTeachFeedback(null);
       setTeachCapturedFromCorrections(false);
@@ -2123,7 +2214,18 @@ export default function AdminUploads() {
       setIntakeStep("required");
       setIntakeError(null);
       setQueuedReviewCardIds((prev) => prev.filter((id) => id !== cardId));
-      setPendingAutoOcrCardId(!hasExistingOcrSuggestions && hasRequiredIntakePhotos ? cardId : null);
+      const shouldRefreshExistingOcr =
+        hasExistingOcrSuggestions &&
+        shouldRefreshLoadedOcrSuggestions({
+          audit: existingOcrAudit,
+          category: categoryType,
+          hasRequiredIntakePhotos,
+          year: sanitizeNullableText(ocrFields.year ?? normalized.year ?? attributes.year ?? ""),
+          manufacturer: sanitizeNullableText(ocrFields.manufacturer ?? normalized.company ?? attributes.brand ?? ""),
+        });
+      setPendingAutoOcrCardId(
+        hasRequiredIntakePhotos && (!hasExistingOcrSuggestions || shouldRefreshExistingOcr) ? cardId : null
+      );
     },
     [resolveApiUrl, session?.token]
   );
@@ -3485,6 +3587,26 @@ export default function AdminUploads() {
       lines.push(
         `OCR insert suggestion: ${insertSuggestion}${insertConfidence != null ? ` (${insertConfidence}%)` : ""}`
       );
+    }
+
+    const ocrCardNumberGrounding = typedOcrAudit?.ocrCardNumberGrounding;
+    if (ocrCardNumberGrounding?.matched && ocrCardNumberGrounding.cardNumber) {
+      const sourceLabel = sanitizeNullableText(ocrCardNumberGrounding.sourceSide) || "OCR";
+      const methodLabel =
+        ocrCardNumberGrounding.matchType === "compact" ? "compact text match" : "pattern match";
+      lines.push(`Card-number grounding: ${ocrCardNumberGrounding.cardNumber} from ${sourceLabel} (${methodLabel})`);
+    } else if (ocrCardNumberGrounding?.reason && ocrCardNumberGrounding.reason !== "missing_scope_hints") {
+      lines.push(`Card-number grounding: ${humanizeOcrAuditReason(ocrCardNumberGrounding.reason)}`);
+    }
+
+    const setCardResolution = typedOcrAudit?.setCardResolution;
+    if (setCardResolution?.matched && setCardResolution.setId) {
+      const programLabel = sanitizeNullableText(setCardResolution.programLabel);
+      lines.push(
+        `Scoped set-card resolver: ${setCardResolution.setId}${programLabel ? ` / ${programLabel}` : ""}`
+      );
+    } else if (setCardResolution?.reason && setCardResolution.reason !== "missing_scope_hints") {
+      lines.push(`Scoped set-card resolver: ${humanizeOcrAuditReason(setCardResolution.reason)}`);
     }
 
     const variantMatch = typedOcrAudit?.variantMatch;

@@ -247,6 +247,37 @@ type SetCardResolutionAudit = {
   runnerUpScore?: number | null;
 };
 
+type CardNumberGroundingMatchType = "pattern" | "compact";
+type CardNumberGroundingSourceSide = OcrPhotoId | "COMBINED";
+
+type CardNumberGroundingAudit = {
+  matched: boolean;
+  reason: string;
+  candidateSetIds: string[];
+  scannedRowCount: number;
+  candidateCount: number;
+  cardNumber: string | null;
+  setId: string | null;
+  programId: string | null;
+  programLabel: string | null;
+  playerName: string | null;
+  teamName: string | null;
+  sourceSide: CardNumberGroundingSourceSide | null;
+  matchType: CardNumberGroundingMatchType | null;
+  evidenceText: string | null;
+  score?: number;
+  runnerUpScore?: number | null;
+  topCandidates?: Array<{
+    cardNumber: string;
+    setId: string;
+    programId: string;
+    programLabel: string | null;
+    sourceSide: CardNumberGroundingSourceSide;
+    matchType: CardNumberGroundingMatchType;
+    score: number;
+  }>;
+};
+
 const OCR_PHOTO_IDS: OcrPhotoId[] = ["FRONT", "BACK", "TILT"];
 const REQUIRED_OCR_PHOTO_IDS: OcrPhotoId[] = ["FRONT", "BACK", "TILT"];
 const TRUE_STRINGS = new Set(["true", "yes", "1"]);
@@ -317,6 +348,424 @@ function publishedSetProgramWhereInput(): Prisma.SetProgramWhereInput {
 
 function normalizeLooseLookupKey(value: string | null | undefined) {
   return tokenize(String(value || "")).join(" ").trim();
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeOcrCodeText(value: string | null | undefined) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/[‐‑‒–—−]/g, "-")
+    .replace(/(?<=\d)[O]/g, "0")
+    .replace(/[O](?=\d)/g, "0")
+    .replace(/(?<=\d)[IL]/g, "1")
+    .replace(/[IL](?=\d)/g, "1")
+    .replace(/(?<=\d)S/g, "5")
+    .replace(/S(?=\d)/g, "5");
+}
+
+function compactAlphaNumeric(value: string | null | undefined) {
+  return normalizeOcrCodeText(value).replace(/[^A-Z0-9]/g, "");
+}
+
+function buildCardNumberSearchRegex(cardNumber: string): RegExp | null {
+  const normalized = normalizeTaxonomyCardNumber(cardNumber);
+  if (!normalized || normalized === "ALL") {
+    return null;
+  }
+  const chunks = normalized
+    .split(/[^A-Z0-9]+/g)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => escapeRegExp(part));
+  if (chunks.length < 1) {
+    return null;
+  }
+  return new RegExp(`(?:^|[^A-Z0-9])(${chunks.join("[\\s\\-_/]*")})(?=$|[^A-Z0-9])`, "i");
+}
+
+function findCardNumberTextEvidence(
+  cardNumber: string,
+  textSources: Array<{ side: CardNumberGroundingSourceSide; text: string }>
+): {
+  sourceSide: CardNumberGroundingSourceSide;
+  matchType: CardNumberGroundingMatchType;
+  evidenceText: string;
+  baseScore: number;
+} | null {
+  const normalizedCardNumber = normalizeTaxonomyCardNumber(cardNumber);
+  if (!normalizedCardNumber || normalizedCardNumber === "ALL") {
+    return null;
+  }
+  const pattern = buildCardNumberSearchRegex(normalizedCardNumber);
+  const compactKey = compactAlphaNumeric(normalizedCardNumber);
+  const sideWeights: Record<CardNumberGroundingSourceSide, number> = {
+    BACK: 4,
+    FRONT: 2.5,
+    TILT: 1.5,
+    COMBINED: 0.5,
+  };
+  const matches: Array<{
+    sourceSide: CardNumberGroundingSourceSide;
+    matchType: CardNumberGroundingMatchType;
+    evidenceText: string;
+    baseScore: number;
+  }> = [];
+
+  textSources.forEach(({ side, text }) => {
+    const normalizedText = normalizeOcrCodeText(text);
+    if (!normalizedText) {
+      return;
+    }
+    if (pattern) {
+      const patternMatch = normalizedText.match(pattern);
+      if (patternMatch?.[1]) {
+        matches.push({
+          sourceSide: side,
+          matchType: "pattern",
+          evidenceText: patternMatch[1],
+          baseScore: sideWeights[side] + 4,
+        });
+      }
+    }
+    if (compactKey.length >= 4) {
+      const compactText = compactAlphaNumeric(normalizedText);
+      if (compactText.includes(compactKey)) {
+        matches.push({
+          sourceSide: side,
+          matchType: "compact",
+          evidenceText: compactKey,
+          baseScore: sideWeights[side] + 2.5,
+        });
+      }
+    }
+  });
+
+  return (
+    matches.sort((a, b) => {
+      if (b.baseScore !== a.baseScore) {
+        return b.baseScore - a.baseScore;
+      }
+      if (a.matchType !== b.matchType) {
+        return a.matchType === "pattern" ? -1 : 1;
+      }
+      return a.sourceSide.localeCompare(b.sourceSide);
+    })[0] ?? null
+  );
+}
+
+async function groundScopedCardNumberFromOcr(params: {
+  fields: SuggestionFields;
+  queryHints: {
+    year: string | null;
+    manufacturer: string | null;
+    sport: string | null;
+    productLine: string | null;
+    setId: string | null;
+  };
+  photoTexts: Record<OcrPhotoId, string>;
+  combinedText: string;
+}): Promise<CardNumberGroundingAudit> {
+  const year = sanitizeText(params.queryHints.year || params.fields.year || "");
+  const manufacturer = sanitizeText(params.queryHints.manufacturer || params.fields.manufacturer || "");
+  const sport = sanitizeText(params.queryHints.sport || params.fields.sport || "") || null;
+  if (!year || !manufacturer) {
+    return {
+      matched: false,
+      reason: "missing_scope_hints",
+      candidateSetIds: [],
+      scannedRowCount: 0,
+      candidateCount: 0,
+      cardNumber: null,
+      setId: null,
+      programId: null,
+      programLabel: null,
+      playerName: null,
+      teamName: null,
+      sourceSide: null,
+      matchType: null,
+      evidenceText: null,
+    };
+  }
+
+  const pool = await loadVariantOptionPool({
+    year,
+    manufacturer,
+    sport,
+    productLine: sanitizeText(params.queryHints.productLine || "") || null,
+    setId: sanitizeText(params.queryHints.setId || "") || null,
+  });
+  const candidateSetIds = (pool.selectedSetId ? [pool.selectedSetId] : pool.scopedSetIds).filter(Boolean);
+  if (candidateSetIds.length < 1) {
+    return {
+      matched: false,
+      reason: "no_scoped_sets",
+      candidateSetIds: [],
+      scannedRowCount: 0,
+      candidateCount: 0,
+      cardNumber: null,
+      setId: null,
+      programId: null,
+      programLabel: null,
+      playerName: null,
+      teamName: null,
+      sourceSide: null,
+      matchType: null,
+      evidenceText: null,
+    };
+  }
+
+  const rows = await prisma.setCard.findMany({
+    where: {
+      setId: { in: candidateSetIds },
+      ...publishedTaxonomyWhereInput(),
+    },
+    select: {
+      setId: true,
+      programId: true,
+      cardNumber: true,
+      playerName: true,
+      team: true,
+    },
+    take: 4000,
+  });
+  if (rows.length < 1) {
+    return {
+      matched: false,
+      reason: "no_scoped_set_cards",
+      candidateSetIds,
+      scannedRowCount: 0,
+      candidateCount: 0,
+      cardNumber: null,
+      setId: null,
+      programId: null,
+      programLabel: null,
+      playerName: null,
+      teamName: null,
+      sourceSide: null,
+      matchType: null,
+      evidenceText: null,
+    };
+  }
+
+  const programKeys = Array.from(new Set(rows.map((row) => `${row.setId}::${row.programId}`)));
+  const programs = programKeys.length
+    ? await prisma.setProgram.findMany({
+        where: {
+          OR: programKeys.map((entry) => {
+            const [setId, programId] = entry.split("::");
+            return { setId, programId };
+          }),
+          ...publishedSetProgramWhereInput(),
+        },
+        select: {
+          setId: true,
+          programId: true,
+          label: true,
+        },
+      })
+    : [];
+  const programLabelByKey = new Map(programs.map((program) => [`${program.setId}::${program.programId}`, program.label]));
+
+  const textSources: Array<{ side: CardNumberGroundingSourceSide; text: string }> = [
+    { side: "BACK", text: params.photoTexts.BACK || "" },
+    { side: "FRONT", text: params.photoTexts.FRONT || "" },
+    { side: "TILT", text: params.photoTexts.TILT || "" },
+    { side: "COMBINED", text: params.combinedText || "" },
+  ];
+  const playerKey = normalizeLooseLookupKey(params.fields.playerName);
+  const teamKey = normalizeLooseLookupKey(params.fields.teamName);
+  const insertKey = normalizeVariantLabelKey(params.fields.insertSet || "");
+  const setKey = normalizeLooseLookupKey(params.fields.setName);
+
+  const grouped = new Map<
+    string,
+    {
+      cardNumber: string;
+      score: number;
+      supportCount: number;
+      bestRow: {
+        setId: string;
+        programId: string;
+        cardNumber: string;
+        playerName: string | null;
+        team: string | null;
+      };
+      programLabel: string | null;
+      sourceSide: CardNumberGroundingSourceSide;
+      matchType: CardNumberGroundingMatchType;
+      evidenceText: string;
+    }
+  >();
+
+  rows.forEach((row) => {
+    const normalizedCardNumber = normalizeTaxonomyCardNumber(row.cardNumber);
+    if (!normalizedCardNumber || normalizedCardNumber === "ALL") {
+      return;
+    }
+    const evidence = findCardNumberTextEvidence(normalizedCardNumber, textSources);
+    if (!evidence) {
+      return;
+    }
+
+    const rowProgramLabel = programLabelByKey.get(`${row.setId}::${row.programId}`) ?? null;
+    const rowPlayerKey = normalizeLooseLookupKey(row.playerName);
+    const rowTeamKey = normalizeLooseLookupKey(row.team);
+    const rowProgramKey = normalizeVariantLabelKey(rowProgramLabel || row.programId || "");
+    const rowSetKey = normalizeLooseLookupKey(row.setId);
+    let score = evidence.baseScore;
+    if (pool.selectedSetId && row.setId === pool.selectedSetId) {
+      score += 2;
+    }
+    if (playerKey && rowPlayerKey) {
+      if (rowPlayerKey === playerKey) {
+        score += 4.5;
+      } else if (rowPlayerKey.includes(playerKey) || playerKey.includes(rowPlayerKey)) {
+        score += 2.25;
+      }
+    }
+    if (teamKey && rowTeamKey && rowTeamKey === teamKey) {
+      score += 1.5;
+    }
+    if (insertKey && rowProgramKey && rowProgramKey === insertKey) {
+      score += 3;
+    }
+    if (setKey && rowSetKey && rowSetKey === setKey) {
+      score += 1.5;
+    }
+
+    const digitCount = normalizedCardNumber.replace(/[^0-9]/g, "").length;
+    const hasAlpha = /[A-Z]/.test(normalizedCardNumber);
+    if (!hasAlpha && digitCount <= 2 && !playerKey && !insertKey) {
+      score -= 2.5;
+    }
+    if (!hasAlpha && evidence.matchType === "compact") {
+      score -= 1.5;
+    }
+    if (score < 5.5) {
+      return;
+    }
+
+    const existing = grouped.get(normalizedCardNumber);
+    if (!existing) {
+      grouped.set(normalizedCardNumber, {
+        cardNumber: normalizedCardNumber,
+        score,
+        supportCount: 1,
+        bestRow: row,
+        programLabel: rowProgramLabel,
+        sourceSide: evidence.sourceSide,
+        matchType: evidence.matchType,
+        evidenceText: evidence.evidenceText,
+      });
+      return;
+    }
+    existing.supportCount += 1;
+    if (score > existing.score) {
+      existing.score = score;
+      existing.bestRow = row;
+      existing.programLabel = rowProgramLabel;
+      existing.sourceSide = evidence.sourceSide;
+      existing.matchType = evidence.matchType;
+      existing.evidenceText = evidence.evidenceText;
+    }
+  });
+
+  const candidates = Array.from(grouped.values())
+    .map((entry) => ({
+      ...entry,
+      score: Number((entry.score + Math.min(1.2, Math.max(0, entry.supportCount - 1) * 0.25)).toFixed(3)),
+    }))
+    .sort(
+      (a, b) =>
+        b.score - a.score ||
+        b.supportCount - a.supportCount ||
+        a.cardNumber.localeCompare(b.cardNumber)
+    );
+
+  const best = candidates[0] ?? null;
+  const runnerUp = candidates[1] ?? null;
+  if (!best) {
+    return {
+      matched: false,
+      reason: "no_card_number_evidence_in_scope",
+      candidateSetIds,
+      scannedRowCount: rows.length,
+      candidateCount: 0,
+      cardNumber: null,
+      setId: null,
+      programId: null,
+      programLabel: null,
+      playerName: null,
+      teamName: null,
+      sourceSide: null,
+      matchType: null,
+      evidenceText: null,
+    };
+  }
+
+  const bestHasAlpha = /[A-Z]/.test(best.cardNumber);
+  const scoreFloor = bestHasAlpha ? 6 : playerKey || insertKey ? 6.2 : 7;
+  const strongLead = !runnerUp || best.score - runnerUp.score >= 1.2;
+  if (best.score < scoreFloor || !strongLead) {
+    return {
+      matched: false,
+      reason: best.score < scoreFloor ? "weak_card_number_evidence" : "ambiguous_card_number_evidence",
+      candidateSetIds,
+      scannedRowCount: rows.length,
+      candidateCount: candidates.length,
+      cardNumber: best.cardNumber,
+      setId: best.bestRow.setId,
+      programId: best.bestRow.programId,
+      programLabel: best.programLabel,
+      playerName: best.bestRow.playerName ?? null,
+      teamName: best.bestRow.team ?? null,
+      sourceSide: best.sourceSide,
+      matchType: best.matchType,
+      evidenceText: best.evidenceText,
+      score: best.score,
+      runnerUpScore: runnerUp?.score ?? null,
+      topCandidates: candidates.slice(0, 3).map((candidate) => ({
+        cardNumber: candidate.cardNumber,
+        setId: candidate.bestRow.setId,
+        programId: candidate.bestRow.programId,
+        programLabel: candidate.programLabel,
+        sourceSide: candidate.sourceSide,
+        matchType: candidate.matchType,
+        score: candidate.score,
+      })),
+    };
+  }
+
+  return {
+    matched: true,
+    reason: "scoped_ocr_card_number_match",
+    candidateSetIds,
+    scannedRowCount: rows.length,
+    candidateCount: candidates.length,
+    cardNumber: best.cardNumber,
+    setId: best.bestRow.setId,
+    programId: best.bestRow.programId,
+    programLabel: best.programLabel,
+    playerName: best.bestRow.playerName ?? null,
+    teamName: best.bestRow.team ?? null,
+    sourceSide: best.sourceSide,
+    matchType: best.matchType,
+    evidenceText: best.evidenceText,
+    score: best.score,
+    runnerUpScore: runnerUp?.score ?? null,
+    topCandidates: candidates.slice(0, 3).map((candidate) => ({
+      cardNumber: candidate.cardNumber,
+      setId: candidate.bestRow.setId,
+      programId: candidate.bestRow.programId,
+      programLabel: candidate.programLabel,
+      sourceSide: candidate.sourceSide,
+      matchType: candidate.matchType,
+      score: candidate.score,
+    })),
+  };
 }
 
 async function resolveScopedSetCard(params: {
@@ -2341,6 +2790,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       confidence.numbered = null;
     }
 
+    let ocrCardNumberGroundingAudit: CardNumberGroundingAudit | null = null;
+    try {
+      ocrCardNumberGroundingAudit = await groundScopedCardNumberFromOcr({
+        fields,
+        queryHints,
+        photoTexts: {
+          FRONT: photoState.byId.FRONT?.ocrText ?? "",
+          BACK: photoState.byId.BACK?.ocrText ?? "",
+          TILT: photoState.byId.TILT?.ocrText ?? "",
+        },
+        combinedText: combinedTextRaw,
+      });
+      if (ocrCardNumberGroundingAudit.matched && ocrCardNumberGroundingAudit.cardNumber) {
+        const shouldReplaceCardNumber =
+          !fields.cardNumber ||
+          fields.cardNumber.trim().toUpperCase() !== ocrCardNumberGroundingAudit.cardNumber.trim().toUpperCase() ||
+          (confidence.cardNumber ?? 0) < 0.96;
+        if (shouldReplaceCardNumber) {
+          fields.cardNumber = ocrCardNumberGroundingAudit.cardNumber;
+          confidence.cardNumber = Math.max(confidence.cardNumber ?? 0, 0.96);
+        }
+      }
+    } catch (error) {
+      console.warn("Scoped OCR card-number grounding failed", error);
+      ocrCardNumberGroundingAudit = {
+        matched: false,
+        reason: error instanceof Error ? error.message : "ocr_card_number_grounding_failed",
+        candidateSetIds: [],
+        scannedRowCount: 0,
+        candidateCount: 0,
+        cardNumber: null,
+        setId: null,
+        programId: null,
+        programLabel: null,
+        playerName: null,
+        teamName: null,
+        sourceSide: null,
+        matchType: null,
+        evidenceText: null,
+      };
+    }
+
     let setCardResolutionAudit: SetCardResolutionAudit | null = null;
     try {
       setCardResolutionAudit = await resolveScopedSetCard({
@@ -2528,6 +3019,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       readiness: photoState.readiness,
       memory: memoryAudit,
       regionTemplates: regionTemplateAudit,
+      ocrCardNumberGrounding: ocrCardNumberGroundingAudit,
       setCardResolution: setCardResolutionAudit,
       variantMatch: variantMatchAudit,
       taxonomyConstraints: taxonomyConstraintAudit,
