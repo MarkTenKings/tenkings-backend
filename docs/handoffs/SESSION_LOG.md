@@ -7380,3 +7380,49 @@
   - run deterministic set-card resolution before variant matching
   - stop weak OCR set-name guesses from poisoning scoped set resolution
 - DB: no migration required.
+
+## 2026-03-07 - Runtime Result (Add Card deterministic resolver still not sufficient)
+
+### Summary
+- User deployed the deterministic set-card resolver patch and retested multiple cards from the same approved `2025-26 Topps Basketball` set.
+- Result: Add Card still does **not** reliably recognize the correct `Product Set` on the first review screen for many cards.
+
+### Runtime Evidence From User
+- Multiple mobile screenshots still showed:
+  - `Product Set: Unknown: not in approved option pool`
+  - `Insert Set` unresolved or driven by OCR guesses
+  - optional fields like `year/manufacturer/sport` partially correct
+- Examples the user shared after deploy:
+  - `Cooper Flagg` still unresolved on first screen
+  - `Devin Vassell` still unresolved and explainability referenced junk OCR insert/set suggestions
+  - `Danny Wolf` / `NEW SCHOOL` still unresolved on first screen
+  - one `Victor Wembanyama` / `THE DAILY DRIBBLE` example continued to resolve correctly
+
+### Updated Diagnosis
+- The deterministic resolver added in `ocr-suggest.ts` compiles and runs, but the live runtime result shows it is still not sufficient.
+- Most likely remaining gap:
+  - back-card OCR is not extracting the right set-name/card-number signal consistently enough,
+  - or the normalized card number being passed into deterministic resolution is still not grounded from the correct back-card text region,
+  - so the resolver does not consistently receive the authoritative card-number input required to force the approved set/program.
+- In other words:
+  - the funnel logic is now more correct in code,
+  - but the upstream OCR/card-number grounding path is still the blocker.
+
+### Next-Agent Starting Point
+- Focus on `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- Verify, with real OCR payload inspection, whether:
+  - `fields.cardNumber` is actually populated from the back photo on the failing cards
+  - the raw OCR text for the back image contains the true set name / card number in the captured payload
+  - card-number normalization is producing the right value for cards like:
+    - `DD-11`
+    - `NS-27`
+    - similar prefixed numbers
+- If `fields.cardNumber` is missing or wrong on failing cards, the next fix is upstream OCR extraction/grounding, not more set matching.
+- Strong next step:
+  - log or expose the exact back-photo OCR token/region text for failing cards
+  - compare that to the approved `SetCard.cardNumber` values
+  - confirm whether the system is reading the right place on the back of the card at all
+
+### Operations
+- User reports the deterministic set-card resolver was deployed to prod and tested.
+- Despite deploy, the recognition issue remains unresolved.

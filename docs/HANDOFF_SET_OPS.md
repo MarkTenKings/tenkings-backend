@@ -3852,3 +3852,25 @@ Build Set Ops UI flow with:
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts` (pass)
 - No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-07, deployed retest shows Add Card still failing first-screen set recognition)
+- User deployed the deterministic set-card resolver patch to prod and retested multiple cards from the same approved `2025-26 Topps Basketball` set.
+- Result: issue still persists for many cards on the first Add Card review screen.
+- User screenshots showed:
+  - repeated `Product Set: Unknown: not in approved option pool`
+  - unresolved or OCR-driven `Insert Set`
+  - partial success on some examples, but not consistent set resolution
+  - one `Victor Wembanyama / THE DAILY DRIBBLE / Base` path still worked, while others such as `Cooper Flagg`, `Devin Vassell`, and `Danny Wolf` remained unresolved
+- Updated diagnosis:
+  - the deterministic resolver in `ocr-suggest.ts` is not enough by itself
+  - the upstream blocker is now likely the OCR/card-number grounding path on the **back** photo
+  - specifically, the failing cards appear not to be feeding a reliable authoritative `cardNumber` into the deterministic set/program resolver
+- Most likely remaining work for next agent:
+  - inspect the actual back-photo OCR payload on failing examples
+  - confirm whether the true set name and card number are present in OCR output
+  - confirm whether `fields.cardNumber` is populated before deterministic resolution
+  - verify normalization for prefixed card numbers like `DD-11`, `NS-27`, etc.
+  - if needed, improve OCR extraction/region grounding for the back card number rather than continuing to tune set matching alone
+- Operational note:
+  - user explicitly reported that the deterministic resolver patch was deployed and tested in prod
+  - runtime behavior still indicates the Add Card funnel is not yet reliably honoring the intended `back OCR -> card number -> approved set/program` architecture
