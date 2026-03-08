@@ -3821,3 +3821,34 @@ Build Set Ops UI flow with:
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId].ts --file pages/api/admin/kingsreview/enqueue.ts` (pass; existing `no-img-element` warnings only in `pages/admin/uploads.tsx`)
 - No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-07, Add Card deterministic set-card resolver)
+- User then deployed/tested multiple live Add Card examples from `2025-26 Topps Basketball` and shared mobile screenshots.
+- Mixed runtime result exposed the remaining architecture gap:
+  - one `Victor Wembanyama` example resolved correctly to `2025-26 Topps Basketball / THE DAILY DRIBBLE / Base / DD-11`
+  - multiple other cards still stalled at `Unknown: not in approved option pool`
+- That proved the funnel was only partially connected:
+  - the flow could work when OCR/LLM already guessed the set,
+  - but it still lacked the deterministic fallback of `back OCR card number -> approved SetCard lookup -> authoritative set/program fill`.
+- Follow-up fix implemented in `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`:
+  - added approved-taxonomy helper filters for `SetCard` / `SetProgram`
+  - added `resolveScopedSetCard(...)`
+  - scopes by approved `year + manufacturer + sport`
+  - looks up normalized `cardNumber` in approved `SetCard` rows
+  - scores results using player/team/insert hints
+  - promotes the winning match into:
+    - `fields.setName`
+    - `fields.insertSet`
+    - `fields.cardNumber`
+    - `fields.playerName`
+    - `fields.teamName`
+  - runs this **before** auto `runVariantMatch(...)`
+  - no longer lets weak OCR `setName` poison `productLine` scope during deterministic resolution
+  - adds `setCardResolution` to OCR audit output for debugging
+- Expected product change:
+  - if back OCR extracts the card number and the uploaded set is approved, Add Card should now resolve the approved set/program even when raw OCR set-name guessing is weak
+  - this brings the live flow in line with the intended funnel architecture
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts` (pass)
+- No deploy/restart/migration actions executed in this step.

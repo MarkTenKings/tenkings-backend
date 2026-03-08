@@ -7306,3 +7306,77 @@
   - wrap card save + KingsReview enqueue endpoints with admin CORS
   - limit post-seed auto pipeline collection to refs created by the current seed run
 - DB: no migration required.
+
+## 2026-03-07 - Session Update (Add Card deterministic set-card resolver)
+
+### Summary
+- User deployed the earlier Add Card funnel hardening and then tested multiple `2025-26 Topps Basketball` cards from mobile.
+- Runtime evidence from the screenshots showed the funnel was still only partially connected:
+  - some cards still landed on `Unknown: not in approved option pool`
+  - `Insert Set` / `Parallel` remained unresolved or were driven by OCR guesses
+  - one `Victor Wembanyama` example *did* resolve correctly to:
+    - `Product Set: 2025-26 Topps Basketball`
+    - `Insert Set: THE DAILY DRIBBLE`
+    - `Parallel: Base`
+    - `Card Number: DD-11`
+- That split behavior proved the problem was not just UI hydration anymore. The deterministic `back OCR -> card number -> approved set/program/card lookup` path was still missing whenever OCR could not already produce a valid `setName`.
+
+### Root Cause
+- `pages/api/admin/cards/[cardId]/ocr-suggest.ts` already ran OCR/LLM parsing and later `runVariantMatch(...)`, but:
+  - `runVariantMatch(...)` only ran if `fields.setName` was already present
+  - the OCR route did **not** first resolve the approved set/program from `year + manufacturer + sport + cardNumber`
+  - a weak or junk OCR set suggestion could still poison the search scope
+- In practice, that meant:
+  - when OCR already guessed the set correctly, the flow could work
+  - when OCR missed the set but did extract the back card number, the system still failed to promote the approved `SetCard` match into `Product Set`
+
+### Fix Implemented
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - added approved-taxonomy helper filters for `SetCard` and `SetProgram`
+  - added `resolveScopedSetCard(...)`
+    - scopes candidate sets by approved `year + manufacturer + sport`
+    - uses normalized `cardNumber` from OCR
+    - queries approved `SetCard` rows inside that scope
+    - scores matches using available player/team/insert/set hints
+    - returns authoritative `setId`, `programId`, `programLabel`, `cardNumber`, `playerName`, `teamName`
+  - integrated that resolver **before** `runVariantMatch(...)`
+  - when matched, the resolver now force-fills:
+    - `fields.setName`
+    - `fields.insertSet`
+    - `fields.cardNumber`
+    - `fields.playerName`
+    - `fields.teamName`
+  - removed the bad fallback where raw OCR `fields.setName` could narrow `productLine` too early during deterministic set-card resolution
+  - added `setCardResolution` to the OCR audit payload for debugging
+
+### Expected Runtime Change
+- If OCR gets the back card number and the card exists in the approved uploaded set scope, Add Card should now:
+  - resolve `Product Set` deterministically even when OCR set-name guessing is weak
+  - resolve the correct `Insert Set` from approved taxonomy
+  - keep `Parallel` inside the resolved set/program funnel instead of drifting into global junk
+- This directly aligns the live flow to the intended funnel:
+  - back OCR identifies set + card number
+  - card number lookup identifies the approved card/program
+  - only then does parallel matching run inside the narrowed set scope
+
+### Validation Evidence
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/cards/[cardId]/ocr-suggest.ts` (pass)
+
+### Operations
+- No deploy/restart/migration actions executed in this step.
+
+## 2026-03-07 - Planned Deploy (Add Card deterministic set-card resolver)
+
+### Plan
+- Deploy the Add Card deterministic set-card resolver so back OCR card numbers can authoritatively resolve approved product set + insert set before variant matching.
+- Scope:
+  - frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts
+  - docs/HANDOFF_SET_OPS.md
+  - docs/handoffs/SESSION_LOG.md
+- Changes:
+  - add approved set-card lookup scoped by year + manufacturer + sport
+  - resolve Product Set / Insert Set / Card Number / Player / Team from approved taxonomy using back card number
+  - run deterministic set-card resolution before variant matching
+  - stop weak OCR set-name guesses from poisoning scoped set resolution
+- DB: no migration required.
