@@ -3932,3 +3932,48 @@ Build Set Ops UI flow with:
 - Runtime validation plan after deploy:
   - re-test `Cooper Flagg`, `Devin Vassell`, and `Danny Wolf` cards from approved `2025-26 Topps Basketball`
   - confirm first-screen `Product Set` resolution and inspect `audit.ocrCardNumberGrounding`.
+
+## Session Update (2026-03-08, prod retest proves set-resolution data-path split)
+- User deployed the prior grounding patch and tested on production with fresh mobile screenshots.
+- Runtime evidence from screenshots:
+  - cards frequently had correct or mostly-correct:
+    - player
+    - team
+    - insert/program (`NO LIMIT`)
+    - parallel (`Base`, `CERTIFIED AUTOGRAPHS`)
+    - card number (`NL-13`, `201`, `80B2-DV`)
+  - while `Product Set` still remained unresolved on first screen (`Unknown: not in approved option pool` / `Unknown: low confidence`).
+- The explainability panel made the split explicit:
+  - `Card-number grounding: no approved set cards available in scope`
+  - `Scoped set-card resolver: card number not found in approved set scope`
+  - but at the same time the UI still showed populated legacy option-pool evidence such as:
+    - `Available option pool: 2422 variants across 2 approved sets`
+    - correct insert/program/parallel suggestions.
+- Root-cause conclusion:
+  - `insertSet` / `parallel` / general option-pool behavior is being served from the legacy `CardVariant` path,
+  - `Product Set` resolution was still gated by the stricter approved `SetCard` path,
+  - so the system could know `NO LIMIT` + `NL-13` (or `Base` + `201`) from OCR/legacy variant scope while still failing to prove the set because `SetCard` rows were missing or not matching in that scope.
+- Follow-up fix implemented in code (not yet deployed):
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - added legacy `CardVariant` fallback inside `resolveScopedSetCard(...)`
+    - when approved `SetCard` lookup is empty/ambiguous, resolver now queries scoped legacy variants by `setId + cardNumber (+ programId when available)`
+    - if the legacy path identifies a unique/strong set match, it now fills `setName` from that fallback instead of leaving first-screen `Product Set` unresolved
+    - audit now marks that path via `setCardResolution.source = legacy_variant`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - explainability now labels whether scoped set resolution came from approved set cards or legacy variants.
+- Local validation for the follow-up fix:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file pages/admin/uploads.tsx` (pass; existing `no-img-element` warnings only in `pages/admin/uploads.tsx`)
+- No deploy/restart/migration commands were run in this follow-up step.
+- Duplicate cards the user accidentally added do not explain the screenshoted failure mode; the error text points specifically to the set-resolution lookup path, not queue duplication.
+
+## Session Update (2026-03-08, Planned Deploy - legacy variant fallback for set resolution)
+- Planned production deploy scope:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Changes being deployed:
+  - fallback from approved `SetCard` lookup to scoped legacy `CardVariant` lookup when resolving `Product Set`,
+  - explainability labeling whether set resolution came from approved set cards or legacy variants.
+- DB: no migration required.

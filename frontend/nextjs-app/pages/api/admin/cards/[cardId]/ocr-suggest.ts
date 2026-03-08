@@ -23,7 +23,7 @@ import {
   type OcrRegionPhotoSide,
   type OcrRegionRect,
 } from "../../../../../lib/server/ocrRegionTemplates";
-import { normalizeTaxonomyCardNumber } from "../../../../../lib/server/taxonomyV2Utils";
+import { normalizeProgramId, normalizeTaxonomyCardNumber } from "../../../../../lib/server/taxonomyV2Utils";
 
 type SuggestResponse =
   | {
@@ -235,6 +235,7 @@ type TaxonomyConstraintAudit = {
 type SetCardResolutionAudit = {
   matched: boolean;
   reason: string;
+  source?: "set_card" | "legacy_variant";
   candidateSetIds: string[];
   candidateCount: number;
   setId: string | null;
@@ -768,6 +769,160 @@ async function groundScopedCardNumberFromOcr(params: {
   };
 }
 
+async function resolveScopedLegacyVariantCard(params: {
+  candidateSetIds: string[];
+  selectedSetId: string | null;
+  fields: SuggestionFields;
+  normalizedCardNumber: string;
+}): Promise<SetCardResolutionAudit> {
+  const { candidateSetIds, selectedSetId, fields, normalizedCardNumber } = params;
+  if (candidateSetIds.length < 1) {
+    return {
+      matched: false,
+      source: "legacy_variant",
+      reason: "no_scoped_sets",
+      candidateSetIds: [],
+      candidateCount: 0,
+      setId: null,
+      programId: null,
+      programLabel: null,
+      cardNumber: normalizedCardNumber,
+      playerName: null,
+      teamName: null,
+    };
+  }
+
+  const normalizedProgram = sanitizeText(fields.insertSet || "") ? normalizeProgramId(fields.insertSet) : null;
+  type LegacyVariantGroupRow = {
+    setId: string;
+    programId: string;
+    cardNumber: string;
+    _count: {
+      _all: number;
+    };
+  };
+  const findLegacyRows = async (programId: string | null): Promise<LegacyVariantGroupRow[]> => {
+    const result = await prisma.cardVariant.groupBy({
+      by: ["setId", "programId", "cardNumber"],
+      where: {
+        setId: { in: candidateSetIds },
+        cardNumber: normalizedCardNumber,
+        ...(programId ? { programId } : {}),
+      },
+      _count: {
+        _all: true,
+      },
+      orderBy: [{ setId: "asc" }, { programId: "asc" }, { cardNumber: "asc" }],
+      take: 60,
+    });
+    return result as LegacyVariantGroupRow[];
+  };
+
+  let rows: LegacyVariantGroupRow[] = await findLegacyRows(normalizedProgram);
+  if (rows.length < 1 && normalizedProgram) {
+    rows = await findLegacyRows(null);
+  }
+  if (rows.length < 1) {
+    return {
+      matched: false,
+      source: "legacy_variant",
+      reason: "legacy_card_number_not_found_in_scope",
+      candidateSetIds,
+      candidateCount: 0,
+      setId: null,
+      programId: null,
+      programLabel: null,
+      cardNumber: normalizedCardNumber,
+      playerName: null,
+      teamName: null,
+    };
+  }
+
+  const programKeys = Array.from(new Set(rows.map((row) => `${row.setId}::${row.programId}`)));
+  const programs = programKeys.length
+    ? await prisma.setProgram.findMany({
+        where: {
+          OR: programKeys.map((entry) => {
+            const [setId, programId] = entry.split("::");
+            return { setId, programId };
+          }),
+        },
+        select: {
+          setId: true,
+          programId: true,
+          label: true,
+        },
+      })
+    : [];
+  const programLabelByKey = new Map(programs.map((program) => [`${program.setId}::${program.programId}`, program.label]));
+
+  const insertKey = normalizeVariantLabelKey(fields.insertSet || "");
+  const setKey = normalizeLooseLookupKey(fields.setName);
+  const scored = rows
+    .map((row) => {
+      const rowProgramLabel = programLabelByKey.get(`${row.setId}::${row.programId}`) ?? null;
+      const rowProgramKey = normalizeVariantLabelKey(rowProgramLabel || row.programId || "");
+      const rowSetKey = normalizeLooseLookupKey(row.setId);
+      let score = selectedSetId && row.setId === selectedSetId ? 3 : 1;
+      if (insertKey && rowProgramKey) {
+        if (rowProgramKey === insertKey) {
+          score += 4;
+        } else if (rowProgramKey.includes(insertKey) || insertKey.includes(rowProgramKey)) {
+          score += 2;
+        }
+      }
+      if (setKey && rowSetKey && rowSetKey === setKey) {
+        score += 1.5;
+      }
+      score += Math.min(1.2, Math.max(0, Number(row._count?._all ?? 0) - 1) * 0.15);
+      return {
+        row,
+        programLabel: rowProgramLabel,
+        score,
+      };
+    })
+    .sort((a, b) => b.score - a.score || a.row.setId.localeCompare(b.row.setId) || a.row.programId.localeCompare(b.row.programId));
+
+  const best = scored[0] ?? null;
+  const runnerUp = scored[1] ?? null;
+  const uniqueSetIds = Array.from(new Set(rows.map((row) => row.setId)));
+  const hasUniqueSet = uniqueSetIds.length === 1;
+  const strongBest = Boolean(best && (!runnerUp || best.score - runnerUp.score >= 1.2));
+  if (!best || (!hasUniqueSet && !strongBest)) {
+    return {
+      matched: false,
+      source: "legacy_variant",
+      reason: hasUniqueSet ? "legacy_unresolved_best_candidate" : "legacy_ambiguous_card_number_scope",
+      candidateSetIds,
+      candidateCount: rows.length,
+      setId: best?.row.setId ?? null,
+      programId: best?.row.programId ?? null,
+      programLabel: best?.programLabel ?? null,
+      cardNumber: normalizedCardNumber,
+      playerName: null,
+      teamName: null,
+      score: best?.score,
+      runnerUpScore: runnerUp?.score ?? null,
+    };
+  }
+
+  return {
+    matched: true,
+    source: "legacy_variant",
+    reason: hasUniqueSet ? "legacy_single_set_card_match" : "legacy_scored_card_match",
+    candidateSetIds,
+    candidateCount: rows.length,
+    setId: best.row.setId,
+    programId: best.row.programId,
+    programLabel: best.programLabel ?? null,
+    cardNumber: normalizedCardNumber,
+    playerName: null,
+    teamName: null,
+    score: best.score,
+    runnerUpScore: runnerUp?.score ?? null,
+  };
+}
+
 async function resolveScopedSetCard(params: {
   fields: SuggestionFields;
   queryHints: {
@@ -787,6 +942,7 @@ async function resolveScopedSetCard(params: {
   if (!year || !manufacturer) {
     return {
       matched: false,
+      source: "set_card",
       reason: "missing_scope_hints",
       candidateSetIds: [],
       candidateCount: 0,
@@ -801,6 +957,7 @@ async function resolveScopedSetCard(params: {
   if (!normalizedCardNumber || normalizedCardNumber === "ALL") {
     return {
       matched: false,
+      source: "set_card",
       reason: "missing_card_number",
       candidateSetIds: [],
       candidateCount: 0,
@@ -824,6 +981,7 @@ async function resolveScopedSetCard(params: {
   if (candidateSetIds.length < 1) {
     return {
       matched: false,
+      source: "set_card",
       reason: "no_scoped_sets",
       candidateSetIds: [],
       candidateCount: 0,
@@ -853,17 +1011,29 @@ async function resolveScopedSetCard(params: {
   });
 
   if (rows.length < 1) {
+    const legacyFallback = await resolveScopedLegacyVariantCard({
+      candidateSetIds,
+      selectedSetId: pool.selectedSetId ?? null,
+      fields: params.fields,
+      normalizedCardNumber,
+    });
+    if (legacyFallback.matched) {
+      return legacyFallback;
+    }
     return {
       matched: false,
-      reason: "card_number_not_found_in_scope",
+      source: "set_card",
+      reason: legacyFallback.reason === "legacy_card_number_not_found_in_scope" ? "card_number_not_found_in_scope" : legacyFallback.reason,
       candidateSetIds,
-      candidateCount: 0,
-      setId: null,
-      programId: null,
-      programLabel: null,
+      candidateCount: legacyFallback.candidateCount,
+      setId: legacyFallback.setId,
+      programId: legacyFallback.programId,
+      programLabel: legacyFallback.programLabel,
       cardNumber: normalizedCardNumber,
       playerName: null,
       teamName: null,
+      score: legacyFallback.score,
+      runnerUpScore: legacyFallback.runnerUpScore ?? null,
     };
   }
 
@@ -930,9 +1100,23 @@ async function resolveScopedSetCard(params: {
   const hasUniqueSet = uniqueSetIds.length === 1;
   const strongBest = Boolean(best && (!runnerUp || best.score - runnerUp.score >= 1.5));
   if (!best || (!hasUniqueSet && !strongBest)) {
+    const legacyFallback = await resolveScopedLegacyVariantCard({
+      candidateSetIds,
+      selectedSetId: pool.selectedSetId ?? null,
+      fields: params.fields,
+      normalizedCardNumber,
+    });
+    if (legacyFallback.matched) {
+      return legacyFallback;
+    }
     return {
       matched: false,
-      reason: hasUniqueSet ? "unresolved_best_candidate" : "ambiguous_card_number_scope",
+      source: "set_card",
+      reason: legacyFallback.reason.startsWith("legacy_")
+        ? legacyFallback.reason
+        : hasUniqueSet
+        ? "unresolved_best_candidate"
+        : "ambiguous_card_number_scope",
       candidateSetIds,
       candidateCount: rows.length,
       setId: best?.row.setId ?? null,
@@ -948,6 +1132,7 @@ async function resolveScopedSetCard(params: {
 
   return {
     matched: true,
+    source: "set_card",
     reason: hasUniqueSet ? "single_set_card_match" : "scored_card_match",
     candidateSetIds,
     candidateCount: rows.length,

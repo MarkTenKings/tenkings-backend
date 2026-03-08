@@ -175,6 +175,7 @@ type OcrAuditPayload = {
   setCardResolution?: {
     matched?: boolean;
     reason?: string;
+    source?: "set_card" | "legacy_variant";
     candidateCount?: number;
     setId?: string | null;
     programId?: string | null;
@@ -487,6 +488,16 @@ const humanizeOcrAuditReason = (reason: string | null | undefined): string => {
       return "single approved set match";
     case "scored_card_match":
       return "best approved set-card match";
+    case "legacy_single_set_card_match":
+      return "legacy variant single-set match";
+    case "legacy_scored_card_match":
+      return "legacy variant scored match";
+    case "legacy_card_number_not_found_in_scope":
+      return "card number not found in approved legacy variant scope";
+    case "legacy_unresolved_best_candidate":
+      return "legacy variant best candidate was not decisive";
+    case "legacy_ambiguous_card_number_scope":
+      return "legacy variant card number maps to multiple set candidates";
     default:
       return sanitizeNullableText(reason).replace(/_/g, " ") || "unknown";
   }
@@ -3602,8 +3613,9 @@ export default function AdminUploads() {
     const setCardResolution = typedOcrAudit?.setCardResolution;
     if (setCardResolution?.matched && setCardResolution.setId) {
       const programLabel = sanitizeNullableText(setCardResolution.programLabel);
+      const sourceLabel = setCardResolution.source === "legacy_variant" ? "legacy variants" : "approved set cards";
       lines.push(
-        `Scoped set-card resolver: ${setCardResolution.setId}${programLabel ? ` / ${programLabel}` : ""}`
+        `Scoped set-card resolver (${sourceLabel}): ${setCardResolution.setId}${programLabel ? ` / ${programLabel}` : ""}`
       );
     } else if (setCardResolution?.reason && setCardResolution.reason !== "missing_scope_hints") {
       lines.push(`Scoped set-card resolver: ${humanizeOcrAuditReason(setCardResolution.reason)}`);
