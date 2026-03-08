@@ -7188,6 +7188,44 @@
 ### Operations
 - No deploy/restart/migration commands executed in this step.
 
+## 2026-03-07 - Post-deploy follow-up (Add Card set funnel + KingsReview send hardening)
+
+### Summary
+- User tested the rebuilt Add Card workflow for the first time against the new card-identification funnel and shared mobile screenshots from both review steps plus the `Send to KingsReview AI` failure state.
+- The screenshots showed two distinct issues:
+  - Safari surfaced a raw `Load failed` banner after tapping `Send to KingsReview AI`
+  - the review form populated `Product Set` with `Base`, which caused `Insert Set` / `Variant / Parallel` pickers to show broad cross-set results instead of staying inside the identified set funnel.
+
+### Root Cause
+- Add Card review hydration in `pages/admin/uploads.tsx` was trusting raw OCR `setName` too early when loading a queued card.
+- In the failing example, OCR/taxonomy did **not** keep the set field, but the UI still accepted `Base` as an actionable product-set hint.
+- Once `productLine=Base` landed in local form state, `/api/admin/variants/options` received `productLine/setId=Base`, failed to resolve a real set, and the UI fell back to broad/global insert+parallel pools.
+- Separately, the raw Safari `Load failed` string indicates a transport-layer fetch failure rather than an application error message. The two routes used during `Send to KingsReview AI` (`PATCH /api/admin/cards/[cardId]` and `POST /api/admin/kingsreview/enqueue`) were not wrapped with `withAdminCors(...)`, leaving the remote-admin-API path vulnerable to cross-origin/mobile fetch failure behavior.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - added guarded product-set hydration so low-confidence / out-of-pool OCR `setName` values do not prefill `Product Set`
+  - added `base` to generic non-actionable product-line tokens
+  - when no real set is resolved, insert/parallel options stay locked instead of exposing global fallback pools
+  - variant explainability now tells the operator to select `Product Set` before insert/parallel options load
+  - `Send to KingsReview AI` now converts raw fetch transport failures into a clearer network/API error message
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+  - wrapped handler with `withAdminCors(...)`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+  - wrapped handler with `withAdminCors(...)`
+
+### Expected Runtime Change
+- Add Card should no longer prefill `Product Set` with `Base` or similar OCR junk when taxonomy did not confidently keep the set.
+- `Insert Set` and `Variant / Parallel` should remain gated until a real `Product Set` is selected/resolved.
+- `Send to KingsReview AI` should no longer fail due to missing admin CORS headers on the save/enqueue endpoints if the page is calling a remote API origin.
+
+### Validation Evidence
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId].ts --file pages/api/admin/kingsreview/enqueue.ts` (pass; existing `no-img-element` warnings only in `pages/admin/uploads.tsx`)
+
+### Operations
+- No deploy/restart/migration commands executed in this step.
+
 ## 2026-03-07 - Planned Deploy (PhotoRoom seed-processing fix + optional seeding UX)
 
 ### Plan
@@ -7205,4 +7243,66 @@
   - fix `processed 0 / skipped N` failure mode when source bytes are not already PNG
   - clarify that approved + variant-sync data is live without mandatory reference seeding
   - add direct `Open Add Cards` path from Step 3
+- DB: no migration required.
+
+## 2026-03-07 - Post-deploy follow-up (seed auto-pipeline scope narrowing)
+
+### Summary
+- User retested Step 3 after the PhotoRoom input hardening deploy and shared runtime evidence from `/admin/set-ops-review`.
+- The optional-seeding UX changes landed correctly:
+  - Step 3 rendered as `Optional Reference Seeding`
+  - `Open Add Cards` was present
+  - copy correctly stated that approved + variant-sync data is already live
+- However, the runtime progress bars exposed a second backend issue:
+  - `PARALLEL LIST` seed inserted `328` new refs
+  - post-seed pipeline then attempted `1312` refs
+  - breakdown showed `processed=0`, `process-skipped=1312`, `promoted=328`, `already-owned=984`
+- This proves the first fix did not fully explain the user-visible behavior. The auto pipeline was still collecting **all refs in matching set/program/card/parallel scope**, including older already-owned refs from prior runs, instead of only refs created by the current seed batch.
+
+### Root Cause
+- `runPostSeedPipeline(...)` in `pages/admin/set-ops-review.tsx` was deduplicating target scopes correctly, but then calling `/api/admin/variants/reference` without any time boundary.
+- For large sets with prior seed history, each scope fetch could return old refs plus newly inserted refs.
+- That inflated process/promote totals, created misleading `alreadyOwned` counts, and could still result in `processed 0/N` even when the newly inserted refs were a much smaller subset.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/set-ops/seed/reference.ts`
+  - preview and execution summaries now emit `generatedAt` so the client can anchor follow-up collection to the current seed run.
+- `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+  - added optional `createdAfter` GET filter, applied to `createdAt >= createdAfter`.
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+  - `runPostSeedPipeline(...)` now accepts `createdAfter`
+  - scope collection requests pass `createdAfter` to `/api/admin/variants/reference`
+  - seed flow passes `payload.summary.generatedAt` from the preview step into the post-seed collector
+  - warning copy now says `newly seeded refs` so the message matches the intended scope
+
+### Expected Runtime Change
+- If a `PARALLEL LIST` seed inserts `328` refs, the post-seed pipeline should now collect only the refs created by that seed run, not older owned refs in the same scope.
+- Resulting process/promote totals should line up with the inserted batch, greatly reducing misleading `already-owned` counts and quota waste.
+
+### Validation Evidence
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+- `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/set-ops/seed/reference.ts --file pages/api/admin/cards/[cardId]/photoroom.ts --file pages/api/admin/kingsreview/photos/process.ts --file pages/admin/set-ops-review.tsx --file lib/server/images.ts` (pass)
+
+### Operations
+- No deploy/restart/migration commands executed in this step.
+
+## 2026-03-07 - Planned Deploy (Add Card set funnel fix + seed scope narrowing)
+
+### Plan
+- Deploy the Add Card set-funnel fix, KingsReview send hardening, and the pending seed scope narrowing follow-up.
+- Scope:
+  - frontend/nextjs-app/pages/admin/uploads.tsx
+  - frontend/nextjs-app/pages/api/admin/cards/[cardId].ts
+  - frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts
+  - frontend/nextjs-app/pages/admin/set-ops-review.tsx
+  - frontend/nextjs-app/pages/api/admin/set-ops/seed/reference.ts
+  - frontend/nextjs-app/pages/api/admin/variants/reference/index.ts
+  - docs/HANDOFF_SET_OPS.md
+  - docs/handoffs/SESSION_LOG.md
+- Changes:
+  - stop hydrating Product Set from bad OCR set hints like `Base`
+  - lock Insert Set / Variant / Parallel until a real Product Set is resolved
+  - prevent global insert/parallel fallback when set scope is unresolved
+  - wrap card save + KingsReview enqueue endpoints with admin CORS
+  - limit post-seed auto pipeline collection to refs created by the current seed run
 - DB: no migration required.

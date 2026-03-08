@@ -15,6 +15,7 @@ import {
 } from "@tenkings/shared";
 import { ensureLabelPairForItem } from "../../../../lib/server/qrCodes";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { withAdminCors } from "../../../../lib/server/cors";
 import { normalizeStorageUrl } from "../../../../lib/server/storage";
 import { upsertOcrFeedbackMemoryAggregates } from "../../../../lib/server/ocrFeedbackMemory";
 
@@ -927,7 +928,7 @@ async function fetchCard(cardId: string, uploadedById?: string | null): Promise<
   };
 }
 
-export default async function handler(
+async function handler(
   req: NextApiRequest,
   res: NextApiResponse<CardResponse | { message: string }>
 ) {
@@ -1252,3 +1253,5 @@ export default async function handler(
     return res.status(result.status).json({ message: result.message });
   }
 }
+
+export default withAdminCors(handler);

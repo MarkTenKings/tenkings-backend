@@ -3764,3 +3764,60 @@ Build Set Ops UI flow with:
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
   - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/cards/[cardId]/photoroom.ts --file pages/api/admin/kingsreview/photos/process.ts --file pages/admin/set-ops-review.tsx --file lib/server/images.ts` (pass)
 - No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-07, seed auto-pipeline scope narrowing)
+- User retested `/admin/set-ops-review` after the PhotoRoom input-hardening deploy and the screenshot confirmed:
+  - the Step 3 optional-seeding UX changes were live,
+  - but the post-seed pipeline still processed the wrong scope.
+- Concrete runtime evidence from the user screenshot:
+  - `PARALLEL LIST` seed inserted `328` new refs,
+  - post-seed pipeline attempted `1312` refs,
+  - counts were `processed=0`, `process-skipped=1312`, `promoted=328`, `already-owned=984`.
+- That behavior shows the pipeline was still collecting every reference in matching `set/program/card/parallel` scope, including old refs from prior runs, not just refs created by the current seed execution.
+- Follow-up fix implemented:
+  - `frontend/nextjs-app/pages/api/admin/set-ops/seed/reference.ts`
+    - preview/execution summaries now include `generatedAt`
+  - `frontend/nextjs-app/pages/api/admin/variants/reference/index.ts`
+    - added optional `createdAfter` filter using `createdAt >= createdAfter`
+  - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+    - `runPostSeedPipeline(...)` now accepts/passes `createdAfter`
+    - post-seed collector is anchored to the current seed run timestamp
+    - warning copy now explicitly refers to `newly seeded refs`
+- Expected result:
+  - inserted counts and post-seed process/promote totals should now stay aligned to the current seed batch
+  - older already-owned refs should no longer inflate the pipeline totals
+  - PhotoRoom/process warnings should be based on newly seeded refs only
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/variants/reference/process.ts --file pages/api/admin/variants/reference/index.ts --file pages/api/admin/set-ops/seed/reference.ts --file pages/api/admin/cards/[cardId]/photoroom.ts --file pages/api/admin/kingsreview/photos/process.ts --file pages/admin/set-ops-review.tsx --file lib/server/images.ts` (pass)
+- No deploy/restart/migration actions executed in this step.
+
+## Session Update (2026-03-07, Add Card set funnel + KingsReview send hardening)
+- User ran the first live test of the rebuilt Add Card recognition flow and shared mobile screenshots from the review screens plus the post-send failure state.
+- The screenshots exposed two issues:
+  - `Send to KingsReview AI` surfaced a raw Safari `Load failed` banner
+  - Add Card incorrectly hydrated `Product Set` with `Base`, then showed global/cross-set `Insert Set` and `Variant / Parallel` pools instead of staying inside the selected set funnel
+- Root cause:
+  - `pages/admin/uploads.tsx` was trusting raw OCR `setName` too early, even when taxonomy had not confidently kept it
+  - `Base` was being treated as an actionable set hint, poisoning `productLine`
+  - once `productLine=Base`, `/api/admin/variants/options` could not resolve a real set and the UI fell back to broad global options
+  - the send path also hit two routes that were not wrapped with `withAdminCors(...)`, leaving the remote admin API path susceptible to mobile/CORS fetch failures
+- Fix implemented:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - guarded product-set hydration using taxonomy field status
+    - treats `base` as a non-actionable product-set token
+    - locks insert/parallel option pools until a real product set is resolved
+    - variant explainability now tells the operator to select `Product Set` first when set scope is not resolved
+    - send error handling now converts raw fetch transport failures into a clearer network/API message
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+    - wrapped with `withAdminCors(...)`
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+    - wrapped with `withAdminCors(...)`
+- Expected runtime result:
+  - Add Card should stop auto-filling `Product Set` with bad OCR tokens like `Base`
+  - `Insert Set` and `Variant / Parallel` should remain gated until the set is actually resolved
+  - `Send to KingsReview AI` should stop failing on missing CORS headers when the app is hitting a remote admin API origin
+- Validation rerun:
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` (pass; engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+  - `PATH=/opt/homebrew/bin:$PATH /opt/homebrew/bin/pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/[cardId].ts --file pages/api/admin/kingsreview/enqueue.ts` (pass; existing `no-img-element` warnings only in `pages/admin/uploads.tsx`)
+- No deploy/restart/migration actions executed in this step.

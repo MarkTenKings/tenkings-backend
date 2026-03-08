@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { CardPhotoKind, CardReviewStage, enqueueBytebotLiteJob, prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { withAdminCors } from "../../../../lib/server/cors";
 import { readTaxonomyV2Flags } from "../../../../lib/server/taxonomyV2Flags";
 import { resolveScopedParallelToken, resolveTaxonomyProgramAndVariation } from "../../../../lib/server/taxonomyV2Core";
 
@@ -256,7 +257,7 @@ const buildCompSearchQueryV2 = async (card: {
   return tokens.join(" ").replace(/\s+/g, " ").trim();
 };
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
     const admin = await requireAdminSession(req);
 
@@ -348,3 +349,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(status).json({ message });
   }
 }
+
+export default withAdminCors(handler);

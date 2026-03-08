@@ -83,6 +83,7 @@ type ResponseBody =
         datasetType: SetDatasetType;
         draftVersionId: string;
         targetCount: number;
+        generatedAt: string;
         scopedTargetCount?: number;
         startIndex?: number;
         concurrency?: number;
@@ -94,6 +95,7 @@ type ResponseBody =
         datasetType: SetDatasetType;
         draftVersionId: string;
         targetCount: number;
+        generatedAt: string;
         scopedTargetCount?: number;
         startIndex?: number;
         concurrency?: number;
@@ -361,6 +363,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           datasetType: payload.datasetType,
           draftVersionId: approvedVersion.draftVersion.id,
           targetCount: targets.length,
+          generatedAt: new Date().toISOString(),
         },
       });
     }
@@ -506,6 +509,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         datasetType: payload.datasetType,
         draftVersionId: approvedVersion.draftVersion.id,
         targetCount: targets.length,
+        generatedAt: new Date().toISOString(),
         scopedTargetCount: scopedTargets.length,
         startIndex: requestStartIndex,
         concurrency: workerCount,

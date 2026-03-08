@@ -1425,7 +1425,7 @@ export default function SetOpsReviewPage() {
   );
 
   const runPostSeedPipeline = useCallback(
-    async (params: { setId: string; datasetLabel: string; targets: ReferenceSeedTarget[] }) => {
+    async (params: { setId: string; datasetLabel: string; targets: ReferenceSeedTarget[]; createdAfter?: string | null }) => {
       const scopeMap = new Map<string, ReferenceSeedTarget>();
       for (const target of params.targets) {
         const key = [
@@ -1461,6 +1461,9 @@ export default function SetOpsReviewPage() {
           parallelId: scope.parallelId,
           limit: "5000",
         });
+        if (params.createdAfter) {
+          search.set("createdAfter", params.createdAfter);
+        }
         const response = await fetch(`/api/admin/variants/reference?${search.toString()}`, {
           headers: {
             ...adminHeaders,
@@ -1660,6 +1663,7 @@ export default function SetOpsReviewPage() {
         summary?: {
           targetCount: number;
           draftVersionId: string;
+          generatedAt: string;
         };
         targets?: ReferenceSeedTarget[];
       };
@@ -1779,6 +1783,7 @@ export default function SetOpsReviewPage() {
           setId: targetSetId,
           datasetLabel,
           targets,
+          createdAfter: payload.summary.generatedAt || null,
         });
         const warnings: string[] = [];
         if (inserted > 0 && postSeedResult.total === 0) {
@@ -1788,7 +1793,7 @@ export default function SetOpsReviewPage() {
         }
         if (postSeedResult.total > 0 && postSeedResult.processed === 0) {
           warnings.push(
-            `PhotoRoom processed 0/${postSeedResult.total} refs (check PhotoRoom key/quota or source fetchability)`
+            `PhotoRoom processed 0/${postSeedResult.total} newly seeded refs (check PhotoRoom key/quota or source fetchability)`
           );
         }
         if (postSeedResult.total > 0 && postSeedResult.promoted + postSeedResult.alreadyOwned === 0) {

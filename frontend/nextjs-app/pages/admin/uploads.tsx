@@ -353,6 +353,7 @@ const tokenize = (value: string): string[] =>
 
 const VARIANT_LABEL_STOP_WORDS = new Set(["the"]);
 const GENERIC_PRODUCT_LINE_HINT_TOKENS = new Set([
+  "base",
   "topps",
   "panini",
   "bowman",
@@ -407,6 +408,35 @@ const isActionableProductLineHint = (value: string): boolean => {
     return true;
   }
   return !GENERIC_PRODUCT_LINE_HINT_TOKENS.has(token);
+};
+
+const resolveHydratedProductLine = (params: {
+  ocrSetName: string;
+  normalizedSetName: string;
+  taxonomyFieldStatus?: "kept" | "cleared_low_confidence" | "cleared_out_of_pool" | "cleared_no_set_scope";
+}): string => {
+  const rawOcrSetName = sanitizeNullableText(params.ocrSetName);
+  const rawNormalizedSetName = sanitizeNullableText(params.normalizedSetName);
+
+  if (params.taxonomyFieldStatus === "kept" && isActionableProductLineHint(rawOcrSetName)) {
+    return rawOcrSetName;
+  }
+
+  if (!rawOcrSetName && isActionableProductLineHint(rawNormalizedSetName)) {
+    return rawNormalizedSetName;
+  }
+
+  return "";
+};
+
+const humanizeRequestFailure = (error: unknown, fallback: string): string => {
+  if (error instanceof Error) {
+    if (/load failed|failed to fetch|network request failed/i.test(error.message)) {
+      return "Network request to the admin API failed. Retry once; if it repeats, the API origin/CORS path still needs attention.";
+    }
+    return error.message;
+  }
+  return fallback;
 };
 
 const scoreOption = (option: string, hints: string[]): number => {
@@ -558,6 +588,7 @@ export default function AdminUploads() {
   const [variantScopeSummary, setVariantScopeSummary] = useState<{
     approvedSetCount: number;
     variantCount: number;
+    selectedSetId: string | null;
   } | null>(null);
   const [selectedQueueCardId, setSelectedQueueCardId] = useState<string | null>(null);
   const [variantCatalog, setVariantCatalog] = useState<VariantApiRow[]>([]);
@@ -1988,6 +2019,9 @@ export default function AdminUploads() {
       const hasRequiredIntakePhotos = Boolean(backPhoto?.imageUrl) && Boolean(tiltPhoto?.imageUrl);
       const hasExistingOcrSuggestions = Boolean(payload.ocrSuggestions?.data);
       const ocrFields = (payload.ocrSuggestions?.data?.fields ?? {}) as Record<string, string | null>;
+      const taxonomyFieldStatus = (
+        payload.ocrSuggestions?.data?.taxonomyConstraints?.fieldStatus ?? {}
+      ) as Partial<Record<"setName" | "insertSet" | "parallel", "kept" | "cleared_low_confidence" | "cleared_out_of_pool" | "cleared_no_set_scope">>;
       const normalized = (payload.classificationNormalized ?? {}) as Record<string, any>;
       const attributes = (payload.classification ?? {}) as Record<string, any>;
       const categoryType = normalized.categoryType === "tcg" ? "tcg" : "sport";
@@ -2000,7 +2034,11 @@ export default function AdminUploads() {
       setIntakeBackPhotoId(backPhoto?.id ?? null);
       setIntakeTiltPhotoId(tiltPhoto?.id ?? null);
 
-      const nextProductLineRaw = sanitizeNullableText(ocrFields.setName ?? normalized.setName ?? "");
+      const nextProductLineRaw = resolveHydratedProductLine({
+        ocrSetName: ocrFields.setName ?? "",
+        normalizedSetName: normalized.setName ?? "",
+        taxonomyFieldStatus: taxonomyFieldStatus.setName,
+      });
       const nextProductLine = isActionableProductLineHint(nextProductLineRaw) ? nextProductLineRaw : "";
       const inferredSport = inferSportFromProductLine(nextProductLineRaw);
       setIntakeRequired({
@@ -3141,6 +3179,8 @@ export default function AdminUploads() {
       const parallelItems = Array.isArray(payload?.parallelOptions)
         ? (payload.parallelOptions as VariantOptionItem[])
         : [];
+      const selectedSetId = sanitizeNullableText(payload?.scope?.selectedSetId);
+      const hasResolvedSetScope = Boolean(selectedSetId);
       const insertLabels = insertItems
         .map((entry) => sanitizeNullableText(entry.label))
         .filter(Boolean);
@@ -3150,13 +3190,15 @@ export default function AdminUploads() {
 
       setVariantCatalog(variants);
       setProductLineOptions(sets);
-      setInsertSetOptions(insertLabels);
-      setParallelOptions(parallelLabels);
-      setVariantOptionItems([...insertItems, ...parallelItems]);
+      setInsertSetOptions(hasResolvedSetScope ? insertLabels : []);
+      setParallelOptions(hasResolvedSetScope ? parallelLabels : []);
+      setVariantOptionItems(hasResolvedSetScope ? [...insertItems, ...parallelItems] : []);
       setVariantScopeSummary({
         approvedSetCount:
           typeof payload?.scope?.approvedSetCount === "number" ? payload.scope.approvedSetCount : 0,
-        variantCount: typeof payload?.scope?.variantCount === "number" ? payload.scope.variantCount : variants.length,
+        variantCount:
+          hasResolvedSetScope && typeof payload?.scope?.variantCount === "number" ? payload.scope.variantCount : 0,
+        selectedSetId: hasResolvedSetScope ? selectedSetId : null,
       });
     })().catch(() => {
       setVariantCatalog([]);
@@ -3462,10 +3504,12 @@ export default function AdminUploads() {
       lines.push(`Image matcher status: ${variantMatch.message}`);
     }
 
-    if (variantScopeSummary && variantScopeSummary.variantCount > 0) {
+    if (variantScopeSummary?.selectedSetId && variantScopeSummary.variantCount > 0) {
       lines.push(
         `Available option pool: ${variantScopeSummary.variantCount} variants across ${variantScopeSummary.approvedSetCount} approved sets`
       );
+    } else if (variantScopeSummary && variantScopeSummary.approvedSetCount > 0) {
+      lines.push("Select Product Set to load insert and parallel options.");
     }
 
     return lines;
@@ -3533,6 +3577,11 @@ export default function AdminUploads() {
     }
     return base.filter((option) => option.toLowerCase().includes(search));
   }, [pickerModalField, pickerSearch, sortedInsertSetOptions, sortedParallelOptions]);
+
+  const hasResolvedVariantSetScope = useMemo(
+    () => Boolean(variantScopeSummary?.selectedSetId),
+    [variantScopeSummary?.selectedSetId]
+  );
 
   useEffect(() => {
     if (!pickerModalField) {
@@ -4140,7 +4189,7 @@ export default function AdminUploads() {
         photoroomRequestedRef.current = sendingCardId;
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to send to KingsReview.";
+      const message = humanizeRequestFailure(err, "Failed to send to KingsReview.");
       setIntakeError(message);
     } finally {
       setIntakeBusy(false);
@@ -4887,9 +4936,17 @@ export default function AdminUploads() {
                   <>
                     <button
                       type="button"
-                      onClick={() => setPickerModalField("insertSet")}
+                      onClick={() => {
+                        if (!hasResolvedVariantSetScope) {
+                          return;
+                        }
+                        setPickerModalField("insertSet");
+                      }}
+                      disabled={!hasResolvedVariantSetScope}
                       className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2 text-left text-sm text-white ${
-                        !sanitizeNullableText(intakeOptional.insertSet) && taxonomyUnknownReasons.insertSet
+                        !hasResolvedVariantSetScope
+                          ? "cursor-not-allowed border-white/10 bg-night-800/60 opacity-70"
+                          : !sanitizeNullableText(intakeOptional.insertSet) && taxonomyUnknownReasons.insertSet
                           ? "border-rose-400/40 bg-rose-500/10"
                           : "border-white/10 bg-night-800"
                       } ${suggestedClass("insertSet", intakeOptional.insertSet)}`}
@@ -4898,12 +4955,16 @@ export default function AdminUploads() {
                         className={
                           intakeOptional.insertSet
                             ? "text-white"
+                            : !hasResolvedVariantSetScope
+                            ? "text-slate-400"
                             : taxonomyUnknownReasons.insertSet
                             ? "text-rose-200"
                             : "text-slate-400"
                         }
                       >
-                        {intakeOptional.insertSet || taxonomyUnknownReasons.insertSet || "Insert Set"}
+                        {intakeOptional.insertSet ||
+                          (!hasResolvedVariantSetScope ? "Select Product Set first" : taxonomyUnknownReasons.insertSet) ||
+                          "Insert Set"}
                       </span>
                       <span className="text-base text-slate-400">▾</span>
                     </button>
@@ -4916,9 +4977,17 @@ export default function AdminUploads() {
                     ) : null}
                     <button
                       type="button"
-                      onClick={() => setPickerModalField("parallel")}
+                      onClick={() => {
+                        if (!hasResolvedVariantSetScope) {
+                          return;
+                        }
+                        setPickerModalField("parallel");
+                      }}
+                      disabled={!hasResolvedVariantSetScope}
                       className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2 text-left text-sm text-white ${
-                        !sanitizeNullableText(intakeOptional.parallel) && taxonomyUnknownReasons.parallel
+                        !hasResolvedVariantSetScope
+                          ? "cursor-not-allowed border-white/10 bg-night-800/60 opacity-70"
+                          : !sanitizeNullableText(intakeOptional.parallel) && taxonomyUnknownReasons.parallel
                           ? "border-rose-400/40 bg-rose-500/10"
                           : "border-white/10 bg-night-800"
                       } ${suggestedClass("parallel", intakeOptional.parallel)}`}
@@ -4927,12 +4996,16 @@ export default function AdminUploads() {
                         className={
                           intakeOptional.parallel
                             ? "text-white"
+                            : !hasResolvedVariantSetScope
+                            ? "text-slate-400"
                             : taxonomyUnknownReasons.parallel
                             ? "text-rose-200"
                             : "text-slate-400"
                         }
                       >
-                        {intakeOptional.parallel || taxonomyUnknownReasons.parallel || "Variant / Parallel"}
+                        {intakeOptional.parallel ||
+                          (!hasResolvedVariantSetScope ? "Select Product Set first" : taxonomyUnknownReasons.parallel) ||
+                          "Variant / Parallel"}
                       </span>
                       <span className="text-base text-slate-400">▾</span>
                     </button>

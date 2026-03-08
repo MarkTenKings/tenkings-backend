@@ -239,7 +239,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const parallelId = typeof req.query.parallelId === "string" ? req.query.parallelId.trim() : "";
       const cardNumber = typeof req.query.cardNumber === "string" ? req.query.cardNumber.trim() : "";
       const refType = typeof req.query.refType === "string" ? req.query.refType.trim().toLowerCase() : "";
+      const createdAfterRaw = typeof req.query.createdAfter === "string" ? req.query.createdAfter.trim() : "";
       const take = Math.min(5000, Math.max(1, Number(req.query.limit ?? 200) || 200));
+      const createdAfter = createdAfterRaw ? new Date(createdAfterRaw) : null;
 
       const andClauses: Record<string, any>[] = [];
       if (setId) {
@@ -276,6 +278,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       }
       if (refType === "front" || refType === "back") {
         andClauses.push({ refType });
+      }
+      if (createdAfter && !Number.isNaN(createdAfter.getTime())) {
+        andClauses.push({ createdAt: { gte: createdAfter } });
       }
       const where: Record<string, any> =
         andClauses.length === 0 ? {} : andClauses.length === 1 ? andClauses[0] : { AND: andClauses };
