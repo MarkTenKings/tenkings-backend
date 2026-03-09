@@ -63,6 +63,81 @@ Note: for checklist sources that include both parallel and player rows in one fi
 5. Run delete dry-run only in production unless explicit delete approval is provided.
 6. Capture evidence (API response snippets + UI screenshots) in `docs/handoffs/SESSION_LOG.md`.
 
+## Batch CSV Import (Local CLI)
+Use this when you want to queue many SET LIST + PARALLEL LIST pairs without changing the existing one-at-a-time UI.
+
+Simplest folder layout:
+```text
+batch-imports/run-1/
+  2025-26 Topps Basketball/
+    set.csv
+    parallel.csv
+  2024-25 Panini Prizm Basketball/
+    set.csv
+    parallel.csv
+```
+
+In folder mode:
+- parent folder = your batch
+- each subfolder name = exact `setId`
+- inside each set folder:
+  - `set.csv`
+  - `parallel.csv` (optional)
+
+Preflight only (recommended first):
+```bash
+cd /Users/markthomas/tenkings/ten-kings-mystery-packs-clean
+export SET_OPS_API_BASE_URL='https://collect.tenkings.co'
+export SET_OPS_OPERATOR_KEY='<operator-key>'
+pnpm set-ops:batch-import --folder batch-imports/run-1 --mode preflight
+```
+
+Commit after clean preflight:
+```bash
+cd /Users/markthomas/tenkings/ten-kings-mystery-packs-clean
+export SET_OPS_API_BASE_URL='https://collect.tenkings.co'
+export SET_OPS_OPERATOR_KEY='<operator-key>'
+pnpm set-ops:batch-import --folder batch-imports/run-1 --mode commit
+```
+
+Advanced manifest example:
+```csv
+setId,setCsv,parallelCsv,setSourceUrl,parallelSourceUrl
+2025-26 Topps Basketball,./imports/2025-26-topps-basketball-set.csv,./imports/2025-26-topps-basketball-parallel.csv,,
+```
+
+Manifest preflight:
+```bash
+cd /Users/markthomas/tenkings/ten-kings-mystery-packs-clean
+export SET_OPS_API_BASE_URL='https://collect.tenkings.co'
+export SET_OPS_OPERATOR_KEY='<operator-key>'
+pnpm set-ops:batch-import --manifest scripts/set-ops/batch-manifest.example.csv --mode preflight
+```
+
+Manifest commit:
+```bash
+cd /Users/markthomas/tenkings/ten-kings-mystery-packs-clean
+export SET_OPS_API_BASE_URL='https://collect.tenkings.co'
+export SET_OPS_OPERATOR_KEY='<operator-key>'
+pnpm set-ops:batch-import --manifest scripts/set-ops/batch-manifest.example.csv --mode commit
+```
+
+Notes:
+- Script uses the same admin APIs as current Set Ops flow:
+  - ingestion
+  - draft build
+  - approval
+  - auto variant sync
+- Folder mode is the simplest operator path and avoids hand-building a manifest.
+- `set.csv`-only runs are supported.
+- Later, when `parallel.csv` is ready for an existing set, rerun the CLI for that set with `--allow-existing-set`.
+- `preflight` stops before approval and writes a JSON report with:
+  - row counts
+  - blocking-error counts
+  - sample normalized draft rows
+- Step 3 reference-image seeding is still optional and is not triggered by this CLI.
+- Existing `/admin/set-ops-review` and `/admin/set-ops` remain the fallback and verification surfaces.
+
 ## Find Manifest Containing a Set (No ripgrep required)
 ```bash
 cd /root/tenkings-backend

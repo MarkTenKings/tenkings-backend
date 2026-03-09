@@ -4,6 +4,7 @@ export interface SetOpsDuplicateKeyInput {
   parallel: string | null | undefined;
   playerSeed?: string | null | undefined;
   listingId?: string | null | undefined;
+  format?: string | null | undefined;
 }
 
 const NAMED_ENTITIES: Record<string, string> = {
@@ -133,7 +134,8 @@ export function buildSetOpsDuplicateKey(input: SetOpsDuplicateKeyInput): string 
   const parallel = normalizeParallelLabel(input.parallel).toLowerCase();
   const playerSeed = normalizePlayerSeed(input.playerSeed ?? null).toLowerCase() || "none";
   const listingId = (normalizeListingId(input.listingId ?? null) ?? "none").toLowerCase();
-  return [setId, cardNumber, parallel, playerSeed, listingId].join("::");
+  const format = normalizePlayerSeed(input.format ?? null).toLowerCase() || "none";
+  return [setId, cardNumber, parallel, playerSeed, listingId, format].join("::");
 }
 
 export function buildSetDeleteConfirmationPhrase(setId: string | null | undefined): string {

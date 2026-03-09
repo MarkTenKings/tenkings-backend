@@ -1,0 +1,3 @@
+setId,setCsv,parallelCsv,setSourceUrl,parallelSourceUrl
+2025-26 Topps Basketball,./imports/2025-26-topps-basketball-set.csv,./imports/2025-26-topps-basketball-parallel.csv,,
+2024-25 Panini Prizm Basketball,./imports/2024-25-panini-prizm-basketball-set.csv,./imports/2024-25-panini-prizm-basketball-parallel.csv,,

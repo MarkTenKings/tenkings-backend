@@ -66,6 +66,26 @@ test("buildSetOpsDuplicateKey is stable between dirty and clean inputs", () => {
   assert.equal(dirty, clean);
 });
 
+test("buildSetOpsDuplicateKey distinguishes parallel rows by format when present", () => {
+  const hobby = buildSetOpsDuplicateKey({
+    setId: "2025 Topps Series 1 Baseball",
+    cardNumber: null,
+    parallel: "Base",
+    playerSeed: "BASE CARDS",
+    format: "hobby",
+  });
+
+  const mega = buildSetOpsDuplicateKey({
+    setId: "2025 Topps Series 1 Baseball",
+    cardNumber: null,
+    parallel: "Base",
+    playerSeed: "BASE CARDS",
+    format: "mega-box-se",
+  });
+
+  assert.notEqual(hobby, mega);
+});
+
 test("decodeHtmlEntities decodes numeric entities and collapses whitespace", () => {
   assert.equal(decodeHtmlEntities("A&#038;B &#8211; C"), "A&B - C");
   assert.equal(decodeHtmlEntities("  A   B  "), "A B");

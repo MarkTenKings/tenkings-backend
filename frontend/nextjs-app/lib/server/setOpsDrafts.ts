@@ -79,6 +79,37 @@ function firstString(record: Record<string, unknown>, keys: string[]) {
   return "";
 }
 
+function normalizeInputKey(key: string) {
+  return String(key)
+    .trim()
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/[^a-zA-Z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+}
+
+function normalizeInputRecord(record: Record<string, unknown>) {
+  const normalized: Record<string, unknown> = { ...record };
+  for (const [key, value] of Object.entries(record)) {
+    const normalizedKey = normalizeInputKey(key);
+    if (!normalizedKey || normalizedKey in normalized) continue;
+    normalized[normalizedKey] = value;
+  }
+  return normalized;
+}
+
+function firstOddsValue(record: Record<string, unknown>) {
+  const direct = firstString(record, ["odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"]);
+  if (direct) return direct;
+  for (const [key, value] of Object.entries(record)) {
+    const normalizedKey = normalizeInputKey(key);
+    if (normalizedKey !== "odds" && !normalizedKey.startsWith("odds_")) continue;
+    const text = String(value ?? "").trim();
+    if (text) return text;
+  }
+  return "";
+}
+
 const rowSignalFields = [
   "cardNumber",
   "card_number",
@@ -139,7 +170,10 @@ function parseRawRows(rawPayload: unknown, datasetType: SetDatasetType): Record<
   }
 
   if (Array.isArray(input)) {
-    return input.map((entry) => asRecord(entry)).filter((entry): entry is Record<string, unknown> => Boolean(entry));
+    return input
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+      .map((entry) => normalizeInputRecord(entry));
   }
 
   const record = asRecord(input);
@@ -269,7 +303,10 @@ function parseRawRows(rawPayload: unknown, datasetType: SetDatasetType): Record<
     (Array.isArray(record.items) ? record.items : null);
 
   if (nested) {
-    return nested.map((entry) => asRecord(entry)).filter((entry): entry is Record<string, unknown> => Boolean(entry));
+    return nested
+      .map((entry) => asRecord(entry))
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry))
+      .map((entry) => normalizeInputRecord(entry));
   }
 
   return [record];
@@ -326,7 +363,7 @@ export function normalizeDraftRows(params: {
     const cardType = normalizePlayerSeed(
       firstString(raw, ["cardType", "card_type", "program", "programLabel", "insertSet", "insert"])
     );
-    const odds = normalizeOddsValue(firstString(raw, ["odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"]));
+    const odds = normalizeOddsValue(firstOddsValue(raw));
     const serial = normalizeParallelLabel(firstString(raw, ["serial", "serialNumber", "serial_number", "printRun"])) || null;
     const format = normalizePlayerSeed(firstString(raw, ["format", "channel", "boxType", "packType", "productType"])) || null;
     const parallel = normalizeParallelLabel(
@@ -392,6 +429,7 @@ export function normalizeDraftRows(params: {
       parallel: duplicateParallelKey,
       playerSeed,
       listingId,
+      format: params.datasetType === SetDatasetType.PARALLEL_DB ? format : null,
     });
 
     if (seenKeys.has(duplicateKey)) {

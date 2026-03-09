@@ -151,6 +151,10 @@ function parseOddsNumeric(oddsText: string): number | null {
 }
 
 function looksLikeOddsHeader(header: string) {
+  const normalized = normalizeHeader(header);
+  if (normalized === "odds" || normalized.startsWith("odds_")) {
+    return true;
+  }
   const text = headerTokens(header);
   return /\b(hobby|jumbo|hta|value|mega|fat|display|hanger|box|pack|blaster|retail|distributor|fanatics|costco|target|ea|se|cee|nt|grocery|tins|super)\b/.test(
     text
@@ -345,6 +349,22 @@ function clamp(value: number) {
   return value;
 }
 
+function scoreSetListCardCount(totalRows: number) {
+  if (totalRows >= 100) return 1;
+  if (totalRows >= 25) return 0.65;
+  if (totalRows >= 10) return 0.4;
+  if (totalRows > 0) return 0.25;
+  return 0;
+}
+
+function scoreParallelCardCount(totalRows: number) {
+  if (totalRows >= 75) return 1;
+  if (totalRows >= 20) return 0.65;
+  if (totalRows >= 10) return 0.4;
+  if (totalRows > 0) return 0.25;
+  return 0;
+}
+
 function createSetListStructuredPayload(params: {
   rows: CanonicalCsvRow[];
   sourceUrl?: string | null;
@@ -394,8 +414,8 @@ function createSetListStructuredPayload(params: {
     {
       key: "card_count_sanity",
       weight: 20,
-      score: totalRows >= 100 ? 1 : totalRows >= 25 ? 0.65 : totalRows > 0 ? 0.25 : 0,
-      passed: totalRows >= 25,
+      score: scoreSetListCardCount(totalRows),
+      passed: totalRows >= 10,
       note: `${totalRows} rows`,
     },
     {
@@ -554,8 +574,8 @@ function createOddsStructuredPayload(params: {
     {
       key: "card_count_sanity",
       weight: 20,
-      score: totalRows >= 75 ? 1 : totalRows >= 20 ? 0.65 : totalRows > 0 ? 0.25 : 0,
-      passed: totalRows >= 20,
+      score: scoreParallelCardCount(totalRows),
+      passed: totalRows >= 10,
       note: `${totalRows} rows`,
     },
     {
@@ -715,7 +735,8 @@ export function evaluateDraftQuality(params: {
   const duplicateErrors = params.rows.flatMap((row) => row.errors).filter((error) => error.field === "duplicateKey").length;
   const metrics: CsvQualityMetric[] = [];
 
-  const cardCountScore = rowCount >= (params.datasetType === SetDatasetType.PARALLEL_DB ? 20 : 25) ? 1 : rowCount > 0 ? 0.4 : 0;
+  const cardCountScore =
+    params.datasetType === SetDatasetType.PARALLEL_DB ? scoreParallelCardCount(rowCount) : scoreSetListCardCount(rowCount);
   metrics.push(assessMetric("card_count_sanity", 20, cardCountScore, 0.65, `${rowCount} rows`));
   metrics.push(
     assessMetric(

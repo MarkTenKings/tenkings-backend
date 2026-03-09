@@ -3977,3 +3977,320 @@ Build Set Ops UI flow with:
   - fallback from approved `SetCard` lookup to scoped legacy `CardVariant` lookup when resolving `Product Set`,
   - explainability labeling whether set resolution came from approved set cards or legacy variants.
 - DB: no migration required.
+
+## Session Update (2026-03-08, transfer summary after legacy-variant fallback commit)
+- Repository state checked again for handoff:
+  - `git status -sb` before this doc update: `## main...origin/main`
+  - `git branch --show-current`: `main`
+  - `git rev-parse --short HEAD`: `43ee92c`
+  - `git rev-parse --short origin/main`: `43ee92c`
+- This means the latest Add Card follow-up code is committed locally and the local `origin/main` ref matches that same commit.
+- Latest landed commit:
+  - `43ee92c` `fix(uploads): fall back to legacy variants for set resolution`
+- What this latest commit changes:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - keeps strict approved `SetCard` resolution first
+    - falls back to scoped legacy `CardVariant` rows when the approved `SetCard` path has no usable match
+    - uses `setId + cardNumber (+ programId when OCR insert/program evidence exists)` to infer `Product Set`
+    - records resolution source in audit as approved-set-card vs legacy-variant
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - explainability now labels whether set resolution came from `approved set cards` or `legacy variants`
+- What is already proven by runtime evidence:
+  - the earlier grounding patch (`d00041d`) was deployed and production-retested
+  - screenshots proved the app could often identify insert/program, parallel, team/player, and card number while still failing first-screen `Product Set`
+  - that runtime split is the reason the legacy-variant fallback was added
+- What is not yet proven in runtime evidence:
+  - no observed production retest result for commit `43ee92c` is captured in this session
+  - treat this commit as code-complete and pushed, but production behavior of the fallback still needs verification
+- Most important next-agent test:
+  - re-test the exact same failing Add Card cases on production after `43ee92c`
+  - confirm first-screen `Product Set` now resolves instead of showing `Unknown`
+  - check explainability for:
+    - `Scoped set-card resolver (legacy variants): ...` on cases where approved `SetCard` coverage is missing
+    - or `Scoped set-card resolver (approved set cards): ...` when strict coverage exists
+- If `43ee92c` still does not resolve first-screen `Product Set`, the next agent should inspect:
+  - the approved option-pool query path in `loadVariantOptionPool(...)`
+  - whether the selected scoped set list is excluding the expected set before fallback runs
+  - whether `programId` normalization is over-constraining the legacy fallback on cards like `NO LIMIT`, `Base`, and `CERTIFIED AUTOGRAPHS`
+
+## Session Update (2026-03-08, docs-only startup sync + repo state)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Repository state observed before this doc update:
+  - `git status -sb`
+    - `## main...origin/main`
+    - ` M docs/HANDOFF_SET_OPS.md`
+    - ` M docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current`: `main`
+  - `git rev-parse --short HEAD`: `43ee92c`
+- No deploy, restart, migration, DB, or runtime validation commands were executed in this session.
+- Existing next runtime task remains unchanged: production retest of Add Card set resolution after commit `43ee92c`.
+
+## Session Update (2026-03-08, batch CSV import workflow guidance)
+- Reviewed current Set Ops ingestion, approval, and bulk-import code paths to determine the safest way to load many SET/PARALLEL CSV pairs for Add Card testing.
+- Current repo reality:
+  - `/admin/set-ops-review` supports per-job ingestion with explicit `setId`, draft build, approval, and auto variant sync.
+  - Queue mode `COMBINED` duplicates the same payload into both dataset types; it is not the right fit when SET LIST and PARALLEL LIST come from separate CSV files.
+  - `/api/admin/variants/bulk-import` can ingest one normalized variant CSV spanning many `setId` values, but it directly upserts `CardVariant` rows and does not represent the full approved-set Set Ops flow.
+- Recommendation for “true” Add Card testing:
+  - prefer a manifest-driven batch Set Ops importer that posts both files with the same explicit canonical `setId`, builds drafts, and approves them sequentially per set;
+  - use direct bulk variant import only when fast legacy `CardVariant` population is sufficient and approved-set taxonomy coverage is not required.
+
+## Session Update (2026-03-08, batch importer behavior clarification)
+- Proposed batch importer should reuse the same backend flow the UI uses now:
+  - create ingestion jobs with explicit canonical `setId`
+  - build draft for each uploaded dataset
+  - approve per set so variant sync auto-runs exactly as it does in the current UI
+- It should process sets sequentially, not as one giant all-or-nothing transaction.
+- There is no required hard cap in the proposed design; practical first-run guidance is to start with a smaller manifest batch and expand after confirming clean approvals and sync results.
+- Important validation note:
+  - file upload alone only proves parse/load;
+  - the meaningful CSV-shape validation point is draft build, where blocking errors and row mapping are surfaced before approval;
+  - best batch-tool design should support a preflight mode: upload -> build drafts -> report validation -> stop before approval.
+- Execution location recommendation:
+  - do not start with a new browser UI for batch mode;
+  - implement the first version as a local repo script/CLI that calls the existing admin APIs and writes a per-set report;
+  - continue using `/admin/set-ops-review` and `/admin/set-ops` for spot-check review and post-run verification.
+
+## Session Update (2026-03-08, batch importer CLI implemented)
+- Added standalone batch importer CLI:
+  - `scripts/set-ops/batch-import.js`
+  - package script: `pnpm set-ops:batch-import`
+- Added manifest example:
+  - `scripts/set-ops/batch-manifest.example.csv`
+- Added runbook usage:
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+- CLI behavior:
+  - manifest-driven pairing by canonical `setId`
+  - simpler folder mode:
+    - parent batch folder contains one subfolder per set
+    - subfolder name = canonical `setId`
+    - files inside = `set.csv` and `parallel.csv`
+  - `preflight` mode:
+    - parses local SET/PARALLEL files
+    - uploads via existing Set Ops ingestion API
+    - builds both drafts
+    - captures row counts, blocking counts, and sample normalized draft rows in a JSON report
+    - stops before approval
+  - `commit` mode:
+    - runs the same preflight steps
+    - approves `SET LIST` first, then `PARALLEL LIST`
+    - relies on the existing approval -> auto variant-sync backend path
+  - does not trigger optional Step 3 reference seeding
+  - blocks existing non-archived sets by default unless `--allow-existing-set` is supplied
+  - fails fast on row-level embedded `setId` mismatch vs manifest `setId`
+- Local validation:
+  - `node --check scripts/set-ops/batch-import.js` => pass
+  - `pnpm set-ops:batch-import --help` => pass (engine warning only because local Node is `v25.6.1` and package expects `20.x`)
+- No deploy, restart, migration, or live batch import was executed in this implementation step.
+
+## Session Update (2026-03-08, run-1 folder inspection before preflight)
+- Inspected local batch folder `batch-imports/run-1` before attempting live preflight.
+- Observed:
+  - set subfolders: `432`
+  - import files matching `set.csv` / `parallel.csv`: `551`
+  - incomplete set folders: `313`
+  - complete set folders currently implied: `119`
+- Sampling showed incomplete folders are currently missing `parallel.csv` (for example many 2018/2019 Topps/Bowman baseball sets contain only `set.csv`).
+- Current shell also does not have live batch-import auth vars loaded:
+  - no `SET_OPS_API_BASE_URL`
+  - no `SET_OPS_OPERATOR_KEY`
+  - no `SET_OPS_BEARER_TOKEN`
+- Result:
+  - no live preflight run was started
+  - next step is to finish pairing `parallel.csv` files (or create a smaller ready-only subset) and export auth vars before running the CLI
+
+## Session Update (2026-03-08, confirmed UI supports split checklist/odds timing)
+- Verified from current code that `/admin/set-ops-review` supports queueing a single dataset type at a time:
+  - upload selector offers `PARALLEL LIST`, `SET LIST`, or `SET LIST + PARALLEL LIST`
+  - queue action posts whichever dataset type is selected to `/api/admin/set-ops/ingestion`
+- Verified from `/api/admin/set-ops/sets` that checklist and odds status are tracked separately per set:
+  - `checklistStatus`
+  - `oddsStatus`
+  - `hasChecklist`
+  - `hasOdds`
+- Updated batch CLI to match that UI reality:
+  - set-only runs are allowed
+  - later parallel-only additions for existing sets are supported via `--allow-existing-set`
+- Local validation after the CLI update:
+  - `node --check scripts/set-ops/batch-import.js` => pass
+  - `pnpm set-ops:batch-import --help` => pass
+
+## Session Update (2026-03-08, prepared split batch folders)
+- Created two derivative batch folders from `batch-imports/run-1` without changing the original source folder:
+  - `batch-imports/run-1-both`
+  - `batch-imports/run-1-set-only`
+- Implementation detail:
+  - created real set subfolders and symlinked `set.csv` / `parallel.csv` files into them
+  - this avoids duplicate storage while keeping the batch CLI folder mode compatible
+- Resulting counts:
+  - `run-1-both`: `119` set folders, `238` symlinked files
+  - `run-1-set-only`: `313` set folders, `313` symlinked files
+- No live preflight/commit was started yet because auth env vars are still missing in the current shell.
+
+## Session Update (2026-03-09, preflight failure diagnosed + CLI logging improved)
+- User ran live preflight for `batch-imports/run-1-both`.
+- Observed result:
+  - first 4 sets completed preflight cleanly
+  - run stopped on set 5: `2023_Bowman_University_Best_Football`
+- Diagnosed from generated report:
+  - `SET LIST` passed (`rows=509`, `blocking=0`)
+  - `PARALLEL LIST` failed draft-build quality gate
+  - exact reason: `Quality score 15.38 is below minimum threshold (70). Import was marked FAILED.`
+- Improved CLI UX in `scripts/set-ops/batch-import.js`:
+  - validation errors are now echoed directly to terminal output after each set result
+  - this avoids forcing the operator to inspect the JSON report just to see the blocking reason
+- Local validation after this logging tweak:
+  - `node --check scripts/set-ops/batch-import.js` => pass
+  - `pnpm set-ops:batch-import --help` => pass
+
+## Session Update (2026-03-09, full both-file preflight completed)
+- User then ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/run-1-both --mode preflight --continue-on-error`
+- Observed result from terminal and saved report `logs/set-ops/batch-import/2026-03-09T01-13-43Z.json`:
+  - `73` sets reached `preflight_complete`
+  - `41` sets reached `preflight_failed`
+  - `5` sets were `blocked_existing_set`
+- Important interpretation:
+  - this was a successful preflight run
+  - it did not approve anything and did not seed live data into the DB
+  - it only validated/imported drafts and identified good vs bad CSV pairs
+- Failure modes observed:
+  - some `PARALLEL LIST` files failed the queue quality gate before draft build, commonly with:
+    - `Quality score 15.38 is below minimum threshold (70). Import was marked FAILED.`
+  - some drafts built successfully but had non-zero `blockingErrorCount`, so the overall set still counted as `preflight_failed`
+- Concrete examples from the report:
+  - `2023_Bowman_University_Chrome_Football`
+    - `SET LIST` passed (`rows=379`, `blocking=0`)
+    - `PARALLEL LIST` failed quality gate
+  - `2024_Bowman_Baseball`
+    - `SET LIST` passed (`rows=748`, `blocking=0`)
+    - `PARALLEL LIST` built but had `blocking=38`
+- The `5` blocked existing sets were artifacts of the earlier stopped preflight run:
+  - they already existed in Set Ops with `draftStatus=REVIEW_REQUIRED` and `variantCount=0`
+- Follow-up code change in `scripts/set-ops/batch-import.js` after reviewing this result:
+  - added safe existing-set bypass logic for reruns when an existing set is only in draft/preflight state
+  - condition: allow rerun when `draftStatus === REVIEW_REQUIRED` and `variantCount === 0`
+- Operational recommendation after this result:
+  - do not run `commit` against the entire `run-1-both` folder
+  - either rerun preflight with the patched CLI or isolate the `73` passing sets into a ready-only batch and commit only those
+- No deploy/restart/migration was run.
+
+## Session Update (2026-03-09, ready-only commit batch prepared)
+- Created a derived folder:
+  - `batch-imports/run-1-both-ready`
+- Source of membership:
+  - exact `preflight_complete` set IDs from `logs/set-ops/batch-import/2026-03-09T01-13-43Z.json`
+- Resulting contents:
+  - `73` set folders
+  - `146` symlinked files (`set.csv` + `parallel.csv`)
+- Purpose:
+  - gives the operator a commit-ready subset containing only the sets that passed the latest full preflight
+- No approvals were run as part of this prep step.
+
+## Session Update (2026-03-09, 73-set commit completed successfully)
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/run-1-both-ready --mode commit`
+- Observed result from `logs/set-ops/batch-import/2026-03-09T01-50-16Z.json`:
+  - `73` sets reached `commit_complete`
+  - `0` approval/sync failures were reported
+- Aggregate sync totals from the report:
+  - `SET LIST`: `inserted=38414`, `updated=687`, `failed=0`
+  - `PARALLEL LIST`: `inserted=3288`, `updated=4942`, `failed=0`
+- Operational interpretation:
+  - these `73` sets were approved
+  - their variant sync completed
+  - they should now be live in Set Ops / DB for downstream Add Card use
+
+## Session Update (2026-03-09, 41 failed preflight sets classified)
+- The remaining `41` failed sets do not point to folder naming problems.
+- Based on the saved preflight report plus code inspection, the failures split into three groups:
+  - `13` `PARALLEL LIST` quality-gate rejects
+  - `5` `SET LIST` quality-gate rejects
+  - `23` draft-validation failures after parsing (`blockingErrorCount > 0`)
+- Concrete evidence/examples:
+  - `2024_Topps_Baseball_Series_1_Baseball`
+    - `set.csv` contains at least one blank `Player_Name`
+    - preview row 2 shows `playerSeed is required for player_worksheet rows`
+  - `2025_Topps_Series_1_Mega_Celebration_Baseball`
+    - `parallel.csv` built but produced `274` blocking errors
+    - preview rows show `duplicate row for setId/cardNumber/parallel/playerSeed/listingId`
+  - `2023_Topps_Complete_Set_Baseball`
+    - `parallel.csv` was rejected before draft build with `CSV quality score 65.38`
+  - `2025-26_Topps_Chrome_Basketball_Sapphire`
+    - `parallel.csv` was rejected during draft-build quality gating with `Quality score 15.38`
+- Current interpretation:
+  - many failures are content/normalization-validator issues, not simple file placement issues
+  - several premium/specialty odds sheets likely need parser/scoring adjustments rather than folder renaming
+
+## Session Update (2026-03-09, root-cause insight for heavy parallel failures)
+- Code inspection found a likely systemic cause for many large `PARALLEL LIST` blocker counts:
+  - in `frontend/nextjs-app/lib/server/setOpsDrafts.ts`, duplicate detection builds its key from:
+    - `setId`
+    - `cardNumber`
+    - `parallel`
+    - `playerSeed`
+    - `listingId`
+  - it does **not** include `format` or `channel`
+- The shared helper `buildSetOpsDuplicateKey(...)` in `packages/shared/src/setOpsNormalizer.ts` also omits `format/channel`.
+- Operational implication:
+  - multi-format odds sheets can create many rows that differ only by pack/box/channel
+  - those rows collapse into duplicate-key blocking errors even when the source CSV is logically valid
+- This likely explains many of the large parallel blocker counts in files such as:
+  - `2025_Topps_Series_1_Mega_Celebration_Baseball`
+  - `2025_Topps_Series_1_Baseball`
+  - `2025_Topps_Series_2_Baseball`
+  - `2026_Topps_Series_1_Baseball`
+- Triage split from the preflight report:
+  - small blocker sets (`<=10` total blockers): `7`
+  - larger blocker sets (`>10` total blockers): `16`
+  - quality-gate rejects: `18`
+
+## Session Update (2026-03-09, parser + validator hardening for failed 41 rerun)
+- Implemented code fixes aimed at the remaining failed preflight sets.
+- `packages/shared/src/setOpsNormalizer.ts`
+  - `buildSetOpsDuplicateKey(...)` now accepts `format`
+  - duplicate keys now include `format`, preventing multi-format odds rows from collapsing into the same key
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+  - raw array/nested rows are now normalized to snake_case aliases before draft parsing
+  - added generic `odds_*` fallback extraction so headers like `Odds_Sapphire`, `Odds_COL_1`, and `Odds_Column_1` can populate `odds`
+  - parallel duplicate-key generation now includes `format`
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`
+  - `looksLikeOddsHeader(...)` now treats `odds` / `odds_*` headers as valid odds signals
+  - card-count quality scoring was softened for small but otherwise valid premium sheets:
+    - `SET LIST`: new intermediate tier at `>=10` rows
+    - `PARALLEL LIST`: new intermediate tier at `>=10` rows
+  - fallback draft quality scoring now uses the same row-count tiers
+- Expected impact:
+  - many `Quality score 15.38` failures should convert into real parsed drafts instead of zero-row rejects
+  - multi-format odds sheets should stop generating large duplicate-key blocker counts solely because rows differ by format
+  - small clean premium sheets around `10-20` rows now have a better chance to clear the quality gate
+- Local validation:
+  - `pnpm --filter @tenkings/shared test` => pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` => pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'lib/server/setOpsCsvContract.ts' --file 'lib/server/setOpsDrafts.ts'` => pass
+- Follow-up filesystem prep:
+  - created `batch-imports/run-1-both-failed`
+  - contents: `41` failed-set folders, `82` symlinked CSV files
+  - intended use: rerun preflight only for the previously failing sets after this code change
+- No deploy/restart/migration was run.
+
+## Session Update (2026-03-09, failed-41 rerun still matched old production behavior)
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/run-1-both-failed --mode preflight --continue-on-error`
+- Observed result from `logs/set-ops/batch-import/2026-03-09T02-58-03Z.json`:
+  - all `41` sets still returned `preflight_failed`
+  - failure pattern matched the earlier production preflight very closely
+- Important interpretation:
+  - this rerun does **not** invalidate the local code fixes
+  - the batch importer targets the remote base URL in `SET_OPS_API_BASE_URL`
+  - in this session that base URL was `https://collect.tenkings.co`
+  - therefore the rerun exercised currently deployed production code, not the local undepoyed fixes
+- Practical conclusion:
+  - no further preflight reruns against production will change behavior until the Set Ops API changes in this repo are deployed
+  - the unchanged result actually reinforces that the remaining issue is system-side validator/parser logic, not folder setup
+- No deploy/restart/migration was run.
