@@ -8057,3 +8057,140 @@
 
 ### Operations
 - No deploy/restart/migration/DB commands were executed by the agent in this diagnostic step.
+
+## 2026-03-09 - Production web-runtime deploy observed via improved failed-41 rerun
+
+### User-Run Deploy Evidence
+- User committed:
+  - `6436cef` - `fix(set-ops): harden batch csv ingestion`
+- User pushed:
+  - `git push origin main`
+  - remote update: `43ee92c..6436cef  main -> main`
+
+### User-Run Verification Command
+- `pnpm set-ops:batch-import --folder batch-imports/run-1-both-failed --mode preflight --continue-on-error`
+
+### Observed Result
+- Report:
+  - `logs/set-ops/batch-import/2026-03-09T03-16-01Z.json`
+- Summary:
+  - `preflight_complete=14`
+  - `preflight_failed=27`
+
+### Interpretation
+- This materially differs from the prior all-failed rerun and is strong evidence that the production web/API runtime is now serving the deployed Set Ops fixes.
+
+### Newly Passing Sets
+- `2023_Bowman_University_Chrome_Football`
+- `2023_Bowman_University_Chrome_Football_Sapphire`
+- `2023_Topps_Complete_Set_Baseball`
+- `2024_Topps_Diamond_Icons_Baseball`
+- `2024_Topps_Luminaries_Baseball`
+- `2025-26_Topps_Chrome_Basketball_Sapphire`
+- `2025-26_Topps_Holiday_Basketball`
+- and `7` additional passing sets in the report
+
+## 2026-03-09 - Remaining failed set triage after deploy
+
+### Failure Split
+- quality-gate rejects: `4`
+- blocker-only sets: `23`
+  - small blocker sets (`<=10` total blockers): `7`
+  - larger blocker sets (`>10` total blockers): `16`
+
+### Remaining Quality Rejects
+- `2023_Topps_Diamond_Icons_Baseball`
+- `2024_Bowman_Draft_Baseball_Sapphire_Edition_Baseball`
+- `2024_Topps_Five_Star_Baseball`
+- `2025_Topps_Sterling_Baseball`
+
+### Small Blocker Sets
+- `2023-24_Topps_Motif_Basketball` (`1`)
+- `2024_Bowman_Chrome_Baseball` (`8`)
+- `2024_Bowman_U_Best_Basketball` (`1`)
+- `2024_Topps_Big_League_Baseball` (`1`)
+- `2024_Topps_Stadium_Club_Baseball` (`8`)
+- `2025_Bowman_Baseball` (`10`)
+- `2025-26_Topps_Chrome_Basketball` (`5`)
+
+### Filesystem Prep
+- Created:
+  - `batch-imports/run-1-both-failed-ready`
+- Result:
+  - `14` passing-set subfolders
+  - `28` symlinked CSV files
+- Purpose:
+  - commit-ready subset for the newly passing post-deploy rerun sets
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this follow-up step.
+
+## 2026-03-09 - User committed post-deploy ready batch successfully
+
+### User-Run Command
+- `pnpm set-ops:batch-import --folder batch-imports/run-1-both-failed-ready --mode commit`
+
+### Observed Result
+- Report:
+  - `logs/set-ops/batch-import/2026-03-09T03-27-25Z.json`
+- Summary:
+  - `commit_complete=14`
+  - no sync failures reported
+- Aggregate sync totals:
+  - `SET LIST`: `inserted=4362`, `updated=74`, `failed=0`
+  - `PARALLEL LIST`: `inserted=247`, `updated=318`, `failed=0`
+
+### Interpretation
+- The `14` newly passing post-deploy sets were approved and should now be live in Set Ops / DB.
+- Combined with the earlier `73`-set commit batch, the operator now has `87` committed live sets from this workflow.
+- Remaining unresolved set count after this commit: `27`
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this follow-up step.
+
+## 2026-03-09 - Remaining-27 parser/draft hardening after post-deploy triage
+
+### Code Updates
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+  - `PLAYER_WORKSHEET` rows now infer `playerSeed` from `team` when `playerName` is blank
+  - exact repeated normalized rows are now dropped before duplicate-key blocking
+  - `PARALLEL_DB` duplicate keys now include a full odds signature from `oddsByFormat`, plus serial
+  - duplicate-key blocker messaging now reflects the broader normalized identity
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`
+  - tiny premium `SET LIST` files (`<=5` rows) can pass quality when card-number and identity coverage are strong
+  - odds-sheet contract duplicate scoring now uses the full per-format odds signature instead of only `cardType + parsedParallel`
+  - fallback draft-quality scoring mirrors the same compact-premium checklist logic
+- `packages/shared/src/setOpsNormalizer.ts`
+  - duplicate-key helper now accepts `odds` and `serial`
+- `packages/shared/tests/setOpsNormalizer.test.js`
+  - added duplicate-key coverage for differing odds values
+
+### Targeted Failure Patterns
+- Team-card checklist rows with blank `Player_Name` but populated `Team`
+- Exact repeated checklist rows in products such as:
+  - `2024_Bowman_Chrome_Baseball`
+  - `2024_Topps_Archives_Baseball`
+  - `2024_Topps_Finest_Football`
+  - `2024_Topps_Heritage_High_Number_Baseball`
+- Parallel odds sheets where rows share the same `Card_Type` / `Parallel` but differ by actual odds layout, such as:
+  - `2025_Topps_Series_1_Mega_Celebration_Baseball`
+  - `2025-26_Topps_Chrome_Basketball`
+- Tiny premium checklist files such as:
+  - `2023_Topps_Diamond_Icons_Baseball`
+  - `2024_Topps_Five_Star_Baseball`
+  - `2025_Topps_Sterling_Baseball`
+
+### Validation
+- `pnpm --filter @tenkings/shared test` => pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` => pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsCsvContract.ts --file lib/server/setOpsDrafts.ts` => pass
+
+### Filesystem Prep
+- Created:
+  - `batch-imports/run-1-both-remaining-27`
+- Result:
+  - `27` still-failing set folders from `logs/set-ops/batch-import/2026-03-09T03-16-01Z.json`
+  - symlinked `set.csv` / `parallel.csv` pairs for rerun convenience
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this implementation step.

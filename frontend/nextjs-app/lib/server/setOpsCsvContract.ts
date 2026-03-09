@@ -365,6 +365,17 @@ function scoreParallelCardCount(totalRows: number) {
   return 0;
 }
 
+function isCompactPremiumSet(totalRows: number, cardNumberCoverage: number, identityCoverage: number, programCount: number) {
+  return totalRows > 0 && totalRows <= 5 && cardNumberCoverage >= 0.9 && identityCoverage >= 0.9 && programCount >= 1;
+}
+
+function buildOddsValueSignature(values: Record<string, { text: string; numeric: number | null }>) {
+  return Object.entries(values)
+    .map(([formatKey, value]) => `${formatKey}=${sanitizeOddsText(value.text || "-") || "-"}`)
+    .sort()
+    .join("||");
+}
+
 function createSetListStructuredPayload(params: {
   rows: CanonicalCsvRow[];
   sourceUrl?: string | null;
@@ -374,6 +385,8 @@ function createSetListStructuredPayload(params: {
   const duplicateKeys = new Set<string>();
   let duplicates = 0;
   let playerNonEmpty = 0;
+  let identityNonEmpty = 0;
+  let cardNumberNonEmpty = 0;
   let totalRows = 0;
   let baseRows = 0;
 
@@ -387,9 +400,11 @@ function createSetListStructuredPayload(params: {
     if (!cardNumber && !playerName && !team && !subset) continue;
     totalRows += 1;
     if (playerName) playerNonEmpty += 1;
+    if (playerName || team) identityNonEmpty += 1;
+    if (cardNumber) cardNumberNonEmpty += 1;
     if (/\bbase\b/i.test(subset)) baseRows += 1;
 
-    const key = `${subset.toLowerCase()}::${cardNumber.toLowerCase()}`;
+    const key = [subset.toLowerCase(), cardNumber.toLowerCase(), playerName.toLowerCase(), team.toLowerCase()].join("::");
     if (duplicateKeys.has(key)) {
       duplicates += 1;
     } else {
@@ -409,7 +424,13 @@ function createSetListStructuredPayload(params: {
 
   const programEntries = Array.from(programMap.entries()).map(([label, cards]) => ({ label, cards }));
   const playerCoverage = totalRows > 0 ? playerNonEmpty / totalRows : 0;
+  const identityCoverage = totalRows > 0 ? identityNonEmpty / totalRows : 0;
+  const cardNumberCoverage = totalRows > 0 ? cardNumberNonEmpty / totalRows : 0;
   const baseRatio = totalRows > 0 ? baseRows / totalRows : 0;
+  const compactPremiumSet = isCompactPremiumSet(totalRows, cardNumberCoverage, identityCoverage, programEntries.length);
+  const cardTypeDistributionScore = compactPremiumSet
+    ? 1
+    : clamp((programEntries.length >= 2 ? 0.5 : 0) + (baseRatio >= 0.4 ? 0.5 : 0));
   const metrics: CsvQualityMetric[] = [
     {
       key: "card_count_sanity",
@@ -428,9 +449,11 @@ function createSetListStructuredPayload(params: {
     {
       key: "card_type_distribution",
       weight: 15,
-      score: clamp((programEntries.length >= 2 ? 0.5 : 0) + (baseRatio >= 0.4 ? 0.5 : 0)),
-      passed: programEntries.length >= 2 && baseRatio >= 0.4,
-      note: `${programEntries.length} card types, base ${Math.round(baseRatio * 100)}%`,
+      score: cardTypeDistributionScore,
+      passed: compactPremiumSet || (programEntries.length >= 2 && baseRatio >= 0.4),
+      note: compactPremiumSet
+        ? `${programEntries.length} card types, compact premium checklist`
+        : `${programEntries.length} card types, base ${Math.round(baseRatio * 100)}%`,
     },
     {
       key: "duplicate_check",
@@ -457,6 +480,8 @@ function createSetListStructuredPayload(params: {
       parsedProgramCount: programEntries.length,
       duplicateRowCount: duplicates,
       playerCoverage,
+      identityCoverage,
+      cardNumberCoverage,
       baseRatio,
       rowCount: totalRows,
     },
@@ -525,13 +550,6 @@ function createOddsStructuredPayload(params: {
     const parsedProgram = compact(parallelFromColumn ? cardType : split.parsedProgram || cardType);
     const parsedParallel = compact(parallelFromColumn || split.parsedParallel || "BASE") || "BASE";
 
-    const duplicateKey = `${cardType.toLowerCase()}::${parsedParallel.toLowerCase()}`;
-    if (duplicateKeys.has(duplicateKey)) {
-      duplicateRows += 1;
-    } else {
-      duplicateKeys.add(duplicateKey);
-    }
-
     const serialDenominator = parseSerialDenominator(cardType);
     if (/\/\s*\d{1,5}\b|\b1\s*\/\s*1\b/i.test(cardType)) {
       serialPatternRows += 1;
@@ -555,6 +573,18 @@ function createOddsStructuredPayload(params: {
         text: text || "-",
         numeric: parseOddsNumeric(text),
       };
+    }
+
+    const duplicateKey = [
+      cardType.toLowerCase(),
+      parsedParallel.toLowerCase(),
+      serialDenominator == null ? "none" : String(serialDenominator),
+      buildOddsValueSignature(values),
+    ].join("::");
+    if (duplicateKeys.has(duplicateKey)) {
+      duplicateRows += 1;
+    } else {
+      duplicateKeys.add(duplicateKey);
     }
 
     oddsEntries.push({
@@ -758,15 +788,23 @@ export function evaluateDraftQuality(params: {
     });
     const baseRows = params.rows.filter((row) => /\bbase\b/i.test(compact(row.cardType || ""))).length;
     const baseRatio = rowCount > 0 ? baseRows / rowCount : 0;
-    const subsetScore = clamp((programCounts.size >= 2 ? 0.5 : 0) + (baseRatio >= 0.4 ? 0.5 : 0));
+    const identityCoverage =
+      rowCount > 0
+        ? params.rows.filter((row) => compact(row.playerSeed).length > 0 || compact(row.raw.team ?? "").length > 0).length / rowCount
+        : 0;
+    const cardNumberCoverage = rowCount > 0 ? params.rows.filter((row) => compact(row.cardNumber).length > 0).length / rowCount : 0;
+    const compactPremiumSet = isCompactPremiumSet(rowCount, cardNumberCoverage, identityCoverage, programCounts.size);
+    const subsetScore = compactPremiumSet ? 1 : clamp((programCounts.size >= 2 ? 0.5 : 0) + (baseRatio >= 0.4 ? 0.5 : 0));
     metrics.push(assessMetric("player_name_coverage", 20, playerCoverage, 0.95, `${Math.round(playerCoverage * 100)}%`));
     metrics.push(
       assessMetric(
         "card_type_distribution",
         15,
         subsetScore,
-        1,
-        `${programCounts.size} card types, base ${Math.round(baseRatio * 100)}%`
+        compactPremiumSet ? 0.7 : 1,
+        compactPremiumSet
+          ? `${programCounts.size} card types, compact premium checklist`
+          : `${programCounts.size} card types, base ${Math.round(baseRatio * 100)}%`
       )
     );
   } else {

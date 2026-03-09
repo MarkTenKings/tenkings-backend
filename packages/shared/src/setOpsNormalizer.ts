@@ -5,6 +5,8 @@ export interface SetOpsDuplicateKeyInput {
   playerSeed?: string | null | undefined;
   listingId?: string | null | undefined;
   format?: string | null | undefined;
+  odds?: string | null | undefined;
+  serial?: string | null | undefined;
 }
 
 const NAMED_ENTITIES: Record<string, string> = {
@@ -135,7 +137,9 @@ export function buildSetOpsDuplicateKey(input: SetOpsDuplicateKeyInput): string 
   const playerSeed = normalizePlayerSeed(input.playerSeed ?? null).toLowerCase() || "none";
   const listingId = (normalizeListingId(input.listingId ?? null) ?? "none").toLowerCase();
   const format = normalizePlayerSeed(input.format ?? null).toLowerCase() || "none";
-  return [setId, cardNumber, parallel, playerSeed, listingId, format].join("::");
+  const odds = normalizePlayerSeed(input.odds ?? null).toLowerCase() || "none";
+  const serial = normalizeParallelLabel(input.serial ?? null).toLowerCase() || "none";
+  return [setId, cardNumber, parallel, playerSeed, listingId, format, odds, serial].join("::");
 }
 
 export function buildSetDeleteConfirmationPhrase(setId: string | null | undefined): string {

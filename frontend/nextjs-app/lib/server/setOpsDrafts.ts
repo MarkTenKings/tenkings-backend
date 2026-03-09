@@ -344,6 +344,97 @@ function normalizeOddsValue(value: string | null | undefined) {
   return numeric[0].replace(/,/g, "");
 }
 
+function derivePlayerSeed(
+  raw: Record<string, unknown>,
+  datasetType: SetDatasetType,
+  cardType: string
+): { playerSeed: string; inferredFromTeam: boolean } {
+  const directPlayerSeed = normalizePlayerSeed(firstString(raw, ["playerSeed", "playerName", "player"]));
+  if (directPlayerSeed) {
+    return {
+      playerSeed: directPlayerSeed,
+      inferredFromTeam: false,
+    };
+  }
+
+  if (datasetType === SetDatasetType.PARALLEL_DB) {
+    return {
+      playerSeed: cardType,
+      inferredFromTeam: false,
+    };
+  }
+
+  const teamFallback = normalizePlayerSeed(firstString(raw, ["team", "teamName", "team_name"]));
+  if (teamFallback) {
+    return {
+      playerSeed: teamFallback,
+      inferredFromTeam: true,
+    };
+  }
+
+  return {
+    playerSeed: "",
+    inferredFromTeam: false,
+  };
+}
+
+function buildOddsSignature(raw: Record<string, unknown>, fallbackOdds: string | null, fallbackFormat: string | null) {
+  const oddsByFormatRaw = Array.isArray(raw.oddsByFormat) ? raw.oddsByFormat : [];
+  const entries: string[] = [];
+
+  for (const oddsEntryRaw of oddsByFormatRaw) {
+    const oddsEntry = asRecord(oddsEntryRaw);
+    if (!oddsEntry) continue;
+    const oddsText = normalizeOddsValue(
+      firstString(oddsEntry, ["oddsText", "text", "odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"])
+    );
+    if (!oddsText) continue;
+    const format = normalizePlayerSeed(firstString(oddsEntry, ["format", "formatKey", "columnHeader"])) || "default";
+    const channel = normalizePlayerSeed(firstString(oddsEntry, ["channel", "channelKey"])) || "none";
+    entries.push(`${format}|${channel}|${oddsText}`);
+  }
+
+  if (entries.length > 0) {
+    return entries.sort().join("||");
+  }
+
+  if (!fallbackOdds && !fallbackFormat) {
+    return null;
+  }
+
+  return `${fallbackFormat || "default"}|none|${fallbackOdds || "none"}`;
+}
+
+function buildExactRowSignature(params: {
+  datasetType: SetDatasetType;
+  setId: string;
+  cardNumber: string | null;
+  parallel: string;
+  cardType: string;
+  playerSeed: string;
+  team: string | null;
+  listingId: string | null;
+  sourceUrl: string | null;
+  format: string | null;
+  oddsSignature: string | null;
+  serial: string | null;
+}) {
+  return JSON.stringify([
+    params.datasetType,
+    params.setId,
+    params.cardNumber || "",
+    params.parallel,
+    params.cardType,
+    params.playerSeed,
+    params.team || "",
+    params.listingId || "",
+    params.sourceUrl || "",
+    params.format || "",
+    params.oddsSignature || "",
+    params.serial || "",
+  ]);
+}
+
 export function normalizeDraftRows(params: {
   datasetType: SetDatasetType;
   fallbackSetId: string;
@@ -352,8 +443,10 @@ export function normalizeDraftRows(params: {
   const fallbackSetId = normalizeSetLabel(params.fallbackSetId);
   const rows = parseRawRows(params.rawPayload, params.datasetType).filter((row) => !isEffectivelyEmptyDraftRow(row));
   const seenKeys = new Set<string>();
+  const seenExactRows = new Set<string>();
+  const normalizedRows: SetOpsDraftRow[] = [];
 
-  const normalizedRows = rows.map((raw, index): SetOpsDraftRow => {
+  for (const [index, raw] of rows.entries()) {
     const normalizedSetId = normalizeSetLabel(
       firstString(raw, ["setId", "set", "setName", "set_name"]) || fallbackSetId
     );
@@ -369,13 +462,13 @@ export function normalizeDraftRows(params: {
     const parallel = normalizeParallelLabel(
       firstString(raw, ["parallel", "parallelId", "parallel_id", "parallelName"])
     );
-    const playerSeed = normalizePlayerSeed(
-      firstString(raw, ["playerSeed", "playerName", "player"]) || (params.datasetType === SetDatasetType.PARALLEL_DB ? cardType : "")
-    );
+    const team = normalizePlayerSeed(firstString(raw, ["team", "teamName", "team_name"])) || null;
+    const { playerSeed, inferredFromTeam } = derivePlayerSeed(raw, params.datasetType, cardType);
     const sourceUrl = firstString(raw, ["sourceUrl", "url", "source"]) || null;
-    let listingId = normalizeListingId(
+    const listingId = normalizeListingId(
       firstString(raw, ["listingId", "sourceListingId", "source_listing_id", "listing", "url", "sourceUrl"])
     );
+    const oddsSignature = params.datasetType === SetDatasetType.PARALLEL_DB ? buildOddsSignature(raw, odds, format) : null;
 
     const duplicateParallelKey =
       params.datasetType === SetDatasetType.PLAYER_WORKSHEET
@@ -398,6 +491,9 @@ export function normalizeDraftRows(params: {
 
     if (params.datasetType === SetDatasetType.PLAYER_WORKSHEET && !playerSeed) {
       errors.push({ field: "playerSeed", message: "playerSeed is required for player_worksheet rows", blocking: true });
+    }
+    if (inferredFromTeam) {
+      warnings.push("playerSeed inferred from team because playerName was blank");
     }
 
     if (looksLikeMarkupNoise(cardNumber)) {
@@ -423,6 +519,25 @@ export function normalizeDraftRows(params: {
       warnings.push("cardType missing");
     }
 
+    const exactRowSignature = buildExactRowSignature({
+      datasetType: params.datasetType,
+      setId: normalizedSetId || fallbackSetId,
+      cardNumber,
+      parallel,
+      cardType,
+      playerSeed,
+      team,
+      listingId,
+      sourceUrl,
+      format,
+      oddsSignature,
+      serial,
+    });
+    if (seenExactRows.has(exactRowSignature)) {
+      continue;
+    }
+    seenExactRows.add(exactRowSignature);
+
     const duplicateKey = buildSetOpsDuplicateKey({
       setId: normalizedSetId || fallbackSetId,
       cardNumber,
@@ -430,19 +545,21 @@ export function normalizeDraftRows(params: {
       playerSeed,
       listingId,
       format: params.datasetType === SetDatasetType.PARALLEL_DB ? format : null,
+      odds: params.datasetType === SetDatasetType.PARALLEL_DB ? oddsSignature : null,
+      serial: params.datasetType === SetDatasetType.PARALLEL_DB ? serial : null,
     });
 
     if (seenKeys.has(duplicateKey)) {
       errors.push({
         field: "duplicateKey",
-        message: "duplicate row for setId/cardNumber/parallel/playerSeed/listingId",
+        message: "duplicate row for the normalized set/card/parallel/player/listing/odds identity",
         blocking: true,
       });
     } else {
       seenKeys.add(duplicateKey);
     }
 
-    return {
+    normalizedRows.push({
       index,
       setId: normalizedSetId || fallbackSetId,
       cardNumber,
@@ -458,8 +575,8 @@ export function normalizeDraftRows(params: {
       errors,
       warnings,
       raw,
-    };
-  });
+    });
+  }
 
   const { errorCount, blockingErrorCount } = countErrors(normalizedRows);
   return {

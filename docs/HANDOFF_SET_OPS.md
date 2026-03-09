@@ -4294,3 +4294,112 @@ Build Set Ops UI flow with:
   - no further preflight reruns against production will change behavior until the Set Ops API changes in this repo are deployed
   - the unchanged result actually reinforces that the remaining issue is system-side validator/parser logic, not folder setup
 - No deploy/restart/migration was run.
+
+## Session Update (2026-03-09, production web-runtime deploy confirmed by failed-41 rerun improvement)
+- User committed and pushed:
+  - commit `6436cef`
+  - command evidence:
+    - `git push origin main`
+    - `43ee92c..6436cef  main -> main`
+- Production confirmation is based on changed runtime behavior against `https://collect.tenkings.co`:
+  - rerun report: `logs/set-ops/batch-import/2026-03-09T03-16-01Z.json`
+  - result changed from `preflight_failed=41` to:
+    - `preflight_complete=14`
+    - `preflight_failed=27`
+- Newly passing sets include:
+  - `2023_Bowman_University_Chrome_Football`
+  - `2023_Bowman_University_Chrome_Football_Sapphire`
+  - `2023_Topps_Complete_Set_Baseball`
+  - `2024_Topps_Diamond_Icons_Baseball`
+  - `2024_Topps_Luminaries_Baseball`
+  - `2025-26_Topps_Chrome_Basketball_Sapphire`
+  - `2025-26_Topps_Holiday_Basketball`
+- This is strong evidence that the deployed Set Ops parser/validator fixes are now active in production.
+
+## Session Update (2026-03-09, remaining failed set triage after deploy)
+- Remaining failures after deploy: `27`
+- New split:
+  - quality-gate rejects: `4`
+  - blocker-only sets: `23`
+    - small blocker sets (`<=10` total blockers): `7`
+    - larger blocker sets (`>10` total blockers): `16`
+- Remaining quality rejects:
+  - `2023_Topps_Diamond_Icons_Baseball`
+  - `2024_Bowman_Draft_Baseball_Sapphire_Edition_Baseball`
+  - `2024_Topps_Five_Star_Baseball`
+  - `2025_Topps_Sterling_Baseball`
+- Small blocker sets:
+  - `2023-24_Topps_Motif_Basketball` (`1`)
+  - `2024_Bowman_Chrome_Baseball` (`8`)
+  - `2024_Bowman_U_Best_Basketball` (`1`)
+  - `2024_Topps_Big_League_Baseball` (`1`)
+  - `2024_Topps_Stadium_Club_Baseball` (`8`)
+  - `2025_Bowman_Baseball` (`10`)
+  - `2025-26_Topps_Chrome_Basketball` (`5`)
+- Large blocker sets remain concentrated in major checklist/odds products such as:
+  - `2024_Topps_Baseball_Series_1_Baseball`
+  - `2024_Topps_Baseball_Series_2_Baseball`
+  - `2025_Topps_Series_1_Baseball`
+  - `2025_Topps_Series_1_Mega_Celebration_Baseball`
+  - `2025_Topps_Series_2_Baseball`
+  - `2026_Topps_Series_1_Baseball`
+
+## Session Update (2026-03-09, 14-set ready-only commit batch prepared)
+- Created a derived folder:
+  - `batch-imports/run-1-both-failed-ready`
+- Source of membership:
+  - exact `preflight_complete` set IDs from `logs/set-ops/batch-import/2026-03-09T03-16-01Z.json`
+- Resulting contents:
+  - `14` set folders
+  - `28` symlinked files (`set.csv` + `parallel.csv`)
+- Purpose:
+  - gives the operator a commit-ready subset containing only the newly passing sets from the post-deploy rerun
+
+## Session Update (2026-03-09, 14-set post-deploy commit completed successfully)
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/run-1-both-failed-ready --mode commit`
+- Observed result from `logs/set-ops/batch-import/2026-03-09T03-27-25Z.json`:
+  - `14` sets reached `commit_complete`
+  - `0` approval/sync failures were reported
+- Aggregate sync totals from the report:
+  - `SET LIST`: `inserted=4362`, `updated=74`, `failed=0`
+  - `PARALLEL LIST`: `inserted=247`, `updated=318`, `failed=0`
+- Operational interpretation:
+  - these `14` sets were approved
+  - their variant sync completed
+  - they should now be live in Set Ops / DB for downstream Add Card use
+- Cumulative operator-visible state from this batching chain:
+  - initial successful commit batch: `73` sets
+  - second successful post-deploy commit batch: `14` sets
+  - total committed live sets from this workflow: `87`
+- Remaining unresolved set count after this commit:
+  - `27`
+
+## Session Update (2026-03-09, remaining-27 parser hardening after post-deploy triage)
+- Implemented another Set Ops parser/draft pass aimed at the final `27` unresolved complete-set folders.
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+  - `PLAYER_WORKSHEET` rows now fall back from blank `playerName` to `team` when deriving `playerSeed`
+  - exact repeated normalized rows are dropped before duplicate-key blocking is applied
+  - `PARALLEL_DB` duplicate keys now include a full odds signature derived from `oddsByFormat`, plus serial, not just the earlier coarse identity
+  - duplicate blocker message was updated to reflect the broader normalized identity
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`
+  - tiny premium `SET LIST` files (`<=5` rows) can now pass the quality gate when card-number coverage and identity coverage are strong, even if they only contain one compact premium card type
+  - odds-sheet contract duplicate scoring now uses the full per-format odds value signature instead of only `cardType + parsedParallel`
+  - fallback draft-quality scoring now mirrors the same compact-premium checklist logic
+- `packages/shared/src/setOpsNormalizer.ts`
+  - duplicate key helper now accepts `odds` and `serial`
+- `packages/shared/tests/setOpsNormalizer.test.js`
+  - added coverage proving duplicate keys differ when odds differ
+- Concrete failure patterns targeted by this patch:
+  - team-card checklist rows with blank `Player_Name` but populated `Team`
+  - exact repeated checklist rows in products like `2024_Bowman_Chrome_Baseball`, `2024_Topps_Archives_Baseball`, `2024_Topps_Finest_Football`, and `2024_Topps_Heritage_High_Number_Baseball`
+  - parallel odds sheets where multiple rows share the same `Card_Type` / `Parallel` but differ by actual odds layout, such as `2025_Topps_Series_1_Mega_Celebration_Baseball` and `2025-26_Topps_Chrome_Basketball`
+  - tiny premium checklist files such as `2023_Topps_Diamond_Icons_Baseball`, `2024_Topps_Five_Star_Baseball`, and `2025_Topps_Sterling_Baseball`
+- Local validation:
+  - `pnpm --filter @tenkings/shared test` => pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` => pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsCsvContract.ts --file lib/server/setOpsDrafts.ts` => pass
+- Filesystem prep:
+  - created `batch-imports/run-1-both-remaining-27`
+  - contents: the `27` still-failing set folders from `logs/set-ops/batch-import/2026-03-09T03-16-01Z.json`, with symlinked `set.csv` / `parallel.csv`
+- No deploy/restart/migration was run for this second parser hardening pass.
