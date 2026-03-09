@@ -531,10 +531,11 @@ export default function SetOpsReviewPage() {
 
   const [seedJobs, setSeedJobs] = useState<SeedJob[]>([]);
   const [referenceStatus, setReferenceStatus] = useState<ReferenceStatus | null>(null);
-  const [referenceSeedLimitInput, setReferenceSeedLimitInput] = useState("20");
+  const [referenceSeedLimitInput, setReferenceSeedLimitInput] = useState("2");
   const [referenceSeedTbsInput, setReferenceSeedTbsInput] = useState("");
   const [referenceSeedProgress, setReferenceSeedProgress] = useState<ReferenceSeedProgress | null>(null);
   const [postSeedPipelineProgress, setPostSeedPipelineProgress] = useState<PostSeedPipelineProgress | null>(null);
+  const [pendingAutoSeedDataset, setPendingAutoSeedDataset] = useState<DatasetType | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [accessBusy, setAccessBusy] = useState(false);
@@ -1393,8 +1394,11 @@ export default function SetOpsReviewPage() {
             : payload.variantSyncWarning
             ? `variant sync warning: ${payload.variantSyncWarning}`
             : "variant sync queued";
+          if (datasetType === "PARALLEL_DB") {
+            setPendingAutoSeedDataset("PARALLEL_DB");
+          }
           setStatus(
-            `${decision} complete (blocking=${payload.blockingErrorCount ?? 0}, added=${payload.diffSummary?.added ?? 0}, changed=${payload.diffSummary?.changed ?? 0}; ${variantSyncStatus}). Set is live for recognition now; reference seeding is optional.`
+            `${decision} complete (blocking=${payload.blockingErrorCount ?? 0}, added=${payload.diffSummary?.added ?? 0}, changed=${payload.diffSummary?.changed ?? 0}; ${variantSyncStatus}). Set is live for recognition now; provisional parallel reference seeding will auto-start at 1-2 images per parallel.`
           );
           setActiveStepWithUrl("seed-monitor");
         } else {
@@ -1838,6 +1842,21 @@ export default function SetOpsReviewPage() {
     referenceSeedLimitInput,
     referenceSeedTbsInput,
     runPostSeedPipeline,
+    session?.token,
+  ]);
+
+  useEffect(() => {
+    if (pendingAutoSeedDataset !== "PARALLEL_DB") return;
+    if (!session?.token || !isAdmin || !canApprove || !activeQueueSetId) return;
+
+    setPendingAutoSeedDataset(null);
+    void seedReferenceImagesForDataset("PARALLEL_DB", "PARALLEL LIST");
+  }, [
+    activeQueueSetId,
+    canApprove,
+    isAdmin,
+    pendingAutoSeedDataset,
+    seedReferenceImagesForDataset,
     session?.token,
   ]);
 

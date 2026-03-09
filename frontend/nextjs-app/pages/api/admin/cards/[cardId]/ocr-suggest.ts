@@ -1756,13 +1756,54 @@ function buildMemoryTokenLookup(tokens: OcrTokenEntry[]): MemoryTokenLookup {
   return { global, byImage };
 }
 
-function buildRegionTokenLookup(tokens: OcrTokenEntry[], templatesBySide: RegionTemplateMap): RegionTokenLookup {
-  const global = new Set<string>();
-  const byImage = new Map<string, Set<string>>();
-  const byFieldGlobal = new Map<keyof SuggestionFields, Set<string>>();
-  const byFieldImage = new Map<keyof SuggestionFields, Map<string, Set<string>>>();
-  const boundsByImage = new Map<string, { maxX: number; maxY: number }>();
+function emptyRegionTemplateMap(): RegionTemplateMap {
+  return {
+    FRONT: [],
+    BACK: [],
+    TILT: [],
+  };
+}
 
+function emptyRegionCountBySide(): Record<OcrRegionPhotoSide, number> {
+  return {
+    FRONT: 0,
+    BACK: 0,
+    TILT: 0,
+  };
+}
+
+function buildGlobalProductSetFallbackTemplates(): RegionTemplateMap {
+  return {
+    FRONT: [],
+    BACK: [
+      {
+        x: 0.04,
+        y: 0.84,
+        width: 0.92,
+        height: 0.14,
+        label: "Global Product Set Fallback",
+        targetField: "setName",
+      },
+    ],
+    TILT: [],
+  };
+}
+
+function mergeRegionTemplateMaps(...maps: RegionTemplateMap[]): RegionTemplateMap {
+  const merged = emptyRegionTemplateMap();
+  maps.forEach((map) => {
+    (["FRONT", "BACK", "TILT"] as OcrRegionPhotoSide[]).forEach((side) => {
+      const regions = Array.isArray(map[side]) ? map[side] : [];
+      if (regions.length > 0) {
+        merged[side] = [...merged[side], ...regions];
+      }
+    });
+  });
+  return merged;
+}
+
+function buildRegionBoundsByImage(tokens: OcrTokenEntry[]) {
+  const boundsByImage = new Map<string, { maxX: number; maxY: number }>();
   tokens.forEach((token) => {
     const imageId = normalizeImageLabel(token.imageId);
     const points = Array.isArray(token.bbox) ? token.bbox : [];
@@ -1790,52 +1831,147 @@ function buildRegionTokenLookup(tokens: OcrTokenEntry[], templatesBySide: Region
     current.maxX = Math.max(current.maxX, maxX);
     current.maxY = Math.max(current.maxY, maxY);
   });
+  return boundsByImage;
+}
+
+function matchTokenRegions(
+  token: OcrTokenEntry,
+  templatesBySide: RegionTemplateMap,
+  boundsByImage: Map<string, { maxX: number; maxY: number }>
+) {
+  const imageId = normalizeImageLabel(token.imageId);
+  const side = imageId as OcrRegionPhotoSide;
+  const regions = templatesBySide[side] ?? [];
+  if (!regions.length) {
+    return {
+      imageId,
+      matchedRegions: [] as OcrRegionRect[],
+    };
+  }
+  const points = Array.isArray(token.bbox) ? token.bbox : [];
+  if (!points.length) {
+    return {
+      imageId,
+      matchedRegions: [] as OcrRegionRect[],
+    };
+  }
+  const bounds = boundsByImage.get(imageId);
+  if (!bounds || bounds.maxX <= 0 || bounds.maxY <= 0) {
+    return {
+      imageId,
+      matchedRegions: [] as OcrRegionRect[],
+    };
+  }
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = 0;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = 0;
+  points.forEach((point) => {
+    if (typeof point?.x === "number" && Number.isFinite(point.x)) {
+      minX = Math.min(minX, point.x);
+      maxX = Math.max(maxX, point.x);
+    }
+    if (typeof point?.y === "number" && Number.isFinite(point.y)) {
+      minY = Math.min(minY, point.y);
+      maxY = Math.max(maxY, point.y);
+    }
+  });
+  if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxX <= minX || maxY <= minY) {
+    return {
+      imageId,
+      matchedRegions: [] as OcrRegionRect[],
+    };
+  }
+  const centerX = ((minX + maxX) / 2) / bounds.maxX;
+  const centerY = ((minY + maxY) / 2) / bounds.maxY;
+  return {
+    imageId,
+    matchedRegions: regions.filter(
+      (region) =>
+        centerX >= region.x &&
+        centerX <= region.x + region.width &&
+        centerY >= region.y &&
+        centerY <= region.y + region.height
+    ),
+  };
+}
+
+function applyRegionTemplateValueHints(params: {
+  fields: SuggestionFields;
+  confidence: SuggestionConfidence;
+  tokens: OcrTokenEntry[];
+  templatesBySide: RegionTemplateMap;
+}) {
+  const { fields, confidence, tokens, templatesBySide } = params;
+  const boundsByImage = buildRegionBoundsByImage(tokens);
+  const countsByFieldValue = new Map<string, { field: keyof SuggestionFields; value: string; hits: number }>();
+
+  tokens.forEach((token) => {
+    const { matchedRegions } = matchTokenRegions(token, templatesBySide, boundsByImage);
+    if (!matchedRegions.length) {
+      return;
+    }
+    matchedRegions.forEach((region) => {
+      const targetField = normalizeTeachTargetField(region.targetField);
+      const targetValue = coerceNullableString(region.targetValue);
+      if (!targetField || !targetValue) {
+        return;
+      }
+      const key = `${targetField}::${targetValue.toLowerCase()}`;
+      const current = countsByFieldValue.get(key);
+      if (current) {
+        current.hits += 1;
+      } else {
+        countsByFieldValue.set(key, {
+          field: targetField,
+          value: targetValue,
+          hits: 1,
+        });
+      }
+    });
+  });
+
+  const bestByField = new Map<keyof SuggestionFields, { value: string; hits: number }>();
+  countsByFieldValue.forEach((entry) => {
+    const current = bestByField.get(entry.field);
+    if (!current || entry.hits > current.hits) {
+      bestByField.set(entry.field, { value: entry.value, hits: entry.hits });
+    }
+  });
+
+  const applied: MemoryApplyEntry[] = [];
+  bestByField.forEach((entry, field) => {
+    const currentValue = coerceNullableString(fields[field]);
+    const currentConfidence = confidence[field] ?? 0;
+    if (currentValue && currentValue.toLowerCase() !== entry.value.toLowerCase() && currentConfidence >= 0.97) {
+      return;
+    }
+    fields[field] = entry.value;
+    confidence[field] = Math.max(currentConfidence, 0.97);
+    applied.push({
+      field,
+      value: entry.value,
+      confidence: 0.97,
+      support: entry.hits,
+    });
+  });
+
+  return applied;
+}
+
+function buildRegionTokenLookup(tokens: OcrTokenEntry[], templatesBySide: RegionTemplateMap): RegionTokenLookup {
+  const global = new Set<string>();
+  const byImage = new Map<string, Set<string>>();
+  const byFieldGlobal = new Map<keyof SuggestionFields, Set<string>>();
+  const byFieldImage = new Map<keyof SuggestionFields, Map<string, Set<string>>>();
+  const boundsByImage = buildRegionBoundsByImage(tokens);
 
   tokens.forEach((token) => {
     const normalized = normalizeMemoryToken(token.text);
     if (!normalized) {
       return;
     }
-    const imageId = normalizeImageLabel(token.imageId);
-    const side = imageId as OcrRegionPhotoSide;
-    const regions = templatesBySide[side] ?? [];
-    if (!regions.length) {
-      return;
-    }
-    const points = Array.isArray(token.bbox) ? token.bbox : [];
-    if (!points.length) {
-      return;
-    }
-    const bounds = boundsByImage.get(imageId);
-    if (!bounds || bounds.maxX <= 0 || bounds.maxY <= 0) {
-      return;
-    }
-    let minX = Number.POSITIVE_INFINITY;
-    let maxX = 0;
-    let minY = Number.POSITIVE_INFINITY;
-    let maxY = 0;
-    points.forEach((point) => {
-      if (typeof point?.x === "number" && Number.isFinite(point.x)) {
-        minX = Math.min(minX, point.x);
-        maxX = Math.max(maxX, point.x);
-      }
-      if (typeof point?.y === "number" && Number.isFinite(point.y)) {
-        minY = Math.min(minY, point.y);
-        maxY = Math.max(maxY, point.y);
-      }
-    });
-    if (!Number.isFinite(minX) || !Number.isFinite(minY) || maxX <= minX || maxY <= minY) {
-      return;
-    }
-    const centerX = ((minX + maxX) / 2) / bounds.maxX;
-    const centerY = ((minY + maxY) / 2) / bounds.maxY;
-    const matchedRegions = regions.filter(
-      (region) =>
-        centerX >= region.x &&
-        centerX <= region.x + region.width &&
-        centerY >= region.y &&
-        centerY <= region.y + region.height
-    );
+    const { imageId, matchedRegions } = matchTokenRegions(token, templatesBySide, boundsByImage);
     if (!matchedRegions.length) {
       return;
     }
@@ -2880,53 +3016,88 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const llmElapsedMs = Date.now() - llmStartMs;
 
     const regionTemplateLayoutClass = sanitizeText(queryHints.layoutClass || "") || "base";
-    const regionTemplateSetId = coerceNullableString(queryHints.setId || queryHints.productLine || fields.setName);
-    let regionTemplatesBySide: RegionTemplateMap = {
-      FRONT: [],
-      BACK: [],
-      TILT: [],
+    const requestedRegionTemplateSetId = coerceNullableString(queryHints.setId || queryHints.productLine || fields.setName);
+    const globalFallbackTemplates = buildGlobalProductSetFallbackTemplates();
+    const dedupeMemoryApplyEntries = (entries: MemoryApplyEntry[]) => {
+      const seen = new Set<string>();
+      return entries.filter((entry) => {
+        const key = `${entry.field}::${entry.value.toLowerCase()}`;
+        if (seen.has(key)) {
+          return false;
+        }
+        seen.add(key);
+        return true;
+      });
     };
+    const loadSetScopedRegionTemplates = async (setId: string | null) => {
+      if (!setId) {
+        return null;
+      }
+      const templateState = await listOcrRegionTemplates({
+        setId,
+        layoutClass: regionTemplateLayoutClass,
+      });
+      return {
+        setId: templateState.setId,
+        layoutClass: templateState.layoutClass,
+        templatesBySide: templateState.templatesBySide,
+        loadedSides: (["FRONT", "BACK", "TILT"] as OcrRegionPhotoSide[]).filter(
+          (side) => (templateState.templatesBySide[side] ?? []).length > 0
+        ),
+        regionCountBySide: {
+          FRONT: templateState.templatesBySide.FRONT.length,
+          BACK: templateState.templatesBySide.BACK.length,
+          TILT: templateState.templatesBySide.TILT.length,
+        },
+      };
+    };
+    let regionTemplatesBySide: RegionTemplateMap = mergeRegionTemplateMaps(globalFallbackTemplates);
     let regionTemplateAudit: {
       setId: string | null;
       layoutClass: string;
       loadedSides: OcrRegionPhotoSide[];
       regionCountBySide: Record<OcrRegionPhotoSide, number>;
+      globalFallbackLoadedSides: OcrRegionPhotoSide[];
+      valueHintsApplied: MemoryApplyEntry[];
+      resolvedAfterMemorySetId: string | null;
       error?: string;
     } = {
-      setId: regionTemplateSetId,
+      setId: requestedRegionTemplateSetId,
       layoutClass: regionTemplateLayoutClass,
       loadedSides: [],
-      regionCountBySide: {
-        FRONT: 0,
-        BACK: 0,
-        TILT: 0,
-      },
+      regionCountBySide: emptyRegionCountBySide(),
+      globalFallbackLoadedSides: ["BACK"],
+      valueHintsApplied: [],
+      resolvedAfterMemorySetId: null,
     };
     try {
-      if (regionTemplateSetId) {
-        const templateState = await listOcrRegionTemplates({
-          setId: regionTemplateSetId,
-          layoutClass: regionTemplateLayoutClass,
-        });
-        regionTemplatesBySide = templateState.templatesBySide;
+      const initialTemplateState = await loadSetScopedRegionTemplates(requestedRegionTemplateSetId);
+      if (initialTemplateState) {
+        regionTemplatesBySide = mergeRegionTemplateMaps(globalFallbackTemplates, initialTemplateState.templatesBySide);
         regionTemplateAudit = {
           ...regionTemplateAudit,
-          setId: templateState.setId,
-          layoutClass: templateState.layoutClass,
-          loadedSides: (["FRONT", "BACK", "TILT"] as OcrRegionPhotoSide[]).filter(
-            (side) => (templateState.templatesBySide[side] ?? []).length > 0
-          ),
-          regionCountBySide: {
-            FRONT: templateState.templatesBySide.FRONT.length,
-            BACK: templateState.templatesBySide.BACK.length,
-            TILT: templateState.templatesBySide.TILT.length,
-          },
+          setId: initialTemplateState.setId,
+          layoutClass: initialTemplateState.layoutClass,
+          loadedSides: initialTemplateState.loadedSides,
+          regionCountBySide: initialTemplateState.regionCountBySide,
         };
       }
     } catch (error) {
       regionTemplateAudit = {
         ...regionTemplateAudit,
         error: error instanceof Error ? error.message : "region_template_load_failed",
+      };
+    }
+    const initialRegionValueHints = applyRegionTemplateValueHints({
+      fields,
+      confidence,
+      tokens: ocrTokens,
+      templatesBySide: regionTemplatesBySide,
+    });
+    if (initialRegionValueHints.length > 0) {
+      regionTemplateAudit = {
+        ...regionTemplateAudit,
+        valueHintsApplied: dedupeMemoryApplyEntries(initialRegionValueHints),
       };
     }
 
@@ -2960,6 +3131,55 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         ...memoryAudit,
         error: error instanceof Error ? error.message : "memory_apply_failed",
       };
+    }
+
+    const resolvedRegionTemplateSetId = coerceNullableString(fields.setName);
+    const shouldReplaySpecificTemplates =
+      resolvedRegionTemplateSetId &&
+      normalizeVariantLabelKey(resolvedRegionTemplateSetId) !==
+        normalizeVariantLabelKey(regionTemplateAudit.setId || "");
+    if (shouldReplaySpecificTemplates) {
+      try {
+        const resolvedTemplateState = await loadSetScopedRegionTemplates(resolvedRegionTemplateSetId);
+        if (resolvedTemplateState) {
+          regionTemplatesBySide = mergeRegionTemplateMaps(globalFallbackTemplates, resolvedTemplateState.templatesBySide);
+          const replayRegionValueHints = applyRegionTemplateValueHints({
+            fields,
+            confidence,
+            tokens: ocrTokens,
+            templatesBySide: regionTemplatesBySide,
+          });
+          const replayMemoryAudit = await applyFeedbackMemoryHints({
+            fields,
+            confidence,
+            tokens: ocrTokens,
+            regionTemplatesBySide,
+          });
+          regionTemplateAudit = {
+            ...regionTemplateAudit,
+            setId: resolvedTemplateState.setId,
+            layoutClass: resolvedTemplateState.layoutClass,
+            loadedSides: resolvedTemplateState.loadedSides,
+            regionCountBySide: resolvedTemplateState.regionCountBySide,
+            resolvedAfterMemorySetId: resolvedTemplateState.setId,
+            valueHintsApplied: dedupeMemoryApplyEntries([
+              ...regionTemplateAudit.valueHintsApplied,
+              ...replayRegionValueHints,
+            ]),
+          };
+          memoryAudit = {
+            context: replayMemoryAudit.context,
+            consideredRows: memoryAudit.consideredRows + replayMemoryAudit.consideredRows,
+            applied: dedupeMemoryApplyEntries([...memoryAudit.applied, ...replayMemoryAudit.applied]),
+          };
+        }
+      } catch (error) {
+        const replayMessage = error instanceof Error ? error.message : "region_template_replay_failed";
+        regionTemplateAudit = {
+          ...regionTemplateAudit,
+          error: regionTemplateAudit.error ? `${regionTemplateAudit.error}; ${replayMessage}` : replayMessage,
+        };
+      }
     }
 
     // Numbered serials must be grounded in OCR text; never keep hallucinated or memory-only values.

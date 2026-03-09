@@ -18,6 +18,7 @@ import { requireAdminSession, toErrorResponse } from "../../../../lib/server/adm
 import { withAdminCors } from "../../../../lib/server/cors";
 import { normalizeStorageUrl } from "../../../../lib/server/storage";
 import { upsertOcrFeedbackMemoryAggregates } from "../../../../lib/server/ocrFeedbackMemory";
+import { seedTrustedReferencesFromInventoryReady } from "../../../../lib/server/kingsreviewReferenceLearning";
 
 const defaultCardAttributes: CardAttributes = {
   playerName: null,
@@ -727,7 +728,6 @@ type CardUpdatePayload = {
   aiGradeRangeLow?: number | string | null;
   aiGradeRangeHigh?: number | string | null;
   recordOcrFeedback?: boolean;
-  trainAiEnabled?: boolean;
 };
 
 async function fetchCard(cardId: string, uploadedById?: string | null): Promise<CardResponse | null> {
@@ -1237,6 +1237,11 @@ async function handler(
         card.reviewStage !== "INVENTORY_READY_FOR_SALE"
       ) {
         await ensureInventoryReadyArtifacts(card.id, admin.user.id);
+        try {
+          await seedTrustedReferencesFromInventoryReady({ cardAssetId: card.id });
+        } catch (error) {
+          console.warn("Inventory-ready reference seed skipped", error);
+        }
       }
 
       const updated = await fetchCard(cardId);

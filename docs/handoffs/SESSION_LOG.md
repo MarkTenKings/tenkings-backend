@@ -8583,3 +8583,136 @@
 ### Notes
 - Current queue fix survives page navigation/reload by rebuilding from persisted server-side card state.
 - Current flow is still not fully offline-safe for unsynced in-progress captures because pending image blobs are not persisted beyond in-memory/localStorage draft state.
+
+## 2026-03-09 - MLB parallel batch verification (workspace evidence only)
+
+### Summary
+- Reviewed user-provided note that `batch-imports/run-1/` had been updated with `122` MLB `parallel.csv` files.
+- Current workspace evidence did not match that note yet:
+  - total `parallel.csv` files under `batch-imports/run-1/`: `119`
+  - baseball folders under `batch-imports/run-1/`: `363`
+  - baseball folders with `parallel.csv`: `76`
+  - baseball folders still missing `parallel.csv`: `287`
+- Confirmed the current parallel CSV ingestion pipeline already supports the described file shape:
+  - `Card_Type,Parallel,Odds_*` headers
+  - uppercase labels
+  - odds values like `1:10`, `1:3,666`, and `-`
+- Verified sample existing MLB files in `run-1` already use that shape and are compatible with the current parser/draft pipeline.
+
+### Files Reviewed
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+- sample files in `batch-imports/run-1/*/parallel.csv`
+
+### Evidence
+- `find batch-imports/run-1 -name 'parallel.csv' | wc -l` -> `119`
+- Placeholder/no-odds targets were still missing at verification time:
+  - `2018_Topps_Allen_and_Ginter_X_Baseball`
+  - `2025_Topps_Bowmans_Best_Baseball`
+  - `2026_Topps_Heritage_Baseball`
+
+### Notes
+- No code changes were made for this verification step.
+- Recommended operational path is to first materialize the new MLB `parallel.csv` files into workspace (preferably a dedicated follow-up batch folder), then run `preflight` / `commit` with `--allow-existing-set` for those already-seeded checklist sets.
+- The `3` no-odds placeholder sets should remain out of ingestion until real odds data exists.
+
+## 2026-03-09 - MLB missing-parallels batch preflight
+
+### Summary
+- User staged a dedicated follow-up batch folder at `batch-imports/mlb-missing-parallels-122/` containing `119` MLB set folders with `set.csv + parallel.csv`.
+- User ran preflight with:
+  - `pnpm set-ops:batch-import --folder batch-imports/mlb-missing-parallels-122 --mode preflight --continue-on-error --allow-existing-set`
+- Observed report:
+  - `logs/set-ops/batch-import/2026-03-09T16-15-51Z.json`
+  - `preflight_complete=105`
+  - `preflight_failed=14`
+- Failure split:
+  - `12` parallel quality-threshold failures
+  - `2` unrelated checklist blockers from re-queuing `set.csv`:
+    - `2021_Heritage_Baseball`
+    - `2022_Topps_Heritage_Baseball`
+
+### Files/Artifacts Created
+- `batch-imports/mlb-missing-parallels-122-parallel-only/`
+  - same `119` set folders, but only `parallel.csv` copied over
+
+### Notes
+- This MLB update is a parallel-only operation on existing sets, so the mixed `set.csv + parallel.csv` batch is broader than necessary.
+- Recommended next run is:
+  - `pnpm set-ops:batch-import --folder batch-imports/mlb-missing-parallels-122-parallel-only --mode preflight --continue-on-error --allow-existing-set`
+- Goal of the parallel-only rerun is to eliminate unrelated checklist blockers and isolate true `PARALLEL LIST` quality issues before any commit.
+
+## 2026-03-09 - MLB parallel-only preflight
+
+### Summary
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/mlb-missing-parallels-122-parallel-only --mode preflight --continue-on-error --allow-existing-set`
+- Observed report:
+  - `logs/set-ops/batch-import/2026-03-09T17-30-43Z.json`
+  - `preflight_complete=107`
+  - `preflight_failed=12`
+- The parallel-only rerun successfully removed the unrelated checklist blockers from the earlier mixed batch.
+- One `preflight_complete` result is operationally suspicious:
+  - `2018_Topps_Chrome_Baseball`
+  - source `parallel.csv` had `78` rows
+  - built `PARALLEL LIST` draft had `0` usable rows
+
+### Files/Artifacts Created
+- `batch-imports/mlb-missing-parallels-122-parallel-ready/`
+  - `106` set folders with preflight-complete `PARALLEL LIST` and build row count `> 0`
+- `batch-imports/mlb-missing-parallels-122-parallel-failed-12/`
+  - `12` set folders still failing parallel-side preflight
+
+### Remaining Failed Parallel Sets
+- `2018_Topps_Bowman_Chrome_Baseball`
+- `2018_Topps_Inception_Baseball`
+- `2019_Topps_Archives_Baseball`
+- `2019_Topps_Baseball_Inception_Checklist_Baseball`
+- `2019_Topps_High_Tek_Baseball`
+- `2020_Allen_and_Ginter_Chrome_Baseball`
+- `2020_Bowman_Platinum_Baseball`
+- `2020_Topps_Chrome_Black_Edition_Baseball`
+- `2021_Topps_Chrome_Black_Baseball`
+- `2022_Topps_Inception_Baseball`
+- `2023_Topps_Inception_Baseball`
+- `2025_Bowman_Draft_Baseball_Mega_Box_Baseball`
+
+### Notes
+- Recommended next action is to commit the ready `106` set folder batch and leave the failed `12` plus the `2018_Topps_Chrome_Baseball` zero-row no-op out of the commit.
+
+## 2026-03-09 - Card workflow flywheel hardening
+
+### Summary
+- Implemented Add Card -> OCR -> KingsReview workflow hardening focused on reference-image trust, comp-driven learning, and immediate draw-teach replay.
+- No deploy, restart, or migration commands were run.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/lib/server/variantMatcher.ts`
+- `frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts`
+- `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+
+### Behavior Changes
+- Add Card now stores `Product Set` teach/correction feedback consistently as `setName` instead of incorrectly storing `Insert Set` there.
+- The old `Train AI` send toggle is now treated as `Teach on Send` behavior in the UI, and the dead `trainAiEnabled` PATCH payload is no longer sent.
+- OCR replay now applies taught region `targetValue` hints directly, includes a global back-of-card `Product Set` fallback zone, and replays set-scoped teach/memory after `setName` resolves so same-set follow-up fields can snap in immediately.
+- Variant matcher now ignores provisional/pending reference images for automatic scoring; only trusted refs (`qaStatus=keep` or `ownedStatus=owned`) drive image-based matching.
+- KingsReview `Mark Comp` now also confirms the currently selected variant as a human override when a non-unknown variant is already selected.
+- Moving a card to `INVENTORY_READY_FOR_SALE` now seeds attached human-confirmed sold comps into trusted reusable reference rows:
+  - set-level refs under a reserved synthetic parallel bucket
+  - parallel-level refs when the card has a specific confirmed parallel
+- Set Ops reference seeding UI now defaults to `2` images per target instead of `20`.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/admin/kingsreview.tsx --file pages/admin/set-ops-review.tsx --file 'pages/api/admin/cards/[cardId].ts' --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file lib/server/kingsreviewReferenceLearning.ts --file lib/server/variantMatcher.ts`
+  - pass with existing warnings only (`<img>` warnings in admin pages, one pre-existing `react-hooks/exhaustive-deps` warning in `kingsreview.tsx`)
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+  - pass
+
+### Notes
+- The trusted comp-to-reference flywheel relies on the latest stored Bytebot job result plus the human-attached evidence URLs; no schema migration was required.
+- Batch-import folders and missing `PARALLEL.csv` work were not modified.
+- Approved `PARALLEL_DB` drafts now auto-start the provisional reference seed pass at the existing Set Ops step-3 workflow default (`2` images per target); this touches only the seed monitor UI flow and does not alter batch-import folders or approval data.

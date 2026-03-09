@@ -1556,7 +1556,7 @@ export default function KingsReview() {
   };
 
   const handleAttachComp = async (comp: JobResultComp, kind: string) => {
-    if (!activeCardId) {
+    if (!activeCardId || !activeCard) {
       return;
     }
     setError(null);
@@ -1583,6 +1583,47 @@ export default function KingsReview() {
       }
       const data = await res.json();
       setEvidenceItems((prev) => [data.item, ...prev]);
+      const selectedParallelId = (activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "").trim();
+      const shouldConfirmVariant =
+        kind === "SOLD_COMP" &&
+        selectedParallelId.length > 0 &&
+        selectedParallelId.toLowerCase() !== "unknown" &&
+        !activeCard.variantDecision?.humanOverride;
+      if (shouldConfirmVariant) {
+        const confirmRes = await fetch("/api/admin/variants/decision", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...adminHeaders(),
+          },
+          body: JSON.stringify({
+            cardAssetId: activeCard.id,
+            selectedParallelId,
+            confidence: activeCard.variantDecision?.confidence ?? activeCard.variantConfidence ?? null,
+            candidates: activeCard.variantDecision?.candidates ?? [],
+            humanOverride: true,
+            humanNotes: variantNotes.trim() || null,
+          }),
+        });
+        if (!confirmRes.ok) {
+          throw new Error("Comp attached, but variant confirmation failed");
+        }
+        setActiveCard((prev) =>
+          prev && prev.id === activeCard.id
+            ? {
+                ...prev,
+                variantId: selectedParallelId,
+                variantDecision: {
+                  selectedParallelId,
+                  confidence: prev.variantDecision?.confidence ?? prev.variantConfidence ?? null,
+                  humanOverride: true,
+                  humanNotes: variantNotes.trim() || null,
+                  candidates: prev.variantDecision?.candidates ?? [],
+                },
+              }
+            : prev
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to attach comp");
     }
@@ -2692,7 +2733,14 @@ export default function KingsReview() {
                                   }}
                                   className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
                                 >
-                                  Mark Comp
+                                  {activeCard &&
+                                  !activeCard.variantDecision?.humanOverride &&
+                                  (activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "")
+                                    .trim()
+                                    .toLowerCase() !== "unknown" &&
+                                  (activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "").trim()
+                                    ? "Mark Comp + Confirm Variant"
+                                    : "Mark Comp"}
                                 </button>
                               )}
                             </div>
@@ -2745,7 +2793,14 @@ export default function KingsReview() {
                                   }}
                                   className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[9px] uppercase tracking-[0.26em] text-emerald-200"
                                 >
-                                  Mark Comp
+                                  {activeCard &&
+                                  !activeCard.variantDecision?.humanOverride &&
+                                  (activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "")
+                                    .trim()
+                                    .toLowerCase() !== "unknown" &&
+                                  (activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "").trim()
+                                    ? "Mark Comp + Confirm Variant"
+                                    : "Mark Comp"}
                                 </button>
                               )}
                             </div>

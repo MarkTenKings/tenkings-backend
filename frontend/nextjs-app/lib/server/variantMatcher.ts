@@ -404,7 +404,10 @@ async function buildEmbeddingCandidates(params: {
             OR: [{ cardNumber: variantCardNumber }, { cardNumber: "ALL" }, { cardNumber: null }],
           };
     const refs = await prisma.cardVariantReferenceImage.findMany({
-      where: referenceWhere,
+      where: {
+        ...referenceWhere,
+        OR: [{ qaStatus: "keep" }, { ownedStatus: "owned" }],
+      },
       take: 5,
       orderBy: [{ qualityScore: "desc" }, { createdAt: "desc" }],
     });

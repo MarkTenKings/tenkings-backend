@@ -908,7 +908,9 @@ export default function AdminUploads() {
       if (draft.intakeOptional && typeof draft.intakeOptional === "object") {
         setIntakeOptional((prev) => ({ ...prev, ...(draft.intakeOptional as Partial<IntakeOptionalFields>) }));
       }
-      if (typeof draft.trainAiEnabled === "boolean") {
+      if (typeof draft.teachOnSendEnabled === "boolean") {
+        setTrainAiEnabled(draft.teachOnSendEnabled);
+      } else if (typeof draft.trainAiEnabled === "boolean") {
         setTrainAiEnabled(draft.trainAiEnabled);
       }
       if (typeof draft.intakeReviewMode === "string") {
@@ -945,7 +947,7 @@ export default function AdminUploads() {
       intakeTiltPreview,
       intakeRequired,
       intakeOptional,
-      trainAiEnabled,
+      teachOnSendEnabled: trainAiEnabled,
     };
     window.localStorage.setItem(OCR_DRAFT_STORAGE_KEY, JSON.stringify(draft));
   }, [
@@ -2043,7 +2045,7 @@ export default function AdminUploads() {
   );
 
   const saveIntakeMetadata = useCallback(
-    async (includeOptional: boolean, recordOcrFeedback = false, trainAi = false) => {
+    async (includeOptional: boolean, recordOcrFeedback = false) => {
       const token = session?.token;
       if (!token) {
         throw new Error("Your session expired. Sign in again and retry.");
@@ -2057,7 +2059,7 @@ export default function AdminUploads() {
         teamName: intakeOptional.teamName.trim() || null,
         year: intakeRequired.year.trim() || null,
         brand: intakeRequired.manufacturer.trim() || null,
-        setName: intakeOptional.insertSet.trim() || null,
+        setName: intakeOptional.productLine.trim() || null,
         variantKeywords: intakeOptional.parallel.trim() ? [intakeOptional.parallel.trim()] : [],
         numbered: intakeOptional.numbered.trim() || null,
         rookie: false,
@@ -2120,7 +2122,6 @@ export default function AdminUploads() {
           normalized,
         },
         recordOcrFeedback,
-        trainAiEnabled: trainAi,
       };
 
       const updateRes = await fetch(resolveApiUrl("/api/admin/cards/" + intakeCardId), {
@@ -4293,7 +4294,7 @@ export default function AdminUploads() {
     try {
       setTeachBusy(true);
       setTeachFeedback(null);
-      await saveIntakeMetadata(true, true, true);
+      await saveIntakeMetadata(true, true);
       setTrainAiEnabled(true);
       setTeachCapturedFromCorrections(true);
       setTeachFeedback("Teach captured from current corrections.");
@@ -4326,7 +4327,7 @@ export default function AdminUploads() {
       setIntakeBusy(true);
       const sendingCardId = intakeCardId;
       const recordTeachOnSend = trainAiEnabled && !teachCapturedFromCorrections;
-      await saveIntakeMetadata(true, recordTeachOnSend, trainAiEnabled);
+      await saveIntakeMetadata(true, recordTeachOnSend);
       const query = buildIntakeQuery();
       const sourceList =
         intakeRequired.category === "tcg"
@@ -5342,7 +5343,7 @@ export default function AdminUploads() {
                         : "border-rose-400/70 bg-transparent text-rose-300 hover:border-rose-300 hover:text-rose-200"
                     }`}
                   >
-                    {trainAiEnabled ? "Train AI On" : "Train AI Off"}
+                    {trainAiEnabled ? "Teach On Send On" : "Teach On Send Off"}
                   </button>
                   <button
                     type="button"
@@ -5363,8 +5364,8 @@ export default function AdminUploads() {
                 </div>
                 <p className="text-xs text-slate-500">
                   {trainAiEnabled
-                    ? "Training enabled for this card."
-                    : "Training off for this card."}
+                    ? "Send to KingsReview will also teach from your current confirmed fields."
+                    : "Send to KingsReview will not teach unless you use Teach From Corrections."}
                 </p>
                 {teachFeedback ? (
                   <p className="text-xs text-emerald-300">{teachFeedback}</p>
