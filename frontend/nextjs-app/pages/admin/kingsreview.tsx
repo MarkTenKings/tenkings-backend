@@ -10,6 +10,8 @@ import { useSession } from "../../hooks/useSession";
 const STAGES = [
   { id: "BYTEBOT_RUNNING", label: "AI Running" },
   { id: "READY_FOR_HUMAN_REVIEW", label: "Ready" },
+  { id: "ESCALATED_REVIEW", label: "Escalated" },
+  { id: "REVIEW_COMPLETE", label: "Complete" },
 ] as const;
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -152,6 +154,15 @@ const queueStatusMeta = (card: CardSummary) => {
 
   if (errorStates.has(rawStatus) || rawStatus.endsWith("_error") || rawStatus.endsWith("_failed")) {
     return { label: "ERROR", className: "border-rose-400/50 bg-rose-500/20 text-rose-200" };
+  }
+  if (rawStage === "escalated_review") {
+    return { label: "ESCALATED", className: "border-amber-400/50 bg-amber-500/20 text-amber-200" };
+  }
+  if (rawStage === "review_complete") {
+    return { label: "COMPLETE", className: "border-emerald-400/50 bg-emerald-500/20 text-emerald-200" };
+  }
+  if (rawStage === "inventory_ready_for_sale") {
+    return { label: "INVENTORY", className: "border-gold-400/50 bg-gold-500/20 text-gold-200" };
   }
   if (rawStatus.includes("process") || rawStatus.includes("running") || rawStage === "bytebot_running") {
     return { label: "PROCESSING", className: "border-sky-400/50 bg-sky-500/20 text-sky-200" };
@@ -2413,6 +2424,8 @@ export default function KingsReview() {
                             >
                               <option value="BYTEBOT_RUNNING">AI Running</option>
                               <option value="READY_FOR_HUMAN_REVIEW">Ready for Review</option>
+                              <option value="ESCALATED_REVIEW">Escalated Review</option>
+                              <option value="REVIEW_COMPLETE">Review Complete</option>
                               <option value="INVENTORY_READY_FOR_SALE">Inventory Ready</option>
                             </select>
                           </label>

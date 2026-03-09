@@ -8301,3 +8301,285 @@
 
 ### Operations
 - No deploy/restart/migration/DB commands were executed by the agent in this follow-up step.
+
+## 2026-03-09 - Final-2 preflight passed cleanly
+
+### User-Run Command
+- `pnpm set-ops:batch-import --folder batch-imports/run-1-both-final-2 --mode preflight --continue-on-error`
+
+### Observed Result
+- Report:
+  - `logs/set-ops/batch-import/2026-03-09T04-58-33Z.json`
+- Summary:
+  - `preflight_complete=2`
+  - `preflight_failed=0`
+
+### Passing Sets
+- `2024_Topps_Finest_Football`
+- `2026_Topps_Series_1_Baseball`
+
+### Interpretation
+- The final two formerly blocked complete-pair sets are now commit-ready.
+- If committed successfully, cumulative live-set count from this workflow will rise from `112` to `114`.
+- The only remaining gap to the original `119` complete-pair folders will then be the earlier `blocked_existing_set` batch of `5`.
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this follow-up step.
+
+## 2026-03-09 - Final-2 commit completed successfully
+
+### User-Run Command
+- `pnpm set-ops:batch-import --folder batch-imports/run-1-both-final-2 --mode commit`
+
+### Observed Result
+- Report:
+  - `logs/set-ops/batch-import/2026-03-09T05-11-27Z.json`
+- Summary:
+  - `commit_complete=2`
+  - no sync failures reported
+- Aggregate sync totals:
+  - `SET LIST`: `inserted=2857`, `updated=116`, `failed=0`
+  - `PARALLEL LIST`: `inserted=54`, `updated=460`, `failed=0`
+
+### Interpretation
+- The final two formerly blocked complete-pair sets were approved successfully.
+- Cumulative live-set count from this batching workflow is now `114`.
+- The only remaining gap to the original `119` complete-pair folders is the earlier `blocked_existing_set` batch of `5`:
+  - `2022-23_Bowman_University_Best_Basketball`
+  - `2022-23_Bowman_University_Chrome_Basketball`
+  - `2022-23_Topps_Finest_Overtime_Elite`
+  - `2023_Bowman_Platinum_Baseball`
+  - `2023_Bowman_University_Best_Football`
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this follow-up step.
+
+## 2026-03-09 - Existing-5 preflight passed with allow-existing-set
+
+### User-Run Command
+- `pnpm set-ops:batch-import --folder batch-imports/run-1-both-existing-5 --mode preflight --continue-on-error --allow-existing-set`
+
+### Observed Result
+- Report:
+  - `logs/set-ops/batch-import/2026-03-09T14-20-16Z.json`
+- Summary:
+  - `preflight_complete=5`
+  - `preflight_failed=0`
+
+### Passing Sets
+- `2022-23_Bowman_University_Best_Basketball`
+- `2022-23_Bowman_University_Chrome_Basketball`
+- `2022-23_Topps_Finest_Overtime_Elite`
+- `2023_Bowman_Platinum_Baseball`
+- `2023_Bowman_University_Best_Football`
+
+### Interpretation
+- The earlier `blocked_existing_set` batch is now commit-ready when rerun with `--allow-existing-set`.
+- If committed successfully, the original `119` complete-pair folders from `run-1-both` will all be processed.
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this follow-up step.
+
+## 2026-03-09 - Existing-5 commit completed successfully
+
+### User-Run Command
+- `pnpm set-ops:batch-import --folder batch-imports/run-1-both-existing-5 --mode commit --allow-existing-set`
+
+### Observed Result
+- Report:
+  - `logs/set-ops/batch-import/2026-03-09T14-21-40Z.json`
+- Summary:
+  - `commit_complete=5`
+  - no sync failures reported
+- Aggregate sync totals:
+  - `SET LIST`: `inserted=1734`, `updated=101`, `failed=0`
+  - `PARALLEL LIST`: `inserted=334`, `updated=25`, `failed=0`
+
+### Interpretation
+- The earlier `blocked_existing_set` batch was successfully approved with `--allow-existing-set`.
+- All original `119` complete `SET.csv + PARALLEL.csv` folders from `batch-imports/run-1-both` have now been processed.
+- Cumulative live-set count from this batching workflow is now `119`.
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this follow-up step.
+
+## 2026-03-09 - Guidance for 3 late-discovered NBA parallel pairings
+
+### Operator Question
+- Operator surfaced `3` unpaired NBA odds cases:
+  - `2023-24_Topps_Chrome_Basketball_Hobby`
+  - `2023-24_Topps_Chrome_Basketball_Retail`
+  - `2024-25_Topps_Chrome_Basketball_Sapphire`
+
+### Guidance Given
+- Stay on the existing batch-import workflow.
+- Do **not** switch to manual UI upload or one-off API calls.
+- Use a small dedicated batch folder for just these `3` sets rather than mutating the broader historical batch folders.
+- For the Hobby/Retail pair, reuse the same shared Chrome odds CSV as `parallel.csv` in both exact set-ID folders if the file truly covers both formats.
+- For the `2024-25` Sapphire case, verify the contents of the mismatched `2023-24_..._Sapphire_ODDS_List.csv` before using it; do not trust the filename alone.
+
+### Interpretation
+- The batch importer keys off the destination folder/set ID, not the source odds filename, so manual pairing via a dedicated 3-set batch folder is the safest and most consistent path.
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this advisory step.
+
+## 2026-03-09 - Perplexity prepared 2-folder NBA missing-parallel batch and rejected Sapphire
+
+### Operator Evidence
+- Operator relayed that Perplexity prepared a ZIP for `missing-parallels-nba-3`, but only `2` folders were valid:
+  - `2023-24_Topps_Chrome_Basketball_Hobby`
+    - `set.csv` (`837` cards)
+    - `parallel.csv` (`161` rows)
+  - `2023-24_Topps_Chrome_Basketball_Retail`
+    - `set.csv` (`394` cards)
+    - `parallel.csv` (`161` rows)
+- Perplexity reused the same shared Chrome odds sheet for both Hobby and Retail.
+
+### Sapphire Rejection
+- Perplexity rejected the candidate Sapphire odds file because:
+  - filename was `2023-24_Topps_Chrome_Basketball_Sapphire_ODDS_List.csv`
+  - header reportedly said `SPO-CHROME BASKETBALL 2023-24 SAPPHIRE ONLINE EXCLUSIVE`
+  - file reportedly contained only one row: `INFINITY, 1:160`
+  - no verified `2024-25` Sapphire odds file was found
+
+### Guidance Given
+- Do **not** ingest the Sapphire set with this mismatched odds file.
+- Run the new 2-folder NBA batch through the same batch importer flow.
+- Because there is no evidence the broader `run-1-set-only` batch was ever executed, start the 2-folder NBA batch **without** `--allow-existing-set`.
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this advisory step.
+
+## 2026-03-09 - 2-set NBA missing-parallel batch completed successfully
+
+### User-Run Commands
+- `pnpm set-ops:batch-import --folder batch-imports/missing-parallels-nba-3 --mode preflight --continue-on-error`
+- `pnpm set-ops:batch-import --folder batch-imports/missing-parallels-nba-3 --mode commit`
+
+### Observed Results
+- Preflight report:
+  - `logs/set-ops/batch-import/2026-03-09T14-42-59Z.json`
+  - `preflight_complete=2`
+  - `preflight_failed=0`
+- Commit report:
+  - `logs/set-ops/batch-import/2026-03-09T14-44-02Z.json`
+  - `commit_complete=2`
+  - no sync failures reported
+- Aggregate sync totals from the commit report:
+  - `SET LIST`: `inserted=1226`, `updated=5`, `failed=0`
+  - `PARALLEL LIST`: `inserted=80`, `updated=242`, `failed=0`
+
+### Successfully Processed Sets
+- `2023-24_Topps_Chrome_Basketball_Hobby`
+- `2023-24_Topps_Chrome_Basketball_Retail`
+
+### Interpretation
+- Both late-discovered NBA missing-parallel sets are now live.
+- The original `119` complete-pair folders from `run-1-both` remain fully processed.
+- Including these `2` additional NBA follow-up sets, cumulative complete-pair processing in this batching workflow is now `121`.
+- `2024-25_Topps_Chrome_Basketball_Sapphire` remains intentionally unpaired and unseeded on the parallel side until a verified `2024-25` odds file is found.
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this follow-up step.
+
+## 2026-03-09 - Work split across threads
+
+### User Direction
+- User is keeping this thread focused on:
+  - Perplexity coordination
+  - missing `PARALLEL.csv` discovery/prep
+  - set/parallel seeding
+- User is opening a second Codex thread focused on a separate Add Card UI/OCR problem:
+  - during Add Card testing, roughly half of the newly photographed cards reportedly disappeared while moving through the OCR queue
+
+### Coordination Guidance
+- Keep this thread on ingestion/seeding work.
+- Use the second thread for the Add Card queue/UI disappearance investigation.
+
+## 2026-03-09 - Agent context sync and repo state capture
+
+### Summary
+- Re-read the mandatory startup docs required by `AGENTS.md`.
+- Captured current workstation git state for handoff.
+- No code changes, deploys, restarts, migrations, or DB operations were executed.
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Git State Observed
+- Branch: `main`
+- HEAD: `6b7b93a`
+- `git status -sb` before this doc append showed:
+  - modified: `docs/HANDOFF_SET_OPS.md`
+  - modified: `docs/handoffs/SESSION_LOG.md`
+  - untracked: `batch-imports/`
+  - untracked: `logs/`
+
+### Notes
+- Per user instruction, no deploy/restart/migrate commands were run.
+- This entry is docs-only and preserves the existing dirty worktree for follow-up sessions.
+
+## 2026-03-09 - Add Card through KingsReview visibility fix
+
+### Summary
+- Investigated the end-to-end card workflow from Add Card capture/upload through OCR review and KingsReview.
+- No delete path was found in the reviewed upload/OCR/KingsReview code paths:
+  - upload presign creates `CardAsset`
+  - upload complete moves it to `OCR_PENDING` and enqueues OCR
+  - OCR/classify/valuation update the same row in place
+  - KingsReview enqueue flips `reviewStage` to `BYTEBOT_RUNNING`
+  - `backend/bytebot-lite-service` moves completed jobs back to `READY_FOR_HUMAN_REVIEW`
+- Root cause identified as a visibility/workflow bug rather than an in-code deletion bug:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx` kept the OCR queue in localStorage only and removed a card from the visible queue as soon as it was loaded for review, before successful KingsReview handoff.
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx` only exposed `BYTEBOT_RUNNING` and `READY_FOR_HUMAN_REVIEW` as visible tabs even though cards can also move into `ESCALATED_REVIEW` and `REVIEW_COMPLETE`.
+- Implemented a server-backed OCR queue recovery path plus safer queue-removal behavior:
+  - new `GET /api/admin/uploads/ocr-queue`
+  - uploads page now syncs queue IDs from persisted cards owned by the current admin user that are still `READY_FOR_HUMAN_REVIEW`, have both `BACK` and `TILT` photos, and have not yet entered Bytebot jobs
+  - uploads queue now removes a card only after successful KingsReview enqueue
+  - KingsReview now exposes `ESCALATED_REVIEW` and `REVIEW_COMPLETE` stages in the UI
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `frontend/nextjs-app/pages/api/admin/uploads/ocr-queue.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/admin/kingsreview.tsx --file pages/api/admin/uploads/ocr-queue.ts`
+  - passed with warnings only
+  - warnings were pre-existing/general:
+    - multiple `@next/next/no-img-element` warnings in `pages/admin/uploads.tsx`
+    - one existing `react-hooks/exhaustive-deps` warning plus one `@next/next/no-img-element` warning in `pages/admin/kingsreview.tsx`
+- Live DB/API verification was not possible from this workspace:
+  - checked-in runtime `.env` files were not present
+  - shell environment did not provide `DATABASE_URL`, `PRISMA_DATABASE_URL`, or `NEXT_PUBLIC_ADMIN_API_BASE_URL`
+
+### Notes
+- No deploy/restart/migration commands were run.
+- This change was intentionally scoped away from Set Ops batch-import work.
+
+## 2026-03-09 - Card workflow follow-up analysis (deploy target, reference prefetch, OCR teach behavior)
+
+### Summary
+- Confirmed this fix is a Next.js frontend/API deploy only:
+  - touched files are in `frontend/nextjs-app`
+  - no new droplet runtime code changes were required for this patch
+- Confirmed Add Card on-demand parallel prefetch behavior:
+  - uploads page auto-triggers `/api/admin/variants/reference/prefetch` once set/product/player context is strong enough
+  - prefetch route uses `referenceSeed` SerpApi-backed eBay listing/product lookups to create `CardVariantReferenceImage` rows
+- Confirmed KingsReview manual variant tools are different from Add Card prefetch:
+  - matcher uses `/api/admin/variants/match`
+  - inspect modal uses existing refs from `/api/admin/variants/reference`
+  - KingsReview comps path is separate Bytebot/SerpApi sold-comp gathering, not the parallel-ref prefetch flow
+- Confirmed OCR learning behavior:
+  - `Teach From Corrections` records OCR feedback events and upserts OCR feedback memory immediately
+  - saved region-teach templates are loaded by later `/ocr-suggest` runs
+  - `trainAiEnabled` is sent by the client but is not currently consumed server-side in `pages/api/admin/cards/[cardId].ts`
+
+### Notes
+- Current queue fix survives page navigation/reload by rebuilding from persisted server-side card state.
+- Current flow is still not fully offline-safe for unsynced in-progress captures because pending image blobs are not persisted beyond in-memory/localStorage draft state.

@@ -296,6 +296,20 @@ const OCR_QUEUE_STORAGE_KEY = "tenkings.adminUploads.ocrQueue";
 const OCR_DRAFT_STORAGE_KEY = "tenkings.adminUploads.ocrDraft";
 const TEACH_REGION_SIDES: TeachRegionSide[] = ["FRONT", "BACK", "TILT"];
 
+const dedupeQueueCardIds = (ids: string[]): string[] => {
+  const seen = new Set<string>();
+  const deduped: string[] = [];
+  ids.forEach((value) => {
+    const normalized = value.trim();
+    if (!normalized || seen.has(normalized)) {
+      return;
+    }
+    seen.add(normalized);
+    deduped.push(normalized);
+  });
+  return deduped;
+};
+
 const clampFraction = (value: number): number => {
   if (!Number.isFinite(value)) {
     return 0;
@@ -845,10 +859,10 @@ export default function AdminUploads() {
       if (!Array.isArray(parsed)) {
         return;
       }
-      const ids = parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
-      if (ids.length > 0) {
-        setQueuedReviewCardIds(ids);
-      }
+      const ids = dedupeQueueCardIds(
+        parsed.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      );
+      setQueuedReviewCardIds(ids);
     } catch {
       // ignore malformed local storage payload
     }
@@ -1902,6 +1916,41 @@ export default function AdminUploads() {
     [isRemoteApi, resolveApiUrl, session?.token]
   );
 
+  const refreshQueuedReviewCards = useCallback(async () => {
+    const token = session?.token;
+    if (!token) {
+      return;
+    }
+    try {
+      const response = await fetch(resolveApiUrl("/api/admin/uploads/ocr-queue?limit=250"), {
+        headers: buildAdminHeaders(token),
+        mode: isRemoteApi ? "cors" : "same-origin",
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to load OCR queue (${response.status})`);
+      }
+      const payload = (await response.json()) as { cards?: Array<{ id?: unknown }> };
+      const queueIds = dedupeQueueCardIds(
+        Array.isArray(payload.cards)
+          ? payload.cards
+              .map((card) => (typeof card?.id === "string" ? card.id : ""))
+              .filter((value): value is string => Boolean(value))
+          : []
+      );
+      setQueuedReviewCardIds(queueIds);
+    } catch (error) {
+      console.warn("[admin/uploads] Failed to refresh OCR queue", error);
+    }
+  }, [isRemoteApi, resolveApiUrl, session?.token]);
+
+  useEffect(() => {
+    if (!session?.token) {
+      return;
+    }
+    void refreshQueuedReviewCards();
+  }, [refreshQueuedReviewCards, session?.token]);
+
   const uploadCardPhoto = useCallback(
     async (file: File, kind: "BACK" | "TILT", cardIdOverride?: string) => {
       const token = session?.token;
@@ -2224,7 +2273,6 @@ export default function AdminUploads() {
       setIntakeReviewMode("review");
       setIntakeStep("required");
       setIntakeError(null);
-      setQueuedReviewCardIds((prev) => prev.filter((id) => id !== cardId));
       const shouldRefreshExistingOcr =
         hasExistingOcrSuggestions &&
         shouldRefreshLoadedOcrSuggestions({
@@ -2944,10 +2992,11 @@ export default function AdminUploads() {
         return;
       }
 
-      setQueuedReviewCardIds((prev) => (prev.includes(targetCardId) ? prev : [...prev, targetCardId]));
+      setQueuedReviewCardIds((prev) => dedupeQueueCardIds([...prev, targetCardId]));
       void warmOcrSuggestionsInBackground(targetCardId);
+      void refreshQueuedReviewCards();
     },
-    [ensureFrontAssetQueued, uploadQueuedPhoto, warmOcrSuggestionsInBackground]
+    [ensureFrontAssetQueued, refreshQueuedReviewCards, uploadQueuedPhoto, warmOcrSuggestionsInBackground]
   );
 
   const confirmIntakeCapture = useCallback(
@@ -4301,7 +4350,9 @@ export default function AdminUploads() {
         const payload = await res.json().catch(() => ({}));
         throw new Error(payload?.message ?? "Failed to enqueue KingsReview job.");
       }
-      const nextReviewCardId = queuedReviewCardIds[0] ?? null;
+      const remainingQueueIds = queuedReviewCardIds.filter((id) => id !== sendingCardId);
+      setQueuedReviewCardIds(remainingQueueIds);
+      const nextReviewCardId = remainingQueueIds[0] ?? null;
       if (nextReviewCardId) {
         clearActiveIntakeState();
         void loadQueuedCardForReview(nextReviewCardId).catch((loadError) => {
@@ -4313,6 +4364,7 @@ export default function AdminUploads() {
         clearActiveIntakeState();
         void openIntakeCapture("front");
       }
+      void refreshQueuedReviewCards();
 
       // Run PhotoRoom processing in background after queue handoff so UX remains fast.
       void triggerPhotoroomForCard(sendingCardId).then((result) => {
@@ -4340,6 +4392,7 @@ export default function AdminUploads() {
     resolveApiUrl,
     saveIntakeMetadata,
     teachCapturedFromCorrections,
+    refreshQueuedReviewCards,
     triggerPhotoroomForCard,
     trainAiEnabled,
     session?.token,
