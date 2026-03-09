@@ -19,6 +19,16 @@ const NAMED_ENTITIES: Record<string, string> = {
   "&mdash;": "-",
 };
 
+const SET_OPS_ODDS_CODE_TOKENS = new Set([
+  "PAR",
+  "AU",
+  "REF",
+  "CHAR",
+  "SP",
+  "SSP",
+  "CASE",
+]);
+
 function decodeNumericEntities(value: string) {
   return value
     .replace(/&#(\d+);/g, (_, numeric: string) => {
@@ -43,6 +53,14 @@ function decodeNumericEntities(value: string) {
 
 function collapseWhitespace(value: string) {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function normalizeOddsWhitespace(value: string | null | undefined) {
+  return collapseWhitespace(
+    decodeHtmlEntities(value)
+      .replace(/(\d)\s*:\s*,\s*(\d)/g, "$1:$2")
+      .replace(/[-_/]+/g, " ")
+  );
 }
 
 export function decodeHtmlEntities(value: string | null | undefined): string {
@@ -129,6 +147,61 @@ export function normalizeListingId(value: string | null | undefined): string | n
   if (fromQuery?.[1]) return fromQuery[1];
 
   return raw;
+}
+
+export function normalizeSetOpsOddsText(value: string | null | undefined): string | null {
+  const text = normalizeOddsWhitespace(value);
+  if (!text) return null;
+
+  const upper = text.toUpperCase();
+  if (upper === "-" || upper === "N/A" || upper === "NA" || upper === "NONE") {
+    return null;
+  }
+
+  const ratioWithQualifier = text.match(/^(\d+\s*:\s*[\d,]+(?:\.\d+)?)(?:\s+([A-Z]{1,8}))?$/i);
+  if (ratioWithQualifier?.[1]) {
+    const ratio = ratioWithQualifier[1].replace(/\s+/g, "");
+    const qualifier = ratioWithQualifier[2] ? ` ${ratioWithQualifier[2].toUpperCase()}` : "";
+    return `${ratio}${qualifier}`;
+  }
+
+  const numeric = text.match(/^\d[\d,]*(?:\.\d+)?$/);
+  if (numeric?.[0]) {
+    return numeric[0].replace(/,/g, "");
+  }
+
+  if (SET_OPS_ODDS_CODE_TOKENS.has(upper)) {
+    return upper;
+  }
+
+  if (/^(?:\d+|ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|NINE|TEN)\s+PER\s+[A-Z0-9]+(?:\s+[A-Z0-9]+)*$/i.test(upper)) {
+    return upper;
+  }
+
+  return null;
+}
+
+export function looksLikeSetOpsOddsValue(value: string | null | undefined): boolean {
+  return Boolean(normalizeSetOpsOddsText(value));
+}
+
+export function parseSetOpsOddsNumeric(value: string | null | undefined): number | null {
+  const normalized = normalizeSetOpsOddsText(value);
+  if (!normalized) return null;
+
+  const ratio = normalized.match(/^1:([\d,]+(?:\.\d+)?)\b/i);
+  if (ratio?.[1]) {
+    const parsed = Number(ratio[1].replace(/,/g, ""));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  const numeric = normalized.match(/^\d+(?:\.\d+)?$/);
+  if (numeric?.[0]) {
+    const parsed = Number(numeric[0]);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+
+  return null;
 }
 
 export function buildSetOpsDuplicateKey(input: SetOpsDuplicateKeyInput): string {

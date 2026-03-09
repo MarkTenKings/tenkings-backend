@@ -1,5 +1,5 @@
 import { SetDatasetType } from "@tenkings/database";
-import { normalizeParallelLabel } from "@tenkings/shared";
+import { normalizeParallelLabel, parseSetOpsOddsNumeric } from "@tenkings/shared";
 import type { TaxonomyAdapterOutput, TaxonomyAdapterParams } from "./taxonomyV2AdapterTypes";
 import { TaxonomyArtifactType, TaxonomyEntityType, TaxonomySourceKind } from "./taxonomyV2Enums";
 import {
@@ -115,6 +115,12 @@ function extractOddsToken(value: unknown): string {
   return match ? sanitizeTaxonomyText(match[0]).replace(/\s+/g, "") : "";
 }
 
+function hasParallelCatalogSignal(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  const text = sanitizeTaxonomyText(value).toLowerCase();
+  return ["1", "true", "yes"].includes(text);
+}
+
 function looksLikeParserNoiseText(value: unknown): boolean {
   const text = sanitizeTaxonomyText(value).toLowerCase();
   if (!text) return false;
@@ -124,6 +130,9 @@ function looksLikeParserNoiseText(value: unknown): boolean {
 }
 
 function looksLikeOddsRow(record: RowRecord) {
+  if (hasParallelCatalogSignal(record.parallelCatalog ?? record.isParallelCatalog ?? record.catalogOnly)) {
+    return true;
+  }
   const oddsText =
     firstText(record, ["odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"]) ||
     extractOddsToken(firstText(record, ["parallel", "parallelId", "parallel_id", "parallelName", "parallelType"]));
@@ -148,6 +157,8 @@ function parseOddsNumeric(value: unknown, oddsText: string | null): number | nul
   if (Number.isFinite(direct) && direct > 0) return direct;
   const text = sanitizeTaxonomyText(value || oddsText || "");
   if (!text || text === "-") return null;
+  const parsedBySetOpsRules = parseSetOpsOddsNumeric(text);
+  if (parsedBySetOpsRules != null) return parsedBySetOpsRules;
   const ratio = text.match(ODDS_RATIO_RE);
   if (ratio?.[1]) {
     const parsed = Number(ratio[1].replace(/,/g, ""));
@@ -310,12 +321,15 @@ export function buildManufacturerTaxonomyAdapterOutput(
       firstText(row, ["odds", "oddsInfo", "packOdds", "pullOdds", "odds_text"]) || extractOddsToken(rawParallel);
     const formatKey = normalizeFormatKey(firstText(row, ["format", "packType", "boxType", "productFormat", "formatType"]));
     const channelKey = normalizeChannelKey(firstText(row, ["channel", "productChannel", "distribution", "retailType"]));
+    const parallelCatalog = hasParallelCatalogSignal(row.parallelCatalog ?? row.isParallelCatalog ?? row.catalogOnly);
 
     const serialText = firstText(row, ["serial", "serialText", "serialNumber", "numbered"]) || null;
     const serialDenominator = parseSerialDenominator(serialText || rawParallel);
     const finishFamily = firstText(row, ["finishFamily", "finish", "foil", "surface"]) || null;
 
-    const hasOddsRowSignal = Boolean(oddsText || serialText || serialDenominator != null || looksLikeOddsRow(row));
+    const hasOddsRowSignal = Boolean(
+      parallelCatalog || oddsText || serialText || serialDenominator != null || looksLikeOddsRow(row)
+    );
     if (isOddsDataset && !hasOddsRowSignal) {
       return;
     }

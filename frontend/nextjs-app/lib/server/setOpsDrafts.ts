@@ -2,11 +2,13 @@ import { createHash } from "node:crypto";
 import { SetDatasetType } from "@tenkings/database";
 import {
   buildSetOpsDuplicateKey,
+  normalizeSetOpsOddsText,
   normalizeCardNumber,
   normalizeListingId,
   normalizeParallelLabel,
   normalizePlayerSeed,
   normalizeSetLabel,
+  parseSetOpsOddsNumeric,
 } from "@tenkings/shared";
 
 export type DraftValidationIssue = {
@@ -250,28 +252,29 @@ function parseRawRows(rawPayload: unknown, datasetType: SetDatasetType): Record<
           oddsText: string;
           oddsNumeric: number | null;
         }> = [];
+        const parallelCatalog = Boolean(odd.parallelCatalog ?? odd.isParallelCatalog);
 
         for (const [formatRaw, oddsValue] of entries) {
           const mapped = formatMap.get(formatRaw) ?? null;
           const oddsRecord = asRecord(oddsValue);
-          const oddsText =
-            firstString(oddsRecord ?? {}, ["text", "odds", "oddsText"]) || (oddsRecord ? "" : String(oddsValue ?? "").trim());
+          const oddsText = normalizeOddsValue(
+            firstString(oddsRecord ?? {}, ["text", "odds", "oddsText"]) || (oddsRecord ? "" : String(oddsValue ?? "").trim())
+          );
           const numericRaw = oddsRecord?.numeric ?? oddsRecord?.oddsNumeric ?? null;
           const oddsNumeric = Number(numericRaw);
-          const hasOdds = oddsText.length > 0 && oddsText !== "-";
-          if (!hasOdds) {
+          if (!oddsText) {
             continue;
           }
           oddsByFormat.push({
             format: mapped?.formatKey ?? formatRaw,
             channel: mapped?.channelKey ?? (firstString(oddsRecord ?? {}, ["channelKey", "channel"]) || null),
             oddsText,
-            oddsNumeric: Number.isFinite(oddsNumeric) ? oddsNumeric : null,
+            oddsNumeric: Number.isFinite(oddsNumeric) ? oddsNumeric : parseSetOpsOddsNumeric(oddsText),
           });
         }
 
         const primaryOdds = oddsByFormat[0] ?? null;
-        if (!primaryOdds && !serialText) {
+        if (!primaryOdds && !serialText && !parallelCatalog) {
           continue;
         }
 
@@ -289,6 +292,8 @@ function parseRawRows(rawPayload: unknown, datasetType: SetDatasetType): Record<
           format: primaryOdds?.format ?? null,
           channel: primaryOdds?.channel ?? null,
           oddsByFormat,
+          parallelCatalog,
+          hasPublishedOdds: Boolean(odd.hasPublishedOdds ?? primaryOdds),
           sourceUrl,
         });
       }
@@ -332,16 +337,14 @@ function looksLikeMarkupNoise(value: string | null | undefined) {
 }
 
 function normalizeOddsValue(value: string | null | undefined) {
-  const text = String(value ?? "").trim();
-  if (!text) return null;
-  const cleaned = text.replace(/(\d)\s*:\s*,\s*(\d)/g, "$1:$2");
-  const match = cleaned.match(/\d+\s*:\s*[\d,]+/);
-  if (match) {
-    return match[0].replace(/\s+/g, "");
-  }
-  const numeric = cleaned.match(/^\d[\d,]*(?:\.\d+)?$/);
-  if (!numeric) return null;
-  return numeric[0].replace(/,/g, "");
+  return normalizeSetOpsOddsText(value);
+}
+
+function hasParallelCatalogSignal(record: Record<string, unknown>) {
+  const value = record.parallelCatalog ?? record.isParallelCatalog ?? record.catalogOnly;
+  if (typeof value === "boolean") return value;
+  const text = String(value ?? "").trim().toLowerCase();
+  return ["1", "true", "yes"].includes(text);
 }
 
 function derivePlayerSeed(
@@ -396,6 +399,10 @@ function buildOddsSignature(raw: Record<string, unknown>, fallbackOdds: string |
 
   if (entries.length > 0) {
     return entries.sort().join("||");
+  }
+
+  if (hasParallelCatalogSignal(raw)) {
+    return "catalog-only";
   }
 
   if (!fallbackOdds && !fallbackFormat) {
@@ -469,6 +476,7 @@ export function normalizeDraftRows(params: {
       firstString(raw, ["listingId", "sourceListingId", "source_listing_id", "listing", "url", "sourceUrl"])
     );
     const oddsSignature = params.datasetType === SetDatasetType.PARALLEL_DB ? buildOddsSignature(raw, odds, format) : null;
+    const parallelCatalog = hasParallelCatalogSignal(raw);
 
     const duplicateParallelKey =
       params.datasetType === SetDatasetType.PLAYER_WORKSHEET
@@ -485,8 +493,11 @@ export function normalizeDraftRows(params: {
     if (params.datasetType === SetDatasetType.PARALLEL_DB && !parallel) {
       errors.push({ field: "parallel", message: "parallel is required for parallel_db rows", blocking: true });
     }
-    if (params.datasetType === SetDatasetType.PARALLEL_DB && !odds && !serial) {
+    if (params.datasetType === SetDatasetType.PARALLEL_DB && !odds && !serial && !parallelCatalog) {
       continue;
+    }
+    if (params.datasetType === SetDatasetType.PARALLEL_DB && parallelCatalog && !odds && !serial) {
+      warnings.push("parallel retained without published odds because it is a catalog-only row");
     }
 
     if (params.datasetType === SetDatasetType.PLAYER_WORKSHEET && !playerSeed) {
@@ -638,7 +649,7 @@ export function buildTaxonomyIngestRows(rows: SetOpsDraftRow[]): SetOpsTaxonomyI
       );
       if (!oddsText && !row.serial) continue;
       const numericRaw = Number(oddsEntry.oddsNumeric ?? oddsEntry.numeric ?? NaN);
-      const oddsNumeric = Number.isFinite(numericRaw) ? numericRaw : null;
+      const oddsNumeric = Number.isFinite(numericRaw) ? numericRaw : parseSetOpsOddsNumeric(oddsText);
       const format =
         normalizePlayerSeed(firstString(oddsEntry, ["format", "formatKey", "columnHeader"])) ||
         row.format ||
@@ -665,7 +676,8 @@ export function buildTaxonomyIngestRows(rows: SetOpsDraftRow[]): SetOpsTaxonomyI
     output.push({
       ...base,
       odds: row.odds,
-      oddsNumeric: Number.isFinite(Number(row.raw.oddsNumeric)) ? Number(row.raw.oddsNumeric) : null,
+      oddsNumeric:
+        Number.isFinite(Number(row.raw.oddsNumeric)) ? Number(row.raw.oddsNumeric) : parseSetOpsOddsNumeric(row.odds),
       format: row.format,
       channel: firstString(row.raw, ["channel", "channelKey"]) || null,
     });

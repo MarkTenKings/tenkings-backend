@@ -5,9 +5,12 @@ const {
   buildSetDeleteConfirmationPhrase,
   decodeHtmlEntities,
   isSetDeleteConfirmationValid,
+  looksLikeSetOpsOddsValue,
   normalizeCardNumber,
+  normalizeSetOpsOddsText,
   normalizeParallelLabel,
   normalizeSetLabel,
+  parseSetOpsOddsNumeric,
 } = require("../dist/setOpsNormalizer");
 
 test("normalizeSetLabel decodes legacy HTML entities for 2020 set strings", () => {
@@ -126,6 +129,30 @@ test("buildSetOpsDuplicateKey distinguishes checklist rows by team when present"
   });
 
   assert.notEqual(first, second);
+});
+
+test("normalizeSetOpsOddsText preserves supported numeric and textual odds markers", () => {
+  assert.equal(normalizeSetOpsOddsText("1:3,666"), "1:3,666");
+  assert.equal(normalizeSetOpsOddsText("1:16 au"), "1:16 AU");
+  assert.equal(normalizeSetOpsOddsText("one-per-pack"), "ONE PER PACK");
+  assert.equal(normalizeSetOpsOddsText("two per box"), "TWO PER BOX");
+  assert.equal(normalizeSetOpsOddsText("par"), "PAR");
+  assert.equal(normalizeSetOpsOddsText("char"), "CHAR");
+  assert.equal(normalizeSetOpsOddsText("-"), null);
+});
+
+test("looksLikeSetOpsOddsValue recognizes supported textual markers", () => {
+  assert.equal(looksLikeSetOpsOddsValue("REF"), true);
+  assert.equal(looksLikeSetOpsOddsValue("AU"), true);
+  assert.equal(looksLikeSetOpsOddsValue("one-per-pack"), true);
+  assert.equal(looksLikeSetOpsOddsValue("base set"), false);
+});
+
+test("parseSetOpsOddsNumeric parses only supported numeric odds payloads", () => {
+  assert.equal(parseSetOpsOddsNumeric("1:80"), 80);
+  assert.equal(parseSetOpsOddsNumeric("1:16 AU"), 16);
+  assert.equal(parseSetOpsOddsNumeric("4:1"), null);
+  assert.equal(parseSetOpsOddsNumeric("PAR"), null);
 });
 
 test("decodeHtmlEntities decodes numeric entities and collapses whitespace", () => {

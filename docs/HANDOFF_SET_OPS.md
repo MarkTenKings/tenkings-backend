@@ -4743,3 +4743,33 @@ Build Set Ops UI flow with:
 - No batch-import folders, draft rows, approvals, deploys, restarts, migrations, or DB operations were executed as part of this change.
 - Rationale:
   - align the existing manual Set Ops reference-seed workflow with the desired `1-2 provisional images per parallel` behavior for Add Card thumbnails without altering the active batch-import workspace.
+
+## Session Update (2026-03-09, MLB final parallel patch staged locally)
+- Scope:
+  - targeted the remaining MLB `PARALLEL LIST` failures after the `106`-set commit
+  - files changed locally:
+    - `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`
+    - `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+    - `frontend/nextjs-app/lib/server/taxonomyV2ManufacturerAdapter.ts`
+- Local parser/quality changes:
+  - accept textual odds markers end-to-end during draft build (`PAR`, `REF`, `CHAR`, `one per pack`, `two per box`, `1:16 AU`)
+  - preserve catalog-only parallel rows that have valid `Card_Type + Parallel` coverage even when no published odds are present for that row
+  - stop penalizing `PARALLEL LIST` sheets simply because they have no serial-numbered rows
+  - soften `PARALLEL LIST` quality scoring for sparse but well-structured catalog sheets with at least some real odds signal
+- Local validation evidence:
+  - `pnpm --filter @tenkings/shared test`
+    - pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsCsvContract.ts --file lib/server/setOpsDrafts.ts --file lib/server/taxonomyV2ManufacturerAdapter.ts`
+    - pass
+- Local batch simulation against the unresolved MLB folders now shows:
+  - all prior failed `12` move to `WARN` or `PASS`
+  - `2018_Topps_Chrome_Baseball`, which previously built `0` usable rows, now becomes a valid catalog-only `WARN`
+- Prepared rerun folder:
+  - `batch-imports/mlb-missing-parallels-final-13-parallel-only/`
+  - contains the previous failed `12` plus `2018_Topps_Chrome_Baseball`
+  - parallel-only layout, so rerun will not touch `SET LIST`
+- Important operational note:
+  - these fixes are local only until the user commits, pushes, and Vercel deploys `main`
+  - do not rerun the final MLB parallel batch against production until that deploy completes

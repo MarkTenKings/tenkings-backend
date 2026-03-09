@@ -1,4 +1,9 @@
 import { SetDatasetType } from "@tenkings/database";
+import {
+  looksLikeSetOpsOddsValue,
+  normalizeSetOpsOddsText,
+  parseSetOpsOddsNumeric,
+} from "@tenkings/shared";
 import type { SetOpsDraftRow, SetOpsDraftSummary } from "./setOpsDrafts";
 
 type CsvContractType = "SET_LIST" | "PARALLEL_LIST";
@@ -138,18 +143,6 @@ function slugify(value: string) {
     .replace(/-{2,}/g, "-");
 }
 
-function parseOddsNumeric(oddsText: string): number | null {
-  const text = sanitizeOddsText(oddsText).replace(/,/g, "");
-  if (!text || text === "-") return null;
-  const ratio = text.match(/^1\s*:\s*([\d.]+)$/i);
-  if (ratio?.[1]) {
-    const parsed = Number(ratio[1]);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-  }
-  const numeric = Number(text);
-  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
-}
-
 function looksLikeOddsHeader(header: string) {
   const normalized = normalizeHeader(header);
   if (normalized === "odds" || normalized.startsWith("odds_")) {
@@ -165,9 +158,7 @@ function looksLikeOddsCell(value: string) {
   const text = sanitizeOddsText(value).toLowerCase();
   if (!text) return false;
   if (["-", "—", "n/a", "na", "none"].includes(text)) return true;
-  if (/^\d+\s*:\s*[\d,]+(?:\.\d+)?$/.test(text)) return true;
-  if (/^\d[\d,]*(?:\.\d+)?$/.test(text)) return true;
-  return false;
+  return looksLikeSetOpsOddsValue(text);
 }
 
 function parseSerialDenominator(cardType: string): number | null {
@@ -238,6 +229,15 @@ function sanitizeOddsText(value: string | null | undefined) {
   if (!compacted) return "";
   // Common OCR/PDF extraction issue: "1:,7" should be "1:7".
   return compacted.replace(/(\d)\s*:\s*,\s*(\d)/g, "$1:$2");
+}
+
+function hasParallelCatalogDraftFlag(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const flag = record.parallelCatalog ?? record.isParallelCatalog ?? record.catalogOnly;
+  if (typeof flag === "boolean") return flag;
+  const text = compact(flag ?? "").toLowerCase();
+  return ["1", "true", "yes"].includes(text);
 }
 
 function normalizeCsvArray(rawPayload: unknown): CanonicalCsvRow[] {
@@ -535,9 +535,12 @@ function createOddsStructuredPayload(params: {
   const duplicateKeys = new Set<string>();
   let totalCells = 0;
   let filledCells = 0;
+  let signalRows = 0;
   let serialPatternRows = 0;
   let serialParsedRows = 0;
   let parsedProgramRows = 0;
+  const distinctParallelLabels = new Set<string>();
+  const distinctScopePairs = new Set<string>();
 
   const oddsEntries: Array<Record<string, unknown>> = [];
 
@@ -549,6 +552,12 @@ function createOddsStructuredPayload(params: {
     const split = splitProgramAndParallel(cardType);
     const parsedProgram = compact(parallelFromColumn ? cardType : split.parsedProgram || cardType);
     const parsedParallel = compact(parallelFromColumn || split.parsedParallel || "BASE") || "BASE";
+    if (parsedParallel) {
+      distinctParallelLabels.add(parsedParallel.toLowerCase());
+    }
+    if (parsedProgram || parsedParallel) {
+      distinctScopePairs.add(`${(parsedProgram || cardType).toLowerCase()}::${parsedParallel.toLowerCase()}`);
+    }
 
     const serialDenominator = parseSerialDenominator(cardType);
     if (/\/\s*\d{1,5}\b|\b1\s*\/\s*1\b/i.test(cardType)) {
@@ -562,17 +571,22 @@ function createOddsStructuredPayload(params: {
     }
 
     const values: Record<string, { text: string; numeric: number | null }> = {};
+    let rowHasPublishedOdds = false;
     for (const format of formats) {
       const normalizedHeader = headerByFormatKey.get(format.formatKey) || format.normalizedHeader;
-      const text = sanitizeOddsText(compact(row.normalized[normalizedHeader] ?? ""));
+      const text = normalizeSetOpsOddsText(sanitizeOddsText(compact(row.normalized[normalizedHeader] ?? "")));
       totalCells += 1;
-      if (text && text !== "-") {
+      if (text) {
         filledCells += 1;
+        rowHasPublishedOdds = true;
       }
       values[format.formatKey] = {
         text: text || "-",
-        numeric: parseOddsNumeric(text),
+        numeric: parseSetOpsOddsNumeric(text),
       };
+    }
+    if (rowHasPublishedOdds) {
+      signalRows += 1;
     }
 
     const duplicateKey = [
@@ -594,12 +608,25 @@ function createOddsStructuredPayload(params: {
       serialDenominator,
       finishFamily: inferFinishFamily(parsedParallel || cardType),
       values,
+      parallelCatalog: !rowHasPublishedOdds && serialDenominator == null,
+      hasPublishedOdds: rowHasPublishedOdds,
     });
   }
 
   const oddsCompleteness = totalCells > 0 ? filledCells / totalCells : 0;
+  const scopeCoverage = totalRows > 0 ? distinctScopePairs.size / totalRows : 0;
+  const sparseParallelCatalog =
+    totalRows >= 15 &&
+    signalRows >= 1 &&
+    duplicateRows <= 1 &&
+    scopeCoverage >= 0.7 &&
+    (parsedProgramRows / Math.max(totalRows, 1)) >= 0.8;
   const serialParseRate = serialPatternRows > 0 ? serialParsedRows / serialPatternRows : 1;
   const crossReferenceRate = totalRows > 0 ? parsedProgramRows / totalRows : 0;
+  const sparseCatalogOddsFloor = totalRows < 25 ? 0.55 : 0.25;
+  const effectiveOddsCompleteness = sparseParallelCatalog
+    ? Math.max(oddsCompleteness, sparseCatalogOddsFloor)
+    : oddsCompleteness;
   const metrics: CsvQualityMetric[] = [
     {
       key: "card_count_sanity",
@@ -611,9 +638,11 @@ function createOddsStructuredPayload(params: {
     {
       key: "odds_completeness",
       weight: 15,
-      score: clamp(oddsCompleteness),
-      passed: oddsCompleteness >= 0.7,
-      note: `${Math.round(oddsCompleteness * 100)}%`,
+      score: clamp(effectiveOddsCompleteness),
+      passed: sparseParallelCatalog || oddsCompleteness >= 0.7,
+      note: sparseParallelCatalog
+        ? `${Math.round(oddsCompleteness * 100)}% sparse catalog coverage (${signalRows}/${totalRows} rows with published odds, scope coverage ${Math.round(scopeCoverage * 100)}%)`
+        : `${Math.round(oddsCompleteness * 100)}%`,
     },
     {
       key: "serial_parse_rate",
@@ -659,6 +688,11 @@ function createOddsStructuredPayload(params: {
       serialParsedRows,
       parsedProgramRows,
       duplicateRowCount: duplicateRows,
+      distinctParallelCount: distinctParallelLabels.size,
+      distinctScopeCount: distinctScopePairs.size,
+      signalRows,
+      sparseParallelCatalog,
+      scopeCoverage,
     },
   };
 }
@@ -808,13 +842,39 @@ export function evaluateDraftQuality(params: {
       )
     );
   } else {
-    const oddsCoverage =
-      rowCount > 0 ? params.rows.filter((row) => compact(row.odds || "") || compact(row.serial || "")).length / rowCount : 0;
+    const rowsWithPublishedOdds = params.rows.filter((row) => compact(row.odds || "") || compact(row.serial || "")).length;
+    const catalogOnlyRows = params.rows.filter(
+      (row) => compact(row.odds || "").length < 1 && compact(row.serial || "").length < 1 && hasParallelCatalogDraftFlag(row.raw)
+    ).length;
+    const oddsCoverage = rowCount > 0 ? rowsWithPublishedOdds / rowCount : 0;
     const serialRows = params.rows.filter((row) => compact(row.serial || "").length > 0).length;
-    const serialRate = rowCount > 0 ? serialRows / rowCount : 0;
+    const serialRate = serialRows > 0 && rowCount > 0 ? serialRows / rowCount : 1;
     const programCoverage =
       rowCount > 0 ? params.rows.filter((row) => compact(row.cardType || "").length > 0).length / rowCount : 0;
-    metrics.push(assessMetric("odds_completeness", 15, oddsCoverage, 0.7, `${Math.round(oddsCoverage * 100)}%`));
+    const distinctScopeCount = new Set(
+      params.rows.map((row) => `${compact(row.cardType || "UNSPECIFIED").toLowerCase()}::${compact(row.parallel).toLowerCase()}`)
+    ).size;
+    const scopeCoverage = rowCount > 0 ? distinctScopeCount / rowCount : 0;
+    const sparseParallelCatalog =
+      rowCount >= 15 &&
+      rowsWithPublishedOdds >= 1 &&
+      duplicateErrors <= 1 &&
+      scopeCoverage >= 0.7 &&
+      programCoverage >= 0.8;
+    const effectiveOddsCoverage = sparseParallelCatalog
+      ? Math.max(oddsCoverage, rowCount < 25 ? 0.55 : 0.25)
+      : oddsCoverage;
+    metrics.push(
+      assessMetric(
+        "odds_completeness",
+        15,
+        effectiveOddsCoverage,
+        sparseParallelCatalog ? 0.25 : 0.7,
+        sparseParallelCatalog
+          ? `${Math.round(oddsCoverage * 100)}% sparse catalog coverage (${rowsWithPublishedOdds} rows with published odds, ${catalogOnlyRows} catalog-only rows)`
+          : `${Math.round(oddsCoverage * 100)}%`
+      )
+    );
     metrics.push(assessMetric("serial_parse_rate", 10, serialRate, 0.3, `${Math.round(serialRate * 100)}%`));
     metrics.push(
       assessMetric(

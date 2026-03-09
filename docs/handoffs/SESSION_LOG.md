@@ -8738,3 +8738,53 @@
 - The trusted comp-to-reference flywheel relies on the latest stored Bytebot job result plus the human-attached evidence URLs; no schema migration was required.
 - Batch-import folders and missing `PARALLEL.csv` work were not modified.
 - Approved `PARALLEL_DB` drafts now auto-start the provisional reference seed pass at the existing Set Ops step-3 workflow default (`2` images per target); this touches only the seed monitor UI flow and does not alter batch-import folders or approval data.
+
+## 2026-03-09 - MLB final parallel patch staged locally
+
+### Summary
+- Patched the remaining MLB parallel-only ingestion path locally so sparse catalog sheets and text-based odds markers survive both precheck and draft build.
+- No deploy, restart, or migration commands were run.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setOpsCsvContract.ts`
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+- `frontend/nextjs-app/lib/server/taxonomyV2ManufacturerAdapter.ts`
+
+### Behavior Changes
+- `PARALLEL LIST` contract detection and draft build now preserve supported text-based odds markers:
+  - `PAR`
+  - `REF`
+  - `CHAR`
+  - `one per pack`
+  - `two per box`
+  - qualifier variants like `1:16 AU`
+- Catalog-only parallel rows can now survive draft normalization when they have valid `Card_Type + Parallel` structure but no published odds on that row.
+- Draft quality no longer penalizes sheets just because they have zero serial-numbered rows.
+- Sparse but structured parallel catalogs with at least some real odds signal now receive a softer completeness floor during quality scoring.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared test`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsCsvContract.ts --file lib/server/setOpsDrafts.ts --file lib/server/taxonomyV2ManufacturerAdapter.ts`
+  - pass
+- Local batch-path simulation against the unresolved MLB folders showed:
+  - prior failed `12` now all evaluate to `WARN` or `PASS`
+  - `2018_Topps_Chrome_Baseball` now evaluates to `WARN` as a catalog-only parallel sheet instead of a zero-row no-op
+
+### Prepared Follow-up
+- Created:
+  - `batch-imports/mlb-missing-parallels-final-13-parallel-only/`
+- Contents:
+  - the prior failed `12`
+  - `2018_Topps_Chrome_Baseball`
+- This folder is parallel-only so the rerun will not touch `SET LIST`.
+
+### Notes
+- These fixes are local only until committed, pushed, and deployed to Vercel.
+- Recommended next operational sequence:
+  - commit and push the local code patch
+  - wait for Vercel production deploy
+  - rerun `preflight` on `batch-imports/mlb-missing-parallels-final-13-parallel-only/`
+  - if clean, rerun `commit` on that same folder with `--allow-existing-set`
