@@ -4485,3 +4485,261 @@ Build Set Ops UI flow with:
     - `2023_Bowman_Platinum_Baseball`
     - `2023_Bowman_University_Best_Football`
   - created `batch-imports/run-1-both-existing-5` for convenience if the operator later wants to rerun them with `--allow-existing-set`
+
+## Session Update (2026-03-09, final-2 preflight passed)
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/run-1-both-final-2 --mode preflight --continue-on-error`
+- Observed result from `logs/set-ops/batch-import/2026-03-09T04-58-33Z.json`:
+  - `preflight_complete=2`
+  - `preflight_failed=0`
+- Passing sets:
+  - `2024_Topps_Finest_Football`
+  - `2026_Topps_Series_1_Baseball`
+- Operational interpretation:
+  - the final two formerly blocked complete-pair sets are now commit-ready
+  - if committed successfully, cumulative live-set count from this workflow will rise from `112` to `114`
+  - the remaining gap to the original `119` complete-pair folders will then be only the earlier `blocked_existing_set` batch of `5`
+
+## Session Update (2026-03-09, final-2 commit completed successfully)
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/run-1-both-final-2 --mode commit`
+- Observed result from `logs/set-ops/batch-import/2026-03-09T05-11-27Z.json`:
+  - `commit_complete=2`
+  - `0` approval/sync failures were reported
+- Aggregate sync totals from the report:
+  - `SET LIST`: `inserted=2857`, `updated=116`, `failed=0`
+  - `PARALLEL LIST`: `inserted=54`, `updated=460`, `failed=0`
+- Operational interpretation:
+  - the last two formerly blocked complete-pair sets were approved successfully
+  - cumulative live-set count from this batching workflow is now `114`
+  - the only remaining gap to the original `119` complete-pair folders is the earlier `blocked_existing_set` batch of `5`
+- Remaining not-yet-processed complete-pair sets:
+  - `2022-23_Bowman_University_Best_Basketball`
+  - `2022-23_Bowman_University_Chrome_Basketball`
+  - `2022-23_Topps_Finest_Overtime_Elite`
+  - `2023_Bowman_Platinum_Baseball`
+  - `2023_Bowman_University_Best_Football`
+
+## Session Update (2026-03-09, existing-5 preflight passed with allow-existing-set)
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/run-1-both-existing-5 --mode preflight --continue-on-error --allow-existing-set`
+- Observed result from `logs/set-ops/batch-import/2026-03-09T14-20-16Z.json`:
+  - `preflight_complete=5`
+  - `preflight_failed=0`
+- Passing sets:
+  - `2022-23_Bowman_University_Best_Basketball`
+  - `2022-23_Bowman_University_Chrome_Basketball`
+  - `2022-23_Topps_Finest_Overtime_Elite`
+  - `2023_Bowman_Platinum_Baseball`
+  - `2023_Bowman_University_Best_Football`
+- Operational interpretation:
+  - the earlier `blocked_existing_set` batch is now commit-ready when rerun with `--allow-existing-set`
+  - if committed successfully, the original `119` complete-pair folders from `run-1-both` will all be processed
+
+## Session Update (2026-03-09, existing-5 commit completed successfully)
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/run-1-both-existing-5 --mode commit --allow-existing-set`
+- Observed result from `logs/set-ops/batch-import/2026-03-09T14-21-40Z.json`:
+  - `commit_complete=5`
+  - `0` approval/sync failures were reported
+- Aggregate sync totals from the report:
+  - `SET LIST`: `inserted=1734`, `updated=101`, `failed=0`
+  - `PARALLEL LIST`: `inserted=334`, `updated=25`, `failed=0`
+- Operational interpretation:
+  - the earlier `blocked_existing_set` batch was successfully approved with `--allow-existing-set`
+  - all original `119` complete `SET.csv + PARALLEL.csv` folders from `batch-imports/run-1-both` have now been processed
+  - cumulative live-set count from this batching workflow is now `119`
+
+## Session Update (2026-03-09, guidance for 3 late-discovered NBA parallel pairings)
+- Reviewed a follow-up operator question about `3` unpaired NBA odds files:
+  - `2023-24_Topps_Chrome_Basketball_Hobby`
+  - `2023-24_Topps_Chrome_Basketball_Retail`
+  - `2024-25_Topps_Chrome_Basketball_Sapphire`
+- Guidance:
+  - stay on the existing batch-import workflow
+  - do **not** switch to manual UI upload or ad-hoc API calls
+  - use a small dedicated batch folder for just these `3` sets instead of mutating the broader historical batch folders
+- Recommended operator pattern:
+  - create a new small folder such as `batch-imports/missing-parallels-nba-3`
+  - use exact set-ID folder names
+  - copy the existing `set.csv` from the matching set-only folders
+  - add `parallel.csv` to each folder
+- Important pairing guidance:
+  - for `2023-24_Topps_Chrome_Basketball_Hobby` and `2023-24_Topps_Chrome_Basketball_Retail`, it is acceptable to place the same shared Chrome odds sheet into both folders as `parallel.csv` if that odds sheet truly covers both formats
+  - the batch importer keys off the folder/set ID, not the source odds filename
+  - for `2024-25_Topps_Chrome_Basketball_Sapphire`, do **not** trust the mismatched `2023-24_..._Sapphire_ODDS_List.csv` filename alone; verify the file content actually matches the `2024-25` product before using it
+
+## Session Update (2026-03-09, Perplexity prepared 2-folder NBA missing-parallel batch and rejected Sapphire)
+- Operator relayed Perplexity findings:
+  - prepared a ZIP for `missing-parallels-nba-3`, but only `2` folders are valid:
+    - `2023-24_Topps_Chrome_Basketball_Hobby`
+      - `set.csv` (`837` cards per Perplexity note)
+      - `parallel.csv` (`161` rows per Perplexity note)
+    - `2023-24_Topps_Chrome_Basketball_Retail`
+      - `set.csv` (`394` cards per Perplexity note)
+      - `parallel.csv` (`161` rows per Perplexity note)
+- Perplexity reused the same shared odds file for both Hobby and Retail, which is consistent with prior guidance as long as the sheet truly represents the shared Chrome parallel structure.
+- Sapphire was intentionally rejected:
+  - source file was `2023-24_Topps_Chrome_Basketball_Sapphire_ODDS_List.csv`
+  - header reportedly says `SPO-CHROME BASKETBALL 2023-24 SAPPHIRE ONLINE EXCLUSIVE`
+  - file reportedly contains only one row: `INFINITY, 1:160`
+  - no verified `2024-25` Sapphire odds file was found
+- Operational guidance:
+  - do **not** ingest the Sapphire set with this mismatched odds file
+  - run the new 2-folder NBA batch through the same batch importer flow
+  - because there is no evidence the broader `run-1-set-only` batch was ever executed, start this 2-folder NBA batch **without** `--allow-existing-set`
+
+## Session Update (2026-03-09, 2-set NBA missing-parallel batch completed successfully)
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/missing-parallels-nba-3 --mode preflight --continue-on-error`
+  - `pnpm set-ops:batch-import --folder batch-imports/missing-parallels-nba-3 --mode commit`
+- Observed result from `logs/set-ops/batch-import/2026-03-09T14-42-59Z.json`:
+  - `preflight_complete=2`
+  - `preflight_failed=0`
+- Observed result from `logs/set-ops/batch-import/2026-03-09T14-44-02Z.json`:
+  - `commit_complete=2`
+  - `0` approval/sync failures were reported
+- Aggregate sync totals from the 2-set commit report:
+  - `SET LIST`: `inserted=1226`, `updated=5`, `failed=0`
+  - `PARALLEL LIST`: `inserted=80`, `updated=242`, `failed=0`
+- Successfully processed sets:
+  - `2023-24_Topps_Chrome_Basketball_Hobby`
+  - `2023-24_Topps_Chrome_Basketball_Retail`
+- Operational interpretation:
+  - both late-discovered NBA missing-parallel sets are now live
+  - the original `119` complete-pair folders from `run-1-both` remain fully processed
+  - including these `2` additional NBA follow-up sets, cumulative complete-pair processing in this batching workflow is now `121`
+  - `2024-25_Topps_Chrome_Basketball_Sapphire` remains intentionally unpaired and unseeded on the parallel side until a verified `2024-25` odds file is found
+
+## Session Update (2026-03-09, work split across threads)
+- User is continuing to use this thread for:
+  - Perplexity coordination
+  - missing `PARALLEL.csv` discovery/prep
+  - set/parallel seeding workflow
+- User plans to open a second Codex thread focused on a separate Add Card UI/OCR issue:
+  - during Add Card testing, roughly half the newly photographed cards reportedly disappeared while the user was moving through the OCR queue
+- Coordination guidance for future agents:
+  - keep this thread focused on set/parallel ingestion and seeding
+  - use the second thread for the Add Card queue/UI disappearance investigation
+
+## Session Update (2026-03-09, agent context sync and repo state capture)
+- Re-read the mandatory startup docs listed in `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Observed workstation git state before this doc append:
+  - branch: `main`
+  - HEAD: `6b7b93a`
+  - `git status -sb` showed:
+    - modified: `docs/HANDOFF_SET_OPS.md`
+    - modified: `docs/handoffs/SESSION_LOG.md`
+    - untracked: `batch-imports/`
+    - untracked: `logs/`
+- No code/runtime changes, deploys, restarts, migrations, or DB operations were executed in this step.
+
+## Session Update (2026-03-09, MLB parallel batch verification)
+- User provided an operational note claiming `batch-imports/run-1/` had been updated with `parallel.csv` files for `122` MLB sets missing odds data.
+- Current workspace evidence does not match that claim yet:
+  - `find batch-imports/run-1 -name 'parallel.csv' | wc -l` returned `119`
+  - `batch-imports/run-1/` currently contains `363` baseball set folders total
+  - only `76` baseball folders currently have `parallel.csv`
+  - `287` baseball folders still have `set.csv` but no `parallel.csv`
+  - the cited placeholder targets were still missing at verification time:
+    - `2018_Topps_Allen_and_Ginter_X_Baseball`
+    - `2025_Topps_Bowmans_Best_Baseball`
+    - `2026_Topps_Heritage_Baseball`
+- Sample existing MLB `parallel.csv` files in `run-1` already match the new claimed format and parse shape:
+  - headers like `Card_Type,Parallel,Odds_HOBBY...`
+  - uppercase `Card_Type` / `Parallel`
+  - odds values like `1:16`, `1:3,666`, and `-`
+- Current code inspection indicates the parallel CSV pipeline already supports this shape:
+  - `frontend/nextjs-app/lib/server/setOpsCsvContract.ts` detects `Card_Type`, `Parallel`, and `Odds_*` headers and adapts them to `PARALLEL_LIST`
+  - `frontend/nextjs-app/lib/server/setOpsDrafts.ts` normalizes `Odds_*` values, accepts dash placeholders as empty, and expands `oddsByFormat`
+- Recommended next step:
+  - do not change the set CSV pipeline
+  - first materialize the new MLB `parallel.csv` files into the workspace (preferably a dedicated follow-up batch folder rather than mutating historical folders blindly)
+  - exclude the `3` no-odds placeholder sets from ingestion until real odds data exists
+  - then run `preflight` / `commit` for those existing sets with `--allow-existing-set`
+
+## Session Update (2026-03-09, MLB missing-parallels batch preflight)
+- User materialized a dedicated follow-up batch at `batch-imports/mlb-missing-parallels-122/` with `119` set folders (`3` no-odds sets excluded).
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/mlb-missing-parallels-122 --mode preflight --continue-on-error --allow-existing-set`
+- Observed report:
+  - `logs/set-ops/batch-import/2026-03-09T16-15-51Z.json`
+  - summary: `preflight_complete=105`, `preflight_failed=14`
+- Failure split from report:
+  - `12` failures were on `PARALLEL LIST` quality thresholds
+  - `2` failures were actually `SET LIST` blockers (`2021_Heritage_Baseball`, `2022_Topps_Heritage_Baseball`)
+- Important operational note:
+  - this mixed batch still re-queues `set.csv`, which is broader than the user requested
+  - since these are existing sets receiving odds additions, the cleaner next step is a parallel-only rerun
+- Prepared local follow-up folder:
+  - `batch-imports/mlb-missing-parallels-122-parallel-only/`
+  - contains the same `119` set folders but only `parallel.csv`
+- Recommended next step:
+  - rerun preflight against `batch-imports/mlb-missing-parallels-122-parallel-only` with `--allow-existing-set`
+  - this should remove the `2` unrelated checklist blockers and isolate only true parallel-side failures
+
+## Session Update (2026-03-09, MLB parallel-only rerun)
+- User reran preflight against the parallel-only folder:
+  - `pnpm set-ops:batch-import --folder batch-imports/mlb-missing-parallels-122-parallel-only --mode preflight --continue-on-error --allow-existing-set`
+- Observed report:
+  - `logs/set-ops/batch-import/2026-03-09T17-30-43Z.json`
+  - `preflight_complete=107`
+  - `preflight_failed=12`
+- This rerun successfully removed the unrelated checklist-side blockers and isolated only `PARALLEL LIST` issues.
+- The `12` remaining failed parallel sets are:
+  - `2018_Topps_Bowman_Chrome_Baseball`
+  - `2018_Topps_Inception_Baseball`
+  - `2019_Topps_Archives_Baseball`
+  - `2019_Topps_Baseball_Inception_Checklist_Baseball`
+  - `2019_Topps_High_Tek_Baseball`
+  - `2020_Allen_and_Ginter_Chrome_Baseball`
+  - `2020_Bowman_Platinum_Baseball`
+  - `2020_Topps_Chrome_Black_Edition_Baseball`
+  - `2021_Topps_Chrome_Black_Baseball`
+  - `2022_Topps_Inception_Baseball`
+  - `2023_Topps_Inception_Baseball`
+  - `2025_Bowman_Draft_Baseball_Mega_Box_Baseball`
+- Important note:
+  - `2018_Topps_Chrome_Baseball` reported `preflight_complete`, but its `parallel.csv` built `0` usable draft rows from `78` source rows; treat it as a no-op rather than a safe commit target.
+- Prepared local follow-up folders:
+  - `batch-imports/mlb-missing-parallels-122-parallel-ready/`
+    - `106` sets with `preflight_complete` and `PARALLEL LIST` build row count `> 0`
+  - `batch-imports/mlb-missing-parallels-122-parallel-failed-12/`
+    - the remaining failed parallel-only sets
+- Recommended next step:
+  - commit `batch-imports/mlb-missing-parallels-122-parallel-ready/`
+  - hold `2018_Topps_Chrome_Baseball` and the failed `12` out of the commit
+
+## Session Update (2026-03-09, MLB parallel-ready commit)
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/mlb-missing-parallels-122-parallel-ready --mode commit --allow-existing-set`
+- Observed report:
+  - `logs/set-ops/batch-import/2026-03-09T18-30-22Z.json`
+  - summary: `commit_complete=106`
+- Commit outcome:
+  - all `106` targeted `PARALLEL LIST` imports completed
+  - aggregate variant-sync totals from the saved report:
+    - `processed=6985`
+    - `inserted=6965`
+    - `updated=20`
+    - `failed=0`
+    - `skipped=0`
+- Operational interpretation:
+  - the `106` MLB missing-parallel additions in `batch-imports/mlb-missing-parallels-122-parallel-ready/` are now live
+  - remaining follow-up scope is:
+    - the failed `12` in `batch-imports/mlb-missing-parallels-122-parallel-failed-12/`
+    - `2018_Topps_Chrome_Baseball`, which was intentionally held out because its `parallel.csv` built `0` usable rows
+
+## Session Update (2026-03-09 - Card workflow flywheel touchpoint)
+- A small Set Ops UI adjustment was made in support of the card-workflow reference-image flywheel:
+  - `frontend/nextjs-app/pages/admin/set-ops-review.tsx`
+  - default reference-seed limit now starts at `2` images per target instead of `20`
+  - approving a `PARALLEL_DB` draft now auto-starts the existing provisional reference seed step using that `2`-image default
+- No batch-import folders, draft rows, approvals, deploys, restarts, migrations, or DB operations were executed as part of this change.
+- Rationale:
+  - align the existing manual Set Ops reference-seed workflow with the desired `1-2 provisional images per parallel` behavior for Add Card thumbnails without altering the active batch-import workspace.

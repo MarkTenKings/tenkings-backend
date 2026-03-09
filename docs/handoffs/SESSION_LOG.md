@@ -8680,6 +8680,28 @@
 ### Notes
 - Recommended next action is to commit the ready `106` set folder batch and leave the failed `12` plus the `2018_Topps_Chrome_Baseball` zero-row no-op out of the commit.
 
+## 2026-03-09 - MLB parallel-ready commit
+
+### Summary
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/mlb-missing-parallels-122-parallel-ready --mode commit --allow-existing-set`
+- Observed report:
+  - `logs/set-ops/batch-import/2026-03-09T18-30-22Z.json`
+  - `commit_complete=106`
+- All `106` targeted `PARALLEL LIST` imports completed successfully.
+- Aggregate variant-sync totals from the report:
+  - `processed=6985`
+  - `inserted=6965`
+  - `updated=20`
+  - `failed=0`
+  - `skipped=0`
+
+### Notes
+- These `106` MLB missing-parallel additions are now live.
+- Remaining scope after this commit:
+  - `batch-imports/mlb-missing-parallels-122-parallel-failed-12/`
+  - `2018_Topps_Chrome_Baseball` zero-row no-op (held out of commit intentionally)
+
 ## 2026-03-09 - Card workflow flywheel hardening
 
 ### Summary
