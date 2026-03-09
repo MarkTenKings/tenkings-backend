@@ -486,7 +486,7 @@ export function normalizeDraftRows(params: {
       errors.push({ field: "parallel", message: "parallel is required for parallel_db rows", blocking: true });
     }
     if (params.datasetType === SetDatasetType.PARALLEL_DB && !odds && !serial) {
-      errors.push({ field: "odds", message: "odds (or serial) is required for parallel_db rows", blocking: true });
+      continue;
     }
 
     if (params.datasetType === SetDatasetType.PLAYER_WORKSHEET && !playerSeed) {
@@ -543,6 +543,7 @@ export function normalizeDraftRows(params: {
       cardNumber,
       parallel: duplicateParallelKey,
       playerSeed,
+      team,
       listingId,
       format: params.datasetType === SetDatasetType.PARALLEL_DB ? format : null,
       odds: params.datasetType === SetDatasetType.PARALLEL_DB ? oddsSignature : null,
@@ -550,6 +551,9 @@ export function normalizeDraftRows(params: {
     });
 
     if (seenKeys.has(duplicateKey)) {
+      if (params.datasetType === SetDatasetType.PARALLEL_DB) {
+        continue;
+      }
       errors.push({
         field: "duplicateKey",
         message: "duplicate row for the normalized set/card/parallel/player/listing/odds identity",

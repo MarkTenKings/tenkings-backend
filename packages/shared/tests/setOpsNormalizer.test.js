@@ -108,6 +108,26 @@ test("buildSetOpsDuplicateKey distinguishes parallel rows by odds when present",
   assert.notEqual(first, second);
 });
 
+test("buildSetOpsDuplicateKey distinguishes checklist rows by team when present", () => {
+  const first = buildSetOpsDuplicateKey({
+    setId: "2024 Topps Finest Football",
+    cardNumber: "MYST-10",
+    parallel: "MYSTERY FINEST",
+    playerSeed: "Tom Brady",
+    team: "New England",
+  });
+
+  const second = buildSetOpsDuplicateKey({
+    setId: "2024 Topps Finest Football",
+    cardNumber: "MYST-10",
+    parallel: "MYSTERY FINEST",
+    playerSeed: "Tom Brady",
+    team: "Tampa Bay",
+  });
+
+  assert.notEqual(first, second);
+});
+
 test("decodeHtmlEntities decodes numeric entities and collapses whitespace", () => {
   assert.equal(decodeHtmlEntities("A&#038;B &#8211; C"), "A&B - C");
   assert.equal(decodeHtmlEntities("  A   B  "), "A B");

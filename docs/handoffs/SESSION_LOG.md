@@ -8194,3 +8194,110 @@
 
 ### Operations
 - No deploy/restart/migration/DB commands were executed by the agent in this implementation step.
+
+## 2026-03-09 - Post-push rerun reduced remaining failures to final 2
+
+### User-Run Deploy Evidence
+- User committed:
+  - `ba6bbba` - `fix(set-ops): clear remaining batch import blockers`
+- User pushed:
+  - `git push origin main`
+  - remote update: `6436cef..ba6bbba  main -> main`
+
+### User-Run Verification Command
+- `pnpm set-ops:batch-import --folder batch-imports/run-1-both-remaining-27 --mode preflight --continue-on-error`
+
+### Observed Result
+- Report:
+  - `logs/set-ops/batch-import/2026-03-09T03-59-17Z.json`
+- Summary:
+  - `preflight_complete=25`
+  - `preflight_failed=2`
+
+### Remaining Failed Sets
+- `2024_Topps_Finest_Football`
+  - `SET LIST` built `rows=821`, `blocking=1`
+- `2026_Topps_Series_1_Baseball`
+  - `PARALLEL LIST` built `rows=344`, `blocking=5`
+
+### Filesystem Prep
+- Created:
+  - `batch-imports/run-1-both-final-25-ready`
+- Result:
+  - `25` preflight-complete set folders from `logs/set-ops/batch-import/2026-03-09T03-59-17Z.json`
+- Purpose:
+  - allow immediate commit of the ready `25` while the final `2` patch is deployed
+
+### Interpretation
+- The second production parser/draft deployment materially improved the rerun again.
+- At this point the batch workflow is down from `41` failed to only `2` failed.
+
+## 2026-03-09 - Final-2 parser hardening
+
+### Code Updates
+- `packages/shared/src/setOpsNormalizer.ts`
+  - duplicate-key helper now accepts `team`
+  - duplicate keys now include `team`
+- `packages/shared/tests/setOpsNormalizer.test.js`
+  - added coverage proving checklist duplicate keys differ by team
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+  - `PLAYER_WORKSHEET` duplicate keys now pass `team`
+  - `PARALLEL_DB` rows with no normalized odds and no serial are now dropped before blocking
+  - `PARALLEL_DB` rows that still collide on the final normalized duplicate key are dropped instead of blocking review
+
+### Root Causes Targeted
+- `2024_Topps_Finest_Football`
+  - remaining blocker traced to same-player/same-card rows that differ only by team variants
+- `2026_Topps_Series_1_Baseball`
+  - remaining blockers traced to no-odds parser-trash rows and exact repeated normalized parallel rows
+
+### Validation
+- `pnpm --filter @tenkings/shared test` => pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` => pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDrafts.ts` => pass
+
+### Filesystem Prep
+- Created:
+  - `batch-imports/run-1-both-final-2`
+- Result:
+  - `2` still-failing set folders from `logs/set-ops/batch-import/2026-03-09T03-59-17Z.json`
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this implementation step.
+
+## 2026-03-09 - User committed 25-set ready batch successfully
+
+### User-Run Command
+- `pnpm set-ops:batch-import --folder batch-imports/run-1-both-final-25-ready --mode commit`
+
+### Observed Result
+- Report:
+  - `logs/set-ops/batch-import/2026-03-09T04-21-32Z.json`
+- Summary:
+  - `commit_complete=25`
+  - no sync failures reported
+- Aggregate sync totals:
+  - `SET LIST`: `inserted=20599`, `updated=926`, `failed=0`
+  - `PARALLEL LIST`: `inserted=956`, `updated=3166`, `failed=0`
+
+### Interpretation
+- The `25` preflight-complete sets from the remaining-27 rerun were approved and should now be live in Set Ops / DB.
+- Combined with the earlier `73`-set and `14`-set commit batches, the operator now has `112` committed live sets from this workflow.
+- Remaining unresolved set count after this commit: `2`
+  - `2024_Topps_Finest_Football`
+  - `2026_Topps_Series_1_Baseball`
+
+### Bookkeeping Note
+- The original `119` complete-pair batch also had `5` earlier `blocked_existing_set` cases that were not part of the later `27`-failure cleanup:
+  - `2022-23_Bowman_University_Best_Basketball`
+  - `2022-23_Bowman_University_Chrome_Basketball`
+  - `2022-23_Topps_Finest_Overtime_Elite`
+  - `2023_Bowman_Platinum_Baseball`
+  - `2023_Bowman_University_Best_Football`
+- Created:
+  - `batch-imports/run-1-both-existing-5`
+- Purpose:
+  - convenience folder if the operator later wants to rerun those sets with `--allow-existing-set`
+
+### Operations
+- No deploy/restart/migration/DB commands were executed by the agent in this follow-up step.

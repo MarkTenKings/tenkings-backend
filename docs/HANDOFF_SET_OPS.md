@@ -4403,3 +4403,85 @@ Build Set Ops UI flow with:
   - created `batch-imports/run-1-both-remaining-27`
   - contents: the `27` still-failing set folders from `logs/set-ops/batch-import/2026-03-09T03-16-01Z.json`, with symlinked `set.csv` / `parallel.csv`
 - No deploy/restart/migration was run for this second parser hardening pass.
+
+## Session Update (2026-03-09, post-push rerun reduced remaining failures to final 2)
+- User committed and pushed:
+  - commit `ba6bbba`
+  - remote update: `6436cef..ba6bbba  main -> main`
+- User reran:
+  - `pnpm set-ops:batch-import --folder batch-imports/run-1-both-remaining-27 --mode preflight --continue-on-error`
+- Observed result from `logs/set-ops/batch-import/2026-03-09T03-59-17Z.json`:
+  - `preflight_complete=25`
+  - `preflight_failed=2`
+- Newly passing sets from this rerun include previously blocked large products such as:
+  - `2024_Topps_Archives_Baseball`
+  - `2024_Topps_Baseball_Series_1_Baseball`
+  - `2025_Topps_Series_1_Mega_Celebration_Baseball`
+  - `2025-26_Topps_Chrome_Basketball`
+  - and `21` others in the report
+- Remaining failed sets after this rerun:
+  - `2024_Topps_Finest_Football`
+    - `SET LIST` built `rows=821`, `blocking=1`
+  - `2026_Topps_Series_1_Baseball`
+    - `PARALLEL LIST` built `rows=344`, `blocking=5`
+- Filesystem prep after this rerun:
+  - created `batch-imports/run-1-both-final-25-ready`
+  - contents: the `25` preflight-complete set folders from `logs/set-ops/batch-import/2026-03-09T03-59-17Z.json`
+  - purpose: allow immediate commit of the ready `25` while the final `2` patch is deployed
+
+## Session Update (2026-03-09, final-2 parser hardening)
+- Implemented a final targeted patch for the two remaining failed sets.
+- `packages/shared/src/setOpsNormalizer.ts`
+  - duplicate-key helper now accepts optional `team`
+  - duplicate keys now include `team`, which prevents checklist collisions when the same player/card appears with different team variants
+- `packages/shared/tests/setOpsNormalizer.test.js`
+  - added coverage proving checklist duplicate keys differ when team differs
+- `frontend/nextjs-app/lib/server/setOpsDrafts.ts`
+  - `PLAYER_WORKSHEET` duplicate keys now pass `team`
+  - `PARALLEL_DB` rows with no normalized odds and no serial are now dropped before blocking
+  - `PARALLEL_DB` rows that still collide on the final normalized duplicate key are dropped instead of blocking review
+- Concrete final-2 root causes targeted:
+  - `2024_Topps_Finest_Football`
+    - remaining false blocker was caused by same-player/same-card rows that differ only by team (for example `Tom Brady` on `MYST-10` with different team variants)
+  - `2026_Topps_Series_1_Baseball`
+    - remaining blockers were parser-trash/duplicate odds rows, including no-odds rows and exact repeated normalized parallel rows
+- Local validation:
+  - `pnpm --filter @tenkings/shared test` => pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` => pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/setOpsDrafts.ts` => pass
+- Filesystem prep:
+  - created `batch-imports/run-1-both-final-2`
+  - contents: the `2` still-failing set folders from `logs/set-ops/batch-import/2026-03-09T03-59-17Z.json`
+- No deploy/restart/migration was run for this final-2 patch.
+
+## Session Update (2026-03-09, 25-set commit after remaining-27 rerun completed successfully)
+- User ran:
+  - `pnpm set-ops:batch-import --folder batch-imports/run-1-both-final-25-ready --mode commit`
+- Observed result from `logs/set-ops/batch-import/2026-03-09T04-21-32Z.json`:
+  - `25` sets reached `commit_complete`
+  - `0` approval/sync failures were reported
+- Aggregate sync totals from the report:
+  - `SET LIST`: `inserted=20599`, `updated=926`, `failed=0`
+  - `PARALLEL LIST`: `inserted=956`, `updated=3166`, `failed=0`
+- Operational interpretation:
+  - these `25` sets were approved
+  - their variant sync completed
+  - they should now be live in Set Ops / DB for downstream Add Card use
+- Cumulative operator-visible state from this batching chain:
+  - initial successful commit batch: `73` sets
+  - second successful post-deploy commit batch: `14` sets
+  - third successful post-rerun commit batch: `25` sets
+  - total committed live sets from this workflow: `112`
+- Remaining unresolved set count after this commit:
+  - `2`
+  - `2024_Topps_Finest_Football`
+  - `2026_Topps_Series_1_Baseball`
+- Important bookkeeping note:
+  - the original `119` complete-pair batch also had `5` earlier `blocked_existing_set` cases that were never part of the later `27`-failure cleanup
+  - those `5` are:
+    - `2022-23_Bowman_University_Best_Basketball`
+    - `2022-23_Bowman_University_Chrome_Basketball`
+    - `2022-23_Topps_Finest_Overtime_Elite`
+    - `2023_Bowman_Platinum_Baseball`
+    - `2023_Bowman_University_Best_Football`
+  - created `batch-imports/run-1-both-existing-5` for convenience if the operator later wants to rerun them with `--allow-existing-set`
