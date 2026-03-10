@@ -123,131 +123,6 @@ type VariantReasonParts = {
   foilScore: number | null;
 };
 
-const normalizeNullableText = (value: string | null | undefined): string | null => {
-  const text = typeof value === "string" ? value.trim() : "";
-  return text ? text : null;
-};
-
-const isJobResultSource = (value: JobResultSource | null): value is JobResultSource => Boolean(value);
-
-const getCompPreviewUrls = (comp: JobResultComp) => {
-  const screenshotUrl = normalizeNullableText(comp.screenshotUrl);
-  const listingImageUrl = normalizeNullableText(comp.listingImageUrl);
-  return {
-    primary: screenshotUrl ?? listingImageUrl,
-    fallback:
-      screenshotUrl && listingImageUrl && screenshotUrl !== listingImageUrl
-        ? listingImageUrl
-        : null,
-  };
-};
-
-const normalizePatternMatch = (value: unknown): JobResultComp["patternMatch"] => {
-  if (!value || typeof value !== "object") {
-    return undefined;
-  }
-  const raw = value as Record<string, unknown>;
-  const tier = raw.tier;
-  if (
-    typeof raw.score !== "number" ||
-    typeof raw.distance !== "number" ||
-    typeof raw.colorDistance !== "number" ||
-    (tier !== "verified" && tier !== "likely" && tier !== "weak" && tier !== "none")
-  ) {
-    return undefined;
-  }
-  return {
-    score: raw.score,
-    distance: raw.distance,
-    colorDistance: raw.colorDistance,
-    tier,
-  };
-};
-
-const normalizeJobResultComp = (value: unknown): JobResultComp | null => {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const raw = value as Record<string, unknown>;
-  const url = normalizeNullableText(typeof raw.url === "string" ? raw.url : null);
-  if (!url) {
-    return null;
-  }
-  const screenshotUrl =
-    normalizeNullableText(typeof raw.screenshotUrl === "string" ? raw.screenshotUrl : null) ??
-    normalizeNullableText(typeof raw.thumbnail === "string" ? raw.thumbnail : null) ??
-    normalizeNullableText(typeof raw.imageUrl === "string" ? raw.imageUrl : null) ??
-    "";
-  const listingImageUrl =
-    normalizeNullableText(typeof raw.listingImageUrl === "string" ? raw.listingImageUrl : null) ??
-    normalizeNullableText(typeof raw.thumbnail === "string" ? raw.thumbnail : null) ??
-    normalizeNullableText(typeof raw.imageUrl === "string" ? raw.imageUrl : null);
-
-  return {
-    source: normalizeNullableText(typeof raw.source === "string" ? raw.source : null) ?? "ebay_sold",
-    title: normalizeNullableText(typeof raw.title === "string" ? raw.title : null),
-    url,
-    price: normalizeNullableText(typeof raw.price === "string" ? raw.price : null),
-    soldDate: normalizeNullableText(typeof raw.soldDate === "string" ? raw.soldDate : null),
-    screenshotUrl,
-    listingImageUrl,
-    notes: normalizeNullableText(typeof raw.notes === "string" ? raw.notes : null),
-    patternMatch: normalizePatternMatch(raw.patternMatch),
-  };
-};
-
-const normalizeBytebotJob = (value: unknown): BytebotJob | null => {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-  const raw = value as Record<string, unknown>;
-  const id = normalizeNullableText(typeof raw.id === "string" ? raw.id : null);
-  const status = normalizeNullableText(typeof raw.status === "string" ? raw.status : null);
-  const searchQuery = normalizeNullableText(typeof raw.searchQuery === "string" ? raw.searchQuery : null);
-  if (!id || !status || !searchQuery) {
-    return null;
-  }
-
-  const rawSources =
-    raw.result && typeof raw.result === "object" && Array.isArray((raw.result as Record<string, unknown>).sources)
-      ? ((raw.result as Record<string, unknown>).sources as unknown[])
-      : [];
-
-  const sources = rawSources
-    .map((source) => {
-      if (!source || typeof source !== "object") {
-        return null;
-      }
-      const record = source as Record<string, unknown>;
-      const sourceId = normalizeNullableText(typeof record.source === "string" ? record.source : null);
-      if (!sourceId) {
-        return null;
-      }
-      const normalizedSource: JobResultSource = {
-        source: sourceId,
-        searchUrl: normalizeNullableText(typeof record.searchUrl === "string" ? record.searchUrl : null) ?? "",
-        searchScreenshotUrl:
-          normalizeNullableText(typeof record.searchScreenshotUrl === "string" ? record.searchScreenshotUrl : null) ??
-          "",
-        comps: Array.isArray(record.comps)
-          ? record.comps.map(normalizeJobResultComp).filter((comp): comp is JobResultComp => Boolean(comp))
-          : [],
-        error: normalizeNullableText(typeof record.error === "string" ? record.error : null) ?? undefined,
-      };
-      return normalizedSource;
-    })
-    .filter(isJobResultSource);
-
-  return {
-    id,
-    status,
-    searchQuery,
-    result: {
-      sources,
-    },
-  };
-};
-
 const parseVariantReason = (reason: string | null | undefined): VariantReasonParts => {
   if (!reason) {
     return { mode: "unknown", foilScore: null };
@@ -989,7 +864,7 @@ export default function KingsReview() {
           return;
         }
         const data = await res.json();
-        const nextJob = normalizeBytebotJob(data.job);
+        const nextJob = data.job ?? null;
         setJob(nextJob);
         if (nextJob?.searchQuery) {
           setQuery(nextJob.searchQuery);
@@ -1045,7 +920,7 @@ export default function KingsReview() {
           return;
         }
         const data = await res.json();
-        const nextJob = normalizeBytebotJob(data.job);
+        const nextJob = data.job ?? null;
         if (nextJob) {
           setJob(nextJob);
           if (nextJob.id !== lastJobIdRef.current) {
@@ -1630,7 +1505,7 @@ export default function KingsReview() {
         throw new Error("Failed to enqueue job");
       }
       const data = await res.json();
-      setJob(normalizeBytebotJob(data.job));
+      setJob(data.job ?? null);
       setActiveSource(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to enqueue job");
@@ -1670,7 +1545,7 @@ export default function KingsReview() {
         throw new Error("Failed to regenerate comps");
       }
       const data = await res.json();
-      setJob(normalizeBytebotJob(data.job));
+      setJob(data.job ?? null);
       setActiveSource(null);
       setError("Comps regeneration queued.");
     } catch (err) {
@@ -2786,7 +2661,6 @@ export default function KingsReview() {
                 {comps.map((comp, index) => {
                   const compAttached = attachedCompKeys.has(normalizeCompUrl(comp.url));
                   const isExpanded = activeCompIndex === index;
-                  const compPreview = getCompPreviewUrls(comp);
                   return (
                     <button
                       key={`${comp.url}-${index}`}
@@ -2811,23 +2685,13 @@ export default function KingsReview() {
                       {isExpanded ? (
                         <div className="grid h-full grid-rows-[1fr_auto] gap-3 text-white">
                           <div className="mx-auto w-full max-w-[300px] overflow-hidden rounded-xl border border-white/20 bg-black">
-                            {compPreview.primary && (
+                            {(comp.listingImageUrl || comp.screenshotUrl) && (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img
-                                src={compPreview.primary}
+                                src={comp.listingImageUrl ?? comp.screenshotUrl}
                                 alt={comp.title ?? "Comp"}
                                 className="h-full w-full object-contain p-2"
                                 referrerPolicy="no-referrer"
-                                data-fallback-src={compPreview.fallback ?? ""}
-                                onError={(event) => {
-                                  const fallbackSrc = event.currentTarget.dataset.fallbackSrc ?? "";
-                                  if (fallbackSrc && event.currentTarget.src !== fallbackSrc) {
-                                    event.currentTarget.src = fallbackSrc;
-                                    event.currentTarget.dataset.fallbackSrc = "";
-                                    return;
-                                  }
-                                  event.currentTarget.style.display = "none";
-                                }}
                               />
                             )}
                           </div>
@@ -2885,23 +2749,13 @@ export default function KingsReview() {
                       ) : (
                         <div className="grid h-full grid-cols-[96px_1fr] gap-3 sm:grid-cols-[120px_1fr]">
                           <div className="mx-auto h-full w-full max-w-[96px] overflow-hidden rounded-xl border border-white/20 bg-black sm:max-w-[120px]">
-                            {compPreview.primary && (
+                            {(comp.listingImageUrl || comp.screenshotUrl) && (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img
-                                src={compPreview.primary}
+                                src={comp.listingImageUrl ?? comp.screenshotUrl}
                                 alt={comp.title ?? "Comp"}
                                 className="h-full w-full object-contain p-3"
                                 referrerPolicy="no-referrer"
-                                data-fallback-src={compPreview.fallback ?? ""}
-                                onError={(event) => {
-                                  const fallbackSrc = event.currentTarget.dataset.fallbackSrc ?? "";
-                                  if (fallbackSrc && event.currentTarget.src !== fallbackSrc) {
-                                    event.currentTarget.src = fallbackSrc;
-                                    event.currentTarget.dataset.fallbackSrc = "";
-                                    return;
-                                  }
-                                  event.currentTarget.style.display = "none";
-                                }}
                               />
                             )}
                           </div>

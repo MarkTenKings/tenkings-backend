@@ -6,13 +6,7 @@ import { readTaxonomyV2Flags } from "../../../../lib/server/taxonomyV2Flags";
 import { resolveScopedParallelToken, resolveTaxonomyProgramAndVariation } from "../../../../lib/server/taxonomyV2Core";
 
 const normalizeWhitespace = (value: unknown): string =>
-  typeof value === "string"
-    ? value
-        .replace(/_/g, " ")
-        .replace(/\s*([/-])\s*/g, "$1")
-        .replace(/\s+/g, " ")
-        .trim()
-    : "";
+  typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 
 const normalizeTokenKey = (value: string): string =>
   value

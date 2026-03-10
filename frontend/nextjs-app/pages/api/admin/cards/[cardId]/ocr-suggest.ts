@@ -2457,62 +2457,14 @@ async function constrainTaxonomyFields(params: {
     setId: explicitSetId,
   });
 
-  const inferUniqueSetIdFromOption = (
-    rawValue: string | null,
-    options: Array<{ label: string; setIds: string[] }>
-  ): string | null => {
-    if (!rawValue || options.length < 1) {
-      return null;
-    }
-    const resolvedLabel = resolveCanonicalOption(
-      options.map((entry) => entry.label),
-      rawValue,
-      0.9
-    );
-    if (!resolvedLabel) {
-      return null;
-    }
-    const matchedOption = options.find(
-      (entry) =>
-        normalizeVariantLabelKey(entry.label) ===
-        normalizeVariantLabelKey(resolvedLabel)
-    );
-    if (!matchedOption) {
-      return null;
-    }
-    const uniqueSetIds = Array.from(
-      new Set(matchedOption.setIds.map((setId) => sanitizeText(setId)).filter(Boolean))
-    );
-    return uniqueSetIds.length === 1 ? uniqueSetIds[0] : null;
-  };
-
   const setOptions = pool.sets.map((entry) => entry.setId);
   let selectedSetId = pool.selectedSetId ?? null;
-  if (!selectedSetId) {
-    const inferredSetIds = Array.from(
-      new Set(
-        [
-          inferUniqueSetIdFromOption(
-            coerceNullableString(fields.insertSet),
-            pool.insertOptions
-          ),
-          inferUniqueSetIdFromOption(
-            coerceNullableString(fields.parallel),
-            pool.parallelOptions
-          ),
-        ].filter(Boolean)
-      )
-    );
-    if (inferredSetIds.length === 1) {
-      selectedSetId = inferredSetIds[0] ?? null;
-    }
-  }
 
   const setConfidence = confidence.setName;
   const rawSetName = coerceNullableString(fields.setName);
   if (selectedSetId) {
     fields.setName = selectedSetId;
-    confidence.setName = Math.max(confidence.setName ?? 0, rawSetName ? 0.99 : 0.93);
+    confidence.setName = Math.max(confidence.setName ?? 0, 0.99);
     fieldStatus.setName = "kept";
   } else if (!rawSetName || setConfidence == null || setConfidence < TAXONOMY_FIELD_THRESHOLD.setName) {
     fields.setName = null;
@@ -2628,14 +2580,6 @@ function normalizeForNumbered(input: string): string {
     .replace(/[IL](?=\d)/g, "1")
     .replace(/(?<=\d)S/g, "5")
     .replace(/S(?=\d)/g, "5");
-}
-
-function isSeasonStyleNumbered(value: string | null | undefined): boolean {
-  const normalized = String(value || "").replace(/\s+/g, "");
-  if (!normalized) {
-    return false;
-  }
-  return /^(19|20)\d{2}[/-](\d{2}|\d{4})$/i.test(normalized);
 }
 
 function readHeaderFirst(value: string | string[] | undefined): string {
@@ -2898,7 +2842,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     if (!fields.numbered) {
       const numberedMatch = normalizedNumberedText.match(/\b\d{1,4}\s*\/\s*\d{1,4}\b/);
-      if (numberedMatch && !isSeasonStyleNumbered(numberedMatch[0])) {
+      if (numberedMatch) {
         fields.numbered = numberedMatch[0].replace(/\s+/g, "");
         confidence.numbered = 0.9;
       }
@@ -3240,7 +3184,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
     // Numbered serials must be grounded in OCR text; never keep hallucinated or memory-only values.
     const explicitNumberedMatch = normalizedNumberedText.match(/\b\d{1,4}\s*\/\s*\d{1,4}\b/);
-    if (explicitNumberedMatch && !isSeasonStyleNumbered(explicitNumberedMatch[0])) {
+    if (explicitNumberedMatch) {
       const canonical = explicitNumberedMatch[0].replace(/\s+/g, "");
       if (!fields.numbered || normalizeForNumbered(fields.numbered) !== normalizeForNumbered(canonical)) {
         fields.numbered = canonical;
