@@ -8953,3 +8953,72 @@
   - set `OPERATOR_API_KEY` as a server-only variable
   - remove `NEXT_PUBLIC_OPERATOR_KEY`
 - After deploy, verify that the browser bundle no longer contains the old operator key.
+
+## 2026-03-10 - Security patch deployed; wallet-service recreate planned
+
+### Summary
+- User reported the Vercel deploy step completed for commit `39297c4` on `main`.
+- This deploy carries the local browser-side operator-key removal patch from the prior entry.
+- No droplet restart/recreate has been run yet in this step.
+
+### Deploy Evidence
+- Current local branch: `main`
+- Current local HEAD: `39297c4`
+- Recent log:
+  - `39297c4 fix(security): remove browser operator key exposure`
+  - `0dea0d8 Revert "fix(card-workflow): repair kingsreview comps and set inference"`
+
+### Planned Next Action
+- Recreate only `wallet-service` on the droplet so the edited env file is reloaded:
+  - `/root/tenkings-backend/env/wallet-service.env`
+- Intended scope is limited to `wallet-service`; no broader compose recreate is planned.
+- Recommended command sequence for the operator:
+  - `ssh root@104.131.27.245`
+  - `cd /root/tenkings-backend/infra`
+  - `docker compose up -d --force-recreate wallet-service`
+  - `docker compose ps wallet-service`
+  - `docker compose logs --tail=50 wallet-service`
+
+## 2026-03-10 - wallet-service recreated with rotated operator key
+
+### Summary
+- User ran the targeted recreate for `wallet-service` after updating `/root/tenkings-backend/env/wallet-service.env`.
+- Service came back healthy and the public health endpoint responded successfully.
+
+### Observed Evidence
+- `docker compose ps wallet-service`
+  - container: `infra-wallet-service-1`
+  - status: `Up`
+  - port mapping: `0.0.0.0:8081->8080/tcp`
+- `docker compose logs --tail=50 wallet-service`
+  - `(wallet-service) listening on port 8080`
+- `curl -s https://wallet.api.tenkings.co/health`
+  - `{"status":"ok","service":"wallet-service"}`
+
+### Notes
+- Compose emitted a non-blocking warning that `version` in `infra/docker-compose.yml` is obsolete and ignored.
+- No broader service restart was performed; scope remained limited to `wallet-service`.
+
+## 2026-03-10 - Fix admin session validation to use auth-service fallback
+
+### Summary
+- User reported Add Card capture failing with `A captured card could not be queued: Session not found`.
+- Root cause was in `frontend/nextjs-app/lib/server/admin.ts`: `requireAdminSession` only checked the local `session` table, while user-session paths already fall back to `auth-service` via `/auth/session`.
+- After the browser-side operator-key bypass was removed, Add Card queue/finalize calls began relying on bearer auth and exposed that mismatch.
+
+### Code Changes
+- Updated `frontend/nextjs-app/lib/server/admin.ts` to:
+  - resolve the auth-service base URL the same way `lib/server/session.ts` does
+  - call `/auth/session` with the bearer token before falling back to the local Prisma session lookup
+  - preserve the existing admin privilege checks after auth-service lookup succeeds
+- Operator-key server fallback remains intact.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/admin.ts --file lib/server/session.ts --file pages/admin/uploads.tsx`
+  - pass with existing `pages/admin/uploads.tsx` `@next/next/no-img-element` warnings only
+- Validation ran under local Node `v25.6.1`; repo target remains `20.x`
+
+### Next Step
+- Deploy the Next.js patch so admin routes use the auth-service fallback in production.

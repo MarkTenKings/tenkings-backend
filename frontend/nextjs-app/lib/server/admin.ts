@@ -22,6 +22,37 @@ class HttpError extends Error {
   }
 }
 
+const trimTrailingSlash = (value: string) => value.replace(/\/$/, "");
+
+const resolveAuthServiceUrl = (): string | null => {
+  const explicit = process.env.AUTH_SERVICE_URL ?? process.env.NEXT_PUBLIC_AUTH_SERVICE_URL;
+  if (explicit && explicit.trim()) {
+    return trimTrailingSlash(explicit.trim());
+  }
+
+  const apiBase = process.env.TENKINGS_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_BASE_URL;
+  if (apiBase && apiBase.trim()) {
+    return `${trimTrailingSlash(apiBase.trim())}/auth`;
+  }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? process.env.SITE_URL;
+  if (siteUrl && siteUrl.trim()) {
+    return `${trimTrailingSlash(siteUrl.trim())}/auth`;
+  }
+
+  return null;
+};
+
+const AUTH_SERVICE_URL = resolveAuthServiceUrl();
+
+const buildAuthUrl = (path: string) => {
+  if (!AUTH_SERVICE_URL) {
+    return null;
+  }
+  const suffix = path.startsWith("/") ? path : `/${path}`;
+  return `${AUTH_SERVICE_URL}${suffix}`;
+};
+
 const extractToken = (req: NextApiRequest): string => {
   const header = req.headers.authorization ?? "";
   const [scheme, token] = header.trim().split(/\s+/);
@@ -30,6 +61,62 @@ const extractToken = (req: NextApiRequest): string => {
   }
   return token.trim();
 };
+
+async function lookupViaAuthService(token: string): Promise<AdminSession | null> {
+  const url = buildAuthUrl("/session");
+  if (!url) {
+    return null;
+  }
+
+  try {
+    const response = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (response.status === 401 || response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      const message = await response.text().catch(() => "Auth service error");
+      console.warn("[admin] auth service returned non-ok status", {
+        status: response.status,
+        message,
+      });
+      return null;
+    }
+
+    const payload = (await response.json()) as {
+      session?: {
+        id?: string;
+        tokenHash?: string;
+        user?: {
+          id?: string;
+          phone?: string | null;
+          displayName?: string | null;
+        };
+      };
+    };
+
+    if (!payload?.session?.id || !payload.session.tokenHash || !payload.session.user?.id) {
+      console.warn("[admin] auth service returned invalid session payload");
+      return null;
+    }
+
+    return {
+      sessionId: payload.session.id,
+      tokenHash: payload.session.tokenHash,
+      user: {
+        id: payload.session.user.id,
+        phone: payload.session.user.phone ?? null,
+        displayName: payload.session.user.displayName ?? null,
+      },
+    };
+  } catch (error) {
+    console.warn("[admin] auth service lookup threw", error);
+    return null;
+  }
+}
 
 export async function requireAdminSession(req: NextApiRequest): Promise<AdminSession> {
   const operatorKeyHeader = req.headers["x-operator-key"];
@@ -72,6 +159,17 @@ export async function requireAdminSession(req: NextApiRequest): Promise<AdminSes
   }
 
   const token = extractToken(req);
+  const viaAuthService = await lookupViaAuthService(token);
+  if (viaAuthService) {
+    const adminById = hasAdminAccess(viaAuthService.user.id);
+    const adminByPhone = hasAdminPhoneAccess(viaAuthService.user.phone);
+
+    if (!adminById && !adminByPhone) {
+      throw new HttpError(403, "Admin privileges required");
+    }
+
+    return viaAuthService;
+  }
   const hash = createHash("sha256").update(token).digest("hex");
 
   const session = await prisma.session.findUnique({

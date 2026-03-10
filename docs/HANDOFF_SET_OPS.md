@@ -4854,3 +4854,45 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/adminHeaders.ts --file lib/api.ts --file hooks/useSession.tsx --file pages/wallet.tsx --file 'pages/api/admin/wallets/[userId].ts'`
     - pass with pre-existing `hooks/useSession.tsx` hook warnings only
 - No deploy, restart, migration, or DB mutation commands were run in this step.
+
+## Session Update (2026-03-10, security patch deployed; wallet-service recreate planned)
+- User reported the workstation commit/push deploy step completed.
+- Current local repo state for the deployed patch:
+  - branch: `main`
+  - HEAD: `39297c4`
+  - commit subject: `fix(security): remove browser operator key exposure`
+- Next planned operational step:
+  - recreate only `wallet-service` on the droplet so `/root/tenkings-backend/env/wallet-service.env` is reloaded with the new `OPERATOR_API_KEY`
+- Recommended operator commands for that step:
+  - `ssh root@104.131.27.245`
+  - `cd /root/tenkings-backend/infra`
+  - `docker compose up -d --force-recreate wallet-service`
+  - `docker compose ps wallet-service`
+  - `docker compose logs --tail=50 wallet-service`
+- No droplet recreate/restart command has been run yet in this session.
+
+## Session Update (2026-03-10, wallet-service recreated successfully)
+- User recreated only `wallet-service` on the droplet after updating `/root/tenkings-backend/env/wallet-service.env`.
+- Observed result:
+  - `docker compose ps wallet-service`
+    - `infra-wallet-service-1` up with `0.0.0.0:8081->8080/tcp`
+  - `docker compose logs --tail=50 wallet-service`
+    - `(wallet-service) listening on port 8080`
+  - `curl -s https://wallet.api.tenkings.co/health`
+    - `{"status":"ok","service":"wallet-service"}`
+- Compose printed a non-blocking warning that the `version` attribute in `infra/docker-compose.yml` is obsolete.
+- No other services were restarted in this step.
+
+## Session Update (2026-03-10, Add Card session lookup fix staged locally)
+- User reported Add Card failing with `A captured card could not be queued: Session not found`.
+- Root cause identified in `frontend/nextjs-app/lib/server/admin.ts`:
+  - admin routes were checking only the local Prisma `session` table
+  - user-session paths already consult `auth-service` via `/auth/session`
+  - after removing browser-side operator-key auth, Add Card queue/finalize calls now correctly depend on bearer session validation and hit that mismatch
+- Local patch added auth-service fallback to `requireAdminSession` before the local DB lookup, while preserving existing admin privilege checks.
+- Local validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+    - pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/admin.ts --file lib/server/session.ts --file pages/admin/uploads.tsx`
+    - pass with existing `pages/admin/uploads.tsx` image warnings only
+- No deploy was run for this fix in this step.
