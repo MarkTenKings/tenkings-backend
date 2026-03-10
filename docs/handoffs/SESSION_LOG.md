@@ -9106,3 +9106,60 @@
 ### Next Step
 - Deploy the Next.js app for the query/UI fixes.
 - Rebuild/restart `bytebot-lite-service` on the backend so new eBay jobs carry image URLs again.
+
+## 2026-03-10 - Review-only: compare KingsReview comp images vs reference seeding image path
+
+### Summary
+- User reported that, after deploying the latest KingsReview query/image patch, eBay comps still load without visible images.
+- This step was review-only: no code or runtime actions were taken.
+
+### Findings From Existing Docs + Current Code
+- Older handoff docs show the robust reference-seeding image path was explicitly upgraded on 2026-03-05 to a 2-step SerpApi flow:
+  1. `engine=ebay` search for candidate listings
+  2. `engine=ebay_product` per `product_id` to fetch `product_results.media` images
+- Current reference-seeding code still follows that pattern in `frontend/nextjs-app/lib/server/referenceSeed.ts`:
+  - `firstProductImageUrl(...)`
+  - `rawImageUrl = firstProductImageUrl(payload)` after `engine=ebay_product`
+- Older docs also explicitly record that eBay search payloads are unreliable for image fields and often require broader fallback keys:
+  - `thumbnail`, `thumbnails`, `thumbnail_images`, `image`, `main_image`, `original_image`, `image_url`, `img`, `gallery_url`
+- Current KingsReview sold-comp worker path in `backend/bytebot-lite-service/src/sources/ebay.ts` does broaden search-result field extraction, but it still does not use the reference-seeding 2-step `ebay -> ebay_product` image-resolution path.
+- Current KingsReview UI in `frontend/nextjs-app/pages/admin/kingsreview.tsx` now again includes payload normalization and image fallback handling, so if fresh jobs still show no images, the likely remaining gap is upstream worker image resolution rather than the UI renderer.
+
+### Conclusion
+- The old docs point to a stronger image-acquisition pattern than the current KingsReview sold-comp path uses.
+- Reference seeding’s reliable behavior comes from per-candidate `ebay_product` lookups and selecting product-media images, not from trusting search-result thumbnails alone.
+- If production still shows blank images after the latest deploy on freshly regenerated jobs, the most likely remaining fix is to align KingsReview sold-comp image acquisition with the same 2-step image-resolution approach already proven in reference seeding.
+
+## 2026-03-10 - Implement surgical KingsReview sold-comp `ebay_product` image resolution
+
+### Summary
+- User approved a slow, surgical implementation of the worker-only image fix.
+- Scope was intentionally limited to the sold-comp fetch path in `backend/bytebot-lite-service/src/sources/ebay.ts`.
+
+### Changes Made
+- Added `parseEbayListingId(...)` and `parseSerpProductId(...)` so each SerpApi eBay sold result can derive a stable product lookup id from:
+  - `product_id`
+  - `serpapi_link`
+  - `link`
+- Added `firstProductMediaImageUrl(...)` and `firstProductImageUrl(...)` helpers, mirroring the proven reference-seeding image-selection path.
+- Added a small `fetchEbayProductImageUrl(...)` lookup that calls SerpApi with:
+  - `engine=ebay_product`
+  - `product_id=<derived product/listing id>`
+- Updated sold-comp assembly so each comp now:
+  - prefers the resolved `ebay_product` media image
+  - falls back to the original search-result image field extraction if product media is unavailable
+- Kept query generation, Next.js API routes, and KingsReview UI untouched in this step.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/bytebot-lite-service build`
+  - pass
+- Validation ran under local Node `v25.6.1`; repo target remains `20.x`
+
+### Runtime Status
+- No deploy, restart, or migration was run in this step.
+
+### Next Step
+- If user chooses to ship this fix:
+  - commit/push the worker change
+  - rebuild/recreate `bytebot-lite-service`
+  - regenerate affected KingsReview comps, because existing jobs will not gain missing image URLs retroactively

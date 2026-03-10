@@ -4942,3 +4942,32 @@ Build Set Ops UI flow with:
 - Important ops note:
   - the query/UI part is a Next.js deploy
   - the image extraction part also requires rebuilding/restarting `bytebot-lite-service` on the backend before new jobs will carry comp image URLs again
+
+## Session Update (2026-03-10, review-only comparison: KingsReview comp images vs reference seeding)
+- User reported that even after the latest deploy, eBay comps still render without visible images.
+- Review-only finding from old handoff docs plus current code:
+  - reference seeding’s stable image path was upgraded on 2026-03-05 to a 2-step SerpApi flow:
+    - `engine=ebay` search
+    - `engine=ebay_product` per `product_id`
+    - select `product_results.media` image via `firstProductImageUrl(...)`
+  - current KingsReview sold-comp path still relies on `engine=ebay` search-result image fields, even though it now checks more alternate keys
+  - current KingsReview UI already has fallback rendering again, so persistent blank images on fresh jobs point more strongly at worker-side image acquisition than UI rendering
+- Conclusion:
+  - the older docs suggest the proven fix pattern is to align KingsReview sold-comp image acquisition with the same `ebay -> ebay_product` detail-image resolution used by reference seeding
+- No code/deploy/restart/migration action was taken in this step.
+
+## Session Update (2026-03-10, staged worker-only KingsReview `ebay_product` image lookup)
+- User approved the surgical worker-side fix after review confirmed the remaining gap was upstream image acquisition, not the UI.
+- Local code change is limited to `backend/bytebot-lite-service/src/sources/ebay.ts`:
+  - adds `parseEbayListingId(...)` / `parseSerpProductId(...)` helpers so each sold-comp candidate carries a stable product lookup id
+  - adds `firstProductMediaImageUrl(...)` / `firstProductImageUrl(...)` helpers modeled on reference seeding
+  - adds a small per-request `ebay_product` image lookup path with in-memory caching
+  - now prefers `ebay_product` media images for `listingImageUrl` and falls back to the original search-result image fields only when product media is unavailable
+- Local validation:
+  - `pnpm --filter @tenkings/bytebot-lite-service build`
+    - pass
+- No deploy or restart was run in this step.
+- Next required runtime action, if user wants to ship it:
+  - deploy/push the code
+  - rebuild/recreate `bytebot-lite-service`
+  - regenerate comps for affected KingsReview cards because old jobs will not backfill missing image URLs automatically
