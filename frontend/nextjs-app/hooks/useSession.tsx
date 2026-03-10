@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { requestLoginCode, verifyLoginCode, setAuthToken, fetchProfile, fetchWallet } from "../lib/api";
+import { requestLoginCode, verifyLoginCode, setAuthToken, fetchProfile } from "../lib/api";
 import AuthModal from "../components/AuthModal";
 
 export interface SessionPayload {
@@ -164,25 +164,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   const tryHydrateWallet = useCallback(
     async (userId: string, token?: string | null) => {
-      if (!userId) {
-        return null;
-      }
-
-      try {
-        const viaService = await fetchWallet(userId);
-        if (viaService?.wallet) {
-          return {
-            id: viaService.wallet.id,
-            balance: normalizeBalance(viaService.wallet.balance),
-          };
-        }
-      } catch (error) {
-        if (process.env.NODE_ENV !== "production") {
-          console.warn("wallet hydrate via service failed", error);
-        }
-      }
-
-      if (!token) {
+      if (!userId || !token) {
         return null;
       }
 

@@ -1,7 +1,7 @@
 import Head from "next/head";
 import { FormEvent, useState } from "react";
 import AppShell from "../components/AppShell";
-import { creditWallet, debitWallet, fetchWallet } from "../lib/api";
+import { buildAdminHeaders } from "../lib/adminHeaders";
 import { useSession } from "../hooks/useSession";
 import { formatTkd } from "../lib/formatters";
 
@@ -14,13 +14,27 @@ export default function Wallet() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const loadOperatorWallet = async (token: string, targetUserId: string) => {
+    const response = await fetch(`/api/admin/wallets/${encodeURIComponent(targetUserId)}`, {
+      headers: buildAdminHeaders(token),
+    });
+
+    const payload = (await response.json().catch(() => null)) as { wallet?: any; message?: string } | null;
+    if (!response.ok) {
+      throw new Error(payload?.message ?? "Unable to load wallet");
+    }
+
+    return payload?.wallet ?? null;
+  };
+
   const loadWallet = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
     try {
       setLoading(true);
-      const data = await fetchWallet(userId);
-      setWallet(data.wallet);
+      const activeSession = session ?? (await ensureSession());
+      const nextWallet = await loadOperatorWallet(activeSession.token, userId);
+      setWallet(nextWallet);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load wallet");
     } finally {
@@ -33,14 +47,22 @@ export default function Wallet() {
     setError(null);
     try {
       setLoading(true);
-      const payload = { amount: Number(amount), note: note || undefined };
-      if (kind === "credit") {
-        await creditWallet(userId, payload);
-      } else {
-        await debitWallet(userId, payload);
+      const activeSession = session ?? (await ensureSession());
+      const response = await fetch(`/api/admin/wallets/${encodeURIComponent(userId)}`, {
+        method: "POST",
+        headers: buildAdminHeaders(activeSession.token, { "Content-Type": "application/json" }),
+        body: JSON.stringify({
+          action: kind,
+          amount: Number(amount),
+          note: note || undefined,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) {
+        throw new Error(payload?.message ?? "Unable to update wallet");
       }
-      const data = await fetchWallet(userId);
-      setWallet(data.wallet);
+      const nextWallet = await loadOperatorWallet(activeSession.token, userId);
+      setWallet(nextWallet);
       setAmount("");
       setNote("");
     } catch (err) {

@@ -24,8 +24,6 @@ const serviceOrigins: Record<string, string> = {
 
 const fallbackBase = trimTrailingSlash(process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost");
 
-const operatorKey = process.env.NEXT_PUBLIC_OPERATOR_KEY;
-
 let authToken: string | null = null;
 
 export function setAuthToken(token: string | null) {
@@ -47,9 +45,6 @@ async function handle<T>(input: RequestInfo, init: RequestOptions = {}): Promise
   if (authToken && !init.skipAuth) {
     headers.set("Authorization", `Bearer ${authToken}`);
   }
-  if (operatorKey) {
-    headers.set("X-Operator-Key", operatorKey);
-  }
   const res = await fetch(input, { ...init, headers });
   if (!res.ok) {
     const message = await res.text();
@@ -63,26 +58,6 @@ export async function createUser(body: { email: string; displayName?: string }) 
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
-}
-
-export async function fetchWallet(userId: string) {
-  return handle<{ wallet: any }>(service(`wallet/wallets/${userId}`));
-}
-
-export async function creditWallet(userId: string, payload: { amount: number; note?: string; source?: string }) {
-  return handle(service(`wallet/wallets/${userId}/credit`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function debitWallet(userId: string, payload: { amount: number; note?: string; source?: string }) {
-  return handle(service(`wallet/wallets/${userId}/debit`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
   });
 }
 

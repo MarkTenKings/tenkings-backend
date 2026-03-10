@@ -4773,3 +4773,84 @@ Build Set Ops UI flow with:
 - Important operational note:
   - these fixes are local only until the user commits, pushes, and Vercel deploys `main`
   - do not rerun the final MLB parallel batch against production until that deploy completes
+
+## Session Update (2026-03-10, AGENTS startup context sync + repo state)
+- Re-read the mandatory startup docs listed in `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Observed workstation git state before this doc append:
+  - branch: `main`
+  - HEAD: `0dea0d8`
+  - `git status -sb` showed:
+    - modified: `docs/handoffs/SESSION_LOG.md`
+    - untracked: `batch-imports/`
+    - untracked: `logs/`
+- No code/runtime changes, deploys, restarts, migrations, or DB operations were executed in this step.
+
+## Session Update (2026-03-10, prod incident triage shows admin/runtime alive)
+- Re-read the mandatory startup docs listed in `AGENTS.md` before incident work.
+- Current workstation repo state during this triage:
+  - branch: `main`
+  - HEAD: `0dea0d8`
+- Live runtime evidence collected directly against production:
+  - `https://collect.tenkings.co/` returned `200`
+  - `https://collect.tenkings.co/admin` returned `200`
+  - `https://collect.tenkings.co/admin/kingsreview` returned `200`
+  - current Next build ID in rendered HTML: `EzH34_SwVq585PN6nGXCP`
+  - `GET /api/admin/set-ops/access` without auth returned expected `401 {"message":"Missing or invalid Authorization header"}`
+  - `https://auth.api.tenkings.co/health` returned `200`
+  - `https://auth.api.tenkings.co/profile` without auth returned expected `401`
+  - `https://wallet.api.tenkings.co/health` returned `200`
+- Additional admin-runtime verification using the operator-key path already embedded in the deployed browser bundle:
+  - `GET /api/admin/set-ops/access` returned `200` with full permissions for the configured operator user
+  - `GET /api/admin/kingsreview/jobs` returned normal validation `400` (`jobId or cardAssetId is required`), not a crash
+  - `GET /api/admin/kingsreview/cards?stage=READY_FOR_HUMAN_REVIEW&limit=1` returned `200` with live queue data
+  - `GET /api/admin/uploads/ocr-queue?limit=1` returned `200` with live OCR queue data
+- Operational interpretation:
+  - current runtime evidence does **not** support “entire website is down”
+  - current runtime evidence does **not** support “admin backend is down”
+  - if the operator still sees failure, it is more likely:
+    - signed-in browser state/session-specific
+    - a specific UI interaction path
+    - a transient incident that has already cleared
+- High-severity security note:
+  - the deployed client bundle currently includes `NEXT_PUBLIC_OPERATOR_KEY` and sends `X-Operator-Key` from browser requests
+  - this should be treated as a separate security issue from the outage investigation
+- No deploy, restart, migration, or DB mutation commands were run in this triage step.
+
+## Session Update (2026-03-10, user confirmed site recovered)
+- User reported that the website is back up and working again.
+- Combined with the earlier live runtime checks in this session, current evidence points to:
+  - a transient incident, or
+  - a browser/session-specific issue that cleared
+- No new deploy, restart, migration, or DB mutation commands were run in response to this confirmation.
+- Highest-priority follow-up remains:
+  - investigate the exposed browser-side operator key
+  - capture exact browser console/network evidence if the issue recurs
+
+## Session Update (2026-03-10, browser-side operator key removal staged locally)
+- Security fix staged locally to stop exposing the operator key in browser code.
+- Client-side changes:
+  - removed `NEXT_PUBLIC_OPERATOR_KEY` usage from:
+    - `frontend/nextjs-app/lib/adminHeaders.ts`
+    - `frontend/nextjs-app/lib/api.ts`
+  - session wallet hydration now uses `/api/wallet/me` instead of direct browser calls to the wallet service
+- Added server-side admin wallet proxy route:
+  - `frontend/nextjs-app/pages/api/admin/wallets/[userId].ts`
+  - uses `requireAdminSession`
+  - supports operator wallet lookup and adjustment without any browser-side operator key
+- Updated operator wallet page:
+  - `frontend/nextjs-app/pages/wallet.tsx`
+  - now calls the new server route instead of direct wallet-service endpoints
+- Env example updated:
+  - removed `NEXT_PUBLIC_OPERATOR_KEY`
+  - added server-only `OPERATOR_API_KEY`
+- Local validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+    - pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/adminHeaders.ts --file lib/api.ts --file hooks/useSession.tsx --file pages/wallet.tsx --file 'pages/api/admin/wallets/[userId].ts'`
+    - pass with pre-existing `hooks/useSession.tsx` hook warnings only
+- No deploy, restart, migration, or DB mutation commands were run in this step.
