@@ -9163,3 +9163,84 @@
   - commit/push the worker change
   - rebuild/recreate `bytebot-lite-service`
   - regenerate affected KingsReview comps, because existing jobs will not gain missing image URLs retroactively
+
+## 2026-03-10 - Review-only: plan split between fast KingsReview thumbnails and HD inventory-ready seeding
+
+### Summary
+- User clarified the desired behavior:
+  - KingsReview should show fast eBay search-result thumbnails for human review
+  - only after humans select comps and click `Move To Inventory Ready` should the system fetch HD/main eBay images for durable reference seeding
+
+### Findings From Current Code
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+  - when a human attaches a sold comp, the POST to `/api/admin/kingsreview/evidence` stores the currently displayed preview URL as `cardEvidenceItem.screenshotUrl`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+  - moving a card to `INVENTORY_READY_FOR_SALE` already calls `seedTrustedReferencesFromInventoryReady({ cardAssetId })`
+- `frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts`
+  - current inventory-ready seed already iterates every attached sold comp, so multiple human-selected eBay comps can seed multiple reference rows
+  - current seed derives `rawImageUrl` from attached evidence and recent job payloads, which means the HD upgrade belongs here if the initial KingsReview fetch path goes back to thumbnails
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+  - already displays preview image, listing id, source host, source URL, and reference id for seeded reference rows
+
+### Conclusion
+- The proposed 2-stage approach fits the current flow cleanly:
+  - restore thumbnails in the KingsReview fetch worker
+  - perform the `ebay -> ebay_product` HD lookup during inventory-ready reference seeding instead
+- Multiple selected eBay comps are already supported by the seed path.
+- `variant-ref-qa` can already be used to inspect the seeded rows, but if stronger proof is desired, a small explicit marker for HD-upgraded references would help.
+
+### Runtime Status
+- No code, deploy, restart, or migration was run in this step.
+
+## 2026-03-10 - Implement split between KingsReview thumbnails and Inventory Ready HD eBay seeding
+
+### Summary
+- User approved a surgical implementation of the 2-stage image strategy.
+- Scope was limited to:
+  - the KingsReview sold-comp worker fetch path
+  - the inventory-ready reference-seed helper
+  - the Variant Ref QA display
+
+### Changes Made
+- `backend/bytebot-lite-service/src/sources/ebay.ts`
+  - removed the per-comp `engine=ebay_product` lookup from the initial KingsReview sold-comp fetch
+  - restored the fast search-result thumbnail path for KingsReview
+  - stopped rewriting search thumbnail URLs to larger `s-l1600` variants
+- `frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts`
+  - added a local `engine=ebay_product` HD lookup used only during `seedTrustedReferencesFromInventoryReady(...)`
+  - uses each attached comp’s `sourceListingId` as the product lookup id
+  - upgrades every attached eBay sold comp during inventory-ready seeding
+  - falls back to the stored thumbnail if the HD lookup fails
+- `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+  - added an eBay image badge derived from the seeded raw-image URL size (`HD 1600px`, `Thumb 140px`, etc.)
+  - added a direct raw-image link so QA can open the actual seeded image in a new tab
+
+### Behavior After This Change
+- KingsReview stage:
+  - sold comps render from fast SerpApi search-result thumbnails
+- Inventory Ready stage:
+  - attached eBay sold comps are upgraded to HD/main images before reference rows are written
+- Variant Ref QA:
+  - QA can see the seeded image tier and open the raw seeded image directly
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec eslint pages/admin/variant-ref-qa.tsx lib/server/kingsreviewReferenceLearning.ts`
+  - pass with existing `@next/next/no-img-element` warnings only
+- `pnpm --filter @tenkings/bytebot-lite-service build`
+  - pass
+- Validation ran under local Node `v25.6.1`; repo target remains `20.x`
+
+### Runtime Status
+- No deploy, restart, or migration was run in this step.
+
+### Next Step
+- If user chooses to ship this split:
+  - commit/push the Next.js and worker changes
+  - deploy the Next.js app
+  - rebuild/recreate `bytebot-lite-service`
+  - verify:
+    - KingsReview comp cards show thumbnails again
+    - `Move To Inventory Ready` seeds HD eBay refs
+    - `/admin/variant-ref-qa` shows `HD ...px` badges and the raw seeded image opens correctly

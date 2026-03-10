@@ -4971,3 +4971,49 @@ Build Set Ops UI flow with:
   - deploy/push the code
   - rebuild/recreate `bytebot-lite-service`
   - regenerate comps for affected KingsReview cards because old jobs will not backfill missing image URLs automatically
+
+## Session Update (2026-03-10, review-only architecture check for thumbnail-fast KingsReview + HD seed on Inventory Ready)
+- User wants a 2-stage image strategy:
+  - KingsReview sold comps should use fast search-result thumbnails only
+  - `Move To Inventory Ready` should upgrade the selected eBay comps to HD/main images before seeding them into reference storage
+- Code-path findings:
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+    - attaching a sold comp stores only the currently displayed preview URL into `cardEvidenceItem.screenshotUrl`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+    - moving a card to `INVENTORY_READY_FOR_SALE` already calls `seedTrustedReferencesFromInventoryReady(...)`
+  - `frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts`
+    - current seed writes every attached sold comp, so multiple selected eBay comps can already seed multiple reference rows
+    - current seed path reads image URLs back from attached evidence / recent job payloads, so it will need the HD upgrade inserted there if KingsReview returns to thumbnails
+  - `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+    - already shows preview image, listing id, source host, source URL, and reference id, which is enough to inspect seeded rows
+- Review conclusion:
+  - the user’s proposed split is compatible with current flow, but the HD lookup needs to move out of the initial KingsReview fetch path and into the inventory-ready seed path
+  - if we want explicit proof of “HD upgraded here,” `variant-ref-qa` likely needs one additional visible indicator beyond the current preview/listing/source fields
+- No code/deploy/restart was run in this step.
+
+## Session Update (2026-03-10, staged split: KingsReview thumbnails + Inventory Ready HD seed)
+- User approved implementation of the split image strategy.
+- Local code changes are limited to:
+  - `backend/bytebot-lite-service/src/sources/ebay.ts`
+    - removes the per-comp `ebay_product` lookup from the initial KingsReview sold-comp fetch
+    - keeps KingsReview on search-result thumbnail URLs only
+    - stops inflating thumbnail URLs to `s-l1600`
+  - `frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts`
+    - upgrades attached eBay sold comps to HD/main images during `seedTrustedReferencesFromInventoryReady(...)`
+    - uses `sourceListingId` as the `product_id` lookup for SerpApi `engine=ebay_product`
+    - falls back to the stored thumbnail if HD lookup fails, so seeding still proceeds
+  - `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+    - adds an eBay image badge derived from the seeded raw-image size (`HD 1600px`, `Thumb 140px`, etc.)
+    - adds a direct raw-image link so QA can open the seeded image itself in a new tab
+- Local validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+    - pass
+  - `pnpm --filter @tenkings/nextjs-app exec eslint pages/admin/variant-ref-qa.tsx lib/server/kingsreviewReferenceLearning.ts`
+    - pass with existing `@next/next/no-img-element` warnings in `pages/admin/variant-ref-qa.tsx` only
+  - `pnpm --filter @tenkings/bytebot-lite-service build`
+    - pass
+- No deploy or restart was run in this step.
+- Runtime expectation after deploy:
+  - new KingsReview jobs should show fast thumbnail comps again
+  - moving a card to Inventory Ready should seed HD/main eBay images for every attached sold comp
+  - Variant Ref QA should show those seeded refs with an HD badge plus an `Open HD Image` / raw-image link when the raw eBay URL resolves to a high-resolution image

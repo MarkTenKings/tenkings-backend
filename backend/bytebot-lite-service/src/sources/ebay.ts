@@ -22,7 +22,6 @@ export type SourceResult = {
 
 type UploadFn = (buffer: Buffer, key: string, contentType: string) => Promise<{ url: string }>;
 const SERPAPI_ENDPOINT = "https://serpapi.com/search.json";
-const EBAY_PRODUCT_ENGINE = "ebay_product";
 
 export function buildEbaySoldUrl(query: string) {
   const params = new URLSearchParams({
@@ -40,37 +39,6 @@ function buildFallbackQuery(query: string) {
   next = next.replace(/\b(PSA|BGS|SGC|CGC)\s*\d{1,2}\b/gi, "");
   next = next.replace(/\s{2,}/g, " ").trim();
   return next || query;
-}
-
-function parseEbayListingId(url: string | null | undefined) {
-  const value = String(url || "").trim();
-  if (!value) {
-    return null;
-  }
-  const pathMatch = value.match(/\/itm\/(?:[^/?#]+\/)?(\d{8,20})(?:[/?#]|$)/i);
-  if (pathMatch?.[1]) {
-    return pathMatch[1];
-  }
-  const queryMatch = value.match(/[?&](?:item|itemId|itm|itm_id)=(\d{8,20})(?:[&#]|$)/i);
-  if (queryMatch?.[1]) {
-    return queryMatch[1];
-  }
-  return null;
-}
-
-function parseSerpProductId(value: string | null | undefined) {
-  const raw = String(value || "").trim();
-  if (!raw) {
-    return null;
-  }
-  if (/^\d{8,20}$/.test(raw)) {
-    return raw;
-  }
-  const queryMatch = raw.match(/[?&]product_id=(\d{8,20})(?:[&#]|$)/i);
-  if (queryMatch?.[1]) {
-    return queryMatch[1];
-  }
-  return null;
 }
 
 function collectHttpUrls(value: unknown, urls: string[], visited: Set<unknown>) {
@@ -123,14 +91,6 @@ function parseEbayImageSize(url: string) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function upscaleEbayImageUrl(url: string) {
-  const size = parseEbayImageSize(url);
-  if (size <= 0 || size >= 1600) {
-    return url;
-  }
-  return url.replace(/s-l\d{2,5}/gi, "s-l1600");
-}
-
 function bestImageUrl(value: unknown): string {
   const urls: string[] = [];
   collectHttpUrls(value, urls, new Set<unknown>());
@@ -151,66 +111,7 @@ function bestImageUrl(value: unknown): string {
       bestScore = score;
     }
   }
-  return best ? upscaleEbayImageUrl(best) : "";
-}
-
-function firstProductMediaImageUrl(payload: any) {
-  const productResults = payload?.product_results ?? payload ?? {};
-  const mediaEntries = Array.isArray(productResults?.media) ? productResults.media : [];
-  for (const mediaEntry of mediaEntries) {
-    const candidate = bestImageUrl(mediaEntry?.image ?? mediaEntry);
-    if (candidate) {
-      return candidate;
-    }
-  }
-  return "";
-}
-
-function firstProductImageUrl(payload: any) {
-  const productResults = payload?.product_results ?? payload ?? {};
-  return (
-    firstProductMediaImageUrl(payload) ||
-    bestImageUrl(productResults?.image) ||
-    bestImageUrl(productResults?.images) ||
-    bestImageUrl(productResults?.product?.image) ||
-    bestImageUrl(productResults?.product?.images) ||
-    ""
-  );
-}
-
-function serpApiErrorMessage(payload: any) {
-  return String(
-    payload?.error ||
-      payload?.message ||
-      payload?.errors?.[0]?.message ||
-      payload?.errors?.[0] ||
-      ""
-  ).trim();
-}
-
-async function fetchEbayProductImageUrl(options: {
-  apiKey: string;
-  productId: string;
-}) {
-  const params = new URLSearchParams({
-    engine: EBAY_PRODUCT_ENGINE,
-    product_id: options.productId,
-    api_key: options.apiKey,
-  });
-  const response = await fetch(`${SERPAPI_ENDPOINT}?${params.toString()}`);
-  if (!response.ok) {
-    return "";
-  }
-  const payload = await response.json().catch(() => null);
-  const errorMessage = serpApiErrorMessage(payload);
-  if (errorMessage && !/hasn'?t returned any results|no results/i.test(errorMessage)) {
-    return "";
-  }
-  const metadataStatus = String(payload?.search_metadata?.status || "").trim();
-  if (metadataStatus && metadataStatus !== "Success") {
-    return "";
-  }
-  return firstProductImageUrl(payload);
+  return best;
 }
 
 export async function fetchEbaySoldComps(options: {
@@ -280,7 +181,6 @@ async function fetchEbaySoldCompsSerpApi(options: {
     price: string | null;
     soldDate: string | null;
     imageUrl: string;
-    productLookupId: string | null;
     sponsored: boolean;
   };
 
@@ -290,7 +190,14 @@ async function fetchEbaySoldCompsSerpApi(options: {
       link: typeof item.link === "string" ? item.link.trim() : "",
       price: normalizePrice(item.price),
       soldDate: typeof item.sold_date === "string" ? item.sold_date.trim() : null,
-      imageUrl: bestImageUrl({
+      // KingsReview uses the fast search-result thumbnail path; HD upgrades happen later at Inventory Ready.
+      imageUrl:
+        bestImageUrl({
+          thumbnail: item?.thumbnail,
+          thumbnails: item?.thumbnails,
+          thumbnail_images: item?.thumbnail_images,
+        }) ||
+        bestImageUrl({
         thumbnail: item?.thumbnail,
         thumbnails: item?.thumbnails,
         thumbnail_images: item?.thumbnail_images,
@@ -304,11 +211,6 @@ async function fetchEbaySoldCompsSerpApi(options: {
         gallery_url: item?.gallery_url,
         galleryUrl: item?.galleryUrl,
       }),
-      productLookupId:
-        parseSerpProductId(item?.product_id) ||
-        parseSerpProductId(item?.serpapi_link) ||
-        parseSerpProductId(item?.link) ||
-        parseEbayListingId(item?.link),
       sponsored: Boolean(item.sponsored),
     }))
     .filter((item: { link: string; title: string }) => item.link && item.title);
@@ -318,45 +220,19 @@ async function fetchEbaySoldCompsSerpApi(options: {
     0,
     Math.max(1, options.maxComps)
   );
-  const fallbackSearchScreenshotUrl =
+  const searchScreenshotUrl =
     targetItems.find((item) => item.imageUrl)?.imageUrl ??
     (items[0]?.imageUrl ?? "");
-  const productImageCache = new Map<string, string>();
-  const comps: Comp[] = [];
-
-  for (const item of targetItems) {
-    let listingImageUrl = item.imageUrl || "";
-    const productLookupId = item.productLookupId;
-
-    if (productLookupId) {
-      let productImageUrl = productImageCache.get(productLookupId);
-      if (productImageUrl === undefined) {
-        productImageUrl = await fetchEbayProductImageUrl({
-          apiKey: options.apiKey,
-          productId: productLookupId,
-        }).catch(() => "");
-        productImageCache.set(productLookupId, productImageUrl);
-      }
-      if (productImageUrl) {
-        listingImageUrl = productImageUrl;
-      }
-    }
-
-    comps.push({
-      source: "ebay_sold",
-      title: item.title || null,
-      url: item.link,
-      price: item.price ?? null,
-      soldDate: item.soldDate,
-      screenshotUrl: listingImageUrl || "",
-      listingImageUrl: listingImageUrl || null,
-      notes: "SerpApi eBay sold results",
-    });
-  }
-
-  const searchScreenshotUrl =
-    comps.find((comp) => comp.screenshotUrl)?.screenshotUrl ??
-    fallbackSearchScreenshotUrl;
+  const comps: Comp[] = targetItems.map((item) => ({
+    source: "ebay_sold",
+    title: item.title || null,
+    url: item.link,
+    price: item.price ?? null,
+    soldDate: item.soldDate,
+    screenshotUrl: item.imageUrl || "",
+    listingImageUrl: item.imageUrl || null,
+    notes: "SerpApi eBay sold results",
+  }));
 
   return {
     source: "ebay_sold",

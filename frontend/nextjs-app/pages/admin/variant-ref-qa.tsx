@@ -109,6 +109,38 @@ function parseEbayImageSizeFromUrl(value: string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function ebayImageBadge(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const size = parseEbayImageSizeFromUrl(raw);
+  if (size >= 1000) {
+    return {
+      label: `HD ${size}px`,
+      className: "border-emerald-400/60 bg-emerald-500/10 text-emerald-200",
+      isHd: true,
+    };
+  }
+  if (size > 0) {
+    return {
+      label: `Thumb ${size}px`,
+      className: "border-amber-400/60 bg-amber-500/10 text-amber-200",
+      isHd: false,
+    };
+  }
+  if (/\/thumbs\//i.test(raw)) {
+    return {
+      label: "Thumb",
+      className: "border-amber-400/60 bg-amber-500/10 text-amber-200",
+      isHd: false,
+    };
+  }
+  return {
+    label: "eBay image",
+    className: "border-white/20 bg-white/5 text-slate-200",
+    isHd: false,
+  };
+}
+
 function pickPreviewUrl(ref: ReferenceRow) {
   const crop = String(ref.cropUrls?.[0] || "").trim();
   const raw = String(ref.rawImageUrl || "").trim();
@@ -1058,10 +1090,12 @@ export default function VariantRefQaPage() {
             {refs.map((ref) => {
               const checked = selectedRefIds.includes(ref.id);
               const preview = pickPreviewUrl(ref);
+              const rawImageUrl = String(ref.rawImageUrl || "").trim();
               const playerLabelFromRef = String(ref.playerSeed || "").trim().split("::")[0]?.trim() || null;
               const playerLabel = playerLabelFromRef || selectedVariant?.playerLabel || null;
               const sourceHost = sourceHostFromUrl(ref.sourceUrl);
               const isEbaySource = sourceHost.endsWith("ebay.com");
+              const imageBadge = isEbaySource ? ebayImageBadge(rawImageUrl) : null;
               return (
                 <article key={ref.id} className={adminSubpanelClass("p-3")}>
                   <div className="mb-2 flex items-center justify-between gap-2">
@@ -1078,13 +1112,22 @@ export default function VariantRefQaPage() {
                       />
                       Select
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => void deleteRef(ref.id)}
-                      className="rounded-full border border-rose-400/60 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-rose-200"
-                    >
-                      Remove
-                    </button>
+                    <div className="flex items-center gap-2">
+                      {imageBadge ? (
+                        <span
+                          className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.2em] ${imageBadge.className}`}
+                        >
+                          {imageBadge.label}
+                        </span>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => void deleteRef(ref.id)}
+                        className="rounded-full border border-rose-400/60 px-3 py-1 text-[10px] uppercase tracking-[0.2em] text-rose-200"
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
                   <a href={preview} target="_blank" rel="noreferrer" className="block">
                     <div className="relative aspect-[9/16] w-full overflow-hidden rounded-lg bg-black">
@@ -1142,6 +1185,11 @@ export default function VariantRefQaPage() {
                         {sourceHost || "—"}
                       </span>
                     </p>
+                    {imageBadge ? (
+                      <p>
+                        Image Mode: <span className="text-slate-300">{imageBadge.label}</span>
+                      </p>
+                    ) : null}
                     <p>ID: <span className="font-mono text-slate-300">{ref.id}</span></p>
                     <p>Quality: <span className="text-slate-300">{ref.qualityScore != null ? ref.qualityScore.toFixed(2) : "—"}</span></p>
                     {ref.sourceUrl ? (
@@ -1151,6 +1199,11 @@ export default function VariantRefQaPage() {
                     ) : (
                       <p>Source: —</p>
                     )}
+                    {rawImageUrl ? (
+                      <a href={rawImageUrl} target="_blank" rel="noreferrer" className="text-emerald-300 hover:text-emerald-200">
+                        {imageBadge?.isHd ? "Open HD Image" : "Open Raw Image"}
+                      </a>
+                    ) : null}
                   </div>
                 </article>
               );

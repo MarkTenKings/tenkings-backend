@@ -5,6 +5,8 @@ import { normalizeProgramId } from "./taxonomyV2Utils";
 const SET_REFERENCE_PARALLEL_ID = "__SET_REFERENCE__";
 const TRUSTED_QA_STATUS = "keep";
 const SKIP_PARALLEL_IDS = new Set(["", "none", "unknown", "base"]);
+const SERPAPI_ENDPOINT = "https://serpapi.com/search.json";
+const EBAY_PRODUCT_ENGINE = "ebay_product";
 
 type ReviewCompImage = {
   sourceUrl: string;
@@ -42,6 +44,147 @@ function parseListingId(value: string | null | undefined): string | null {
   }
   const queryMatch = text.match(/[?&](?:item|itemId|itm|itm_id)=(\d{8,20})(?:[&#]|$)/i);
   return queryMatch?.[1] ?? null;
+}
+
+function sourceHostFromUrl(value: string | null | undefined): string {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  try {
+    return new URL(text).hostname.trim().toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+function isEbaySourceUrl(value: string | null | undefined): boolean {
+  const host = sourceHostFromUrl(value);
+  return host === "ebay.com" || host.endsWith(".ebay.com");
+}
+
+function collectHttpUrls(value: unknown, urls: string[], visited: Set<unknown>) {
+  if (!value) return;
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (/^https?:\/\//i.test(normalized)) {
+      urls.push(normalized);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectHttpUrls(entry, urls, visited);
+    }
+    return;
+  }
+  if (typeof value === "object") {
+    if (visited.has(value)) return;
+    visited.add(value);
+    const record = value as Record<string, unknown>;
+    collectHttpUrls(record.link, urls, visited);
+    collectHttpUrls(record.url, urls, visited);
+    collectHttpUrls(record.src, urls, visited);
+    collectHttpUrls(record.image, urls, visited);
+    collectHttpUrls(record.images, urls, visited);
+    collectHttpUrls(record.image_url, urls, visited);
+    collectHttpUrls(record.imageUrl, urls, visited);
+    for (const nested of Object.values(record)) {
+      collectHttpUrls(nested, urls, visited);
+    }
+  }
+}
+
+function parseEbayImageSize(url: string) {
+  const match = url.match(/(?:^|[/?._-])s-l(\d{2,5})(?:[._/?-]|$)/i);
+  if (!match?.[1]) return 0;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function upscaleEbayImageUrl(url: string) {
+  const size = parseEbayImageSize(url);
+  if (size <= 0 || size >= 1600) return url;
+  return url.replace(/s-l\d{2,5}/gi, "s-l1600");
+}
+
+function bestImageUrl(value: unknown): string {
+  if (!value) return "";
+  const urls: string[] = [];
+  collectHttpUrls(value, urls, new Set<unknown>());
+  if (urls.length === 0) return "";
+  let best = "";
+  let bestScore = -1;
+  const seen = new Set<string>();
+  for (const url of urls) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    const score = parseEbayImageSize(url);
+    if (score > bestScore) {
+      best = url;
+      bestScore = score;
+    }
+  }
+  return best ? upscaleEbayImageUrl(best) : "";
+}
+
+function firstProductMediaImageUrl(payload: any) {
+  const productResults = payload?.product_results ?? payload ?? {};
+  const mediaEntries = Array.isArray(productResults?.media) ? productResults.media : [];
+  for (const mediaEntry of mediaEntries) {
+    const candidate = bestImageUrl(mediaEntry?.image ?? mediaEntry);
+    if (candidate) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
+function firstProductImageUrl(payload: any) {
+  const productResults = payload?.product_results ?? payload ?? {};
+  return (
+    firstProductMediaImageUrl(payload) ||
+    bestImageUrl(productResults?.image) ||
+    bestImageUrl(productResults?.images) ||
+    bestImageUrl(productResults?.product?.image) ||
+    bestImageUrl(productResults?.product?.images) ||
+    ""
+  );
+}
+
+function serpApiErrorMessage(payload: any) {
+  return String(
+    payload?.error ||
+      payload?.message ||
+      payload?.errors?.[0]?.message ||
+      payload?.errors?.[0] ||
+      ""
+  ).trim();
+}
+
+async function fetchEbayProductImageUrl(options: {
+  apiKey: string;
+  productId: string;
+}) {
+  const params = new URLSearchParams({
+    engine: EBAY_PRODUCT_ENGINE,
+    product_id: options.productId,
+    api_key: options.apiKey,
+  });
+  const response = await fetch(`${SERPAPI_ENDPOINT}?${params.toString()}`);
+  if (!response.ok) {
+    return "";
+  }
+  const payload = await response.json().catch(() => null);
+  const errorMessage = serpApiErrorMessage(payload);
+  if (errorMessage && !/hasn'?t returned any results|no results/i.test(errorMessage)) {
+    return "";
+  }
+  const metadataStatus = String(payload?.search_metadata?.status || "").trim();
+  if (metadataStatus && metadataStatus !== "Success") {
+    return "";
+  }
+  return firstProductImageUrl(payload);
 }
 
 function normalizeReviewParallelId(value: string | null | undefined): string | null {
@@ -171,6 +314,44 @@ async function loadReviewCompImages(cardAssetId: string): Promise<ReviewCompImag
   return images;
 }
 
+async function upgradeReviewCompImagesToHd(images: ReviewCompImage[]): Promise<ReviewCompImage[]> {
+  const apiKey = process.env.SERPAPI_KEY ?? "";
+  if (!apiKey || images.length < 1) {
+    return images;
+  }
+
+  const productImageCache = new Map<string, string>();
+  const upgradedImages: ReviewCompImage[] = [];
+
+  // Keep KingsReview on fast thumbnails; only upgrade selected eBay comps during Inventory Ready seeding.
+  for (const image of images) {
+    if (!image.sourceListingId || !isEbaySourceUrl(image.sourceUrl)) {
+      upgradedImages.push(image);
+      continue;
+    }
+
+    let upgradedImageUrl = productImageCache.get(image.sourceListingId);
+    if (upgradedImageUrl === undefined) {
+      upgradedImageUrl = await fetchEbayProductImageUrl({
+        apiKey,
+        productId: image.sourceListingId,
+      }).catch(() => "");
+      productImageCache.set(image.sourceListingId, upgradedImageUrl);
+    }
+
+    upgradedImages.push(
+      upgradedImageUrl
+        ? {
+            ...image,
+            rawImageUrl: upgradedImageUrl,
+          }
+        : image
+    );
+  }
+
+  return upgradedImages;
+}
+
 export async function seedTrustedReferencesFromInventoryReady(params: { cardAssetId: string }) {
   const card = await prisma.cardAsset.findUnique({
     where: { id: params.cardAssetId },
@@ -208,7 +389,7 @@ export async function seedTrustedReferencesFromInventoryReady(params: { cardAsse
     normalizeReviewParallelId(card.variantId) ||
     normalizeReviewParallelId(Array.isArray(attributes?.variantKeywords) ? attributes?.variantKeywords[0] : null);
 
-  const compImages = await loadReviewCompImages(card.id);
+  const compImages = await upgradeReviewCompImagesToHd(await loadReviewCompImages(card.id));
   if (compImages.length < 1) {
     return { created: 0, skipped: 0, reason: "no_comp_images" as const };
   }
