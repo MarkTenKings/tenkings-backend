@@ -5039,3 +5039,81 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/bytebot-lite-service build`
     - pass
 - No deploy or restart was run in this step.
+
+## Session Update (2026-03-10, review-only finding after deployed thumbnail-field patch still showed blank KingsReview comps)
+- User deployed the explicit `thumbnail` payload patch and re-tested.
+- Observed runtime result:
+  - Add Card / OCR / LLM flow is healthy
+  - KingsReview is fast
+  - search queries are correct and sold listings are correct
+  - but KingsReview comp image boxes are still blank
+- Current code-path conclusion:
+  - the worker now sends the same thumbnail URL three ways for KingsReview comps:
+    - `screenshotUrl`
+    - `listingImageUrl`
+    - `thumbnail`
+  - KingsReview UI now reads all three in its preview fallback chain
+  - therefore the remaining issue is unlikely to be field naming / payload mapping
+- Most likely root issue:
+  - the browser is failing to render eBay `i.ebayimg.com/thumbs/...` URLs themselves
+  - KingsReview’s `<img>` error handler hides the element on load failure, which matches the user-visible symptom of blank image boxes
+  - the remaining delta between the working HD path and the failing fast path is the external image endpoint class:
+    - working: main/HD eBay image URLs
+    - failing: eBay `thumbs` URLs
+- Inference:
+  - the `thumbs` asset endpoint is likely not stable/embeddable for this browser use case, or it is returning an error/placeholder that the current image element rejects
+- No code/deploy/restart was run in this step.
+
+## Session Update (2026-03-10, review-only: operator needs to capture live KingsReview job data)
+- User asked for exact commands/steps to gather the real runtime data needed to prove where comp image fields are being lost.
+- Current best proof targets:
+  - browser Network response for `/api/admin/kingsreview/jobs?cardAssetId=...`
+  - live Postgres `BytebotLiteJob.result` row on the backend
+- No code/deploy/restart was run in this step.
+
+## Session Update (2026-03-10, review-only: live browser job payload proves KingsReview comps are stored without image fields)
+- User captured live browser console output from the deployed KingsReview page.
+- Captured evidence:
+  - `JOB_ID`: `6f9cfc76-9ae8-4144-ba79-259df958ca21`
+  - `SEARCH_QUERY`: `2025 Topps Basketball VJ Edgecombe RTS-3 RISE TO STARDOM`
+  - first five live comp objects all had:
+    - `listingImageUrl: null`
+    - `screenshotUrl: ""`
+    - `thumbnail: null`
+    - valid `title`
+    - valid `url`
+- What this proves:
+  - KingsReview is not failing after mount on image load
+  - the UI is receiving comp rows whose image fields are already empty
+  - the missing `<img>` tag in the DOM is explained by `compPreview.primary` resolving falsy at render time
+- Important inference from the exact field shapes:
+  - the current worker serialization pattern appears to be executing and persisting empty image values, because the live object shape matches:
+    - `screenshotUrl: item.imageUrl || ""`
+    - `listingImageUrl: item.imageUrl || null`
+    - `thumbnail: item.imageUrl || null`
+  - therefore the remaining issue is most likely upstream of persistence:
+    - `imageUrl` is resolving empty inside the worker for these SerpApi sold results
+    - not a KingsReview UI fallback bug
+- Backend shell follow-up:
+  - operator ran the provided `psql` commands but left the literal placeholder `<PASTE_JOB_ID_HERE>` in place, so the `0 rows` result is not valid evidence and should be ignored
+- No code/deploy/restart was run in this step.
+
+## Session Update (2026-03-10, fix queued: map SerpApi sold-comp thumbnails directly from `item.thumbnail`)
+- User directed a surgical fix only in `backend/bytebot-lite-service/src/sources/ebay.ts`.
+- Implemented change:
+  - internal SerpApi sold-result mapping now reads `thumbnail` directly from raw `item.thumbnail`
+  - KingsReview sold comp payload fields now map from that direct thumbnail value:
+    - `searchScreenshotUrl`
+    - `screenshotUrl`
+    - `listingImageUrl`
+    - `thumbnail`
+- Scope intentionally excluded any UI, seeding, query-builder, or non-worker changes.
+- Local validation:
+  - `pnpm --filter @tenkings/bytebot-lite-service build`
+    - pass under local Node `v25.6.1` with the usual unsupported-engine warning for repo target `20.x`
+
+## Session Update (2026-03-10, planned worker deploy for direct-thumbnail mapping fix)
+- Planned action:
+  - commit and push the one-file worker fix plus required handoff docs
+  - redeploy only `bytebot-lite-service` on the droplet
+- No deploy/restart result recorded yet in this section.

@@ -181,7 +181,7 @@ async function fetchEbaySoldCompsSerpApi(options: {
     link: string;
     price: string | null;
     soldDate: string | null;
-    imageUrl: string;
+    thumbnail: string;
     sponsored: boolean;
   };
 
@@ -191,27 +191,7 @@ async function fetchEbaySoldCompsSerpApi(options: {
       link: typeof item.link === "string" ? item.link.trim() : "",
       price: normalizePrice(item.price),
       soldDate: typeof item.sold_date === "string" ? item.sold_date.trim() : null,
-      // KingsReview uses the fast search-result thumbnail path; HD upgrades happen later at Inventory Ready.
-      imageUrl:
-        bestImageUrl({
-          thumbnail: item?.thumbnail,
-          thumbnails: item?.thumbnails,
-          thumbnail_images: item?.thumbnail_images,
-        }) ||
-        bestImageUrl({
-        thumbnail: item?.thumbnail,
-        thumbnails: item?.thumbnails,
-        thumbnail_images: item?.thumbnail_images,
-        image: item?.image,
-        images: item?.images,
-        main_image: item?.main_image,
-        original_image: item?.original_image,
-        image_url: item?.image_url,
-        imageUrl: item?.imageUrl,
-        img: item?.img,
-        gallery_url: item?.gallery_url,
-        galleryUrl: item?.galleryUrl,
-      }),
+      thumbnail: typeof item.thumbnail === "string" ? item.thumbnail.trim() : "",
       sponsored: Boolean(item.sponsored),
     }))
     .filter((item: { link: string; title: string }) => item.link && item.title);
@@ -222,17 +202,17 @@ async function fetchEbaySoldCompsSerpApi(options: {
     Math.max(1, options.maxComps)
   );
   const searchScreenshotUrl =
-    targetItems.find((item) => item.imageUrl)?.imageUrl ??
-    (items[0]?.imageUrl ?? "");
+    targetItems.find((item) => item.thumbnail)?.thumbnail ??
+    (items[0]?.thumbnail ?? "");
   const comps: Comp[] = targetItems.map((item) => ({
     source: "ebay_sold",
     title: item.title || null,
     url: item.link,
     price: item.price ?? null,
     soldDate: item.soldDate,
-    screenshotUrl: item.imageUrl || "",
-    listingImageUrl: item.imageUrl || null,
-    thumbnail: item.imageUrl || null,
+    screenshotUrl: item.thumbnail || "",
+    listingImageUrl: item.thumbnail || null,
+    thumbnail: item.thumbnail || null,
     notes: "SerpApi eBay sold results",
   }));
 

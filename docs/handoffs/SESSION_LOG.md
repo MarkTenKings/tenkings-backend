@@ -9282,3 +9282,119 @@
 
 ### Runtime Status
 - No deploy, restart, or migration was run in this step.
+
+## 2026-03-10 - Review-only: deployed thumbnail-field patch still leaves blank KingsReview comp images
+
+### Summary
+- User deployed the explicit `thumbnail` payload patch and re-tested.
+- Runtime outcome:
+  - Add Card / OCR / LLM flow healthy
+  - KingsReview fast again
+  - search queries correct
+  - sold listings correct
+  - thumbnail images still not visible in KingsReview comp cards
+
+### What Changed Earlier To Try To Fix It
+- Restored the fast thumbnail-only KingsReview worker path in `backend/bytebot-lite-service/src/sources/ebay.ts`
+- Removed the initial `ebay_product` HD lookup from the review-stage worker
+- Stopped inflating thumbnail URLs to `s-l1600`
+- Moved HD/main-image lookup to inventory-ready seeding in `frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts`
+- Added Variant Ref QA visibility for seeded HD refs in `frontend/nextjs-app/pages/admin/variant-ref-qa.tsx`
+- Preserved SerpApi `thumbnail` explicitly in the worker payload and KingsReview normalization path:
+  - `backend/bytebot-lite-service/src/sources/ebay.ts`
+  - `backend/bytebot-lite-service/src/index.ts`
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+
+### Current Finding
+- The code now carries the same KingsReview preview URL three ways:
+  - `screenshotUrl`
+  - `listingImageUrl`
+  - `thumbnail`
+- KingsReview UI now consumes all three in `getCompPreviewUrls(...)`.
+- Because the deployed UI still shows blank image boxes, the remaining issue is unlikely to be a field-name mismatch.
+
+### Most Likely Root Cause
+- The remaining failure point is the browser loading the external eBay `i.ebayimg.com/thumbs/...` asset itself.
+- KingsReview’s comp image element hides itself on load failure via its `onError` handler, which matches the blank-box symptom exactly.
+- The main behavioral difference between the working and non-working paths is now:
+  - working path: main/HD eBay image URLs
+  - failing path: eBay `thumbs` URLs
+
+### Conclusion
+- Based on current code inspection, the thumbnail issue is most likely an external thumbnail-URL render/load failure rather than an ingestion or UI field-mapping failure.
+- No code, deploy, restart, or migration was run in this investigation step.
+
+## 2026-03-10 - Review-only: prepared operator evidence-gathering steps for live KingsReview job data
+
+### Summary
+- User asked for exact commands/steps to gather the actual runtime data needed for proof.
+
+### Evidence Targets
+- Browser Network response from:
+  - `/api/admin/kingsreview/jobs?cardAssetId=...`
+- Live Postgres row from:
+  - `BytebotLiteJob.result`
+
+### Runtime Status
+- No code, deploy, restart, or migration was run in this step.
+
+## 2026-03-10 - Review-only: live browser KingsReview payload proves stored comp image fields are empty
+
+### Summary
+- User captured the deployed browser console output for the live KingsReview job payload.
+
+### Evidence
+- `JOB_ID`: `6f9cfc76-9ae8-4144-ba79-259df958ca21`
+- `SEARCH_QUERY`: `2025 Topps Basketball VJ Edgecombe RTS-3 RISE TO STARDOM`
+- First five comp rows from the live `/api/admin/kingsreview/jobs?cardAssetId=...` response all showed:
+  - `listingImageUrl: null`
+  - `screenshotUrl: ""`
+  - `thumbnail: null`
+  - populated `title`
+  - populated `url`
+
+### What This Proves
+- The missing thumbnail is not a post-render browser image-load failure.
+- The missing `<img>` element in KingsReview is explained by the actual job payload already lacking usable image URLs.
+- The current KingsReview fallback chain is not the limiting factor for this failure.
+
+### Working Diagnosis
+- The live field shape strongly matches the worker’s current serialization when `item.imageUrl` resolves empty:
+  - `screenshotUrl: item.imageUrl || ""`
+  - `listingImageUrl: item.imageUrl || null`
+  - `thumbnail: item.imageUrl || null`
+- That means the remaining issue is most likely in the worker’s upstream image acquisition for these SerpApi sold results, not the UI render path.
+
+### Notes
+- Operator also ran the suggested `psql` commands on the droplet, but the literal placeholder `<PASTE_JOB_ID_HERE>` was not replaced, so the resulting `0 rows` output is not valid evidence and should be ignored.
+
+### Runtime Status
+- No code, deploy, restart, or migration was run in this step.
+
+## 2026-03-10 - Fix: map SerpApi sold-comp thumbnails directly from raw `item.thumbnail`
+
+### Summary
+- User requested a surgical one-file fix in `backend/bytebot-lite-service/src/sources/ebay.ts` and asked not to change anything else.
+- Implemented the sold-comp image mapping change so the raw SerpApi `thumbnail` field is used directly instead of routing through the internal `item.imageUrl` field name.
+
+### Code Change
+- Updated `backend/bytebot-lite-service/src/sources/ebay.ts`:
+  - changed the intermediate sold-result shape from `imageUrl` to `thumbnail`
+  - mapped `thumbnail` directly from raw `item.thumbnail`
+  - mapped `searchScreenshotUrl`, `screenshotUrl`, `listingImageUrl`, and `thumbnail` from that direct `thumbnail` value
+
+### Validation
+- Ran:
+  - `pnpm --filter @tenkings/bytebot-lite-service build`
+- Result:
+  - pass
+- Validation ran under local Node `v25.6.1`; repo target remains `20.x`
+
+## 2026-03-10 - Planned deploy: bytebot-lite thumbnail mapping fix
+
+### Planned Action
+- Commit and push the one-file worker fix plus required handoff docs.
+- Redeploy only `bytebot-lite-service` on the droplet.
+
+### Runtime Status
+- Deploy/restart result not yet recorded in this section.
