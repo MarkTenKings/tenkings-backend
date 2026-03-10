@@ -8,6 +8,15 @@ import { resolveScopedParallelToken, resolveTaxonomyProgramAndVariation } from "
 const normalizeWhitespace = (value: unknown): string =>
   typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 
+const normalizeQueryLabel = (value: unknown): string =>
+  typeof value === "string"
+    ? value
+        .replace(/_/g, " ")
+        .replace(/\s*([/-])\s*/g, "$1")
+        .replace(/\s+/g, " ")
+        .trim()
+    : "";
+
 const normalizeTokenKey = (value: string): string =>
   value
     .toLowerCase()
@@ -26,12 +35,12 @@ const stripLeadingSeasonToken = (value: string): string =>
   value.replace(/^\s*(?:19|20)\d{2}(?:-\d{2,4})?\s+/, "").trim();
 
 const normalizeSetForQuery = (rawSetName: string, year: string, manufacturer: string): string => {
-  let next = normalizeWhitespace(rawSetName);
+  let next = normalizeQueryLabel(rawSetName);
   if (!next) {
     return "";
   }
   next = stripLeadingSeasonToken(next);
-  const normalizedManufacturer = normalizeWhitespace(manufacturer);
+  const normalizedManufacturer = normalizeQueryLabel(manufacturer);
   if (normalizedManufacturer) {
     next = next.replace(new RegExp(`^${escapeRegex(normalizedManufacturer)}\\b\\s*`, "i"), "").trim();
   }
@@ -42,7 +51,7 @@ const normalizeSetForQuery = (rawSetName: string, year: string, manufacturer: st
 };
 
 const normalizeDescriptor = (value: string): string => {
-  const cleaned = normalizeWhitespace(value);
+  const cleaned = normalizeQueryLabel(value);
   if (!cleaned) {
     return "";
   }
@@ -57,6 +66,77 @@ const normalizeDescriptor = (value: string): string => {
     return toTitleCase(cleaned.replace(/\s+cards?$/i, ""));
   }
   return cleaned;
+};
+
+const hasDescriptorMatch = (values: string[], pattern: RegExp): boolean =>
+  values.some((value) => pattern.test(normalizeQueryLabel(value)));
+
+const buildDeterministicCompQuery = (params: {
+  year: string;
+  manufacturerRaw: string;
+  setNameRaw: string;
+  playerName: string;
+  cardNumber: string;
+  numbered: string;
+  descriptorCandidates: string[];
+  textPool: string;
+  rookieHint?: boolean;
+  autographHint?: boolean;
+  memorabiliaHint?: boolean;
+}) => {
+  const year = normalizeWhitespace(params.year);
+  const manufacturerRaw = normalizeQueryLabel(params.manufacturerRaw);
+  const manufacturer = manufacturerRaw ? toTitleCase(manufacturerRaw) : "";
+  const setName = normalizeSetForQuery(params.setNameRaw, year, manufacturerRaw);
+  const playerName = normalizeWhitespace(params.playerName);
+  const cardNumber = normalizeWhitespace(params.cardNumber);
+  const numbered = normalizeWhitespace(params.numbered);
+  const descriptorCandidates = params.descriptorCandidates
+    .map((entry) => normalizeQueryLabel(entry))
+    .filter(Boolean);
+  const normalizedDescriptors = descriptorCandidates.map((entry) => normalizeDescriptor(entry)).filter(Boolean);
+  const nonSpecialDescriptor =
+    normalizedDescriptors.find((entry) => {
+      const key = normalizeTokenKey(entry);
+      return key !== normalizeTokenKey("AUTOGRAPH") && key !== normalizeTokenKey("PATCH");
+    }) ?? null;
+
+  const rookieFlag =
+    /\b(rookie|rc)\b/i.test(params.textPool) ||
+    Boolean(params.rookieHint);
+  const gradeMatch = params.textPool.match(/\b(PSA|BGS|SGC|CGC)\s*\d{1,2}\b/i);
+  const grade = gradeMatch ? gradeMatch[0].toUpperCase().replace(/\s+/g, " ") : "";
+  const memorabiliaFlag =
+    /\b(patch|relic|rpa)\b/i.test(params.textPool) ||
+    hasDescriptorMatch(descriptorCandidates, /\b(patch|relic|rpa|memorabilia|jersey)\b/i) ||
+    Boolean(params.memorabiliaHint);
+  const autographFlag =
+    /\b(auto|autograph)\b/i.test(params.textPool) ||
+    hasDescriptorMatch(descriptorCandidates, /\b(auto|autograph)\b/i) ||
+    Boolean(params.autographHint);
+
+  const tokens: string[] = [];
+  pushUniqueToken(tokens, year);
+  pushUniqueToken(tokens, manufacturer);
+  pushUniqueToken(tokens, setName);
+  if (autographFlag) {
+    pushUniqueToken(tokens, "AUTOGRAPH");
+  }
+  pushUniqueToken(tokens, playerName);
+  pushUniqueToken(tokens, cardNumber);
+  pushUniqueToken(tokens, numbered);
+  if (nonSpecialDescriptor) {
+    pushUniqueToken(tokens, nonSpecialDescriptor);
+  }
+  if (rookieFlag && !nonSpecialDescriptor) {
+    pushUniqueToken(tokens, "Rookie");
+  }
+  pushUniqueToken(tokens, grade);
+  if (memorabiliaFlag) {
+    pushUniqueToken(tokens, "Patch");
+  }
+
+  return tokens.join(" ").replace(/\s+/g, " ").trim();
 };
 
 const pushUniqueToken = (target: string[], value: string) => {
@@ -84,7 +164,7 @@ const queryHasSignal = (value: string): boolean => {
 };
 
 const fallbackQueryFromText = (value: string | null): string => {
-  const query = normalizeWhitespace(value ?? "");
+  const query = normalizeQueryLabel(value ?? "");
   if (!query) {
     return "";
   }
@@ -108,68 +188,29 @@ const buildCompSearchQuery = (card: {
       : null;
 
   const year = normalizeWhitespace(normalized?.year ?? attributes?.year);
-  const manufacturerRaw = normalizeWhitespace(attributes?.brand ?? normalized?.company);
-  const manufacturer = manufacturerRaw ? toTitleCase(manufacturerRaw) : "";
-  const setNameRaw = normalizeWhitespace(normalized?.setName);
-  const setName = normalizeSetForQuery(setNameRaw, year, manufacturerRaw);
-  const playerName = normalizeWhitespace(card.resolvedPlayerName ?? attributes?.playerName);
-  const cardNumber = normalizeWhitespace(normalized?.cardNumber ?? attributes?.cardNumber);
-  const numbered = normalizeWhitespace(attributes?.numbered);
-
-  const setCode = normalizeDescriptor(normalized?.setCode ?? attributes?.setName ?? "");
-  const parallel = normalizeDescriptor(
-    normalized?.parallelName ??
-      attributes?.parallel ??
-      (Array.isArray(attributes?.variantKeywords) ? attributes.variantKeywords[0] : "") ??
-      card.variantId ??
-      ""
-  );
-
-  const descriptorCandidates = [setCode, parallel]
-    .map((entry) => normalizeWhitespace(entry))
-    .filter(Boolean);
-
-  const autoDescriptor =
-    descriptorCandidates.find((entry) => normalizeTokenKey(entry) === normalizeTokenKey("AUTOGRAPH")) ?? null;
-  const nonAutoDescriptor =
-    descriptorCandidates.find((entry) => normalizeTokenKey(entry) !== normalizeTokenKey("AUTOGRAPH")) ?? null;
-
   const textPool = `${card.customTitle ?? ""} ${card.ocrText ?? ""}`;
-  const rookieFlag =
-    /\b(rookie|rc)\b/i.test(textPool) ||
-    Boolean((attributes?.rookie as boolean | undefined) ?? false);
-
-  const gradeMatch = textPool.match(/\b(PSA|BGS|SGC|CGC)\s*\d{1,2}\b/i);
-  const grade = gradeMatch ? gradeMatch[0].toUpperCase().replace(/\s+/g, " ") : "";
-  const memorabiliaFlag =
-    /\b(patch|relic|rpa)\b/i.test(textPool) ||
-    Boolean((attributes?.memorabilia as boolean | undefined) ?? false);
-  const autographFlag =
-    /\b(auto|autograph)\b/i.test(textPool) ||
-    Boolean((attributes?.autograph as boolean | undefined) ?? false);
-
-  const tokens: string[] = [];
-  pushUniqueToken(tokens, year);
-  pushUniqueToken(tokens, manufacturer);
-  pushUniqueToken(tokens, setName);
-  if (autoDescriptor || autographFlag) {
-    pushUniqueToken(tokens, "AUTOGRAPH");
-  }
-  pushUniqueToken(tokens, playerName);
-  pushUniqueToken(tokens, cardNumber);
-  pushUniqueToken(tokens, numbered);
-  if (nonAutoDescriptor) {
-    pushUniqueToken(tokens, nonAutoDescriptor);
-  }
-  if (rookieFlag && !nonAutoDescriptor) {
-    pushUniqueToken(tokens, "Rookie");
-  }
-  pushUniqueToken(tokens, grade);
-  if (memorabiliaFlag) {
-    pushUniqueToken(tokens, "Patch");
-  }
-
-  return tokens.join(" ").replace(/\s+/g, " ").trim();
+  return buildDeterministicCompQuery({
+    year,
+    manufacturerRaw: normalizeQueryLabel(attributes?.brand ?? normalized?.company),
+    setNameRaw: normalizeQueryLabel(normalized?.setName),
+    playerName: normalizeQueryLabel(card.resolvedPlayerName ?? attributes?.playerName),
+    cardNumber: normalizeWhitespace(normalized?.cardNumber ?? attributes?.cardNumber),
+    numbered: normalizeWhitespace(attributes?.numbered),
+    descriptorCandidates: [
+      normalizeQueryLabel(normalized?.setCode ?? attributes?.setName ?? ""),
+      normalizeQueryLabel(
+        normalized?.parallelName ??
+          attributes?.parallel ??
+          (Array.isArray(attributes?.variantKeywords) ? attributes.variantKeywords[0] : "") ??
+          card.variantId ??
+          ""
+      ),
+    ],
+    textPool,
+    rookieHint: Boolean((attributes?.rookie as boolean | undefined) ?? false),
+    autographHint: Boolean((attributes?.autograph as boolean | undefined) ?? false),
+    memorabiliaHint: Boolean((attributes?.memorabilia as boolean | undefined) ?? false),
+  });
 };
 
 const buildCompSearchQueryV2 = async (card: {
@@ -189,17 +230,16 @@ const buildCompSearchQueryV2 = async (card: {
       : null;
 
   const year = normalizeWhitespace(normalized?.year ?? attributes?.year);
-  const manufacturerRaw = normalizeWhitespace(attributes?.brand ?? normalized?.company);
-  const manufacturer = manufacturerRaw ? toTitleCase(manufacturerRaw) : "";
-  const setNameRaw = normalizeWhitespace(normalized?.setName ?? attributes?.setName);
+  const manufacturerRaw = normalizeQueryLabel(attributes?.brand ?? normalized?.company);
+  const setNameRaw = normalizeQueryLabel(normalized?.setName ?? attributes?.setName);
   const normalizedSetName = normalizeSetForQuery(setNameRaw, year, manufacturerRaw);
   const cardNumber = normalizeWhitespace(normalized?.cardNumber ?? attributes?.cardNumber);
-  const playerName = normalizeWhitespace(card.resolvedPlayerName ?? attributes?.playerName);
+  const playerName = normalizeQueryLabel(card.resolvedPlayerName ?? attributes?.playerName);
   const numbered = normalizeWhitespace(attributes?.numbered);
 
-  const rawProgram = normalizeWhitespace(normalized?.setCode ?? attributes?.setCode ?? attributes?.insertSet);
-  const rawVariation = normalizeWhitespace(normalized?.variationName ?? attributes?.variation);
-  const rawParallel = normalizeWhitespace(
+  const rawProgram = normalizeQueryLabel(normalized?.setCode ?? attributes?.setCode ?? attributes?.insertSet);
+  const rawVariation = normalizeQueryLabel(normalized?.variationName ?? attributes?.variation);
+  const rawParallel = normalizeQueryLabel(
     normalized?.parallelName ??
       attributes?.parallel ??
       (Array.isArray(attributes?.variantKeywords) ? attributes.variantKeywords[0] : "") ??
@@ -210,7 +250,7 @@ const buildCompSearchQueryV2 = async (card: {
   const setCandidates = Array.from(
     new Set(
       [
-        normalizeWhitespace(setNameRaw),
+        normalizeQueryLabel(setNameRaw),
         [year, manufacturerRaw, normalizedSetName].filter(Boolean).join(" ").trim(),
         [year, manufacturerRaw, setNameRaw].filter(Boolean).join(" ").trim(),
       ].filter(Boolean)
@@ -239,22 +279,28 @@ const buildCompSearchQueryV2 = async (card: {
       parallel: rawParallel,
     });
     if (scopedParallel?.inScope) {
-      scopedParallelLabel = normalizeWhitespace(scopedParallel.parallelLabel);
+      scopedParallelLabel = normalizeQueryLabel(scopedParallel.parallelLabel);
     }
   }
 
-  const tokens: string[] = [];
-  pushUniqueToken(tokens, year);
-  pushUniqueToken(tokens, manufacturer);
-  pushUniqueToken(tokens, normalizedSetName || setNameRaw);
-  pushUniqueToken(tokens, taxonomyResolution?.programLabel ?? rawProgram);
-  pushUniqueToken(tokens, cardNumber);
-  pushUniqueToken(tokens, playerName);
-  pushUniqueToken(tokens, taxonomyResolution?.variationLabel ?? rawVariation);
-  pushUniqueToken(tokens, scopedParallelLabel ?? "");
-  pushUniqueToken(tokens, numbered);
-
-  return tokens.join(" ").replace(/\s+/g, " ").trim();
+  const textPool = `${card.customTitle ?? ""} ${card.ocrText ?? ""}`;
+  return buildDeterministicCompQuery({
+    year,
+    manufacturerRaw,
+    setNameRaw: normalizedSetName || setNameRaw,
+    playerName,
+    cardNumber,
+    numbered,
+    descriptorCandidates: [
+      normalizeQueryLabel(taxonomyResolution?.programLabel ?? rawProgram),
+      normalizeQueryLabel(taxonomyResolution?.variationLabel ?? rawVariation),
+      normalizeQueryLabel(scopedParallelLabel ?? rawParallel),
+    ],
+    textPool,
+    rookieHint: Boolean((attributes?.rookie as boolean | undefined) ?? false),
+    autographHint: Boolean((attributes?.autograph as boolean | undefined) ?? false),
+    memorabiliaHint: Boolean((attributes?.memorabilia as boolean | undefined) ?? false),
+  });
 };
 
 async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -292,8 +338,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
         const taxonomyGenerated = useTaxonomyQuery ? await buildCompSearchQueryV2(card) : "";
         const legacyGenerated = buildCompSearchQuery(card);
         const candidateQueries = useTaxonomyQuery
-          ? [taxonomyGenerated, legacyGenerated, rawQuery]
-          : [legacyGenerated, taxonomyGenerated, rawQuery];
+          ? [legacyGenerated, taxonomyGenerated, rawQuery]
+          : [legacyGenerated, rawQuery, taxonomyGenerated];
         const selected = candidateQueries.find((candidate) => queryHasSignal(candidate));
         if (selected) {
           query = selected;

@@ -9022,3 +9022,35 @@
 
 ### Next Step
 - Deploy the Next.js patch so admin routes use the auth-service fallback in production.
+
+## 2026-03-10 - Restore simplified KingsReview eBay query structure
+
+### Summary
+- User reported KingsReview eBay queries regressing to raw taxonomy/set-id strings, example:
+  - `2025 Topps -26_Topps_Basketball ROOKIE PHOTO SHOOT AUTOGRAPHS 80B2-DV Devin Vassell`
+- Root cause in `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`:
+  - underscore-style set IDs from batch-upload data were no longer being humanized after the revert of `8fab00c`
+  - the V2 candidate ordering preferred taxonomy-built queries ahead of the older deterministic builder
+  - raw taxonomy program/variation labels were leaking into query text instead of the prior simplified shape
+
+### Code Changes
+- Updated `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts` to:
+  - restore query-label normalization for machine-style set IDs (`_` -> spaces, stable separator cleanup)
+  - clean set names before season/manufacturer stripping so batch-upload labels like `2025-26_Topps_Basketball` normalize correctly
+  - route both legacy and V2 builders through one deterministic token assembler
+  - prefer the cleaned legacy-style query shape before taxonomy fallback when auto-generating eBay search queries
+- Intended restored structure is the prior simplified form:
+  - `year manufacturer set [canonical descriptor] player cardNumber`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/kingsreview/enqueue.ts --file pages/admin/kingsreview.tsx`
+  - pass with existing `pages/admin/kingsreview.tsx` warnings only:
+    - missing `fetchCardDetail` hook dependency
+    - `@next/next/no-img-element`
+- Local sample simulation with the user-reported bad inputs now returns:
+  - `2025 Topps Basketball Devin Vassell 80B2-DV`
+
+### Next Step
+- Deploy the Next.js patch and re-test Add Card -> KingsReview on the previously failing basketball cards.

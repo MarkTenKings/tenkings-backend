@@ -4896,3 +4896,22 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/admin.ts --file lib/server/session.ts --file pages/admin/uploads.tsx`
     - pass with existing `pages/admin/uploads.tsx` image warnings only
 - No deploy was run for this fix in this step.
+
+## Session Update (2026-03-10, KingsReview query structure restored locally)
+- User reported eBay search queries regressing to raw set-id/taxonomy strings, example:
+  - `2025 Topps -26_Topps_Basketball ROOKIE PHOTO SHOOT AUTOGRAPHS 80B2-DV Devin Vassell`
+- Root cause in `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`:
+  - underscore/machine-style batch-upload set IDs were no longer normalized for query text
+  - taxonomy-built query candidates were being preferred ahead of the older simplified deterministic builder
+- Local patch:
+  - restores query-label cleanup for machine-style set IDs
+  - runs both legacy and V2 query inputs through one deterministic token assembler
+  - prefers the older simplified query shape first, with taxonomy as fallback
+- Local validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+    - pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/kingsreview/enqueue.ts --file pages/admin/kingsreview.tsx`
+    - pass with existing `pages/admin/kingsreview.tsx` warnings only
+- Local sample output for the user-reported bad case now collapses to:
+  - `2025 Topps Basketball Devin Vassell 80B2-DV`
+- No deploy was run for this fix in this step.
