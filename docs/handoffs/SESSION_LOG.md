@@ -8825,3 +8825,8 @@
 ### Notes
 - No deploy, restart, or migration commands were run in this session.
 - Existing Bytebot jobs already queued in production with malformed search queries will still need a fresh comps regeneration after the deploy because the search text is stored per job.
+
+## 2026-03-10 - Emergency rollback planned
+- Production admin surfaced connection/reset failure after deploy of `8fab00c`.
+- Rolling back `8fab00c` on `main` to restore service.
+- No droplet restart or migration planned.
