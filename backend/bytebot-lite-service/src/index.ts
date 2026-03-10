@@ -375,7 +375,7 @@ async function autoAttachEbayComps(job: {
       source: "ebay_sold",
       title: comp.title ?? null,
       url: comp.url,
-      screenshotUrl: comp.screenshotUrl || null,
+      screenshotUrl: comp.listingImageUrl || comp.screenshotUrl || null,
       price: comp.price ?? null,
       soldDate: comp.soldDate ?? null,
       note: comp.notes ?? "Auto-attached from SerpApi",

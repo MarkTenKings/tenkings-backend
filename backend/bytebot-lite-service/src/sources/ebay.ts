@@ -41,6 +41,87 @@ function buildFallbackQuery(query: string) {
   return next || query;
 }
 
+function collectHttpUrls(value: unknown, urls: string[], visited: Set<unknown>) {
+  if (!value) {
+    return;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim();
+    if (/^https?:\/\//i.test(normalized)) {
+      urls.push(normalized);
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectHttpUrls(entry, urls, visited);
+    }
+    return;
+  }
+  if (typeof value === "object") {
+    if (visited.has(value)) {
+      return;
+    }
+    visited.add(value);
+    const record = value as Record<string, unknown>;
+    collectHttpUrls(record.thumbnail, urls, visited);
+    collectHttpUrls(record.thumbnails, urls, visited);
+    collectHttpUrls(record.thumbnail_images, urls, visited);
+    collectHttpUrls(record.image, urls, visited);
+    collectHttpUrls(record.images, urls, visited);
+    collectHttpUrls(record.main_image, urls, visited);
+    collectHttpUrls(record.original_image, urls, visited);
+    collectHttpUrls(record.image_url, urls, visited);
+    collectHttpUrls(record.imageUrl, urls, visited);
+    collectHttpUrls(record.img, urls, visited);
+    collectHttpUrls(record.gallery_url, urls, visited);
+    collectHttpUrls(record.galleryUrl, urls, visited);
+    for (const nested of Object.values(record)) {
+      collectHttpUrls(nested, urls, visited);
+    }
+  }
+}
+
+function parseEbayImageSize(url: string) {
+  const match = url.match(/(?:^|[/?._-])s-l(\d{2,5})(?:[._/?-]|$)/i);
+  if (!match?.[1]) {
+    return 0;
+  }
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function upscaleEbayImageUrl(url: string) {
+  const size = parseEbayImageSize(url);
+  if (size <= 0 || size >= 1600) {
+    return url;
+  }
+  return url.replace(/s-l\d{2,5}/gi, "s-l1600");
+}
+
+function bestImageUrl(value: unknown): string {
+  const urls: string[] = [];
+  collectHttpUrls(value, urls, new Set<unknown>());
+  if (urls.length === 0) {
+    return "";
+  }
+  let best = "";
+  let bestScore = -1;
+  const seen = new Set<string>();
+  for (const url of urls) {
+    if (seen.has(url)) {
+      continue;
+    }
+    seen.add(url);
+    const score = parseEbayImageSize(url);
+    if (score > bestScore) {
+      best = url;
+      bestScore = score;
+    }
+  }
+  return best ? upscaleEbayImageUrl(best) : "";
+}
+
 export async function fetchEbaySoldComps(options: {
   context?: BrowserContext | null;
   query: string;
@@ -107,7 +188,7 @@ async function fetchEbaySoldCompsSerpApi(options: {
     link: string;
     price: string | null;
     soldDate: string | null;
-    thumbnail: string;
+    imageUrl: string;
     sponsored: boolean;
   };
 
@@ -117,7 +198,20 @@ async function fetchEbaySoldCompsSerpApi(options: {
       link: typeof item.link === "string" ? item.link.trim() : "",
       price: normalizePrice(item.price),
       soldDate: typeof item.sold_date === "string" ? item.sold_date.trim() : null,
-      thumbnail: typeof item.thumbnail === "string" ? item.thumbnail.trim() : "",
+      imageUrl: bestImageUrl({
+        thumbnail: item?.thumbnail,
+        thumbnails: item?.thumbnails,
+        thumbnail_images: item?.thumbnail_images,
+        image: item?.image,
+        images: item?.images,
+        main_image: item?.main_image,
+        original_image: item?.original_image,
+        image_url: item?.image_url,
+        imageUrl: item?.imageUrl,
+        img: item?.img,
+        gallery_url: item?.gallery_url,
+        galleryUrl: item?.galleryUrl,
+      }),
       sponsored: Boolean(item.sponsored),
     }))
     .filter((item: { link: string; title: string }) => item.link && item.title);
@@ -128,8 +222,8 @@ async function fetchEbaySoldCompsSerpApi(options: {
     Math.max(1, options.maxComps)
   );
   const searchScreenshotUrl =
-    targetItems.find((item) => item.thumbnail)?.thumbnail ??
-    (items[0]?.thumbnail ?? "");
+    targetItems.find((item) => item.imageUrl)?.imageUrl ??
+    (items[0]?.imageUrl ?? "");
 
   const comps: Comp[] = targetItems.map((item) => ({
     source: "ebay_sold",
@@ -137,8 +231,8 @@ async function fetchEbaySoldCompsSerpApi(options: {
     url: item.link,
     price: item.price ?? null,
     soldDate: item.soldDate,
-    screenshotUrl: item.thumbnail || "",
-    listingImageUrl: item.thumbnail || null,
+    screenshotUrl: item.imageUrl || "",
+    listingImageUrl: item.imageUrl || null,
     notes: "SerpApi eBay sold results",
   }));
 

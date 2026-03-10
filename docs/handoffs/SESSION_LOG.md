@@ -9054,3 +9054,55 @@
 
 ### Next Step
 - Deploy the Next.js patch and re-test Add Card -> KingsReview on the previously failing basketball cards.
+
+## 2026-03-10 - Fix duplicate KingsReview set tokens and restore comp-image fallbacks
+
+### Summary
+- User reported two remaining KingsReview regressions after the prior query cleanup deploy:
+  - eBay queries still duplicated the set, example:
+    - `2025 Topps Chrome Basketball HUGO GONZALEZ TC-HG 2025-26 Topps Chrome Basketball`
+  - comps were returning with title/price rows but no visible images
+
+### Root Cause
+- Query duplication:
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts` still allowed taxonomy descriptor tokens that normalized to the same set identity to be appended after the cleaned base set.
+- Missing comp images:
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx` had lost the earlier job-payload normalization/fallback logic when `8fab00c` was reverted.
+  - `backend/bytebot-lite-service/src/sources/ebay.ts` was only reading SerpApi `thumbnail`, but prior ops notes already documented that eBay payloads often expose media in alternate keys (`image`, `main_image`, `thumbnail_images`, etc.).
+
+### Code Changes
+- Updated `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts` to suppress descriptor tokens that collapse to the already-selected set identity.
+- Updated `frontend/nextjs-app/pages/admin/kingsreview.tsx` to:
+  - normalize raw job payloads again before rendering,
+  - recover comp preview URLs from `listingImageUrl`, `screenshotUrl`, `thumbnail`, and `imageUrl`,
+  - use primary/fallback preview URLs with `img` error fallback,
+  - attach the best available comp preview URL into evidence rows.
+- Updated `backend/bytebot-lite-service/src/sources/ebay.ts` to extract image URLs from broader SerpApi eBay field variants:
+  - `thumbnail`
+  - `thumbnails`
+  - `thumbnail_images`
+  - `image`
+  - `images`
+  - `main_image`
+  - `original_image`
+  - `image_url`
+  - `imageUrl`
+  - `img`
+  - `gallery_url`
+  - `galleryUrl`
+- Updated `backend/bytebot-lite-service/src/index.ts` auto-attach path to prefer `listingImageUrl` when `screenshotUrl` is empty.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/kingsreview/enqueue.ts --file pages/admin/kingsreview.tsx`
+  - pass with existing `pages/admin/kingsreview.tsx` warnings only:
+    - missing `fetchCardDetail` hook dependency
+    - `@next/next/no-img-element`
+- `pnpm --filter @tenkings/bytebot-lite-service build`
+  - pass
+- Validation ran under local Node `v25.6.1`; repo target remains `20.x`
+
+### Next Step
+- Deploy the Next.js app for the query/UI fixes.
+- Rebuild/restart `bytebot-lite-service` on the backend so new eBay jobs carry image URLs again.

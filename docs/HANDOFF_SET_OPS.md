@@ -4915,3 +4915,30 @@ Build Set Ops UI flow with:
 - Local sample output for the user-reported bad case now collapses to:
   - `2025 Topps Basketball Devin Vassell 80B2-DV`
 - No deploy was run for this fix in this step.
+
+## Session Update (2026-03-10, KingsReview duplicate-token + comp-image fix staged locally)
+- User reported two remaining KingsReview problems after the prior query deploy:
+  - duplicate set text still appearing in eBay queries
+  - comps loading without visible images
+- Local patch set now includes:
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+    - suppresses descriptor tokens that normalize to the same set identity, so the set is not appended twice
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+    - restores job-payload normalization and preview-image fallback handling (`listingImageUrl`, `screenshotUrl`, `thumbnail`, `imageUrl`)
+    - restores image fallback-on-error behavior in comp cards
+    - uses the best comp preview URL when attaching evidence
+  - `backend/bytebot-lite-service/src/sources/ebay.ts`
+    - broadens SerpApi eBay image extraction to alternate fields beyond `thumbnail`
+  - `backend/bytebot-lite-service/src/index.ts`
+    - auto-attach evidence prefers `listingImageUrl` when `screenshotUrl` is empty
+- Local validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+    - pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/kingsreview/enqueue.ts --file pages/admin/kingsreview.tsx`
+    - pass with existing KingsReview warnings only
+  - `pnpm --filter @tenkings/bytebot-lite-service build`
+    - pass
+- No deploy or restart was run in this step.
+- Important ops note:
+  - the query/UI part is a Next.js deploy
+  - the image extraction part also requires rebuilding/restarting `bytebot-lite-service` on the backend before new jobs will carry comp image URLs again

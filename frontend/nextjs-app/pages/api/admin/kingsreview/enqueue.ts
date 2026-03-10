@@ -94,10 +94,20 @@ const buildDeterministicCompQuery = (params: {
   const descriptorCandidates = params.descriptorCandidates
     .map((entry) => normalizeQueryLabel(entry))
     .filter(Boolean);
+  const setIdentityKey = normalizeTokenKey(setName);
+  const fullSetIdentityKey = normalizeTokenKey([year, manufacturer, setName].filter(Boolean).join(" "));
   const normalizedDescriptors = descriptorCandidates.map((entry) => normalizeDescriptor(entry)).filter(Boolean);
   const nonSpecialDescriptor =
     normalizedDescriptors.find((entry) => {
       const key = normalizeTokenKey(entry);
+      const descriptorSetKey = normalizeTokenKey(normalizeSetForQuery(entry, year, manufacturerRaw));
+      const descriptorFullKey = normalizeTokenKey(normalizeQueryLabel(entry));
+      if (
+        (setIdentityKey && descriptorSetKey === setIdentityKey) ||
+        (fullSetIdentityKey && descriptorFullKey === fullSetIdentityKey)
+      ) {
+        return false;
+      }
       return key !== normalizeTokenKey("AUTOGRAPH") && key !== normalizeTokenKey("PATCH");
     }) ?? null;
 
