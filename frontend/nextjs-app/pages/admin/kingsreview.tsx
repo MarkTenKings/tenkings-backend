@@ -92,6 +92,7 @@ type JobResultComp = {
   soldDate: string | null;
   screenshotUrl: string;
   listingImageUrl?: string | null;
+  thumbnail?: string | null;
   notes?: string | null;
   patternMatch?: {
     score: number;
@@ -133,11 +134,14 @@ const isJobResultSource = (value: JobResultSource | null): value is JobResultSou
 const getCompPreviewUrls = (comp: JobResultComp) => {
   const screenshotUrl = normalizeNullableText(comp.screenshotUrl);
   const listingImageUrl = normalizeNullableText(comp.listingImageUrl);
+  const thumbnailUrl = normalizeNullableText(comp.thumbnail);
   return {
-    primary: listingImageUrl ?? screenshotUrl,
+    primary: listingImageUrl ?? screenshotUrl ?? thumbnailUrl,
     fallback:
       listingImageUrl && screenshotUrl && listingImageUrl !== screenshotUrl
         ? screenshotUrl
+        : (listingImageUrl ?? screenshotUrl) && thumbnailUrl && (listingImageUrl ?? screenshotUrl) !== thumbnailUrl
+          ? thumbnailUrl
         : null,
   };
 };
@@ -191,6 +195,7 @@ const normalizeJobResultComp = (value: unknown): JobResultComp | null => {
     soldDate: normalizeNullableText(typeof raw.soldDate === "string" ? raw.soldDate : null),
     screenshotUrl,
     listingImageUrl,
+    thumbnail: normalizeNullableText(typeof raw.thumbnail === "string" ? raw.thumbnail : null),
     notes: normalizeNullableText(typeof raw.notes === "string" ? raw.notes : null),
     patternMatch: normalizePatternMatch(raw.patternMatch),
   };

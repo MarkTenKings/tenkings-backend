@@ -5017,3 +5017,25 @@ Build Set Ops UI flow with:
   - new KingsReview jobs should show fast thumbnail comps again
   - moving a card to Inventory Ready should seed HD/main eBay images for every attached sold comp
   - Variant Ref QA should show those seeded refs with an HD badge plus an `Open HD Image` / raw-image link when the raw eBay URL resolves to a high-resolution image
+
+## Session Update (2026-03-10, staged follow-up: preserve SerpApi `thumbnail` field explicitly for KingsReview)
+- User reported that, after the split deploy, KingsReview was fast and query/results quality were correct, but comp thumbnails still did not render.
+- Review finding:
+  - SerpApi eBay sold results document `thumbnail` as the canonical guaranteed image field
+  - KingsReview UI already had `thumbnail` fallback logic, but the worker payload was only sending the derived `screenshotUrl` / `listingImageUrl` preview fields
+- Local follow-up patch:
+  - `backend/bytebot-lite-service/src/sources/ebay.ts`
+    - now includes `thumbnail` explicitly on each sold comp payload, using the same search-result thumbnail URL
+  - `backend/bytebot-lite-service/src/index.ts`
+    - extends the stored job-result comp typing to include `thumbnail`
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+    - preserves `thumbnail` in normalized comp state
+    - treats `thumbnail` as an explicit preview fallback in `getCompPreviewUrls(...)`
+- Local validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+    - pass
+  - `pnpm --filter @tenkings/nextjs-app exec eslint pages/admin/kingsreview.tsx`
+    - pass with existing KingsReview warnings only
+  - `pnpm --filter @tenkings/bytebot-lite-service build`
+    - pass
+- No deploy or restart was run in this step.

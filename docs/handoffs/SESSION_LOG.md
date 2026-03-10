@@ -9244,3 +9244,41 @@
     - KingsReview comp cards show thumbnails again
     - `Move To Inventory Ready` seeds HD eBay refs
     - `/admin/variant-ref-qa` shows `HD ...px` badges and the raw seeded image opens correctly
+
+## 2026-03-10 - Follow-up: preserve SerpApi `thumbnail` field explicitly in KingsReview payloads
+
+### Summary
+- After the split deploy, user reported:
+  - Add Card / OCR / KingsReview query flow was working
+  - KingsReview was fast again
+  - sold comp results were correct
+  - but the sold comp thumbnail images still were not visible in KingsReview
+
+### Findings
+- External review of the SerpApi eBay sold-result docs matched the likely weak point:
+  - `thumbnail` is the canonical image field returned on `organic_results`
+- Current KingsReview UI already had `thumbnail` in its fallback normalization chain.
+- The remaining gap was that the worker payload was not preserving `thumbnail` explicitly; it only emitted derived preview fields (`screenshotUrl`, `listingImageUrl`).
+
+### Changes Made
+- `backend/bytebot-lite-service/src/sources/ebay.ts`
+  - added `thumbnail` explicitly to each sold comp payload, using the same search-result thumbnail URL selected for KingsReview
+- `backend/bytebot-lite-service/src/index.ts`
+  - extended the stored job-result comp typing to include `thumbnail`
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+  - added `thumbnail` to the normalized comp model
+  - updated `getCompPreviewUrls(...)` so `thumbnail` is an explicit preview fallback, not only an intermediate normalization source
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec eslint pages/admin/kingsreview.tsx`
+  - pass with existing warnings only:
+    - missing `fetchCardDetail` hook dependency
+    - `@next/next/no-img-element`
+- `pnpm --filter @tenkings/bytebot-lite-service build`
+  - pass
+- Validation ran under local Node `v25.6.1`; repo target remains `20.x`
+
+### Runtime Status
+- No deploy, restart, or migration was run in this step.

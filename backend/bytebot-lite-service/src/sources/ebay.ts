@@ -10,6 +10,7 @@ export type Comp = {
   soldDate: string | null;
   screenshotUrl: string;
   listingImageUrl?: string | null;
+  thumbnail?: string | null;
   notes?: string | null;
 };
 
@@ -231,6 +232,7 @@ async function fetchEbaySoldCompsSerpApi(options: {
     soldDate: item.soldDate,
     screenshotUrl: item.imageUrl || "",
     listingImageUrl: item.imageUrl || null,
+    thumbnail: item.imageUrl || null,
     notes: "SerpApi eBay sold results",
   }));
 

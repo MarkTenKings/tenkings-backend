@@ -42,6 +42,7 @@ type JobResult = {
       soldDate: string | null;
       screenshotUrl: string;
       listingImageUrl?: string | null;
+      thumbnail?: string | null;
       notes?: string | null;
       patternMatch?: {
         score: number;
