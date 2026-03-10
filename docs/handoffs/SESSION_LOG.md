@@ -8788,3 +8788,40 @@
   - wait for Vercel production deploy
   - rerun `preflight` on `batch-imports/mlb-missing-parallels-final-13-parallel-only/`
   - if clean, rerun `commit` on that same folder with `--allow-existing-set`
+
+## 2026-03-10 - Card Workflow Regression Follow-Up (Prod Test Triage)
+
+### Summary
+- Investigated the post-deploy Add Card -> KingsReview regression reported from production testing.
+- Root symptoms reviewed:
+  - KingsReview sold-comp searches were malformed for some cards and returned no comps.
+  - Other KingsReview comps loaded titles/prices but displayed blank thumbnails.
+  - Add Card Product Set selection was over-constrained to a single OCR-picked set in some flows.
+  - Add Card could recognize insert/parallel without backfilling Product Set.
+  - Season text such as `2024/25` was still being mistaken for `numbered`.
+- Applied targeted fixes only in the affected workflow paths.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+
+### Behavior Changes
+- KingsReview search-query normalization now humanizes underscore-style `SETID` values before building the eBay sold query.
+- KingsReview comp rendering now normalizes Bytebot job payloads and prefers `screenshotUrl` thumbnails before falling back to `listingImageUrl`.
+- Add Card set dropdowns no longer collapse to a single OCR-picked Product Set when broader scoped set options are available.
+- OCR taxonomy constraining now backfills Product Set from a unique insert or parallel match when set scope can be inferred.
+- OCR numbered parsing now rejects season-style values like `2024/25` so they are not treated as serial-numbered cards.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/api/admin/kingsreview/enqueue.ts --file lib/server/variantOptionPool.ts --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts'`
+  - passed with pre-existing KingsReview warnings only:
+    - missing `fetchCardDetail` hook dependency
+    - existing `<img>` optimization warning
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+  - passed after fixing a local type issue in the new KingsReview job normalizer
+
+### Notes
+- No deploy, restart, or migration commands were run in this session.
+- Existing Bytebot jobs already queued in production with malformed search queries will still need a fresh comps regeneration after the deploy because the search text is stored per job.

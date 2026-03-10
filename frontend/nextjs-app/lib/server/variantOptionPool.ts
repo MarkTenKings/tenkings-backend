@@ -593,6 +593,7 @@ async function loadTaxonomyV2OptionPool(params: {
   approvedSetCount: number;
   scopedSetIds: string[];
 }): Promise<VariantOptionPool | null> {
+  const displaySetIds = params.scopedSetIds.length > 0 ? params.scopedSetIds : params.querySetIds;
   const programs = await loadTaxonomyProgramsForOptionPool(params.querySetIds);
 
   if (programs.length < 1) {
@@ -605,10 +606,10 @@ async function loadTaxonomyV2OptionPool(params: {
     return null;
   }
 
-  const cardCountsBySetRows = await loadTaxonomyCardCountsForOptionPool(params.querySetIds);
+  const cardCountsBySetRows = await loadTaxonomyCardCountsForOptionPool(displaySetIds);
   const cardCountsBySet = new Map<string, number>(cardCountsBySetRows.map((row) => [row.setId, row.count]));
 
-  const sets: SetOptionRow[] = params.querySetIds
+  const sets: SetOptionRow[] = displaySetIds
     .map((setId) => ({
       setId,
       count: cardCountsBySet.get(setId) ?? 0,
@@ -860,6 +861,21 @@ export async function loadVariantOptionPool(params: {
     }))
     .filter((row) => Boolean(row.setId && row.parallelId));
 
+  const setCountRows =
+    selectedSetId && scopedSetIds.length > 1
+      ? await prisma.cardVariant.groupBy({
+          by: ["setId"],
+          where: {
+            setId: {
+              in: scopedSetIds,
+            },
+          },
+          _count: {
+            _all: true,
+          },
+        })
+      : [];
+
   const setCounts = new Map<string, number>();
   groupedRows.forEach((row) => {
     const setId = sanitizeText(row.setId);
@@ -868,11 +884,19 @@ export async function loadVariantOptionPool(params: {
     }
     setCounts.set(setId, (setCounts.get(setId) ?? 0) + (row._count?._all ?? 0));
   });
+  setCountRows.forEach((row) => {
+    const setId = sanitizeText(row.setId);
+    if (!setId) {
+      return;
+    }
+    setCounts.set(setId, row._count?._all ?? 0);
+  });
 
-  const sets: SetOptionRow[] = Array.from(setCounts.entries())
-    .map(([setId, count]) => ({
+  const displaySetIds = selectedSetId && scopedSetIds.length > 1 ? scopedSetIds : querySetIds;
+  const sets: SetOptionRow[] = displaySetIds
+    .map((setId) => ({
       setId,
-      count,
+      count: setCounts.get(setId) ?? 0,
       score: Number(scoreSet(setId, setHints).toFixed(3)),
     }))
     .sort((a, b) => b.score - a.score || b.count - a.count || a.setId.localeCompare(b.setId));
