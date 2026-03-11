@@ -30,7 +30,6 @@ export {
   SetAuditStatus,
 } from "@prisma/client";
 
-export * from "./processingJobs";
 export * from "./bytebotLiteJobs";
 export * from "./mint";
 export * from "./batches";

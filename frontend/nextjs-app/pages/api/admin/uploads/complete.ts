@@ -1,9 +1,7 @@
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from "next";
 import {
   CardAssetStatus,
-  ProcessingJobType,
   Prisma,
-  enqueueProcessingJob,
   prisma,
 } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
@@ -66,17 +64,9 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
       updates.fileSize = Math.round(payload.size);
     }
 
-    await prisma.$transaction(async (tx) => {
-      await tx.cardAsset.update({
-        where: { id: asset.id },
-        data: updates,
-      });
-
-      await enqueueProcessingJob({
-        client: tx,
-        cardAssetId: asset.id,
-        type: ProcessingJobType.OCR,
-      });
+    await prisma.cardAsset.update({
+      where: { id: asset.id },
+      data: updates,
     });
 
     const thumbnailKey = buildThumbnailKey(asset.storageKey);
