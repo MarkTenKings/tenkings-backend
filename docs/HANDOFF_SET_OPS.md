@@ -5678,3 +5678,10 @@ Build Set Ops UI flow with:
   - only a real explicit card number promotes a prefetch ref to `qaStatus = keep`
 - This preserves `pending` status for set-level fallback refs from Add Cards prefetch and other shared seed callers.
 - No deploy, restart, migration, or DB mutation was executed for this follow-up logic fix.
+
+## Session Update (2026-03-11, auto-promote prefetch refs preview fix)
+- Fixed the Vercel preview build error in `frontend/nextjs-app/lib/server/referenceSeed.ts`:
+  - replaced the handwritten `rows` array shape with `Prisma.CardVariantReferenceImageCreateManyInput[]`
+  - removed the invalid `cropEmbeddings?: Prisma.JsonNull` type annotation that used a Prisma value as a type
+- This is a type-only correction; runtime behavior for the explicit high-confidence gate and worker-queue signaling is unchanged.
+- No deploy, restart, migration, or DB mutation was executed for this follow-up fix.

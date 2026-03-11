@@ -10759,3 +10759,19 @@
 ### Notes
 - This correction keeps set-level fallback refs in `pending` while still auto-promoting only truly card-scoped refs.
 - No deploy, restart, migration, or DB mutation was executed for this follow-up fix.
+
+## 2026-03-11 - Auto-promote prefetch refs preview build correction
+
+### Summary
+- Fixed the follow-up Vercel preview TypeScript failure in `frontend/nextjs-app/lib/server/referenceSeed.ts`.
+- Replaced the handwritten create-many row type with `Prisma.CardVariantReferenceImageCreateManyInput[]` so Prisma value sentinels stay values, not mistaken type annotations.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+
+### Validation Evidence
+- `git diff --check` to be rerun before commit/push after this edit.
+
+### Notes
+- This is a type-only fix; the explicit-card-number confidence gate remains unchanged.
+- No deploy, restart, migration, or DB mutation was executed for this follow-up fix.

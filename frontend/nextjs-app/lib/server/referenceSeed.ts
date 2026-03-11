@@ -647,22 +647,7 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
     })
     .sort((a: SeedListingCandidate, b: SeedListingCandidate) => b.score - a.score);
 
-  const rows: Array<{
-    setId: string;
-    programId: string;
-    cardNumber: string;
-    parallelId: string;
-    sourceListingId: string | null;
-    playerSeed: string | null;
-    listingTitle: string | null;
-    rawImageUrl: string;
-    sourceUrl: string | null;
-    qaStatus: string;
-    ownedStatus: string;
-    cropUrls: string[];
-    qualityScore: number | null;
-    cropEmbeddings?: Prisma.JsonNull;
-  }> = [];
+  const rows: Prisma.CardVariantReferenceImageCreateManyInput[] = [];
   let noMediaCandidates = 0;
   const maxProductLookups = Math.max(8, Math.min(24, safeLimit * 4));
   let productLookupCount = 0;
