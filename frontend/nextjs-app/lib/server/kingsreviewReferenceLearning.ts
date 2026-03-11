@@ -1,4 +1,5 @@
-import { prisma, type Prisma } from "@tenkings/database";
+import { prisma } from "@tenkings/database";
+import { Prisma } from "@prisma/client";
 import { parseClassificationPayload } from "@tenkings/shared";
 import { normalizeProgramId } from "./taxonomyV2Utils";
 
@@ -214,6 +215,38 @@ function buildPairKey(params: {
   ].join("::");
 }
 
+function normalizeReferenceIds(referenceIds: string[]) {
+  return Array.from(new Set(referenceIds.map((value) => String(value || "").trim()).filter(Boolean)));
+}
+
+function logInventoryReadyReferenceQueue(params: {
+  cardAssetId: string;
+  created: number;
+  skipped: number;
+  queued: number;
+  reason: string | null;
+}) {
+  console.info("[inventory-ready.refs] queued trusted refs", params);
+}
+
+async function queueTrustedReferencesForProcessing(referenceIds: string[]) {
+  const ids = normalizeReferenceIds(referenceIds);
+  if (ids.length < 1) {
+    return 0;
+  }
+
+  // The reference worker polls for refs in this pending state.
+  await prisma.cardVariantReferenceImage.updateMany({
+    where: { id: { in: ids } },
+    data: {
+      qualityScore: null,
+      cropEmbeddings: Prisma.JsonNull,
+    },
+  });
+
+  return ids.length;
+}
+
 async function loadReviewCompImages(cardAssetId: string): Promise<ReviewCompImage[]> {
   const [evidenceItems, jobs] = await Promise.all([
     prisma.cardEvidenceItem.findMany({
@@ -365,7 +398,15 @@ export async function seedTrustedReferencesFromInventoryReady(params: { cardAsse
   });
 
   if (!card) {
-    return { created: 0, skipped: 0, reason: "card_not_found" as const };
+    const result = { created: 0, skipped: 0, queued: 0, reason: "card_not_found" as const };
+    logInventoryReadyReferenceQueue({
+      cardAssetId: params.cardAssetId,
+      created: result.created,
+      skipped: result.skipped,
+      queued: result.queued,
+      reason: result.reason,
+    });
+    return result;
   }
 
   const classification = parseClassificationPayload(card.classificationJson);
@@ -374,7 +415,15 @@ export async function seedTrustedReferencesFromInventoryReady(params: { cardAsse
 
   const setId = normalizeText(normalized?.setName || attributes?.setName);
   if (!setId) {
-    return { created: 0, skipped: 0, reason: "missing_set" as const };
+    const result = { created: 0, skipped: 0, queued: 0, reason: "missing_set" as const };
+    logInventoryReadyReferenceQueue({
+      cardAssetId: card.id,
+      created: result.created,
+      skipped: result.skipped,
+      queued: result.queued,
+      reason: result.reason,
+    });
+    return result;
   }
 
   const programId = normalizeProgramId(normalizeText(normalized?.setCode) || "base");
@@ -391,10 +440,18 @@ export async function seedTrustedReferencesFromInventoryReady(params: { cardAsse
 
   const compImages = await upgradeReviewCompImagesToHd(await loadReviewCompImages(card.id));
   if (compImages.length < 1) {
-    return { created: 0, skipped: 0, reason: "no_comp_images" as const };
+    const result = { created: 0, skipped: 0, queued: 0, reason: "no_comp_images" as const };
+    logInventoryReadyReferenceQueue({
+      cardAssetId: card.id,
+      created: result.created,
+      skipped: result.skipped,
+      queued: result.queued,
+      reason: result.reason,
+    });
+    return result;
   }
 
-  const candidateRows: Prisma.CardVariantReferenceImageCreateManyInput[] = [];
+  const candidateRows: Prisma.CardVariantReferenceImageUncheckedCreateInput[] = [];
   compImages.forEach((comp) => {
     candidateRows.push({
       setId,
@@ -418,6 +475,7 @@ export async function seedTrustedReferencesFromInventoryReady(params: { cardAsse
       listingTitle: comp.title,
       rawImageUrl: comp.rawImageUrl,
       cropUrls: [],
+      cropEmbeddings: Prisma.JsonNull,
       qualityScore: null,
     });
 
@@ -447,13 +505,22 @@ export async function seedTrustedReferencesFromInventoryReady(params: { cardAsse
       listingTitle: comp.title,
       rawImageUrl: comp.rawImageUrl,
       cropUrls: [],
+      cropEmbeddings: Prisma.JsonNull,
       qualityScore: null,
     });
   });
 
   const pairKeys = candidateRows.map((row) => String(row.pairKey || "").trim()).filter(Boolean);
   if (pairKeys.length < 1) {
-    return { created: 0, skipped: candidateRows.length, reason: "no_pair_keys" as const };
+    const result = { created: 0, skipped: candidateRows.length, queued: 0, reason: "no_pair_keys" as const };
+    logInventoryReadyReferenceQueue({
+      cardAssetId: card.id,
+      created: result.created,
+      skipped: result.skipped,
+      queued: result.queued,
+      reason: result.reason,
+    });
+    return result;
   }
 
   const existing = await prisma.cardVariantReferenceImage.findMany({
@@ -471,18 +538,43 @@ export async function seedTrustedReferencesFromInventoryReady(params: { cardAsse
   );
   const rowsToCreate = candidateRows.filter((row) => !existingKeys.has(String(row.pairKey || "").trim()));
   if (rowsToCreate.length < 1) {
-    return { created: 0, skipped: candidateRows.length, reason: "already_seeded" as const };
+    const result = { created: 0, skipped: candidateRows.length, queued: 0, reason: "already_seeded" as const };
+    logInventoryReadyReferenceQueue({
+      cardAssetId: card.id,
+      created: result.created,
+      skipped: result.skipped,
+      queued: result.queued,
+      reason: result.reason,
+    });
+    return result;
   }
 
-  const result = await prisma.cardVariantReferenceImage.createMany({
-    data: rowsToCreate,
-  });
+  const createdRefs = await prisma.$transaction(
+    rowsToCreate.map((row) =>
+      prisma.cardVariantReferenceImage.create({
+        data: row,
+        select: { id: true },
+      })
+    )
+  );
+  const createdIds = createdRefs.map((row) => row.id);
+  const queued = await queueTrustedReferencesForProcessing(createdIds);
 
-  return {
-    created: Number(result.count ?? 0),
-    skipped: Math.max(0, candidateRows.length - Number(result.count ?? 0)),
+  const result = {
+    created: createdIds.length,
+    skipped: Math.max(0, candidateRows.length - createdIds.length),
+    queued,
     reason: null,
   };
+  logInventoryReadyReferenceQueue({
+    cardAssetId: card.id,
+    created: result.created,
+    skipped: result.skipped,
+    queued: result.queued,
+    reason: result.reason,
+  });
+
+  return result;
 }
 
 export { SET_REFERENCE_PARALLEL_ID };
