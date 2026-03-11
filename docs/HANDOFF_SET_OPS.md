@@ -1,16 +1,16 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-02-23` (rookie-parallel guard + seed/read fallback alignment)
-- Branch: `main`
-- Latest commits:
-  - `6e3f20c` fix(set-ops): harden checklist parsing and block html/noise rows
-  - `a3a7aa9` fix(set-ops): add direct source-url import and state reset
-  - `01a191f` fix(set-ops): filter discovery results to card-set sources
-  - `f683c0c` fix(set-ops): harden discovery against blocked source search
-  - `9b7ffcf` feat(set-ops): add source discovery import workflow
-  - `fbe2c0b` feat(set-ops): add csv/json upload flow for ingestion queue
-- Environments touched: workstation, repository main branch
+- Last reviewed: `2026-03-11` (PhotoRoom trigger timing fix implemented locally; no new runtime/DB evidence)
+- Branch: `codex/fix/photoroom-trigger-timing`
+- Short HEAD: `da154e5`
+- Latest repo commits:
+  - `da154e5` fix(kingsreview): map sold comp thumbnails directly
+  - `ff91554` fix(kingsreview): preserve ebay thumbnails in comp payloads
+  - `c2aa7bf` fix(kingsreview): split thumbnail review from hd reference seeding
+  - `8d81b03` fix(kingsreview): resolve comp images from ebay product media
+  - `ede4996` fix(kingsreview): restore comp images and de-dupe ebay query
+- Environments touched: workstation only in this sync session; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
 ## What Works
@@ -5117,3 +5117,398 @@ Build Set Ops UI flow with:
   - commit and push the one-file worker fix plus required handoff docs
   - redeploy only `bytebot-lite-service` on the droplet
 - No deploy/restart result recorded yet in this section.
+
+## Session Update (2026-03-10, deploy follow-up for direct-thumbnail mapping fix)
+- Workstation deploy status:
+  - committed locally as `da154e5`
+  - pushed to `origin/main` successfully
+- Observed blocker on droplet deploy from Codex tool environment:
+  - direct `ssh root@104.131.27.245` failed with `Permission denied (publickey)`
+  - direct `ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes root@104.131.27.245` also failed with `Permission denied (publickey)`
+  - local `~/.ssh/config` points `tenkings` at `104.131.27.245` with `IdentityFile ~/.ssh/id_ed25519`, but the tool environment does not have access to the user’s working SSH agent/keychain session
+- Result:
+  - code is live on GitHub `main`
+  - `bytebot-lite-service` was **not** recreated from this tool session because SSH auth blocked the remote step
+- Required manual follow-up from a shell with the user’s SSH agent/keychain available:
+  - `ssh root@104.131.27.245`
+  - `cd /root/tenkings-backend`
+  - `git pull --ff-only`
+  - `cd infra`
+  - `docker compose up -d --build --force-recreate bytebot-lite-service`
+  - `docker compose ps bytebot-lite-service`
+  - `docker compose logs --tail=50 bytebot-lite-service`
+
+## Session Update (2026-03-10, observed result after manual droplet worker recreate for direct-thumbnail mapping fix)
+- User completed the remote deploy from their shell.
+- Observed droplet sync result:
+  - `git pull --ff-only`
+    - fast-forwarded `ff91554..da154e5`
+  - `git log --oneline -n 3`
+    - `da154e5 (HEAD -> main, origin/main, origin/HEAD) fix(kingsreview): map sold comp thumbnails directly`
+    - `ff91554 fix(kingsreview): preserve ebay thumbnails in comp payloads`
+    - `c2aa7bf fix(kingsreview): split thumbnail review from hd reference seeding`
+- Observed worker recreate result:
+  - `docker compose up -d --build --force-recreate bytebot-lite-service`
+    - build completed successfully
+    - container `infra-bytebot-lite-service-1` recreated
+  - `docker compose ps bytebot-lite-service`
+    - service `Up`
+    - port mapping `0.0.0.0:8089->8088/tcp`
+  - `docker compose logs --tail=50 bytebot-lite-service`
+    - `[bytebot-lite] reference worker online`
+    - `[bytebot-lite] worker 1 online`
+    - `[bytebot-lite] teach server listening on 8088`
+- Runtime note:
+  - Docker Compose emitted the known warning that `version` is obsolete in `infra/docker-compose.yml`; this did not block the build or recreate
+
+## Session Update (2026-03-11)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Captured current workstation git state at repo root:
+  - `git status -sb` showed `## main...origin/main` with modified `docs/HANDOFF_SET_OPS.md`, modified `docs/handoffs/SESSION_LOG.md`, and untracked `batch-imports/` + `logs/`
+  - `git branch --show-current` returned `main`
+  - `git rev-parse --short HEAD` returned `da154e5`
+- No code changes, deploys, restarts, migrations, or DB operations were executed in this session before these handoff updates.
+- Existing handoff doc edits were preserved; this session only appended new context.
+
+## Session Update (2026-03-11, architecture audit: card workflow)
+- Investigation-only pass completed for the card workflow from Add Cards through Assigned Locations.
+- Added new audit doc:
+  - `docs/ARCHITECTURE_CARD_WORKFLOW.md`
+- Audit scope covered:
+  - Add Cards upload, OCR suggest, teach memory, draw-teach regions, and SerpApi reference prefetch
+  - KingsReview list/load behavior, evidence attachment, variant matching/confirmation, and Inventory Ready handoff
+  - Inventory Ready item minting, QR/label creation, trusted reference seeding, and location assignment state
+- Main architectural findings recorded in the new doc:
+  - two overlapping pipelines are active today: the newer admin OCR/KingsReview flow and the older `ProcessingJob` OCR/classify/valuation worker flow
+  - Draw Teach (`OcrRegionTemplate`) is live and used by later `ocr-suggest` calls
+  - Teach From Corrections (`OcrFeedbackEvent` / `OcrFeedbackMemoryAggregate`) is live and does affect later cards
+  - Add Cards reference prefetch creates provisional external refs; Inventory Ready creates trusted external refs; neither path auto-promotes refs to owned storage
+  - KingsReview enqueue currently ignores requested sources and hardcodes `["ebay_sold"]`
+  - Assigned Locations is data-backed by `InventoryBatch` and `CardAsset.inventoryBatchId`, but `/admin/location-batches` is still a placeholder UI
+- No deploy, restart, migration, test run, or DB mutation was performed for this architecture audit.
+
+## Session Update (2026-03-11, status-only refresh)
+- Re-read the mandatory startup docs listed in `AGENTS.md`.
+- Captured current workstation git state for a user-requested status report:
+  - `git status -sb`: `## main...origin/main` with modified `docs/HANDOFF_SET_OPS.md`, modified `docs/handoffs/SESSION_LOG.md`, and untracked `batch-imports/`, `docs/ARCHITECTURE_CARD_WORKFLOW.md`, and `logs/`
+  - `git branch --show-current`: `main`
+  - `git rev-parse --short HEAD`: `da154e5`
+- No code changes, deploys, restarts, migrations, or DB operations were executed in this session beyond these append-only handoff updates.
+- Existing handoff doc edits were preserved.
+
+## Session Update (2026-03-11, architecture cleanup review prep)
+- Reviewed the architecture audit brief for the Add Cards -> KingsReview -> Inventory Ready -> Assigned Locations flow against current repository code.
+- The brief is aligned enough to use as the review baseline for upcoming Agent A-G work.
+- Review-critical reminders captured from current code:
+  - legacy processing worker and its deploy config are still present
+  - Add Cards still triggers PhotoRoom in background after KingsReview enqueue
+  - inventory assignment still does not cascade `locationId` to `Item` / `PackLabel` / `QrCode`
+  - inventory purge still deletes card-side rows only
+  - KingsReview enqueue still hardcodes `["ebay_sold"]` and checks BACK but not TILT
+- No code, deploy, restart, migration, or DB operations were executed for this review-prep step.
+
+## Session Update (2026-03-11, Agent A review)
+- Reviewed Agent A branch `codex/fix/kill-legacy-processing-pipeline` at commit `cacbe81`.
+- Confirmed intended removals are present:
+  - deleted `backend/processing-service`
+  - removed `processing-service` from `infra/docker-compose.yml`
+  - removed upload-time `ProcessingJob` enqueue from `pages/api/admin/uploads/complete.ts`
+- Blocker found:
+  - branch still sets `CardAsset.status = OCR_PENDING` on upload complete
+  - batch list/detail APIs still compute readiness from `CardAssetStatus.READY`
+  - with the worker removed, the prior status-advance path is gone, so batch readiness/progress would stall
+- Secondary notes:
+  - `ProcessingJob` Prisma schema/model remains intact, which is correct
+  - branch also removes shared DB helper files and does not include the agent's local handoff/doc updates in the commit
+
+## Session Update (2026-03-11, Agent A review follow-up)
+- Re-reviewed Agent A branch after follow-up commit `9ca2d06`.
+- Original blocker is resolved:
+  - `pages/api/admin/uploads/complete.ts` now marks assets `READY` after upload finalization
+  - this realigns with batch APIs that derive processed/readiness counts from `CardAssetStatus.READY`
+- Follow-up doc cleanup is also present:
+  - `docs/ADMIN_UPLOADS.md`
+  - `docs/CARD_PIPELINE_PLAN.md`
+- Focused validation executed in this review session:
+  - `pnpm --filter @tenkings/database build` passed
+  - `pnpm --filter @tenkings/nextjs-app build` passed
+- Agent A is approved from the review side.
+
+## Session Update (2026-03-11, Agent A Vercel production promote in progress)
+- User manually promoted the Agent A branch build to Vercel production from the dashboard.
+- At the time of this note, the Vercel production build was still in progress.
+- Important deployment nuance:
+  - a successful Vercel production build would make Agent A's Next.js/API changes live on the Vercel-served production surface
+  - it would not by itself remove the legacy `processing-service` container/config from the droplet runtime
+- No droplet sync, restart, or migration command was executed in this session.
+
+## Session Update (2026-03-11, legacy processing-service droplet cleanup guidance)
+- Reviewed the exact droplet-side cleanup path for removing `processing-service`.
+- Important nuance from live git evidence gathered in this session:
+  - remote `origin/main` still reported `da154e5` at check time, so this clone could not yet verify Agent A on GitHub `main`
+- Operational guidance recorded:
+  - durable cleanup requires the droplet's checked-out `infra/docker-compose.yml` to be updated first
+  - after compose is updated, preferred removal command is `docker compose up -d --remove-orphans`
+  - stopping/removing `processing-service` alone before the compose update is only temporary and later `docker compose up -d` can recreate it
+- Known extra droplet artifact from prior session history:
+  - `/root/tenkings-backend/env/processing-service.env`
+- No repo evidence was found for cron/systemd/supervisor/pm2 wiring for this worker; tracked runtime was Docker Compose only.
+
+## Session Update (2026-03-11, requested git report refresh)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Captured current workstation git state for the user-requested report:
+  - `git status -sb` showed `## main...origin/main` with modified `docs/HANDOFF_SET_OPS.md`, modified `docs/handoffs/SESSION_LOG.md`, and untracked `batch-imports/`, `docs/ARCHITECTURE_CARD_WORKFLOW.md`, and `logs/`
+  - `git branch --show-current` returned `main`
+  - `git rev-parse --short HEAD` returned `da154e5`
+- Per explicit user instruction, no deploy, restart, migration, or DB operation was executed.
+- Existing workspace edits were preserved; this session only appended handoff context.
+
+## Session Update (2026-03-11, legacy processing-service pipeline removed locally)
+- Investigation findings before deletion:
+  - `processing-service` was only a droplet-side Docker Compose worker defined in `infra/docker-compose.yml`; no Cloud Run config or scheduler/cron trigger exists in the repo.
+  - Outside the legacy worker, `ProcessingJob` runtime usage was limited to the upload-complete enqueue path plus generic database helper exports; batch readiness APIs already derive state from `CardAsset.status`, not `ProcessingJob.status`.
+  - Ximilar credentials and the legacy eBay Browse bearer token were only referenced inside `backend/processing-service`.
+  - `CardBatch.processedCount` / `CardBatch.status` are also updated by `/api/admin/cards/assign`; batch list/detail APIs compute readiness from `CardAssetStatus.READY` without persisting through `ProcessingJob`.
+- Local code deletion completed:
+  - removed the entire `backend/processing-service` workspace package, including worker entrypoint, legacy OCR/classify/grading/valuation processors, PhotoRoom helper path, and SportsDB sync code
+  - removed the `processing-service` service definition from `infra/docker-compose.yml`
+  - removed the `ProcessingJob(type=OCR)` enqueue from `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`
+  - removed dead `packages/database/src/processingJobs.ts` helper exports while preserving the Prisma `ProcessingJob` model/table and `CardAsset` fields
+  - refreshed `pnpm-lock.yaml` so frozen installs no longer expect the removed workspace package
+- Local validation evidence:
+  - `rg` across non-doc source returned no remaining `processing-service`, `@tenkings/processing-service`, `enqueueProcessingJob`, `ProcessingJobType.OCR`, `XIMILAR_*`, or `EBAY_BEARER_TOKEN` references
+  - `pnpm install --lockfile-only` completed successfully
+  - `pnpm --filter '@tenkings/*' run --if-present build` completed successfully across 13 workspace packages, including `@tenkings/database` and `@tenkings/nextjs-app`
+  - built route artifact `frontend/nextjs-app/.next/server/pages/api/admin/uploads/complete.js` contains the direct `cardAsset.update(...)` path and no queue helper references
+- Runtime verification limit:
+  - full DB-backed upload proof was not runnable in this sandbox because `DATABASE_URL` was unset, no local Postgres was listening on `localhost:5432`, `psql`/`docker` were unavailable, and no operator/auth env was present for an authenticated POST
+  - the built Next.js app did start locally via `next start -p 3100`, but cross-command localhost access in this sandbox could not reach that running session for a usable API round-trip
+- No deploy, restart, migration, or DB mutation was executed in this session.
+
+## Session Update (2026-03-11, legacy processing-service PR opened)
+- Published branch:
+  - `codex/fix/kill-legacy-processing-pipeline`
+- Commit created:
+  - `cacbe81` — `fix: remove legacy processing-service pipeline`
+- Pull request opened:
+  - [PR #2](https://github.com/MarkTenKings/tenkings-backend/pull/2)
+- Working tree after PR creation still contains local-only handoff updates plus pre-existing untracked workspace artifacts; these were not included in the commit.
+
+## Session Update (2026-03-11, corrected git evidence)
+- Re-checked repository state after finding same-day handoff notes that did not match current git evidence.
+- Current workstation git state is:
+  - `git status -sb`: `## codex/fix/kill-legacy-processing-pipeline` with modified `docs/HANDOFF_SET_OPS.md`, modified `docs/handoffs/SESSION_LOG.md`, and untracked `batch-imports/`, `docs/ARCHITECTURE_CARD_WORKFLOW.md`, and `logs/`
+  - `git branch --show-current`: `codex/fix/kill-legacy-processing-pipeline`
+  - `git rev-parse --short HEAD`: `da154e5`
+- Per `MASTER_PRODUCT_CONTEXT.md` source-of-truth policy, current repository evidence supersedes the earlier same-day note that referenced `main`.
+- No code changes, deploys, restarts, migrations, or DB operations were executed in this status-only session beyond these append-only handoff updates.
+
+## Session Update (2026-03-11, git-state verification correction)
+- Re-checked workstation git state after a same-session branch mismatch between earlier command output and later `git status -sb` evidence.
+- Final verified git state for this repository is:
+  - `git status -sb` showed `## codex/fix/kill-legacy-processing-pipeline` with modified `docs/HANDOFF_SET_OPS.md`, modified `docs/handoffs/SESSION_LOG.md`, and untracked `batch-imports/`, `docs/ARCHITECTURE_CARD_WORKFLOW.md`, and `logs/`
+  - `git branch --show-current` returned `codex/fix/kill-legacy-processing-pipeline`
+  - `git symbolic-ref --short HEAD` returned `codex/fix/kill-legacy-processing-pipeline`
+  - `git rev-parse --short HEAD` returned `da154e5`
+- This correction supersedes same-session notes in handoff docs that referenced branch `main`.
+- No code, deploy, restart, migration, or DB operation was executed for this verification step.
+
+## Session Update (2026-03-11, user-requested git report refresh)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Captured current workstation git state for the user-requested report:
+  - `git status -sb` showed `## codex/fix/kill-legacy-processing-pipeline` with modified `docs/HANDOFF_SET_OPS.md`, modified `docs/handoffs/SESSION_LOG.md`, and untracked `batch-imports/`, `docs/ARCHITECTURE_CARD_WORKFLOW.md`, and `logs/`
+  - `git branch --show-current` returned `codex/fix/kill-legacy-processing-pipeline`
+  - `git rev-parse --short HEAD` returned `da154e5`
+- Per explicit user instruction, no deploy, restart, migration, or DB operation was executed.
+- Existing workspace edits were preserved; this session only appended handoff context.
+
+## Session Update (2026-03-11, AGENTS startup sync + git report refresh)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Live repository evidence for this session:
+  - `git status -sb`: `## codex/fix/kill-legacy-processing-pipeline` with modified `docs/HANDOFF_SET_OPS.md`, modified `docs/handoffs/SESSION_LOG.md`, and untracked `batch-imports/`, `docs/ARCHITECTURE_CARD_WORKFLOW.md`, and `logs/`
+  - `git branch --show-current`: `codex/fix/kill-legacy-processing-pipeline`
+  - `git rev-parse --short HEAD`: `da154e5`
+  - `git log --oneline -n 5`: latest commits are `da154e5`, `ff91554`, `c2aa7bf`, `8d81b03`, `ede4996`
+- Current repo evidence supersedes older same-day notes in this file that referenced `main` or older top-of-file commit history.
+- No code changes, runtime checks, deploys, restarts, migrations, or destructive set operations were executed in this status-only session.
+
+## Session Update (2026-03-11, AGENTS.md status refresh)
+- Re-read the mandatory startup docs listed in `AGENTS.md` before any repo inspection.
+- Verified current workstation git evidence for this status-only session:
+  - `git status -sb` showed `## codex/fix/kill-legacy-processing-pipeline` with modified `docs/HANDOFF_SET_OPS.md`, modified `docs/handoffs/SESSION_LOG.md`, and untracked `batch-imports/`, `docs/ARCHITECTURE_CARD_WORKFLOW.md`, and `logs/`
+  - `git branch --show-current` returned `codex/fix/kill-legacy-processing-pipeline`
+  - `git rev-parse --short HEAD` returned `da154e5`
+- Per explicit instruction, no deploy, restart, migration, or DB operation was executed.
+- Existing workspace edits were preserved; only append-only handoff updates were made.
+
+## Session Update (2026-03-11, AGENTS follow-through for status-only user request)
+- Re-read mandatory startup docs per `AGENTS.md` before inspecting repository state.
+- Confirmed current workstation git state used for the user response:
+  - `git status -sb` showed `## codex/fix/kill-legacy-processing-pipeline` with deleted files under `backend/processing-service/`, deleted `packages/database/src/processingJobs.ts`, modified `packages/database/src/index.ts`, modified `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`, modified `infra/docker-compose.yml`, modified `pnpm-lock.yaml`, modified `docs/HANDOFF_SET_OPS.md`, modified `docs/handoffs/SESSION_LOG.md`, and untracked `batch-imports/`, `docs/ARCHITECTURE_CARD_WORKFLOW.md`, and `logs/`
+  - `git branch --show-current` returned `codex/fix/kill-legacy-processing-pipeline`
+  - `git rev-parse --short HEAD` returned `da154e5`
+- No deploy, restart, migration, runtime, or DB command was executed.
+- Existing workspace edits were preserved; this update is handoff-only.
+
+## Session Update (2026-03-11, repeated AGENTS startup sync for git report)
+- Re-read mandatory startup docs per `AGENTS.md` before any repo inspection for this turn.
+- Re-verified current workstation git state for the user-requested report:
+  - `git status -sb` showed `## codex/fix/kill-legacy-processing-pipeline` with deleted files under `backend/processing-service/`, modified `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`, modified `infra/docker-compose.yml`, modified `packages/database/src/index.ts`, deleted `packages/database/src/processingJobs.ts`, modified `pnpm-lock.yaml`, modified `docs/HANDOFF_SET_OPS.md`, modified `docs/handoffs/SESSION_LOG.md`, and untracked `batch-imports/`, `docs/ARCHITECTURE_CARD_WORKFLOW.md`, and `logs/`
+  - `git branch --show-current` returned `codex/fix/kill-legacy-processing-pipeline`
+  - `git rev-parse --short HEAD` returned `da154e5`
+- This turn confirmed the dirty worktree still includes pending legacy processing-pipeline removal edits plus upload/API, infra, database export, and lockfile changes.
+- Per explicit user instruction, no deploy, restart, migration, runtime, or DB command was executed.
+- Existing workspace edits were preserved; this update is handoff-only.
+
+## Session Update (2026-03-11, reviewer blocker fix pushed)
+- Addressed the batch-readiness regression flagged in PR review:
+  - `frontend/nextjs-app/pages/api/admin/uploads/complete.ts` no longer leaves uploads in `OCR_PENDING`
+  - upload completion now sets `CardAsset.status = READY` after metadata + thumbnail work finishes, so `/api/admin/batches` and `/api/admin/batches/[batchId]` continue counting freshly completed uploads as processed
+- Updated stale docs that still described the retired worker as active:
+  - `docs/ADMIN_UPLOADS.md`
+  - `docs/CARD_PIPELINE_PLAN.md`
+- Focused validation:
+  - `pnpm --filter @tenkings/nextjs-app build`
+    - completed successfully
+    - existing Next.js lint warnings remained unchanged; no new build/type failure was introduced
+- Follow-up commit created and pushed to the same PR branch:
+  - `9ca2d06` — `fix: mark uploads ready after completion`
+  - commit message body explicitly documents why the earlier removal of `packages/database/src/processingJobs.ts` is safe (no remaining runtime callers after worker + upload enqueue removal)
+- PR update:
+  - [PR #2](https://github.com/MarkTenKings/tenkings-backend/pull/2) now includes the blocker fix
+- No deploy, restart, migration, or DB mutation was executed in this session.
+
+## Session Update (2026-03-11, remote main verification vs Vercel production)
+- Verified remote `origin/main` directly with `git fetch origin main`.
+- Result:
+  - fetched `main` still points to `da154e5`
+  - fetched `frontend/nextjs-app/pages/api/admin/uploads/complete.ts` still contains the legacy `OCR_PENDING` + `enqueueProcessingJob(...)` path
+  - fetched `infra/docker-compose.yml` still still contains the `processing-service` service block
+  - fetched tree still contains `backend/processing-service/src/index.ts`
+- User-provided Vercel evidence shows production is currently:
+  - `F6RXX3MVV`
+  - `Production Rebuild of Chmp7GKtk`
+  - where `Chmp7GKtk` is the preview deployment for branch `codex/fix/kill-legacy-processing-pipeline` at commit `9ca2d06`
+- Conclusion:
+  - Vercel production is serving Agent A's branch build
+  - GitHub `main` is still behind and does not yet contain Agent A's fix
+
+## Session Update (2026-03-11, planned promotion of Agent A branch to main)
+- Verified current remote relationship:
+  - `origin/main` = `da154e5`
+  - `origin/codex/fix/kill-legacy-processing-pipeline` = `9ca2d06`
+  - `git rev-list --left-right --count origin/main...origin/codex/fix/kill-legacy-processing-pipeline` returned `0 2`, so `main` can be fast-forwarded directly.
+- Recommended operator path:
+  - use a clean temporary worktree from `origin/main`
+  - fast-forward `main` to `origin/codex/fix/kill-legacy-processing-pipeline`
+  - push `main` to origin so GitHub matches the Vercel production rebuild now serving Agent A's branch commit
+- No deploy/restart/migration was executed from this session; this note records the verified promotion plan only.
+
+## Session Update (2026-03-11, Agent A promoted to remote main)
+- Operator completed the clean-worktree promotion flow.
+- Verified results:
+  - `git merge --ff-only origin/codex/fix/kill-legacy-processing-pipeline` advanced `main` from `da154e5` to `9ca2d06`
+  - `git push origin main` succeeded with `da154e5..9ca2d06  main -> main`
+  - `git rev-parse --short HEAD` returned `9ca2d06`
+  - `git ls-remote --heads origin main` returned `9ca2d067f63d4a36f322b6e9a0b7d960b047d03b refs/heads/main`
+- Outcome:
+  - GitHub `origin/main` now contains Agent A's approved fix
+  - safe prerequisite for droplet-side compose cleanup of `processing-service` is now satisfied
+- Remaining observation gap:
+  - Vercel production deployment from `main` was not rechecked from this shell session; confirm the new `main` production build is green in Vercel before declaring app deployment fully observed.
+
+## Session Update (2026-03-11, Vercel main confirmed; droplet cleanup planning)
+- User provided Vercel evidence showing current production deployment `p1aKgbnfF` is `Ready` on branch `main` at commit `9ca2d06`.
+- User also reported a manual production-site smoke check passed.
+- Current cleanup recommendation for the legacy worker on the droplet:
+  - sync `/root/tenkings-backend` to current `origin/main`
+  - from `/root/tenkings-backend/infra`, run `docker compose up -d --remove-orphans`
+  - verify `processing-service` no longer appears in `docker compose ps` / `docker ps -a`
+- Optional follow-up cleanup:
+  - remove `/root/tenkings-backend/env/processing-service.env` if historical retention is not needed
+  - optionally prune the retired Docker image later if disk usage matters
+- Risk summary:
+  - low code risk because Vercel `main` and GitHub `main` already match `9ca2d06`
+  - main operational risk is incidental restart/recreate behavior across compose-managed services during orphan cleanup; verify service health immediately after
+  - no repo evidence of cron/systemd/supervisor/pm2 wiring for `processing-service`; tracked runtime wiring was Docker Compose only
+
+## Session Update (2026-03-11, droplet cleanup completed for legacy processing-service)
+- User executed the droplet sync flow:
+  - `/root/tenkings-backend`
+  - `git pull --ff-only`
+  - `git rev-parse --short HEAD`
+- Verified droplet repo advanced cleanly to `9ca2d06`.
+- User then executed orphan cleanup from `/root/tenkings-backend/infra`:
+  - `docker compose up -d --remove-orphans`
+  - output showed `infra-processing-service-1` removed
+- Verification:
+  - `docker compose ps` listed remaining active services and no `processing-service`
+  - `docker ps -a --filter name=processing-service` returned no matching containers
+- Known non-blocking warning:
+  - Docker Compose reported that the `version` key in `infra/docker-compose.yml` is obsolete and ignored
+- Optional follow-up only:
+  - delete `/root/tenkings-backend/env/processing-service.env` if no rollback breadcrumb is desired
+  - optionally prune the retired Docker image later if disk usage warrants it
+
+## Session Update (2026-03-11, review outcome for Agent B PhotoRoom timing branch)
+- Reviewed local branch `codex/fix/photoroom-trigger-timing` against `origin/main` at `9ca2d06`.
+- Branch changes are still local/uncommitted at review time.
+- Review result: changes requested due to one blocker.
+- Blocker summary:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx` now treats the API message `"PhotoRoom not configured"` as a hard failure in `triggerPhotoroomForCard()`
+  - `handleSendToKingsReview()` now throws on that result before enqueue
+  - consequence: environments without `PHOTOROOM_API_KEY` can no longer send cards to KingsReview, which is a broader behavior change than the requested trigger-timing fix
+- Secondary warning:
+  - PhotoRoom is now awaited inline before enqueue, but the card PhotoRoom API still has no explicit timeout/telemetry for long-running calls
+
+## Session Update (2026-03-11, PhotoRoom trigger timing fix)
+- Investigated all current card PhotoRoom trigger points before changing code.
+- Implemented the timing change in `frontend/nextjs-app/pages/admin/uploads.tsx`:
+  - removed the OCR-stage PhotoRoom trigger that fired after `ocr-suggest`
+  - removed now-unused `photoroomRequestedRef`
+  - changed `handleSendToKingsReview()` to await `triggerPhotoroomForCard(...)` before `POST /api/admin/kingsreview/enqueue`
+- Idempotency remains intact because `frontend/nextjs-app/pages/api/admin/cards/[cardId]/photoroom.ts` still skips any front/BACK/TILT image with `backgroundRemovedAt` already set.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx`
+    - pass with existing `@next/next/no-img-element` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - pass
+- Timing risk still open:
+  - no local runtime metrics were found for card PhotoRoom duration
+  - the card PhotoRoom API still has no explicit timeout and processes front/BACK/TILT serially under queue concurrency `1`
+  - as a result, the `<10s` acceptance criterion is not verified from local evidence alone
+- No deploy, restart, migration, or DB operation was executed for this change.
+
+## Session Update (2026-03-11, PhotoRoom not-configured skip follow-up)
+- Applied Agent R blocker fix in `frontend/nextjs-app/pages/admin/uploads.tsx`.
+- The pre-enqueue UI wrapper now treats the API response message `PhotoRoom not configured` as a non-fatal skip:
+  - logs a browser console warning
+  - returns success to the send path
+  - allows `handleSendToKingsReview()` to enqueue KingsReview normally
+- Actual PhotoRoom failures still block enqueue:
+  - non-200 card PhotoRoom API responses
+  - thrown fetch/runtime errors in the wrapper
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx`
+    - pass with existing `@next/next/no-img-element` warnings only
+- No deploy, restart, migration, or DB operation was executed for this follow-up fix.

@@ -758,7 +758,6 @@ export default function AdminUploads() {
   const ocrAppliedOptionalFieldsRef = useRef<(keyof IntakeOptionalFields)[]>([]);
   const parallelPrefetchKeyRef = useRef<string | null>(null);
   const parallelPrefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const photoroomRequestedRef = useRef<string | null>(null);
   const restoredDraftRef = useRef(false);
   const teachRegionImageRefs = useRef<Record<TeachRegionSide, HTMLImageElement | null>>({
     FRONT: null,
@@ -1576,7 +1575,6 @@ export default function AdminUploads() {
     ocrAppliedFieldsRef.current = [];
     ocrOptionalBackupRef.current = null;
     ocrAppliedOptionalFieldsRef.current = [];
-    photoroomRequestedRef.current = null;
   }, []);
 
   const clearActiveIntakeState = useCallback(() => {
@@ -2689,7 +2687,8 @@ export default function AdminUploads() {
         }
         const message = typeof payload?.message === "string" ? payload.message : "PhotoRoom processed.";
         if (/not configured/i.test(message)) {
-          return { ok: false as const, message: "PhotoRoom is not configured in this environment." };
+          console.warn("PhotoRoom is not configured in this environment. Skipping pre-enqueue processing.");
+          return { ok: true as const, message };
         }
         return { ok: true as const, message };
       } catch (error) {
@@ -2806,14 +2805,6 @@ export default function AdminUploads() {
         }
         return;
       }
-      if (photoroomRequestedRef.current !== cardId) {
-        photoroomRequestedRef.current = cardId;
-        void triggerPhotoroomForCard(cardId).then((result) => {
-          if (!result.ok) {
-            console.warn("PhotoRoom background removal failed", result.message);
-          }
-        });
-      }
       const suggestions = payload?.suggestions ?? {};
       const suggestionConfidence =
         (payload?.audit?.confidence as Record<string, number | null | undefined> | undefined) ?? undefined;
@@ -2839,7 +2830,6 @@ export default function AdminUploads() {
     intakeRequired.year,
     teachLayoutClass,
     session?.token,
-    triggerPhotoroomForCard,
   ]);
 
   useEffect(() => {
@@ -4328,6 +4318,10 @@ export default function AdminUploads() {
       const sendingCardId = intakeCardId;
       const recordTeachOnSend = trainAiEnabled && !teachCapturedFromCorrections;
       await saveIntakeMetadata(true, recordTeachOnSend);
+      const photoroomResult = await triggerPhotoroomForCard(sendingCardId);
+      if (!photoroomResult.ok) {
+        throw new Error(photoroomResult.message);
+      }
       const query = buildIntakeQuery();
       const sourceList =
         intakeRequired.category === "tcg"
@@ -4366,15 +4360,6 @@ export default function AdminUploads() {
         void openIntakeCapture("front");
       }
       void refreshQueuedReviewCards();
-
-      // Run PhotoRoom processing in background after queue handoff so UX remains fast.
-      void triggerPhotoroomForCard(sendingCardId).then((result) => {
-        if (!result.ok) {
-          console.warn("PhotoRoom background removal failed", result.message);
-          return;
-        }
-        photoroomRequestedRef.current = sendingCardId;
-      });
     } catch (err) {
       const message = humanizeRequestFailure(err, "Failed to send to KingsReview.");
       setIntakeError(message);
