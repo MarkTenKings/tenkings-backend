@@ -163,15 +163,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       await prisma.$transaction(async (tx) => {
         for (const pack of packs) {
-        const labelRecord = pack.packLabels[0] ?? null;
-        await syncPackAssetsLocation(tx, {
-          packInstanceId: pack.id,
-          packLabelId: labelRecord?.id ?? null,
-          cardQrCodeId: labelRecord?.cardQrCode.id ?? null,
-          packQrCodeId: labelRecord?.packQrCode.id ?? null,
-          locationId: targetLocationId,
-        });
-      }
+          const labelRecord = pack.packLabels[0] ?? null;
+          await syncPackAssetsLocation(tx, {
+            packInstanceId: pack.id,
+            itemId: pack.slots[0]?.item?.id ?? null,
+            packLabelId: labelRecord?.id ?? null,
+            cardQrCodeId: labelRecord?.cardQrCode.id ?? null,
+            packQrCodeId: labelRecord?.packQrCode.id ?? null,
+            locationId: targetLocationId,
+          });
+        }
       });
 
       return res.status(200).json({ updated: assignments.length });

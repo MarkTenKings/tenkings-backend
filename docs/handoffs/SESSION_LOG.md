@@ -10510,3 +10510,90 @@
 - Current allowlist is `["ebay_sold"]`.
 - If the filtered source list is empty, the backend falls back to `["ebay_sold"]`.
 - No deploy, restart, migration, runtime, or DB operation was executed for this fix.
+
+## 2026-03-11 - Inventory assignment location cascade
+
+### Summary
+- Implemented location cascade for Inventory Ready assignment in an isolated worktree on branch `codex/fix/cascade-location-on-assign`.
+- Added nullable `Item.locationId` plus migration so assigned inventory items can store the same physical location as their batch, label, and QR codes.
+- Added a manual backfill script for existing assigned cards; default mode is dry-run/report-only.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/qrCodes.ts`
+- `frontend/nextjs-app/pages/api/admin/inventory-ready/assign.ts`
+- `frontend/nextjs-app/pages/api/admin/packing/location.ts`
+- `frontend/nextjs-app/pages/api/kiosk/start.ts`
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260311193000_add_item_location/migration.sql`
+- `scripts/backfill-location-cascade.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Investigation Findings
+- `CardAsset -> Item` is still linked by convention, not FK:
+  - `packages/database/src/mint.ts` looks up and creates items with `Item.number = CardAsset.id`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts` uses the same pattern for Inventory Ready artifact creation
+- `QrCode` already has nullable `locationId`.
+- `PackLabel` already has nullable `locationId`.
+- `InventoryBatch.locationId` is a required FK to `Location.id`.
+- `Location` is the canonical physical-location model used by kiosk sessions, live rips, pack instances, QR codes, pack labels, restocks, and inventory batches.
+- Live DB count for already-assigned rows missing cascaded location is still blocked in this workspace because `DATABASE_URL` is not set.
+
+### Implementation Notes
+- Extended the shared location helper in `frontend/nextjs-app/lib/server/qrCodes.ts` so location sync now updates:
+  - `Item.locationId`
+  - `PackLabel.locationId`
+  - both linked `QrCode.locationId` values
+  - and, for pack-aware callers, `PackInstance.locationId`
+- Updated `POST /api/admin/inventory-ready/assign` to run in a transaction:
+  - create `InventoryBatch`
+  - update selected `CardAsset` rows
+  - locate linked `Item` rows via `Item.number in cardIds`
+  - locate linked `PackLabel` rows via `itemId` and `cardQrCodeId`
+  - cascade the batch location to item/label/QR records
+- Updated existing pack/kiosk callers of `syncPackAssetsLocation(...)` to pass `itemId` so the new `Item.locationId` field stays aligned when locations change outside Inventory Ready assignment.
+- Added `scripts/backfill-location-cascade.ts`:
+  - dry-run by default
+  - reports assigned-card coverage and missing-location counts
+  - writes only when `--apply` is provided
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database generate`
+  - pass
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/inventory-ready/assign.ts --file lib/server/qrCodes.ts --file pages/api/admin/packing/location.ts --file pages/api/kiosk/start.ts`
+  - pass
+- `TS_NODE_COMPILER_OPTIONS='{"module":"commonjs","moduleResolution":"node"}' pnpm --filter @tenkings/kiosk-agent exec ts-node --skip-project --transpile-only scripts/backfill-location-cascade.ts --help`
+  - pass
+
+### Notes
+- No deploy, restart, migration, or DB operation was executed for this coding step.
+- `vaultLocation` was intentionally left untouched; it is not used as a substitute for relational location state.
+
+## 2026-03-11 - Inventory assignment location cascade follow-up
+
+### Summary
+- Applied Agent R follow-up fixes on `codex/fix/cascade-location-on-assign`.
+- Corrected the backfill dry-run reporting so it detects any location drift versus the assigned batch location, not only `NULL` location fields.
+- Prepared the previously untracked migration and backfill script for inclusion in the branch commit.
+
+### Files Updated
+- `scripts/backfill-location-cascade.ts`
+- `packages/database/prisma/migrations/20260311193000_add_item_location/migration.sql`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `scripts/backfill-location-cascade.ts`
+  - dry-run summary now compares each matched `Item`, `PackLabel`, and `QrCode` location against the expected `InventoryBatch.locationId`
+  - summary keys were renamed from missing/null semantics to drift semantics (`cardsWithLocationDrift`, `locationDriftCounts`)
+  - usage text now explicitly states that dry-run reports location drift versus assigned batch location
+
+### Validation Evidence
+- `TS_NODE_COMPILER_OPTIONS='{"module":"commonjs","moduleResolution":"node"}' pnpm --filter @tenkings/kiosk-agent exec ts-node --skip-project --transpile-only scripts/backfill-location-cascade.ts --help`
+  - pass
+
+### Notes
+- Live DB drift counts remain blocked in this workspace because `DATABASE_URL` is not set.
+- No deploy, restart, migration, or DB operation was executed for this follow-up step.

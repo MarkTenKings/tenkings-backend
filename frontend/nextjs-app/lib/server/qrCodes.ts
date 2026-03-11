@@ -469,6 +469,7 @@ export async function reserveLabelsForPacks({
 
         await syncPackAssetsLocation(tx, {
           packInstanceId: packRecord.id,
+          itemId: assignment.itemId,
           packLabelId: updatedLabel.id,
           cardQrCodeId: updatedLabel.cardQrCodeId,
           packQrCodeId: updatedLabel.packQrCodeId,
@@ -704,30 +705,33 @@ export async function ensureLabelPairForItem({
   });
 }
 
-export async function syncPackAssetsLocation(
+export async function syncInventoryArtifactsLocation(
   tx: TransactionClient,
   params: {
-    packInstanceId: string;
+    itemId?: string | null;
     packLabelId: string | null;
     cardQrCodeId: string | null;
     packQrCodeId: string | null;
     locationId: string | null;
   }
 ) {
-  const { packInstanceId, packLabelId, cardQrCodeId, packQrCodeId, locationId } = params;
+  const { itemId = null, packLabelId, cardQrCodeId, packQrCodeId, locationId } = params;
 
-  await tx.packInstance.update({
-    where: { id: packInstanceId },
-    data: { locationId },
-  });
+  const locationRelation =
+    locationId != null ? { connect: { id: locationId } } : { disconnect: true };
+
+  if (itemId) {
+    await tx.item.update({
+      where: { id: itemId },
+      data: { location: locationRelation },
+    });
+  }
 
   if (packLabelId) {
     await tx.packLabel.update({ where: { id: packLabelId }, data: { locationId } });
   }
 
-  const qrLocationUpdate: Prisma.QrCodeUpdateInput = locationId
-    ? { location: { connect: { id: locationId } } }
-    : { location: { disconnect: true } };
+  const qrLocationUpdate: Prisma.QrCodeUpdateInput = { location: locationRelation };
 
   const qrIds: string[] = [];
   if (cardQrCodeId) {
@@ -737,9 +741,30 @@ export async function syncPackAssetsLocation(
     qrIds.push(packQrCodeId);
   }
 
-  for (const qrId of qrIds) {
+  for (const qrId of new Set(qrIds)) {
     await tx.qrCode.update({ where: { id: qrId }, data: qrLocationUpdate });
   }
+}
+
+export async function syncPackAssetsLocation(
+  tx: TransactionClient,
+  params: {
+    packInstanceId: string;
+    itemId?: string | null;
+    packLabelId: string | null;
+    cardQrCodeId: string | null;
+    packQrCodeId: string | null;
+    locationId: string | null;
+  }
+) {
+  const { packInstanceId, ...inventoryParams } = params;
+
+  await tx.packInstance.update({
+    where: { id: packInstanceId },
+    data: { locationId: params.locationId },
+  });
+
+  await syncInventoryArtifactsLocation(tx, inventoryParams);
 }
 
 export async function bindPackQrCode({

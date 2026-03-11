@@ -325,6 +325,7 @@ model Location {
   liveRips         LiveRip[]
   kioskSessions    KioskSession[]
   packInstances    PackInstance[]
+  items            Item[]
   qrCodes          QrCode[]
   packLabels       PackLabel[]
   restocks         LocationRestock[]
@@ -386,9 +387,11 @@ model Item {
   thumbnailUrl    String?
   detailsJson     Json?
   ownerId         String
+  locationId      String?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   owner           User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  location        Location?        @relation(fields: [locationId], references: [id], onDelete: SetNull)
   listings        Listing?
   ownerships      ItemOwnership[]
   packSlots       PackSlot[]
@@ -398,6 +401,8 @@ model Item {
   cardQrCodeId    String?          @unique
   cardQrCode      QrCode?          @relation("CardQrCode", fields: [cardQrCodeId], references: [id])
   packLabels      PackLabel[]
+
+  @@index([locationId])
 }
 
 model AuthVerification {

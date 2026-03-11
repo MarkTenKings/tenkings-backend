@@ -215,12 +215,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const labelRecord = packQr
         ? await tx.packLabel.findFirst({
             where: { packQrCodeId: packQr.id },
-            select: { id: true, cardQrCodeId: true, packQrCodeId: true },
+            select: { id: true, itemId: true, cardQrCodeId: true, packQrCodeId: true },
           })
         : null;
 
       await syncPackAssetsLocation(tx, {
         packInstanceId: pack.id,
+        itemId: labelRecord?.itemId ?? null,
         packLabelId: labelRecord?.id ?? null,
         cardQrCodeId: labelRecord?.cardQrCodeId ?? null,
         packQrCodeId: packQr?.id ?? pack.packQrCode?.id ?? null,

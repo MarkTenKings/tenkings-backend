@@ -5603,3 +5603,35 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/kingsreview/enqueue.ts`
   - result: pass (only the existing unsupported-engine warning for local Node `v25.6.1` vs repo target `20.x`)
 - No deploy, restart, migration, runtime, or DB operation was executed for this fix.
+
+## Session Update (2026-03-11, inventory assignment location cascade)
+- Work continued in an isolated git worktree at `/tmp/tenkings-agent-c` on branch `codex/fix/cascade-location-on-assign` to avoid collisions with other parallel agents using the shared checkout.
+- Investigation findings from current code:
+  - `CardAsset -> Item` is not a Prisma FK; the active linkage is `Item.number = CardAsset.id`
+  - `QrCode.locationId` already exists
+  - `PackLabel.locationId` already exists
+  - `Item` had no `locationId` field on `origin/main`
+  - `InventoryBatch.locationId` is a required relation to `Location.id`
+- Implemented scope-limited fix:
+  - added nullable `Item.locationId` relation plus migration
+  - extended `frontend/nextjs-app/lib/server/qrCodes.ts` shared location-sync helper so item/label/QR location state updates together
+  - updated `frontend/nextjs-app/pages/api/admin/inventory-ready/assign.ts` to cascade the batch location after assignment inside the same transaction
+  - updated existing pack/kiosk location-sync callers to pass `itemId` so the new item field stays aligned when location changes elsewhere
+  - added manual dry-run/apply backfill script: `scripts/backfill-location-cascade.ts`
+- Validation:
+  - `pnpm --filter @tenkings/database generate`: pass
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`: pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/inventory-ready/assign.ts --file lib/server/qrCodes.ts --file pages/api/admin/packing/location.ts --file pages/api/kiosk/start.ts`: pass
+  - `TS_NODE_COMPILER_OPTIONS='{"module":"commonjs","moduleResolution":"node"}' pnpm --filter @tenkings/kiosk-agent exec ts-node --skip-project --transpile-only scripts/backfill-location-cascade.ts --help`: pass
+- Live DB count for existing assigned cards missing cascaded `Item` / `PackLabel` / `QrCode` location is still blocked in this workspace because `DATABASE_URL` is not set.
+- No deploy, restart, migration, or DB operation was executed for this change.
+
+## Session Update (2026-03-11, inventory assignment cascade follow-up)
+- Applied Agent R follow-up requests on the same isolated branch/worktree.
+- Backfill dry-run reporting in `scripts/backfill-location-cascade.ts` now detects any location drift versus expected `InventoryBatch.locationId`, not just `NULL` location fields.
+- The previously untracked migration folder and backfill script remain part of the intended branch diff and are being included in branch commit/push flow.
+- Validation:
+  - `TS_NODE_COMPILER_OPTIONS='{"module":"commonjs","moduleResolution":"node"}' pnpm --filter @tenkings/kiosk-agent exec ts-node --skip-project --transpile-only scripts/backfill-location-cascade.ts --help`
+    - pass
+- Live DB drift counts are still blocked in this workspace because `DATABASE_URL` is not set.
+- No deploy, restart, migration, or DB operation was executed for this follow-up.
