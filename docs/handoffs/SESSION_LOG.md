@@ -10699,3 +10699,63 @@
 
 ### Notes
 - No deploy, restart, migration, or DB operation was executed for this blocker follow-up.
+
+## 2026-03-11 - Auto-promote high-confidence prefetch refs
+
+### Summary
+- Investigated the Add Cards prefetch insert path, variant matcher visibility rules, and the bytebot reference-worker queue model.
+- Updated prefetch reference creation so high-confidence refs insert with `qaStatus = keep`, while lower-confidence refs remain `pending`.
+- Updated the bytebot reference worker to prioritize trusted refs and emit a warning when `VARIANT_EMBEDDING_URL` is not configured.
+
+### Files Reviewed
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/reference/prefetch.ts`
+- `frontend/nextjs-app/lib/server/variantMatcher.ts`
+- `backend/bytebot-lite-service/src/reference/queue.ts`
+- `backend/bytebot-lite-service/src/reference/embedding.ts`
+- `backend/bytebot-lite-service/src/index.ts`
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+- `backend/bytebot-lite-service/src/reference/queue.ts`
+
+### Live Evidence
+- Read-only droplet/container query returned:
+  - `CardVariantReferenceImage total = 24594`
+  - `qaStatus = pending -> 4052`
+  - `qaStatus = keep -> 20542`
+  - `ownedStatus = owned -> 20521`
+  - `qaStatus = pending AND cardNumber IS NULL -> 0`
+  - `VARIANT_EMBEDDING_URL configured -> false`
+- Queue model finding:
+  - the reference worker is DB-polled, not message-queued
+  - it scans `CardVariantReferenceImage` rows with missing `qualityScore` or `cropEmbeddings`
+
+### Validation Evidence
+- Original workspace before task isolation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/referenceSeed.ts --file pages/api/admin/variants/reference/prefetch.ts --file pages/api/admin/variants/reference/seed.ts` passed
+  - `pnpm --filter @tenkings/bytebot-lite-service exec tsc -p . --noEmit` passed
+- Isolated branch worktree:
+  - `git diff --check` passed
+  - `pnpm` executable-based checks could not be rerun there because `next` and `tsc` were not available without a fresh install in that worktree
+
+### Notes
+- High-confidence is determined from explicit seed inputs before fallback normalization, so a missing `cardNumber` that would otherwise normalize to `ALL` still stays `pending`.
+- Trusted refs are now inserted with explicit worker-queue sentinel fields and are prioritized by the polling worker ahead of older backlog.
+- No deploy, restart, migration, or DB mutation was executed for this change.
+
+## 2026-03-11 - Auto-promote prefetch refs review correction
+
+### Summary
+- Tightened the shared confidence gate after review so `cardNumber = ALL` is not treated as an explicit high-confidence card number.
+- Preserved the queue-side changes: trusted-ref prioritization in the worker and the one-time missing-embedding warning.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/referenceSeed.ts`
+
+### Validation Evidence
+- `git diff --check` passed in the isolated branch worktree after the follow-up edit.
+
+### Notes
+- This correction keeps set-level fallback refs in `pending` while still auto-promoting only truly card-scoped refs.
+- No deploy, restart, migration, or DB mutation was executed for this follow-up fix.

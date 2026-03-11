@@ -1,4 +1,5 @@
 import { prisma } from "@tenkings/database";
+import { Prisma } from "@prisma/client";
 import { normalizeCardNumber, normalizeParallelLabel, normalizePlayerSeed, normalizeSetLabel } from "@tenkings/shared";
 import { normalizeProgramId } from "./taxonomyV2Utils";
 
@@ -380,6 +381,17 @@ export function buildReferenceSeedQuery(params: {
     .trim();
 }
 
+function hasHighConfidenceReferenceIdentity(params: {
+  setId: string | null | undefined;
+  programId: string | null | undefined;
+  cardNumber: string | null | undefined;
+}) {
+  const normalizedSetId = normalizeSetLabel(String(params.setId || "").trim());
+  const explicitProgramId = String(params.programId || "").trim();
+  const explicitCardNumber = normalizeCardNumber(String(params.cardNumber ?? "").trim());
+  return Boolean(normalizedSetId && explicitProgramId && explicitCardNumber && explicitCardNumber !== "ALL");
+}
+
 function buildSearchQueryStages(params: {
   query: string;
   setId: string;
@@ -517,6 +529,12 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
   const normalizedParallelId = canonicalSeedParallel(String(parallelId || "").trim(), normalizedCardNumber);
   const normalizedPlayerSeed = normalizePlayerSeed(String(playerSeed || "").trim());
   const normalizedQuery = String(query || "").trim();
+  const trustedPrefetch = hasHighConfidenceReferenceIdentity({
+    setId,
+    programId,
+    cardNumber,
+  });
+  const qaStatus = trustedPrefetch ? "keep" : "pending";
 
   if (!normalizedQuery) {
     throw new ReferenceSeedError(400, "query is required.");
@@ -639,6 +657,11 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
     listingTitle: string | null;
     rawImageUrl: string;
     sourceUrl: string | null;
+    qaStatus: string;
+    ownedStatus: string;
+    cropUrls: string[];
+    qualityScore: number | null;
+    cropEmbeddings?: Prisma.JsonNull;
   }> = [];
   let noMediaCandidates = 0;
   const maxProductLookups = Math.max(8, Math.min(24, safeLimit * 4));
@@ -679,6 +702,12 @@ export async function seedVariantReferenceImages(params: SeedReferenceInput): Pr
       listingTitle: row.listingTitle,
       rawImageUrl,
       sourceUrl: row.sourceUrl,
+      qaStatus,
+      ownedStatus: "external",
+      cropUrls: [],
+      qualityScore: null,
+      // Bytebot's reference worker polls DB rows with missing embeddings/quality.
+      ...(trustedPrefetch ? { cropEmbeddings: Prisma.JsonNull } : {}),
     });
   }
 

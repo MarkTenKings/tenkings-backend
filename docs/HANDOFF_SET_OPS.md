@@ -5648,3 +5648,33 @@ Build Set Ops UI flow with:
   - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
     - pass
 - No deploy, restart, migration, or DB operation was executed for this fix.
+
+## Session Update (2026-03-11, auto-promote prefetch refs)
+- Investigated the Add Cards prefetch -> variant matcher -> bytebot reference worker path:
+  - `frontend/nextjs-app/lib/server/referenceSeed.ts` bulk-inserted refs without explicit `qaStatus`, so they defaulted to `pending`
+  - `frontend/nextjs-app/lib/server/variantMatcher.ts` only reads refs where `qaStatus = keep` or `ownedStatus = owned`
+  - `backend/bytebot-lite-service/src/reference/queue.ts` uses a DB-backed polling queue, not a message broker; it scans `CardVariantReferenceImage` for missing `qualityScore` or `cropEmbeddings`
+- Read-only droplet evidence gathered via `bytebot-lite-service` container:
+  - `CardVariantReferenceImage` counts: `total=24594`, `pending=4052`, `keep=20542`, `owned=20521`
+  - all currently counted `pending` rows have non-null `cardNumber`
+  - current bytebot-lite env reports `VARIANT_EMBEDDING_URL` is unset
+- Implemented scoped changes on branch/worktree `codex/fix/auto-promote-prefetch-refs`:
+  - high-confidence prefetch refs (explicit `setId`, `programId`, and `cardNumber` supplied to the seed call) now insert with `qaStatus = keep`
+  - lower-confidence prefetch refs continue to insert with `qaStatus = pending`
+  - trusted prefetch refs are explicitly inserted with missing-processing sentinel fields so the polling worker sees them immediately
+  - the reference worker now prioritizes trusted `keep`/`owned` refs ahead of older backlog and logs a one-time warning when `VARIANT_EMBEDDING_URL` is missing
+- Validation:
+  - original workspace before isolation:
+    - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/referenceSeed.ts --file pages/api/admin/variants/reference/prefetch.ts --file pages/api/admin/variants/reference/seed.ts` -> pass
+    - `pnpm --filter @tenkings/bytebot-lite-service exec tsc -p . --noEmit` -> pass
+  - isolated branch worktree:
+    - `git diff --check` -> pass
+    - `next` / `tsc` executables were unavailable there without a fresh dependency install
+- No deploy, restart, migration, or DB mutation was executed for this change.
+
+## Session Update (2026-03-11, auto-promote prefetch refs review fix)
+- Tightened the shared high-confidence gate in `frontend/nextjs-app/lib/server/referenceSeed.ts` after review:
+  - `cardNumber = ALL` no longer qualifies as high confidence
+  - only a real explicit card number promotes a prefetch ref to `qaStatus = keep`
+- This preserves `pending` status for set-level fallback refs from Add Cards prefetch and other shared seed callers.
+- No deploy, restart, migration, or DB mutation was executed for this follow-up logic fix.
