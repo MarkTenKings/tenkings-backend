@@ -1,65 +1,47 @@
 # Card Automation Pipeline
 
-This note captures the structure we will implement for automated processing of uploaded card assets.
+This note now serves as a historical record for the retired background-processing design.
+The active upload flow no longer uses `backend/processing-service` or enqueues `ProcessingJob` work from upload completion.
 
 ## High-level flow
 
 ```
 Upload (browser)
   → `CardAsset` row created (`status = UPLOADING`)
-  → File stream finishes → API marks row `UPLOADED` and enqueues job
-  → Worker service pulls job
-      1. Download the image from storage (local for dev)
-      2. Google Vision OCR → store text/JSON
-      3. Ximilar classification using OCR text & raw image
-      4. Valuation lookup (eBay sold listings, other sources)
-      5. Update `CardAsset` status & metadata
+  → File stream finishes
+  → `/api/admin/uploads/complete` stores final metadata, attempts thumbnail generation,
+    and marks the asset `READY`
+  → Later admin review flows enrich the same `CardAsset` record interactively
 ```
 
-Each step emits a `CardAssetStatus` transition so the UI reflects progress.
+The legacy worker-specific status ladder is no longer active.
 
 ## Services & components
 
 | Component | Responsibility |
 |-----------|----------------|
 | `frontend/nextjs-app` | Upload UI, admin consoles, triggers REST endpoints |
-| `pages/api/admin/uploads/*` | Creates batches/assets and enqueues the first job |
-| `backend/processing-service` (new) | Background worker that processes card assets |
-| `packages/shared` | Shared types/constants for queue payloads |
+| `pages/api/admin/uploads/*` | Creates batches/assets, finalizes uploads, and marks assets `READY` |
+| `packages/shared` | Shared types/constants used by admin flows |
 
 ## Queue mechanism
 
-We will start with PostgreSQL-backed polling (no Redis dependency yet):
-
-- A `ProcessingJob` table records pending work (`cardAssetId`, `type`, `payload`, `status`, timestamps).
-- Worker service keeps a short polling loop (e.g. 5s) selecting the next job in `QUEUED` status.
-- Lock rows with `FOR UPDATE SKIP LOCKED` to avoid duplicate work when scaling later.
-
-Future: swap to BullMQ/Redis without changing the API surface.
+The PostgreSQL-backed `ProcessingJob` queue described in the original plan is now legacy-only.
+The Prisma model/table remains for historical records, but the active upload flow does not enqueue or consume processing jobs.
 
 ### Processing statuses
 
-`CardAssetStatus` transitions:
+Current upload completion behavior:
 
-1. `UPLOADED` → `OCR_PENDING`
-2. `OCR_PENDING` → `OCR_COMPLETE` (on Google Vision success)
-3. `OCR_COMPLETE` → `CLASSIFY_PENDING`
-4. `CLASSIFY_PENDING` → `CLASSIFIED`
-5. `CLASSIFIED` → `VALUATION_PENDING`
-6. `VALUATION_PENDING` → `READY`
-7. Any failure → `ERROR` with `errorMessage`
+1. `UPLOADING` while the file transfer is in progress
+2. `/api/admin/uploads/complete` finalizes the asset and marks it `READY`
 
-A new `ProcessingJob.status` enum will track job progress (`QUEUED`, `IN_PROGRESS`, `COMPLETE`, `FAILED`).
+Historical `ProcessingJob.status` / worker-managed transitions remain in the schema only for old records.
 
 ## External integrations
 
-| Integration | Env vars | Notes |
-|-------------|----------|-------|
-| Google Vision API | `GOOGLE_VISION_API_KEY` | Worker calls the REST `images:annotate` endpoint with base64 image payload |
-| Ximilar API | `XIMILAR_API_KEY`, `XIMILAR_COLLECTION_ID` | REST call using OCR text + raw image to classify |
-| Valuation provider (eBay) | `EBAY_BEARER_TOKEN`, `EBAY_MARKETPLACE_ID` (default `EBAY_US`) | Browse API search for recent sold listings |
-
-For development without credentials, the worker will fall back to stub implementations and mark jobs as `CLASSIFIED`/`READY` with placeholder data.
+The removed worker design referenced Google Vision, Ximilar, and eBay Browse integrations.
+Those are no longer part of the upload-complete background pipeline documented here.
 
 ## Database changes
 
@@ -69,45 +51,16 @@ For development without credentials, the worker will fall back to stub implement
 
 ## API adjustments
 
-- `POST /api/admin/uploads/complete` will insert an `OCR` job once the asset is stored.
-- New admin endpoints:
-  - `POST /api/admin/cards/:id/retry` — resets status to the right stage and enqueues a new job.
-  - `POST /api/admin/cards/:id/notes` — attach operator notes during manual review.
-
-## Worker outline
-
-```
-loop {
-  job = fetchNextQueuedJob()
-  if (!job) sleep(5000) and continue
-  mark job IN_PROGRESS
-  try {
-    switch (job.type) {
-      case 'OCR': runVision(); enqueue('CLASSIFY'); break;
-      case 'CLASSIFY': runXimilar(); enqueue('VALUATION'); break;
-      case 'VALUATION': runValuation(); mark asset READY; break;
-    }
-    mark job COMPLETE
-  } catch (err) {
-    mark job FAILED; update CardAsset.status = ERROR; store errorMessage
-  }
-}
-```
-
-All processing helpers live in `backend/processing-service/src/processors/*` with dependency injection for mocks.
+- `POST /api/admin/uploads/complete` now finalizes the upload directly and marks the asset `READY`.
+- Historical follow-on ideas in the original plan included retry and notes endpoints, but they were tied to the retired worker model and are not part of the active upload path described here.
 
 ## Dev/testing strategy
 
-- Provide `npm run worker` script to start the processor locally (polling the same database used by the services).
-- Add seed script to create a fake job for testing without uploading new files.
-- Provide jest/vitest unit tests for the processors with mock responses.
+- Validate upload creation and completion through the Next.js admin APIs.
+- Confirm batch list/detail readiness against `CardAsset.status = READY`.
+- Keep historical `ProcessingJob` data available for audit purposes only.
 
 ## Next implementation steps
 
-1. Apply Prisma migration for `ProcessingJob` (schema + enum, extend `CardAsset` timestamps).
-2. Implement queue helper in `packages/database/src/processingJobs.ts`.
-3. Update upload completion API to insert the first job (`OCR`).
-4. Scaffold `backend/processing-service` (Express not required; simple worker script).
-5. Update admin UI to show processing status/allow manual retry (future step once worker is done).
-
-This plan keeps all automation within the existing monorepo and uses Postgres as the initial job queue so we can iterate quickly before introducing heavier infra.
+The original worker rollout described in this note has been retired.
+Current work should treat upload completion as a direct API operation rather than a queued background pipeline.

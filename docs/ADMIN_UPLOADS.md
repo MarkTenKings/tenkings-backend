@@ -44,17 +44,9 @@ pnpm --filter @tenkings/database exec prisma generate
 - `GET /api/admin/batches/[id]` expands a single batch with all associated assets, and `GET /api/admin/cards/[id]` surfaces the full record (notes, OCR, valuation, etc.).
 - `/admin/uploads` now lists recent batches, and `/admin/batches/[id]` renders a gallery of the associated assets.
 
-When OCR/classification is ready, these endpoints and screens will reflect each state transition automatically.
-Each time the valuation stage finishes for a card, the batch increments `processedCount` and flips status to `READY` when all assets are finished.
+`POST /api/admin/uploads/complete` now finalizes the upload directly:
+- it stores any final file metadata,
+- attempts thumbnail generation,
+- and marks the `CardAsset` as `READY`.
 
-While the OCR/classification pipeline is still pending, this provides end-to-end verification that storage and database writes succeed.
-
-## Worker service
-
-- The automation worker lives in `backend/processing-service`. After running `pnpm install`, start it locally with `pnpm --filter @tenkings/processing-service run dev`.
-- Poll interval defaults to 5 s and can be tuned via `PROCESSING_POLL_INTERVAL_MS`.
-- Current processors write stub OCR/classification/valuation data until Google Vision, Ximilar, and valuation APIs are configured.
-- Provide the following env vars to enable real integrations:
-  - `GOOGLE_VISION_API_KEY`
-  - `XIMILAR_API_KEY`, `XIMILAR_COLLECTION_ID`
-  - `EBAY_BEARER_TOKEN` (and optional `EBAY_MARKETPLACE_ID`)
+Batch list/detail screens compute `processedCount` and `READY` state from `CardAsset.status = READY`, so uploads now appear as processed without any separate background worker.

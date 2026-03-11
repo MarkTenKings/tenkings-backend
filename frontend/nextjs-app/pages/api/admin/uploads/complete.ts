@@ -46,7 +46,6 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
     }
 
     const updates: Prisma.CardAssetUpdateInput = {
-      status: CardAssetStatus.OCR_PENDING,
       processingStartedAt: null,
       processingCompletedAt: null,
       errorMessage: null,
@@ -101,6 +100,11 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
         data: { errorMessage: `Thumbnail failed: ${message}` },
       });
     }
+
+    await prisma.cardAsset.update({
+      where: { id: asset.id },
+      data: { status: CardAssetStatus.READY },
+    });
 
     return res.status(200).json({ message: "Upload recorded." });
   } catch (error) {
