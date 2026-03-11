@@ -1,16 +1,16 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-11` (PhotoRoom trigger timing fix implemented locally; no new runtime/DB evidence)
-- Branch: `codex/fix/photoroom-trigger-timing`
-- Short HEAD: `da154e5`
+- Last reviewed: `2026-03-11` (isolated origin/main worktree; Inventory Ready trusted-ref queue-only fix committed locally; no new runtime/DB evidence)
+- Branch: `codex/fix/auto-process-inventory-ready-refs`
+- Short HEAD: `a5dfccd`
 - Latest repo commits:
-  - `da154e5` fix(kingsreview): map sold comp thumbnails directly
-  - `ff91554` fix(kingsreview): preserve ebay thumbnails in comp payloads
-  - `c2aa7bf` fix(kingsreview): split thumbnail review from hd reference seeding
-  - `8d81b03` fix(kingsreview): resolve comp images from ebay product media
-  - `ede4996` fix(kingsreview): restore comp images and de-dupe ebay query
-- Environments touched: workstation only in this sync session; no deploy/restart/migration executed
+  - `a5dfccd` fix(kingsreview): queue inventory-ready trusted refs
+  - `28d6ac1` fix(reference): correct prefetch row typing for preview build
+  - `590ce1f` fix(reference): auto-promote only explicit high-confidence prefetch refs
+  - `535faa8` fix(inventory-ready): cascade purge inventory artifacts
+  - `fd20c1e` fix(database): use uuid for item location
+- Environments touched: isolated workstation worktree `/tmp/tenkings-agent-f`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
 ## What Works
@@ -5685,3 +5685,22 @@ Build Set Ops UI flow with:
   - removed the invalid `cropEmbeddings?: Prisma.JsonNull` type annotation that used a Prisma value as a type
 - This is a type-only correction; runtime behavior for the explicit high-confidence gate and worker-queue signaling is unchanged.
 - No deploy, restart, migration, or DB mutation was executed for this follow-up fix.
+
+## Session Update (2026-03-11, Inventory Ready trusted refs now queue existing worker path)
+- Work was moved out of the shared checkout into isolated worktree `/tmp/tenkings-agent-f` from `origin/main`, per operator instruction.
+- Updated only `frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts`:
+  - trusted refs seeded from Inventory Ready now create with explicit worker-pending fields (`cropEmbeddings: Prisma.JsonNull`, `qualityScore: null`)
+  - row creation now captures exact new `CardVariantReferenceImage.id` values
+  - newly created ref IDs are explicitly re-queued via the reference worker's existing DB-polled pending-state contract
+  - queue counts are logged from `seedTrustedReferencesFromInventoryReady(...)` on every transition path, including zero-queue early exits
+- Review fix applied:
+  - removed the competing app-side background PhotoRoom/storage processor so this change only queues the existing worker path
+- Scope guardrails followed:
+  - no change to `referenceSeed.ts`
+  - no change to Inventory Ready caller path outside `kingsreviewReferenceLearning.ts`
+  - no owned-storage promotion was added
+- Validation:
+  - direct `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/kingsreviewReferenceLearning.ts` could not run in the isolated worktree because local `next` binaries were not installed there
+  - fallback validation used the shared checkout's installed `eslint` binary against `/tmp/tenkings-agent-f/frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts` with `NODE_PATH` pointed at the shared install
+  - fallback eslint exited `0`; it emitted config-resolution warnings about pages-dir/react detection caused by linting from the isolated worktree with shared dependencies
+- No deploy, restart, migration, runtime, or DB operation was executed for this fix.

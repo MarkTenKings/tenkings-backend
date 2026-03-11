@@ -10775,3 +10775,38 @@
 ### Notes
 - This is a type-only fix; the explicit-card-number confidence gate remains unchanged.
 - No deploy, restart, migration, or DB mutation was executed for this follow-up fix.
+
+## 2026-03-11 - Fix: Inventory Ready trusted refs now queue the existing reference worker
+
+### Summary
+- Per operator instruction, work was moved into isolated worktree `/tmp/tenkings-agent-f` from `origin/main` on branch `codex/fix/auto-process-inventory-ready-refs`.
+- Updated `frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts` so trusted refs created by `seedTrustedReferencesFromInventoryReady(...)` are explicitly queued into the reference worker's existing DB-pending contract.
+- Applied review feedback by removing the competing app-side background PhotoRoom/storage processor; the Inventory Ready path now only creates refs, records exact IDs, writes worker-pending state, logs queue counts, and returns.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- New trusted refs now persist explicit pending-processing state on create:
+  - `qualityScore: null`
+  - `cropEmbeddings: Prisma.JsonNull`
+- Seeder now creates refs individually in a transaction so exact new ref IDs can be collected.
+- Newly created ref IDs are then re-queued explicitly by writing the same pending worker state the reference worker already polls for.
+- Seeder now logs `{ created, skipped, queued, reason }` for every Inventory Ready transition path, including zero-queue early exits.
+- No owned-storage promotion was added.
+
+### Validation Evidence
+- Attempted:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/kingsreviewReferenceLearning.ts`
+- Result:
+  - could not run in `/tmp/tenkings-agent-f` because local `next` binaries were not installed in the isolated worktree
+- Fallback:
+  - ran the shared checkout's installed `eslint` binary against `frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts` in `/tmp/tenkings-agent-f`
+  - command exited `0`
+  - warnings were emitted about pages-dir/react config resolution because linting reused the shared checkout toolchain against the isolated worktree
+
+### Notes
+- Scope guardrail followed: no changes were made to `referenceSeed.ts`.
+- No deploy, restart, migration, runtime, or DB operation was executed for this fix.
