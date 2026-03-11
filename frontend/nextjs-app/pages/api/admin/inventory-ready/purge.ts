@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { deleteInventoryArtifactsForCardIds } from "../../../../lib/server/inventoryReadyPurge";
 
 const TARGET_STAGE = "INVENTORY_READY_FOR_SALE";
 
@@ -26,14 +27,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ deleted: 0 });
     }
 
-    await prisma.$transaction([
-      prisma.bytebotLiteJob.deleteMany({ where: { cardAssetId: { in: cardIds } } }),
-      prisma.cardEvidenceItem.deleteMany({ where: { cardAssetId: { in: cardIds } } }),
-      prisma.cardPhoto.deleteMany({ where: { cardAssetId: { in: cardIds } } }),
-      prisma.cardNote.deleteMany({ where: { cardId: { in: cardIds } } }),
-      prisma.processingJob.deleteMany({ where: { cardAssetId: { in: cardIds } } }),
-      prisma.cardAsset.deleteMany({ where: { id: { in: cardIds } } }),
-    ]);
+    await prisma.$transaction(async (tx) => {
+      await tx.bytebotLiteJob.deleteMany({ where: { cardAssetId: { in: cardIds } } });
+      await tx.cardEvidenceItem.deleteMany({ where: { cardAssetId: { in: cardIds } } });
+      await tx.cardPhoto.deleteMany({ where: { cardAssetId: { in: cardIds } } });
+      await tx.cardNote.deleteMany({ where: { cardId: { in: cardIds } } });
+      await tx.processingJob.deleteMany({ where: { cardAssetId: { in: cardIds } } });
+      await deleteInventoryArtifactsForCardIds(tx, cardIds);
+      await tx.cardAsset.deleteMany({ where: { id: { in: cardIds } } });
+    });
 
     return res.status(200).json({ deleted: cardIds.length });
   } catch (error) {

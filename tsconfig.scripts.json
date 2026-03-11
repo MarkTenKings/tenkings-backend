@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "types": ["node"],
+    "typeRoots": [
+      "./node_modules/@types",
+      "./frontend/nextjs-app/node_modules/@types",
+      "./packages/database/node_modules/@types",
+      "./packages/kiosk-agent/node_modules/@types"
+    ],
+    "paths": {
+      "@tenkings/database": ["packages/database/src/index.ts"],
+      "@tenkings/database/*": ["packages/database/src/*"],
+      "@tenkings/shared": ["packages/shared/src/index.ts"],
+      "@tenkings/shared/*": ["packages/shared/src/*"]
+    }
+  },
+  "include": [
+    "scripts/cleanup-orphaned-inventory.ts",
+    "frontend/nextjs-app/lib/server/inventoryReadyPurge.ts",
+    "packages/database/src/**/*.ts",
+    "packages/shared/src/**/*.ts"
+  ]
+}

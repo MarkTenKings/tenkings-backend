@@ -10620,3 +10620,82 @@
 
 ### Notes
 - No deploy, restart, migration, or DB operation was executed for this fix.
+
+## 2026-03-11 - Inventory Ready purge now cascades to minted inventory artifacts
+
+### Summary
+- Continued this task in isolated worktree `/tmp/tenkings-agent-d` on branch `codex/fix/cascade-purge-inventory` from `origin/main` (`4069fe7`), per user instruction to avoid shared-checkout branch switching.
+- Updated Inventory Ready purge logic to delete minted inventory artifacts before deleting `CardAsset` rows.
+- Added a one-time cleanup script for historical orphaned inventory artifacts with required `--confirm` gating.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/inventory-ready/purge.ts`
+- `frontend/nextjs-app/lib/server/inventoryReadyPurge.ts`
+- `scripts/cleanup-orphaned-inventory.ts`
+- `tsconfig.scripts.json`
+
+### Implementation Notes
+- Current purge path investigation confirmed the pre-fix delete order in `pages/api/admin/inventory-ready/purge.ts` was:
+  - `BytebotLiteJob`
+  - `CardEvidenceItem`
+  - `CardPhoto`
+  - `CardNote`
+  - `ProcessingJob`
+  - `CardAsset`
+- Inventory relationship mapping used for the fix:
+  - `CardAsset.id` -> `Item.number`
+  - `Item.id` -> `ItemOwnership.itemId`
+  - `Item.cardQrCodeId` -> `QrCode.id`
+  - `PackLabel.itemId` -> `Item.id`
+  - `PackLabel.cardQrCodeId` / `PackLabel.packQrCodeId` -> `QrCode.id`
+- New purge flow now deletes in FK-safe order before `CardAsset.deleteMany(...)`:
+  - `ItemOwnership`
+  - `PackLabel`
+  - `Item`
+  - `QrCode` (card + pack codes)
+- Cards with no minted `Item` are handled as a no-op on the inventory-artifact branch of the purge.
+- Cleanup script behavior:
+  - reports orphan counts before any delete
+  - defaults to dry run
+  - requires `--confirm` before destructive deletes
+  - logs each orphaned `Item`, `ItemOwnership`, `PackLabel`, and `QrCode` row it plans to delete
+
+### Investigation Limits
+- Live orphan counts were not collected in this session because `DATABASE_URL` is unset in the isolated worktree environment (`printenv DATABASE_URL | wc -c` returned `0`).
+- No runtime/API/DB command was executed against a live database for this task.
+
+### Validation Evidence
+- `NODE_PATH=/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/frontend/nextjs-app/node_modules:/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/node_modules /Users/markthomas/tenkings/ten-kings-mystery-packs-clean/frontend/nextjs-app/node_modules/.bin/eslint --resolve-plugins-relative-to /Users/markthomas/tenkings/ten-kings-mystery-packs-clean/frontend/nextjs-app --config /tmp/tenkings-agent-d/frontend/nextjs-app/.eslintrc.json /tmp/tenkings-agent-d/frontend/nextjs-app/pages/api/admin/inventory-ready/purge.ts /tmp/tenkings-agent-d/frontend/nextjs-app/lib/server/inventoryReadyPurge.ts`
+  - Result: pass
+  - Note: emitted a non-blocking React-version detection warning because linting was run from the isolated worktree using dependencies installed in the main checkout
+- `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/packages/kiosk-agent/node_modules/.bin/ts-node --project tsconfig.scripts.json scripts/cleanup-orphaned-inventory.ts --help`
+  - Result: pass
+
+### Notes
+- No deploy, restart, migration, or DB delete was executed for this task.
+
+## 2026-03-11 - Inventory Ready purge blocker follow-up
+
+### Summary
+- Addressed Agent R blocker feedback in isolated worktree `/tmp/tenkings-agent-d` on `codex/fix/cascade-purge-inventory`.
+- Corrected minted-inventory delete order to avoid `Item.cardQrCodeId -> QrCode.id` foreign-key violations.
+- Prepared the new helper/script/config files for explicit git staging in this worktree.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/inventoryReadyPurge.ts`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `deleteInventoryArtifactsFromReport(...)` now deletes in this order:
+  - `ItemOwnership`
+  - `PackLabel`
+  - `Item`
+  - `QrCode`
+- This order preserves FK safety for minted cards whose `Item.cardQrCodeId` still points at the card QR row.
+
+### Validation Evidence
+- `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/packages/kiosk-agent/node_modules/.bin/ts-node --project tsconfig.scripts.json scripts/cleanup-orphaned-inventory.ts --help`
+  - Result: pass
+
+### Notes
+- No deploy, restart, migration, or DB operation was executed for this blocker follow-up.
