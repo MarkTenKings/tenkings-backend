@@ -378,6 +378,10 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
       if (!hasBack) {
         return res.status(400).json({ message: "Back photo is required before sending to KingsReview AI." });
       }
+      const hasTilt = card.photos.some((photo) => photo.kind === CardPhotoKind.TILT);
+      if (!hasTilt) {
+        return res.status(400).json({ message: "TILT photo is required before sending to KingsReview" });
+      }
       await prisma.cardAsset.update({
         where: { id: card.id },
         data: {

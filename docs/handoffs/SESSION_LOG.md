@@ -10285,6 +10285,75 @@
   - the API fetch to PhotoRoom has no explicit timeout/telemetry in `pages/api/admin/cards/[cardId]/photoroom.ts`
 - This was recorded as a warning rather than the primary blocker because the more immediate regression is the hard failure when PhotoRoom is unconfigured.
 
+## 2026-03-11 - Re-review: Agent B pushed commit `4069fe7`
+
+### Summary
+- Re-reviewed pushed branch `origin/codex/fix/photoroom-trigger-timing` at commit `4069fe7` against `origin/main` (`9ca2d06`).
+- Prior blocker is fixed:
+  - `uploads.tsx` now treats the API message `"PhotoRoom not configured"` as a warning/no-op and still allows KingsReview enqueue to continue.
+- Current review result: approved with warning.
+
+### Evidence
+- Branch tip:
+  - `git rev-parse --short origin/codex/fix/photoroom-trigger-timing` => `4069fe7`
+- Behavioral diff verified in `frontend/nextjs-app/pages/admin/uploads.tsx`:
+  - OCR-stage PhotoRoom trigger removed
+  - pre-enqueue PhotoRoom await retained
+  - `"not configured"` path now logs `console.warn(...)` and returns success instead of failing send
+- Targeted verification rerun locally:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx`
+    - passed with only existing `@next/next/no-img-element` warnings
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - passed
+
+### Remaining Warning
+- The send path still blocks on PhotoRoom without an explicit timeout/telemetry path in `pages/api/admin/cards/[cardId]/photoroom.ts`.
+- This is a follow-up concern rather than a blocker for the requested timing change.
+
+## 2026-03-11 - Planned action: promote Agent B to origin/main
+
+### Summary
+- Agent B branch `origin/codex/fix/photoroom-trigger-timing` was approved for merge after blocker fix.
+- Verified remote relationship before promotion planning:
+  - `origin/main` = `9ca2d06`
+  - `origin/codex/fix/photoroom-trigger-timing` = `4069fe7`
+  - `git rev-list --left-right --count origin/main...origin/codex/fix/photoroom-trigger-timing` returned `0 1`, so `main` can be fast-forwarded directly.
+
+### Planned Commands
+- `git fetch origin`
+- create clean temporary worktree from `origin/main`
+- `git merge --ff-only origin/codex/fix/photoroom-trigger-timing`
+- `git push origin main`
+
+### Notes
+- Expected application deployment path is Vercel auto-deploy from `main` after push.
+- No deploy/restart/migration command was executed from this shell session; this entry records the verified promotion plan only.
+
+## 2026-03-11 - Observed result: Agent B fast-forwarded to origin/main
+
+### Summary
+- Operator executed the clean-worktree promotion flow for Agent B.
+- `main` fast-forwarded from `9ca2d06` to `4069fe7` with no merge commit.
+- Remote `origin/main` now points to Agent B's approved commit.
+
+### Evidence
+- `git worktree add /tmp/tenkings-agent-b-main origin/main`
+- `git checkout -B main origin/main`
+- `git merge --ff-only origin/codex/fix/photoroom-trigger-timing`
+  - output: `Updating 9ca2d06..4069fe7`
+  - output: `Fast-forward`
+- `git push origin main`
+  - output: `9ca2d06..4069fe7  main -> main`
+- `git rev-parse --short HEAD`
+  - output: `4069fe7`
+- `git ls-remote --heads origin main`
+  - output: `4069fe701c3ce4e5ce6c00b1beea97e47ee09005 refs/heads/main`
+- temporary worktree cleanup completed with `git worktree remove /tmp/tenkings-agent-b-main`
+
+### Notes
+- This promotion also brought the branch's documentation updates onto `main`, including the newly added `docs/ARCHITECTURE_CARD_WORKFLOW.md`.
+- Vercel production deployment from `main` has not yet been re-verified from this shell session; confirm the current production deployment is `main` at `4069fe7` before treating Agent B rollout as fully observed.
+
 ## 2026-03-11 - PhotoRoom trigger timing fix
 
 ### Summary
@@ -10353,3 +10422,51 @@
 
 ### Notes
 - No deploy, restart, migration, or DB operation was executed for this follow-up coding step.
+
+## 2026-03-11 - Docs sync and git state report
+
+### Summary
+- Re-read the mandatory startup docs required by `AGENTS.md`.
+- Collected the requested workstation git state only.
+- No deploy, restart, migration, or DB operation was executed.
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Git State Observed
+- `git status -sb`
+  - `## codex/fix/photoroom-trigger-timing...origin/codex/fix/photoroom-trigger-timing`
+  - ` M docs/HANDOFF_SET_OPS.md`
+  - ` M docs/handoffs/SESSION_LOG.md`
+  - `?? batch-imports/`
+  - `?? logs/`
+- `git branch --show-current`
+  - `codex/fix/photoroom-trigger-timing`
+- `git rev-parse --short HEAD`
+  - `4069fe7`
+
+### Notes
+- The modified doc paths above were already dirty before this append and were preserved.
+
+## 2026-03-11 - Fix 1: KingsReview enqueue now enforces TILT photo
+
+### Summary
+- Created task branch `codex/fix/tilt-enforcement-and-source-passthrough` from the current live `HEAD` after the workspace moved during inspection.
+- Updated `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts` to reject enqueue requests when the card lacks a `CardPhoto(kind = "TILT")`.
+- Preserved the existing BACK-photo guard and kept the change backend-only.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/kingsreview/enqueue.ts`
+  - pass
+  - note: existing unsupported-engine warning remains for local Node `v25.6.1` vs repo target `20.x`
+
+### Notes
+- Response message for the new guard is `TILT photo is required before sending to KingsReview`.
+- No deploy, restart, migration, runtime, or DB operation was executed for this fix.
