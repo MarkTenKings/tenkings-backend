@@ -1,5 +1,5 @@
 ALTER TABLE "Item"
-ADD COLUMN "locationId" TEXT;
+ADD COLUMN "locationId" UUID;
 
 CREATE INDEX "Item_locationId_idx" ON "Item"("locationId");
 

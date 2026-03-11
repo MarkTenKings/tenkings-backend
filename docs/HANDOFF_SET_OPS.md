@@ -5635,3 +5635,16 @@ Build Set Ops UI flow with:
     - pass
 - Live DB drift counts are still blocked in this workspace because `DATABASE_URL` is not set.
 - No deploy, restart, migration, or DB operation was executed for this follow-up.
+
+## Session Update (2026-03-11, inventory assignment location UUID fix)
+- Fixed the schema/migration mismatch that broke production `migrate deploy` with Prisma `P3018` / Postgres `42804`.
+- `packages/database/prisma/schema.prisma`
+  - `Item.locationId` is now `String? @db.Uuid`
+- `packages/database/prisma/migrations/20260311193000_add_item_location/migration.sql`
+  - `ADD COLUMN "locationId" UUID`
+- Validation:
+  - `nl -ba packages/database/prisma/schema.prisma | sed -n '376,396p'`
+  - `nl -ba packages/database/prisma/migrations/20260311193000_add_item_location/migration.sql`
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+    - pass
+- No deploy, restart, migration, or DB operation was executed for this fix.

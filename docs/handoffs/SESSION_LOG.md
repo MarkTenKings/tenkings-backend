@@ -10597,3 +10597,26 @@
 ### Notes
 - Live DB drift counts remain blocked in this workspace because `DATABASE_URL` is not set.
 - No deploy, restart, migration, or DB operation was executed for this follow-up step.
+
+## 2026-03-11 - Inventory assignment location UUID fix
+
+### Summary
+- Fixed the production migration type mismatch that caused Prisma `P3018` / Postgres `42804`.
+- `Item.locationId` is now UUID-compatible in both Prisma schema and migration SQL.
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260311193000_add_item_location/migration.sql`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `nl -ba packages/database/prisma/schema.prisma | sed -n '376,396p'`
+  - confirms `Item.locationId      String?          @db.Uuid`
+- `nl -ba packages/database/prisma/migrations/20260311193000_add_item_location/migration.sql`
+  - confirms `ADD COLUMN "locationId" UUID;`
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+  - pass
+
+### Notes
+- No deploy, restart, migration, or DB operation was executed for this fix.
