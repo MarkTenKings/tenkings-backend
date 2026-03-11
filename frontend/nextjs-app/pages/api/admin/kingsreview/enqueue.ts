@@ -5,6 +5,9 @@ import { withAdminCors } from "../../../../lib/server/cors";
 import { readTaxonomyV2Flags } from "../../../../lib/server/taxonomyV2Flags";
 import { resolveScopedParallelToken, resolveTaxonomyProgramAndVariation } from "../../../../lib/server/taxonomyV2Core";
 
+const DEFAULT_KINGSREVIEW_SOURCES = ["ebay_sold"] as const;
+const SUPPORTED_KINGSREVIEW_SOURCES = new Set<string>(DEFAULT_KINGSREVIEW_SOURCES);
+
 const normalizeWhitespace = (value: unknown): string =>
   typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 
@@ -181,6 +184,33 @@ const fallbackQueryFromText = (value: string | null): string => {
   return query.split(/\s+/).slice(0, 18).join(" ").trim();
 };
 
+const normalizeRequestedSources = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? Array.from(
+        new Set(
+          value
+            .filter((entry): entry is string => typeof entry === "string")
+            .map((entry) => entry.trim())
+            .filter(Boolean)
+        )
+      )
+    : [];
+
+const resolveKingsreviewSources = (value: unknown): string[] => {
+  const requestedSources = normalizeRequestedSources(value);
+  const supportedSources = requestedSources.filter((source) => SUPPORTED_KINGSREVIEW_SOURCES.has(source));
+  const unsupportedSources = requestedSources.filter((source) => !SUPPORTED_KINGSREVIEW_SOURCES.has(source));
+
+  if (unsupportedSources.length > 0) {
+    console.warn("[kingsreview/enqueue] filtered unsupported sources", {
+      requestedSources,
+      unsupportedSources,
+    });
+  }
+
+  return supportedSources.length > 0 ? supportedSources : [...DEFAULT_KINGSREVIEW_SOURCES];
+};
+
 const buildCompSearchQuery = (card: {
   customTitle: string | null;
   ocrText: string | null;
@@ -325,7 +355,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
     const rawQuery = typeof body.query === "string" ? body.query.trim() : "";
     const useManual = Boolean(body.useManual);
     const cardAssetId = typeof body.cardAssetId === "string" ? body.cardAssetId : undefined;
-    const sources = ["ebay_sold"];
+    const sources = resolveKingsreviewSources(body.sources);
     const categoryType = typeof body.categoryType === "string" ? body.categoryType : null;
 
     let query = rawQuery;

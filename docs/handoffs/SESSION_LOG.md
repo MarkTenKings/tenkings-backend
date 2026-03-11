@@ -10354,6 +10354,26 @@
 - This promotion also brought the branch's documentation updates onto `main`, including the newly added `docs/ARCHITECTURE_CARD_WORKFLOW.md`.
 - Vercel production deployment from `main` has not yet been re-verified from this shell session; confirm the current production deployment is `main` at `4069fe7` before treating Agent B rollout as fully observed.
 
+## 2026-03-11 - Coordination note: Agent C branch collision / worktree recommendation
+
+### Summary
+- Agent C reported the shared repo checkout switched underneath the task to branch `codex/fix/tilt-enforcement-and-source-passthrough` while C was investigating.
+- Local verification from this review workspace confirms current branch is `codex/fix/tilt-enforcement-and-source-passthrough`.
+- Recommendation: run all remaining parallel agents (C-G) in isolated git worktrees rather than the shared checkout.
+
+### Technical Notes
+- Current schema nuance confirmed:
+  - `Item` does not currently have `locationId`; it only has `vaultLocation` in `packages/database/prisma/schema.prisma`
+  - `QrCode` and `PackLabel` already have `locationId`
+  - existing helper `syncPackAssetsLocation(...)` in `frontend/nextjs-app/lib/server/qrCodes.ts` already handles cascading location updates for `PackLabel` and `QrCode`
+- Implication for Agent C:
+  - if the spec requires `Item.locationId`, Agent C likely needs a schema change + migration
+  - Agent C should reuse existing location-sync helper behavior where possible instead of duplicating QR/label update logic
+
+### Recommendation
+- Direct Agent C to continue in an isolated worktree based from current `origin/main` (`4069fe7`).
+- More broadly, use one worktree per remaining agent branch to avoid branch/ref collisions in the shared repo.
+
 ## 2026-03-11 - PhotoRoom trigger timing fix
 
 ### Summary
@@ -10469,4 +10489,24 @@
 
 ### Notes
 - Response message for the new guard is `TILT photo is required before sending to KingsReview`.
+- No deploy, restart, migration, runtime, or DB operation was executed for this fix.
+
+## 2026-03-11 - Fix 2: KingsReview enqueue now respects requested sources
+
+### Summary
+- Continued on `codex/fix/tilt-enforcement-and-source-passthrough` with fix 1 already present as commit `36c46c8`.
+- Updated `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts` to read `sources` from the request payload instead of hardcoding `["ebay_sold"]`.
+- Added allowlist filtering so only currently supported sources are enqueued and persisted; unsupported requested sources are logged and dropped.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/kingsreview/enqueue.ts`
+  - pass
+  - note: existing unsupported-engine warning remains for local Node `v25.6.1` vs repo target `20.x`
+
+### Notes
+- Current allowlist is `["ebay_sold"]`.
+- If the filtered source list is empty, the backend falls back to `["ebay_sold"]`.
 - No deploy, restart, migration, runtime, or DB operation was executed for this fix.

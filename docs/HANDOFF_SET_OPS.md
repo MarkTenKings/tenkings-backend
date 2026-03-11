@@ -5521,6 +5521,17 @@ Build Set Ops UI flow with:
 - Remaining observation gap:
   - Vercel auto-deploy from `main` was not rechecked from this shell session; confirm production is green on commit `4069fe7` before declaring Agent B fully rolled out.
 
+## Session Update (2026-03-11, Agent C coordination guidance)
+- Agent C reported the shared checkout switched branches mid-task to `codex/fix/tilt-enforcement-and-source-passthrough`.
+- Local verification in this review workspace confirms current branch is `codex/fix/tilt-enforcement-and-source-passthrough`.
+- Recommendation:
+  - run Agent C in an isolated git worktree from current `origin/main` (`4069fe7`)
+  - apply the same one-worktree-per-agent rule for the remaining parallel branches C-G
+- Schema/helper note for Agent C:
+  - `Item` currently has `vaultLocation` but no `locationId`
+  - `QrCode` and `PackLabel` already have `locationId`
+  - existing helper `syncPackAssetsLocation(...)` in `frontend/nextjs-app/lib/server/qrCodes.ts` already handles QR/label location cascades and should be reused where practical
+
 ## Session Update (2026-03-11, PhotoRoom trigger timing fix)
 - Investigated all current card PhotoRoom trigger points before changing code.
 - Implemented the timing change in `frontend/nextjs-app/pages/admin/uploads.tsx`:
@@ -5574,6 +5585,20 @@ Build Set Ops UI flow with:
   - preserved the existing BACK-photo guard
   - added a matching TILT-photo guard for `CardPhotoKind.TILT`
   - returns HTTP 400 with `TILT photo is required before sending to KingsReview` when TILT is missing
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/kingsreview/enqueue.ts`
+  - result: pass (only the existing unsupported-engine warning for local Node `v25.6.1` vs repo target `20.x`)
+- No deploy, restart, migration, runtime, or DB operation was executed for this fix.
+
+## Session Update (2026-03-11, fix 2 staged: KingsReview source passthrough filtering)
+- Continuing on branch `codex/fix/tilt-enforcement-and-source-passthrough` with fix 1 now at commit `36c46c8`.
+- Backend-only change in `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`:
+  - replaced the hardcoded `["ebay_sold"]` source list with request-payload parsing
+  - validates requested sources against the current allowlist (`["ebay_sold"]`)
+  - filters unsupported requested sources instead of rejecting the request
+  - defaults back to `["ebay_sold"]` if nothing supported remains
+  - logs a warning when unsupported requested sources are filtered out
+  - passes the validated sources into `enqueueBytebotLiteJob(...)` and the persisted payload
 - Validation:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/kingsreview/enqueue.ts`
   - result: pass (only the existing unsupported-engine warning for local Node `v25.6.1` vs repo target `20.x`)
