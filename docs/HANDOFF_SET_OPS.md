@@ -5704,3 +5704,25 @@ Build Set Ops UI flow with:
   - fallback validation used the shared checkout's installed `eslint` binary against `/tmp/tenkings-agent-f/frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts` with `NODE_PATH` pointed at the shared install
   - fallback eslint exited `0`; it emitted config-resolution warnings about pages-dir/react detection caused by linting from the isolated worktree with shared dependencies
 - No deploy, restart, migration, runtime, or DB operation was executed for this fix.
+
+## Session Update (2026-03-11, OCR multimodal image-format normalization fix)
+- Worked in isolated worktree `/tmp/tenkings-agent-ocr-format` on branch `codex/fix/ocr-multimodal-image-format` from `origin/main`.
+- Updated:
+  - `frontend/nextjs-app/lib/server/images.ts`
+  - `frontend/nextjs-app/pages/api/public/ocr-image.ts`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- Implemented a vision-input normalization path for multimodal OCR:
+  - detect the upstream image MIME type
+  - keep JPEG/PNG/WebP/GIF inputs as-is
+  - transcode unsupported inputs such as HEIC/HEIF to JPEG before OpenAI fetches them
+- `ocr-suggest.ts` now generates signed OCR proxy URLs specifically for multimodal LLM use with `format=llm-supported`, `purpose=ocr-llm-multimodal`, and `imageId=FRONT|BACK|TILT`.
+- `/api/public/ocr-image` now logs the actual upstream and served MIME types for these multimodal requests so production logs can confirm the root cause.
+- Scope guardrails followed:
+  - no changes to fallback heuristics
+  - no changes to KingsReview send flow
+  - no changes to Agent A-G cleanup code paths
+- Validation:
+  - `git diff --check` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/public/ocr-image.ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/images.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` was attempted and hit unrelated baseline repo type errors already present on current `main`
+- No deploy, restart, migration, runtime, or DB operation was executed for this fix.

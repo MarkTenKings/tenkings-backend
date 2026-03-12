@@ -1,9 +1,31 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "node:crypto";
 import { toErrorResponse } from "../../../lib/server/admin";
+import {
+  isSupportedOpenAiVisionImageMimeType,
+  normalizeImageForOpenAiVision,
+  normalizeImageMimeType,
+} from "../../../lib/server/images";
 import { normalizeStorageUrl } from "../../../lib/server/storage";
 
 const MAX_AGE_MS = 5 * 60 * 1000;
+const OCR_PROXY_FORMAT_VALUES = new Set(["llm-supported"]);
+
+function buildSignaturePayload(params: {
+  url: string;
+  exp: number;
+  format?: string | null;
+  purpose?: string | null;
+  imageId?: string | null;
+}) {
+  return [
+    params.url,
+    String(params.exp),
+    params.format ?? "",
+    params.purpose ?? "",
+    params.imageId ?? "",
+  ].join("|");
+}
 
 function getAllowedHost(): string | null {
   const base = process.env.CARD_STORAGE_PUBLIC_BASE_URL;
@@ -24,6 +46,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const rawUrl = typeof req.query.url === "string" ? req.query.url : "";
     const exp = typeof req.query.exp === "string" ? Number(req.query.exp) : NaN;
     const sig = typeof req.query.sig === "string" ? req.query.sig : "";
+    const requestedFormat =
+      typeof req.query.format === "string" && OCR_PROXY_FORMAT_VALUES.has(req.query.format)
+        ? req.query.format
+        : null;
+    const purpose = typeof req.query.purpose === "string" ? req.query.purpose : null;
+    const imageId = typeof req.query.imageId === "string" ? req.query.imageId : null;
     if (!rawUrl || Number.isNaN(exp) || !sig) {
       return res.status(400).json({ message: "Missing url, exp, or sig" });
     }
@@ -48,7 +76,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(403).json({ message: "Host not allowed" });
     }
 
-    const payload = `${normalizedUrl}|${exp}`;
+    const payload = buildSignaturePayload({
+      url: normalizedUrl,
+      exp,
+      format: requestedFormat,
+      purpose,
+      imageId,
+    });
     const expected = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
     const sigBuffer = Buffer.from(sig);
     const expectedBuffer = Buffer.from(expected);
@@ -57,13 +91,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     let matchesRaw = false;
     if (!matchesExpected && normalizedUrl !== rawUrl) {
-      const rawPayload = `${rawUrl}|${exp}`;
+      const rawPayload = buildSignaturePayload({
+        url: rawUrl,
+        exp,
+        format: requestedFormat,
+        purpose,
+        imageId,
+      });
       const rawExpected = crypto.createHmac("sha256", secret).update(rawPayload).digest("base64url");
       const rawBuffer = Buffer.from(rawExpected);
       matchesRaw = sigBuffer.length === rawBuffer.length && crypto.timingSafeEqual(rawBuffer, sigBuffer);
     }
 
-    if (!matchesExpected && !matchesRaw) {
+    let matchesLegacy = false;
+    if (!matchesExpected && !matchesRaw && !requestedFormat && !purpose && !imageId) {
+      const legacyPayload = `${normalizedUrl}|${exp}`;
+      const legacyExpected = crypto.createHmac("sha256", secret).update(legacyPayload).digest("base64url");
+      const legacyBuffer = Buffer.from(legacyExpected);
+      matchesLegacy =
+        sigBuffer.length === legacyBuffer.length && crypto.timingSafeEqual(legacyBuffer, sigBuffer);
+    }
+
+    if (!matchesExpected && !matchesRaw && !matchesLegacy) {
       return res.status(403).json({ message: "Invalid signature" });
     }
 
@@ -75,16 +124,41 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(502).json({ message: `Upstream error: ${response.status}` });
       }
 
-      const contentType = response.headers.get("content-type") ?? "application/octet-stream";
-      const contentLength = response.headers.get("content-length");
-      res.setHeader("Content-Type", contentType);
-      if (contentLength) {
-        res.setHeader("Content-Length", contentLength);
-      }
-      res.setHeader("Cache-Control", `public, max-age=${Math.floor(MAX_AGE_MS / 1000)}`);
+      const upstreamContentType = normalizeImageMimeType(response.headers.get("content-type"));
+      const upstreamBuffer = Buffer.from(await response.arrayBuffer());
 
-      const arrayBuffer = await response.arrayBuffer();
-      return res.status(200).send(Buffer.from(arrayBuffer));
+      let servedBuffer = upstreamBuffer;
+      let servedContentType = upstreamContentType ?? "application/octet-stream";
+      let normalizedForLlm = false;
+      let sourceFormat: string | null = null;
+
+      if (requestedFormat === "llm-supported") {
+        if (isSupportedOpenAiVisionImageMimeType(upstreamContentType)) {
+          servedContentType = normalizeImageMimeType(upstreamContentType) ?? "application/octet-stream";
+        } else {
+          const normalized = await normalizeImageForOpenAiVision(upstreamBuffer);
+          servedBuffer = normalized.buffer;
+          servedContentType = normalized.contentType;
+          normalizedForLlm = normalized.normalized;
+          sourceFormat = normalized.sourceFormat;
+        }
+
+        console.info("[ocr-image] served llm multimodal image", {
+          purpose,
+          imageId,
+          requestedFormat,
+          upstreamContentType,
+          servedContentType,
+          normalizedForLlm,
+          sourceFormat,
+          normalizedUrl,
+        });
+      }
+
+      res.setHeader("Content-Type", servedContentType);
+      res.setHeader("Content-Length", String(servedBuffer.length));
+      res.setHeader("Cache-Control", `public, max-age=${Math.floor(MAX_AGE_MS / 1000)}`);
+      return res.status(200).send(servedBuffer);
     } finally {
       clearTimeout(timeout);
     }

@@ -10810,3 +10810,37 @@
 ### Notes
 - Scope guardrail followed: no changes were made to `referenceSeed.ts`.
 - No deploy, restart, migration, runtime, or DB operation was executed for this fix.
+
+## 2026-03-11 - OCR multimodal image-format normalization fix
+
+### Summary
+- Worked in isolated worktree `/tmp/tenkings-agent-ocr-format` on branch `codex/fix/ocr-multimodal-image-format` from `origin/main`.
+- Fixed the OCR multimodal image path so OpenAI image inputs are served in a supported format without changing fallback heuristics, KingsReview flow, or any A-G cleanup code.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/images.ts`
+- `frontend/nextjs-app/pages/api/public/ocr-image.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+
+### Implementation Notes
+- Added shared image helpers:
+  - normalize image MIME headers
+  - detect whether an image MIME type is supported by OpenAI vision input
+  - transcode unsupported images to JPEG for LLM vision use
+- `ocr-suggest.ts` now builds separate signed proxy URLs for multimodal LLM images with:
+  - `format=llm-supported`
+  - `purpose=ocr-llm-multimodal`
+  - `imageId=FRONT|BACK|TILT`
+- `/api/public/ocr-image` now:
+  - validates the signed transform parameters
+  - inspects upstream `Content-Type`
+  - transcodes unsupported image inputs to JPEG before serving them to OpenAI
+  - logs the actual upstream and served MIME types for multimodal requests
+
+### Validation Evidence
+- `git diff --check` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/public/ocr-image.ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/images.ts` passed in the isolated worktree after linking shared `node_modules`.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` was attempted and failed on many unrelated baseline repo type errors already present on current `main`; no new OCR-image-specific type error was isolated from that run.
+
+### Notes
+- No deploy, restart, migration, runtime, or DB operation was executed for this fix.

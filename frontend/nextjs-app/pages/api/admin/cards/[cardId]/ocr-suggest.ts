@@ -2545,7 +2545,31 @@ async function constrainTaxonomyFields(params: {
   };
 }
 
-function buildProxyUrl(req: NextApiRequest, targetUrl: string): string | null {
+function buildOcrProxySignaturePayload(params: {
+  url: string;
+  exp: number;
+  format?: string | null;
+  purpose?: string | null;
+  imageId?: string | null;
+}) {
+  return [
+    params.url,
+    String(params.exp),
+    params.format ?? "",
+    params.purpose ?? "",
+    params.imageId ?? "",
+  ].join("|");
+}
+
+function buildProxyUrl(
+  req: NextApiRequest,
+  targetUrl: string,
+  options?: {
+    format?: "llm-supported";
+    purpose?: string;
+    imageId?: string;
+  }
+): string | null {
   const normalizedTarget = normalizeStorageUrl(targetUrl) ?? targetUrl;
   const secret = process.env.OCR_PROXY_SECRET ?? process.env.OPENAI_API_KEY;
   if (!secret) {
@@ -2557,10 +2581,29 @@ function buildProxyUrl(req: NextApiRequest, targetUrl: string): string | null {
   }
   const protocol = (req.headers["x-forwarded-proto"] as string) || "https";
   const expires = Date.now() + 5 * 60 * 1000;
-  const payload = `${normalizedTarget}|${expires}`;
+  const payload = buildOcrProxySignaturePayload({
+    url: normalizedTarget,
+    exp: expires,
+    format: options?.format ?? null,
+    purpose: options?.purpose ?? null,
+    imageId: options?.imageId ?? null,
+  });
   const signature = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
-  const encodedUrl = encodeURIComponent(normalizedTarget);
-  return `${protocol}://${host}/api/public/ocr-image?url=${encodedUrl}&exp=${expires}&sig=${signature}`;
+  const params = new URLSearchParams({
+    url: normalizedTarget,
+    exp: String(expires),
+    sig: signature,
+  });
+  if (options?.format) {
+    params.set("format", options.format);
+  }
+  if (options?.purpose) {
+    params.set("purpose", options.purpose);
+  }
+  if (options?.imageId) {
+    params.set("imageId", options.imageId);
+  }
+  return `${protocol}://${host}/api/public/ocr-image?${params.toString()}`;
 }
 
 function pickImageUrl(primary?: string | null, thumbnail?: string | null): string | null {
@@ -2653,6 +2696,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const frontProxyUrl = frontImageUrl ? buildProxyUrl(req, frontImageUrl) : null;
     const backProxyUrl = backImageUrl ? buildProxyUrl(req, backImageUrl) : null;
     const tiltProxyUrl = tiltImageUrl ? buildProxyUrl(req, tiltImageUrl) : null;
+    const frontLlmProxyUrl = frontImageUrl
+      ? buildProxyUrl(req, frontImageUrl, {
+          format: "llm-supported",
+          purpose: "ocr-llm-multimodal",
+          imageId: "FRONT",
+        })
+      : null;
+    const backLlmProxyUrl = backImageUrl
+      ? buildProxyUrl(req, backImageUrl, {
+          format: "llm-supported",
+          purpose: "ocr-llm-multimodal",
+          imageId: "BACK",
+        })
+      : null;
+    const tiltLlmProxyUrl = tiltImageUrl
+      ? buildProxyUrl(req, tiltImageUrl, {
+          format: "llm-supported",
+          purpose: "ocr-llm-multimodal",
+          imageId: "TILT",
+        })
+      : null;
 
     const pendingPhotoState = buildPhotoOcrState({
       frontImageUrl: frontImageUrl ?? null,
@@ -2684,9 +2748,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       ...(tiltProxyUrl ? [{ id: "tilt", url: tiltProxyUrl }] : []),
     ];
     const llmImages: LlmImageInput[] = [
-      ...(frontProxyUrl ? [{ id: "FRONT" as const, url: frontProxyUrl }] : []),
-      ...(backProxyUrl ? [{ id: "BACK" as const, url: backProxyUrl }] : []),
-      ...(tiltProxyUrl ? [{ id: "TILT" as const, url: tiltProxyUrl }] : []),
+      ...(frontLlmProxyUrl ? [{ id: "FRONT" as const, url: frontLlmProxyUrl }] : []),
+      ...(backLlmProxyUrl ? [{ id: "BACK" as const, url: backLlmProxyUrl }] : []),
+      ...(tiltLlmProxyUrl ? [{ id: "TILT" as const, url: tiltLlmProxyUrl }] : []),
     ];
 
     if (images.length === 0) {
