@@ -2670,33 +2670,25 @@ export default function AdminUploads() {
   const triggerPhotoroomForCard = useCallback(
     async (cardId: string) => {
       if (!session?.token) {
-        return { ok: false as const, message: "Your session expired. Sign in again and retry." };
+        throw new Error("Your session expired. Sign in again and retry.");
       }
-      try {
-        const res = await fetch(resolveApiUrl(`/api/admin/cards/${cardId}/photoroom`), {
-          method: "POST",
-          mode: isRemoteApi ? "cors" : "same-origin",
-          headers: {
-            "Content-Type": "application/json",
-            ...buildAdminHeaders(session.token),
-          },
-        });
-        const payload = (await res.json().catch(() => ({}))) as { message?: string; processed?: number; skipped?: number };
-        if (!res.ok) {
-          return { ok: false as const, message: payload?.message ?? "PhotoRoom background removal failed." };
-        }
-        const message = typeof payload?.message === "string" ? payload.message : "PhotoRoom processed.";
-        if (/not configured/i.test(message)) {
-          console.warn("PhotoRoom is not configured in this environment. Skipping pre-enqueue processing.");
-          return { ok: true as const, message };
-        }
-        return { ok: true as const, message };
-      } catch (error) {
-        return {
-          ok: false as const,
-          message: error instanceof Error ? error.message : "PhotoRoom background removal failed.",
-        };
+      const res = await fetch(resolveApiUrl(`/api/admin/cards/${cardId}/photoroom`), {
+        method: "POST",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAdminHeaders(session.token),
+        },
+      });
+      const payload = (await res.json().catch(() => ({}))) as { message?: string; processed?: number; skipped?: number };
+      if (!res.ok) {
+        throw new Error(payload?.message ?? `PhotoRoom background removal failed (${res.status}).`);
       }
+      const message = typeof payload?.message === "string" ? payload.message : "PhotoRoom processed.";
+      if (/not configured/i.test(message)) {
+        console.warn("PhotoRoom is not configured in this environment. Skipping pre-enqueue processing.");
+      }
+      return message;
     },
     [isRemoteApi, resolveApiUrl, session?.token]
   );
@@ -4315,35 +4307,56 @@ export default function AdminUploads() {
     }
     try {
       setIntakeBusy(true);
+      setIntakeError(null);
       const sendingCardId = intakeCardId;
       const recordTeachOnSend = trainAiEnabled && !teachCapturedFromCorrections;
-      await saveIntakeMetadata(true, recordTeachOnSend);
-      const photoroomResult = await triggerPhotoroomForCard(sendingCardId);
-      if (!photoroomResult.ok) {
-        throw new Error(photoroomResult.message);
+      try {
+        await saveIntakeMetadata(true, recordTeachOnSend);
+      } catch (error) {
+        setIntakeError(humanizeRequestFailure(error, "Failed to save card metadata before sending to KingsReview."));
+        return;
       }
+
+      triggerPhotoroomForCard(sendingCardId).catch((err) =>
+        console.warn("[PhotoRoom] background processing failed:", err)
+      );
+
       const query = buildIntakeQuery();
       const sourceList =
         intakeRequired.category === "tcg"
           ? ["ebay_sold", "tcgplayer", "pricecharting"]
           : ["ebay_sold", "pricecharting"];
-      const res = await fetch(resolveApiUrl("/api/admin/kingsreview/enqueue"), {
-        method: "POST",
-        mode: isRemoteApi ? "cors" : "same-origin",
-        headers: {
-          "Content-Type": "application/json",
-          ...buildAdminHeaders(token),
-        },
-        body: JSON.stringify({
-          cardAssetId: sendingCardId,
-          query,
-          sources: sourceList,
-          categoryType: intakeRequired.category,
-        }),
-      });
+
+      let res: Response;
+      try {
+        res = await fetch(resolveApiUrl("/api/admin/kingsreview/enqueue"), {
+          method: "POST",
+          mode: isRemoteApi ? "cors" : "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            ...buildAdminHeaders(token),
+          },
+          body: JSON.stringify({
+            cardAssetId: sendingCardId,
+            query,
+            sources: sourceList,
+            categoryType: intakeRequired.category,
+          }),
+        });
+      } catch (error) {
+        setIntakeError(
+          humanizeRequestFailure(
+            error,
+            "Failed to enqueue KingsReview job. The request did not reach the admin API."
+          )
+        );
+        return;
+      }
+
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.message ?? "Failed to enqueue KingsReview job.");
+        setIntakeError(payload?.message ?? `Failed to enqueue KingsReview job (${res.status}).`);
+        return;
       }
       const remainingQueueIds = queuedReviewCardIds.filter((id) => id !== sendingCardId);
       setQueuedReviewCardIds(remainingQueueIds);
@@ -4361,7 +4374,7 @@ export default function AdminUploads() {
       }
       void refreshQueuedReviewCards();
     } catch (err) {
-      const message = humanizeRequestFailure(err, "Failed to send to KingsReview.");
+      const message = humanizeRequestFailure(err, "Unexpected client error while sending to KingsReview.");
       setIntakeError(message);
     } finally {
       setIntakeBusy(false);

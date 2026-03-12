@@ -10844,3 +10844,43 @@
 
 ### Notes
 - No deploy, restart, migration, runtime, or DB operation was executed for this fix.
+
+## 2026-03-12 - Fix: uploads send-to-KingsReview no longer blocks on PhotoRoom
+
+### Summary
+- On `main`, updated `frontend/nextjs-app/pages/admin/uploads.tsx` so `handleSendToKingsReview` no longer waits for the PhotoRoom request before enqueueing KingsReview work.
+- PhotoRoom now fires in the background with warning-only `.catch(...)` logging, while metadata save and `/api/admin/kingsreview/enqueue` remain awaited.
+- Added step-specific client error handling so failures now report whether the send broke during metadata save, enqueue network transport, or enqueue HTTP response handling.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `triggerPhotoroomForCard(...)` now throws on actual request failures instead of collapsing them into `{ ok: false }`, which makes the fire-and-forget `.catch(...)` actionable.
+- `handleSendToKingsReview(...)` now:
+  - clears stale intake errors before work starts
+  - wraps `saveIntakeMetadata(...)` in its own try/catch with a metadata-save-specific message
+  - triggers PhotoRoom in the background without `await`
+  - wraps the enqueue fetch in its own try/catch and reports transport failures separately from non-`200` responses
+- No changes were made to `pages/api/admin/kingsreview/enqueue.ts`, `pages/api/admin/cards/[cardId]/photoroom.ts`, or any OCR path.
+
+### Diagnosis
+- Read-only code inspection found:
+  - `pages/api/admin/kingsreview/enqueue.ts` already wraps the full handler in `try/catch` and returns JSON errors, so no bare uncaught throw path was found there
+  - `pages/api/admin/cards/[cardId]/photoroom.ts` still performs image prep, external PhotoRoom API I/O, storage upload, thumbnail generation, and Prisma updates inside the request lifecycle before returning
+  - `lib/server/queues.ts` shows `photoroomQueue` is only an in-memory per-process queue (`PHOTOROOM_CONCURRENCY`, default `1`), not a durable out-of-request worker
+- Likely cause of the transient "Network request to the admin API failed" incident remains PhotoRoom request duration/resource pressure on the serverless route, not an uncaught exception in the enqueue handler.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx`
+  - pass
+  - warnings only: existing `@next/next/no-img-element` warnings in `pages/admin/uploads.tsx`
+- `git diff --check`
+  - pass
+
+### Notes
+- Branch: `main`
+- Short `HEAD` before this follow-up edit: `9956bf2`
+- No deploy, restart, migration, runtime, or DB operation was executed for this fix.

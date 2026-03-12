@@ -138,6 +138,7 @@ Build Set Ops UI flow with:
 
 ## Vercel Build Hotfix (2026-02-22)
 - Fixed `frontend/nextjs-app/pages/admin/set-ops.tsx` union narrowing bug that caused Vercel compile failure (`Property 'sets' does not exist on type 'LoadResponse'`).
+
 - Load response parsing now narrows payload before reading `sets` and `total`.
 
 ## Vercel Build Hotfix 2 (2026-02-22)
@@ -5726,3 +5727,22 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/public/ocr-image.ts --file pages/api/admin/cards/[cardId]/ocr-suggest.ts --file lib/server/images.ts` -> pass
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` was attempted and hit unrelated baseline repo type errors already present on current `main`
 - No deploy, restart, migration, runtime, or DB operation was executed for this fix.
+
+## Session Update (2026-03-12, uploads send flow follow-up)
+- On `main`, updated `frontend/nextjs-app/pages/admin/uploads.tsx` so `handleSendToKingsReview` no longer awaits PhotoRoom before enqueue:
+  - save metadata still awaits
+  - PhotoRoom now fires in background with `.catch(...)` warning-only logging
+  - KingsReview enqueue still awaits immediately after metadata save
+- Added step-specific client error handling so the UI now distinguishes:
+  - metadata save failures before send
+  - enqueue network failures that never reached the admin API
+  - enqueue HTTP failures with explicit status fallback
+- Read-only diagnosis findings:
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts` already wraps the handler in `try/catch` and returns JSON errors
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/photoroom.ts` still performs image prep, external PhotoRoom I/O, uploads, thumbnail generation, and Prisma updates inside the request lifecycle
+  - `frontend/nextjs-app/lib/server/queues.ts` shows `photoroomQueue` is in-memory per process, so it does not move that work out of the serverless request
+- Likely crash source for the transient "admin API failed" report remains PhotoRoom request duration/resource pressure, not an uncaught enqueue-handler exception.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx` passed with only existing `@next/next/no-img-element` warnings
+  - `git diff --check` passed
+- No deploy, restart, migration, runtime, or DB operation was executed for this follow-up fix.
