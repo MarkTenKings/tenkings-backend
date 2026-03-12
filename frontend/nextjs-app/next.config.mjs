@@ -11,6 +11,18 @@ const nextConfig = {
     // standalone bundle inside the monorepo Docker image.
     outputFileTracingRoot: path.join(__dirname, "../.."),
   },
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "**.cdn.digitaloceanspaces.com",
+      },
+      {
+        protocol: "https",
+        hostname: "**.digitaloceanspaces.com",
+      },
+    ],
+  },
 };
 
 export default nextConfig;

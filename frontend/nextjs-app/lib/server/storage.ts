@@ -45,6 +45,10 @@ export interface StoragePlan {
   publicUrl: string;
 }
 
+export interface UploadBufferOptions {
+  cacheControl?: string;
+}
+
 export function getStorageMode(): StorageMode {
   if (mode === "mock") {
     return "mock";
@@ -194,7 +198,8 @@ export async function presignReadUrl(storageKey: string, expiresInSeconds = 60 *
 export async function uploadBuffer(
   storageKey: string,
   buffer: Buffer,
-  contentType: string
+  contentType: string,
+  options: UploadBufferOptions = {}
 ) {
   const mode = getStorageMode();
   if (mode === "s3") {
@@ -205,6 +210,7 @@ export async function uploadBuffer(
         Key: storageKey,
         Body: buffer,
         ContentType: contentType,
+        CacheControl: options.cacheControl,
         ACL: s3ObjectAcl,
       })
     );

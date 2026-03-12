@@ -4,11 +4,13 @@ import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/
 import { buildSiteUrl } from "../../../../../lib/server/urls";
 import {
   buildThumbnailKey,
+  getStorageMode,
   normalizeStorageUrl,
   readStorageBuffer,
   uploadBuffer,
 } from "../../../../../lib/server/storage";
 import { createThumbnailPng, prepareImageForPhotoroom } from "../../../../../lib/server/images";
+import { generateAndUploadVariants } from "../../../../../lib/server/imageVariants";
 import { withAdminCors } from "../../../../../lib/server/cors";
 import { photoroomQueue } from "../../../../../lib/server/queues";
 
@@ -57,6 +59,47 @@ async function createThumbnail(buffer: Buffer, storageKey: string) {
   return normalizeStorageUrl(thumbUploaded) ?? thumbUploaded;
 }
 
+async function updateCardAssetVariants(cardAssetId: string, imageBuffer: Buffer) {
+  if (getStorageMode() !== "s3") {
+    return;
+  }
+
+  try {
+    const variants = await generateAndUploadVariants(imageBuffer, `cards/${cardAssetId}`);
+    await prisma.cardAsset.update({
+      where: { id: cardAssetId },
+      data: {
+        cdnHdUrl: variants.hdUrl,
+        cdnThumbUrl: variants.thumbUrl,
+      },
+    });
+  } catch (error) {
+    console.error(`[imageVariants] PhotoRoom variant regen failed for ${cardAssetId}:`, error);
+  }
+}
+
+async function updateCardPhotoVariants(photoId: string, cardAssetId: string, imageBuffer: Buffer) {
+  if (getStorageMode() !== "s3") {
+    return;
+  }
+
+  try {
+    const variants = await generateAndUploadVariants(
+      imageBuffer,
+      `cards/${cardAssetId}/photos/${photoId}`
+    );
+    await prisma.cardPhoto.update({
+      where: { id: photoId },
+      data: {
+        cdnHdUrl: variants.hdUrl,
+        cdnThumbUrl: variants.thumbUrl,
+      },
+    });
+  } catch (error) {
+    console.error(`[imageVariants] PhotoRoom variant regen failed for ${photoId}:`, error);
+  }
+}
+
 async function processAsset(cardId: string, apiKey: string) {
   const asset = await prisma.cardAsset.findUnique({
     where: { id: cardId },
@@ -95,6 +138,8 @@ async function processAsset(cardId: string, apiKey: string) {
     },
   });
 
+  await updateCardAssetVariants(asset.id, processedBuffer);
+
   return { processed: 1, skipped: 0 };
 }
 
@@ -103,6 +148,7 @@ async function processPhoto(photoId: string, apiKey: string) {
     where: { id: photoId },
     select: {
       id: true,
+      cardAssetId: true,
       storageKey: true,
       imageUrl: true,
       thumbnailUrl: true,
@@ -135,6 +181,8 @@ async function processPhoto(photoId: string, apiKey: string) {
       backgroundRemovedAt: new Date(),
     },
   });
+
+  await updateCardPhotoVariants(photo.id, photo.cardAssetId, processedBuffer);
 
   return { processed: 1, skipped: 0 };
 }

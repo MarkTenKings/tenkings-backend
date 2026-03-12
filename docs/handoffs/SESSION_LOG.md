@@ -10884,3 +10884,75 @@
 - Branch: `main`
 - Short `HEAD` before this follow-up edit: `9956bf2`
 - No deploy, restart, migration, runtime, or DB operation was executed for this fix.
+
+## 2026-03-12 - Agent Context Sync (Handoff Refresh)
+
+### Summary
+- Read the required startup docs listed in `AGENTS.md`.
+- Confirmed workstation repo state before handoff updates:
+  - branch `main`
+  - short `HEAD` `1fc25b7`
+  - `git status -sb` clean as `## main...origin/main`
+- Updated handoff docs to record this docs-only session.
+- No code edits, deploys, restarts, migrations, runtime checks, or DB operations were executed.
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- Repo status now reflects only these handoff-doc updates.
+
+## 2026-03-12 - Image CDN Variant Foundation
+
+### Summary
+- Implemented the backend foundation for CDN-served card image variants without changing page components or API response shapes.
+- Added additive `cdnHdUrl` / `cdnThumbUrl` fields for `CardAsset`, `CardPhoto`, and `Item`, plus the `add_cdn_variant_urls` Prisma migration.
+- Added a shared image variant helper that generates `hd.webp` and `thumb.webp`, uploads them through the existing Spaces client, and returns public CDN URLs.
+- Wired variant generation into front upload completion, KingsReview photo processing, and the PhotoRoom background flow with failure-tolerant logging.
+- Updated item mint/update paths so `Item` records inherit CDN URLs from `CardAsset`.
+- Added a standalone `CardImage` component and allowed DigitalOcean Spaces hosts in Next image config.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/storage.ts`
+- `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/photos/process.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/photoroom.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+- `frontend/nextjs-app/next.config.js`
+- `frontend/nextjs-app/next.config.mjs`
+- `packages/database/prisma/schema.prisma`
+- `packages/database/src/mint.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Added
+- `frontend/nextjs-app/lib/server/imageVariants.ts`
+- `frontend/nextjs-app/components/CardImage.tsx`
+- `packages/database/prisma/migrations/20260312153000_add_cdn_variant_urls/migration.sql`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database generate`
+  - pass
+  - note: engine warning only because local Node is `v25.6.1` while repo declares `20.x`
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/imageVariants.ts --file lib/server/storage.ts --file pages/api/admin/uploads/complete.ts --file pages/api/admin/kingsreview/photos/process.ts --file 'pages/api/admin/cards/[cardId]/photoroom.ts' --file 'pages/api/admin/cards/[cardId].ts' --file components/CardImage.tsx`
+  - pass
+  - note: engine warning only because local Node is `v25.6.1` while repo declares `20.x`
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+  - note: engine warning only because local Node is `v25.6.1` while repo declares `20.x`
+- `git diff --check`
+  - pass
+
+### Notes
+- `sharp` was already present in `frontend/nextjs-app/package.json`; no dependency change was required.
+- No deploy, restart, migration, runtime, or DB operation was executed in this session.

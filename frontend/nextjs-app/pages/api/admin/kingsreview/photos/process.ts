@@ -4,11 +4,13 @@ import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/
 import { buildSiteUrl } from "../../../../../lib/server/urls";
 import {
   buildThumbnailKey,
+  getStorageMode,
   normalizeStorageUrl,
   readStorageBuffer,
   uploadBuffer,
 } from "../../../../../lib/server/storage";
 import { createThumbnailPng, prepareImageForPhotoroom } from "../../../../../lib/server/images";
+import { generateAndUploadVariants } from "../../../../../lib/server/imageVariants";
 import { withAdminCors } from "../../../../../lib/server/cors";
 import { photoroomQueue } from "../../../../../lib/server/queues";
 
@@ -48,6 +50,29 @@ async function runPhotoroom(buffer: Buffer, apiKey: string): Promise<Buffer> {
 
   const arrayBuffer = await response.arrayBuffer();
   return Buffer.from(arrayBuffer);
+}
+
+async function updatePhotoVariants(photoId: string, cardAssetId: string, imageBuffer: Buffer) {
+  if (getStorageMode() !== "s3") {
+    return;
+  }
+
+  try {
+    const variants = await generateAndUploadVariants(
+      imageBuffer,
+      `cards/${cardAssetId}/photos/${photoId}`
+    );
+
+    await prisma.cardPhoto.update({
+      where: { id: photoId },
+      data: {
+        cdnHdUrl: variants.hdUrl,
+        cdnThumbUrl: variants.thumbUrl,
+      },
+    });
+  } catch (error) {
+    console.error(`[imageVariants] Failed to generate photo variants for ${photoId}:`, error);
+  }
 }
 
 const handler = async function handler(
@@ -99,6 +124,7 @@ const handler = async function handler(
           data: { thumbnailUrl },
         });
       }
+      await updatePhotoVariants(photo.id, photo.cardAssetId, sourceBuffer);
       return res.status(200).json({ message: "Thumbnail updated", thumbnailUrl: thumbnailUrl ?? undefined });
     }
 
@@ -108,6 +134,7 @@ const handler = async function handler(
 
     const apiKey = (process.env.PHOTOROOM_API_KEY ?? "").trim();
     if (!apiKey) {
+      await updatePhotoVariants(photo.id, photo.cardAssetId, sourceBuffer);
       return res.status(200).json({ message: "PhotoRoom not configured", thumbnailUrl: thumbnailUrl ?? undefined });
     }
 
@@ -139,6 +166,8 @@ const handler = async function handler(
           backgroundRemovedAt: new Date(),
         },
       });
+
+      await updatePhotoVariants(photo.id, photo.cardAssetId, processedBuffer);
 
       processedImageUrl = normalizedUrl;
       processedThumbUrl = processedThumbnailUrl ?? thumbnailUrl ?? null;

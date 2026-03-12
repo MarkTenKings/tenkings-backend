@@ -385,6 +385,8 @@ model Item {
   vaultLocation   String?
   imageUrl        String?
   thumbnailUrl    String?
+  cdnHdUrl        String?
+  cdnThumbUrl     String?
   detailsJson     Json?
   ownerId         String
   locationId      String?          @db.Uuid
@@ -1028,6 +1030,8 @@ model CardAsset {
   mimeType                  String
   imageUrl                  String
   thumbnailUrl              String?
+  cdnHdUrl                  String?
+  cdnThumbUrl               String?
   status                    CardAssetStatus  @default(UPLOADING)
   ocrText                   String?
   ocrJson                   Json?
@@ -1397,6 +1401,8 @@ model CardPhoto {
   mimeType            String
   imageUrl            String
   thumbnailUrl        String?
+  cdnHdUrl            String?
+  cdnThumbUrl         String?
   backgroundRemovedAt DateTime?
   createdById         String?
   createdAt           DateTime      @default(now())

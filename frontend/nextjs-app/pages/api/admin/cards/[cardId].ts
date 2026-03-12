@@ -346,6 +346,8 @@ const ensureInventoryReadyArtifacts = async (cardId: string, userId: string) => 
       fileName: true,
       imageUrl: true,
       thumbnailUrl: true,
+      cdnHdUrl: true,
+      cdnThumbUrl: true,
       customTitle: true,
       resolvedPlayerName: true,
       classificationJson: true,
@@ -380,6 +382,8 @@ const ensureInventoryReadyArtifacts = async (cardId: string, userId: string) => 
         ownerId: owner.id,
         imageUrl: card.imageUrl,
         thumbnailUrl: card.thumbnailUrl ?? null,
+        cdnHdUrl: card.cdnHdUrl ?? null,
+        cdnThumbUrl: card.cdnThumbUrl ?? null,
         detailsJson,
       },
     });
@@ -391,6 +395,28 @@ const ensureInventoryReadyArtifacts = async (cardId: string, userId: string) => 
         note: `Minted from card asset ${card.id} (Inventory Ready)`,
       },
     });
+  } else {
+    const updates: Prisma.ItemUpdateInput = {};
+
+    if (!item.imageUrl && card.imageUrl) {
+      updates.imageUrl = card.imageUrl;
+    }
+    if (!item.thumbnailUrl && card.thumbnailUrl) {
+      updates.thumbnailUrl = card.thumbnailUrl;
+    }
+    if (card.cdnHdUrl && item.cdnHdUrl !== card.cdnHdUrl) {
+      updates.cdnHdUrl = card.cdnHdUrl;
+    }
+    if (card.cdnThumbUrl && item.cdnThumbUrl !== card.cdnThumbUrl) {
+      updates.cdnThumbUrl = card.cdnThumbUrl;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      item = await prisma.item.update({
+        where: { id: item.id },
+        data: updates,
+      });
+    }
   }
 
   await ensureLabelPairForItem({

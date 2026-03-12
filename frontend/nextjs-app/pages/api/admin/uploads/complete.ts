@@ -5,8 +5,15 @@ import {
   prisma,
 } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
-import { buildThumbnailKey, normalizeStorageUrl, readStorageBuffer, uploadBuffer } from "../../../../lib/server/storage";
+import {
+  buildThumbnailKey,
+  getStorageMode,
+  normalizeStorageUrl,
+  readStorageBuffer,
+  uploadBuffer,
+} from "../../../../lib/server/storage";
 import { createThumbnailPng } from "../../../../lib/server/images";
+import { generateAndUploadVariants } from "../../../../lib/server/imageVariants";
 import { withAdminCors } from "../../../../lib/server/cors";
 
 interface CompletePayload {
@@ -84,8 +91,9 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
       }
     };
 
+    let sourceBuffer: Buffer | null = null;
     try {
-      const sourceBuffer = await readStorageBuffer(asset.storageKey);
+      sourceBuffer = await readStorageBuffer(asset.storageKey);
       const thumbUrl = await ensureThumbnail(sourceBuffer);
       if (thumbUrl) {
         await prisma.cardAsset.update({
@@ -99,6 +107,21 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
         where: { id: asset.id },
         data: { errorMessage: `Thumbnail failed: ${message}` },
       });
+    }
+
+    if (getStorageMode() === "s3" && sourceBuffer) {
+      try {
+        const variants = await generateAndUploadVariants(sourceBuffer, `cards/${asset.id}`);
+        await prisma.cardAsset.update({
+          where: { id: asset.id },
+          data: {
+            cdnHdUrl: variants.hdUrl,
+            cdnThumbUrl: variants.thumbUrl,
+          },
+        });
+      } catch (error) {
+        console.error(`[imageVariants] Failed to generate variants for ${asset.id}:`, error);
+      }
     }
 
     await prisma.cardAsset.update({

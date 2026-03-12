@@ -1,16 +1,16 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-11` (isolated origin/main worktree; Inventory Ready trusted-ref queue-only fix committed locally; no new runtime/DB evidence)
-- Branch: `codex/fix/auto-process-inventory-ready-refs`
-- Short HEAD: `a5dfccd`
+- Last reviewed: `2026-03-12` (local image CDN variant foundation implemented on workstation checkout; no deploy/restart/migration or new runtime/DB evidence)
+- Branch: `main`
+- Short HEAD: `1fc25b7`
 - Latest repo commits:
-  - `a5dfccd` fix(kingsreview): queue inventory-ready trusted refs
-  - `28d6ac1` fix(reference): correct prefetch row typing for preview build
-  - `590ce1f` fix(reference): auto-promote only explicit high-confidence prefetch refs
-  - `535faa8` fix(inventory-ready): cascade purge inventory artifacts
-  - `fd20c1e` fix(database): use uuid for item location
-- Environments touched: isolated workstation worktree `/tmp/tenkings-agent-f`; no deploy/restart/migration executed
+  - `1fc25b7` fix(admin): make KingsReview send non-blocking
+  - `9956bf2` deploy photoroom fire-and-forget
+  - `f53035f` trigger vercel deploy
+  - `8e14c4d` trigger vercel deploy
+  - `0a7be9b` fix(ocr): normalize multimodal image inputs for openai
+- Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
 ## What Works
@@ -5746,3 +5746,47 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx` passed with only existing `@next/next/no-img-element` warnings
   - `git diff --check` passed
 - No deploy, restart, migration, runtime, or DB operation was executed for this follow-up fix.
+
+## Session Update (2026-03-12, startup context sync)
+- Re-read mandatory startup docs per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Confirmed repo state before these handoff updates:
+  - `git status -sb` -> `## main...origin/main`
+  - branch -> `main`
+  - short `HEAD` -> `1fc25b7`
+- No code/runtime changes, deploys, restarts, migrations, or DB operations were executed in this session.
+
+## Session Update (2026-03-12, image CDN variant foundation)
+- On `main`, implemented the backend image-variant foundation without changing page components or API response shapes.
+- Added additive Prisma fields + migration for:
+  - `CardAsset.cdnHdUrl`
+  - `CardAsset.cdnThumbUrl`
+  - `CardPhoto.cdnHdUrl`
+  - `CardPhoto.cdnThumbUrl`
+  - `Item.cdnHdUrl`
+  - `Item.cdnThumbUrl`
+- Added `frontend/nextjs-app/lib/server/imageVariants.ts`:
+  - generates `hd.webp` and `thumb.webp` from an original image buffer
+  - uploads both through the existing Spaces/S3 client
+  - returns public CDN URLs
+- Hooked failure-tolerant variant generation into:
+  - `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/photos/process.ts`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/photoroom.ts`
+- Updated item mint/update paths to copy CDN URLs from `CardAsset` to `Item`:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+  - `packages/database/src/mint.ts`
+- Added standalone component `frontend/nextjs-app/components/CardImage.tsx`.
+- Updated both Next config files to allow DigitalOcean Spaces remote images.
+- Validation:
+  - `pnpm --filter @tenkings/database generate` -> pass
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/imageVariants.ts --file lib/server/storage.ts --file pages/api/admin/uploads/complete.ts --file pages/api/admin/kingsreview/photos/process.ts --file 'pages/api/admin/cards/[cardId]/photoroom.ts' --file 'pages/api/admin/cards/[cardId].ts' --file components/CardImage.tsx` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- `sharp` was already present in `frontend/nextjs-app/package.json`; no dependency change was required.
+- No deploy, restart, migration, runtime, or DB operation was executed for this work.

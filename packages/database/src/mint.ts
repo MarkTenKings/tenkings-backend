@@ -201,6 +201,8 @@ export async function mintAssignedCardAssets({
             ownerId: seller.id,
             imageUrl: card.imageUrl,
             thumbnailUrl: card.thumbnailUrl ?? null,
+            cdnHdUrl: card.cdnHdUrl ?? null,
+            cdnThumbUrl: card.cdnThumbUrl ?? null,
             detailsJson: classificationDetails ?? ocrDetails ?? undefined,
           },
         });
@@ -225,6 +227,12 @@ export async function mintAssignedCardAssets({
         }
         if (!item.thumbnailUrl && card.thumbnailUrl) {
           updates.thumbnailUrl = card.thumbnailUrl;
+        }
+        if (card.cdnHdUrl && item.cdnHdUrl !== card.cdnHdUrl) {
+          updates.cdnHdUrl = card.cdnHdUrl;
+        }
+        if (card.cdnThumbUrl && item.cdnThumbUrl !== card.cdnThumbUrl) {
+          updates.cdnThumbUrl = card.cdnThumbUrl;
         }
         if (!item.detailsJson) {
           const classificationDetails = (card.classificationJson as Prisma.InputJsonValue | null) ?? null;
