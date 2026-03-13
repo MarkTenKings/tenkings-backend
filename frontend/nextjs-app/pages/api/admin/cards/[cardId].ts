@@ -660,6 +660,8 @@ interface CardResponse {
   fileSize: number;
   imageUrl: string;
   thumbnailUrl: string | null;
+  cdnHdUrl: string | null;
+  cdnThumbUrl: string | null;
   mimeType: string;
   ocrText: string | null;
   ocrSuggestions: {
@@ -718,6 +720,8 @@ interface CardResponse {
     kind: string;
     imageUrl: string;
     thumbnailUrl: string | null;
+    cdnHdUrl: string | null;
+    cdnThumbUrl: string | null;
   }>;
   label:
     | {
@@ -767,6 +771,8 @@ async function fetchCard(cardId: string, uploadedById?: string | null): Promise<
           kind: true,
           imageUrl: true,
           thumbnailUrl: true,
+          cdnHdUrl: true,
+          cdnThumbUrl: true,
         },
         orderBy: { createdAt: "asc" },
       },
@@ -857,6 +863,8 @@ async function fetchCard(cardId: string, uploadedById?: string | null): Promise<
     fileSize: card.fileSize,
     imageUrl: normalizeStorageUrl(card.imageUrl) ?? card.imageUrl,
     thumbnailUrl: normalizeStorageUrl(card.thumbnailUrl) ?? card.thumbnailUrl,
+    cdnHdUrl: card.cdnHdUrl ?? null,
+    cdnThumbUrl: card.cdnThumbUrl ?? null,
     mimeType: card.mimeType,
     ocrText: card.ocrText,
     ocrSuggestions: {
@@ -931,6 +939,8 @@ async function fetchCard(cardId: string, uploadedById?: string | null): Promise<
       kind: photo.kind,
       imageUrl: normalizeStorageUrl(photo.imageUrl) ?? photo.imageUrl,
       thumbnailUrl: normalizeStorageUrl(photo.thumbnailUrl) ?? photo.thumbnailUrl,
+      cdnHdUrl: photo.cdnHdUrl ?? null,
+      cdnThumbUrl: photo.cdnThumbUrl ?? null,
     })),
     label: labelRecord
       ? {

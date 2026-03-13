@@ -1,4 +1,5 @@
 import { prisma, PackStatus } from "@tenkings/database";
+import { sanitizeListImageUrl } from "./storage";
 
 export interface RecentPullRecord {
   slotId: string;
@@ -21,7 +22,8 @@ export interface RecentPullRecord {
     estimatedValue: number | null;
     imageUrl: string | null;
     thumbnailUrl: string | null;
-    detailsJson: unknown;
+    cdnHdUrl: string | null;
+    cdnThumbUrl: string | null;
   };
   owner: {
     id: string;
@@ -52,7 +54,18 @@ export async function loadRecentPulls(limit = 12): Promise<RecentPullRecord[]> {
     },
     include: {
       item: {
-        include: {
+        select: {
+          id: true,
+          name: true,
+          set: true,
+          number: true,
+          language: true,
+          foil: true,
+          estimatedValue: true,
+          imageUrl: true,
+          thumbnailUrl: true,
+          cdnHdUrl: true,
+          cdnThumbUrl: true,
           owner: OWNER_SELECTION,
         },
       },
@@ -115,9 +128,10 @@ export async function loadRecentPulls(limit = 12): Promise<RecentPullRecord[]> {
         language: item.language,
         foil: item.foil,
         estimatedValue: item.estimatedValue,
-        imageUrl: item.imageUrl,
-        thumbnailUrl: item.thumbnailUrl,
-        detailsJson: item.detailsJson,
+        imageUrl: sanitizeListImageUrl(item.imageUrl),
+        thumbnailUrl: sanitizeListImageUrl(item.thumbnailUrl),
+        cdnHdUrl: item.cdnHdUrl ?? null,
+        cdnThumbUrl: item.cdnThumbUrl ?? null,
       },
       owner: owner
         ? {

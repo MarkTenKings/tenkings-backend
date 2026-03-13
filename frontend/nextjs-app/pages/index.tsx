@@ -14,8 +14,9 @@ import {
 } from "react";
 import { useRouter } from "next/router";
 import AppShell from "../components/AppShell";
+import { CardImage } from "../components/CardImage";
 import LiveRipPreview from "../components/LiveRipPreview";
-import { fetchCollector, listRecentPulls } from "../lib/api";
+import { fetchCollector } from "../lib/api";
 import CardDetailModal from "../components/CardDetailModal";
 import { formatUsdMinor } from "../lib/formatters";
 import { loadRecentPulls } from "../lib/server/recentPulls";
@@ -29,7 +30,10 @@ type PullCard = {
   itemId: string;
   cardName: string;
   marketValueMinor: number | null;
-  image: string | null;
+  imageUrl: string | null;
+  thumbnailUrl: string | null;
+  cdnHdUrl: string | null;
+  cdnThumbUrl: string | null;
   ownerId: string | null;
   ownerLabel: string;
   ownerAvatar: string | null;
@@ -54,43 +58,25 @@ const fallbackPulls: PullCard[] = Array.from({ length: 3 }).map((_, index) => ({
   itemId: `placeholder-${index}`,
   cardName: "Card Title",
   marketValueMinor: null,
-  image: null,
+  imageUrl: null,
+  thumbnailUrl: null,
+  cdnHdUrl: null,
+  cdnThumbUrl: null,
   ownerId: null,
   ownerLabel: UNKNOWN_OWNER_LABEL,
   ownerAvatar: null,
   packLabel: null,
 }));
 
-const parseDetailsImage = (raw: unknown): string | null => {
-  if (!raw) {
+const sanitizePullImageUrl = (value: unknown): string | null => {
+  if (typeof value !== "string") {
     return null;
   }
-  const value = typeof raw === "string" ? (() => {
-    try {
-      return JSON.parse(raw);
-    } catch (error) {
-      return null;
-    }
-  })() : raw;
-
-  if (!value || typeof value !== "object") {
+  const trimmed = value.trim();
+  if (!trimmed || /^data:/i.test(trimmed)) {
     return null;
   }
-
-  const imageCandidates = [
-    (value as Record<string, unknown>).thumbnailUrl,
-    (value as Record<string, unknown>).imageUrl,
-    (value as Record<string, unknown>).cardImage,
-    (value as Record<string, unknown>).fullImage,
-  ];
-
-  for (const candidate of imageCandidates) {
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate;
-    }
-  }
-
-  return null;
+  return trimmed;
 };
 
 type HeroMedia =
@@ -140,9 +126,10 @@ const mapPullsFromApi = (rawPulls: any[]): { pulls: PullCard[]; names: Record<st
       const rawValue = Number(item?.estimatedValue ?? 0);
       const marketValueMinor = Number.isFinite(rawValue) && rawValue > 0 ? rawValue : null;
       const cardName = typeof item?.name === "string" && item.name.trim() ? item.name.trim() : "Card Title";
-      const thumbnail = typeof item?.thumbnailUrl === "string" && item.thumbnailUrl.trim() ? item.thumbnailUrl : null;
-      const fallbackImage = typeof item?.imageUrl === "string" && item.imageUrl.trim() ? item.imageUrl : null;
-      const detailsImage = parseDetailsImage(item?.detailsJson);
+      const thumbnailUrl = sanitizePullImageUrl(item?.thumbnailUrl);
+      const imageUrl = sanitizePullImageUrl(item?.imageUrl);
+      const cdnHdUrl = sanitizePullImageUrl(item?.cdnHdUrl);
+      const cdnThumbUrl = sanitizePullImageUrl(item?.cdnThumbUrl);
 
       const owner = pull?.owner ?? {};
       const ownerId = typeof owner?.id === "string" && owner.id.trim() ? owner.id : null;
@@ -170,7 +157,10 @@ const mapPullsFromApi = (rawPulls: any[]): { pulls: PullCard[]; names: Record<st
         itemId,
         cardName,
         marketValueMinor,
-        image: thumbnail ?? fallbackImage ?? detailsImage,
+        imageUrl,
+        thumbnailUrl,
+        cdnHdUrl,
+        cdnThumbUrl,
         ownerId,
         ownerLabel,
         ownerAvatar,
@@ -415,17 +405,6 @@ export default function Home({
 
     const load = async () => {
       try {
-        const recent = await listRecentPulls({ limit: 20 });
-        if (applyPulls(recent?.pulls ?? [])) {
-          return;
-        }
-      } catch (error) {
-        if (process.env.NODE_ENV !== "production") {
-          console.warn("recent pulls service fetch failed", error);
-        }
-      }
-
-      try {
         const response = await fetch("/api/recent-pulls?limit=20");
         if (!response.ok) {
           return;
@@ -434,7 +413,7 @@ export default function Home({
         applyPulls(payload.pulls ?? []);
       } catch (error) {
         if (process.env.NODE_ENV !== "production") {
-          console.warn("recent pulls api fallback failed", error);
+          console.warn("recent pulls api fetch failed", error);
         }
       }
     };
@@ -893,16 +872,17 @@ export default function Home({
                     </header>
                     <div className="relative mt-2 flex-1 overflow-hidden rounded-2xl border border-white/10 bg-night-900/60">
                       <div className="relative h-0 w-full pb-[133%]">
-                        {item.image ? (
-                          <Image
-                            src={item.image}
+                        {item.cdnHdUrl || item.cdnThumbUrl || item.imageUrl || item.thumbnailUrl ? (
+                          <CardImage
+                            cdnHdUrl={item.cdnHdUrl}
+                            cdnThumbUrl={item.cdnThumbUrl}
+                            fallbackUrl={item.imageUrl ?? item.thumbnailUrl}
+                            variant="hd"
                             alt={item.cardName ?? "Card image"}
                             fill
                             className="object-cover"
                             sizes="(max-width: 768px) 280px, 320px"
-                            priority={index < 6}
-                            fetchPriority={index < 6 ? "high" : undefined}
-                            unoptimized
+                            priority={index < 3}
                           />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center bg-night-900/80 text-xs uppercase tracking-[0.3em] text-slate-500">

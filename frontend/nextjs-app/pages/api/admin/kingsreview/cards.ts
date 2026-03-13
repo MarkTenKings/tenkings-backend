@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
-import { normalizeStorageUrl } from "../../../../lib/server/storage";
+import { sanitizeListImageUrl } from "../../../../lib/server/storage";
 
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
@@ -40,6 +40,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         fileName: true,
         imageUrl: true,
         thumbnailUrl: true,
+        cdnHdUrl: true,
+        cdnThumbUrl: true,
         customTitle: true,
         resolvedPlayerName: true,
         resolvedTeamName: true,
@@ -55,8 +57,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const normalized = cards.map((card) => ({
       ...card,
-      imageUrl: normalizeStorageUrl(card.imageUrl),
-      thumbnailUrl: normalizeStorageUrl(card.thumbnailUrl),
+      imageUrl: sanitizeListImageUrl(card.imageUrl),
+      thumbnailUrl: sanitizeListImageUrl(card.thumbnailUrl),
+      cdnHdUrl: card.cdnHdUrl ?? null,
+      cdnThumbUrl: card.cdnThumbUrl ?? null,
     }));
 
     return res.status(200).json({ cards: normalized });

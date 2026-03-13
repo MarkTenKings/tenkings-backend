@@ -1,6 +1,7 @@
 import Head from "next/head";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import AppShell from "../../components/AppShell";
+import { CardImage } from "../../components/CardImage";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import { useSession } from "../../hooks/useSession";
@@ -8,8 +9,10 @@ import { useSession } from "../../hooks/useSession";
 type InventoryCard = {
   id: string;
   title: string;
-  imageUrl: string;
+  imageUrl: string | null;
   thumbnailUrl: string | null;
+  cdnHdUrl: string | null;
+  cdnThumbUrl: string | null;
   valuationMinor: number | null;
   valuationCurrency: string;
   category: string;
@@ -23,6 +26,8 @@ type InventoryCardDetail = {
   fileName: string;
   imageUrl: string;
   thumbnailUrl: string | null;
+  cdnHdUrl: string | null;
+  cdnThumbUrl: string | null;
   customTitle: string | null;
   customDetails: string | null;
   ocrText: string | null;
@@ -30,7 +35,14 @@ type InventoryCardDetail = {
   valuationCurrency: string;
   classificationNormalized?: { [key: string]: unknown } | null;
   classification?: { [key: string]: unknown } | null;
-  photos?: Array<{ id: string; kind: string; imageUrl: string }>;
+  photos?: Array<{
+    id: string;
+    kind: string;
+    imageUrl: string;
+    thumbnailUrl?: string | null;
+    cdnHdUrl?: string | null;
+    cdnThumbUrl?: string | null;
+  }>;
 };
 
 type EvidenceItem = {
@@ -267,6 +279,8 @@ export default function InventoryReady() {
             fileName: card.fileName,
             imageUrl: card.imageUrl,
             thumbnailUrl: card.thumbnailUrl ?? null,
+            cdnHdUrl: card.cdnHdUrl ?? null,
+            cdnThumbUrl: card.cdnThumbUrl ?? null,
             customTitle: card.customTitle ?? null,
             customDetails: card.customDetails ?? null,
             ocrText: card.ocrText ?? null,
@@ -733,11 +747,15 @@ export default function InventoryReady() {
                   }`}
                 >
                   <div className="relative aspect-[3/4] w-full overflow-hidden rounded-2xl bg-night-800">
-                    <img
-                      src={card.thumbnailUrl ?? card.imageUrl}
+                    <CardImage
+                      cdnHdUrl={card.cdnHdUrl}
+                      cdnThumbUrl={card.cdnThumbUrl}
+                      fallbackUrl={card.imageUrl ?? card.thumbnailUrl}
+                      variant="thumb"
                       alt={card.title}
-                      className="h-full w-full object-cover"
-                      loading="lazy"
+                      fill
+                      className="object-cover"
+                      sizes="(min-width: 1280px) 16vw, (min-width: 768px) 30vw, 45vw"
                     />
                     {selected && (
                       <span className="absolute right-2 top-2 rounded-full bg-gold-500 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.2em] text-night-900">
@@ -768,29 +786,69 @@ export default function InventoryReady() {
               <div className="mt-4 grid gap-6 lg:grid-cols-[1.1fr_1fr]">
                 <div className="grid gap-3 md:grid-cols-3">
                   {(() => {
-                    const photoMap = (activeCardDetail.photos ?? []).reduce<Record<string, string>>(
+                    const photoMap = (activeCardDetail.photos ?? []).reduce<Record<string, NonNullable<InventoryCardDetail["photos"]>[number]>>(
                       (acc, photo) => {
-                        acc[photo.kind] = photo.imageUrl;
+                        acc[photo.kind] = photo;
                         return acc;
                       },
                       {}
                     );
                     const photos = [
-                      { label: "Front", url: photoMap.FRONT ?? activeCardDetail.imageUrl },
-                      { label: "Back", url: photoMap.BACK },
-                      { label: "Tilt", url: photoMap.TILT },
+                      {
+                        label: "Front",
+                        cdnHdUrl: activeCardDetail.cdnHdUrl,
+                        cdnThumbUrl: activeCardDetail.cdnThumbUrl,
+                        imageUrl: activeCardDetail.imageUrl,
+                        thumbnailUrl: activeCardDetail.thumbnailUrl,
+                      },
+                      photoMap.BACK
+                        ? {
+                            label: "Back",
+                            cdnHdUrl: photoMap.BACK.cdnHdUrl ?? null,
+                            cdnThumbUrl: photoMap.BACK.cdnThumbUrl ?? null,
+                            imageUrl: photoMap.BACK.imageUrl,
+                            thumbnailUrl: photoMap.BACK.thumbnailUrl ?? null,
+                          }
+                        : {
+                            label: "Back",
+                            cdnHdUrl: null,
+                            cdnThumbUrl: null,
+                            imageUrl: null,
+                            thumbnailUrl: null,
+                          },
+                      photoMap.TILT
+                        ? {
+                            label: "Tilt",
+                            cdnHdUrl: photoMap.TILT.cdnHdUrl ?? null,
+                            cdnThumbUrl: photoMap.TILT.cdnThumbUrl ?? null,
+                            imageUrl: photoMap.TILT.imageUrl,
+                            thumbnailUrl: photoMap.TILT.thumbnailUrl ?? null,
+                          }
+                        : {
+                            label: "Tilt",
+                            cdnHdUrl: null,
+                            cdnThumbUrl: null,
+                            imageUrl: null,
+                            thumbnailUrl: null,
+                          },
                     ];
                     return photos.map((photo) => (
                       <div key={photo.label} className="rounded-2xl border border-white/10 bg-night-800/70 p-2">
                         <p className="text-[10px] uppercase tracking-[0.3em] text-slate-400">{photo.label}</p>
                         <div className="mt-2 aspect-[4/5] overflow-hidden rounded-xl border border-white/10 bg-night-900">
-                          {photo.url ? (
-                            <img
-                              src={photo.url}
-                              alt={`${photo.label} image`}
-                              className="h-full w-full object-contain"
-                              loading="lazy"
-                            />
+                          {photo.cdnHdUrl || photo.cdnThumbUrl || photo.imageUrl || photo.thumbnailUrl ? (
+                            <div className="relative h-full w-full">
+                              <CardImage
+                                cdnHdUrl={photo.cdnHdUrl}
+                                cdnThumbUrl={photo.cdnThumbUrl}
+                                fallbackUrl={photo.imageUrl ?? photo.thumbnailUrl}
+                                variant="hd"
+                                alt={`${photo.label} image`}
+                                fill
+                                className="object-contain"
+                                sizes="(min-width: 1024px) 12vw, 28vw"
+                              />
+                            </div>
                           ) : (
                             <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
                               Missing

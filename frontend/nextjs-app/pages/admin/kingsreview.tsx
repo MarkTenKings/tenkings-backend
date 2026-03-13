@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useRouter } from "next/router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
+import { CardImage } from "../../components/CardImage";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import { useSession } from "../../hooks/useSession";
@@ -29,8 +30,10 @@ const PRICE_REQUIRED_MESSAGE = "Price valuation field must be complete before mo
 type CardSummary = {
   id: string;
   fileName: string;
-  imageUrl: string;
+  imageUrl: string | null;
   thumbnailUrl: string | null;
+  cdnHdUrl: string | null;
+  cdnThumbUrl: string | null;
   customTitle: string | null;
   resolvedPlayerName: string | null;
   resolvedTeamName: string | null;
@@ -56,7 +59,14 @@ type CardDetail = CardSummary & {
         [key: string]: unknown;
       }
     | null;
-  photos?: Array<{ id: string; kind: string; imageUrl: string; thumbnailUrl?: string | null }>;
+  photos?: Array<{
+    id: string;
+    kind: string;
+    imageUrl: string;
+    thumbnailUrl?: string | null;
+    cdnHdUrl?: string | null;
+    cdnThumbUrl?: string | null;
+  }>;
   variantId?: string | null;
   variantConfidence?: number | null;
   variantDecision?: {
@@ -400,7 +410,6 @@ export default function KingsReview() {
   const [activeSource, setActiveSource] = useState<string | null>(null);
   const [activeCompIndex, setActiveCompIndex] = useState<number | null>(null);
   const [activePhotoKind, setActivePhotoKind] = useState<"FRONT" | "BACK" | "TILT">("FRONT");
-  const [activeCardImageUrl, setActiveCardImageUrl] = useState<string | null>(null);
   const [zoom, setZoom] = useState<number>(1);
   const [query, setQuery] = useState<string>("");
   const [queryTouched, setQueryTouched] = useState(false);
@@ -545,27 +554,11 @@ export default function KingsReview() {
     if (!activeCard?.photos?.length) {
       return {};
     }
-    return activeCard.photos.reduce<Record<string, string>>((acc, photo) => {
+    return activeCard.photos.reduce<Record<string, NonNullable<CardDetail["photos"]>[number]>>((acc, photo) => {
       const key = typeof photo.kind === "string" ? photo.kind.toUpperCase() : photo.kind;
-      acc[key] = photo.imageUrl;
+      acc[key] = photo;
       if (typeof key === "string") {
-        acc[key.toLowerCase()] = photo.imageUrl;
-      }
-      return acc;
-    }, {});
-  }, [activeCard?.photos]);
-  const activePhotoThumbs = useMemo(() => {
-    if (!activeCard?.photos?.length) {
-      return {};
-    }
-    return activeCard.photos.reduce<Record<string, string>>((acc, photo) => {
-      if (!photo.thumbnailUrl) {
-        return acc;
-      }
-      const key = typeof photo.kind === "string" ? photo.kind.toUpperCase() : photo.kind;
-      acc[key] = photo.thumbnailUrl;
-      if (typeof key === "string") {
-        acc[key.toLowerCase()] = photo.thumbnailUrl;
+        acc[key.toLowerCase()] = photo;
       }
       return acc;
     }, {});
@@ -689,6 +682,8 @@ export default function KingsReview() {
             fileName: card.fileName,
             imageUrl: card.imageUrl,
             thumbnailUrl: card.thumbnailUrl,
+            cdnHdUrl: card.cdnHdUrl ?? null,
+            cdnThumbUrl: card.cdnThumbUrl ?? null,
             ocrText: card.ocrText ?? null,
             classification: card.classification ?? null,
             customTitle: card.customTitle ?? null,
@@ -738,11 +733,11 @@ export default function KingsReview() {
       if (!detail) {
         return;
       }
-      preloadImage(detail.thumbnailUrl);
-      preloadImage(detail.imageUrl);
+      preloadImage(detail.cdnThumbUrl ?? detail.thumbnailUrl);
+      preloadImage(detail.cdnHdUrl ?? detail.imageUrl);
       (detail.photos ?? []).forEach((photo) => {
-        preloadImage(photo.thumbnailUrl ?? null);
-        preloadImage(photo.imageUrl);
+        preloadImage(photo.cdnThumbUrl ?? photo.thumbnailUrl ?? null);
+        preloadImage(photo.cdnHdUrl ?? photo.imageUrl);
       });
     },
     [fetchCardDetail, preloadImage]
@@ -1030,7 +1025,7 @@ export default function KingsReview() {
     loadCard();
     loadJob();
     loadEvidence();
-  }, [activeCardId, adminHeaders, isAdmin, session]);
+  }, [activeCardId, adminHeaders, fetchCardDetail, isAdmin, session]);
 
   useEffect(() => {
     if (!activeCardId || !session || !isAdmin) {
@@ -1078,26 +1073,6 @@ export default function KingsReview() {
 
     return () => clearInterval(interval);
   }, [job?.status]);
-
-  useEffect(() => {
-    if (!activeCard) {
-      setActiveCardImageUrl(null);
-      return;
-    }
-
-    const isFront = activePhotoKind === "FRONT";
-    const thumb = isFront ? activeCard.thumbnailUrl : activePhotoThumbs[activePhotoKind];
-    const full = isFront ? activeCard.imageUrl : activePhotos[activePhotoKind];
-
-    const fallback = thumb ?? full ?? null;
-    setActiveCardImageUrl(fallback);
-
-    if (full && full !== fallback) {
-      const img = new Image();
-      img.onload = () => setActiveCardImageUrl(full);
-      img.src = full;
-    }
-  }, [activeCard, activePhotoKind, activePhotoThumbs, activePhotos]);
 
   useEffect(() => {
     if (!activeCard?.id) {
@@ -2197,17 +2172,24 @@ export default function KingsReview() {
                       >
                         {PHOTO_CAROUSEL_ORDER.map((kind) => {
                           const isFront = kind === "FRONT";
-                          const imageUrl = isFront
-                            ? activeCard.imageUrl
-                            : (activePhotos[kind] as string | undefined) ?? (activePhotoThumbs[kind] as string | undefined);
+                          const photo = isFront ? null : activePhotos[kind];
+                          const cdnHdUrl = isFront ? activeCard.cdnHdUrl : photo?.cdnHdUrl ?? null;
+                          const cdnThumbUrl = isFront ? activeCard.cdnThumbUrl : photo?.cdnThumbUrl ?? null;
+                          const imageUrl = isFront ? activeCard.imageUrl : photo?.imageUrl ?? null;
+                          const thumbnailUrl = isFront ? activeCard.thumbnailUrl : photo?.thumbnailUrl ?? null;
                           return (
-                            <div key={kind} className="h-full w-full shrink-0">
-                              {imageUrl ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                  src={imageUrl}
+                            <div key={kind} className="relative h-full w-full shrink-0">
+                              {cdnHdUrl || cdnThumbUrl || imageUrl || thumbnailUrl ? (
+                                <CardImage
+                                  cdnHdUrl={cdnHdUrl}
+                                  cdnThumbUrl={cdnThumbUrl}
+                                  fallbackUrl={imageUrl ?? thumbnailUrl}
+                                  variant="hd"
                                   alt={`${activeCard.fileName} ${kind.toLowerCase()}`}
-                                  className="h-full w-full object-cover"
+                                  fill
+                                  className="object-cover"
+                                  sizes="(min-width: 1024px) 400px, 80vw"
+                                  priority={activePhotoKind === kind}
                                 />
                               ) : (
                                 <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.3em] text-slate-500">

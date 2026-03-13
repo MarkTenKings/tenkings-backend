@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { normalizeStorageUrl } from "../../../../lib/server/storage";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   try {
@@ -12,12 +13,54 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         return res.status(400).json({ message: "cardAssetId is required" });
       }
 
-      const items = await prisma.cardEvidenceItem.findMany({
-        where: { cardAssetId },
-        orderBy: { createdAt: "desc" },
-      });
+      const [items, card] = await Promise.all([
+        prisma.cardEvidenceItem.findMany({
+          where: { cardAssetId },
+          orderBy: { createdAt: "desc" },
+        }),
+        prisma.cardAsset.findUnique({
+          where: { id: cardAssetId },
+          select: {
+            id: true,
+            imageUrl: true,
+            thumbnailUrl: true,
+            cdnHdUrl: true,
+            cdnThumbUrl: true,
+            photos: {
+              select: {
+                id: true,
+                kind: true,
+                imageUrl: true,
+                thumbnailUrl: true,
+                cdnHdUrl: true,
+                cdnThumbUrl: true,
+              },
+              orderBy: { createdAt: "asc" },
+            },
+          },
+        }),
+      ]);
 
-      return res.status(200).json({ items });
+      return res.status(200).json({
+        items,
+        card: card
+          ? {
+              id: card.id,
+              imageUrl: normalizeStorageUrl(card.imageUrl) ?? card.imageUrl,
+              thumbnailUrl: normalizeStorageUrl(card.thumbnailUrl) ?? card.thumbnailUrl,
+              cdnHdUrl: card.cdnHdUrl ?? null,
+              cdnThumbUrl: card.cdnThumbUrl ?? null,
+              photos: card.photos.map((photo) => ({
+                id: photo.id,
+                kind: photo.kind,
+                imageUrl: normalizeStorageUrl(photo.imageUrl) ?? photo.imageUrl,
+                thumbnailUrl: normalizeStorageUrl(photo.thumbnailUrl) ?? photo.thumbnailUrl,
+                cdnHdUrl: photo.cdnHdUrl ?? null,
+                cdnThumbUrl: photo.cdnThumbUrl ?? null,
+              })),
+            }
+          : null,
+      });
     }
 
     if (req.method === "POST") {

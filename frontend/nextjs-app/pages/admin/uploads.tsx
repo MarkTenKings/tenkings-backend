@@ -2,6 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
+import { CardImage } from "../../components/CardImage";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
@@ -672,6 +673,12 @@ export default function AdminUploads() {
   const [intakeFrontPreview, setIntakeFrontPreview] = useState<string | null>(null);
   const [intakeBackPreview, setIntakeBackPreview] = useState<string | null>(null);
   const [intakeTiltPreview, setIntakeTiltPreview] = useState<string | null>(null);
+  const [intakeFrontCdnHdUrl, setIntakeFrontCdnHdUrl] = useState<string | null>(null);
+  const [intakeFrontCdnThumbUrl, setIntakeFrontCdnThumbUrl] = useState<string | null>(null);
+  const [intakeBackCdnHdUrl, setIntakeBackCdnHdUrl] = useState<string | null>(null);
+  const [intakeBackCdnThumbUrl, setIntakeBackCdnThumbUrl] = useState<string | null>(null);
+  const [intakeTiltCdnHdUrl, setIntakeTiltCdnHdUrl] = useState<string | null>(null);
+  const [intakeTiltCdnThumbUrl, setIntakeTiltCdnThumbUrl] = useState<string | null>(null);
   const [intakeBusy, setIntakeBusy] = useState(false);
   const [intakePhotoBusy, setIntakePhotoBusy] = useState(false);
   const [intakeError, setIntakeError] = useState<string | null>(null);
@@ -895,6 +902,12 @@ export default function AdminUploads() {
       if (typeof draft.intakeTiltPreview === "string") {
         setIntakeTiltPreview(draft.intakeTiltPreview || null);
       }
+      setIntakeFrontCdnHdUrl(null);
+      setIntakeFrontCdnThumbUrl(null);
+      setIntakeBackCdnHdUrl(null);
+      setIntakeBackCdnThumbUrl(null);
+      setIntakeTiltCdnHdUrl(null);
+      setIntakeTiltCdnThumbUrl(null);
       if (typeof draft.intakeBackPhotoId === "string") {
         setIntakeBackPhotoId(draft.intakeBackPhotoId || null);
       }
@@ -1616,6 +1629,12 @@ export default function AdminUploads() {
     setIntakeFrontPreview(null);
     setIntakeBackPreview(null);
     setIntakeTiltPreview(null);
+    setIntakeFrontCdnHdUrl(null);
+    setIntakeFrontCdnThumbUrl(null);
+    setIntakeBackCdnHdUrl(null);
+    setIntakeBackCdnThumbUrl(null);
+    setIntakeTiltCdnHdUrl(null);
+    setIntakeTiltCdnThumbUrl(null);
     setIntakeError(null);
     setIntakeCaptureTarget(null);
     setPendingBackBlob(null);
@@ -2181,6 +2200,12 @@ export default function AdminUploads() {
       setIntakeFrontPreview(payload.imageUrl ?? null);
       setIntakeBackPreview(backPhoto?.imageUrl ?? null);
       setIntakeTiltPreview(tiltPhoto?.imageUrl ?? null);
+      setIntakeFrontCdnHdUrl(typeof payload.cdnHdUrl === "string" ? payload.cdnHdUrl : null);
+      setIntakeFrontCdnThumbUrl(typeof payload.cdnThumbUrl === "string" ? payload.cdnThumbUrl : null);
+      setIntakeBackCdnHdUrl(typeof backPhoto?.cdnHdUrl === "string" ? backPhoto.cdnHdUrl : null);
+      setIntakeBackCdnThumbUrl(typeof backPhoto?.cdnThumbUrl === "string" ? backPhoto.cdnThumbUrl : null);
+      setIntakeTiltCdnHdUrl(typeof tiltPhoto?.cdnHdUrl === "string" ? tiltPhoto.cdnHdUrl : null);
+      setIntakeTiltCdnThumbUrl(typeof tiltPhoto?.cdnThumbUrl === "string" ? tiltPhoto.cdnThumbUrl : null);
       setIntakeBackPhotoId(backPhoto?.id ?? null);
       setIntakeTiltPhotoId(tiltPhoto?.id ?? null);
 
@@ -2997,6 +3022,8 @@ export default function AdminUploads() {
           setPendingTiltBlob(null);
           setIntakePhotoBusy(true);
           setIntakeFrontPreview(URL.createObjectURL(blob));
+          setIntakeFrontCdnHdUrl(null);
+          setIntakeFrontCdnThumbUrl(null);
           setIntakeStep("back");
           setIntakeCaptureTarget("back");
           const currentToken = activeFrontUploadTokenRef.current + 1;
@@ -3025,11 +3052,15 @@ export default function AdminUploads() {
           })();
         } else if (target === "back") {
           setIntakeBackPreview(URL.createObjectURL(blob));
+          setIntakeBackCdnHdUrl(null);
+          setIntakeBackCdnThumbUrl(null);
           setPendingBackBlob(blob);
           setIntakeStep("tilt");
           setIntakeCaptureTarget("tilt");
         } else {
           setIntakeTiltPreview(URL.createObjectURL(blob));
+          setIntakeTiltCdnHdUrl(null);
+          setIntakeTiltCdnThumbUrl(null);
           setPendingTiltBlob(blob);
           setIntakeCaptureTarget(null);
           const backgroundCardId = intakeCardId;
@@ -3788,11 +3819,18 @@ export default function AdminUploads() {
 
   const teachRegionPreviewBySide = useMemo<Record<TeachRegionSide, string | null>>(
     () => ({
-      FRONT: intakeFrontPreview,
-      BACK: intakeBackPreview,
-      TILT: intakeTiltPreview,
+      FRONT: intakeFrontCdnHdUrl ?? intakeFrontPreview,
+      BACK: intakeBackCdnHdUrl ?? intakeBackPreview,
+      TILT: intakeTiltCdnHdUrl ?? intakeTiltPreview,
     }),
-    [intakeBackPreview, intakeFrontPreview, intakeTiltPreview]
+    [
+      intakeBackCdnHdUrl,
+      intakeBackPreview,
+      intakeFrontCdnHdUrl,
+      intakeFrontPreview,
+      intakeTiltCdnHdUrl,
+      intakeTiltPreview,
+    ]
   );
 
   const activeTeachRegionPreview = teachRegionPreviewBySide[teachRegionSide] ?? null;
@@ -4786,7 +4824,16 @@ export default function AdminUploads() {
                     </ul>
                   </div>
                 ) : intakeFrontPreview ? (
-                  <img src={intakeFrontPreview} alt="Front preview" className="h-full max-h-[320px] w-full rounded-xl object-contain" />
+                  <CardImage
+                    cdnHdUrl={intakeFrontCdnHdUrl}
+                    cdnThumbUrl={intakeFrontCdnThumbUrl}
+                    fallbackUrl={intakeFrontPreview}
+                    variant="thumb"
+                    alt="Front preview"
+                    width={300}
+                    height={420}
+                    className="h-full max-h-[320px] w-full rounded-xl object-contain"
+                  />
                 ) : (
                   <p>No front photo yet.</p>
                 )}
@@ -4810,7 +4857,16 @@ export default function AdminUploads() {
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
                 {intakeBackPreview ? (
-                  <img src={intakeBackPreview} alt="Back preview" className="h-full max-h-[320px] w-full rounded-xl object-contain" />
+                  <CardImage
+                    cdnHdUrl={intakeBackCdnHdUrl}
+                    cdnThumbUrl={intakeBackCdnThumbUrl}
+                    fallbackUrl={intakeBackPreview}
+                    variant="thumb"
+                    alt="Back preview"
+                    width={300}
+                    height={420}
+                    className="h-full max-h-[320px] w-full rounded-xl object-contain"
+                  />
                 ) : (
                   <p>No back photo yet.</p>
                 )}
@@ -4836,7 +4892,16 @@ export default function AdminUploads() {
               </div>
               <div className="rounded-2xl border border-white/10 bg-night-900/40 p-4 text-sm text-slate-400">
                 {intakeTiltPreview ? (
-                  <img src={intakeTiltPreview} alt="Tilt preview" className="h-full max-h-[320px] w-full rounded-xl object-contain" />
+                  <CardImage
+                    cdnHdUrl={intakeTiltCdnHdUrl}
+                    cdnThumbUrl={intakeTiltCdnThumbUrl}
+                    fallbackUrl={intakeTiltPreview}
+                    variant="thumb"
+                    alt="Tilt preview"
+                    width={300}
+                    height={420}
+                    className="h-full max-h-[320px] w-full rounded-xl object-contain"
+                  />
                 ) : (
                   <p>No tilt photo yet.</p>
                 )}
@@ -5079,15 +5144,54 @@ export default function AdminUploads() {
                 <div className="mt-3 grid gap-2 md:grid-cols-3">
                   <div className="rounded-xl border border-white/10 bg-night-900/60 p-2 text-xs">
                     <p className="uppercase tracking-[0.2em] text-slate-500">Front</p>
-                    {intakeFrontPreview ? <img src={intakeFrontPreview} alt="Front" className="mt-2 rounded-lg" /> : <p className="mt-2 text-slate-600">Missing</p>}
+                    {intakeFrontPreview ? (
+                      <CardImage
+                        cdnHdUrl={intakeFrontCdnHdUrl}
+                        cdnThumbUrl={intakeFrontCdnThumbUrl}
+                        fallbackUrl={intakeFrontPreview}
+                        variant="thumb"
+                        alt="Front"
+                        width={300}
+                        height={420}
+                        className="mt-2 h-auto w-full rounded-lg object-contain"
+                      />
+                    ) : (
+                      <p className="mt-2 text-slate-600">Missing</p>
+                    )}
                   </div>
                   <div className="rounded-xl border border-white/10 bg-night-900/60 p-2 text-xs">
                     <p className="uppercase tracking-[0.2em] text-slate-500">Back</p>
-                    {intakeBackPreview ? <img src={intakeBackPreview} alt="Back" className="mt-2 rounded-lg" /> : <p className="mt-2 text-slate-600">Missing</p>}
+                    {intakeBackPreview ? (
+                      <CardImage
+                        cdnHdUrl={intakeBackCdnHdUrl}
+                        cdnThumbUrl={intakeBackCdnThumbUrl}
+                        fallbackUrl={intakeBackPreview}
+                        variant="thumb"
+                        alt="Back"
+                        width={300}
+                        height={420}
+                        className="mt-2 h-auto w-full rounded-lg object-contain"
+                      />
+                    ) : (
+                      <p className="mt-2 text-slate-600">Missing</p>
+                    )}
                   </div>
                   <div className="rounded-xl border border-white/10 bg-night-900/60 p-2 text-xs">
                     <p className="uppercase tracking-[0.2em] text-slate-500">Tilt</p>
-                    {intakeTiltPreview ? <img src={intakeTiltPreview} alt="Tilt" className="mt-2 rounded-lg" /> : <p className="mt-2 text-slate-600">Optional</p>}
+                    {intakeTiltPreview ? (
+                      <CardImage
+                        cdnHdUrl={intakeTiltCdnHdUrl}
+                        cdnThumbUrl={intakeTiltCdnThumbUrl}
+                        fallbackUrl={intakeTiltPreview}
+                        variant="thumb"
+                        alt="Tilt"
+                        width={300}
+                        height={420}
+                        className="mt-2 h-auto w-full rounded-lg object-contain"
+                      />
+                    ) : (
+                      <p className="mt-2 text-slate-600">Optional</p>
+                    )}
                   </div>
                 </div>
               </div>

@@ -10956,3 +10956,39 @@
 ### Notes
 - `sharp` was already present in `frontend/nextjs-app/package.json`; no dependency change was required.
 - No deploy, restart, migration, runtime, or DB operation was executed in this session.
+
+## 2026-03-12 - Frontend Image CDN Migration + API Slimming
+
+### Summary
+- Slimmed recent-pulls, collection, Inventory Ready, and KingsReview list payloads so they now return CDN variant URLs plus sanitized string fallbacks instead of propagating embedded `data:` image blobs.
+- Added `cdnHdUrl` / `cdnThumbUrl` to admin card detail responses and `CardPhoto` payloads, and exposed the same CDN fields from the KingsReview evidence endpoint.
+- Migrated the homepage recent-pulls carousel, `/collection`, `/admin/inventory-ready`, `/admin/kingsreview`, and Add Cards captured-photo previews to `CardImage`.
+- Kept the Teach Regions canvas on a raw `<img>` element, but now prefer HD CDN URLs for that preview when available so the overlay flow stays intact.
+- Switched the homepage client refresh path to `/api/recent-pulls` so image bytes stay out of the serverless JSON response path.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/recentPulls.ts`
+- `frontend/nextjs-app/lib/server/storage.ts`
+- `frontend/nextjs-app/pages/api/collection/index.ts`
+- `frontend/nextjs-app/pages/api/admin/inventory-ready/cards.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/cards.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/evidence.ts`
+- `frontend/nextjs-app/pages/index.tsx`
+- `frontend/nextjs-app/pages/collection.tsx`
+- `frontend/nextjs-app/pages/admin/inventory-ready.tsx`
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/index.tsx --file pages/collection.tsx --file pages/admin/inventory-ready.tsx --file pages/admin/kingsreview.tsx --file pages/admin/uploads.tsx --file pages/api/collection/index.ts --file pages/api/admin/inventory-ready/cards.ts --file pages/api/admin/kingsreview/cards.ts --file 'pages/api/admin/cards/[cardId].ts' --file pages/api/admin/kingsreview/evidence.ts --file lib/server/recentPulls.ts --file lib/server/storage.ts`
+  - pass
+  - warnings only: existing `@next/next/no-img-element` warnings remain on screens that still intentionally use raw `<img>` for external comp images or direct image-element workflows
+  - note: engine warning only because local Node is `v25.6.1` while repo declares `20.x`
+- `git diff --check`
+  - pass
+
+### Notes
+- Short `HEAD` during validation: `9bc79a9`
+- No deploy, restart, migration, runtime, or DB operation was executed in this session.
+- Runtime payload-size checks were not executed locally in this session; verification here covers code-path changes and static lint/diff validation.

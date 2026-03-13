@@ -1,7 +1,7 @@
 import Head from "next/head";
-import Image from "next/image";
 import { FormEvent, useCallback, useEffect, useMemo, useState, type KeyboardEvent, type MouseEvent } from "react";
 import AppShell from "../components/AppShell";
+import { CardImage } from "../components/CardImage";
 import { useSession } from "../hooks/useSession";
 import { buybackItem } from "../lib/api";
 
@@ -41,6 +41,8 @@ interface CollectionItem {
   vaultLocation: string | null;
   imageUrl: string | null;
   thumbnailUrl: string | null;
+  cdnHdUrl: string | null;
+  cdnThumbUrl: string | null;
   details: Record<string, unknown> | null;
   createdAt: string;
   updatedAt: string;
@@ -96,8 +98,6 @@ const formatMinor = (value: number | null) => {
   }
   return `${(value / 100).toFixed(2)} TKD`;
 };
-
-const placeholderCardImage = "/images/card-pull-1.png";
 
 export default function CollectionPage() {
   const { session, loading, ensureSession, updateWalletBalance, logout } = useSession();
@@ -183,8 +183,6 @@ export default function CollectionPage() {
     setShowShippingForm(false);
   };
 
-  const getItemImage = (item: CollectionItem) => item.thumbnailUrl ?? item.imageUrl ?? placeholderCardImage;
-
   const renderSection = (
     title: string,
     subtitle: string,
@@ -230,7 +228,16 @@ export default function CollectionPage() {
               >
                 <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-night-900/80">
                   <div className="relative aspect-[3/4]">
-                    <Image src={getItemImage(item)} alt={item.name} fill className="object-cover" sizes="(min-width: 1024px) 240px, 40vw" />
+                    <CardImage
+                      cdnHdUrl={item.cdnHdUrl}
+                      cdnThumbUrl={item.cdnThumbUrl}
+                      fallbackUrl={item.imageUrl ?? item.thumbnailUrl}
+                      variant="thumb"
+                      alt={item.name}
+                      fill
+                      className="object-cover"
+                      sizes="(min-width: 1024px) 240px, 40vw"
+                    />
                   </div>
                   {hasPendingShipment && (
                     <span className="absolute left-3 top-3 rounded-full bg-amber-500/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.28em] text-night-900">
@@ -648,7 +655,16 @@ export default function CollectionPage() {
               <div className="relative">
                 <div className="relative m-6 overflow-hidden rounded-3xl border border-white/10 bg-night-900/70">
                   <div className="relative aspect-[3/4]">
-                    <Image src={getItemImage(modalItem)} alt={modalItem.name} fill className="object-cover" sizes="(min-width: 768px) 300px, 60vw" />
+                    <CardImage
+                      cdnHdUrl={modalItem.cdnHdUrl}
+                      cdnThumbUrl={modalItem.cdnThumbUrl}
+                      fallbackUrl={modalItem.imageUrl ?? modalItem.thumbnailUrl}
+                      variant="hd"
+                      alt={modalItem.name}
+                      fill
+                      className="object-cover"
+                      sizes="(min-width: 768px) 300px, 60vw"
+                    />
                   </div>
                 </div>
               </div>

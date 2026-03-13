@@ -1,6 +1,22 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { ItemStatus, prisma } from "@tenkings/database";
+import { prisma } from "@tenkings/database";
 import { requireUserSession, toUserErrorResponse } from "../../../lib/server/session";
+import { sanitizeListImageUrl } from "../../../lib/server/storage";
+
+const stripDataUrls = (value: unknown): unknown => {
+  if (typeof value === "string") {
+    return /^data:/i.test(value.trim()) ? null : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => stripDataUrls(entry));
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, entry]) => [key, stripDataUrls(entry)])
+    );
+  }
+  return value;
+};
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "GET") {
@@ -32,6 +48,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const payload = items.map((item) => {
       const slot = item.packSlots[0];
+      const ingestionPayload =
+        (item.ingestionTask?.rawPayload as { imageUrl?: string; thumbnailUrl?: string } | undefined) ?? undefined;
       return {
         id: item.id,
         name: item.name,
@@ -42,12 +60,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         estimatedValue: item.estimatedValue,
         status: item.status,
         vaultLocation: item.vaultLocation,
-         imageUrl:
-           item.thumbnailUrl ??
-           item.imageUrl ??
-           ((item.ingestionTask?.rawPayload as { imageUrl?: string } | undefined)?.imageUrl ?? null),
-         thumbnailUrl: item.thumbnailUrl,
-         details: item.detailsJson ?? (item.ingestionTask?.rawPayload as Record<string, unknown> | null) ?? null,
+        imageUrl: sanitizeListImageUrl(item.imageUrl) ?? sanitizeListImageUrl(ingestionPayload?.imageUrl),
+        thumbnailUrl:
+          sanitizeListImageUrl(item.thumbnailUrl) ?? sanitizeListImageUrl(ingestionPayload?.thumbnailUrl),
+        cdnHdUrl: item.cdnHdUrl ?? null,
+        cdnThumbUrl: item.cdnThumbUrl ?? null,
+        details:
+          (stripDataUrls(
+            item.detailsJson ?? (item.ingestionTask?.rawPayload as Record<string, unknown> | null) ?? null
+          ) as Record<string, unknown> | null) ?? null,
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString(),
         pack: slot

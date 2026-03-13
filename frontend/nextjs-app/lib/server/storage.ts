@@ -254,6 +254,17 @@ export function normalizeStorageUrl(input: string | null | undefined) {
   }
 }
 
+export function sanitizeListImageUrl(input: string | null | undefined) {
+  if (typeof input !== "string") {
+    return null;
+  }
+  const trimmed = input.trim();
+  if (!trimmed || /^data:/i.test(trimmed)) {
+    return null;
+  }
+  return normalizeStorageUrl(trimmed) ?? trimmed;
+}
+
 export function isManagedStorageUrl(input: string | null | undefined) {
   if (!input || !/^https?:\/\//i.test(input)) return false;
   try {

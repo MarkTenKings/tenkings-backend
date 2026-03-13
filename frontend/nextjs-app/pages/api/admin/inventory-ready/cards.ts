@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { getNormalizedClassification } from "@tenkings/shared";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
+import { sanitizeListImageUrl } from "../../../../lib/server/storage";
 
 const DEFAULT_LIMIT = 200;
 
@@ -98,6 +99,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         fileName: true,
         imageUrl: true,
         thumbnailUrl: true,
+        cdnHdUrl: true,
+        cdnThumbUrl: true,
         customTitle: true,
         resolvedPlayerName: true,
         resolvedTeamName: true,
@@ -132,8 +135,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             normalized?.displayName ||
             card.resolvedPlayerName ||
             card.fileName,
-          imageUrl: card.imageUrl,
-          thumbnailUrl: card.thumbnailUrl ?? null,
+          imageUrl: sanitizeListImageUrl(card.imageUrl),
+          thumbnailUrl: sanitizeListImageUrl(card.thumbnailUrl),
+          cdnHdUrl: card.cdnHdUrl ?? null,
+          cdnThumbUrl: card.cdnThumbUrl ?? null,
           valuationMinor: card.valuationMinor,
           valuationCurrency: card.valuationCurrency ?? "USD",
           category: categoryType,
