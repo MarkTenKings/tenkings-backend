@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "migrate:images": "ts-node --project tsconfig.scripts.json scripts/migrate-image-variants.ts",
+    "migrate:images:dry": "ts-node --project tsconfig.scripts.json scripts/migrate-image-variants.ts --dry-run"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.588.0",
@@ -41,6 +43,7 @@
     "eslint-config-next": "14.2.5",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.14",
+    "ts-node": "^10.9.2",
     "typescript": "5.5.4"
   }
 }

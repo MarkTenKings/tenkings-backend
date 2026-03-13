@@ -11016,3 +11016,71 @@
 ### Notes
 - Short `HEAD` during validation: `ffdecfc`
 - No deploy, restart, migration, runtime, or DB operation was executed in this session.
+
+## 2026-03-12 - Production DB URL retrieval + migration evidence (user-run)
+
+### Summary
+- User ran the documented droplet command to export `DATABASE_URL` from the running `bytebot-lite-service` container environment.
+- Export succeeded in the user shell (`DATABASE_URL length: 145`).
+- User then ran `pnpm --filter @tenkings/database migrate:deploy` on the droplet and Prisma reported no pending migrations.
+- User then ran `pnpm --filter @tenkings/database generate` successfully.
+
+### Runtime Evidence
+- Prisma migrate output identified the datasource as:
+  - PostgreSQL database `defaultdb`
+  - schema `public`
+  - host `db-postgresql-nyc3-83816-do-user-27093151-0.f.db.ondigitalocean.com:25060`
+- `54 migrations found in prisma/migrations`
+- `No pending migrations to apply.`
+
+### Notes
+- This evidence was provided from the user's droplet shell output in-session.
+- No additional deploy, restart, or migration command was executed by the agent.
+
+## 2026-03-13 - Image variant backfill script for existing records
+
+### Summary
+- Implemented `frontend/nextjs-app/scripts/migrate-image-variants.ts` to backfill CDN variant URLs for existing `CardAsset`, `CardPhoto`, and `Item` rows.
+- Added CLI support for:
+  - `--dry-run`
+  - `--batch-size`
+  - `--skip-photos`
+  - `--skip-items`
+- Used current code/schema evidence for the `Item` association:
+  - `Item.number` stores the originating `CardAsset.id` during minting, so matched items copy CDN URLs from that `CardAsset`
+  - unmatched items with `imageUrl` fall back to direct variant generation under `items/<itemId>`
+- Read `CardAsset` and `CardPhoto` bytes from `storageKey` first, with URL fallback and `data:` URL decoding support, to avoid depending only on public fetches.
+- Added app-local script runner wiring:
+  - `frontend/nextjs-app/tsconfig.scripts.json`
+  - `migrate:images`
+  - `migrate:images:dry`
+  - `ts-node` devDependency in `frontend/nextjs-app/package.json`
+- Synced the app workspace lock/importer state with `pnpm install --filter @tenkings/nextjs-app --offline`.
+
+### Files Updated
+- `frontend/nextjs-app/package.json`
+- `pnpm-lock.yaml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Added
+- `frontend/nextjs-app/scripts/migrate-image-variants.ts`
+- `frontend/nextjs-app/tsconfig.scripts.json`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.scripts.json --noEmit`
+  - pass
+  - note: engine warning only because local Node is `v25.6.1` while repo declares `20.x`
+- `pnpm --filter @tenkings/nextjs-app exec ts-node --project tsconfig.scripts.json scripts/migrate-image-variants.ts --help`
+  - pass
+  - note: engine warning only because local Node is `v25.6.1` while repo declares `20.x`
+- `pnpm --filter @tenkings/nextjs-app run migrate:images:dry -- --help`
+  - pass
+  - note: validates the package script wiring without touching the database
+  - note: engine warning only because local Node is `v25.6.1` while repo declares `20.x`
+- `git diff --check`
+  - pass
+
+### Notes
+- Actual migration rows were not processed in this session; only the script implementation and local runner wiring were validated.
+- No deploy, restart, migration, runtime, or DB operation was executed for this work.

@@ -1,7 +1,7 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-12` (local image CDN variant foundation implemented on workstation checkout; no deploy/restart/migration or new runtime/DB evidence)
+- Last reviewed: `2026-03-13` (image variant backfill script implemented on workstation checkout; no deploy/restart/migration or new runtime/DB evidence)
 - Branch: `main`
 - Short HEAD: `1fc25b7`
 - Latest repo commits:
@@ -5789,4 +5789,28 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
 - `sharp` was already present in `frontend/nextjs-app/package.json`; no dependency change was required.
+- No deploy, restart, migration, runtime, or DB operation was executed for this work.
+
+## Session Update (2026-03-13, image variant backfill script)
+- Implemented `frontend/nextjs-app/scripts/migrate-image-variants.ts` as a manual backfill script for existing image records with:
+  - `--dry-run`
+  - `--batch-size`
+  - `--skip-photos`
+  - `--skip-items`
+  - per-record failure logging and continue-on-error behavior
+- Script behavior follows current repo evidence instead of placeholder join assumptions:
+  - `CardAsset` and `CardPhoto` source bytes are read from `storageKey` first with URL fallback
+  - `Item` rows backfill from their minted `CardAsset` via `Item.number -> CardAsset.id`
+  - unmatched `Item` rows with `imageUrl` fall back to direct variant generation under `items/<itemId>`
+- Added `frontend/nextjs-app/tsconfig.scripts.json` for `ts-node` execution from the app workspace.
+- Updated `frontend/nextjs-app/package.json` with:
+  - `migrate:images`
+  - `migrate:images:dry`
+  - local `ts-node` devDependency
+- Synced `pnpm-lock.yaml` via `pnpm install --filter @tenkings/nextjs-app --offline`.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.scripts.json --noEmit` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec ts-node --project tsconfig.scripts.json scripts/migrate-image-variants.ts --help` -> pass
+  - `pnpm --filter @tenkings/nextjs-app run migrate:images:dry -- --help` -> pass
+  - `git diff --check` -> pass
 - No deploy, restart, migration, runtime, or DB operation was executed for this work.
