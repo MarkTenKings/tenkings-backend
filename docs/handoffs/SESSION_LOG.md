@@ -10992,3 +10992,27 @@
 - Short `HEAD` during validation: `9bc79a9`
 - No deploy, restart, migration, runtime, or DB operation was executed in this session.
 - Runtime payload-size checks were not executed locally in this session; verification here covers code-path changes and static lint/diff validation.
+
+## 2026-03-12 - Inventory Ready build fix for stale thumbnail fallback
+
+### Summary
+- Fixed the Inventory Ready detail-card `CardImage` fallback to use `photo.imageUrl` only.
+- Removed the stale `photo.thumbnailUrl` fallback reference that was causing the Vercel TypeScript build to fail in `pages/admin/inventory-ready.tsx`.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/inventory-ready.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/inventory-ready.tsx`
+  - pass
+  - warnings only: existing `@next/next/no-img-element` warnings remain on intentional raw `<img>` surfaces in this page
+  - note: engine warning only because local Node is `v25.6.1` while repo declares `20.x`
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+  - note: engine warning only because local Node is `v25.6.1` while repo declares `20.x`
+- `git diff --check`
+  - pass
+
+### Notes
+- Short `HEAD` during validation: `ffdecfc`
+- No deploy, restart, migration, runtime, or DB operation was executed in this session.

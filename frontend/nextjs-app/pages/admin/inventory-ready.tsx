@@ -841,7 +841,7 @@ export default function InventoryReady() {
                               <CardImage
                                 cdnHdUrl={photo.cdnHdUrl}
                                 cdnThumbUrl={photo.cdnThumbUrl}
-                                fallbackUrl={photo.imageUrl ?? photo.thumbnailUrl}
+                                fallbackUrl={photo.imageUrl}
                                 variant="hd"
                                 alt={`${photo.label} image`}
                                 fill
