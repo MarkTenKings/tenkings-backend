@@ -245,6 +245,32 @@
 ### Validation Evidence
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/set-ops-review.tsx --file pages/admin/set-ops.tsx --file pages/admin/index.tsx` passed.
 
+## 2026-03-16 - Inventory v2 foundation merged to main
+
+### Summary
+- Merged Task 2 schema foundation onto `main` from feature commit `3fdb945` via cherry-pick.
+- Cherry-pick produced one schema conflict in `packages/database/prisma/schema.prisma`.
+- Resolved that conflict by keeping the existing `main` `CardAsset` CDN image fields and all new Inventory v2 schema additions.
+- Added the Inventory v2 migration SQL, data-migration script, and script-config include on `main`.
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was performed in this session.
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260316160000_inventory_system_v2_foundation/migration.sql`
+- `scripts/migrate-inventory-v2.ts`
+- `tsconfig.scripts.json`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' /Users/markthomas/tenkings/ten-kings-mystery-packs-clean/packages/database/node_modules/.bin/prisma validate --schema /Users/markthomas/tenkings/ten-kings-mystery-packs-clean/packages/database/prisma/schema.prisma` passed.
+- `git diff --check` passed before finalizing the cherry-pick.
+- Resulting `main` commit after conflict resolution: `3118d0a`.
+
+### Notes
+- The conflict was limited to `CardAsset` field ordering/content around the newer CDN URL fields.
+- `main` now contains both the CDN fields and the full Inventory v2 foundation additions.
+
 ## 2026-02-22 - Set Ops P0-C Ticket 9 (Seed Monitor UI MVP)
 
 ### Summary

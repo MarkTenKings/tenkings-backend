@@ -1,15 +1,15 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-13` (image variant backfill script implemented on workstation checkout; no deploy/restart/migration or new runtime/DB evidence)
+- Last reviewed: `2026-03-16` (inventory v2 foundation merged onto `main` with schema conflict resolved locally; no deploy/restart/migration or new runtime/DB evidence)
 - Branch: `main`
-- Short HEAD: `1fc25b7`
+- Short HEAD: `3118d0a`
 - Latest repo commits:
-  - `1fc25b7` fix(admin): make KingsReview send non-blocking
-  - `9956bf2` deploy photoroom fire-and-forget
-  - `f53035f` trigger vercel deploy
-  - `8e14c4d` trigger vercel deploy
-  - `0a7be9b` fix(ocr): normalize multimodal image inputs for openai
+  - `3118d0a` feat(database): add inventory v2 foundation schema
+  - `b32578d` fix(cards): assign inventory-ready items to house account
+  - `6b39477` Agent J: image variant migration script
+  - `2e82455` fix: remove stale thumbnailUrl reference in inventory-ready
+  - `ffdecfc` Agent I: API slimming + frontend CardImage migration
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
@@ -259,6 +259,20 @@ Build Set Ops UI flow with:
 2. Expected for article import:
    - no GTM/script/nav/eBay HTML junk rows
    - either meaningful checklist rows or clear parse failure (no garbage draft rows).
+
+## Session Update (2026-03-16, inventory v2 foundation merged to main)
+- Merged Task 2 commit `3fdb945` into `main` as commit `3118d0a`.
+- Resolved the only cherry-pick conflict in `packages/database/prisma/schema.prisma` by keeping:
+  - the existing `main` CDN fields on `CardAsset` (`cdnHdUrl`, `cdnThumbUrl`)
+  - all Inventory v2 enum/model/index additions from Task 2
+- Added to `main`:
+  - `packages/database/prisma/migrations/20260316160000_inventory_system_v2_foundation/migration.sql`
+  - `scripts/migrate-inventory-v2.ts`
+  - `tsconfig.scripts.json` include for the new script
+- Validation on `main`:
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' /Users/markthomas/tenkings/ten-kings-mystery-packs-clean/packages/database/node_modules/.bin/prisma validate --schema packages/database/prisma/schema.prisma` -> pass
+  - `git diff --check` -> pass before cherry-pick continue
+- No deploy, restart, migration execution, or DB mutation was performed in this session.
 3. Import this direct PDF URL as `parallel_db`:
    - `https://cdn.shopify.com/s/files/1/0662/9749/5709/files/NBA2402-24TCBKRetailChecklist.pdf`
 4. Expected for PDF URL import:
