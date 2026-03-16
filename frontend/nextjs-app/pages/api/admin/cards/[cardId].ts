@@ -338,7 +338,23 @@ const resolveItemSet = (card: { classificationJson: unknown }) => {
   );
 };
 
-const ensureInventoryReadyArtifacts = async (cardId: string, userId: string) => {
+const resolveInventoryReadyOwner = async () => {
+  const sellerEmail = process.env.PACK_INVENTORY_SELLER_EMAIL ?? process.env.HOUSE_USER_EMAIL;
+  const normalizedSellerEmail = sellerEmail?.trim();
+
+  if (!normalizedSellerEmail) {
+    throw new Error("PACK_INVENTORY_SELLER_EMAIL or HOUSE_USER_EMAIL must be configured");
+  }
+
+  const sellerUser = await prisma.user.findUnique({ where: { email: normalizedSellerEmail } });
+  if (!sellerUser) {
+    throw new Error(`House account not found for email: ${normalizedSellerEmail}`);
+  }
+
+  return sellerUser;
+};
+
+const ensureInventoryReadyArtifacts = async (cardId: string, createdById: string) => {
   const card = await prisma.cardAsset.findUnique({
     where: { id: cardId },
     select: {
@@ -360,10 +376,7 @@ const ensureInventoryReadyArtifacts = async (cardId: string, userId: string) => 
     throw new Error("Card not found");
   }
 
-  const owner = await prisma.user.findUnique({ where: { id: userId } });
-  if (!owner) {
-    throw new Error("Owner account not found");
-  }
+  const owner = await resolveInventoryReadyOwner();
 
   let item = await prisma.item.findFirst({ where: { number: card.id } });
   if (!item) {
@@ -421,7 +434,7 @@ const ensureInventoryReadyArtifacts = async (cardId: string, userId: string) => 
 
   await ensureLabelPairForItem({
     itemId: item.id,
-    createdById: userId,
+    createdById,
     locationId: null,
   });
 };
