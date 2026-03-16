@@ -1,6 +1,20 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   transpilePackages: ["@tenkings/database", "@tenkings/shared"],
+  async redirects() {
+    return [
+      {
+        source: "/admin/inventory-ready",
+        destination: "/admin/inventory",
+        permanent: true,
+      },
+      {
+        source: "/admin/location-batches",
+        destination: "/admin/assigned-locations",
+        permanent: true,
+      },
+    ];
+  },
   images: {
     remotePatterns: [
       {

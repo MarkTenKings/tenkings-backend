@@ -40,15 +40,15 @@ const ADMIN_SECTIONS: AdminSection[] = [
         priority: true,
       },
       {
-        label: "Inventory Ready",
-        href: "/admin/inventory-ready",
+        label: "Inventory",
+        href: "/admin/inventory",
         posterSrc: "/admin/launch/inventory-ready-poster.jpg",
         videoSrc: "/admin/launch/inventory-ready.mp4",
         priority: true,
       },
       {
         label: "Assigned Locations",
-        href: "/admin/location-batches",
+        href: "/admin/assigned-locations",
         posterSrc: "/admin/launch/assigned-locations-poster.jpg",
         videoSrc: "/admin/launch/assigned-locations.mp4",
         priority: true,

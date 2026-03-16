@@ -5828,3 +5828,58 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app run migrate:images:dry -- --help` -> pass
   - `git diff --check` -> pass
 - No deploy, restart, migration, runtime, or DB operation was executed for this work.
+
+## Session Update (2026-03-16, Inventory v2 production migration)
+- Production database migration for Inventory v2 was applied from the main checkout after switching the operator shell to Node `v20.20.1`.
+- Production preflight showed one pending migration on database `Vercel`:
+  - `20260316160000_inventory_system_v2_foundation`
+- Applied successfully with:
+  - `pnpm --filter @tenkings/database migrate:deploy`
+- Regenerated Prisma client successfully with:
+  - `pnpm --filter @tenkings/database generate`
+- Ran the Inventory v2 data migration successfully with:
+  - `pnpm --filter @tenkings/kiosk-agent exec ts-node --transpile-only --project /Users/markthomas/tenkings/ten-kings-mystery-packs-clean/tsconfig.scripts.json /Users/markthomas/tenkings/ten-kings-mystery-packs-clean/scripts/migrate-inventory-v2.ts`
+- Production data migration results:
+  - `585` `CardAsset` rows started with `category = null`
+  - `53` rows were auto-classified and updated
+  - `532` rows remain unmapped and require manual review/follow-up
+  - global `PackCalculatorConfig` seeded
+  - global `AutoFillProfile` seeded
+  - `Online (collect.tenkings.co)` location created
+  - `InventoryBatch` stage default check reported `0` current batches reading as `ASSIGNED`
+- Important follow-up:
+  - the current migration heuristic only classifies cards when `classificationJson` or related text contains enough category evidence; manual cleanup is still needed for the remaining `532` unmapped assets
+- No app deploy or service restart was run as part of this step.
+
+## Session Update (2026-03-16, Task 3 inventory routing merged on main)
+- Merged the Task 3 inventory routing work from worktree commit `de0218e` directly into the `main` checkout while preserving the newer `main` doc state and keeping the legacy fallback pages in place.
+- Added the new admin inventory + assigned-locations surfaces:
+  - `frontend/nextjs-app/pages/admin/inventory.tsx`
+  - `frontend/nextjs-app/pages/admin/assigned-locations.tsx`
+  - `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx`
+- Added reusable admin UI building blocks:
+  - `frontend/nextjs-app/components/admin/AssignToLocationModal.tsx`
+  - `frontend/nextjs-app/components/admin/CardGrid.tsx`
+  - `frontend/nextjs-app/components/admin/CardTile.tsx`
+  - `frontend/nextjs-app/components/admin/FilterBar.tsx`
+  - `frontend/nextjs-app/components/admin/PaginationBar.tsx`
+  - `frontend/nextjs-app/components/admin/SelectionBar.tsx`
+- Added shared inventory query helpers:
+  - `frontend/nextjs-app/lib/adminInventory.ts`
+  - `frontend/nextjs-app/lib/server/adminInventory.ts`
+- Added supporting API routes:
+  - `frontend/nextjs-app/pages/api/admin/inventory/*`
+  - `frontend/nextjs-app/pages/api/admin/assigned-locations/*`
+- Updated admin entry/navigation and merged redirects into the existing Next config:
+  - `/admin/inventory-ready` -> `/admin/inventory`
+  - `/admin/location-batches` -> `/admin/assigned-locations`
+- Deliberately kept the existing legacy page implementations for:
+  - `frontend/nextjs-app/pages/admin/inventory-ready.tsx`
+  - `frontend/nextjs-app/pages/admin/location-batches.tsx`
+  so the new redirects can handle traffic without deleting the old code.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/index.tsx --file pages/admin/inventory.tsx --file pages/admin/assigned-locations.tsx --file 'pages/admin/assigned-locations/[locationId].tsx' --file pages/api/admin/inventory/cards.ts --file pages/api/admin/inventory/assign.ts --file pages/api/admin/inventory/filter-options.ts --file pages/api/admin/inventory/purge.ts --file pages/api/admin/inventory/return.ts --file pages/api/admin/assigned-locations/index.ts --file 'pages/api/admin/assigned-locations/[locationId]/index.ts' --file 'pages/api/admin/assigned-locations/[locationId]/return.ts' --file 'pages/api/admin/assigned-locations/[locationId]/transition.ts' --file components/admin/AssignToLocationModal.tsx --file components/admin/CardGrid.tsx --file components/admin/CardTile.tsx --file components/admin/FilterBar.tsx --file components/admin/PaginationBar.tsx --file components/admin/SelectionBar.tsx --file lib/adminInventory.ts --file lib/server/adminInventory.ts` -> pass
+  - `git diff --check` -> pass
+- Validation ran under local Node `v25.6.1`, so `pnpm` printed the existing repo engine warning for `20.x`; the checks themselves still passed.
+- No migration, restart, or other runtime operation was executed for this work.
