@@ -1,16 +1,16 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-16` (pack recipe system replay in progress on top of current `origin/main`; no deploy/restart/migration or new runtime/DB evidence)
+- Last reviewed: `2026-03-16` (Task 4 pack recipe system replayed onto current `origin/main` lineage; no deploy/restart/migration or new runtime/DB evidence)
 - Branch: `codex/task4-main-integration`
-- Short HEAD: `8b09b34`
+- Short HEAD: `9e88d8c`
 - Latest repo commits:
+  - `9e88d8c` Add location pack recipes and packing slips
+  - `8b09b34` feat(admin): add inventory routing and assigned locations
+  - `10b9669` docs(handoff): log inventory v2 merge to main
   - `3118d0a` feat(database): add inventory v2 foundation schema
   - `b32578d` fix(cards): assign inventory-ready items to house account
-  - `6b39477` Agent J: image variant migration script
-  - `2e82455` fix: remove stale thumbnailUrl reference in inventory-ready
-  - `ffdecfc` Agent I: API slimming + frontend CardImage migration
-- Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
+- Environments touched: workstation checkout `/Users/markthomas/tenkings/task4-main-integration`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
 ## What Works
@@ -5812,8 +5812,6 @@ Build Set Ops UI flow with:
 - Soft-integrated recipes into assignment flow:
   - `frontend/nextjs-app/pages/api/admin/inventory/assign.ts` now resolves a location/category/tier recipe when present and otherwise falls back to `PackCalculatorConfig` defaults without blocking assignment
   - `frontend/nextjs-app/pages/admin/inventory.tsx` now reflects that resolved recipe/default in the success notice
-- Source-of-truth doc correction:
-  - updated `docs/architecture/01-data-model.md` enum catalog to include `CollectibleCategory.ONE_PIECE` and `PackTier.TIER_250`
 - Validation:
   - targeted ESLint passed using the sibling checkout toolchain with `NODE_PATH` pointing at `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/*/node_modules`
   - `git diff --check` passed
@@ -6000,3 +5998,19 @@ Build Set Ops UI flow with:
   - `git diff --check` -> pass
 - Validation ran under local Node `v25.6.1`, so `pnpm` printed the existing repo engine warning for `20.x`; the checks themselves still passed.
 - No migration, restart, or other runtime operation was executed for this work.
+
+## Session Update (2026-03-16, Task 4 replayed onto current main lineage)
+- Created integration worktree `/Users/markthomas/tenkings/task4-main-integration` from `origin/main` at `8b09b34` to avoid overwriting unrelated untracked docs in the earlier isolated checkout.
+- Replayed Task 4 by cherry-picking original worktree commit `9973deb`; only `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md` required manual conflict resolution.
+- Preserved the current `main` inventory-routing implementation while keeping all Task 4 recipe and packing-slip additions:
+  - `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx`
+  - `frontend/nextjs-app/pages/api/admin/inventory/assign.ts`
+  - `frontend/nextjs-app/pages/admin/inventory.tsx`
+  - new recipe and packing-slip files under `frontend/nextjs-app/components/admin/`, `frontend/nextjs-app/lib/`, and `frontend/nextjs-app/pages/api/admin/`
+- Integrated result is commit `9e88d8c` on branch `codex/task4-main-integration`.
+- Validation:
+  - `git diff --cached --check` -> pass during cherry-pick resolution
+  - targeted ESLint against the integrated file set passed using the sibling checkout's installed `eslint` binary with `NODE_PATH` pointed at the shared dependencies
+  - direct `pnpm --filter @tenkings/nextjs-app exec next lint ...` and `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` could not run in the fresh integration worktree because local `next` / `tsc` binaries were not installed there
+  - fallback `tsc` using the shared checkout binary still failed at environment level because the integration worktree does not have full local Next/Prisma/module type resolution
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this integration step.

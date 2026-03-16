@@ -10960,7 +10960,6 @@
 - `frontend/nextjs-app/pages/admin/batches/[...segments].tsx`
 - `frontend/nextjs-app/pages/api/admin/inventory/assign.ts`
 - `frontend/nextjs-app/pages/admin/inventory.tsx`
-- `docs/architecture/01-data-model.md`
 - `docs/HANDOFF_SET_OPS.md`
 - `docs/handoffs/SESSION_LOG.md`
 
@@ -10974,7 +10973,6 @@
 ### Notes
 - Batch packing-slip routes use catch-all files (`[...segments]`) so nested print routes can coexist with the existing `/admin/batches/[batchId]` and `/api/admin/batches/[batchId]` files without moving those large routes.
 - The recipe/default fallback maps `PackCalculatorConfig.bonusCardAvgCost` to the packing-slip/default bonus-card value target because the current schema does not expose a separate non-recipe bonus-card max field.
-- Updated `docs/architecture/01-data-model.md` to reflect the Task 2 enum additions `ONE_PIECE` and `TIER_250` per the repo source-of-truth rule.
 
 ## 2026-03-12 - Image CDN Variant Foundation
 
@@ -11213,3 +11211,44 @@
   - `git diff --check` -> pass
 - `pnpm` emitted the existing engine warning because the local shell here is on Node `v25.6.1` while the repo declares `20.x`; no validation failure resulted from that warning.
 - No migration, restart, or other runtime operation was executed in this session.
+
+## Session Update (2026-03-16, Task 4 replayed onto current main lineage)
+- Created integration worktree `/Users/markthomas/tenkings/task4-main-integration` from `origin/main` at `8b09b34`.
+- Replayed original Task 4 commit `9973deb` onto that branch and resolved the only conflicts in `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`.
+- Preserved the current `main` inventory-routing work while keeping all Task 4 recipe CRUD, resolve, assigned-location UI, assign-flow integration, and packing-slip additions.
+- Resulting integrated commit is `9e88d8c`.
+- No deploy, restart, migration, runtime, or DB operation was executed in this session.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx`
+- `frontend/nextjs-app/pages/admin/inventory.tsx`
+- `frontend/nextjs-app/pages/api/admin/inventory/assign.ts`
+
+### Files Added
+- `frontend/nextjs-app/components/admin/PackingSlipPrint.tsx`
+- `frontend/nextjs-app/components/admin/RecipeCard.tsx`
+- `frontend/nextjs-app/components/admin/RecipeForm.tsx`
+- `frontend/nextjs-app/lib/adminPackRecipes.ts`
+- `frontend/nextjs-app/lib/server/packRecipes.ts`
+- `frontend/nextjs-app/pages/admin/batches/[...segments].tsx`
+- `frontend/nextjs-app/pages/api/admin/batches/[...segments].ts`
+- `frontend/nextjs-app/pages/api/admin/locations/[locationId]/recipes.ts`
+- `frontend/nextjs-app/pages/api/admin/recipes/[recipeId]/duplicate.ts`
+- `frontend/nextjs-app/pages/api/admin/recipes/[recipeId]/index.ts`
+- `frontend/nextjs-app/pages/api/admin/recipes/[recipeId]/resolve.ts`
+
+### Validation Evidence
+- `git diff --cached --check`
+  - pass
+- Targeted ESLint passed using the sibling checkout toolchain:
+  - `NODE_PATH='/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/frontend/nextjs-app/node_modules:/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/node_modules' /Users/markthomas/tenkings/ten-kings-mystery-packs-clean/node_modules/.bin/eslint ...`
+- `pnpm --filter @tenkings/nextjs-app exec next lint ...`
+  - failed in the fresh integration worktree because local `next` binaries were not installed there
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - failed in the fresh integration worktree because local `tsc` binaries were not installed there
+- Fallback `tsc` using the shared checkout binary still failed at environment level because the integration worktree did not have full local Next/Prisma/module type resolution.
+
+### Notes
+- The original isolated-worktree Task 4 notes mentioned an architecture doc correction, but that doc file was not part of the staged Task 4 commit and therefore is not part of integrated commit `9e88d8c`.
