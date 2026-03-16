@@ -297,6 +297,11 @@ export default function InventoryPage() {
       const payload = (await response.json()) as {
         message?: string;
         locationName?: string;
+        packConfiguration?: {
+          source: "recipe" | "calculator-config" | "default";
+          recipeName: string | null;
+          bonusCardsPerPack: number;
+        };
       };
       if (!response.ok) {
         throw new Error(payload.message ?? "Failed to assign cards");
@@ -306,8 +311,14 @@ export default function InventoryPage() {
       setAssignForm(INITIAL_ASSIGN_FORM);
       setSelectedIds(new Set());
       setBulkSelection(null);
+      const recipeSuffix =
+        payload.packConfiguration?.source === "recipe" && payload.packConfiguration.recipeName
+          ? ` using ${payload.packConfiguration.recipeName}`
+          : payload.packConfiguration
+            ? ` using ${payload.packConfiguration.bonusCardsPerPack} bonus-card default`
+            : "";
       setNotice({
-        message: `${selectedCount} cards assigned to ${payload.locationName ?? "selected location"}`,
+        message: `${selectedCount} cards assigned to ${payload.locationName ?? "selected location"}${recipeSuffix}`,
         href: `/admin/assigned-locations/${assignForm.locationId}`,
         hrefLabel: "View in Assigned Locations",
       });

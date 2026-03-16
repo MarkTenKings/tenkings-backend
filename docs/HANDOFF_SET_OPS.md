@@ -1,9 +1,9 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-16` (inventory v2 foundation merged onto `main` with schema conflict resolved locally; no deploy/restart/migration or new runtime/DB evidence)
-- Branch: `main`
-- Short HEAD: `3118d0a`
+- Last reviewed: `2026-03-16` (pack recipe system replay in progress on top of current `origin/main`; no deploy/restart/migration or new runtime/DB evidence)
+- Branch: `codex/task4-main-integration`
+- Short HEAD: `8b09b34`
 - Latest repo commits:
   - `3118d0a` feat(database): add inventory v2 foundation schema
   - `b32578d` fix(cards): assign inventory-ready items to house account
@@ -5714,6 +5714,123 @@ Build Set Ops UI flow with:
   - no change to `referenceSeed.ts`
   - no change to Inventory Ready caller path outside `kingsreviewReferenceLearning.ts`
   - no owned-storage promotion was added
+- Validation:
+  - direct `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/kingsreviewReferenceLearning.ts` could not run in the isolated worktree because local `next` binaries were not installed there
+  - fallback validation used the shared checkout's installed `eslint` binary against `/tmp/tenkings-agent-f/frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts` with `NODE_PATH` pointed at the shared install
+  - fallback eslint exited `0`; it emitted config-resolution warnings about pages-dir/react detection caused by linting from the isolated worktree with shared dependencies
+- No deploy, restart, migration, runtime, or DB operation was executed for this fix.
+
+## Session Update (2026-03-12, AGENTS startup context sync)
+- Re-read mandatory startup docs per `AGENTS.md` in isolated checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Current workstation git state observed before this append:
+  - `git status -sb` showed `## codex/fix/auto-promote-prefetch-refs`
+  - `git branch --show-current` returned `codex/fix/auto-promote-prefetch-refs`
+  - `git rev-parse --short HEAD` returned `28d6ac1`
+  - workspace was clean before this doc sync append
+- No deploy, restart, migration, runtime, or DB operation was executed in this session.
+- No new runtime or DB evidence was collected; the latest implementation notes remain the 2026-03-11 auto-promote prefetch refs entries above.
+
+## Session Update (2026-03-13, AGENTS startup context sync + git report refresh)
+- Re-read mandatory startup docs per `AGENTS.md` in isolated checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Current workstation git state observed before this append:
+  - `git status -sb` showed `## codex/fix/auto-promote-prefetch-refs`
+  - modified files already present: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` returned `codex/fix/auto-promote-prefetch-refs`
+  - `git rev-parse --short HEAD` returned `28d6ac1`
+- No deploy, restart, migration, runtime, or DB operation was executed in this session.
+- No new runtime or DB evidence was collected; this was a status-only refresh requested before final handoff.
+
+## Session Update (2026-03-13, full architecture audit docs)
+- Completed a full static codebase architecture audit in isolated checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs`.
+- Added architecture documentation:
+  - `docs/architecture/01-data-model.md`
+  - `docs/architecture/02-card-commerce.md`
+  - `docs/architecture/03-live-rip-video.md`
+  - `docs/architecture/04-infra-frontend.md`
+  - `docs/TEN_KINGS_SYSTEM_ARCHITECTURE.md`
+- Coverage validation:
+  - `docs/architecture/04-infra-frontend.md` mentions all `114` `pages/api` route files
+  - `docs/architecture/04-infra-frontend.md` mentions all `39` `pages` files
+  - `docs/architecture/04-infra-frontend.md` mentions all `208` environment variables discovered from active code plus dynamic flag names
+- Git state observed before this append:
+  - `git status -sb` showed branch `codex/fix/auto-promote-prefetch-refs`
+  - modified/untracked docs at that point: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`, `docs/TEN_KINGS_SYSTEM_ARCHITECTURE.md`, and `docs/architecture/*`
+  - `git rev-parse --short HEAD` remained `28d6ac1`
+- Notable audit findings captured in the docs:
+  - kiosk/live detail pages do not inline-play Mux HLS on `/live/[slug]`
+  - Twilio is auth-only in current code; no post-rip SMS flow was found
+  - no social auto-posting implementation was found in the repository
+  - `backend/pricing-service` still reports 80% buyback while active kiosk/storefront flows use 75%
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this documentation task.
+
+## Session Update (2026-03-16, AGENTS startup context sync + git report refresh)
+- Re-read mandatory startup docs per `AGENTS.md` in isolated checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Current workstation git state observed before this append:
+  - `git status -sb` showed `## codex/fix/auto-promote-prefetch-refs`
+  - modified files already present: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - untracked paths already present: `"docs 2/"`, `docs/TEN_KINGS_SYSTEM_ARCHITECTURE.md`, `docs/architecture/`, `ten-kings-architecture-docs.zip`
+  - `git branch --show-current` returned `codex/fix/auto-promote-prefetch-refs`
+  - `git rev-parse --short HEAD` returned `28d6ac1`
+- No deploy, restart, migration, runtime, or DB operation was executed in this session.
+- No new runtime or DB evidence was collected; this was a docs/status refresh requested before final handoff.
+
+## Session Update (2026-03-16, Task 4 pack recipe system + packing slips)
+- Implemented per-location pack recipe management:
+  - admin recipe list/create route: `frontend/nextjs-app/pages/api/admin/locations/[locationId]/recipes.ts`
+  - recipe update/delete route: `frontend/nextjs-app/pages/api/admin/recipes/[recipeId]/index.ts`
+  - recipe duplicate route: `frontend/nextjs-app/pages/api/admin/recipes/[recipeId]/duplicate.ts`
+  - recipe resolve route: `frontend/nextjs-app/pages/api/admin/recipes/[recipeId]/resolve.ts`
+  - shared validation/resolution helper: `frontend/nextjs-app/lib/server/packRecipes.ts`
+- Implemented packing slip generation and printable admin view:
+  - API route: `frontend/nextjs-app/pages/api/admin/batches/[...segments].ts`
+  - printable page: `frontend/nextjs-app/pages/admin/batches/[...segments].tsx`
+  - print component: `frontend/nextjs-app/components/admin/PackingSlipPrint.tsx`
+- Implemented assigned-location recipe UI:
+  - new recipe card + modal components:
+    - `frontend/nextjs-app/components/admin/RecipeCard.tsx`
+    - `frontend/nextjs-app/components/admin/RecipeForm.tsx`
+  - `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx` now includes:
+    - `Assigned Cards` / `Recipes` workspace tabs
+    - recipe CRUD actions
+    - duplicate modal
+    - `Print Packing Slips` entry point for the active batch
+- Soft-integrated recipes into assignment flow:
+  - `frontend/nextjs-app/pages/api/admin/inventory/assign.ts` now resolves a location/category/tier recipe when present and otherwise falls back to `PackCalculatorConfig` defaults without blocking assignment
+  - `frontend/nextjs-app/pages/admin/inventory.tsx` now reflects that resolved recipe/default in the success notice
+- Source-of-truth doc correction:
+  - updated `docs/architecture/01-data-model.md` enum catalog to include `CollectibleCategory.ONE_PIECE` and `PackTier.TIER_250`
+- Validation:
+  - targeted ESLint passed using the sibling checkout toolchain with `NODE_PATH` pointing at `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/*/node_modules`
+  - `git diff --check` passed
+  - direct `pnpm --filter @tenkings/nextjs-app exec next lint ...` still cannot run in this isolated worktree because `next` is not installed here
+  - `tsc -p frontend/nextjs-app/tsconfig.json --noEmit` remains blocked in this isolated worktree by missing local Next/Prisma/module type resolution; the failure is environment-level rather than a task-specific runtime/deploy issue
+- Route note:
+  - batch packing-slip endpoints use catch-all route files (`[...segments]`) so `/admin/batches/:batchId/print-slips` and `/api/admin/batches/:batchId/packing-slips` can coexist with the existing `/admin/batches/[batchId]` and `/api/admin/batches/[batchId]` routes without moving those large existing files.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
+## Session Update (2026-03-16, admin card ownership fix)
+- Implemented the ownership fix in `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`.
+- `ensureInventoryReadyArtifacts()` now resolves the house inventory owner from:
+  - `PACK_INVENTORY_SELLER_EMAIL`
+  - fallback `HOUSE_USER_EMAIL`
+- Added hard failure behavior when no house seller email is configured or when no user exists for the resolved email.
+- Replaced the prior admin-user ownership path so newly created `Item` and `ItemOwnership` rows use the house account rather than `admin.user.id`.
+- Preserved `createdById` on `ensureLabelPairForItem(...)` as the acting admin user for audit/label provenance.
 - Validation:
   - direct `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/kingsreviewReferenceLearning.ts` could not run in the isolated worktree because local `next` binaries were not installed there
   - fallback validation used the shared checkout's installed `eslint` binary against `/tmp/tenkings-agent-f/frontend/nextjs-app/lib/server/kingsreviewReferenceLearning.ts` with `NODE_PATH` pointed at the shared install

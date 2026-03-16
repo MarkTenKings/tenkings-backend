@@ -7,6 +7,7 @@ import {
   buildInventoryBatchLabel,
   buildPackDefinitionName,
 } from "../../../../lib/adminInventory";
+import { resolvePackConfigurationWithClient } from "../../../../lib/server/packRecipes";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 
 const assignSchema = z.object({
@@ -62,6 +63,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           },
         };
       }
+
+      const packConfiguration = await resolvePackConfigurationWithClient(
+        tx,
+        location.id,
+        packCategory,
+        packTier
+      );
 
       let packDefinition = await tx.packDefinition.findFirst({
         where: {
@@ -133,6 +141,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           batchLabel: batch.label,
           cardsAssigned: updated.count,
           locationName: location.name,
+          packConfiguration,
         },
       };
     });

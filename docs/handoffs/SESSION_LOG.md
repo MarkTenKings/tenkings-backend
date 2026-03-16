@@ -10936,6 +10936,46 @@
 ### Notes
 - Repo status now reflects only these handoff-doc updates.
 
+## 2026-03-16 - Task 4 pack recipe system and packing slips
+
+### Summary
+- Implemented per-location pack recipe CRUD, recipe duplication, recipe resolution, and active-extra-item cost computation.
+- Added recipe management UI inside the Assigned Locations detail page with new `Assigned Cards` / `Recipes` tabs, recipe cards, create/edit modal, duplicate modal, and a print-slips entry point for the active batch.
+- Added packing-slip generation API plus a printable admin page for `/admin/batches/:batchId/print-slips`.
+- Soft-integrated recipe/default resolution into `POST /api/admin/inventory/assign` without blocking assignment when no recipe exists.
+- No deploy, restart, migration, runtime, or DB operation was executed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/lib/adminPackRecipes.ts`
+- `frontend/nextjs-app/lib/server/packRecipes.ts`
+- `frontend/nextjs-app/pages/api/admin/locations/[locationId]/recipes.ts`
+- `frontend/nextjs-app/pages/api/admin/recipes/[recipeId]/index.ts`
+- `frontend/nextjs-app/pages/api/admin/recipes/[recipeId]/duplicate.ts`
+- `frontend/nextjs-app/pages/api/admin/recipes/[recipeId]/resolve.ts`
+- `frontend/nextjs-app/pages/api/admin/batches/[...segments].ts`
+- `frontend/nextjs-app/components/admin/RecipeCard.tsx`
+- `frontend/nextjs-app/components/admin/RecipeForm.tsx`
+- `frontend/nextjs-app/components/admin/PackingSlipPrint.tsx`
+- `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx`
+- `frontend/nextjs-app/pages/admin/batches/[...segments].tsx`
+- `frontend/nextjs-app/pages/api/admin/inventory/assign.ts`
+- `frontend/nextjs-app/pages/admin/inventory.tsx`
+- `docs/architecture/01-data-model.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- Targeted ESLint passed by reusing the sibling checkout toolchain:
+  - `NODE_PATH='/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/frontend/nextjs-app/node_modules:/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/node_modules' /Users/markthomas/tenkings/ten-kings-mystery-packs-clean/node_modules/.bin/eslint ...`
+- `git diff --check` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint ...` could not run in this isolated worktree because the `next` binary is not installed here (`ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL`).
+- `'/Users/markthomas/tenkings/ten-kings-mystery-packs-clean/frontend/nextjs-app/node_modules/.bin/tsc' -p tsconfig.json --noEmit --typeRoots ...` still failed due worktree-level missing module/type resolution for Next/Prisma dependencies, so it was not used as clean validation evidence.
+
+### Notes
+- Batch packing-slip routes use catch-all files (`[...segments]`) so nested print routes can coexist with the existing `/admin/batches/[batchId]` and `/api/admin/batches/[batchId]` files without moving those large routes.
+- The recipe/default fallback maps `PackCalculatorConfig.bonusCardAvgCost` to the packing-slip/default bonus-card value target because the current schema does not expose a separate non-recipe bonus-card max field.
+- Updated `docs/architecture/01-data-model.md` to reflect the Task 2 enum additions `ONE_PIECE` and `TIER_250` per the repo source-of-truth rule.
+
 ## 2026-03-12 - Image CDN Variant Foundation
 
 ### Summary
