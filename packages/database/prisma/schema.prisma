@@ -137,6 +137,7 @@ enum BytebotLiteJobStatus {
 enum CollectibleCategory {
   SPORTS
   POKEMON
+  ONE_PIECE
   COMICS
 }
 
@@ -144,7 +145,14 @@ enum PackTier {
   TIER_25
   TIER_50
   TIER_100
+  TIER_250
   TIER_500
+}
+
+enum InventoryBatchStage {
+  ASSIGNED
+  SHIPPED
+  LOADED
 }
 
 enum BatchStage {
@@ -176,6 +184,19 @@ enum KioskSessionStatus {
   REVEAL
   COMPLETE
   CANCELLED
+}
+
+enum AutoFillSessionStatus {
+  GENERATED
+  APPROVED
+  CANCELLED
+}
+
+enum PackRecipeItemType {
+  PROMOTIONAL
+  MERCH
+  COUPON
+  OTHER
 }
 
 enum SetDatasetType {
@@ -290,6 +311,8 @@ model User {
   createdEvidenceItems    CardEvidenceItem[]    @relation("CardEvidenceCreatedBy")
   createdPhotos           CardPhoto[]           @relation("CardPhotoCreatedBy")
   inventoryBatchesCreated InventoryBatch[]      @relation("InventoryBatchCreatedBy")
+  autoFillSessionsCreated AutoFillSession[]     @relation("AutoFillSessionCreatedBy")
+  packRecipesCreated      PackRecipe[]          @relation("PackRecipeCreatedBy")
   bytebotPlaybookRules    BytebotPlaybookRule[]
   sessions                Session[]
   qrCodesCreated          QrCode[]              @relation("QrCodeCreatedBy")
@@ -330,6 +353,8 @@ model Location {
   packLabels       PackLabel[]
   restocks         LocationRestock[]
   inventoryBatches InventoryBatch[]
+  autoFillSessions AutoFillSession[]
+  packRecipes      PackRecipe[]
 }
 
 model LiveRip {
@@ -791,17 +816,17 @@ model SetProgram {
 }
 
 model SetCard {
-  id         String   @id @default(uuid())
-  setId      String
-  programId  String
-  cardNumber String
-  playerName String?
-  team       String?
-  isRookie   Boolean?
+  id           String   @id @default(uuid())
+  setId        String
+  programId    String
+  cardNumber   String
+  playerName   String?
+  team         String?
+  isRookie     Boolean?
   metadataJson Json?
-  sourceId   String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  sourceId     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   program SetProgram         @relation(fields: [setId, programId], references: [setId, programId], onDelete: Cascade)
   source  SetTaxonomySource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
@@ -875,18 +900,18 @@ model SetParallelScope {
 }
 
 model SetOddsByFormat {
-  id         String   @id @default(uuid())
-  setId      String
-  oddsKey    String
-  programId  String?
-  parallelId String?
-  formatKey  String?
-  channelKey String?
-  oddsText   String
+  id          String   @id @default(uuid())
+  setId       String
+  oddsKey     String
+  programId   String?
+  parallelId  String?
+  formatKey   String?
+  channelKey  String?
+  oddsText    String
   oddsNumeric Float?
-  sourceId   String?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  sourceId    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   program  SetProgram?        @relation(fields: [setId, programId], references: [setId, programId], onDelete: Cascade)
   parallel SetParallel?       @relation(fields: [setId, parallelId], references: [setId, parallelId], onDelete: Cascade)
@@ -1022,7 +1047,7 @@ model LocationRestock {
 }
 
 model CardAsset {
-  id                        String           @id @default(uuid())
+  id                        String               @id @default(uuid())
   batchId                   String
   storageKey                String
   fileName                  String
@@ -1032,7 +1057,7 @@ model CardAsset {
   thumbnailUrl              String?
   cdnHdUrl                  String?
   cdnThumbUrl               String?
-  status                    CardAssetStatus  @default(UPLOADING)
+  status                    CardAssetStatus      @default(UPLOADING)
   ocrText                   String?
   ocrJson                   Json?
   ocrSuggestionJson         Json?
@@ -1043,14 +1068,14 @@ model CardAsset {
   classificationJson        Json?
   classificationSourcesJson Json?
   valuationMinor            Int?
-  valuationCurrency         String?          @default("USD")
+  valuationCurrency         String?              @default("USD")
   valuationSource           String?
   marketplaceUrl            String?
   assignedDefinitionId      String?
   assignedAt                DateTime?
   errorMessage              String?
-  createdAt                 DateTime         @default(now())
-  updatedAt                 DateTime         @updatedAt
+  createdAt                 DateTime             @default(now())
+  updatedAt                 DateTime             @updatedAt
   processingStartedAt       DateTime?
   processingCompletedAt     DateTime?
   customTitle               String?
@@ -1076,6 +1101,8 @@ model CardAsset {
   aiGradeGeneratedAt        DateTime?
   reviewStage               CardReviewStage?
   reviewStageUpdatedAt      DateTime?
+  category                  CollectibleCategory?
+  subCategory               String?
   inventoryBatchId          String?
   inventoryAssignedAt       DateTime?
   variantId                 String?
@@ -1097,6 +1124,10 @@ model CardAsset {
 
   @@index([sportsDbPlayerId])
   @@index([inventoryBatchId])
+  @@index([reviewStage, inventoryBatchId])
+  @@index([category, reviewStage, inventoryBatchId])
+  @@index([valuationMinor])
+  @@index([inventoryAssignedAt])
 }
 
 model CardVariant {
@@ -1354,20 +1385,135 @@ model OcrEvalResult {
 }
 
 model InventoryBatch {
-  id          String   @id @default(uuid())
-  locationId  String   @db.Uuid
-  label       String?
-  notes       String?
-  createdById String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id             String               @id @default(uuid())
+  locationId     String               @db.Uuid
+  label          String?
+  notes          String?
+  createdById    String?
+  stage          InventoryBatchStage  @default(ASSIGNED)
+  category       CollectibleCategory?
+  tier           PackTier?
+  stageChangedAt DateTime?
+  shippedAt      DateTime?
+  loadedAt       DateTime?
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
 
-  location  Location    @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  createdBy User?       @relation("InventoryBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  cards     CardAsset[]
+  location         Location          @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  createdBy        User?             @relation("InventoryBatchCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  cards            CardAsset[]
+  autoFillSessions AutoFillSession[]
 
   @@index([locationId])
+  @@index([locationId, stage])
   @@index([createdById])
+}
+
+model PackCalculatorConfig {
+  id                    String               @id @default(uuid())
+  category              CollectibleCategory? @unique
+  discountRate          Float                @default(0.80)
+  packCost              Int                  @default(60)
+  slabCost              Int                  @default(50)
+  laborPackPerCard      Int                  @default(25)
+  laborStockPerPack     Int                  @default(15)
+  locationRevenueShare  Float                @default(0.10)
+  merchantProcessingFee Float                @default(0.06)
+  lossRate              Float                @default(0.04)
+  bonusCardsPerPack     Int                  @default(3)
+  bonusCardAvgCost      Int                  @default(200)
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+}
+
+model AutoFillProfile {
+  id                String               @id @default(uuid())
+  name              String               @default("Default")
+  category          CollectibleCategory? @unique
+  hitRate           Float                @default(0.12)
+  solidRate         Float                @default(0.25)
+  standardRate      Float                @default(0.63)
+  hitMultiplierMin  Float                @default(1.5)
+  hitMultiplierMax  Float                @default(4.0)
+  solidRangeMin     Float                @default(0.6)
+  solidRangeMax     Float                @default(1.0)
+  standardRangeMin  Float                @default(0.3)
+  standardRangeMax  Float                @default(0.6)
+  bonusCardsPerPack Int                  @default(3)
+  bonusCardMaxValue Int                  @default(300)
+  isActive          Boolean              @default(true)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+}
+
+model AutoFillSession {
+  id                  String                @id @default(uuid())
+  category            CollectibleCategory
+  packTier            PackTier
+  quantity            Int
+  locationId          String                @db.Uuid
+  targetMarginPercent Float
+  calculatorResult    Json
+  proposedGroupings   Json
+  finalGroupings      Json?
+  status              AutoFillSessionStatus @default(GENERATED)
+  inventoryBatchId    String?
+  createdById         String?
+  createdAt           DateTime              @default(now())
+  approvedAt          DateTime?
+
+  location       Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  inventoryBatch InventoryBatch? @relation(fields: [inventoryBatchId], references: [id], onDelete: SetNull)
+  createdBy      User?           @relation("AutoFillSessionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([locationId])
+  @@index([inventoryBatchId])
+  @@index([status])
+}
+
+model PackRecipe {
+  id                String              @id @default(uuid())
+  locationId        String              @db.Uuid
+  category          CollectibleCategory
+  tier              PackTier
+  name              String
+  isActive          Boolean             @default(true)
+  slabCardsPerPack  Int                 @default(1)
+  bonusCardsPerPack Int                 @default(2)
+  bonusCardMaxValue Int                 @default(300)
+  notes             String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  createdById       String?
+
+  location  Location         @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  createdBy User?            @relation("PackRecipeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  items     PackRecipeItem[]
+
+  @@unique([locationId, category, tier])
+  @@index([locationId])
+  @@index([isActive])
+}
+
+model PackRecipeItem {
+  id          String             @id @default(uuid())
+  recipeId    String
+  name        String
+  description String?
+  itemType    PackRecipeItemType
+  quantity    Int                @default(1)
+  costPerUnit Int                @default(0)
+  isSeasonal  Boolean            @default(false)
+  seasonStart DateTime?
+  seasonEnd   DateTime?
+  isActive    Boolean            @default(true)
+  sortOrder   Int                @default(0)
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  recipe PackRecipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+
+  @@index([recipeId])
 }
 
 model CardEvidenceItem {

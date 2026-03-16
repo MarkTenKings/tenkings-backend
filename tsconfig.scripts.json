@@ -20,6 +20,7 @@
   },
   "include": [
     "scripts/cleanup-orphaned-inventory.ts",
+    "scripts/migrate-inventory-v2.ts",
     "frontend/nextjs-app/lib/server/inventoryReadyPurge.ts",
     "packages/database/src/**/*.ts",
     "packages/shared/src/**/*.ts"
