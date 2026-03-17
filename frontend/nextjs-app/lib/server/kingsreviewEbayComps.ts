@@ -101,7 +101,6 @@ export function buildKingsreviewEbaySoldUrl(query: string, page = 1, limit = 20)
     _nkw: query,
     LH_Sold: "1",
     LH_Complete: "1",
-    _sop: "13",
     _ipg: String(normalizedLimit),
   });
   if (normalizedPage > 1) {
@@ -207,7 +206,6 @@ async function fetchKingsreviewEbaySoldSerpPage(options: {
     _nkw: options.query,
     ebay_domain: "ebay.com",
     show_only: "Sold,Complete",
-    _sop: "13",
     _ipg: String(options.pageSize),
     api_key: options.apiKey,
   });
