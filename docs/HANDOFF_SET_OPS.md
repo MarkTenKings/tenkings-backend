@@ -1,17 +1,34 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-17` (Task 10b Screen 2 prefetch fix pushed to `origin/main`; no deploy/restart/migration or DB writes)
+- Last reviewed: `2026-03-17` (Task 13 recipe modal crash fix complete on local `main`; pending push; no deploy/restart/migration or DB writes)
 - Branch: `main`
-- Short HEAD: `492347a`
+- Short HEAD: `71385e1`
 - Latest repo commits:
+  - `71385e1` fix(recipes): fix crash on recipe name input + rename Manage Recipes to Pack Recipes
+  - `dc08ef3` docs(handoff): sync task10b pushed state
   - `492347a` docs(handoff): sync task10b implementation state
   - `fff0b60` fix(add-cards): pre-fetch screen 2 data on product set selection, not on screen transition
   - `067c180` docs(handoff): reverify teach commit ancestry on main
-  - `4127916` docs(handoff): sync task10 investigation pushed state
-  - `412b27d` docs(handoff): sync task10 investigation final git state
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-03-17, Task 13 recipe modal crash fix)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then pulled `origin/main` with `--ff-only` before editing.
+- Shipped the assigned-locations recipe modal fix in:
+  - `frontend/nextjs-app/components/admin/RecipeForm.tsx`
+  - `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx`
+  - `frontend/nextjs-app/pages/admin/assigned-locations.tsx`
+- What changed:
+  - `RecipeForm` now normalizes the full form state and each extra-item row on init, rehydrate, render, and submit so partial or malformed local state cannot crash when the Recipe Name input updates
+  - all extra-item array edits now operate on a normalized `items` array, protecting cost preview and row rendering from undefined state
+  - the location detail page mounts `RecipeForm` with a stable key so create/edit modal transitions always start from a clean form instance
+  - the assigned-locations location-card CTA text now reads `Pack Recipes` instead of `Manage Recipes`
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/admin/RecipeForm.tsx --file pages/admin/assigned-locations.tsx --file 'pages/admin/assigned-locations/[locationId].tsx'` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
 
 ## Session Update (2026-03-17, Task 10b Screen 2 prefetch fix)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then documented the initial code trace in `docs/handoffs/TASK10B_ANALYSIS.md` before changing code.
