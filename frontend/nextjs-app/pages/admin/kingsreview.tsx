@@ -8,9 +8,15 @@ import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
 import { useSession } from "../../hooks/useSession";
 
-const STAGES = [
+const REVIEW_STAGES = [
   { id: "BYTEBOT_RUNNING", label: "AI Running" },
   { id: "READY_FOR_HUMAN_REVIEW", label: "Ready" },
+  { id: "ESCALATED_REVIEW", label: "Escalated" },
+  { id: "REVIEW_COMPLETE", label: "Complete" },
+] as const;
+
+const QUEUE_FILTERS = [
+  { id: "IN_REVIEW", label: "In Review" },
   { id: "ESCALATED_REVIEW", label: "Escalated" },
   { id: "REVIEW_COMPLETE", label: "Complete" },
 ] as const;
@@ -25,8 +31,9 @@ const AI_STATUS_MESSAGES = [
   "Organizing results",
 ] as const;
 const PHOTO_CAROUSEL_ORDER = ["FRONT", "BACK", "TILT"] as const;
-const COMPS_PAGE_SIZE = 20;
+const LOAD_MORE_COMPS_PAGE_SIZE = 10;
 const PRICE_REQUIRED_MESSAGE = "Price valuation field must be complete before moving a card to inventory ready.";
+type QueueFilterStage = (typeof QUEUE_FILTERS)[number]["id"];
 
 type CardSummary = {
   id: string;
@@ -317,6 +324,27 @@ const queueStatusMeta = (card: CardSummary) => {
   return { label: "", className: "" };
 };
 
+const normalizeQueueFilterStage = (value: string | null | undefined): QueueFilterStage | null => {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized) {
+    return null;
+  }
+  if (
+    normalized === "IN_REVIEW" ||
+    normalized === "BYTEBOT_RUNNING" ||
+    normalized === "READY_FOR_HUMAN_REVIEW"
+  ) {
+    return "IN_REVIEW";
+  }
+  if (normalized === "ESCALATED_REVIEW") {
+    return "ESCALATED_REVIEW";
+  }
+  if (normalized === "REVIEW_COMPLETE") {
+    return "REVIEW_COMPLETE";
+  }
+  return null;
+};
+
 const areCardSummariesEqual = (left: CardSummary[], right: CardSummary[]) =>
   left.length === right.length &&
   left.every((card, index) => {
@@ -600,7 +628,7 @@ const CompCard = memo(function CompCard({
 export default function KingsReview() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
-  const [stage, setStage] = useState<string>("READY_FOR_HUMAN_REVIEW");
+  const [stage, setStage] = useState<QueueFilterStage>("IN_REVIEW");
   const [cards, setCards] = useState<CardSummary[]>([]);
   const [cardsLoading, setCardsLoading] = useState(false);
   const [cardsOffset, setCardsOffset] = useState(0);
@@ -633,9 +661,10 @@ export default function KingsReview() {
   const [enqueueing, setEnqueueing] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const [extraCompsBySource, setExtraCompsBySource] = useState<Record<string, JobResultComp[]>>({});
-  const [compPagesBySource, setCompPagesBySource] = useState<Record<string, number>>({});
+  const [compNextOffsetBySource, setCompNextOffsetBySource] = useState<Record<string, number>>({});
   const [compHasMoreBySource, setCompHasMoreBySource] = useState<Record<string, boolean>>({});
   const [compLoadingBySource, setCompLoadingBySource] = useState<Record<string, boolean>>({});
+  const [compErrorBySource, setCompErrorBySource] = useState<Record<string, string | null>>({});
   const [aiMessageIndex, setAiMessageIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [purging, setPurging] = useState(false);
@@ -672,6 +701,11 @@ export default function KingsReview() {
     () => buildAdminHeaders(session?.token),
     [session?.token]
   );
+  const handleQueueFilterChange = useCallback((nextStage: QueueFilterStage) => {
+    setStage(nextStage);
+    setActiveCardId(null);
+    setCardsLoading(true);
+  }, []);
   const toggleDeleteSelection = useCallback((cardId: string) => {
     setDeleteSelection((prev) =>
       prev.includes(cardId) ? prev.filter((id) => id !== cardId) : [...prev, cardId]
@@ -735,6 +769,7 @@ export default function KingsReview() {
   const activeSourceKey = activeSourceData?.source ?? "ebay_sold";
   const sourceComps = useMemo(() => activeSourceData?.comps ?? [], [activeSourceData?.comps]);
   const appendedComps = useMemo(() => extraCompsBySource[activeSourceKey] ?? [], [activeSourceKey, extraCompsBySource]);
+  const activeCompSearchQuery = useMemo(() => (job?.searchQuery ?? query).trim(), [job?.searchQuery, query]);
   const comps = useMemo(() => {
     const seen = new Set<string>();
     const merged: JobResultComp[] = [];
@@ -749,12 +784,14 @@ export default function KingsReview() {
     });
     return merged;
   }, [appendedComps, normalizeCompUrl, sourceComps]);
-  const activeCompPage = compPagesBySource[activeSourceKey] ?? 1;
+  const activeCompNextOffset = compNextOffsetBySource[activeSourceKey] ?? sourceComps.length;
   const activeCompLoadingMore = compLoadingBySource[activeSourceKey] ?? false;
-  const activeCompHasMore = compHasMoreBySource[activeSourceKey] ?? (sourceComps.length >= COMPS_PAGE_SIZE);
+  const activeCompHasMore =
+    compHasMoreBySource[activeSourceKey] ?? (sourceComps.length >= LOAD_MORE_COMPS_PAGE_SIZE);
+  const activeCompError = compErrorBySource[activeSourceKey] ?? null;
   const canLoadMoreComps =
     activeSourceKey === "ebay_sold" &&
-    Boolean((job?.searchQuery ?? query).trim()) &&
+    Boolean(activeCompSearchQuery) &&
     sourceComps.length > 0;
   const attachedCompKeys = useMemo(() => {
     return new Set(
@@ -1088,8 +1125,8 @@ export default function KingsReview() {
     if (!router.isReady) {
       return;
     }
-    const requestedStage = typeof router.query.stage === "string" ? router.query.stage : null;
-    if (requestedStage && STAGES.some((entry) => entry.id === requestedStage)) {
+    const requestedStage = normalizeQueueFilterStage(typeof router.query.stage === "string" ? router.query.stage : null);
+    if (requestedStage) {
       setStage(requestedStage);
     }
     const requestedCardId = typeof router.query.cardId === "string" ? router.query.cardId : null;
@@ -1284,9 +1321,10 @@ export default function KingsReview() {
 
   useEffect(() => {
     setExtraCompsBySource({});
-    setCompPagesBySource({});
+    setCompNextOffsetBySource({});
     setCompHasMoreBySource({});
     setCompLoadingBySource({});
+    setCompErrorBySource({});
   }, [activeCardId, job?.id]);
 
   useEffect(() => {
@@ -1616,8 +1654,9 @@ export default function KingsReview() {
       if (valuationMinorForUpdate !== undefined) {
         lastSavedValuationRef.current.set(activeCard.id, valuationMinorForUpdate);
       }
-      if (STAGES.some((entry) => entry.id === nextStage)) {
-        setStage(nextStage);
+      const nextQueueFilter = normalizeQueueFilterStage(nextStage);
+      if (nextQueueFilter) {
+        setStage((current) => (current === "IN_REVIEW" ? current : nextQueueFilter));
       }
       setActiveCardId(null);
     } catch (err) {
@@ -1926,21 +1965,21 @@ export default function KingsReview() {
     if (!canLoadMoreComps || activeCompLoadingMore || !activeCompHasMore) {
       return;
     }
-    const nextQuery = (job?.searchQuery ?? query).trim();
+    const nextQuery = activeCompSearchQuery;
     if (!nextQuery) {
       setError("Search query is required to load more comps");
       return;
     }
 
-    const nextPage = activeCompPage + 1;
     setCompLoadingBySource((prev) => ({ ...prev, [activeSourceKey]: true }));
+    setCompErrorBySource((prev) => ({ ...prev, [activeSourceKey]: null }));
     setError(null);
     try {
       const params = new URLSearchParams({
         source: activeSourceKey,
         query: nextQuery,
-        page: String(nextPage),
-        limit: String(COMPS_PAGE_SIZE),
+        offset: String(activeCompNextOffset),
+        limit: String(LOAD_MORE_COMPS_PAGE_SIZE),
       });
       const res = await fetch(`/api/admin/kingsreview/comps?${params.toString()}`, {
         headers: adminHeaders(),
@@ -1974,26 +2013,31 @@ export default function KingsReview() {
           [activeSourceKey]: [...existing, ...uniqueNext],
         };
       });
-      setCompPagesBySource((prev) => ({ ...prev, [activeSourceKey]: nextPage }));
+      const nextOffset =
+        typeof payload.nextOffset === "number" && Number.isFinite(payload.nextOffset)
+          ? payload.nextOffset
+          : activeCompNextOffset + nextComps.length;
+      setCompNextOffsetBySource((prev) => ({ ...prev, [activeSourceKey]: nextOffset }));
       setCompHasMoreBySource((prev) => ({
         ...prev,
-        [activeSourceKey]: Boolean(payload?.hasMore) && nextComps.length > 0,
+        [activeSourceKey]: Boolean(payload?.hasMore),
       }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load more comps");
+      const message = err instanceof Error ? err.message : "Failed to load more comps";
+      setCompErrorBySource((prev) => ({ ...prev, [activeSourceKey]: message }));
+      setError(message);
     } finally {
       setCompLoadingBySource((prev) => ({ ...prev, [activeSourceKey]: false }));
     }
   }, [
     activeCompHasMore,
     activeCompLoadingMore,
-    activeCompPage,
+    activeCompNextOffset,
+    activeCompSearchQuery,
     activeSourceKey,
     adminHeaders,
     canLoadMoreComps,
-    job?.searchQuery,
     normalizeCompUrl,
-    query,
     sourceComps,
   ]);
 
@@ -2185,107 +2229,13 @@ export default function KingsReview() {
             >
               ← Add Cards
             </Link>
-            <p className="hidden px-2 font-heading text-sm uppercase tracking-[0.24em] text-gold-300 lg:block">KingsReview</p>
+            <p className="px-2 font-heading text-sm uppercase tracking-[0.24em] text-gold-300">KingsReview</p>
             <Link
-              href="/admin/inventory-ready"
+              href="/admin/inventory"
               className="inline-flex rounded-full border border-white/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
             >
-              Inventory Ready →
+              Inventory →
             </Link>
-            {STAGES.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => {
-                  setStage(item.id);
-                  setActiveCardId(null);
-                  setCardsLoading(true);
-                }}
-                className={`rounded-full border px-3 py-1.5 text-[9px] uppercase tracking-[0.3em] transition sm:px-4 sm:py-2 sm:text-[11px] ${
-                  stage === item.id
-                    ? "border-gold-400 bg-gold-500/20 text-gold-200"
-                    : "border-white/20 text-slate-300 hover:border-white/40 hover:text-white"
-                }`}
-              >
-                {item.label}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={() => setShowTeach((prev) => !prev)}
-              className="rounded-full border border-sky-400/60 bg-sky-500/10 px-3 py-1.5 text-[9px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 sm:px-4 sm:py-2 sm:text-[11px]"
-            >
-              {showTeach ? "Hide Bytebot Teach" : "Bytebot Teach"}
-            </button>
-            <div className="flex min-w-[260px] flex-1 flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-night-950/50 p-2">
-              <input
-                value={query}
-                onChange={(event) => {
-                  setQuery(event.target.value);
-                  setQueryTouched(true);
-                }}
-                placeholder="Search query"
-                className="min-w-[160px] flex-1 rounded-xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-slate-200"
-              />
-              <button
-                type="button"
-                onClick={handleEnqueue}
-                disabled={enqueueing}
-                className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 disabled:opacity-60"
-              >
-                {enqueueing ? "Running…" : "Generate Comps"}
-              </button>
-              {(sources.length ? sources : [{ source: "ebay_sold" } as { source: string }]).map((source) => (
-                <button
-                  key={source.source}
-                  type="button"
-                  onClick={() => {
-                    setActiveSource(source.source);
-                    setActiveCompIndex(null);
-                  }}
-                  className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.3em] transition ${
-                    activeSourceData?.source === source.source
-                      ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
-                      : "border-white/10 text-slate-400"
-                  }`}
-                >
-                  {SOURCE_LABELS[source.source] ?? source.source}
-                </button>
-              ))}
-              {activeSourceData && (
-                <button
-                  type="button"
-                  onClick={handleAttachSearch}
-                  className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
-                >
-                  Attach Search
-                </button>
-              )}
-              {draftAutosaveLabel && (
-                <span className="text-[10px] uppercase tracking-[0.24em] text-slate-400">{draftAutosaveLabel}</span>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setDeleteSelection([]);
-                setShowDeleteDialog(true);
-              }}
-              className="ml-auto inline-flex items-center justify-center rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1.5 text-[9px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60 sm:px-4 sm:py-2 sm:text-[11px]"
-              disabled={purging}
-              aria-label="Delete cards"
-              title="Delete cards"
-            >
-              <svg aria-hidden="true" className="h-3 w-3 sm:h-4 sm:w-4" viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M6 7h12M9 7v11m6-11v11M10 4h4a1 1 0 0 1 1 1v2H9V5a1 1 0 0 1 1-1zM5 7h14l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7z"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
           </div>
         </header>
 
@@ -2393,9 +2343,48 @@ export default function KingsReview() {
           <section
             className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:h-[calc(100vh-140px)] lg:max-h-[calc(100vh-140px)] lg:w-[425px]"
           >
-            <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
-              <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-2">
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
+                <label className="flex items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
+                  <span>View</span>
+                  <select
+                    value={stage}
+                    onChange={(event) => handleQueueFilterChange(event.target.value as QueueFilterStage)}
+                    className="rounded-full border border-white/10 bg-night-800 px-3 py-1.5 text-[10px] uppercase tracking-[0.28em] text-slate-200 outline-none transition focus:border-gold-400/60"
+                  >
+                    {QUEUE_FILTERS.map((filterOption) => (
+                      <option key={filterOption.id} value={filterOption.id}>
+                        {filterOption.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="flex items-center gap-2">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDeleteSelection([]);
+                    setShowDeleteDialog(true);
+                  }}
+                  className="inline-flex items-center justify-center rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1.5 text-[9px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
+                  disabled={purging}
+                  aria-label="Delete cards"
+                  title="Delete cards"
+                >
+                  <svg aria-hidden="true" className="h-3 w-3" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M6 7h12M9 7v11m6-11v11M10 4h4a1 1 0 0 1 1 1v2H9V5a1 1 0 0 1 1-1zM5 7h14l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7z"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
             </div>
             <div
               className="min-h-0 flex-1 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2"
@@ -2442,7 +2431,7 @@ export default function KingsReview() {
                 })}
                 {cards.length === 0 && !cardsLoading && (
                   <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
-                    No cards in this stage
+                    No cards in this queue
                   </p>
                 )}
                 {cards.length === 0 && cardsLoading && (
@@ -2920,10 +2909,11 @@ export default function KingsReview() {
                               onChange={(event) => handleStageUpdate(event.target.value)}
                               className="rounded-full border border-white/10 bg-night-800 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200 outline-none transition focus:border-gold-400/60"
                             >
-                              <option value="BYTEBOT_RUNNING">AI Running</option>
-                              <option value="READY_FOR_HUMAN_REVIEW">Ready for Review</option>
-                              <option value="ESCALATED_REVIEW">Escalated Review</option>
-                              <option value="REVIEW_COMPLETE">Review Complete</option>
+                              {REVIEW_STAGES.map((reviewStage) => (
+                                <option key={reviewStage.id} value={reviewStage.id}>
+                                  {reviewStage.label}
+                                </option>
+                              ))}
                               <option value="INVENTORY_READY_FOR_SALE">Inventory Ready</option>
                             </select>
                           </label>
@@ -2962,6 +2952,13 @@ export default function KingsReview() {
                               className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-200 disabled:opacity-60"
                             >
                               {regenerating ? "Regenerating…" : "Regenerate Comps"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setShowTeach((prev) => !prev)}
+                              className="rounded-full border border-sky-400/40 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300"
+                            >
+                              {showTeach ? "Hide Bytebot Teach" : "Show Bytebot Teach"}
                             </button>
                           </div>
                         </div>
@@ -3100,20 +3097,66 @@ export default function KingsReview() {
           </section>
 
           <section className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:h-[calc(100vh-140px)] lg:max-h-[calc(100vh-140px)] lg:w-[425px]">
-            <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
-              {activeSourceData?.searchUrl && (
-                <a
-                  href={activeSourceData.searchUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center rounded-full border border-sky-400/70 bg-sky-500/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.2em] text-sky-100 transition hover:bg-sky-500/30"
-                >
-                  OPEN EBAY SEARCH
-                </a>
-              )}
+            <div className="border-b border-white/10 pb-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  {(sources.length ? sources : [{ source: "ebay_sold" } as { source: string }]).map((source) => (
+                    <button
+                      key={source.source}
+                      type="button"
+                      onClick={() => {
+                        setActiveSource(source.source);
+                        setActiveCompIndex(null);
+                      }}
+                      className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.28em] transition ${
+                        activeSourceData?.source === source.source
+                          ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
+                          : "border-white/10 text-slate-400"
+                      }`}
+                    >
+                      {SOURCE_LABELS[source.source] ?? source.source}
+                    </button>
+                  ))}
+                  {activeSourceData && (
+                    <button
+                      type="button"
+                      onClick={handleAttachSearch}
+                      className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.28em] text-emerald-200"
+                    >
+                      Attach Search
+                    </button>
+                  )}
+                  {activeSourceData?.searchUrl && (
+                    <a
+                      href={activeSourceData.searchUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center rounded-full border border-sky-400/70 bg-sky-500/20 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-100 transition hover:bg-sky-500/30"
+                    >
+                      Open eBay Search
+                    </a>
+                  )}
+                </div>
+              </div>
+              <div className="mt-3 rounded-2xl border border-white/10 bg-night-950/50 px-3 py-3">
+                <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">eBay Query</p>
+                <p className="mt-1 break-words text-xs text-slate-300">
+                  {activeCompSearchQuery ? `"${activeCompSearchQuery}"` : "No eBay query captured yet."}
+                </p>
+                {queryTouched && query.trim() && query.trim() !== activeCompSearchQuery && (
+                  <p className="mt-2 text-[10px] uppercase tracking-[0.24em] text-amber-300">
+                    Search field edited locally. Run or regenerate comps to refresh results.
+                  </p>
+                )}
+              </div>
             </div>
             <div className="min-h-0 flex-1 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
+              {activeCompError && (
+                <div className="mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+                  {activeCompError}
+                </div>
+              )}
               {comps.length === 0 && (
                 <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
               )}
@@ -3148,7 +3191,7 @@ export default function KingsReview() {
                     {activeCompLoadingMore && (
                       <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-sky-100 border-t-transparent" />
                     )}
-                    LOAD MORE COMPS
+                    Load 10 More Comps
                   </button>
                 </div>
               )}
