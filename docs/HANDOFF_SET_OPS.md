@@ -1,15 +1,15 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-17` (Task 10 Add Cards investigation docs and final handoff sync pushed on `main`; no deploy/restart/migration or DB writes)
+- Last reviewed: `2026-03-17` (Teach commit ancestry re-verified against `origin/main`; no code replay, deploy/restart/migration, or DB writes)
 - Branch: `main`
-- Short HEAD: `412b27d`
+- Short HEAD: `4127916`
 - Latest repo commits:
+  - `4127916` docs(handoff): sync task10 investigation pushed state
   - `412b27d` docs(handoff): sync task10 investigation final git state
   - `36fbbe2` docs(add-cards): document task10 flow and regression analysis
   - `e87d4b7` docs(handoff): verify teach commit already on main
   - `a643e3f` docs(handoff): sync task9b final git state
-  - `3aba099` fix(kingsreview): remove unsupported serpapi ebay sort param
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
@@ -6257,3 +6257,19 @@ Build Set Ops UI flow with:
   - `git branch --contains df43737` -> `main`
   - `git log --oneline origin/main` shows `df43737` beneath later docs/KingsReview commits
 - No rebase, cherry-pick, deploy, restart, migration, runtime mutation, or DB mutation was needed or executed in this session.
+
+## Session Update (2026-03-17, Teach commit ancestry re-verification on 4127916)
+- Re-read the mandatory startup docs per `AGENTS.md` before this follow-up verification session.
+- Re-fetched and pulled current `origin/main` after the user reported `main` at `4127916`:
+  - `git fetch origin main` -> pass
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Verified the current remote/default branch state:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `4127916`
+  - `git rev-parse --short origin/main` -> `4127916`
+- Verified the teach fix commit is still part of `origin/main` ancestry:
+  - `git merge-base --is-ancestor df43737 origin/main` -> exit `0`
+  - `git branch --contains df43737` -> `main`
+  - `git log --oneline origin/main` shows `df43737` below later docs/KingsReview commits and above older Add Cards work
+- No rebase, cherry-pick, conflict resolution, deploy, restart, migration, runtime mutation, or DB mutation was needed or executed in this session.

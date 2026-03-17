@@ -11897,3 +11897,37 @@
 
 ### Notes
 - No application code, deploy, restart, migration, runtime mutation, or DB mutation was executed in this push-sync step.
+
+## 2026-03-17 - Teach Commit Ancestry Re-Verification On 4127916
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Re-fetched and pulled current `origin/main` after a follow-up request to replay Task 11's teach commit on top of `4127916`.
+- Confirmed no rebase or cherry-pick was appropriate because `df43737` is already an ancestor of the fetched `origin/main`.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Git State
+- `git fetch origin main`
+  - pass
+- `git pull --ff-only origin main`
+  - `Already up to date.`
+- `git status -sb`
+  - `## main...origin/main`
+- `git branch --show-current`
+  - `main`
+- `git rev-parse --short HEAD`
+  - `4127916`
+- `git rev-parse --short origin/main`
+  - `4127916`
+- `git merge-base --is-ancestor df43737 origin/main`
+  - exit `0`
+- `git branch --contains df43737`
+  - `main`
+
+### Notes
+- Verified target commit: `df43737` -> `fix(teach): audit + fix both Draw Teach and Teach From Corrections modes`
+- `git log --oneline origin/main` shows `df43737` in the current remote `main` history beneath later docs/KingsReview commits and above older Add Cards work.
+- No code changes were replayed, no conflicts existed to resolve, and no deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
