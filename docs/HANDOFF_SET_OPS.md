@@ -1,15 +1,15 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-17` (Task 7 KingsReview performance/teach/baseball audit completed locally on `main`; no deploy/restart/migration or DB writes)
+- Last reviewed: `2026-03-17` (Task 7 KingsReview performance/teach/baseball audit committed and pushed on `main`; no deploy/restart/migration or DB writes)
 - Branch: `main`
-- Short HEAD: `5d2885c`
+- Short HEAD: `ac1e8b1`
 - Latest repo commits:
+  - `ac1e8b1` fix(kingsreview): improve comp toggling performance + audit teach feature + investigate baseball sets
+  - `e5b09dc` feat(inventory): add card detail editing + improve pack flow UX
   - `5d2885c` feat(kingsreview): add Load More Comps button for additional eBay sold results
   - `cecaf6d` fix(inventory): show front photo in card tiles + fix filter dropdown z-index
   - `b7a2383` docs(handoff): record task4 main-lineage replay
-  - `9e88d8c` Add location pack recipes and packing slips
-  - `8b09b34` feat(admin): add inventory routing and assigned locations
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; read-only DB verification via Prisma with `.env.production`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
