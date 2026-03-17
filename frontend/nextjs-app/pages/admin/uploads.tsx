@@ -2403,31 +2403,48 @@ export default function AdminUploads() {
     if (productLineManualMode) {
       return;
     }
+    if (intakeOptionalTouched.productLine) {
+      return;
+    }
     const current = sanitizeNullableText(intakeOptional.productLine);
-    if (current && productLineOptions.some((option) => option.toLowerCase() === current.toLowerCase())) {
+    const matchedCurrentOption = current
+      ? productLineOptions.find((option) => option.toLowerCase() === current.toLowerCase()) ?? ""
+      : "";
+    if (matchedCurrentOption) {
       return;
     }
-    if (current) {
+    const resolvedScopedSetId = sanitizeNullableText(variantScopeSummary?.selectedSetId);
+    const serverResolvedCandidate = resolvedScopedSetId
+      ? productLineOptions.find((option) => option.toLowerCase() === resolvedScopedSetId.toLowerCase()) ??
+        resolvedScopedSetId
+      : "";
+    let candidate = "";
+    if (serverResolvedCandidate) {
+      candidate = serverResolvedCandidate;
+    } else if (!current && productLineOptions.length === 1) {
+      candidate = productLineOptions[0] ?? "";
+    } else if (!current) {
+      const suggestedSetName = sanitizeNullableText(intakeSuggested.setName);
+      const actionableSuggestedSetName = isActionableProductLineHint(suggestedSetName) ? suggestedSetName : "";
+      // Phase 3 unknown-first policy: avoid heuristic-only set auto-picks unless scope already resolves cleanly.
+      if (!actionableSuggestedSetName) {
+        return;
+      }
+      candidate = pickBestCandidate(productLineOptions, [actionableSuggestedSetName], 1.1) ?? "";
+    } else {
       return;
     }
-    const suggestedSetName = sanitizeNullableText(intakeSuggested.setName);
-    const actionableSuggestedSetName = isActionableProductLineHint(suggestedSetName) ? suggestedSetName : "";
-    // Phase 3 unknown-first policy: avoid heuristic-only set auto-picks.
-    if (!actionableSuggestedSetName) {
-      return;
-    }
-    const candidate = pickBestCandidate(productLineOptions, [
-      actionableSuggestedSetName,
-    ], 1.1);
     if (candidate) {
       setIntakeOptional((prev) => ({ ...prev, productLine: candidate }));
     }
   }, [
     intakeOptional.productLine,
+    intakeOptionalTouched.productLine,
     intakeRequired.category,
     intakeSuggested.setName,
     productLineManualMode,
     productLineOptions,
+    variantScopeSummary?.selectedSetId,
   ]);
 
   const selectedProductLineOption = useMemo(() => {

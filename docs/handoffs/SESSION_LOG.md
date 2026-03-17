@@ -11410,3 +11410,37 @@
 ### Files Updated
 - `docs/HANDOFF_SET_OPS.md`
 - `docs/handoffs/SESSION_LOG.md`
+
+## 2026-03-17 - Task 10 Add Cards product-set + variant auto-suggestion speed
+
+### Summary
+- Synced `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` with `origin/main` before editing:
+  - `git pull --ff-only origin main`
+  - result: `Already up to date.`
+- Root cause findings:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx` only auto-filled `Product Set` from OCR `setName` text or a pre-hydrated exact set value.
+  - `frontend/nextjs-app/lib/server/variantOptionPool.ts` only returned `selectedSetId` when the request already carried `productLine` / `setId`, even if Year / Manufacturer / Sport had already narrowed the scope to one approved set.
+  - Because `/admin/uploads` only exposes scoped insert/parallel option pools when `/api/admin/variants/options` returns `scope.selectedSetId`, Product Set stayed blank and the insert/parallel pickers stayed delayed until a slower OCR follow-up eventually populated `setName`.
+- Fix implemented:
+  - `frontend/nextjs-app/lib/server/variantOptionPool.ts` now auto-resolves `selectedSetId` immediately when the scoped approved-set list has exactly one candidate.
+  - `frontend/nextjs-app/pages/admin/uploads.tsx` now auto-fills `Product Set` from the server-resolved scope before waiting on OCR `setName`, and falls back to the sole Product Set option when only one option exists.
+  - Result: Add Cards can load Product Set, insert options, and parallel options from the initial scope-derived option-pool response instead of waiting on delayed OCR set-name hydration.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file lib/server/variantOptionPool.ts`
+  - pass with existing `@next/next/no-img-element` warnings on legacy Add Cards `<img>` usage
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Notes
+- The functional fix stays inside Add Cards scope resolution and option-pool selection; no OCR provider pipeline, KingsReview flow, inventory flow, packing flow, or mint flow was changed.
+- `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed.

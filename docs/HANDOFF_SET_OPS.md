@@ -6099,6 +6099,25 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/inventory.tsx --file 'pages/admin/assigned-locations/[locationId].tsx' --file components/admin/CardGrid.tsx --file components/admin/CardTile.tsx --file components/admin/InventoryCardDetailPanel.tsx --file lib/adminInventory.ts --file lib/server/adminInventory.ts --file pages/api/admin/inventory/cards/index.ts --file 'pages/api/admin/inventory/cards/[cardId].ts'` -> pass
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
-  - `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed
+- `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed
 - Unrelated local edits in `frontend/nextjs-app/pages/admin/kingsreview.tsx` and `frontend/nextjs-app/pages/admin/uploads.tsx` were left untouched and are not part of this task.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
+## Session Update (2026-03-17, Task 10 Add Cards product-set + variant auto-suggestion speed)
+- Synced the workstation `main` checkout with `origin/main` before editing:
+  - `git pull --ff-only origin main`
+  - result: `Already up to date.`
+- Root cause findings:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx` only auto-selected `Product Set` from OCR `setName` text or a previously hydrated exact set value.
+  - `frontend/nextjs-app/lib/server/variantOptionPool.ts` did not promote a uniquely scoped Year / Manufacturer / Sport match to `selectedSetId` unless the client had already supplied `productLine` / `setId`.
+  - Because `frontend/nextjs-app/pages/admin/uploads.tsx` only exposes insert/parallel options when `/api/admin/variants/options` returns `scope.selectedSetId`, the UI left Product Set blank and withheld insert/parallel option pools until the slower OCR follow-up eventually filled `setName`.
+- Fix implemented:
+  - `frontend/nextjs-app/lib/server/variantOptionPool.ts` now auto-resolves `selectedSetId` immediately when the Year / Manufacturer / Sport scope narrows to exactly one approved set.
+  - `frontend/nextjs-app/pages/admin/uploads.tsx` now trusts that server-resolved set scope and auto-fills `Product Set` before waiting on OCR `setName`; it also falls back to the lone Product Set option when the scoped list contains exactly one entry.
+  - Result: Add Cards can load Product Set, insert options, and parallel options from the initial scope-derived option-pool response instead of waiting for delayed OCR set-name hydration.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file lib/server/variantOptionPool.ts` -> pass with existing `@next/next/no-img-element` warnings on legacy Add Cards `<img>` usage
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+  - `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.

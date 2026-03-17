@@ -793,6 +793,10 @@ export async function loadVariantOptionPool(params: {
     }
   }
 
+  if (!selectedSetId && scopedSetIds.length === 1) {
+    selectedSetId = scopedSetIds[0] ?? null;
+  }
+
   if (scopedSetIds.length < 1) {
     // Keep pickers usable even when OCR hints are noisy (e.g., misspelled manufacturer).
     scopedSetIds = scopeVariantSetIds;
