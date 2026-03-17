@@ -15,6 +15,7 @@ import {
 } from "../../../../../lib/server/variantOptionPool";
 import {
   buildOcrFeedbackMemoryContext,
+  isOcrFeedbackMemoryStoredValueEmpty,
   parseOcrFeedbackTokenRefs,
   upsertOcrFeedbackMemoryAggregates,
 } from "../../../../../lib/server/ocrFeedbackMemory";
@@ -2194,7 +2195,6 @@ async function applyFeedbackMemoryHints(params: {
       const seedRows = (await (prisma as any).ocrFeedbackEvent.findMany({
         where: {
           fieldName: { in: MEMORY_FIELD_KEYS },
-          humanValue: { not: null },
           OR: seedOrClauses,
         },
         orderBy: [{ createdAt: "desc" }],
@@ -2250,7 +2250,8 @@ async function applyFeedbackMemoryHints(params: {
 
   type CandidateAggregate = {
     field: keyof SuggestionFields;
-    value: string;
+    value: string | null;
+    clearValue: boolean;
     score: number;
     support: number;
     prior: number;
@@ -2263,11 +2264,13 @@ async function applyFeedbackMemoryHints(params: {
     if (!MEMORY_FIELD_KEYS.includes(field)) {
       return;
     }
-    const humanValue = coerceNullableString(row.value);
-    if (!humanValue) {
+    const storedValue = coerceNullableString(row.value);
+    const clearValue = isOcrFeedbackMemoryStoredValueEmpty(storedValue);
+    const humanValue = clearValue ? null : storedValue;
+    if (!humanValue && !clearValue) {
       return;
     }
-    if (BOOLEAN_MEMORY_FIELDS.has(field) && !isTruthyString(humanValue)) {
+    if (BOOLEAN_MEMORY_FIELDS.has(field) && humanValue && !isTruthyString(humanValue) && humanValue !== "false") {
       return;
     }
 
@@ -2349,7 +2352,7 @@ async function applyFeedbackMemoryHints(params: {
     const recencyMultiplier = Math.max(0.2, 1 - Math.min(1, ageDays / 180));
     score *= recencyMultiplier;
 
-    const aggregateKey = `${field}::${humanValue.toLowerCase()}`;
+    const aggregateKey = `${field}::${clearValue ? "[clear]" : humanValue!.toLowerCase()}`;
     const current = aggregateByFieldValue.get(aggregateKey);
     if (current) {
       current.score += score;
@@ -2359,6 +2362,7 @@ async function applyFeedbackMemoryHints(params: {
       aggregateByFieldValue.set(aggregateKey, {
         field,
         value: humanValue,
+        clearValue,
         score,
         support: Math.max(1, row.sampleCount),
         prior: Math.max(0, row.confidencePrior ?? 0),
@@ -2386,12 +2390,30 @@ async function applyFeedbackMemoryHints(params: {
     );
     const currentConfidence = confidence[field] ?? 0;
     const currentValue = fields[field];
-    if (!currentValue || currentConfidence < learnedConfidence || currentValue.trim().toLowerCase() === top.value.toLowerCase()) {
-      fields[field] = top.value;
+    if (top.clearValue) {
+      if (!currentValue) {
+        return;
+      }
+      if (currentConfidence > learnedConfidence && top.support < 2) {
+        return;
+      }
+      fields[field] = null;
+      confidence[field] = null;
+      applied.push({
+        field,
+        value: "[clear]",
+        confidence: Number(learnedConfidence.toFixed(3)),
+        support: top.support,
+      });
+      return;
+    }
+    const topValue = top.value ?? "";
+    if (!currentValue || currentConfidence < learnedConfidence || currentValue.trim().toLowerCase() === topValue.toLowerCase()) {
+      fields[field] = topValue;
       confidence[field] = Math.max(currentConfidence, learnedConfidence);
       applied.push({
         field,
-        value: top.value,
+        value: topValue,
         confidence: Number(learnedConfidence.toFixed(3)),
         support: top.support,
       });

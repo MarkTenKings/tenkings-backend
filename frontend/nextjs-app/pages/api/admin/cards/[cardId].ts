@@ -17,7 +17,11 @@ import { ensureLabelPairForItem } from "../../../../lib/server/qrCodes";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { withAdminCors } from "../../../../lib/server/cors";
 import { normalizeStorageUrl } from "../../../../lib/server/storage";
-import { upsertOcrFeedbackMemoryAggregates } from "../../../../lib/server/ocrFeedbackMemory";
+import {
+  selectOcrFeedbackTokenAnchorValue,
+  shouldRecordOcrFeedbackMemoryRow,
+  upsertOcrFeedbackMemoryAggregates,
+} from "../../../../lib/server/ocrFeedbackMemory";
 import { seedTrustedReferencesFromInventoryReady } from "../../../../lib/server/kingsreviewReferenceLearning";
 
 const defaultCardAttributes: CardAttributes = {
@@ -1257,24 +1261,31 @@ async function handler(
         const rows = FEEDBACK_FIELD_KEYS.map((key) => {
           const modelValue = normalizeFeedbackValue(suggestionFields[key]);
           const humanValue = normalizeFeedbackValue(fieldValues[key]);
+          const wasCorrect = modelValue === humanValue;
+          const tokenAnchorValue = selectOcrFeedbackTokenAnchorValue({
+            fieldName: key,
+            humanValue,
+            modelValue,
+            wasCorrect,
+          });
           return {
             cardAssetId: card.id,
             fieldName: key,
             modelValue,
             humanValue,
-            wasCorrect: modelValue === humanValue,
+            wasCorrect,
             setId: normalizeFeedbackValue(feedbackAttributes?.setName),
             year: normalizeFeedbackValue(feedbackAttributes?.year),
             manufacturer: normalizeFeedbackValue(feedbackAttributes?.brand),
             sport: normalizeFeedbackValue(feedbackNormalized?.sport?.sport),
             cardNumber: normalizeFeedbackValue(feedbackNormalized?.cardNumber),
             numbered: normalizeFeedbackValue(feedbackAttributes?.numbered),
-            tokenRefsJson: buildTokenRefsForValue(humanValue, suggestionTokens) as Prisma.InputJsonValue | null,
+            tokenRefsJson: buildTokenRefsForValue(tokenAnchorValue, suggestionTokens) as Prisma.InputJsonValue | null,
             modelVersion,
           };
         });
         await (prisma as any).ocrFeedbackEvent.createMany({ data: rows });
-        const rowsForMemory = rows.filter((row) => row.humanValue && row.wasCorrect === false);
+        const rowsForMemory = rows.filter((row) => row.wasCorrect === false && shouldRecordOcrFeedbackMemoryRow(row));
         if (rowsForMemory.length > 0) {
           await upsertOcrFeedbackMemoryAggregates(rowsForMemory);
         }

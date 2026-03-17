@@ -46,9 +46,12 @@ export type OcrFeedbackMemoryAggregateInput = {
 
 const TAXONOMY_ALIAS_FIELDS = new Set(["insertSet", "parallel"]);
 const BOOLEAN_MEMORY_FIELDS = new Set(["autograph", "memorabilia", "graded"]);
+const FALSE_STRINGS = new Set(["false", "no", "0"]);
 const MEMORY_EXCLUDED_FIELDS = new Set(["numbered"]);
+const CLEARABLE_MEMORY_FIELDS = new Set(["insertSet", "parallel", "gradeCompany", "gradeValue"]);
 const TRUE_STRINGS = new Set(["true", "yes", "1"]);
 const VARIANT_LABEL_STOP_WORDS = new Set(["the"]);
+export const OCR_FEEDBACK_EMPTY_VALUE_SENTINEL = "__EMPTY__";
 
 function coerceNullableString(value: unknown): string | null {
   if (typeof value !== "string") {
@@ -92,6 +95,20 @@ function normalizeImageLabel(value: string | null | undefined): string {
 
 function isTruthyString(value: string | null | undefined): boolean {
   return TRUE_STRINGS.has(String(value || "").trim().toLowerCase());
+}
+
+function isFalsyString(value: string | null | undefined): boolean {
+  return FALSE_STRINGS.has(String(value || "").trim().toLowerCase());
+}
+
+function normalizeBooleanMemoryValue(value: string | null | undefined): string | null {
+  if (isTruthyString(value)) {
+    return "true";
+  }
+  if (isFalsyString(value)) {
+    return "false";
+  }
+  return null;
 }
 
 function parseStringArray(raw: unknown): string[] {
@@ -197,6 +214,9 @@ export function buildOcrFeedbackMemoryValueKey(fieldName: string, value: string 
   if (!cleaned) {
     return "";
   }
+  if (cleaned === OCR_FEEDBACK_EMPTY_VALUE_SENTINEL) {
+    return OCR_FEEDBACK_EMPTY_VALUE_SENTINEL;
+  }
   const normalized = normalizeTextKey(cleaned);
   if (!normalized) {
     return "";
@@ -210,6 +230,74 @@ export function buildOcrFeedbackMemoryValueKey(fieldName: string, value: string 
     .filter((token) => token && !VARIANT_LABEL_STOP_WORDS.has(token));
   const withoutStopWords = tokenized.join(" ").trim();
   return withoutStopWords || normalized;
+}
+
+export function isOcrFeedbackMemoryStoredValueEmpty(value: string | null | undefined): boolean {
+  return coerceNullableString(value) === OCR_FEEDBACK_EMPTY_VALUE_SENTINEL;
+}
+
+export function buildOcrFeedbackMemoryStoredValue(params: {
+  fieldName: string;
+  humanValue?: string | null;
+  modelValue?: string | null;
+  wasCorrect: boolean;
+}): string | null {
+  const fieldName = coerceNullableString(params.fieldName);
+  if (!fieldName) {
+    return null;
+  }
+  const humanValue = coerceNullableString(params.humanValue);
+  const modelValue = coerceNullableString(params.modelValue);
+  if (MEMORY_EXCLUDED_FIELDS.has(fieldName)) {
+    return null;
+  }
+  if (BOOLEAN_MEMORY_FIELDS.has(fieldName)) {
+    const normalizedBoolean = normalizeBooleanMemoryValue(humanValue);
+    return normalizedBoolean;
+  }
+  if (humanValue) {
+    return humanValue;
+  }
+  if (!params.wasCorrect && modelValue && CLEARABLE_MEMORY_FIELDS.has(fieldName)) {
+    return OCR_FEEDBACK_EMPTY_VALUE_SENTINEL;
+  }
+  return null;
+}
+
+export function shouldRecordOcrFeedbackMemoryRow(row: OcrFeedbackMemoryAggregateInput): boolean {
+  return Boolean(
+    buildOcrFeedbackMemoryStoredValue({
+      fieldName: row.fieldName,
+      humanValue: row.humanValue,
+      modelValue: row.modelValue,
+      wasCorrect: row.wasCorrect,
+    })
+  );
+}
+
+export function selectOcrFeedbackTokenAnchorValue(params: {
+  fieldName: string;
+  humanValue?: string | null;
+  modelValue?: string | null;
+  wasCorrect: boolean;
+}): string | null {
+  const fieldName = coerceNullableString(params.fieldName);
+  if (!fieldName) {
+    return null;
+  }
+  const storedValue = buildOcrFeedbackMemoryStoredValue(params);
+  if (!storedValue) {
+    return null;
+  }
+  const humanValue = coerceNullableString(params.humanValue);
+  const modelValue = coerceNullableString(params.modelValue);
+  if (isOcrFeedbackMemoryStoredValueEmpty(storedValue)) {
+    return modelValue;
+  }
+  if (BOOLEAN_MEMORY_FIELDS.has(fieldName) && storedValue === "false") {
+    return modelValue;
+  }
+  return humanValue;
 }
 
 export function buildOcrFeedbackMemoryContext(input: OcrFeedbackMemoryContextInput): OcrFeedbackMemoryContext {
@@ -240,17 +328,19 @@ export async function upsertOcrFeedbackMemoryAggregates(rows: OcrFeedbackMemoryA
   const candidates = rows
     .map((row) => {
       const fieldName = coerceNullableString(row.fieldName);
-      const humanValue = coerceNullableString(row.humanValue);
-      if (!fieldName || !humanValue) {
+      if (!fieldName) {
         return null;
       }
-      if (MEMORY_EXCLUDED_FIELDS.has(fieldName)) {
+      const storedValue = buildOcrFeedbackMemoryStoredValue({
+        fieldName,
+        humanValue: row.humanValue,
+        modelValue: row.modelValue,
+        wasCorrect: row.wasCorrect,
+      });
+      if (!storedValue) {
         return null;
       }
-      if (BOOLEAN_MEMORY_FIELDS.has(fieldName) && !isTruthyString(humanValue)) {
-        return null;
-      }
-      const valueKey = buildOcrFeedbackMemoryValueKey(fieldName, humanValue);
+      const valueKey = buildOcrFeedbackMemoryValueKey(fieldName, storedValue);
       if (!valueKey) {
         return null;
       }
@@ -265,7 +355,7 @@ export async function upsertOcrFeedbackMemoryAggregates(rows: OcrFeedbackMemoryA
       return {
         row,
         fieldName,
-        humanValue,
+        storedValue,
         valueKey,
         context,
         incomingTokenRefs: parseOcrFeedbackTokenRefs(row.tokenRefsJson),
@@ -277,7 +367,7 @@ export async function upsertOcrFeedbackMemoryAggregates(rows: OcrFeedbackMemoryA
       ): entry is {
         row: OcrFeedbackMemoryAggregateInput;
         fieldName: string;
-        humanValue: string;
+        storedValue: string;
         valueKey: string;
         context: OcrFeedbackMemoryContext;
         incomingTokenRefs: OcrFeedbackMemoryTokenRef[];
@@ -300,7 +390,7 @@ export async function upsertOcrFeedbackMemoryAggregates(rows: OcrFeedbackMemoryA
       return;
     }
     const candidate = candidates[index];
-    const { row, fieldName, humanValue, valueKey, context, incomingTokenRefs } = candidate;
+    const { row, fieldName, storedValue, valueKey, context, incomingTokenRefs } = candidate;
 
     const existing = await (prisma as any).ocrFeedbackMemoryAggregate.findFirst({
       where: {
@@ -325,12 +415,21 @@ export async function upsertOcrFeedbackMemoryAggregates(rows: OcrFeedbackMemoryA
     if (!existing) {
       const sampleCount = 1;
       const correctCount = row.wasCorrect ? 1 : 0;
-      const aliases = buildAliasValues(fieldName, null, [humanValue, row.modelValue]);
+      const aliases = isOcrFeedbackMemoryStoredValueEmpty(storedValue)
+        ? []
+        : buildAliasValues(
+            fieldName,
+            null,
+            [
+              storedValue,
+              buildOcrFeedbackMemoryValueKey(fieldName, row.modelValue) === valueKey ? row.modelValue : null,
+            ]
+          );
       const tokenAnchors = buildTokenAnchors(null, incomingTokenRefs);
       await (prisma as any).ocrFeedbackMemoryAggregate.create({
         data: {
           fieldName,
-          value: humanValue,
+          value: storedValue,
           valueKey,
           setId: context.setId,
           setIdKey: context.setIdKey,
@@ -359,12 +458,21 @@ export async function upsertOcrFeedbackMemoryAggregates(rows: OcrFeedbackMemoryA
 
     const sampleCount = Number(existing.sampleCount || 0) + 1;
     const correctCount = Number(existing.correctCount || 0) + (row.wasCorrect ? 1 : 0);
-    const aliases = buildAliasValues(fieldName, existing.aliasValuesJson, [humanValue, row.modelValue]);
+    const aliases = isOcrFeedbackMemoryStoredValueEmpty(storedValue)
+      ? []
+      : buildAliasValues(
+          fieldName,
+          existing.aliasValuesJson,
+          [
+            storedValue,
+            buildOcrFeedbackMemoryValueKey(fieldName, row.modelValue) === valueKey ? row.modelValue : null,
+          ]
+        );
     const tokenAnchors = buildTokenAnchors(existing.tokenAnchorsJson, incomingTokenRefs);
     await (prisma as any).ocrFeedbackMemoryAggregate.update({
       where: { id: existing.id },
       data: {
-        value: humanValue,
+        value: storedValue,
         sampleCount,
         correctCount,
         confidencePrior: roundPrior(correctCount / Math.max(sampleCount, 1)),

@@ -6153,3 +6153,28 @@ Build Set Ops UI flow with:
   - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
   - `frontend/nextjs-app/pages/api/admin/kingsreview/comps.ts`
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
+## Session Update (2026-03-17, Task 11 teach audit + Add Cards teach fixes)
+- Audited both Add Cards teach modes end-to-end in code:
+  - Draw Teach: `frontend/nextjs-app/pages/admin/uploads.tsx` -> `frontend/nextjs-app/pages/api/admin/cards/[cardId]/region-teach.ts` -> `OcrRegionTemplate` / `OcrRegionTeachEvent` -> replay in `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - Teach From Corrections: `frontend/nextjs-app/pages/admin/uploads.tsx` -> `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts` -> `OcrFeedbackEvent` / `OcrFeedbackMemoryAggregate` -> replay in `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- Fixes shipped:
+  - Draw Teach no longer requires a literal field value; operators can now save field-location-only regions and later OCR still reuses them as location hints.
+  - Add Cards now surfaces load errors for saved region templates instead of silently clearing them.
+  - Teach From Corrections now persists replayable negative feedback for:
+    - unchecked `autograph`
+    - unchecked `memorabilia`
+    - unchecked `graded`
+    - cleared `insertSet`
+    - cleared `parallel`
+    - cleared `gradeCompany`
+    - cleared `gradeValue`
+  - Feedback token anchoring for those negative corrections now prefers the model's wrong OCR value when that is the useful suppression signal.
+- Remaining limitation:
+  - clearing `numbered` still does not become replayable memory; numbered remains intentionally OCR-grounded instead of memory-driven.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file 'pages/api/admin/cards/[cardId].ts' --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file lib/server/ocrFeedbackMemory.ts` -> pass with existing Add Cards `<img>` warnings
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> fails only on unrelated pre-existing `frontend/nextjs-app/pages/admin/kingsreview.tsx` errors (`STAGES`, implicit `any`)
+  - `git diff --check` -> pass
+- Full audit details and the requested storage/readback/data-flow notes were appended to `docs/handoffs/SESSION_LOG.md`.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.

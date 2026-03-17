@@ -700,6 +700,7 @@ export default function AdminUploads() {
   const [teachRegionLoading, setTeachRegionLoading] = useState(false);
   const [teachRegionBusy, setTeachRegionBusy] = useState(false);
   const [teachRegionFeedback, setTeachRegionFeedback] = useState<string | null>(null);
+  const [teachRegionError, setTeachRegionError] = useState<string | null>(null);
   const [teachRegionDrawEnabled, setTeachRegionDrawEnabled] = useState(true);
   const [teachRegionBindDraft, setTeachRegionBindDraft] = useState<TeachRegionBindDraft | null>(null);
   const [productLineOptions, setProductLineOptions] = useState<string[]>([]);
@@ -1656,6 +1657,7 @@ export default function AdminUploads() {
     setTeachRegionLoading(false);
     setTeachRegionBusy(false);
     setTeachRegionFeedback(null);
+    setTeachRegionError(null);
     setProductLineOptions([]);
     setInsertSetOptions([]);
     setParallelOptions([]);
@@ -4023,7 +4025,7 @@ export default function AdminUploads() {
           width,
           height,
         });
-        setTeachRegionFeedback("Region captured. Link it to a card detail field to finish the teach step.");
+      setTeachRegionFeedback("Region captured. Link it to a card detail field to finish the teach step.");
       }
       setTeachRegionDraft(null);
     },
@@ -4087,26 +4089,27 @@ export default function AdminUploads() {
       return;
     }
     const targetValue = sanitizeNullableText(teachRegionBindDraft.targetValue);
-    if (!targetValue) {
-      setIntakeError("Pick a card detail field/value before saving this teach region.");
-      return;
-    }
     const option = teachRegionBindingOptionMap.get(teachRegionBindDraft.targetField);
     const targetFieldLabel = option?.label ?? teachRegionBindDraft.targetField;
     const note = sanitizeNullableText(teachRegionBindDraft.note);
+    const label = targetValue ? `${targetFieldLabel}: ${targetValue}` : targetFieldLabel;
     const linkedRegion: TeachRegionRect = {
       ...teachRegionBindDraft.region,
       targetField: teachRegionBindDraft.targetField,
       targetValue,
       note,
-      label: `${targetFieldLabel}: ${targetValue}`.slice(0, 120),
+      label: label.slice(0, 120),
     };
     setTeachRegionsBySide((prev) => ({
       ...prev,
       [teachRegionBindDraft.side]: [...prev[teachRegionBindDraft.side], linkedRegion].slice(0, 24),
     }));
     setTeachRegionBindDraft(null);
-    setTeachRegionFeedback(`Teach region linked to ${targetFieldLabel}.`);
+    setTeachRegionFeedback(
+      targetValue
+        ? `Teach region linked to ${targetFieldLabel} (${targetValue}).`
+        : `Teach region linked to ${targetFieldLabel}. Future OCR will reuse this area as a location hint.`
+    );
     setIntakeError(null);
   }, [teachRegionBindDraft, teachRegionBindingOptionMap]);
 
@@ -4139,11 +4142,13 @@ export default function AdminUploads() {
     if (!token || !cardId || !setId) {
       setTeachRegionsBySide(buildEmptyTeachRegionsBySide());
       setTeachRegionFeedback(null);
+      setTeachRegionError(null);
       return;
     }
     try {
       setTeachRegionLoading(true);
       setTeachRegionFeedback(null);
+      setTeachRegionError(null);
       const params = new URLSearchParams({
         setId,
         layoutClass: normalizeTeachLayoutClass(teachLayoutClass),
@@ -4154,13 +4159,16 @@ export default function AdminUploads() {
         headers: buildAdminHeaders(token),
       });
       if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { message?: string };
         setTeachRegionsBySide(buildEmptyTeachRegionsBySide());
+        setTeachRegionError(payload?.message ?? "Failed to load saved teach regions.");
         return;
       }
       const payload = (await res.json()) as { templatesBySide?: unknown };
       setTeachRegionsBySide(coerceTeachRegionsBySide(payload?.templatesBySide));
     } catch {
       setTeachRegionsBySide(buildEmptyTeachRegionsBySide());
+      setTeachRegionError("Failed to load saved teach regions.");
     } finally {
       setTeachRegionLoading(false);
     }
@@ -4238,6 +4246,7 @@ export default function AdminUploads() {
     try {
       setTeachRegionBusy(true);
       setTeachRegionFeedback(null);
+      setTeachRegionError(null);
       const snapshots = templates
         .map((entry) => {
           const side = entry.photoSide as TeachRegionSide;
@@ -5488,8 +5497,11 @@ export default function AdminUploads() {
                 </div>
                 <p className="text-xs text-slate-500">
                   {trainAiEnabled
-                    ? "Send to KingsReview will also teach from your current confirmed fields."
-                    : "Send to KingsReview will not teach unless you use Teach From Corrections."}
+                    ? "Teach On Send is on. Sending to KingsReview will save field-by-field OCR feedback from your current confirmed form."
+                    : "Teach On Send is off. Use Teach From Corrections if you want to save feedback without sending yet."}
+                </p>
+                <p className="text-xs text-slate-500">
+                  Teach From Corrections compares the OCR suggestion against the current final fields, including cleared optional values and unchecked toggles.
                 </p>
                 {teachFeedback ? (
                   <p className="text-xs text-emerald-300">{teachFeedback}</p>
@@ -5542,6 +5554,9 @@ export default function AdminUploads() {
                   </div>
                   <p className="text-[10px] uppercase tracking-[0.18em] text-slate-500">
                     1) Draw Mode On 2) Drag finger/mouse on image 3) Link region to field 4) Save Region Teach
+                  </p>
+                  <p className="text-[10px] text-slate-500">
+                    Saved by Product Set + Layout Class. Leave the value blank if you only want to teach where a field lives; future OCR will still reuse the region as a field-location hint.
                   </p>
                   <div
                     className={`relative overflow-hidden rounded-xl border border-white/10 bg-night-800/70 select-none touch-none ${
@@ -5651,6 +5666,7 @@ export default function AdminUploads() {
                     </div>
                   ) : null}
                   {teachRegionFeedback ? <p className="text-xs text-emerald-300">{teachRegionFeedback}</p> : null}
+                  {teachRegionError ? <p className="text-xs text-rose-300">{teachRegionError}</p> : null}
                   {typedOcrAudit?.regionTemplates?.loadedSides?.length ? (
                     <p className="text-[10px] text-slate-500">
                       OCR replay loaded region templates for {typedOcrAudit.regionTemplates.loadedSides.join(", ")}.
@@ -5691,7 +5707,7 @@ export default function AdminUploads() {
                 </button>
               </div>
               <p className="mb-3 text-xs text-slate-400">
-                Connect this marked region to a card detail field so memory replay understands what this area represents.
+                Connect this marked region to a card detail field so future OCR knows where that field lives. The value is optional; leave it blank if you only want location guidance.
               </p>
               <div className="space-y-3">
                 <div className="space-y-1">
@@ -5722,7 +5738,7 @@ export default function AdminUploads() {
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-[10px] uppercase tracking-[0.24em] text-slate-400">Value to teach</label>
+                  <label className="text-[10px] uppercase tracking-[0.24em] text-slate-400">Value to teach (optional)</label>
                   <input
                     value={teachRegionBindDraft.targetValue}
                     onChange={(event) =>

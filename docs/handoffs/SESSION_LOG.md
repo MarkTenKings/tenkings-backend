@@ -11486,3 +11486,216 @@
   - `frontend/nextjs-app/lib/server/ocrFeedbackMemory.ts`
   - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
   - `frontend/nextjs-app/pages/api/admin/kingsreview/comps.ts`
+
+## 2026-03-17 - Task 11 Teach From Corrections audit + Draw Teach audit/fixes
+
+### Summary
+- Audited both Add Cards teach modes end-to-end in `frontend/nextjs-app/pages/admin/uploads.tsx`, the card admin APIs, and the Prisma schema.
+- Confirmed Draw Teach was already wired from UI -> API -> DB -> later OCR replay, but the UI had a real product gap: it forced a literal field value even when the useful lesson was only "this field lives in this region."
+- Confirmed Teach From Corrections was already wired from Add Cards -> `PATCH /api/admin/cards/[cardId]` -> `OcrFeedbackEvent` -> `OcrFeedbackMemoryAggregate` -> later `/api/admin/cards/[cardId]/ocr-suggest`, but it only learned positive corrections well; negative corrections such as unchecked booleans or cleared optional values were not being replayed effectively.
+- Fixed both gaps without changing the OCR providers or KingsReview/inventory/packing/mint flows.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Draw Teach Status
+- Status: Working end-to-end after this task, with one remaining design limitation noted below.
+- UI capture path:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - pointer drag creates a region draft
+  - the bind modal links that region to `targetField`
+  - `Save Region Teach` posts to `POST /api/admin/cards/[cardId]/region-teach`
+- DB write path:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/region-teach.ts`
+  - persists set/layout/side-scoped templates via `upsertOcrRegionTemplates(...)`
+  - logs each save via `createOcrRegionTeachEvent(...)`
+  - stores optional snapshot overlays via `storeOcrRegionSnapshot(...)`
+- DB models used:
+  - `OcrRegionTemplate`
+    - `setId`
+    - `setIdKey`
+    - `layoutClass`
+    - `layoutClassKey`
+    - `photoSide`
+    - `photoSideKey`
+    - `regionsJson`
+    - `sampleCount`
+    - `createdById`
+  - `OcrRegionTeachEvent`
+    - `cardAssetId`
+    - `setId`
+    - `layoutClass`
+    - `photoSide`
+    - `eventType`
+    - `regionCount`
+    - `templatesUpdated`
+    - `snapshotStorageKey`
+    - `snapshotImageUrl`
+    - `debugPayloadJson`
+    - `createdById`
+- What is replayed later:
+  - `/api/admin/cards/[cardId]/ocr-suggest`
+  - loads templates with `listOcrRegionTemplates(...)`
+  - `applyRegionTemplateValueHints(...)` can directly boost a field value when OCR tokens land inside a taught region with a taught `targetValue`
+  - `buildRegionTokenLookup(...)` and `scoreTokenRefSupport(...)` use the taught region boundaries as "where to look" support when replaying feedback memory
+- Fix shipped in this task:
+  - region binding no longer requires `targetValue`
+  - users can now teach only the field location
+  - Add Cards copy now states that field-only regions are valid and will still be reused as location hints
+  - load failures for saved teach regions now surface visible UI error text instead of failing silently
+
+### Teach From Corrections Status
+- Status: Partially working before this task; broader working after this task, with one remaining numbered-specific gap noted below.
+- Trigger path:
+  - `Teach From Corrections` button in `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - calls `saveIntakeMetadata(true, true)`
+  - sends `classificationUpdates` plus `recordOcrFeedback: true` to `PATCH /api/admin/cards/[cardId]`
+- Teach On Send toggle path:
+  - local Add Cards state: `trainAiEnabled`
+  - persisted in local storage as `teachOnSendEnabled`
+  - `Send to KingsReview AI` computes `recordTeachOnSend = trainAiEnabled && !teachCapturedFromCorrections`
+  - result:
+    - if the toggle is on and the operator has not already clicked `Teach From Corrections`, send-to-KingsReview also records OCR feedback
+    - if the operator already used `Teach From Corrections`, send does not double-write the same teach signal
+- DB write path:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+  - compares OCR suggestion fields vs final human-confirmed fields
+  - writes one `OcrFeedbackEvent` row per field in `FEEDBACK_FIELD_KEYS`
+  - upserts replayable incorrect corrections into `OcrFeedbackMemoryAggregate`
+- DB models used:
+  - `OcrFeedbackEvent`
+    - `cardAssetId`
+    - `fieldName`
+    - `modelValue`
+    - `humanValue`
+    - `wasCorrect`
+    - `setId`
+    - `year`
+    - `manufacturer`
+    - `sport`
+    - `cardNumber`
+    - `numbered`
+    - `tokenRefsJson`
+    - `modelVersion`
+  - `OcrFeedbackMemoryAggregate`
+    - `fieldName`
+    - `value`
+    - `valueKey`
+    - `setId`
+    - `setIdKey`
+    - `year`
+    - `yearKey`
+    - `manufacturer`
+    - `manufacturerKey`
+    - `sport`
+    - `sportKey`
+    - `cardNumber`
+    - `cardNumberKey`
+    - `numbered`
+    - `numberedKey`
+    - `sampleCount`
+    - `correctCount`
+    - `confidencePrior`
+    - `aliasValuesJson`
+    - `tokenAnchorsJson`
+- What was fixed in this task:
+  - negative optional feedback now replays instead of being dropped
+  - unchecked `autograph`, `memorabilia`, and `graded` corrections are now stored in replayable memory instead of being ignored
+  - cleared optional text corrections for `insertSet`, `parallel`, `gradeCompany`, and `gradeValue` are now stored as explicit "clear this field in this context" memory instead of being lost
+  - token-anchor capture for those negative corrections now prefers the model's wrong value when that is the useful OCR text to suppress later
+
+### Data Flow Diagram
+- OCR -> `/api/admin/cards/[cardId]/ocr-suggest`
+- OCR suggestions + token audit -> Add Cards review UI in `pages/admin/uploads.tsx`
+- Human edits fields or toggles checkboxes
+- Teach path A:
+  - `Teach From Corrections`
+  - `PATCH /api/admin/cards/[cardId]`
+  - write `OcrFeedbackEvent`
+  - write/update `OcrFeedbackMemoryAggregate`
+- Teach path B:
+  - draw region
+  - link region to field
+  - `POST /api/admin/cards/[cardId]/region-teach`
+  - write `OcrRegionTemplate`
+  - log `OcrRegionTeachEvent`
+- Future OCR:
+  - `/api/admin/cards/[cardId]/ocr-suggest`
+  - load region templates
+  - apply region value hints
+  - query feedback memory aggregates by set/year/manufacturer/sport/cardNumber context
+  - score learned values against OCR token overlap + taught region overlap
+  - boost or clear future suggestions
+
+### What Is Read Back
+- Draw Teach readback:
+  - `listOcrRegionTemplates(...)` loads templates by `setId + layoutClass`
+  - initial OCR pass loads templates using request hints or current OCR set name
+  - if memory later resolves a more specific set name, OCR replays the region template load for that resolved set
+- Teach From Corrections readback:
+  - `applyFeedbackMemoryHints(...)` in `pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - queries `OcrFeedbackMemoryAggregate`
+  - scores candidates by:
+    - set/card/year/manufacturer/sport context
+    - sample count
+    - prior correctness
+    - token anchor overlap
+    - region overlap
+    - recency
+  - applies the strongest candidate back into `fields`
+  - writes the applied lessons into `audit.memory.applied`
+  - Add Cards UI shows `Teach memory applied N learned fields...` from that audit payload
+
+### Effectiveness Notes
+- Draw Teach effectiveness after fix:
+  - better than before because operators can now teach pure field location without inventing a literal value
+  - stored `targetField` still improves later OCR even with blank `targetValue` because the region is used for field-scoped token support
+- Teach From Corrections effectiveness after fix:
+  - positive corrections already worked before this task
+  - negative corrections now work for:
+    - unchecked `autograph`
+    - unchecked `memorabilia`
+    - unchecked `graded`
+    - cleared `insertSet`
+    - cleared `parallel`
+    - cleared `gradeCompany`
+    - cleared `gradeValue`
+- Important remaining limitation:
+  - clearing `numbered` still does not become replayable teach memory
+  - current OCR code intentionally keeps `numbered` grounded to explicit OCR text and does not use replay memory to suppress that field
+  - answer to the user's exact question today:
+    - "if I teach that this card is NOT numbered, will it stop suggesting numbered for that set?"
+    - not reliably yet
+
+### Gaps
+- `numbered` negative feedback remains a gap.
+- Draw Teach is still scoped only by `Product Set + Layout Class`; if the operator chooses the wrong set/layout, the replay scope is wrong.
+- There is still no operator-facing screen that lists exactly which fields were learned or cleared from the last teach action; the UI only shows the count from `audit.memory.applied`.
+- Existing historical `OcrFeedbackEvent` rows can seed the new negative-memory behavior only when they are read through the current aggregate-seeding path; no bulk backfill was run in this session.
+
+### Recommendations
+- Add a compact Add Cards audit chip that lists the exact learned fields from `audit.memory.applied`, especially `[clear]` suppressions.
+- Add a numbered-specific suppression design keyed at least by `setId + cardNumber` before teaching "not numbered" is marketed as reliable behavior.
+- Add a small operator view for saved region templates by set/layout/side so Draw Teach can be reviewed and pruned without opening a live card.
+- Consider storing a per-teach action summary response from `PATCH /api/admin/cards/[cardId]` so the UI can say exactly how many feedback rows and replay-memory rows were written.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file 'pages/api/admin/cards/[cardId].ts' --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file lib/server/ocrFeedbackMemory.ts`
+  - pass with existing `@next/next/no-img-element` warnings on legacy Add Cards `<img>` usage
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - fails only on unrelated pre-existing `frontend/nextjs-app/pages/admin/kingsreview.tsx` errors:
+    - `Cannot find name 'STAGES'`
+    - implicit `any` on the `item` callback parameter
+- `git diff --check`
+  - pass
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/ocrFeedbackMemory.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- The Task 11 teach changes were scoped to Add Cards teach UI, OCR feedback persistence/replay, and handoff documentation only.
+- No OCR provider prompt/model routing was changed.
+- No KingsReview, inventory, packing, mint, or upload-capture transport flow was changed as part of this task.
