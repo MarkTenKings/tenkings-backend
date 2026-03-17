@@ -1,15 +1,15 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-17` (Task 9 KingsReview load-more/query/top-bar fix committed on `main`; no deploy/restart/migration or DB writes)
+- Last reviewed: `2026-03-17` (Task 9b KingsReview SerpApi eBay pagination hotfix committed on `main`; no deploy/restart/migration or DB writes)
 - Branch: `main`
-- Short HEAD: `188d48e`
+- Short HEAD: `3aba099`
 - Latest repo commits:
+  - `3aba099` fix(kingsreview): remove unsupported serpapi ebay sort param
+  - `cdd7d61` docs(handoff): sync task10 final git state
+  - `5fa3dc1` docs(handoff): sync task9 final git state
   - `188d48e` fix(kingsreview): load 10 comps per click + show eBay query + clean up top bar
   - `df43737` fix(teach): audit + fix both Draw Teach and Teach From Corrections modes
-  - `137b3a9` feat(assigned-locations): add location creation + show all locations + standalone recipes
-  - `64dc7b6` fix(add-cards): resolve product set + insert/parallel immediately instead of delayed polling
-  - `eb1f817` docs(handoff): sync task7 final git state
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
@@ -6211,3 +6211,19 @@ Build Set Ops UI flow with:
   - `git rev-parse --short HEAD` -> `5fa3dc1`
 - Confirmed the Task 10 Add Cards fix commit `64dc7b6` (`fix(add-cards): resolve product set + insert/parallel immediately instead of delayed polling`) is already present in current `main` history alongside later Task 12 / Task 11 / Task 9 commits.
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this final sync step.
+
+## Session Update (2026-03-17, Task 9b KingsReview SerpApi pagination hotfix)
+- Re-read the mandatory startup docs per `AGENTS.md` before making this follow-up fix.
+- Root cause:
+  - `frontend/nextjs-app/lib/server/kingsreviewEbayComps.ts` was sending `_sop=13` to SerpApi's eBay engine.
+  - SerpApi eBay rejected that parameter with `400` / `Unsupported _sop: 13`.
+- Fix shipped:
+  - committed as `3aba099` on `main`
+  - removed `_sop` from the SerpApi request params
+  - removed `_sop` from the derived open-in-eBay search URL so the UI link matches the supported request shape
+  - kept load-more pagination on `_pgn` + `_ipg` plus local absolute-offset slicing for 10-result batches
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/kingsreviewEbayComps.ts --file pages/api/admin/kingsreview/comps.ts --file pages/admin/kingsreview.tsx` -> pass with the existing KingsReview `<img>` warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this hotfix.

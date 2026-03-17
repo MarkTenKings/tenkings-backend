@@ -11746,3 +11746,27 @@
 
 ### Notes
 - No additional code/runtime changes, deploys, restarts, migrations, or DB operations were executed in this final sync step.
+
+## 2026-03-17 - Task 9b KingsReview SerpApi pagination hotfix
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Fixed the KingsReview load-more SerpApi failure caused by sending unsupported eBay parameter `_sop=13`, committed as `3aba099`.
+- Kept pagination on SerpApi-supported `_pgn` and `_ipg` only, with the existing local offset-based slicing intact for 10-result batches.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/kingsreviewEbayComps.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/kingsreviewEbayComps.ts --file pages/api/admin/kingsreview/comps.ts --file pages/admin/kingsreview.tsx`
+  - pass with the existing `@next/next/no-img-element` warning on legacy KingsReview `<img>` usage
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Notes
+- Official SerpApi eBay docs support `_pgn`, `_ipg`, and `show_only=Sold,Complete`; `_sop` was not supported by that engine and caused the `400`.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this hotfix.
