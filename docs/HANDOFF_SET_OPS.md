@@ -1,16 +1,16 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-17` (Task 7 KingsReview performance/teach/baseball audit committed and pushed on `main`; no deploy/restart/migration or DB writes)
+- Last reviewed: `2026-03-17` (Task 9 KingsReview load-more/query/top-bar fix committed on `main`; no deploy/restart/migration or DB writes)
 - Branch: `main`
-- Short HEAD: `ac1e8b1`
+- Short HEAD: `188d48e`
 - Latest repo commits:
-  - `ac1e8b1` fix(kingsreview): improve comp toggling performance + audit teach feature + investigate baseball sets
-  - `e5b09dc` feat(inventory): add card detail editing + improve pack flow UX
-  - `5d2885c` feat(kingsreview): add Load More Comps button for additional eBay sold results
-  - `cecaf6d` fix(inventory): show front photo in card tiles + fix filter dropdown z-index
-  - `b7a2383` docs(handoff): record task4 main-lineage replay
-- Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; read-only DB verification via Prisma with `.env.production`; no deploy/restart/migration executed
+  - `188d48e` fix(kingsreview): load 10 comps per click + show eBay query + clean up top bar
+  - `df43737` fix(teach): audit + fix both Draw Teach and Teach From Corrections modes
+  - `137b3a9` feat(assigned-locations): add location creation + show all locations + standalone recipes
+  - `64dc7b6` fix(add-cards): resolve product set + insert/parallel immediately instead of delayed polling
+  - `eb1f817` docs(handoff): sync task7 final git state
+- Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
 ## What Works
@@ -6177,4 +6177,28 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> fails only on unrelated pre-existing `frontend/nextjs-app/pages/admin/kingsreview.tsx` errors (`STAGES`, implicit `any`)
   - `git diff --check` -> pass
 - Full audit details and the requested storage/readback/data-flow notes were appended to `docs/handoffs/SESSION_LOG.md`.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
+## Session Update (2026-03-17, Task 9 KingsReview load-more + top-bar cleanup)
+- Re-read the mandatory startup docs per `AGENTS.md` and confirmed workstation `main` was already up to date with `origin/main` before editing.
+- Fixed KingsReview load-more comps pagination and reliability:
+  - `frontend/nextjs-app/lib/server/kingsreviewEbayComps.ts`
+    - switched load-more fetches to 10-result batches
+    - added retryable SerpApi request handling with server-side logging
+    - translated those 10-result batches onto supported eBay `_ipg` page sizes (`25/50/100/200`) using offset-based slicing, so follow-up clicks fetch the next sold results instead of mis-paginating
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/comps.ts`
+    - changed the default load-more limit to `10`
+    - added offset parsing and explicit server error logging
+- Cleaned up the KingsReview UI:
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+    - top bar now only shows `Add Cards`, `KingsReview`, and `Inventory`
+    - moved queue filtering into the left `Card Queue` header as a compact selector
+    - changed the nav target from `/admin/inventory-ready` to `/admin/inventory`
+    - surfaced the active eBay query above the comp list
+    - moved source/search controls beside `Comp Detail`
+    - added inline load-more error messaging and updated the button copy to `Load 10 More Comps`
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/api/admin/kingsreview/comps.ts --file lib/server/kingsreviewEbayComps.ts` -> pass with the existing KingsReview `<img>` warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.

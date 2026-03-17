@@ -11699,3 +11699,30 @@
 - The Task 11 teach changes were scoped to Add Cards teach UI, OCR feedback persistence/replay, and handoff documentation only.
 - No OCR provider prompt/model routing was changed.
 - No KingsReview, inventory, packing, mint, or upload-capture transport flow was changed as part of this task.
+
+## 2026-03-17 - Task 9 KingsReview load-more + top-bar cleanup
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Confirmed `main` was already current with `origin/main` before editing, then committed the KingsReview fix as `188d48e`.
+- Fixed KingsReview load-more comps so each click requests the next 10 sold comps reliably instead of mis-paginating through SerpApi/eBay pages.
+- Cleaned the KingsReview top bar down to the requested `Add Cards | KingsReview | Inventory` navigation and surfaced the active eBay query above the comp column.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/kingsreviewEbayComps.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/comps.ts`
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/api/admin/kingsreview/comps.ts --file lib/server/kingsreviewEbayComps.ts`
+  - pass with the existing `@next/next/no-img-element` warning on legacy KingsReview `<img>` usage
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Notes
+- SerpApi's eBay engine does not support a 10-result `_ipg`, so the helper now fetches supported eBay page sizes and slices them into 10-result load-more batches by absolute offset.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
