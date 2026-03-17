@@ -11253,6 +11253,44 @@
 ### Notes
 - The original isolated-worktree Task 4 notes mentioned an architecture doc correction, but that doc file was not part of the staged Task 4 commit and therefore is not part of integrated commit `9e88d8c`.
 
+## 2026-03-17 - Task 8 inventory card editing + pack flow UX
+
+### Summary
+- Added a right-side inventory card detail drawer so operators can edit inventory-ready, unassigned cards directly from `/admin/inventory` without sending them back to KingsReview.
+- Added `PATCH /api/admin/inventory/cards/[cardId]` and moved the list endpoint to `pages/api/admin/inventory/cards/index.ts` so the list and detail routes can coexist.
+- Improved the assign success notice on `/admin/inventory` with direct navigation into Assigned Locations and recipe creation when no location-specific recipe exists for the assigned category+tier.
+- Added breadcrumb flow, Cards / Recipes / Packing Slips discoverability, no-recipe guidance, and a collapsible `How Packing Works` help surface on `/admin/assigned-locations/[locationId]`.
+
+### Files Updated
+- `frontend/nextjs-app/components/admin/CardGrid.tsx`
+- `frontend/nextjs-app/components/admin/CardTile.tsx`
+- `frontend/nextjs-app/lib/adminInventory.ts`
+- `frontend/nextjs-app/lib/server/adminInventory.ts`
+- `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx`
+- `frontend/nextjs-app/pages/admin/inventory.tsx`
+- `frontend/nextjs-app/pages/api/admin/inventory/cards/index.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Added
+- `frontend/nextjs-app/components/admin/InventoryCardDetailPanel.tsx`
+- `frontend/nextjs-app/pages/api/admin/inventory/cards/[cardId].ts`
+
+### Validation Evidence
+- `git pull --ff-only`
+  - `Already up to date.`
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/inventory.tsx --file 'pages/admin/assigned-locations/[locationId].tsx' --file components/admin/CardGrid.tsx --file components/admin/CardTile.tsx --file components/admin/InventoryCardDetailPanel.tsx --file lib/adminInventory.ts --file lib/server/adminInventory.ts --file pages/api/admin/inventory/cards/index.ts --file 'pages/api/admin/inventory/cards/[cardId].ts'`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Notes
+- `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed.
+- Unrelated local edits in `frontend/nextjs-app/pages/admin/kingsreview.tsx` and `frontend/nextjs-app/pages/admin/uploads.tsx` were left untouched and are not part of this task commit.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
 ## 2026-03-17 - Task 5 Inventory UI Fixes
 
 ### Summary

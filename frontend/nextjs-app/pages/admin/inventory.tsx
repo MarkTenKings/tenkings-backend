@@ -12,6 +12,7 @@ import {
 } from "../../components/admin/AdminPrimitives";
 import { CardGrid } from "../../components/admin/CardGrid";
 import { FilterBar } from "../../components/admin/FilterBar";
+import { InventoryCardDetailPanel } from "../../components/admin/InventoryCardDetailPanel";
 import { PaginationBar } from "../../components/admin/PaginationBar";
 import { SelectionBar } from "../../components/admin/SelectionBar";
 import {
@@ -24,6 +25,7 @@ import {
   type InventoryFilterOptionsResponse,
   type InventoryQueryState,
   type InventorySelectionSummary,
+  type InventoryCardUpdatePayload,
   type PackTierValue,
 } from "../../lib/adminInventory";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
@@ -33,6 +35,11 @@ import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 type SelectedCardMeta = {
   valuationMinor: number | null;
   category: string | null;
+};
+
+type InventoryNotice = {
+  message: string;
+  actions?: Array<{ href: string; label: string }>;
 };
 
 const INITIAL_ASSIGN_FORM = {
@@ -57,7 +64,7 @@ export default function InventoryPage() {
   const [cardsLoading, setCardsLoading] = useState(false);
   const [filterLoading, setFilterLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ message: string; href?: string; hrefLabel?: string } | null>(null);
+  const [notice, setNotice] = useState<InventoryNotice | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectedMeta, setSelectedMeta] = useState<Record<string, SelectedCardMeta>>({});
   const [bulkSelection, setBulkSelection] = useState<InventorySelectionSummary | null>(null);
@@ -67,6 +74,9 @@ export default function InventoryPage() {
   const [assignError, setAssignError] = useState<string | null>(null);
   const [returnBusy, setReturnBusy] = useState(false);
   const [purgeBusy, setPurgeBusy] = useState(false);
+  const [activeCard, setActiveCard] = useState<InventoryCardSummary | null>(null);
+  const [cardSaveBusy, setCardSaveBusy] = useState(false);
+  const [cardSaveError, setCardSaveError] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
 
   const isAdmin = useMemo(
@@ -194,6 +204,9 @@ export default function InventoryPage() {
           });
           return next;
         });
+        setActiveCard((current) =>
+          current ? payload.cards.find((card) => card.id === current.id) ?? current : null
+        );
       })
       .catch((fetchError: unknown) => {
         if ((fetchError as Error).name === "AbortError") {
@@ -277,6 +290,11 @@ export default function InventoryPage() {
   };
 
   const handleAssign = async () => {
+    const assignedCount = selectedIds.size;
+    const assignedLocationId = assignForm.locationId;
+    const assignedCategory = assignForm.packCategory;
+    const assignedTier = assignForm.packTier;
+
     setAssignBusy(true);
     setAssignError(null);
     try {
@@ -317,16 +335,82 @@ export default function InventoryPage() {
           : payload.packConfiguration
             ? ` using ${payload.packConfiguration.bonusCardsPerPack} bonus-card default`
             : "";
+      const actions = [
+        {
+          href: `/admin/assigned-locations/${assignedLocationId}`,
+          label: "View in Assigned Locations ->",
+        },
+      ];
+      if (
+        payload.packConfiguration?.source !== "recipe" &&
+        assignedLocationId &&
+        assignedCategory &&
+        assignedTier
+      ) {
+        actions.push({
+          href: `/admin/assigned-locations/${assignedLocationId}?tab=recipes&createRecipe=1&category=${assignedCategory}&tier=${assignedTier}`,
+          label: "Create Pack Recipe ->",
+        });
+      }
       setNotice({
-        message: `${selectedCount} cards assigned to ${payload.locationName ?? "selected location"}${recipeSuffix}`,
-        href: `/admin/assigned-locations/${assignForm.locationId}`,
-        hrefLabel: "View in Assigned Locations",
+        message: `${assignedCount} cards assigned to ${payload.locationName ?? "selected location"}${recipeSuffix}`,
+        actions,
       });
       setRefreshNonce((value) => value + 1);
     } catch (fetchError) {
       setAssignError(fetchError instanceof Error ? fetchError.message : "Failed to assign cards");
     } finally {
       setAssignBusy(false);
+    }
+  };
+
+  const handleSaveCard = async (updates: InventoryCardUpdatePayload) => {
+    if (!activeCard) {
+      return;
+    }
+
+    setCardSaveBusy(true);
+    setCardSaveError(null);
+
+    try {
+      const response = await fetch(`/api/admin/inventory/cards/${activeCard.id}`, {
+        method: "PATCH",
+        headers: {
+          ...adminHeaders,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(updates),
+      });
+      const payload = (await response.json()) as { message?: string; card?: InventoryCardSummary };
+      if (!response.ok || !payload.card) {
+        throw new Error(payload.message ?? "Failed to save inventory card");
+      }
+      const updatedCard = payload.card;
+
+      setCardsResponse((current) =>
+        current
+          ? {
+              ...current,
+              cards: current.cards.map((card) => (card.id === updatedCard.id ? updatedCard : card)),
+            }
+          : current
+      );
+      setSelectedMeta((current) => ({
+        ...current,
+        [updatedCard.id]: {
+          valuationMinor: updatedCard.valuationMinor,
+          category: updatedCard.category,
+        },
+      }));
+      setActiveCard(updatedCard);
+      setNotice({
+        message: `${updatedCard.playerName ?? updatedCard.setName ?? "Card"} updated in Inventory.`,
+      });
+      setRefreshNonce((value) => value + 1);
+    } catch (fetchError) {
+      setCardSaveError(fetchError instanceof Error ? fetchError.message : "Failed to save inventory card");
+    } finally {
+      setCardSaveBusy(false);
     }
   };
 
@@ -472,13 +556,18 @@ export default function InventoryPage() {
         {notice ? (
           <section className={adminPanelClass("flex flex-col gap-3 border-emerald-400/25 bg-emerald-500/10 p-4 md:flex-row md:items-center md:justify-between")}>
             <p className="text-sm text-emerald-100">{notice.message}</p>
-            {notice.href ? (
-              <Link
-                href={notice.href}
-                className="text-[11px] uppercase tracking-[0.22em] text-emerald-100 transition hover:text-white"
-              >
-                {notice.hrefLabel ?? "Open"}
-              </Link>
+            {notice.actions?.length ? (
+              <div className="flex flex-wrap gap-2">
+                {notice.actions.map((action) => (
+                  <Link
+                    key={`${action.href}-${action.label}`}
+                    href={action.href}
+                    className="rounded-full border border-emerald-200/25 px-4 py-2 text-[11px] uppercase tracking-[0.22em] text-emerald-100 transition hover:border-emerald-100/40 hover:text-white"
+                  >
+                    {action.label}
+                  </Link>
+                ))}
+              </div>
             ) : null}
           </section>
         ) : null}
@@ -563,6 +652,10 @@ export default function InventoryPage() {
           selectedIds={selectedIds}
           loading={cardsLoading}
           onToggleCard={toggleCard}
+          onOpenCard={(card) => {
+            setActiveCard(card);
+            setCardSaveError(null);
+          }}
           emptyState={
             <div className="flex flex-col items-center justify-center gap-4 py-12 text-center">
               <h2 className="font-heading text-3xl uppercase tracking-[0.12em] text-white">No cards in inventory</h2>
@@ -613,6 +706,19 @@ export default function InventoryPage() {
             setAssignError(null);
           }}
           onAssign={handleAssign}
+        />
+      ) : null}
+
+      {activeCard ? (
+        <InventoryCardDetailPanel
+          card={activeCard}
+          busy={cardSaveBusy}
+          error={cardSaveError}
+          onClose={() => {
+            setActiveCard(null);
+            setCardSaveError(null);
+          }}
+          onSave={handleSaveCard}
         />
       ) : null}
     </AppShell>

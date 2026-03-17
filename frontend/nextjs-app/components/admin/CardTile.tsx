@@ -13,15 +13,30 @@ type CardTileProps = {
   card: InventoryCardSummary;
   isSelected: boolean;
   onToggle: (cardId: string) => void;
+  onOpen?: (card: InventoryCardSummary) => void;
 };
 
-export function CardTile({ card, isSelected, onToggle }: CardTileProps) {
+export function CardTile({ card, isSelected, onToggle, onOpen }: CardTileProps) {
   const categoryClass = card.category ? CATEGORY_BADGE_CLASSES[card.category] ?? "border-white/10 bg-white/5 text-slate-200" : "border-white/10 bg-white/5 text-slate-200";
 
   return (
     <article
+      role={onOpen ? "button" : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      onClick={onOpen ? () => onOpen(card) : undefined}
+      onKeyDown={
+        onOpen
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpen(card);
+              }
+            }
+          : undefined
+      }
       className={[
         "group flex h-full flex-col overflow-hidden rounded-[24px] border bg-black/85 shadow-[0_20px_60px_rgba(0,0,0,0.38)] transition",
+        onOpen ? "cursor-pointer focus:outline-none focus:ring-2 focus:ring-gold-400/35" : "",
         isSelected ? "border-gold-400/60 ring-2 ring-gold-400/30" : "border-white/10 hover:border-white/20",
       ].join(" ")}
     >
@@ -37,11 +52,15 @@ export function CardTile({ card, isSelected, onToggle }: CardTileProps) {
         ) : (
           <PlaceholderImage label="No Image" />
         )}
-        <label className="absolute left-3 top-3 inline-flex items-center gap-2 rounded-full border border-black/30 bg-black/70 px-3 py-1.5 text-[11px] uppercase tracking-[0.24em] text-white backdrop-blur">
+        <label
+          className="absolute left-3 top-3 inline-flex items-center gap-2 rounded-full border border-black/30 bg-black/70 px-3 py-1.5 text-[11px] uppercase tracking-[0.24em] text-white backdrop-blur"
+          onClick={(event) => event.stopPropagation()}
+        >
           <input
             type="checkbox"
             checked={isSelected}
             onChange={() => onToggle(card.id)}
+            onClick={(event) => event.stopPropagation()}
             className="h-4 w-4 rounded border-white/30 bg-black text-gold-400 focus:ring-gold-400"
           />
           Select

@@ -8,6 +8,7 @@ type CardGridProps = {
   selectedIds: Set<string>;
   loading?: boolean;
   onToggleCard: (cardId: string) => void;
+  onOpenCard?: (card: InventoryCardSummary) => void;
   emptyState: ReactNode;
 };
 
@@ -24,7 +25,7 @@ function CardSkeleton() {
   );
 }
 
-export function CardGrid({ cards, selectedIds, loading, onToggleCard, emptyState }: CardGridProps) {
+export function CardGrid({ cards, selectedIds, loading, onToggleCard, onOpenCard, emptyState }: CardGridProps) {
   if (loading) {
     return (
       <section className={adminPanelClass("p-4 md:p-5")}>
@@ -45,7 +46,13 @@ export function CardGrid({ cards, selectedIds, loading, onToggleCard, emptyState
     <section className={adminPanelClass("p-4 md:p-5")}>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
         {cards.map((card) => (
-          <CardTile key={card.id} card={card} isSelected={selectedIds.has(card.id)} onToggle={onToggleCard} />
+          <CardTile
+            key={card.id}
+            card={card}
+            isSelected={selectedIds.has(card.id)}
+            onToggle={onToggleCard}
+            onOpen={onOpenCard}
+          />
         ))}
       </div>
     </section>

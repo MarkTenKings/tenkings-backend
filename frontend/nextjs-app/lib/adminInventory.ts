@@ -100,6 +100,7 @@ export type InventoryCardSummary = {
   subCategory: string | null;
   sport: string | null;
   frontPhotoUrl: string | null;
+  backPhotoUrl: string | null;
   createdAt: string;
   inventoryBatch: {
     id: string;
@@ -157,6 +158,18 @@ export type AssignedLocationSummary = {
     packedCount: number;
     totalCount: number;
   };
+};
+
+export type InventoryCardUpdatePayload = {
+  playerName?: string;
+  setName?: string;
+  year?: string;
+  cardNumber?: string;
+  parallel?: string | null;
+  valuationMinor?: number;
+  category?: CollectibleCategoryValue;
+  subCategory?: string;
+  brand?: string;
 };
 
 export type AssignedLocationsResponse = {

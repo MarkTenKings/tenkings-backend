@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { parseInventoryQueryState } from "../../../../lib/adminInventory";
-import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
-import { listInventoryCards } from "../../../../lib/server/adminInventory";
+import { parseInventoryQueryState } from "../../../../../lib/adminInventory";
+import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
+import { listInventoryCards } from "../../../../../lib/server/adminInventory";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "GET") {

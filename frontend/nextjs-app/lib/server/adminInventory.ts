@@ -26,7 +26,7 @@ const SPORT_SUBCATEGORY_MAP = new Map<string, string>([
   ["soccer", "Soccer"],
 ]);
 
-const CARD_ASSET_SELECT = {
+export const INVENTORY_CARD_SELECT = {
   id: true,
   fileName: true,
   imageUrl: true,
@@ -77,7 +77,7 @@ const CARD_ASSET_SELECT = {
   },
 } satisfies Prisma.CardAssetSelect;
 
-type CardAssetListRow = Prisma.CardAssetGetPayload<{ select: typeof CARD_ASSET_SELECT }>;
+export type InventoryCardRow = Prisma.CardAssetGetPayload<{ select: typeof INVENTORY_CARD_SELECT }>;
 
 type InventoryCardMetadata = {
   playerName: string | null;
@@ -90,6 +90,7 @@ type InventoryCardMetadata = {
   subCategory: string | null;
   sport: string | null;
   frontPhotoUrl: string | null;
+  backPhotoUrl: string | null;
   searchText: string;
 };
 
@@ -133,15 +134,16 @@ const pickFirstString = (...values: Array<string | null | undefined>) => {
 };
 
 const FRONT_PHOTO_KIND = "FRONT";
+const BACK_PHOTO_KIND = "BACK";
 
-function resolvePhotoPreviewUrl(photo: CardAssetListRow["photos"][number] | null | undefined) {
+function resolvePhotoPreviewUrl(photo: InventoryCardRow["photos"][number] | null | undefined) {
   if (!photo) {
     return null;
   }
   return pickFirstString(photo.cdnThumbUrl, photo.thumbnailUrl, photo.cdnHdUrl, photo.imageUrl);
 }
 
-function resolveFrontInventoryPhotoUrl(card: CardAssetListRow) {
+function resolveFrontInventoryPhotoUrl(card: InventoryCardRow) {
   const frontPhoto =
     card.photos.find((photo) => (typeof photo.kind === "string" ? photo.kind.toUpperCase() : photo.kind) === FRONT_PHOTO_KIND) ?? null;
   const fallbackPhoto = frontPhoto ?? card.photos[0] ?? null;
@@ -155,6 +157,12 @@ function resolveFrontInventoryPhotoUrl(card: CardAssetListRow) {
     resolvePhotoPreviewUrl(frontPhoto),
     resolvePhotoPreviewUrl(fallbackPhoto)
   );
+}
+
+function resolveBackInventoryPhotoUrl(card: InventoryCardRow) {
+  const backPhoto =
+    card.photos.find((photo) => (typeof photo.kind === "string" ? photo.kind.toUpperCase() : photo.kind) === BACK_PHOTO_KIND) ?? null;
+  return pickFirstString(resolvePhotoPreviewUrl(backPhoto));
 }
 
 const compareStrings = (left: string | null | undefined, right: string | null | undefined) =>
@@ -206,7 +214,7 @@ function resolveSportSubCategory(candidates: Array<string | null | undefined>) {
   return null;
 }
 
-function inferCategory(card: CardAssetListRow): CollectibleCategory | null {
+function inferCategory(card: InventoryCardRow): CollectibleCategory | null {
   if (card.category) {
     return card.category;
   }
@@ -262,7 +270,7 @@ function inferCategory(card: CardAssetListRow): CollectibleCategory | null {
   return null;
 }
 
-function deriveInventoryCardMetadata(card: CardAssetListRow): InventoryCardMetadata {
+function deriveInventoryCardMetadata(card: InventoryCardRow): InventoryCardMetadata {
   const payload = parseClassificationPayload(card.classificationJson);
   const attributes = payload?.attributes;
   const normalized = payload?.normalized;
@@ -293,6 +301,7 @@ function deriveInventoryCardMetadata(card: CardAssetListRow): InventoryCardMetad
   const parallel = pickFirstString(attributes?.variantKeywords?.[0] ?? null);
   const sport = pickFirstString(normalized?.sport?.sport, normalized?.sport?.subcategory, subCategory);
   const frontPhotoUrl = resolveFrontInventoryPhotoUrl(card);
+  const backPhotoUrl = resolveBackInventoryPhotoUrl(card);
 
   const searchText = [
     playerName,
@@ -321,11 +330,12 @@ function deriveInventoryCardMetadata(card: CardAssetListRow): InventoryCardMetad
     subCategory,
     sport,
     frontPhotoUrl,
+    backPhotoUrl,
     searchText,
   };
 }
 
-function toInventoryCardSummary(card: CardAssetListRow): InventoryCardSummary {
+export function serializeInventoryCardSummary(card: InventoryCardRow): InventoryCardSummary {
   const metadata = deriveInventoryCardMetadata(card);
   return {
     id: card.id,
@@ -340,6 +350,7 @@ function toInventoryCardSummary(card: CardAssetListRow): InventoryCardSummary {
     subCategory: metadata.subCategory,
     sport: metadata.sport,
     frontPhotoUrl: metadata.frontPhotoUrl,
+    backPhotoUrl: metadata.backPhotoUrl,
     createdAt: card.createdAt.toISOString(),
     inventoryBatch:
       card.inventoryBatch && card.inventoryBatch.location
@@ -378,7 +389,7 @@ function matchesParallelFilter(parallel: string | null | undefined, selected: st
   });
 }
 
-function filterCards(rows: CardAssetListRow[], query: InventoryQueryState) {
+function filterCards(rows: InventoryCardRow[], query: InventoryQueryState) {
   const search = normalizeText(query.search);
   return rows.filter((card) => {
     const metadata = deriveInventoryCardMetadata(card);
@@ -405,7 +416,7 @@ function filterCards(rows: CardAssetListRow[], query: InventoryQueryState) {
   });
 }
 
-function sortCards(rows: CardAssetListRow[], sort: InventorySortValue) {
+function sortCards(rows: InventoryCardRow[], sort: InventorySortValue) {
   return [...rows].sort((left, right) => {
     const leftMetadata = deriveInventoryCardMetadata(left);
     const rightMetadata = deriveInventoryCardMetadata(right);
@@ -429,7 +440,7 @@ function sortCards(rows: CardAssetListRow[], sort: InventorySortValue) {
   });
 }
 
-function buildSelectionSummary(rows: CardAssetListRow[]): InventorySelectionSummary {
+function buildSelectionSummary(rows: InventoryCardRow[]): InventorySelectionSummary {
   const categoryCounts = new Map<string | null, number>();
   let totalValue = 0;
 
@@ -446,7 +457,7 @@ function buildSelectionSummary(rows: CardAssetListRow[]): InventorySelectionSumm
   };
 }
 
-function buildAggregations(rows: CardAssetListRow[]): InventoryCardsResponse["aggregations"] {
+function buildAggregations(rows: InventoryCardRow[]): InventoryCardsResponse["aggregations"] {
   const categoryCounts = new Map<string, number>();
   const valuations = rows.map((row) => row.valuationMinor).filter((value): value is number => value != null);
   let totalValue = 0;
@@ -517,7 +528,7 @@ function buildCardWhere(query: InventoryQueryState, scope?: InventoryListScope):
 async function loadInventoryCardRows(query: InventoryQueryState, scope?: InventoryListScope) {
   return prisma.cardAsset.findMany({
     where: buildCardWhere(query, scope),
-    select: CARD_ASSET_SELECT,
+    select: INVENTORY_CARD_SELECT,
   });
 }
 
@@ -535,7 +546,7 @@ export async function listInventoryCards(options: ListInventoryCardsOptions): Pr
   const totalPages = Math.max(1, Math.ceil(totalCount / query.pageSize));
   const page = Math.min(query.page, totalPages);
   const start = (page - 1) * query.pageSize;
-  const cards = sorted.slice(start, start + query.pageSize).map(toInventoryCardSummary);
+  const cards = sorted.slice(start, start + query.pageSize).map(serializeInventoryCardSummary);
 
   return {
     cards,
@@ -569,51 +580,7 @@ export async function getInventoryFilterOptions(scope?: InventoryListScope): Pro
       },
       scope
     ),
-    select: {
-      id: true,
-      fileName: true,
-      imageUrl: true,
-      thumbnailUrl: true,
-      valuationMinor: true,
-      classificationJson: true,
-      customTitle: true,
-      resolvedPlayerName: true,
-      resolvedTeamName: true,
-      category: true,
-      subCategory: true,
-      reviewStage: true,
-      createdAt: true,
-      updatedAt: true,
-      inventoryBatchId: true,
-      inventoryAssignedAt: true,
-      assignedDefinitionId: true,
-      photos: {
-        select: {
-          id: true,
-          kind: true,
-          imageUrl: true,
-          thumbnailUrl: true,
-          createdAt: true,
-        },
-      },
-      inventoryBatch: {
-        select: {
-          id: true,
-          label: true,
-          stage: true,
-          category: true,
-          tier: true,
-          locationId: true,
-          location: {
-            select: {
-              id: true,
-              name: true,
-              slug: true,
-            },
-          },
-        },
-      },
-    },
+    select: INVENTORY_CARD_SELECT,
   });
 
   const subCategories = new Set<string>();
@@ -622,7 +589,7 @@ export async function getInventoryFilterOptions(scope?: InventoryListScope): Pro
   const parallels = new Set<string>();
 
   for (const row of rows) {
-    const metadata = deriveInventoryCardMetadata(row as CardAssetListRow);
+    const metadata = deriveInventoryCardMetadata(row);
     if (metadata.subCategory) {
       subCategories.add(metadata.subCategory);
     }

@@ -22,7 +22,9 @@ import {
 } from "../../../components/admin/RecipeForm";
 import { SelectionBar } from "../../../components/admin/SelectionBar";
 import {
+  COLLECTIBLE_CATEGORY_VALUES,
   PACK_TIER_OPTIONS,
+  buildPackDefinitionName,
   buildInventoryQueryState,
   formatCategoryLabel,
   formatCurrencyFromMinor,
@@ -117,6 +119,17 @@ function buildEmptyRecipeForm(): RecipeFormValue {
     notes: "",
     items: [],
   };
+}
+
+function buildPrefilledRecipeForm(
+  category: CollectibleCategoryValue | "",
+  tier: PackTierValue | ""
+): RecipeFormValue {
+  const next = buildEmptyRecipeForm();
+  next.category = category;
+  next.tier = tier;
+  next.name = category && tier ? buildPackDefinitionName(category, tier) : "";
+  return next;
 }
 
 function buildRecipeFormItem(item: LocationRecipeSummary["items"][number]): RecipeFormItemValue {
@@ -302,6 +315,17 @@ export default function AssignedLocationDetailPage() {
   }, [selectionScopeKey]);
 
   useEffect(() => {
+    const tab = typeof router.query.tab === "string" ? router.query.tab : null;
+    if (tab === "recipes") {
+      setActiveTab("recipes");
+      return;
+    }
+    if (tab === "cards") {
+      setActiveTab("cards");
+    }
+  }, [router.query.tab]);
+
+  useEffect(() => {
     if (!session?.token || !isAdmin || typeof locationId !== "string") {
       return;
     }
@@ -431,6 +455,47 @@ export default function AssignedLocationDetailPage() {
     setRecipeFormInitial(buildEmptyRecipeForm());
     setRecipeSubmitError(null);
   };
+
+  useEffect(() => {
+    if (!router.isReady || typeof locationId !== "string") {
+      return;
+    }
+
+    if (router.query.createRecipe !== "1") {
+      return;
+    }
+
+    const categoryQuery = typeof router.query.category === "string" ? router.query.category : "";
+    const tierQuery = typeof router.query.tier === "string" ? router.query.tier : "";
+    const category = COLLECTIBLE_CATEGORY_VALUES.includes(categoryQuery as CollectibleCategoryValue)
+      ? (categoryQuery as CollectibleCategoryValue)
+      : "";
+    const tier = PACK_TIER_OPTIONS.some((option) => option.value === tierQuery)
+      ? (tierQuery as PackTierValue)
+      : "";
+
+    setActiveTab("recipes");
+    setRecipeFormMode("create");
+    setRecipeEditing(null);
+    setRecipeFormInitial(buildPrefilledRecipeForm(category, tier));
+    setRecipeSubmitError(null);
+
+    const nextQuery = { ...router.query };
+    delete nextQuery.locationId;
+    delete nextQuery.createRecipe;
+    delete nextQuery.category;
+    delete nextQuery.tier;
+    nextQuery.tab = "recipes";
+
+    void router.replace(
+      {
+        pathname: `/admin/assigned-locations/${locationId}`,
+        query: nextQuery,
+      },
+      undefined,
+      { shallow: true }
+    );
+  }, [locationId, router]);
 
   const openEditRecipe = (recipe: LocationRecipeSummary) => {
     setRecipeFormMode("edit");
@@ -913,63 +978,115 @@ export default function AssignedLocationDetailPage() {
         </section>
 
         <section className={adminPanelClass("p-4 md:p-5")}>
-          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-            <div className="space-y-3">
-              <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Workspace</p>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("cards")}
-                  className={[
-                    "rounded-full border px-4 py-2 text-[11px] uppercase tracking-[0.22em] transition",
-                    activeTab === "cards"
-                      ? "border-gold-400/45 bg-gold-500/15 text-gold-100"
-                      : "border-white/12 bg-white/[0.04] text-slate-300 hover:border-white/25 hover:text-white",
-                  ].join(" ")}
-                >
-                  Assigned Cards
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setActiveTab("recipes")}
-                  className={[
-                    "rounded-full border px-4 py-2 text-[11px] uppercase tracking-[0.22em] transition",
-                    activeTab === "recipes"
-                      ? "border-gold-400/45 bg-gold-500/15 text-gold-100"
-                      : "border-white/12 bg-white/[0.04] text-slate-300 hover:border-white/25 hover:text-white",
-                  ].join(" ")}
-                >
-                  Recipes
-                </button>
+          <div className="flex flex-col gap-5">
+            <nav className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-[0.24em] text-slate-500">
+              <Link href="/admin/inventory" className="transition hover:text-white">
+                Inventory
+              </Link>
+              <span>-&gt;</span>
+              <Link href="/admin/assigned-locations" className="transition hover:text-white">
+                Assigned Locations
+              </Link>
+              <span>-&gt;</span>
+              <span className="text-white">{detail?.location.name ?? "Location"}</span>
+            </nav>
+
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Pack Flow</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("cards")}
+                      className={[
+                        "rounded-full border px-4 py-2 text-[11px] uppercase tracking-[0.22em] transition",
+                        activeTab === "cards"
+                          ? "border-gold-400/45 bg-gold-500/15 text-gold-100"
+                          : "border-white/12 bg-white/[0.04] text-slate-300 hover:border-white/25 hover:text-white",
+                      ].join(" ")}
+                    >
+                      Cards
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("recipes")}
+                      className={[
+                        "rounded-full border px-4 py-2 text-[11px] uppercase tracking-[0.22em] transition",
+                        activeTab === "recipes"
+                          ? "border-gold-400/45 bg-gold-500/15 text-gold-100"
+                          : "border-white/12 bg-white/[0.04] text-slate-300 hover:border-white/25 hover:text-white",
+                      ].join(" ")}
+                    >
+                      Recipes
+                    </button>
+                    {activeBatch ? (
+                      <Link
+                        href={`/admin/batches/${activeBatch.id}/print-slips`}
+                        className="rounded-full border border-white/12 bg-white/[0.04] px-4 py-2 text-[11px] uppercase tracking-[0.22em] text-slate-300 transition hover:border-white/25 hover:text-white"
+                      >
+                        Packing Slips
+                      </Link>
+                    ) : (
+                      <span className="rounded-full border border-white/12 bg-white/[0.04] px-4 py-2 text-[11px] uppercase tracking-[0.22em] text-slate-500">
+                        Packing Slips
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                <details className="rounded-[22px] border border-white/10 bg-white/[0.03] px-4 py-3 text-sm text-slate-300">
+                  <summary className="cursor-pointer list-none text-[11px] uppercase tracking-[0.24em] text-white">
+                    How Packing Works
+                  </summary>
+                  <ol className="mt-3 space-y-2 text-sm text-slate-300">
+                    <li>1. Assign cards to a location on the Inventory page.</li>
+                    <li>2. Configure pack recipes here in the Recipes tab to define what goes in each pack.</li>
+                    <li>3. Open Packing Slips to print the instructions your packers follow.</li>
+                    <li>
+                      4. Pack and ship through the existing{" "}
+                      <Link href="/admin/packing" className="text-gold-200 transition hover:text-white">
+                        packing flow
+                      </Link>
+                      .
+                    </li>
+                  </ol>
+                </details>
+              </div>
+
+              <div className="flex flex-col gap-3 xl:items-end">
+                {activeBatch ? (
+                  <div className="flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.22em] text-slate-400">
+                    <span className="rounded-full border border-white/10 px-3 py-2">{activeBatch.stage}</span>
+                    {activeBatch.category ? (
+                      <span className="rounded-full border border-white/10 px-3 py-2">
+                        {formatCategoryLabel(activeBatch.category)}
+                      </span>
+                    ) : null}
+                    {activeBatch.tier ? (
+                      <span className="rounded-full border border-white/10 px-3 py-2">
+                        {formatPackTierLabel(activeBatch.tier)}
+                      </span>
+                    ) : null}
+                    <span className="rounded-full border border-white/10 px-3 py-2">
+                      {activeBatch.cardCount} Cards
+                    </span>
+                  </div>
+                ) : (
+                  <p className="max-w-sm text-sm text-slate-400">
+                    Assign cards from Inventory first, then come back here to configure recipes and print slips.
+                  </p>
+                )}
+                {activeBatch ? (
+                  <Link
+                    href={`/admin/batches/${activeBatch.id}/print-slips`}
+                    className="rounded-full border border-gold-400/45 bg-gold-500 px-4 py-2 text-[11px] uppercase tracking-[0.22em] text-night-950 transition hover:bg-gold-400"
+                  >
+                    Print Packing Slips
+                  </Link>
+                ) : null}
               </div>
             </div>
-
-            {activeBatch ? (
-              <div className="flex flex-col gap-3 xl:items-end">
-                <div className="flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.22em] text-slate-400">
-                  <span className="rounded-full border border-white/10 px-3 py-2">{activeBatch.stage}</span>
-                  {activeBatch.category ? (
-                    <span className="rounded-full border border-white/10 px-3 py-2">
-                      {formatCategoryLabel(activeBatch.category)}
-                    </span>
-                  ) : null}
-                  {activeBatch.tier ? (
-                    <span className="rounded-full border border-white/10 px-3 py-2">
-                      {formatPackTierLabel(activeBatch.tier)}
-                    </span>
-                  ) : null}
-                  <span className="rounded-full border border-white/10 px-3 py-2">
-                    {activeBatch.cardCount} Cards
-                  </span>
-                </div>
-                <Link
-                  href={`/admin/batches/${activeBatch.id}/print-slips`}
-                  className="rounded-full border border-gold-400/45 bg-gold-500 px-4 py-2 text-[11px] uppercase tracking-[0.22em] text-night-950 transition hover:bg-gold-400"
-                >
-                  Print Packing Slips
-                </Link>
-              </div>
-            ) : null}
           </div>
         </section>
 
@@ -1105,7 +1222,7 @@ export default function AssignedLocationDetailPage() {
                 onClick={openCreateRecipe}
                 className="rounded-full border border-gold-400/45 bg-gold-500 px-5 py-3 text-[11px] uppercase tracking-[0.22em] text-night-950 transition hover:bg-gold-400"
               >
-                New Recipe
+                + Create Recipe
               </button>
             </div>
 
@@ -1141,19 +1258,26 @@ export default function AssignedLocationDetailPage() {
                 ))}
               </div>
             ) : (
-              <div className="mt-6 rounded-[28px] border border-dashed border-white/12 bg-white/[0.02] px-6 py-12 text-center">
-                <h2 className="font-heading text-3xl uppercase tracking-[0.12em] text-white">
-                  No recipes configured yet
+              <div className="mt-6 rounded-[28px] border border-amber-400/25 bg-amber-500/10 px-6 py-10">
+                <p className="text-[11px] uppercase tracking-[0.24em] text-amber-100">Recipe Setup Needed</p>
+                <h2 className="mt-3 font-heading text-3xl uppercase tracking-[0.12em] text-white">
+                  No pack recipe configured for this location
                 </h2>
-                <p className="mx-auto mt-3 max-w-2xl text-sm text-slate-400">
-                  Create the first recipe for this location to define per-tier bonus card expectations and packer-facing extra items.
+                <p className="mt-3 max-w-2xl text-sm text-slate-200">
+                  Pack recipes define what goes into each pack, including card counts, bonus cards, and extra items
+                  like promo tickets or merch. Create one here before your team starts printing packing slips.
                 </p>
+                {detail?.batches.length ? (
+                  <p className="mt-3 text-sm text-amber-100">
+                    This location already has {detail.batches.length} batch{detail.batches.length === 1 ? "" : "es"} waiting on recipe guidance.
+                  </p>
+                ) : null}
                 <button
                   type="button"
                   onClick={openCreateRecipe}
-                  className="mt-6 rounded-full border border-gold-400/45 px-5 py-3 text-[11px] uppercase tracking-[0.24em] text-gold-100 transition hover:border-gold-300 hover:text-white"
+                  className="mt-6 rounded-full border border-gold-400/45 bg-gold-500 px-5 py-3 text-[11px] uppercase tracking-[0.24em] text-night-950 transition hover:bg-gold-400"
                 >
-                  Create First Recipe
+                  + Create Recipe
                 </button>
               </div>
             )}

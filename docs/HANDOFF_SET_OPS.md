@@ -6049,3 +6049,30 @@ Build Set Ops UI flow with:
   - `git diff --check` -> pass
   - `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-03-17, Task 8 inventory card editing + pack flow UX)
+- Added inline inventory card editing on `/admin/inventory`:
+  - card tile click now opens a right-side detail drawer
+  - checkbox selection behavior remains separate from opening card details
+  - editable fields save through `PATCH /api/admin/inventory/cards/[cardId]`
+- Added inventory card edit API support:
+  - moved the list route from `frontend/nextjs-app/pages/api/admin/inventory/cards.ts` to `frontend/nextjs-app/pages/api/admin/inventory/cards/index.ts`
+  - added `frontend/nextjs-app/pages/api/admin/inventory/cards/[cardId].ts`
+  - PATCH only allows edits for `INVENTORY_READY_FOR_SALE` cards with `inventoryBatchId = null`
+  - validation enforces non-negative `valuationMinor` and valid `CollectibleCategory`
+- Improved assignment success guidance on `/admin/inventory`:
+  - success notice now links to Assigned Locations
+  - when no location-specific recipe exists for the assigned category+tier, the notice also links directly into recipe creation on the location detail page
+- Improved `/admin/assigned-locations/[locationId]` flow clarity:
+  - breadcrumb trail now shows `Inventory -> Assigned Locations -> [Location]`
+  - Cards / Recipes / Packing Slips controls are surfaced together
+  - the no-recipe state now explains why recipes matter and gives a direct create action
+  - added collapsible `How Packing Works` help with a direct `/admin/packing` handoff
+- Validation:
+  - `git pull --ff-only` -> `Already up to date.`
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/inventory.tsx --file 'pages/admin/assigned-locations/[locationId].tsx' --file components/admin/CardGrid.tsx --file components/admin/CardTile.tsx --file components/admin/InventoryCardDetailPanel.tsx --file lib/adminInventory.ts --file lib/server/adminInventory.ts --file pages/api/admin/inventory/cards/index.ts --file 'pages/api/admin/inventory/cards/[cardId].ts'` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+  - `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed
+- Unrelated local edits in `frontend/nextjs-app/pages/admin/kingsreview.tsx` and `frontend/nextjs-app/pages/admin/uploads.tsx` were left untouched and are not part of this task.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
