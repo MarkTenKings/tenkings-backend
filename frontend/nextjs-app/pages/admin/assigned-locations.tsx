@@ -293,7 +293,7 @@ export default function AssignedLocationsPage() {
                         href={`/admin/assigned-locations/${location.id}?tab=recipes`}
                         className="relative z-10 rounded-full border border-gold-400/45 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-gold-100 transition hover:border-gold-300 hover:text-white"
                       >
-                        Manage Recipes
+                        Pack Recipes
                       </Link>
                     </div>
                   </div>

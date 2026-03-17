@@ -1291,6 +1291,7 @@ export default function AssignedLocationDetailPage() {
 
       {recipeFormMode ? (
         <RecipeForm
+          key={`${recipeFormMode}-${recipeEditing?.id ?? "new"}-${locationId ?? "location"}`}
           mode={recipeFormMode}
           locationName={detail?.location.name ?? "Assigned Location"}
           initialValue={recipeFormInitial}

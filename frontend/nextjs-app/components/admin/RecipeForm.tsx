@@ -62,6 +62,67 @@ function createEmptyItem(): RecipeFormItemValue {
   };
 }
 
+function createEmptyFormValue(): RecipeFormValue {
+  return {
+    name: "",
+    category: "",
+    tier: "",
+    isActive: true,
+    slabCardsPerPack: 1,
+    bonusCardsPerPack: 2,
+    bonusCardMaxValueInput: "3.00",
+    notes: "",
+    items: [],
+  };
+}
+
+function normalizeRecipeFormItemValue(item?: Partial<RecipeFormItemValue> | null): RecipeFormItemValue {
+  const base = createEmptyItem();
+  return {
+    ...base,
+    ...item,
+    name: typeof item?.name === "string" ? item.name : base.name,
+    description: typeof item?.description === "string" ? item.description : base.description,
+    itemType: PACK_RECIPE_ITEM_TYPE_VALUES.includes(item?.itemType as PackRecipeItemTypeValue)
+      ? (item?.itemType as PackRecipeItemTypeValue)
+      : base.itemType,
+    quantity:
+      Number.isInteger(item?.quantity) && Number(item?.quantity) > 0 ? Number(item?.quantity) : base.quantity,
+    costPerUnitInput:
+      typeof item?.costPerUnitInput === "string" ? item.costPerUnitInput : base.costPerUnitInput,
+    isSeasonal: Boolean(item?.isSeasonal),
+    seasonStart: typeof item?.seasonStart === "string" ? item.seasonStart : base.seasonStart,
+    seasonEnd: typeof item?.seasonEnd === "string" ? item.seasonEnd : base.seasonEnd,
+    isActive: item?.isActive == null ? base.isActive : Boolean(item.isActive),
+  };
+}
+
+function normalizeRecipeFormValue(value?: Partial<RecipeFormValue> | null): RecipeFormValue {
+  const base = createEmptyFormValue();
+  return {
+    ...base,
+    ...value,
+    name: typeof value?.name === "string" ? value.name : base.name,
+    category: typeof value?.category === "string" ? value.category : base.category,
+    tier: typeof value?.tier === "string" ? value.tier : base.tier,
+    isActive: value?.isActive == null ? base.isActive : Boolean(value.isActive),
+    slabCardsPerPack:
+      Number.isInteger(value?.slabCardsPerPack) && Number(value?.slabCardsPerPack) > 0
+        ? Number(value?.slabCardsPerPack)
+        : base.slabCardsPerPack,
+    bonusCardsPerPack:
+      Number.isInteger(value?.bonusCardsPerPack) && Number(value?.bonusCardsPerPack) >= 0
+        ? Number(value?.bonusCardsPerPack)
+        : base.bonusCardsPerPack,
+    bonusCardMaxValueInput:
+      typeof value?.bonusCardMaxValueInput === "string"
+        ? value.bonusCardMaxValueInput
+        : base.bonusCardMaxValueInput,
+    notes: typeof value?.notes === "string" ? value.notes : base.notes,
+    items: Array.isArray(value?.items) ? value.items.map((item) => normalizeRecipeFormItemValue(item)) : [],
+  };
+}
+
 function parseCurrencyInput(value: string) {
   const normalized = value.replace(/[^0-9.]/g, "").trim();
   if (!normalized) {
@@ -137,18 +198,19 @@ export function RecipeForm({
   onClose,
   onSubmit,
 }: RecipeFormProps) {
-  const [value, setValue] = useState<RecipeFormValue>(initialValue);
+  const [value, setValue] = useState<RecipeFormValue>(() => normalizeRecipeFormValue(initialValue));
   const [clientError, setClientError] = useState<string | null>(null);
+  const formValue = useMemo(() => normalizeRecipeFormValue(value), [value]);
 
   useEffect(() => {
-    setValue(initialValue);
+    setValue(normalizeRecipeFormValue(initialValue));
     setClientError(null);
   }, [initialValue]);
 
   const previewExtraCostPerPack = useMemo(() => {
     const now = new Date();
 
-    return value.items.reduce((sum, item) => {
+    return formValue.items.reduce((sum, item) => {
       if (!item.isActive) {
         return sum;
       }
@@ -169,17 +231,18 @@ export function RecipeForm({
       }
       return sum + costPerUnit * item.quantity;
     }, 0);
-  }, [value.items]);
+  }, [formValue.items]);
 
   const submit = () => {
-    const validationError = validateForm(value);
+    const nextValue = normalizeRecipeFormValue(value);
+    const validationError = validateForm(nextValue);
     if (validationError) {
       setClientError(validationError);
       return;
     }
 
     setClientError(null);
-    onSubmit(value);
+    onSubmit(nextValue);
   };
 
   return (
@@ -191,7 +254,7 @@ export function RecipeForm({
               {mode === "create" ? "Create Recipe" : "Edit Recipe"}
             </p>
             <h2 className="font-heading text-3xl uppercase tracking-[0.12em] text-white">
-              {mode === "create" ? "New Pack Recipe" : value.name || "Update Pack Recipe"}
+              {mode === "create" ? "New Pack Recipe" : formValue.name || "Update Pack Recipe"}
             </h2>
             <p className="max-w-2xl text-sm text-slate-300">
               Manage location-specific pack composition for <span className="text-white">{locationName}</span>.
@@ -211,7 +274,7 @@ export function RecipeForm({
           <label className="flex flex-col gap-2 text-sm text-slate-200">
             <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Recipe Name</span>
             <input
-              value={value.name}
+              value={formValue.name}
               onChange={(event) => setValue((current) => ({ ...current, name: event.currentTarget.value }))}
               className={adminInputClass()}
               placeholder="Ex: Dallas Sports $50 Pack"
@@ -221,7 +284,7 @@ export function RecipeForm({
           <label className="flex flex-col gap-2 text-sm text-slate-200">
             <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Status</span>
             <select
-              value={value.isActive ? "active" : "inactive"}
+              value={formValue.isActive ? "active" : "inactive"}
               onChange={(event) =>
                 setValue((current) => ({ ...current, isActive: event.currentTarget.value === "active" }))
               }
@@ -235,7 +298,7 @@ export function RecipeForm({
           <label className="flex flex-col gap-2 text-sm text-slate-200">
             <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Category</span>
             <select
-              value={value.category}
+              value={formValue.category}
               disabled={mode === "edit"}
               onChange={(event) =>
                 setValue((current) => ({
@@ -257,7 +320,7 @@ export function RecipeForm({
           <label className="flex flex-col gap-2 text-sm text-slate-200">
             <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Pack Tier</span>
             <select
-              value={value.tier}
+              value={formValue.tier}
               disabled={mode === "edit"}
               onChange={(event) =>
                 setValue((current) => ({ ...current, tier: event.currentTarget.value as PackTierValue }))
@@ -279,7 +342,7 @@ export function RecipeForm({
               type="number"
               min={1}
               step={1}
-              value={value.slabCardsPerPack}
+              value={formValue.slabCardsPerPack}
               onChange={(event) =>
                 setValue((current) => ({
                   ...current,
@@ -296,7 +359,7 @@ export function RecipeForm({
               type="number"
               min={0}
               step={1}
-              value={value.bonusCardsPerPack}
+              value={formValue.bonusCardsPerPack}
               onChange={(event) =>
                 setValue((current) => ({
                   ...current,
@@ -310,7 +373,7 @@ export function RecipeForm({
           <label className="flex flex-col gap-2 text-sm text-slate-200 lg:col-span-2">
             <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Bonus Card Max Value</span>
             <input
-              value={value.bonusCardMaxValueInput}
+              value={formValue.bonusCardMaxValueInput}
               onChange={(event) =>
                 setValue((current) => ({ ...current, bonusCardMaxValueInput: event.currentTarget.value }))
               }
@@ -322,7 +385,7 @@ export function RecipeForm({
           <label className="flex flex-col gap-2 text-sm text-slate-200 lg:col-span-2">
             <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Notes</span>
             <textarea
-              value={value.notes}
+              value={formValue.notes}
               onChange={(event) => setValue((current) => ({ ...current, notes: event.currentTarget.value }))}
               rows={4}
               className={adminTextareaClass("min-h-[110px] resize-y")}
@@ -344,7 +407,7 @@ export function RecipeForm({
               onClick={() =>
                 setValue((current) => ({
                   ...current,
-                  items: [...current.items, createEmptyItem()],
+                  items: [...normalizeRecipeFormValue(current).items, createEmptyItem()],
                 }))
               }
               className="rounded-full border border-gold-400/45 px-4 py-2 text-[11px] uppercase tracking-[0.22em] text-gold-100 transition hover:border-gold-300 hover:text-white"
@@ -353,9 +416,9 @@ export function RecipeForm({
             </button>
           </div>
 
-          {value.items.length > 0 ? (
+          {formValue.items.length > 0 ? (
             <div className="mt-4 space-y-4">
-              {value.items.map((item, index) => (
+              {formValue.items.map((item, index) => (
                 <div key={`${item.id ?? "new"}-${index}`} className="rounded-[22px] border border-white/10 bg-white/[0.03] p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-sm font-semibold uppercase tracking-[0.18em] text-white">
@@ -366,7 +429,7 @@ export function RecipeForm({
                       onClick={() =>
                         setValue((current) => ({
                           ...current,
-                          items: current.items.filter((_, itemIndex) => itemIndex !== index),
+                          items: normalizeRecipeFormValue(current).items.filter((_, itemIndex) => itemIndex !== index),
                         }))
                       }
                       className="rounded-full border border-rose-400/30 px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-rose-100 transition hover:border-rose-300/60 hover:text-white"
@@ -383,7 +446,7 @@ export function RecipeForm({
                         onChange={(event) =>
                           setValue((current) => ({
                             ...current,
-                            items: current.items.map((entry, itemIndex) =>
+                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
                               itemIndex === index ? { ...entry, name: event.currentTarget.value } : entry
                             ),
                           }))
@@ -400,7 +463,7 @@ export function RecipeForm({
                         onChange={(event) =>
                           setValue((current) => ({
                             ...current,
-                            items: current.items.map((entry, itemIndex) =>
+                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
                               itemIndex === index
                                 ? { ...entry, itemType: event.currentTarget.value as PackRecipeItemTypeValue }
                                 : entry
@@ -424,7 +487,7 @@ export function RecipeForm({
                         onChange={(event) =>
                           setValue((current) => ({
                             ...current,
-                            items: current.items.map((entry, itemIndex) =>
+                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
                               itemIndex === index ? { ...entry, costPerUnitInput: event.currentTarget.value } : entry
                             ),
                           }))
@@ -444,7 +507,7 @@ export function RecipeForm({
                         onChange={(event) =>
                           setValue((current) => ({
                             ...current,
-                            items: current.items.map((entry, itemIndex) =>
+                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
                               itemIndex === index
                                 ? {
                                     ...entry,
@@ -468,7 +531,7 @@ export function RecipeForm({
                         onChange={(event) =>
                           setValue((current) => ({
                             ...current,
-                            items: current.items.map((entry, itemIndex) =>
+                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
                               itemIndex === index ? { ...entry, description: event.currentTarget.value } : entry
                             ),
                           }))
@@ -487,7 +550,7 @@ export function RecipeForm({
                         onChange={(event) =>
                           setValue((current) => ({
                             ...current,
-                            items: current.items.map((entry, itemIndex) =>
+                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
                               itemIndex === index ? { ...entry, isActive: event.currentTarget.checked } : entry
                             ),
                           }))
@@ -504,7 +567,7 @@ export function RecipeForm({
                         onChange={(event) =>
                           setValue((current) => ({
                             ...current,
-                            items: current.items.map((entry, itemIndex) =>
+                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
                               itemIndex === index
                                 ? {
                                     ...entry,
@@ -532,7 +595,7 @@ export function RecipeForm({
                           onChange={(event) =>
                             setValue((current) => ({
                               ...current,
-                              items: current.items.map((entry, itemIndex) =>
+                              items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
                                 itemIndex === index ? { ...entry, seasonStart: event.currentTarget.value } : entry
                               ),
                             }))
@@ -549,7 +612,7 @@ export function RecipeForm({
                           onChange={(event) =>
                             setValue((current) => ({
                               ...current,
-                              items: current.items.map((entry, itemIndex) =>
+                              items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
                                 itemIndex === index ? { ...entry, seasonEnd: event.currentTarget.value } : entry
                               ),
                             }))

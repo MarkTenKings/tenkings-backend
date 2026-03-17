@@ -12021,3 +12021,37 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this push-sync step.
+
+## 2026-03-17 - Task 13 Recipe Modal Crash + Label Rename
+
+### Summary
+- Fixed the assigned-locations recipe creation flow so the shared recipe modal no longer crashes on the first Recipe Name keystroke.
+- Renamed the location-card action from `Manage Recipes` to `Pack Recipes`.
+
+### Files Updated
+- `frontend/nextjs-app/components/admin/RecipeForm.tsx`
+- `frontend/nextjs-app/pages/admin/assigned-locations.tsx`
+- `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `frontend/nextjs-app/components/admin/RecipeForm.tsx`
+  - added normalization helpers for the full recipe form value and each extra-item row
+  - initialized and rehydrated modal state through that normalization layer so missing or partial fields cannot leave the form in a shape that crashes derived render paths
+  - switched render-time reads and submit-time validation to use the normalized recipe value
+  - hardened extra-item add/remove/map updates so they always operate on a normalized `items` array
+- `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx`
+  - added a stable `key` to the shared `RecipeForm` mount so create/edit modal transitions always remount a clean form instance
+- `frontend/nextjs-app/pages/admin/assigned-locations.tsx`
+  - renamed the location-card CTA from `Manage Recipes` to `Pack Recipes`
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/admin/RecipeForm.tsx --file pages/admin/assigned-locations.tsx --file 'pages/admin/assigned-locations/[locationId].tsx'`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
