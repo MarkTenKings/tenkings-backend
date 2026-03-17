@@ -6014,3 +6014,23 @@ Build Set Ops UI flow with:
   - direct `pnpm --filter @tenkings/nextjs-app exec next lint ...` and `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` could not run in the fresh integration worktree because local `next` / `tsc` binaries were not installed there
   - fallback `tsc` using the shared checkout binary still failed at environment level because the integration worktree does not have full local Next/Prisma/module type resolution
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this integration step.
+
+## Session Update (2026-03-17, Task 5 inventory UI fixes on main)
+- Synced the workstation `main` checkout with `origin/main` before editing:
+  - `git pull --rebase --autostash origin main`
+  - fast-forwarded from `8b09b34` to `b7a2383`
+  - the autostash conflicted only on previously local handoff-doc edits, so the pulled `HEAD` versions of `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md` were restored before continuing
+- Fixed inventory tile image resolution in `frontend/nextjs-app/lib/server/adminInventory.ts`:
+  - added `cdnHdUrl` / `cdnThumbUrl` selection for `CardAsset` and `CardPhoto`
+  - aligned front-image precedence with KingsReview by preferring the primary `CardAsset` front image/CDN fields first
+  - when falling back to `CardPhoto[]`, explicitly prefer `kind = FRONT` before any first-photo fallback
+- Fixed `/admin/inventory` filter dropdown overlap in `frontend/nextjs-app/components/admin/FilterBar.tsx`:
+  - replaced the uncontrolled `details` menus with controlled popovers
+  - ensured only one filter menu can be open at a time
+  - raised the filter-bar/menu stacking context so open menus render above the price chips and lower content
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/admin/FilterBar.tsx --file lib/server/adminInventory.ts --file pages/admin/inventory.tsx --file components/admin/CardTile.tsx --file pages/api/admin/inventory/cards.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+  - `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.

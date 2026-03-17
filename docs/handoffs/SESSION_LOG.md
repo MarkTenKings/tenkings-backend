@@ -11252,3 +11252,31 @@
 
 ### Notes
 - The original isolated-worktree Task 4 notes mentioned an architecture doc correction, but that doc file was not part of the staged Task 4 commit and therefore is not part of integrated commit `9e88d8c`.
+
+## 2026-03-17 - Task 5 Inventory UI Fixes
+
+### Summary
+- Synced `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` with `origin/main` before editing:
+  - `git pull --rebase --autostash origin main`
+  - fast-forwarded from `8b09b34` to `b7a2383`
+- Fixed the new `/admin/inventory` card-tile image selection so the grid prefers the front card image instead of falling through to a back photo.
+- Fixed the inventory filter dropdown stacking so Category/Year/Brand/Parallel menus render above the price preset controls and only one dropdown stays open at a time.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/adminInventory.ts`
+- `frontend/nextjs-app/components/admin/FilterBar.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/admin/FilterBar.tsx --file lib/server/adminInventory.ts --file pages/admin/inventory.tsx --file components/admin/CardTile.tsx --file pages/api/admin/inventory/cards.ts`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Notes
+- The autostash created by `git pull --rebase --autostash` conflicted only on the previously local handoff-doc edits; the pulled `HEAD` versions of those docs were restored before the Task 5 code changes were applied.
+- `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed.

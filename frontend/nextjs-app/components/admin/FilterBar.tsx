@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   INVENTORY_SORT_OPTIONS,
   findPricePreset,
@@ -15,9 +15,12 @@ type FilterBarProps = {
 };
 
 type MultiSelectMenuProps = {
+  menuId: string;
   label: string;
   options: string[];
   selected: string[];
+  isOpen: boolean;
+  onOpenChange: (next: boolean) => void;
   onToggle: (value: string) => void;
 };
 
@@ -44,39 +47,76 @@ const dollarInputToMinor = (value: string) => {
   return String(Math.round(parsed * 100));
 };
 
-function MultiSelectMenu({ label, options, selected, onToggle }: MultiSelectMenuProps) {
+function MultiSelectMenu({ menuId, label, options, selected, isOpen, onOpenChange, onToggle }: MultiSelectMenuProps) {
   const summary = selected.length > 0 ? `${label}: ${selected.length}` : label;
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      return undefined;
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        onOpenChange(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onOpenChange(false);
+      }
+    };
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onOpenChange]);
 
   return (
-    <details className="group relative min-w-[170px]">
-      <summary className="flex h-11 cursor-pointer list-none items-center justify-between rounded-xl border border-white/12 bg-black px-3 text-sm text-white outline-none transition hover:border-white/25">
+    <div ref={containerRef} className={`relative min-w-[170px] ${isOpen ? "z-40" : "z-10"}`}>
+      <button
+        type="button"
+        aria-expanded={isOpen}
+        aria-controls={`${menuId}-menu`}
+        onClick={() => onOpenChange(!isOpen)}
+        className="flex h-11 w-full items-center justify-between rounded-xl border border-white/12 bg-black px-3 text-sm text-white outline-none transition hover:border-white/25 focus:border-white/35"
+      >
         <span className="truncate">{summary}</span>
-        <span className="text-slate-500 transition group-open:rotate-180">▾</span>
-      </summary>
-      <div className="absolute left-0 top-[calc(100%+8px)] z-20 max-h-72 w-full overflow-auto rounded-2xl border border-white/12 bg-night-950/95 p-2 shadow-[0_18px_55px_rgba(0,0,0,0.5)] backdrop-blur">
-        {options.length === 0 ? (
-          <p className="px-3 py-2 text-sm text-slate-500">No options</p>
-        ) : (
-          options.map((option) => {
-            const active = selected.includes(option);
-            return (
-              <label
-                key={option}
-                className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-200 transition hover:bg-white/[0.04]"
-              >
-                <input
-                  type="checkbox"
-                  checked={active}
-                  onChange={() => onToggle(option)}
-                  className="h-4 w-4 rounded border-white/20 bg-black text-gold-400 focus:ring-gold-400"
-                />
-                <span className="truncate">{option}</span>
-              </label>
-            );
-          })
-        )}
-      </div>
-    </details>
+        <span className={`text-slate-500 transition ${isOpen ? "rotate-180" : ""}`}>▾</span>
+      </button>
+      {isOpen ? (
+        <div
+          id={`${menuId}-menu`}
+          className="absolute left-0 top-[calc(100%+8px)] z-50 max-h-72 w-full overflow-auto rounded-2xl border border-white/12 bg-night-950/95 p-2 shadow-[0_18px_55px_rgba(0,0,0,0.5)] backdrop-blur"
+        >
+          {options.length === 0 ? (
+            <p className="px-3 py-2 text-sm text-slate-500">No options</p>
+          ) : (
+            options.map((option) => {
+              const active = selected.includes(option);
+              return (
+                <label
+                  key={option}
+                  className="flex cursor-pointer items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-200 transition hover:bg-white/[0.04]"
+                >
+                  <input
+                    type="checkbox"
+                    checked={active}
+                    onChange={() => onToggle(option)}
+                    className="h-4 w-4 rounded border-white/20 bg-black text-gold-400 focus:ring-gold-400"
+                  />
+                  <span className="truncate">{option}</span>
+                </label>
+              );
+            })
+          )}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -84,6 +124,7 @@ export function FilterBar({ filters, filterOptions, loading, onChange }: FilterB
   const [searchDraft, setSearchDraft] = useState(filters.search);
   const [minDraft, setMinDraft] = useState(minorToDollarInput(filters.minPrice));
   const [maxDraft, setMaxDraft] = useState(minorToDollarInput(filters.maxPrice));
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   useEffect(() => {
     setSearchDraft(filters.search);
@@ -106,6 +147,12 @@ export function FilterBar({ filters, filterOptions, loading, onChange }: FilterB
   const activePreset = findPricePreset(filters.minPrice, filters.maxPrice);
   const showSubCategory = filters.category.includes("SPORTS");
 
+  useEffect(() => {
+    if (!showSubCategory && openMenuId === "sub-category") {
+      setOpenMenuId(null);
+    }
+  }, [openMenuId, showSubCategory]);
+
   const toggleValue = (key: "category" | "subCategory" | "year" | "brand" | "parallel", value: string) => {
     const current = filters[key];
     const next = current.includes(value) ? current.filter((entry) => entry !== value) : [...current, value];
@@ -117,40 +164,55 @@ export function FilterBar({ filters, filterOptions, loading, onChange }: FilterB
   };
 
   return (
-    <section className={adminPanelClass("p-4 md:p-5")}>
+    <section className={adminPanelClass("relative z-20 p-4 md:p-5")}>
       <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="relative z-30 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="grid gap-3 md:grid-cols-2 xl:flex xl:flex-wrap">
             <MultiSelectMenu
+              menuId="category"
               label="Category"
               options={filterOptions?.categories ?? []}
               selected={filters.category}
+              isOpen={openMenuId === "category"}
+              onOpenChange={(next) => setOpenMenuId(next ? "category" : null)}
               onToggle={(value) => toggleValue("category", value)}
             />
             {showSubCategory ? (
               <MultiSelectMenu
+                menuId="sub-category"
                 label="Sub-Category"
                 options={filterOptions?.subCategories ?? []}
                 selected={filters.subCategory}
+                isOpen={openMenuId === "sub-category"}
+                onOpenChange={(next) => setOpenMenuId(next ? "sub-category" : null)}
                 onToggle={(value) => toggleValue("subCategory", value)}
               />
             ) : null}
             <MultiSelectMenu
+              menuId="year"
               label="Year"
               options={filterOptions?.years ?? []}
               selected={filters.year}
+              isOpen={openMenuId === "year"}
+              onOpenChange={(next) => setOpenMenuId(next ? "year" : null)}
               onToggle={(value) => toggleValue("year", value)}
             />
             <MultiSelectMenu
+              menuId="brand"
               label="Brand"
               options={filterOptions?.brands ?? []}
               selected={filters.brand}
+              isOpen={openMenuId === "brand"}
+              onOpenChange={(next) => setOpenMenuId(next ? "brand" : null)}
               onToggle={(value) => toggleValue("brand", value)}
             />
             <MultiSelectMenu
+              menuId="parallel"
               label="Parallel"
               options={filterOptions?.parallels ?? []}
               selected={filters.parallel}
+              isOpen={openMenuId === "parallel"}
+              onOpenChange={(next) => setOpenMenuId(next ? "parallel" : null)}
               onToggle={(value) => toggleValue("parallel", value)}
             />
             <select
@@ -177,7 +239,7 @@ export function FilterBar({ filters, filterOptions, loading, onChange }: FilterB
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="relative z-10 flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex flex-wrap gap-2">
             {[
               { label: "$0-10", min: "0", max: "1000" },

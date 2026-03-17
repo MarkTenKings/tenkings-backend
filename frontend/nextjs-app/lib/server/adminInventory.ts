@@ -31,6 +31,8 @@ const CARD_ASSET_SELECT = {
   fileName: true,
   imageUrl: true,
   thumbnailUrl: true,
+  cdnHdUrl: true,
+  cdnThumbUrl: true,
   valuationMinor: true,
   classificationJson: true,
   customTitle: true,
@@ -51,6 +53,8 @@ const CARD_ASSET_SELECT = {
       kind: true,
       imageUrl: true,
       thumbnailUrl: true,
+      cdnHdUrl: true,
+      cdnThumbUrl: true,
       createdAt: true,
     },
   },
@@ -127,6 +131,31 @@ const pickFirstString = (...values: Array<string | null | undefined>) => {
   }
   return null;
 };
+
+const FRONT_PHOTO_KIND = "FRONT";
+
+function resolvePhotoPreviewUrl(photo: CardAssetListRow["photos"][number] | null | undefined) {
+  if (!photo) {
+    return null;
+  }
+  return pickFirstString(photo.cdnThumbUrl, photo.thumbnailUrl, photo.cdnHdUrl, photo.imageUrl);
+}
+
+function resolveFrontInventoryPhotoUrl(card: CardAssetListRow) {
+  const frontPhoto =
+    card.photos.find((photo) => (typeof photo.kind === "string" ? photo.kind.toUpperCase() : photo.kind) === FRONT_PHOTO_KIND) ?? null;
+  const fallbackPhoto = frontPhoto ?? card.photos[0] ?? null;
+
+  // KingsReview treats the CardAsset image/CDN fields as the canonical front image, with CardPhoto rows used for supplemental angles.
+  return pickFirstString(
+    card.cdnThumbUrl,
+    card.thumbnailUrl,
+    card.cdnHdUrl,
+    card.imageUrl,
+    resolvePhotoPreviewUrl(frontPhoto),
+    resolvePhotoPreviewUrl(fallbackPhoto)
+  );
+}
 
 const compareStrings = (left: string | null | undefined, right: string | null | undefined) =>
   (left ?? "").localeCompare(right ?? "", "en", { numeric: true, sensitivity: "base" });
@@ -263,11 +292,7 @@ function deriveInventoryCardMetadata(card: CardAssetListRow): InventoryCardMetad
   const cardNumber = pickFirstString(normalized?.cardNumber);
   const parallel = pickFirstString(attributes?.variantKeywords?.[0] ?? null);
   const sport = pickFirstString(normalized?.sport?.sport, normalized?.sport?.subcategory, subCategory);
-  const frontPhotoUrl =
-    card.photos.find((photo) => photo.kind === "FRONT")?.imageUrl ??
-    card.photos[0]?.imageUrl ??
-    card.thumbnailUrl ??
-    card.imageUrl;
+  const frontPhotoUrl = resolveFrontInventoryPhotoUrl(card);
 
   const searchText = [
     playerName,
