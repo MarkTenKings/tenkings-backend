@@ -6227,3 +6227,18 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this hotfix.
+
+## Session Update (2026-03-17, Teach commit replay verification)
+- Re-read the mandatory startup docs per `AGENTS.md` before this verification-only session.
+- Fetched and pulled `origin/main` without changing code:
+  - `git fetch origin main` -> pass
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Verified current remote/main state before this docs append:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short origin/main` -> `a643e3f`
+- Confirmed the Task 11 teach commit is already present on `origin/main` history:
+  - `df43737` -> `fix(teach): audit + fix both Draw Teach and Teach From Corrections modes`
+  - `git branch --contains df43737` -> `main`
+  - `git log --oneline origin/main` shows `df43737` beneath later docs/KingsReview commits
+- No rebase, cherry-pick, deploy, restart, migration, runtime mutation, or DB mutation was needed or executed in this session.

@@ -11770,3 +11770,33 @@
 ### Notes
 - Official SerpApi eBay docs support `_pgn`, `_ipg`, and `show_only=Sold,Complete`; `_sop` was not supported by that engine and caused the `400`.
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this hotfix.
+
+## 2026-03-17 - Teach Commit Replay Verification
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Fetched and pulled the latest `origin/main` to verify whether Task 11's teach commit still needed to be replayed.
+- Confirmed no rebase or cherry-pick was necessary because `df43737` is already present in `origin/main` history and reachable from the checked-out `main`.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Git State
+- `git fetch origin main`
+  - pass
+- `git pull --ff-only origin main`
+  - `Already up to date.`
+- `git status -sb`
+  - `## main...origin/main`
+- `git branch --show-current`
+  - `main`
+- `git rev-parse --short origin/main`
+  - `a643e3f`
+- `git branch --contains df43737`
+  - `main`
+
+### Notes
+- Verified target commit: `df43737` -> `fix(teach): audit + fix both Draw Teach and Teach From Corrections modes`
+- `git log --oneline origin/main` shows `df43737` beneath later `main` commits, so the requested teach changes are already on the remote default branch.
+- No code changes were replayed, and no deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
