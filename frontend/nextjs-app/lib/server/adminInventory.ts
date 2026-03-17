@@ -725,6 +725,28 @@ async function loadLocationBatches(locationId?: string) {
   });
 }
 
+function buildEmptyAssignedLocationSummary(location: {
+  id: string;
+  name: string;
+  slug: string;
+}): AssignedLocationSummary {
+  return {
+    id: location.id,
+    name: location.name,
+    slug: location.slug,
+    cardCount: 0,
+    totalValue: 0,
+    categories: [],
+    tiers: [],
+    stageSummary: [],
+    primaryStage: null,
+    packingProgress: {
+      packedCount: 0,
+      totalCount: 0,
+    },
+  };
+}
+
 export async function getAssignedLocationsSummary(): Promise<{
   summary: {
     totalCards: number;
@@ -734,6 +756,14 @@ export async function getAssignedLocationsSummary(): Promise<{
   };
   locations: AssignedLocationSummary[];
 }> {
+  const locations = await prisma.location.findMany({
+    orderBy: { name: "asc" },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+    },
+  });
   const batches = await loadLocationBatches();
   const allCardIds = batches.flatMap((batch) => batch.cards.map((card) => card.id));
   const packedCardIds = await getPackedCardIds(allCardIds);
@@ -745,27 +775,13 @@ export async function getAssignedLocationsSummary(): Promise<{
   let cardsThisWeek = 0;
   let totalValue = 0;
 
-  const byLocation = new Map<string, AssignedLocationSummary>();
+  const byLocation = new Map<string, AssignedLocationSummary>(
+    locations.map((location) => [location.id, buildEmptyAssignedLocationSummary(location)])
+  );
 
   for (const batch of batches) {
     const location = batch.location;
-    const existing =
-      byLocation.get(location.id) ??
-      ({
-        id: location.id,
-        name: location.name,
-        slug: location.slug,
-        cardCount: 0,
-        totalValue: 0,
-        categories: [],
-        tiers: [],
-        stageSummary: [],
-        primaryStage: null,
-        packingProgress: {
-          packedCount: 0,
-          totalCount: 0,
-        },
-      } satisfies AssignedLocationSummary);
+    const existing = byLocation.get(location.id) ?? buildEmptyAssignedLocationSummary(location);
 
     const categoryCounts = new Map(existing.categories.map((entry) => [entry.category, entry.count]));
     const tierCounts = new Map(existing.tiers.map((entry) => [entry.tier, entry.count]));
@@ -813,9 +829,7 @@ export async function getAssignedLocationsSummary(): Promise<{
       cardsThisWeek,
       totalValue,
     },
-    locations: [...byLocation.values()].sort(
-      (left, right) => right.totalValue - left.totalValue || compareStrings(left.name, right.name)
-    ),
+    locations: [...byLocation.values()].sort((left, right) => compareStrings(left.name, right.name)),
   };
 }
 

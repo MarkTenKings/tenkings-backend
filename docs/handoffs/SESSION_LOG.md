@@ -11444,3 +11444,45 @@
 ### Notes
 - The functional fix stays inside Add Cards scope resolution and option-pool selection; no OCR provider pipeline, KingsReview flow, inventory flow, packing flow, or mint flow was changed.
 - `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed.
+
+## 2026-03-17 - Task 12 Assigned Locations location creation + standalone recipes
+
+### Summary
+- Synced `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` with `origin/main` before editing:
+  - `git pull --ff-only origin main`
+  - result: `Already up to date.`
+- Local `main` was already one commit ahead of `origin/main` on entry:
+  - `64dc7b6` `fix(add-cards): resolve product set + insert/parallel immediately instead of delayed polling`
+- Added admin location creation directly on `/admin/assigned-locations` so operators can create recipe-ready locations without leaving the page.
+- Expanded the assigned-locations summary so all `Location` rows appear, including locations with zero assigned cards.
+- Added direct `Manage Recipes` entry points for empty locations and updated detail-page copy to support recipe setup before the first card assignment.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/adminInventory.ts`
+- `frontend/nextjs-app/pages/admin/assigned-locations.tsx`
+- `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx`
+- `frontend/nextjs-app/pages/api/admin/locations/index.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Added
+- `frontend/nextjs-app/components/admin/AddLocationModal.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/assigned-locations.tsx --file 'pages/admin/assigned-locations/[locationId].tsx' --file pages/api/admin/locations/index.ts --file components/admin/AddLocationModal.tsx --file lib/server/adminInventory.ts`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - fails due pre-existing unrelated local typing errors in:
+    - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `git diff --check`
+  - pass
+
+### Notes
+- `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; lint still passed.
+- Unrelated local edits already present in the working tree were left untouched and are not part of this task’s staged change set, including:
+  - `frontend/nextjs-app/lib/server/kingsreviewEbayComps.ts`
+  - `frontend/nextjs-app/lib/server/ocrFeedbackMemory.ts`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/comps.ts`

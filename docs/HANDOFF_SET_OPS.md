@@ -6121,3 +6121,35 @@ Build Set Ops UI flow with:
   - `git diff --check` -> pass
   - `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
+## Session Update (2026-03-17, Task 12 assigned locations + standalone recipe setup)
+- Synced the workstation `main` checkout with `origin/main` before editing:
+  - `git pull --ff-only origin main`
+  - result: `Already up to date.`
+  - note: local `main` was already ahead of `origin/main` by one pre-existing commit (`64dc7b6`, Add Cards product-set auto-selection fix)
+- Expanded assigned-location coverage in `frontend/nextjs-app/lib/server/adminInventory.ts` so `/admin/assigned-locations` now returns every `Location`, including locations with zero assigned cards.
+- Added admin-side location creation support in `frontend/nextjs-app/pages/api/admin/locations/index.ts`:
+  - `POST /api/admin/locations`
+  - requires admin session
+  - validates `name`, `address`, and optional `slug`
+  - normalizes slug with the shared `slugify(...)` helper
+  - initializes `recentRips` to `[]`
+- Added `frontend/nextjs-app/components/admin/AddLocationModal.tsx` and updated `/admin/assigned-locations` to:
+  - keep `+ Add Location` visible in the header at all times
+  - create locations in place and refresh the location list immediately
+  - keep `Go to Inventory` as a secondary action
+  - show actionable cards for empty locations with direct `Manage Recipes` links
+  - use a true empty state of `No locations yet` only when the `Location` table itself is empty
+- Updated `/admin/assigned-locations/[locationId]` copy so recipe setup is explicitly supported before any cards are assigned.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/assigned-locations.tsx --file 'pages/admin/assigned-locations/[locationId].tsx' --file pages/api/admin/locations/index.ts --file components/admin/AddLocationModal.tsx --file lib/server/adminInventory.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> fails due pre-existing unrelated local errors in:
+    - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - `git diff --check` -> pass
+- Unrelated local edits present before staging this task were left untouched, including:
+  - `frontend/nextjs-app/lib/server/kingsreviewEbayComps.ts`
+  - `frontend/nextjs-app/lib/server/ocrFeedbackMemory.ts`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/comps.ts`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.

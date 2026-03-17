@@ -1,7 +1,8 @@
 import Head from "next/head";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
+import { AddLocationModal } from "../../components/admin/AddLocationModal";
 import {
   ADMIN_PAGE_FRAME_CLASS,
   AdminPageHeader,
@@ -39,7 +40,11 @@ export default function AssignedLocationsPage() {
   const { session, loading, ensureSession, logout } = useSession();
   const [payload, setPayload] = useState<AssignedLocationsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loadingData, setLoadingData] = useState(false);
+  const [showAddLocationModal, setShowAddLocationModal] = useState(false);
+  const [locationCreateBusy, setLocationCreateBusy] = useState(false);
+  const [locationCreateError, setLocationCreateError] = useState<string | null>(null);
 
   const isAdmin = useMemo(
     () => hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone),
@@ -47,37 +52,86 @@ export default function AssignedLocationsPage() {
   );
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
 
+  const loadAssignedLocations = useCallback(
+    async (options?: { signal?: AbortSignal; quiet?: boolean }) => {
+      if (!options?.quiet) {
+        setLoadingData(true);
+      }
+
+      try {
+        const response = await fetch("/api/admin/assigned-locations", {
+          headers: adminHeaders,
+          signal: options?.signal,
+        });
+        if (!response.ok) {
+          throw new Error("Failed to load assigned locations");
+        }
+        const nextPayload = (await response.json()) as AssignedLocationsResponse;
+        setPayload(nextPayload);
+        setError(null);
+      } catch (fetchError: unknown) {
+        if ((fetchError as Error).name === "AbortError") {
+          return;
+        }
+        setError(fetchError instanceof Error ? fetchError.message : "Failed to load locations");
+      } finally {
+        if (!options?.quiet) {
+          setLoadingData(false);
+        }
+      }
+    },
+    [adminHeaders]
+  );
+
   useEffect(() => {
     if (!session?.token || !isAdmin) {
       return;
     }
 
     const controller = new AbortController();
-    setLoadingData(true);
-    fetch("/api/admin/assigned-locations", {
-      headers: adminHeaders,
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error("Failed to load assigned locations");
-        }
-        return (await response.json()) as AssignedLocationsResponse;
-      })
-      .then((nextPayload) => {
-        setPayload(nextPayload);
-        setError(null);
-      })
-      .catch((fetchError: unknown) => {
-        if ((fetchError as Error).name === "AbortError") {
-          return;
-        }
-        setError(fetchError instanceof Error ? fetchError.message : "Failed to load locations");
-      })
-      .finally(() => setLoadingData(false));
+    void loadAssignedLocations({ signal: controller.signal });
 
     return () => controller.abort();
-  }, [adminHeaders, isAdmin, session?.token]);
+  }, [isAdmin, loadAssignedLocations, session?.token]);
+
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setNotice(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
+
+  const handleCreateLocation = async (value: { name: string; address: string; slug: string }) => {
+    setLocationCreateBusy(true);
+    setLocationCreateError(null);
+
+    try {
+      const response = await fetch("/api/admin/locations", {
+        method: "POST",
+        headers: buildAdminHeaders(session?.token, {
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify(value),
+      });
+      const responseJson = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        location?: { name?: string };
+      };
+
+      if (!response.ok) {
+        throw new Error(responseJson.message ?? "Failed to create location");
+      }
+
+      setShowAddLocationModal(false);
+      setNotice(`Location '${responseJson.location?.name ?? value.name}' created`);
+      await loadAssignedLocations({ quiet: true });
+    } catch (createError: unknown) {
+      setLocationCreateError(createError instanceof Error ? createError.message : "Failed to create location");
+    } finally {
+      setLocationCreateBusy(false);
+    }
+  };
 
   const gate = (() => {
     if (loading) {
@@ -139,13 +193,39 @@ export default function AssignedLocationsPage() {
         <meta name="robots" content="noindex" />
       </Head>
 
+      {notice ? (
+        <div className="fixed right-4 top-4 z-50 max-w-md rounded-2xl border border-emerald-400/30 bg-emerald-500/15 px-4 py-3 text-sm text-emerald-100 shadow-[0_18px_50px_rgba(0,0,0,0.4)]">
+          {notice}
+        </div>
+      ) : null}
+
       <div className={ADMIN_PAGE_FRAME_CLASS}>
         <AdminPageHeader
           backHref="/admin"
           backLabel="← Admin Home"
           eyebrow="Inventory Routing"
           title="Assigned Locations"
-          description="Track inventory batches by location, monitor derived packing progress, and jump into the batch drill-down to ship, load, or return cards to inventory."
+          description="Create locations, prepare pack recipes before inventory arrives, and track assigned-card progress by location once batches start flowing."
+          actions={
+            <>
+              <Link
+                href="/admin/inventory"
+                className="rounded-full border border-white/12 px-5 py-3 text-[11px] uppercase tracking-[0.24em] text-slate-200 transition hover:border-white/25 hover:text-white"
+              >
+                Go to Inventory
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  setLocationCreateError(null);
+                  setShowAddLocationModal(true);
+                }}
+                className="rounded-full border border-gold-400/45 bg-gold-500 px-5 py-3 text-[11px] uppercase tracking-[0.24em] text-night-950 transition hover:bg-gold-400"
+              >
+                + Add Location
+              </button>
+            </>
+          }
         />
 
         {error ? (
@@ -187,24 +267,38 @@ export default function AssignedLocationsPage() {
               {payload.locations.map((location) => (
                 <article
                   key={location.id}
-                  className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5 shadow-[0_16px_50px_rgba(0,0,0,0.28)]"
+                  className="relative rounded-[24px] border border-white/10 bg-white/[0.03] p-5 shadow-[0_16px_50px_rgba(0,0,0,0.28)] transition hover:border-gold-400/25 hover:bg-white/[0.05]"
                 >
-                  <div className="flex flex-wrap items-start justify-between gap-4">
+                  <Link
+                    href={`/admin/assigned-locations/${location.id}`}
+                    aria-label={`View ${location.name}`}
+                    className="absolute inset-0 rounded-[24px] focus:outline-none focus-visible:ring-2 focus-visible:ring-gold-400/70"
+                  />
+
+                  <div className="relative z-10 flex flex-wrap items-start justify-between gap-4">
                     <div className="space-y-2">
                       <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">
-                        {location.primaryStage ?? "No Stage"}
+                        {location.cardCount > 0 ? location.primaryStage ?? "In Routing" : "Recipe Planning Ready"}
                       </p>
                       <h2 className="font-heading text-2xl uppercase tracking-[0.12em] text-white">{location.name}</h2>
                     </div>
-                    <Link
-                      href={`/admin/assigned-locations/${location.id}`}
-                      className="rounded-full border border-gold-400/45 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-gold-100 transition hover:border-gold-300 hover:text-white"
-                    >
-                      View Cards
-                    </Link>
+                    <div className="flex flex-wrap gap-2">
+                      <Link
+                        href={`/admin/assigned-locations/${location.id}`}
+                        className="relative z-10 rounded-full border border-white/15 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-slate-100 transition hover:border-white/35 hover:text-white"
+                      >
+                        View Location →
+                      </Link>
+                      <Link
+                        href={`/admin/assigned-locations/${location.id}?tab=recipes`}
+                        className="relative z-10 rounded-full border border-gold-400/45 px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-gold-100 transition hover:border-gold-300 hover:text-white"
+                      >
+                        Manage Recipes
+                      </Link>
+                    </div>
                   </div>
 
-                  <div className="mt-5 grid gap-3 md:grid-cols-2">
+                  <div className="relative z-10 mt-5 grid gap-3 md:grid-cols-2">
                     <div>
                       <p className="text-[11px] uppercase tracking-[0.22em] text-slate-500">Cards</p>
                       <p className="mt-2 text-2xl font-semibold text-white">{location.cardCount}</p>
@@ -217,52 +311,96 @@ export default function AssignedLocationsPage() {
                     </div>
                   </div>
 
-                  <div className="mt-5 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.22em]">
-                    {location.categories.map((entry) => (
-                      <span key={`${entry.category}-${entry.count}`} className="rounded-full border border-white/10 px-2.5 py-1 text-slate-300">
-                        {formatCategoryLabel(entry.category)} · {entry.count}
-                      </span>
-                    ))}
-                    {location.tiers.map((entry) => (
-                      <span key={`${entry.tier}-${entry.count}`} className="rounded-full border border-white/10 px-2.5 py-1 text-slate-300">
-                        {formatPackTierLabel(entry.tier)} · {entry.count}
-                      </span>
-                    ))}
-                  </div>
+                  {location.cardCount > 0 ? (
+                    <>
+                      <div className="relative z-10 mt-5 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.22em]">
+                        {location.categories.map((entry) => (
+                          <span
+                            key={`${entry.category}-${entry.count}`}
+                            className="rounded-full border border-white/10 px-2.5 py-1 text-slate-300"
+                          >
+                            {formatCategoryLabel(entry.category)} · {entry.count}
+                          </span>
+                        ))}
+                        {location.tiers.map((entry) => (
+                          <span
+                            key={`${entry.tier}-${entry.count}`}
+                            className="rounded-full border border-white/10 px-2.5 py-1 text-slate-300"
+                          >
+                            {formatPackTierLabel(entry.tier)} · {entry.count}
+                          </span>
+                        ))}
+                      </div>
 
-                  <div className="mt-5 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.22em] text-slate-400">
-                    {location.stageSummary.map((entry) => (
-                      <span key={`${entry.stage}-${entry.count}`} className="rounded-full border border-white/10 px-2.5 py-1">
-                        {entry.stage} · {entry.count}
-                      </span>
-                    ))}
-                  </div>
+                      <div className="relative z-10 mt-5 flex flex-wrap gap-2 text-[11px] uppercase tracking-[0.22em] text-slate-400">
+                        {location.stageSummary.map((entry) => (
+                          <span key={`${entry.stage}-${entry.count}`} className="rounded-full border border-white/10 px-2.5 py-1">
+                            {entry.stage} · {entry.count}
+                          </span>
+                        ))}
+                      </div>
 
-                  <div className="mt-6">
-                    <ProgressBar
-                      packedCount={location.packingProgress.packedCount}
-                      totalCount={location.packingProgress.totalCount}
-                    />
-                  </div>
+                      <div className="relative z-10 mt-6">
+                        <ProgressBar
+                          packedCount={location.packingProgress.packedCount}
+                          totalCount={location.packingProgress.totalCount}
+                        />
+                      </div>
+                    </>
+                  ) : (
+                    <div className="relative z-10 mt-6 rounded-[22px] border border-dashed border-white/12 bg-black/35 px-4 py-5">
+                      <p className="text-sm text-white">No batches assigned yet</p>
+                      <p className="mt-2 text-sm text-slate-400">
+                        Create recipes now so this location is ready when cards arrive from Inventory.
+                      </p>
+                    </div>
+                  )}
                 </article>
               ))}
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center gap-4 py-12 text-center">
-              <h2 className="font-heading text-3xl uppercase tracking-[0.12em] text-white">No assigned locations yet</h2>
+              <h2 className="font-heading text-3xl uppercase tracking-[0.12em] text-white">No locations yet</h2>
               <p className="max-w-xl text-sm text-slate-400">
-                Assign cards from Inventory to start building location batches and packing progress.
+                Create your first location to start managing inventory and pack recipes.
               </p>
-              <Link
-                href="/admin/inventory"
-                className="rounded-full border border-gold-400/45 px-5 py-3 text-[11px] uppercase tracking-[0.24em] text-gold-100 transition hover:border-gold-300 hover:text-white"
-              >
-                Go to Inventory
-              </Link>
+              <div className="flex flex-wrap justify-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLocationCreateError(null);
+                    setShowAddLocationModal(true);
+                  }}
+                  className="rounded-full border border-gold-400/45 bg-gold-500 px-5 py-3 text-[11px] uppercase tracking-[0.24em] text-night-950 transition hover:bg-gold-400"
+                >
+                  + Add Location
+                </button>
+                <Link
+                  href="/admin/inventory"
+                  className="rounded-full border border-white/12 px-5 py-3 text-[11px] uppercase tracking-[0.24em] text-slate-200 transition hover:border-white/25 hover:text-white"
+                >
+                  Go to Inventory
+                </Link>
+              </div>
             </div>
           )}
         </section>
       </div>
+
+      {showAddLocationModal ? (
+        <AddLocationModal
+          busy={locationCreateBusy}
+          error={locationCreateError}
+          onClose={() => {
+            if (locationCreateBusy) {
+              return;
+            }
+            setLocationCreateError(null);
+            setShowAddLocationModal(false);
+          }}
+          onCreate={(value) => void handleCreateLocation(value)}
+        />
+      ) : null}
     </AppShell>
   );
 }

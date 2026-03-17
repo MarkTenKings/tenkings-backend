@@ -1040,9 +1040,9 @@ export default function AssignedLocationDetailPage() {
                     How Packing Works
                   </summary>
                   <ol className="mt-3 space-y-2 text-sm text-slate-300">
-                    <li>1. Assign cards to a location on the Inventory page.</li>
-                    <li>2. Configure pack recipes here in the Recipes tab to define what goes in each pack.</li>
-                    <li>3. Open Packing Slips to print the instructions your packers follow.</li>
+                    <li>1. Configure pack recipes here in the Recipes tab so this location is ready before cards arrive.</li>
+                    <li>2. Assign cards to a location on the Inventory page when inventory is ready.</li>
+                    <li>3. Open Packing Slips to print the instructions your packers follow once a batch exists.</li>
                     <li>
                       4. Pack and ship through the existing{" "}
                       <Link href="/admin/packing" className="text-gold-200 transition hover:text-white">
@@ -1074,7 +1074,7 @@ export default function AssignedLocationDetailPage() {
                   </div>
                 ) : (
                   <p className="max-w-sm text-sm text-slate-400">
-                    Assign cards from Inventory first, then come back here to configure recipes and print slips.
+                    Create recipes now, then assign cards from Inventory when stock arrives to unlock packing slips.
                   </p>
                 )}
                 {activeBatch ? (
@@ -1271,7 +1271,11 @@ export default function AssignedLocationDetailPage() {
                   <p className="mt-3 text-sm text-amber-100">
                     This location already has {detail.batches.length} batch{detail.batches.length === 1 ? "" : "es"} waiting on recipe guidance.
                   </p>
-                ) : null}
+                ) : (
+                  <p className="mt-3 text-sm text-amber-100">
+                    This location has no cards assigned yet, but you can build recipes now so operators are ready before the first batch lands.
+                  </p>
+                )}
                 <button
                   type="button"
                   onClick={openCreateRecipe}
