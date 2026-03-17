@@ -1,16 +1,16 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-17` (Task 6 KingsReview load-more comps implemented locally on `main`; no deploy/restart/migration or new runtime/DB evidence)
+- Last reviewed: `2026-03-17` (Task 7 KingsReview performance/teach/baseball audit completed locally on `main`; no deploy/restart/migration or DB writes)
 - Branch: `main`
-- Short HEAD: `b7a2383`
+- Short HEAD: `5d2885c`
 - Latest repo commits:
+  - `5d2885c` feat(kingsreview): add Load More Comps button for additional eBay sold results
+  - `cecaf6d` fix(inventory): show front photo in card tiles + fix filter dropdown z-index
   - `b7a2383` docs(handoff): record task4 main-lineage replay
   - `9e88d8c` Add location pack recipes and packing slips
   - `8b09b34` feat(admin): add inventory routing and assigned locations
-  - `10b9669` docs(handoff): log inventory v2 merge to main
-  - `3118d0a` feat(database): add inventory v2 foundation schema
-- Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
+- Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; read-only DB verification via Prisma with `.env.production`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
 ## What Works
@@ -111,6 +111,32 @@ Build Set Ops UI flow with:
   - `git diff --check`
     - pass
 - No deploy, restart, migration, runtime, or DB operation was executed.
+
+## Session Update (2026-03-17, Task 7 KingsReview performance + Teach audit)
+- Re-read mandatory startup docs per `AGENTS.md`, fetched `origin/main`, and confirmed local `main` was already current before editing (`git status -sb` returned `## main...origin/main` after fetch).
+- KingsReview performance findings and fixes:
+  - comp selection in `frontend/nextjs-app/pages/admin/kingsreview.tsx` was already client-state-only (`activeCompIndex`); no API call is made when clicking between sold comps
+  - observed lag sources were aggressive detail/photo preloading, 2-second queue polling, and full comp-list rerenders on toggle
+  - reduced the queue poll cadence to 5 seconds, skip polling in hidden tabs, avoid `setCards(...)` when summary payloads are unchanged, preload only thumbnails for nearby cards, memoize `CompCard`, and lazy-load comp/evidence images
+- Teach audit:
+  - KingsReview's visible `Teach` panel is Bytebot playbook-rule management only, so the UI copy was clarified to `Bytebot Teach`
+  - OCR teach-from-corrections is implemented in Add Cards, not KingsReview:
+    - `frontend/nextjs-app/pages/admin/uploads.tsx` records corrections with `recordOcrFeedback: true`
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts` persists `OcrFeedbackEvent` rows and updates `OcrFeedbackMemoryAggregate`
+    - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts` reads that memory back through feedback-hint application
+  - read-only production DB verification found `80` `OcrFeedbackEvent` rows and `268` `OcrFeedbackMemoryAggregate` rows
+- Baseball dropdown findings:
+  - baseball set data exists in the DB (`196` baseball draft rows found in read-only verification, including 2018 Topps baseball variants)
+  - the same option-pool code path used by Add Cards returned `19` set options for the scope `2018 / Topps / Baseball` with source `taxonomy_v2`
+  - likely failure mode is incorrect Year / Manufacturer / Sport scope on the card rather than missing baseball catalog data, so Add Cards now shows an operator hint when no Product Set options match the current scope
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/admin/uploads.tsx`
+    - pass with existing `@next/next/no-img-element` warnings on legacy `<img>` usage
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - fails due unrelated pre-existing typing errors in `frontend/nextjs-app/pages/api/admin/inventory/cards/[cardId].ts`
+  - `git diff --check`
+    - pass
+- No deploy, restart, migration, runtime mutation, or DB write was executed.
 
 ## Implementation Progress (2026-02-22)
 - P0-A Ticket 1 complete in code: Set Ops Prisma foundation models/enums + migration scaffold added.

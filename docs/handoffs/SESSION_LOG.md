@@ -11351,3 +11351,51 @@
 - Initial comps still come from the existing KingsReview job payload; the new admin API route is only used for append-only follow-up pages.
 - The new server helper uses SerpApi eBay `_pgn` pagination so the client can request additional sold listings without touching comp attachment behavior.
 - `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed.
+
+## 2026-03-17 - Task 7 KingsReview Performance + Teach/Dropdown Audit
+
+### Summary
+- Confirmed `/admin/kingsreview` comp toggling already uses client-only `activeCompIndex` state; no per-click comp-detail API call was found.
+- Reduced KingsReview lag by:
+  - memoizing comp cards and comp-action handlers
+  - throttling queue polling from 2 seconds to 5 seconds and skipping polling while the tab is hidden
+  - avoiding `setCards(...)` when the refreshed queue payload is unchanged
+  - replacing eager full-detail/photo preloads with thumbnail-only preloads for the queue and active card
+  - adding lazy/async loading to comp and evidence images
+- Clarified the KingsReview `Teach` UI as `Bytebot Teach` and added inline copy stating it saves Bytebot click-selector rules only.
+- Audited OCR teach-from-corrections end-to-end:
+  - corrections are captured from Add Cards, not KingsReview
+  - `PATCH /api/admin/cards/[cardId]` persists `OcrFeedbackEvent` rows and updates `OcrFeedbackMemoryAggregate`
+  - `/api/admin/cards/[cardId]/ocr-suggest` reads that stored memory back into later OCR suggestions
+- Investigated the missing baseball Product Set dropdown:
+  - read-only DB evidence shows baseball set data exists
+  - the option-pool loader returned baseball set options for a representative `2018 / Topps / Baseball` scope
+  - likely failure mode is incorrect Year / Manufacturer / Sport scope on the card rather than missing catalog data
+  - added an Add Cards hint when no Product Set options match the current scope
+- Fetched `origin/main` and confirmed local `main` was already current before commit work.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `git fetch origin main`
+  - pass; local `git status -sb` then showed `## main...origin/main`
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/admin/uploads.tsx`
+  - pass with existing `@next/next/no-img-element` warnings on legacy `<img>` usage
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - fails due unrelated pre-existing typing errors in `frontend/nextjs-app/pages/api/admin/inventory/cards/[cardId].ts`
+- `git diff --check`
+  - pass
+- Read-only production DB verification:
+  - `OcrFeedbackEvent`: `80`
+  - `OcrFeedbackMemoryAggregate`: `268`
+  - baseball draft rows found: `196`
+  - `loadVariantOptionPool(2018, Topps, Baseball)`: `19` set options from `taxonomy_v2`
+
+### Notes
+- KingsReview `Bytebot Teach` remains separate from OCR teach-from-corrections; Add Cards is the current OCR teaching surface.
+- `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; lint still passed.

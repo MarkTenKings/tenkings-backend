@@ -5013,6 +5013,11 @@ export default function AdminUploads() {
                         )}`}
                       />
                     )}
+                    {!productLineOptions.length && intakeRequired.year.trim() && intakeRequired.manufacturer.trim() ? (
+                      <p className="text-xs text-amber-200/80">
+                        No Product Set dropdown options matched the current Year / Manufacturer / Sport scope. Re-check those fields or type the set manually.
+                      </p>
+                    ) : null}
                     <div className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs uppercase tracking-[0.22em] text-slate-400">
                       Sport (auto): <span className="text-slate-200">{intakeRequired.sport || "Unknown"}</span>
                     </div>

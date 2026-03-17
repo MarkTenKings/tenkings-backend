@@ -1997,7 +1997,7 @@ export default function KingsReview() {
     sourceComps,
   ]);
 
-  const handleAttachComp = async (comp: JobResultComp, kind: string) => {
+  const handleAttachComp = useCallback(async (comp: JobResultComp, kind: string) => {
     if (!activeCardId || !activeCard) {
       return;
     }
@@ -2069,7 +2069,7 @@ export default function KingsReview() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to attach comp");
     }
-  };
+  }, [activeCard, activeCardId, adminHeaders, variantNotes]);
 
   const handleAttachSearch = async () => {
     if (!activeCardId || !activeSourceData) {
@@ -2103,7 +2103,7 @@ export default function KingsReview() {
     }
   };
 
-  const handleDeleteEvidence = async (id: string) => {
+  const handleDeleteEvidence = useCallback(async (id: string) => {
     setError(null);
     try {
       const res = await fetch(`/api/admin/kingsreview/evidence?id=${encodeURIComponent(id)}`, {
@@ -2117,16 +2117,22 @@ export default function KingsReview() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to remove evidence");
     }
-  };
+  }, [adminHeaders]);
 
-  const handleUnattachComp = async (compUrl: string) => {
+  const handleUnattachComp = useCallback(async (compUrl: string) => {
     const key = normalizeCompUrl(compUrl);
     const item = attachedCompItemByKey.get(key);
     if (!item) {
       return;
     }
     await handleDeleteEvidence(item.id);
-  };
+  }, [attachedCompItemByKey, handleDeleteEvidence, normalizeCompUrl]);
+  const handleToggleComp = useCallback((index: number) => {
+    setActiveCompIndex((prev) => (prev === index ? null : index));
+  }, []);
+  const handleAttachSoldComp = useCallback((comp: JobResultComp) => {
+    void handleAttachComp(comp, "SOLD_COMP");
+  }, [handleAttachComp]);
 
   const renderContent = () => {
     if (loading) {
@@ -2209,7 +2215,7 @@ export default function KingsReview() {
               onClick={() => setShowTeach((prev) => !prev)}
               className="rounded-full border border-sky-400/60 bg-sky-500/10 px-3 py-1.5 text-[9px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300 sm:px-4 sm:py-2 sm:text-[11px]"
             >
-              {showTeach ? "Hide Teach" : "Teach"}
+              {showTeach ? "Hide Bytebot Teach" : "Bytebot Teach"}
             </button>
             <div className="flex min-w-[260px] flex-1 flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-night-950/50 p-2">
               <input
@@ -2772,6 +2778,8 @@ export default function KingsReview() {
                                   alt={item.title ?? "Evidence"}
                                   className="h-full w-full object-contain p-2"
                                   referrerPolicy="no-referrer"
+                                  loading="lazy"
+                                  decoding="async"
                                 />
                               ) : null}
                             </div>
@@ -2960,11 +2968,14 @@ export default function KingsReview() {
                         {showTeach && (
                           <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-3">
                             <div className="flex items-center justify-between">
-                              <p className="text-[10px] uppercase tracking-[0.3em] text-sky-300">Teach Bytebot</p>
+                              <p className="text-[10px] uppercase tracking-[0.3em] text-sky-300">Bytebot Teach</p>
                               <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
                                 Space = Pause · T = Toggle
                               </span>
                             </div>
+                            <p className="mt-2 text-xs text-slate-400">
+                              This panel saves Bytebot click-selector rules only. OCR teach-from-corrections lives in Add Cards.
+                            </p>
                             <div className="mt-2">
                               <Link
                                 href="/admin/bytebot/teach"
@@ -3109,175 +3120,18 @@ export default function KingsReview() {
               <div className="space-y-2">
                 {comps.map((comp, index) => {
                   const compAttached = attachedCompKeys.has(normalizeCompUrl(comp.url));
-                  const isExpanded = activeCompIndex === index;
-                  const compPreview = getCompPreviewUrls(comp);
                   return (
-                    <button
+                    <CompCard
                       key={`${comp.url}-${index}`}
-                      type="button"
-                      onClick={() => setActiveCompIndex((prev) => (prev === index ? null : index))}
-                      className={`relative w-full overflow-hidden rounded-2xl border p-2.5 text-left transition md:p-3 ${
-                        isExpanded
-                          ? "h-[360px] border-emerald-400/60 bg-emerald-500/10 shadow-[0_0_0_1px_rgba(52,211,153,0.2)]"
-                          : "h-[150px] border-white/20 bg-black/90 hover:-translate-y-0.5 hover:border-white/40"
-                      }`}
-                    >
-                      {compAttached && (
-                        <div className="absolute right-2 top-2 z-10 flex flex-col items-center">
-                          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/80 bg-emerald-500/20 text-[13px] font-bold text-emerald-300">
-                            ✓
-                          </span>
-                          <span className="mt-1 text-[9px] font-semibold uppercase tracking-[0.26em] text-emerald-300">
-                            Comp
-                          </span>
-                        </div>
-                      )}
-                      {isExpanded ? (
-                        <div className="grid h-full grid-rows-[1fr_auto] gap-3 text-white">
-                          <div className="mx-auto w-full max-w-[300px] overflow-hidden rounded-xl border border-white/20 bg-black">
-                            {compPreview.primary && (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={compPreview.primary}
-                                alt={comp.title ?? "Comp"}
-                                className="h-full w-full object-contain p-2"
-                                referrerPolicy="no-referrer"
-                                data-fallback-src={compPreview.fallback ?? ""}
-                                onError={(event) => {
-                                  const fallbackSrc = event.currentTarget.dataset.fallbackSrc ?? "";
-                                  if (fallbackSrc && event.currentTarget.src !== fallbackSrc) {
-                                    event.currentTarget.src = fallbackSrc;
-                                    event.currentTarget.dataset.fallbackSrc = "";
-                                    return;
-                                  }
-                                  event.currentTarget.style.display = "none";
-                                }}
-                              />
-                            )}
-                          </div>
-                          <div className="space-y-2">
-                            <div>
-                              <div className="text-lg font-bold text-emerald-400 md:text-xl">{comp.price ?? "—"}</div>
-                              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
-                                {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
-                              </div>
-                            </div>
-                            <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
-                            <div className="flex flex-wrap gap-2">
-                              <a
-                                href={comp.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="rounded-full border border-white/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-slate-300"
-                                onClick={(event) => event.stopPropagation()}
-                              >
-                                Open Listing
-                              </a>
-                              {compAttached ? (
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleUnattachComp(comp.url);
-                                  }}
-                                  className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-rose-200"
-                                >
-                                  Unselect
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleAttachComp(comp, "SOLD_COMP");
-                                  }}
-                                  className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
-                                >
-                                  {activeCard &&
-                                  !activeCard.variantDecision?.humanOverride &&
-                                  (activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "")
-                                    .trim()
-                                    .toLowerCase() !== "unknown" &&
-                                  (activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "").trim()
-                                    ? "Mark Comp + Confirm Variant"
-                                    : "Mark Comp"}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="grid h-full grid-cols-[96px_1fr] gap-3 sm:grid-cols-[120px_1fr]">
-                          <div className="mx-auto h-full w-full max-w-[96px] overflow-hidden rounded-xl border border-white/20 bg-black sm:max-w-[120px]">
-                            {compPreview.primary && (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={compPreview.primary}
-                                alt={comp.title ?? "Comp"}
-                                className="h-full w-full object-contain p-3"
-                                referrerPolicy="no-referrer"
-                                data-fallback-src={compPreview.fallback ?? ""}
-                                onError={(event) => {
-                                  const fallbackSrc = event.currentTarget.dataset.fallbackSrc ?? "";
-                                  if (fallbackSrc && event.currentTarget.src !== fallbackSrc) {
-                                    event.currentTarget.src = fallbackSrc;
-                                    event.currentTarget.dataset.fallbackSrc = "";
-                                    return;
-                                  }
-                                  event.currentTarget.style.display = "none";
-                                }}
-                              />
-                            )}
-                          </div>
-                          <div className="flex flex-col justify-between gap-2 text-white">
-                            <div>
-                              <div className="text-lg font-bold text-emerald-400 md:text-xl">{comp.price ?? "—"}</div>
-                              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
-                                {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
-                              </div>
-                            </div>
-                            <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
-                            {comp.patternMatch && (
-                              <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
-                                Pattern {comp.patternMatch.tier}
-                              </div>
-                            )}
-                            <div className="flex flex-wrap gap-2">
-                              {compAttached ? (
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleUnattachComp(comp.url);
-                                  }}
-                                  className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1 text-[9px] uppercase tracking-[0.26em] text-rose-200"
-                                >
-                                  Unselect
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void handleAttachComp(comp, "SOLD_COMP");
-                                  }}
-                                  className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[9px] uppercase tracking-[0.26em] text-emerald-200"
-                                >
-                                  {activeCard &&
-                                  !activeCard.variantDecision?.humanOverride &&
-                                  (activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "")
-                                    .trim()
-                                    .toLowerCase() !== "unknown" &&
-                                  (activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "").trim()
-                                    ? "Mark Comp + Confirm Variant"
-                                    : "Mark Comp"}
-                                </button>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </button>
+                      comp={comp}
+                      index={index}
+                      isExpanded={activeCompIndex === index}
+                      attached={compAttached}
+                      showConfirmVariantLabel={shouldConfirmVariantOnCompAttach}
+                      onToggle={handleToggleComp}
+                      onAttach={handleAttachSoldComp}
+                      onUnattach={handleUnattachComp}
+                    />
                   );
                 })}
               </div>
