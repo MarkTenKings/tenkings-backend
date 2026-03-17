@@ -1,15 +1,15 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-17` (Task 9b KingsReview SerpApi eBay pagination hotfix committed on `main`; no deploy/restart/migration or DB writes)
+- Last reviewed: `2026-03-17` (Task 10 Add Cards investigation docs committed on `main`; no deploy/restart/migration or DB writes)
 - Branch: `main`
-- Short HEAD: `3aba099`
+- Short HEAD: `36fbbe2`
 - Latest repo commits:
+  - `36fbbe2` docs(add-cards): document task10 flow and regression analysis
+  - `e87d4b7` docs(handoff): verify teach commit already on main
+  - `a643e3f` docs(handoff): sync task9b final git state
   - `3aba099` fix(kingsreview): remove unsupported serpapi ebay sort param
   - `cdd7d61` docs(handoff): sync task10 final git state
-  - `5fa3dc1` docs(handoff): sync task9 final git state
-  - `188d48e` fix(kingsreview): load 10 comps per click + show eBay query + clean up top bar
-  - `df43737` fix(teach): audit + fix both Draw Teach and Teach From Corrections modes
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
