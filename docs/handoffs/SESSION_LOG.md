@@ -11280,3 +11280,36 @@
 ### Notes
 - The autostash created by `git pull --rebase --autostash` conflicted only on the previously local handoff-doc edits; the pulled `HEAD` versions of those docs were restored before the Task 5 code changes were applied.
 - `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed.
+
+## 2026-03-17 - Task 6 Load More Comps on KingsReview
+
+### Summary
+- Added paginated eBay sold comp loading to `/admin/kingsreview` without changing the initial job-driven comp fetch.
+- Added a new right-column `LOAD MORE COMPS` button that:
+  - fetches the next batch of sold listings
+  - appends them below the current comps
+  - shows a loading spinner while fetching
+  - switches to `No more comps available` when pagination is exhausted
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Added
+- `frontend/nextjs-app/lib/server/kingsreviewEbayComps.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/comps.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/api/admin/kingsreview/comps.ts --file lib/server/kingsreviewEbayComps.ts`
+  - pass with the existing `@next/next/no-img-element` warning on KingsReview's legacy `<img>` usage
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Notes
+- Initial comps still come from the existing KingsReview job payload; the new admin API route is only used for append-only follow-up pages.
+- The new server helper uses SerpApi eBay `_pgn` pagination so the client can request additional sold listings without touching comp attachment behavior.
+- `pnpm` emitted the existing engine warning because the local shell is on Node `v25.6.1` while the repo declares `20.x`; validation still passed.

@@ -1,16 +1,16 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-16` (Task 4 pack recipe system replayed onto current `origin/main` lineage; no deploy/restart/migration or new runtime/DB evidence)
-- Branch: `codex/task4-main-integration`
-- Short HEAD: `9e88d8c`
+- Last reviewed: `2026-03-17` (Task 6 KingsReview load-more comps implemented locally on `main`; no deploy/restart/migration or new runtime/DB evidence)
+- Branch: `main`
+- Short HEAD: `b7a2383`
 - Latest repo commits:
+  - `b7a2383` docs(handoff): record task4 main-lineage replay
   - `9e88d8c` Add location pack recipes and packing slips
   - `8b09b34` feat(admin): add inventory routing and assigned locations
   - `10b9669` docs(handoff): log inventory v2 merge to main
   - `3118d0a` feat(database): add inventory v2 foundation schema
-  - `b32578d` fix(cards): assign inventory-ready items to house account
-- Environments touched: workstation checkout `/Users/markthomas/tenkings/task4-main-integration`; no deploy/restart/migration executed
+- Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
 ## What Works
@@ -96,6 +96,21 @@ Build Set Ops UI flow with:
 - Confirmed active branch remains `main` (`git status -sb` showed `## main...origin/main` before doc updates).
 - No code/runtime changes, deploys, restarts, migrations, or DB operations were executed.
 - Existing `Next Actions (Ordered)` remains unchanged.
+
+## Session Update (2026-03-17, Task 6 KingsReview load-more comps)
+- Re-read mandatory startup docs per `AGENTS.md` and worked in the default workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` on `main`.
+- Added paginated eBay sold comp loading for `/admin/kingsreview` without changing the initial job-driven comp load:
+  - new admin API route for extra eBay sold pages
+  - new server helper that fetches page-aware SerpApi eBay sold results
+  - new right-column `LOAD MORE COMPS` button that appends results, shows a spinner, and swaps to `No more comps available` when pagination is exhausted
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/api/admin/kingsreview/comps.ts --file lib/server/kingsreviewEbayComps.ts`
+    - pass with the existing `@next/next/no-img-element` warning on KingsReview's legacy `<img>` usage
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+    - pass
+  - `git diff --check`
+    - pass
+- No deploy, restart, migration, runtime, or DB operation was executed.
 
 ## Implementation Progress (2026-02-22)
 - P0-A Ticket 1 complete in code: Set Ops Prisma foundation models/enums + migration scaffold added.

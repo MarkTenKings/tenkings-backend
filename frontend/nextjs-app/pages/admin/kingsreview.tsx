@@ -1,7 +1,7 @@
 import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { CardImage } from "../../components/CardImage";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
@@ -25,6 +25,7 @@ const AI_STATUS_MESSAGES = [
   "Organizing results",
 ] as const;
 const PHOTO_CAROUSEL_ORDER = ["FRONT", "BACK", "TILT"] as const;
+const COMPS_PAGE_SIZE = 20;
 const PRICE_REQUIRED_MESSAGE = "Price valuation field must be complete before moving a card to inventory ready.";
 
 type CardSummary = {
@@ -316,6 +317,26 @@ const queueStatusMeta = (card: CardSummary) => {
   return { label: "", className: "" };
 };
 
+const areCardSummariesEqual = (left: CardSummary[], right: CardSummary[]) =>
+  left.length === right.length &&
+  left.every((card, index) => {
+    const other = right[index];
+    return (
+      other &&
+      card.id === other.id &&
+      card.fileName === other.fileName &&
+      card.customTitle === other.customTitle &&
+      card.resolvedPlayerName === other.resolvedPlayerName &&
+      card.resolvedTeamName === other.resolvedTeamName &&
+      card.status === other.status &&
+      card.reviewStage === other.reviewStage &&
+      card.reviewStageUpdatedAt === other.reviewStageUpdatedAt &&
+      card.updatedAt === other.updatedAt &&
+      card.valuationMinor === other.valuationMinor &&
+      card.valuationCurrency === other.valuationCurrency
+    );
+  });
+
 function formatMinorToDollarInput(minor: number | null | undefined): string {
   if (minor == null || !Number.isFinite(minor)) {
     return "";
@@ -394,6 +415,188 @@ type PlaybookRule = {
   enabled: boolean;
 };
 
+type CompCardProps = {
+  comp: JobResultComp;
+  index: number;
+  isExpanded: boolean;
+  attached: boolean;
+  showConfirmVariantLabel: boolean;
+  onToggle: (index: number) => void;
+  onAttach: (comp: JobResultComp) => void;
+  onUnattach: (compUrl: string) => void;
+};
+
+const CompCard = memo(function CompCard({
+  comp,
+  index,
+  isExpanded,
+  attached,
+  showConfirmVariantLabel,
+  onToggle,
+  onAttach,
+  onUnattach,
+}: CompCardProps) {
+  const compPreview = getCompPreviewUrls(comp);
+
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(index)}
+      className={`relative w-full overflow-hidden rounded-2xl border p-2.5 text-left transition md:p-3 ${
+        isExpanded
+          ? "h-[360px] border-emerald-400/60 bg-emerald-500/10 shadow-[0_0_0_1px_rgba(52,211,153,0.2)]"
+          : "h-[150px] border-white/20 bg-black/90 hover:-translate-y-0.5 hover:border-white/40"
+      }`}
+    >
+      {attached && (
+        <div className="absolute right-2 top-2 z-10 flex flex-col items-center">
+          <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/80 bg-emerald-500/20 text-[13px] font-bold text-emerald-300">
+            ✓
+          </span>
+          <span className="mt-1 text-[9px] font-semibold uppercase tracking-[0.26em] text-emerald-300">
+            Comp
+          </span>
+        </div>
+      )}
+      {isExpanded ? (
+        <div className="grid h-full grid-rows-[1fr_auto] gap-3 text-white">
+          <div className="mx-auto w-full max-w-[300px] overflow-hidden rounded-xl border border-white/20 bg-black">
+            {compPreview.primary && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={compPreview.primary}
+                alt={comp.title ?? "Comp"}
+                className="h-full w-full object-contain p-2"
+                referrerPolicy="no-referrer"
+                loading="lazy"
+                decoding="async"
+                data-fallback-src={compPreview.fallback ?? ""}
+                onError={(event) => {
+                  const fallbackSrc = event.currentTarget.dataset.fallbackSrc ?? "";
+                  if (fallbackSrc && event.currentTarget.src !== fallbackSrc) {
+                    event.currentTarget.src = fallbackSrc;
+                    event.currentTarget.dataset.fallbackSrc = "";
+                    return;
+                  }
+                  event.currentTarget.style.display = "none";
+                }}
+              />
+            )}
+          </div>
+          <div className="space-y-2">
+            <div>
+              <div className="text-lg font-bold text-emerald-400 md:text-xl">{comp.price ?? "—"}</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
+                {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
+              </div>
+            </div>
+            <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href={comp.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-full border border-white/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-slate-300"
+                onClick={(event) => event.stopPropagation()}
+              >
+                Open Listing
+              </a>
+              {attached ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onUnattach(comp.url);
+                  }}
+                  className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-rose-200"
+                >
+                  Unselect
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onAttach(comp);
+                  }}
+                  className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.3em] text-emerald-200"
+                >
+                  {showConfirmVariantLabel ? "Mark Comp + Confirm Variant" : "Mark Comp"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="grid h-full grid-cols-[96px_1fr] gap-3 sm:grid-cols-[120px_1fr]">
+          <div className="mx-auto h-full w-full max-w-[96px] overflow-hidden rounded-xl border border-white/20 bg-black sm:max-w-[120px]">
+            {compPreview.primary && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={compPreview.primary}
+                alt={comp.title ?? "Comp"}
+                className="h-full w-full object-contain p-3"
+                referrerPolicy="no-referrer"
+                loading="lazy"
+                decoding="async"
+                data-fallback-src={compPreview.fallback ?? ""}
+                onError={(event) => {
+                  const fallbackSrc = event.currentTarget.dataset.fallbackSrc ?? "";
+                  if (fallbackSrc && event.currentTarget.src !== fallbackSrc) {
+                    event.currentTarget.src = fallbackSrc;
+                    event.currentTarget.dataset.fallbackSrc = "";
+                    return;
+                  }
+                  event.currentTarget.style.display = "none";
+                }}
+              />
+            )}
+          </div>
+          <div className="flex flex-col justify-between gap-2 text-white">
+            <div>
+              <div className="text-lg font-bold text-emerald-400 md:text-xl">{comp.price ?? "—"}</div>
+              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300 md:text-sm">
+                {comp.soldDate ? `Sold ${comp.soldDate}` : ""}
+              </div>
+            </div>
+            <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
+            {comp.patternMatch && (
+              <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
+                Pattern {comp.patternMatch.tier}
+              </div>
+            )}
+            <div className="flex flex-wrap gap-2">
+              {attached ? (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onUnattach(comp.url);
+                  }}
+                  className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1 text-[9px] uppercase tracking-[0.26em] text-rose-200"
+                >
+                  Unselect
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onAttach(comp);
+                  }}
+                  className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[9px] uppercase tracking-[0.26em] text-emerald-200"
+                >
+                  {showConfirmVariantLabel ? "Mark + Confirm" : "Mark Comp"}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </button>
+  );
+});
+
 export default function KingsReview() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
@@ -429,6 +632,10 @@ export default function KingsReview() {
   const [variantInspectLoading, setVariantInspectLoading] = useState(false);
   const [enqueueing, setEnqueueing] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [extraCompsBySource, setExtraCompsBySource] = useState<Record<string, JobResultComp[]>>({});
+  const [compPagesBySource, setCompPagesBySource] = useState<Record<string, number>>({});
+  const [compHasMoreBySource, setCompHasMoreBySource] = useState<Record<string, boolean>>({});
+  const [compLoadingBySource, setCompLoadingBySource] = useState<Record<string, boolean>>({});
   const [aiMessageIndex, setAiMessageIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [purging, setPurging] = useState(false);
@@ -514,7 +721,6 @@ export default function KingsReview() {
 
   const sources = job?.result?.sources ?? [];
   const activeSourceData = sources.find((source) => source.source === activeSource) ?? sources[0] ?? null;
-  const comps = activeSourceData?.comps ?? [];
   const normalizeCompUrl = useCallback((value: string | null | undefined) => {
     if (!value) {
       return "";
@@ -526,6 +732,30 @@ export default function KingsReview() {
       return value.trim().toLowerCase();
     }
   }, []);
+  const activeSourceKey = activeSourceData?.source ?? "ebay_sold";
+  const sourceComps = useMemo(() => activeSourceData?.comps ?? [], [activeSourceData?.comps]);
+  const appendedComps = useMemo(() => extraCompsBySource[activeSourceKey] ?? [], [activeSourceKey, extraCompsBySource]);
+  const comps = useMemo(() => {
+    const seen = new Set<string>();
+    const merged: JobResultComp[] = [];
+    [...sourceComps, ...appendedComps].forEach((comp) => {
+      const fallbackKey = [comp.title ?? "", comp.price ?? "", comp.soldDate ?? ""].join("::");
+      const key = normalizeCompUrl(comp.url) || fallbackKey;
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      merged.push(comp);
+    });
+    return merged;
+  }, [appendedComps, normalizeCompUrl, sourceComps]);
+  const activeCompPage = compPagesBySource[activeSourceKey] ?? 1;
+  const activeCompLoadingMore = compLoadingBySource[activeSourceKey] ?? false;
+  const activeCompHasMore = compHasMoreBySource[activeSourceKey] ?? (sourceComps.length >= COMPS_PAGE_SIZE);
+  const canLoadMoreComps =
+    activeSourceKey === "ebay_sold" &&
+    Boolean((job?.searchQuery ?? query).trim()) &&
+    sourceComps.length > 0;
   const attachedCompKeys = useMemo(() => {
     return new Set(
       evidenceItems
@@ -550,6 +780,14 @@ export default function KingsReview() {
   const rulesForActiveSource = playbookRules.filter(
     (rule) => rule.source === (activeSourceData?.source ?? teachForm.source)
   );
+  const shouldConfirmVariantOnCompAttach = useMemo(() => {
+    const selectedParallelId = (activeCard?.variantDecision?.selectedParallelId ?? activeCard?.variantId ?? "")
+      .trim()
+      .toLowerCase();
+    return Boolean(
+      activeCard && !activeCard.variantDecision?.humanOverride && selectedParallelId && selectedParallelId !== "unknown"
+    );
+  }, [activeCard]);
   const activePhotos = useMemo(() => {
     if (!activeCard?.photos?.length) {
       return {};
@@ -742,6 +980,15 @@ export default function KingsReview() {
     },
     [fetchCardDetail, preloadImage]
   );
+  const preloadCardSummary = useCallback(
+    (card: CardSummary | CardDetail | null | undefined) => {
+      if (!card) {
+        return;
+      }
+      preloadImage(card.cdnThumbUrl ?? card.thumbnailUrl ?? card.imageUrl);
+    },
+    [preloadImage]
+  );
 
   const loadMoreCards = useCallback(async () => {
     if (cardsLoadingMore || !cardsHasMore) {
@@ -774,6 +1021,9 @@ export default function KingsReview() {
       return;
     }
     const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+        return;
+      }
       const limit = Math.max(cardsOffset, 10);
       const queryString = `?stage=${stage}&limit=${limit}&offset=0`;
       fetch(`/api/admin/kingsreview/cards${queryString}`, {
@@ -786,9 +1036,9 @@ export default function KingsReview() {
             return;
           }
           const nextCards = data.cards ?? [];
-          setCards(nextCards);
-          setCardsOffset(nextCards.length);
-          setCardsHasMore(nextCards.length === limit);
+          setCards((prev) => (areCardSummariesEqual(prev, nextCards) ? prev : nextCards));
+          setCardsOffset((prev) => (prev === nextCards.length ? prev : nextCards.length));
+          setCardsHasMore((prev) => (prev === (nextCards.length === limit) ? prev : nextCards.length === limit));
           setActiveCardId((prev) => {
             if (!nextCards.length) {
               return null;
@@ -800,7 +1050,7 @@ export default function KingsReview() {
           });
         })
         .catch(() => undefined);
-    }, 2000);
+    }, 5000);
     return () => clearInterval(interval);
   }, [adminHeaders, cardsOffset, isAdmin, session, stage]);
 
@@ -808,11 +1058,8 @@ export default function KingsReview() {
     if (!cards.length) {
       return;
     }
-    const preloadTargets = cards.slice(0, 10);
-    preloadTargets.forEach((card) => {
-      void preloadCardAssets(card.id);
-    });
-  }, [cards, preloadCardAssets]);
+    cards.slice(0, 6).forEach((card) => preloadCardSummary(card));
+  }, [cards, preloadCardSummary]);
 
   useEffect(() => {
     if (!activeCardId || !cards.length) {
@@ -822,12 +1069,20 @@ export default function KingsReview() {
     if (index === -1) {
       return;
     }
-    const start = Math.max(0, index - 10);
-    const end = Math.min(cards.length, index + 21);
-    cards.slice(start, end).forEach((card) => {
-      void preloadCardAssets(card.id);
+    const start = Math.max(0, index - 2);
+    const end = Math.min(cards.length, index + 3);
+    cards.slice(start, end).forEach((card) => preloadCardSummary(card));
+  }, [activeCardId, cards, preloadCardSummary]);
+
+  useEffect(() => {
+    if (!activeCard) {
+      return;
+    }
+    preloadCardSummary(activeCard);
+    (activeCard.photos ?? []).forEach((photo) => {
+      preloadImage(photo.cdnThumbUrl ?? photo.thumbnailUrl ?? photo.imageUrl ?? null);
     });
-  }, [activeCardId, cards, preloadCardAssets]);
+  }, [activeCard, preloadCardSummary, preloadImage]);
 
   useEffect(() => {
     if (!router.isReady) {
@@ -1026,6 +1281,13 @@ export default function KingsReview() {
     loadJob();
     loadEvidence();
   }, [activeCardId, adminHeaders, fetchCardDetail, isAdmin, session]);
+
+  useEffect(() => {
+    setExtraCompsBySource({});
+    setCompPagesBySource({});
+    setCompHasMoreBySource({});
+    setCompLoadingBySource({});
+  }, [activeCardId, job?.id]);
 
   useEffect(() => {
     if (!activeCardId || !session || !isAdmin) {
@@ -1659,6 +1921,81 @@ export default function KingsReview() {
       setRegenerating(false);
     }
   };
+
+  const handleLoadMoreComps = useCallback(async () => {
+    if (!canLoadMoreComps || activeCompLoadingMore || !activeCompHasMore) {
+      return;
+    }
+    const nextQuery = (job?.searchQuery ?? query).trim();
+    if (!nextQuery) {
+      setError("Search query is required to load more comps");
+      return;
+    }
+
+    const nextPage = activeCompPage + 1;
+    setCompLoadingBySource((prev) => ({ ...prev, [activeSourceKey]: true }));
+    setError(null);
+    try {
+      const params = new URLSearchParams({
+        source: activeSourceKey,
+        query: nextQuery,
+        page: String(nextPage),
+        limit: String(COMPS_PAGE_SIZE),
+      });
+      const res = await fetch(`/api/admin/kingsreview/comps?${params.toString()}`, {
+        headers: adminHeaders(),
+        cache: "no-store",
+      });
+      const payload = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+      if (!res.ok) {
+        throw new Error(typeof payload.message === "string" ? payload.message : "Failed to load more comps");
+      }
+      const rawNextComps = Array.isArray(payload.comps) ? payload.comps : [];
+      const nextComps = rawNextComps
+        .map(normalizeJobResultComp)
+        .filter((comp): comp is JobResultComp => Boolean(comp));
+      setExtraCompsBySource((prev) => {
+        const existing = prev[activeSourceKey] ?? [];
+        const seen = new Set(
+          [...sourceComps, ...existing].map((comp) => normalizeCompUrl(comp.url)).filter(Boolean)
+        );
+        const uniqueNext = nextComps.filter((comp) => {
+          const key = normalizeCompUrl(comp.url);
+          if (key && seen.has(key)) {
+            return false;
+          }
+          if (key) {
+            seen.add(key);
+          }
+          return true;
+        });
+        return {
+          ...prev,
+          [activeSourceKey]: [...existing, ...uniqueNext],
+        };
+      });
+      setCompPagesBySource((prev) => ({ ...prev, [activeSourceKey]: nextPage }));
+      setCompHasMoreBySource((prev) => ({
+        ...prev,
+        [activeSourceKey]: Boolean(payload?.hasMore) && nextComps.length > 0,
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load more comps");
+    } finally {
+      setCompLoadingBySource((prev) => ({ ...prev, [activeSourceKey]: false }));
+    }
+  }, [
+    activeCompHasMore,
+    activeCompLoadingMore,
+    activeCompPage,
+    activeSourceKey,
+    adminHeaders,
+    canLoadMoreComps,
+    job?.searchQuery,
+    normalizeCompUrl,
+    query,
+    sourceComps,
+  ]);
 
   const handleAttachComp = async (comp: JobResultComp, kind: string) => {
     if (!activeCardId || !activeCard) {
@@ -2944,6 +3281,28 @@ export default function KingsReview() {
                   );
                 })}
               </div>
+              {canLoadMoreComps && activeCompHasMore && (
+                <div className="mt-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void handleLoadMoreComps();
+                    }}
+                    disabled={activeCompLoadingMore}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-sky-400/70 bg-sky-500/20 px-4 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-sky-100 transition hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-70"
+                  >
+                    {activeCompLoadingMore && (
+                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-sky-100 border-t-transparent" />
+                    )}
+                    LOAD MORE COMPS
+                  </button>
+                </div>
+              )}
+              {canLoadMoreComps && !activeCompHasMore && comps.length > 0 && (
+                <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-center text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-500">
+                  No more comps available
+                </div>
+              )}
             </div>
           </section>
         </div>
