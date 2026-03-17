@@ -13,6 +13,21 @@
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
+## Session Update (2026-03-17, Task 10 Add Cards investigation)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md` and performed a read-only trace of the Add Cards flow on `main`.
+- Added `docs/handoffs/TASK10_INVESTIGATION.md`, which documents:
+  - the full `/admin/uploads` Add Cards flow from capture queue through send-to-KingsReview
+  - field-by-field data sources for screen 1 and screen 2
+  - the exact Task 10 changes in `uploads.tsx` and `variantOptionPool.ts`
+  - the downstream `selectedSetId` data-flow change and why it likely exposed a screen 2 sequencing race
+  - the Teach From Corrections handler path and the likely post-save feedback-write failure class
+- Key finding:
+  - Task 10 fixed screen 1 Product Set by resolving a single scoped set earlier, but screen 2 still depends on refreshed `/api/admin/cards/[cardId]/ocr-suggest` results for insert, parallel, card number, numbered, and autograph.
+  - Because screen 1 no longer forces a 10-12 second wait, operators can now reach screen 2 before the refreshed OCR/variant-match pass finishes, exposing stale OCR-audit values.
+- Local log search result:
+  - no runtime log files were present in the repo, `~/.pm2`, `~/Library/Logs`, or `~/.local/state`, so the teach failure analysis in the investigation doc is based on route/error-path tracing rather than observed logs.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this investigation.
+
 ## What Works
 - Card-number-aware seeding for 2020 set.
 - Legacy `ALL` variant exclusion in seeder and QA gap queue.

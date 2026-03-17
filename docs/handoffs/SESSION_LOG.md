@@ -11800,3 +11800,48 @@
 - Verified target commit: `df43737` -> `fix(teach): audit + fix both Draw Teach and Teach From Corrections modes`
 - `git log --oneline origin/main` shows `df43737` beneath later `main` commits, so the requested teach changes are already on the remote default branch.
 - No code changes were replayed, and no deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-03-17 - Task 10 Add Cards Investigation
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Performed a read-only end-to-end trace of the Add Cards flow implemented in `frontend/nextjs-app/pages/admin/uploads.tsx`.
+- Added `docs/handoffs/TASK10_INVESTIGATION.md` with:
+  - full capture queue -> screen 1 -> screen 2 -> submit flow
+  - field-by-field source mapping for both detail screens
+  - Task 10 diff analysis for `frontend/nextjs-app/pages/admin/uploads.tsx` and `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+  - API/data dependency tracing for insert, parallel, card number, numbered, and autograph
+  - Teach From Corrections handler trace and inferred failure analysis
+
+### Findings
+- Active Add Cards route is `frontend/nextjs-app/pages/admin/uploads.tsx`; there is no `pages/admin/add-cards.tsx` in this checkout.
+- Task 10 fixed Product Set on screen 1 by:
+  - auto-resolving `selectedSetId` in `variantOptionPool.ts` when scope narrows to one approved set
+  - auto-writing Product Set from `variantScopeSummary.selectedSetId` in `uploads.tsx`
+- Screen 2 still depends on refreshed `/api/admin/cards/[cardId]/ocr-suggest` output for:
+  - `insertSet`
+  - `parallel`
+  - `cardNumber`
+  - `numbered`
+  - `autograph`
+- Likely regression class:
+  - screen 1 is now fast enough that operators can reach screen 2 before the refreshed OCR/variant-match pass finishes, exposing stale initial audit values that were previously hidden by the old 10-12 second Product Set wait.
+
+### Log / Error Evidence
+- No local runtime log files were present in:
+  - repo checkout
+  - `~/.pm2`
+  - `~/Library/Logs`
+  - `~/.local/state`
+- Teach From Corrections uses `PATCH /api/admin/cards/[cardId]` with `recordOcrFeedback=true`; from code order, the likeliest failure class is a post-save feedback persistence failure in:
+  - `ocrFeedbackEvent.createMany(...)`
+  - `upsertOcrFeedbackMemoryAggregates(...)`
+
+### Files Updated
+- `docs/handoffs/TASK10_INVESTIGATION.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- No application code was changed.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this investigation.
