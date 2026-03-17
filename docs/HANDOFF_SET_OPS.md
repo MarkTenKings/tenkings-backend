@@ -1,17 +1,34 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-17` (Teach commit ancestry re-verified against `origin/main`; no code replay, deploy/restart/migration, or DB writes)
+- Last reviewed: `2026-03-17` (Task 10b Screen 2 prefetch fix committed on `main`; no deploy/restart/migration or DB writes)
 - Branch: `main`
-- Short HEAD: `4127916`
+- Short HEAD: `fff0b60`
 - Latest repo commits:
+  - `fff0b60` fix(add-cards): pre-fetch screen 2 data on product set selection, not on screen transition
+  - `067c180` docs(handoff): reverify teach commit ancestry on main
   - `4127916` docs(handoff): sync task10 investigation pushed state
   - `412b27d` docs(handoff): sync task10 investigation final git state
   - `36fbbe2` docs(add-cards): document task10 flow and regression analysis
-  - `e87d4b7` docs(handoff): verify teach commit already on main
-  - `a643e3f` docs(handoff): sync task9b final git state
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-03-17, Task 10b Screen 2 prefetch fix)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then documented the initial code trace in `docs/handoffs/TASK10B_ANALYSIS.md` before changing code.
+- Shipped the Add Cards Screen 2 follow-up fix in:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- What changed:
+  - Screen 1 Product Set selection now triggers a scoped `/ocr-suggest` prefetch immediately, before the operator taps `Next`
+  - the scoped prefetch passes `cardNumber` as a hint so the existing set-card / variant pipeline can resolve insert and parallel faster
+  - untouched stale `insertSet` / `parallel` values are cleared when Product Set changes, so Screen 2 shows either the replacement result or a narrow loading state instead of stale values
+  - Screen 2 booleans and numbered fields are synchronized from the completed OCR audit so stale heuristic checks no longer stay sticky
+  - initial queued-card hydration now respects existing OCR-backed `autograph` / `memorabilia` booleans instead of only classification attributes
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts'` -> pass with existing `uploads.tsx` `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
 
 ## Session Update (2026-03-17, Task 10 Add Cards investigation)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md` and performed a read-only trace of the Add Cards flow on `main`.
