@@ -11931,3 +11931,41 @@
 - Verified target commit: `df43737` -> `fix(teach): audit + fix both Draw Teach and Teach From Corrections modes`
 - `git log --oneline origin/main` shows `df43737` in the current remote `main` history beneath later docs/KingsReview commits and above older Add Cards work.
 - No code changes were replayed, no conflicts existed to resolve, and no deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-03-17 - Task 10b Screen 2 Prefetch Fix
+
+### Summary
+- Implemented the Task 10b Add Cards follow-up on `main` so Screen 2 data starts loading as soon as Product Set is selected on Screen 1 instead of waiting for the screen transition.
+- Kept `/api/admin/cards/[cardId]/ocr-suggest` as the single authority for scoped set-card, insert, parallel, and OCR-backed optional-field resolution.
+- Added the requested audit trail in `docs/handoffs/TASK10B_ANALYSIS.md` before coding, then implemented the scoped prefetch path.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `docs/handoffs/TASK10B_ANALYSIS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - added a scoped Screen 2 prefetch effect keyed by `cardId + productSet + cardNumber + scope hints`
+  - fires `/ocr-suggest` immediately when Product Set resolves or changes on Screen 1
+  - clears untouched stale `insertSet` / `parallel` values on Product Set changes so the next response replaces them cleanly
+  - passes `cardNumber` as an OCR query hint during the scoped prefetch
+  - shows a narrow loading label on Screen 2 Insert / Parallel while the scoped fetch is in flight
+  - syncs untouched Track B fields (`cardNumber`, `numbered`, `autograph`, `memorabilia`, `graded`, grade fields) from the completed OCR audit so stale heuristic booleans do not remain sticky
+  - initial review hydration now honors existing OCR booleans for `autograph` / `memorabilia` instead of only classification attributes
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - accepts `cardNumber` as a query hint
+  - uses hinted `cardNumber` for scoped set-card resolution and variant matching when available
+  - seeds hinted `cardNumber` back into OCR resolution if OCR has not already grounded a more specific value
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts'`
+  - pass with existing `pages/admin/uploads.tsx` `<img>` warnings only
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.

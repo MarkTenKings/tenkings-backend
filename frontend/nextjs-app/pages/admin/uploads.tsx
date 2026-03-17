@@ -204,6 +204,15 @@ type OcrAuditPayload = {
   };
 };
 
+type OcrFetchPurpose = "default" | "product_set_prefetch";
+
+type OcrFetchOptions = {
+  purpose?: OcrFetchPurpose;
+  hintProductLine?: string;
+  hintCardNumber?: string;
+  retryAttempt?: number;
+};
+
 type TeachRegionSide = "FRONT" | "BACK" | "TILT";
 
 type TeachRegionRect = {
@@ -390,6 +399,11 @@ const sanitizeNullableText = (value: string | null | undefined): string => {
   return normalized;
 };
 
+const isTruthySuggestionValue = (value: string | null | undefined): boolean => {
+  const normalized = sanitizeNullableText(value).toLowerCase();
+  return normalized === "true" || normalized === "yes" || normalized === "1";
+};
+
 const tokenize = (value: string): string[] =>
   value
     .toLowerCase()
@@ -432,6 +446,7 @@ const OCR_TAXONOMY_THRESHOLD: Record<"setName" | "insertSet" | "parallel", numbe
   insertSet: 0.8,
   parallel: 0.8,
 };
+const OCR_OPTIONAL_FIELD_THRESHOLD = 0.88;
 const PRODUCT_LINE_MANUAL_OPTION = "__MANUAL_ENTRY__";
 
 const ocrSuggestionThreshold = (field: string, baseThreshold: number): number => {
@@ -727,6 +742,9 @@ export default function AdminUploads() {
   const [ocrApplied, setOcrApplied] = useState(false);
   const [ocrMode, setOcrMode] = useState<null | "high" | "low">(null);
   const [ocrError, setOcrError] = useState<string | null>(null);
+  const [screen2PrefetchStatus, setScreen2PrefetchStatus] = useState<null | "idle" | "loading" | "ready" | "error">(
+    null
+  );
   const [parallelPrefetchStatus, setParallelPrefetchStatus] = useState<null | "idle" | "loading" | "ready" | "error">(
     null
   );
@@ -759,11 +777,13 @@ export default function AdminUploads() {
   const ocrSuggestRef = useRef(false);
   const ocrRetryRef = useRef(0);
   const ocrRequestIdRef = useRef(0);
+  const ocrRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ocrCardIdRef = useRef<string | null>(null);
   const ocrBackupRef = useRef<IntakeRequiredFields | null>(null);
   const ocrAppliedFieldsRef = useRef<OcrApplyField[]>([]);
   const ocrOptionalBackupRef = useRef<IntakeOptionalFields | null>(null);
   const ocrAppliedOptionalFieldsRef = useRef<(keyof IntakeOptionalFields)[]>([]);
+  const screen2PrefetchKeyRef = useRef<string | null>(null);
   const parallelPrefetchKeyRef = useRef<string | null>(null);
   const parallelPrefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoredDraftRef = useRef(false);
@@ -1581,14 +1601,20 @@ export default function AdminUploads() {
     setOcrApplied(false);
     setOcrMode(null);
     setOcrError(null);
+    setScreen2PrefetchStatus(null);
     ocrSuggestRef.current = false;
     ocrRetryRef.current = 0;
+    if (ocrRetryTimerRef.current) {
+      clearTimeout(ocrRetryTimerRef.current);
+      ocrRetryTimerRef.current = null;
+    }
     ocrRequestIdRef.current = 0;
     ocrCardIdRef.current = null;
     ocrBackupRef.current = null;
     ocrAppliedFieldsRef.current = [];
     ocrOptionalBackupRef.current = null;
     ocrAppliedOptionalFieldsRef.current = [];
+    screen2PrefetchKeyRef.current = null;
   }, []);
 
   const clearActiveIntakeState = useCallback(() => {
@@ -1665,8 +1691,10 @@ export default function AdminUploads() {
     setVariantScopeSummary(null);
     setVariantCatalog([]);
     setOptionPreviewUrls({});
+    setScreen2PrefetchStatus(null);
     setParallelPrefetchStatus(null);
     setParallelPrefetchMessage(null);
+    screen2PrefetchKeyRef.current = null;
     parallelPrefetchKeyRef.current = null;
     if (parallelPrefetchTimerRef.current) {
       clearTimeout(parallelPrefetchTimerRef.current);
@@ -2245,8 +2273,12 @@ export default function AdminUploads() {
         parallel: sanitizeNullableText(ocrFields.parallel ?? (attributes.variantKeywords ?? [])[0] ?? ""),
         cardNumber: sanitizeNullableText(ocrFields.cardNumber ?? normalized.cardNumber ?? ""),
         numbered: sanitizeNullableText(ocrFields.numbered ?? attributes.numbered ?? ""),
-        autograph: Boolean(attributes.autograph ?? false),
-        memorabilia: Boolean(attributes.memorabilia ?? false),
+        autograph:
+          isTruthySuggestionValue(typeof ocrFields.autograph === "string" ? ocrFields.autograph : null) ||
+          Boolean(attributes.autograph ?? false),
+        memorabilia:
+          isTruthySuggestionValue(typeof ocrFields.memorabilia === "string" ? ocrFields.memorabilia : null) ||
+          Boolean(attributes.memorabilia ?? false),
         graded:
           String(ocrFields.graded ?? "").toLowerCase() === "true" ||
           (Boolean(ocrFields.gradeCompany) && Boolean(ocrFields.gradeValue)),
@@ -2519,6 +2551,112 @@ export default function AdminUploads() {
     parallelOptions,
   ]);
 
+  const syncOptionalFieldsFromOcrAudit = useCallback(
+    (
+      auditFields?: Record<string, string | null> | null,
+      auditConfidence?: Record<string, number | null | undefined> | null
+    ) => {
+      const fields = auditFields ?? {};
+      const confidenceFor = (field: string): number => {
+        const value = auditConfidence?.[field];
+        return typeof value === "number" && Number.isFinite(value) ? value : 0;
+      };
+      setIntakeOptional((prev) => {
+        const next = { ...prev };
+        let changed = false;
+
+        if (!intakeOptionalTouched.cardNumber) {
+          const groundedCardNumber = sanitizeNullableText(fields.cardNumber);
+          if (
+            groundedCardNumber &&
+            confidenceFor("cardNumber") >= OCR_OPTIONAL_FIELD_THRESHOLD &&
+            groundedCardNumber !== prev.cardNumber
+          ) {
+            next.cardNumber = groundedCardNumber;
+            changed = true;
+          }
+        }
+
+        if (!intakeOptionalTouched.numbered) {
+          const numberedValue = sanitizeNullableText(fields.numbered);
+          if (numberedValue && confidenceFor("numbered") >= OCR_OPTIONAL_FIELD_THRESHOLD) {
+            if (numberedValue !== prev.numbered) {
+              next.numbered = numberedValue;
+              changed = true;
+            }
+          } else if (prev.numbered) {
+            next.numbered = "";
+            changed = true;
+          }
+        }
+
+        const autographDetected =
+          isTruthySuggestionValue(fields.autograph) && confidenceFor("autograph") >= OCR_OPTIONAL_FIELD_THRESHOLD;
+        if (!intakeOptionalTouched.autograph && autographDetected !== prev.autograph) {
+          next.autograph = autographDetected;
+          changed = true;
+        }
+
+        const memorabiliaDetected =
+          isTruthySuggestionValue(fields.memorabilia) && confidenceFor("memorabilia") >= OCR_OPTIONAL_FIELD_THRESHOLD;
+        if (!intakeOptionalTouched.memorabilia && memorabiliaDetected !== prev.memorabilia) {
+          next.memorabilia = memorabiliaDetected;
+          changed = true;
+        }
+
+        const gradeCompanyValue = sanitizeNullableText(fields.gradeCompany);
+        const gradeValueValue = sanitizeNullableText(fields.gradeValue);
+        const gradedDetected =
+          (isTruthySuggestionValue(fields.graded) && confidenceFor("graded") >= OCR_OPTIONAL_FIELD_THRESHOLD) ||
+          Boolean(
+            gradeCompanyValue &&
+              gradeValueValue &&
+              confidenceFor("gradeCompany") >= OCR_OPTIONAL_FIELD_THRESHOLD &&
+              confidenceFor("gradeValue") >= OCR_OPTIONAL_FIELD_THRESHOLD
+          );
+        if (!intakeOptionalTouched.graded && gradedDetected !== prev.graded) {
+          next.graded = gradedDetected;
+          changed = true;
+        }
+
+        if (!intakeOptionalTouched.gradeCompany) {
+          if (gradeCompanyValue && confidenceFor("gradeCompany") >= OCR_OPTIONAL_FIELD_THRESHOLD) {
+            if (gradeCompanyValue !== prev.gradeCompany) {
+              next.gradeCompany = gradeCompanyValue;
+              changed = true;
+            }
+          } else if (prev.gradeCompany) {
+            next.gradeCompany = "";
+            changed = true;
+          }
+        }
+
+        if (!intakeOptionalTouched.gradeValue) {
+          if (gradeValueValue && confidenceFor("gradeValue") >= OCR_OPTIONAL_FIELD_THRESHOLD) {
+            if (gradeValueValue !== prev.gradeValue) {
+              next.gradeValue = gradeValueValue;
+              changed = true;
+            }
+          } else if (prev.gradeValue) {
+            next.gradeValue = "";
+            changed = true;
+          }
+        }
+
+        return changed ? next : prev;
+      });
+    },
+    [
+      intakeOptionalTouched.autograph,
+      intakeOptionalTouched.cardNumber,
+      intakeOptionalTouched.gradeCompany,
+      intakeOptionalTouched.gradeValue,
+      intakeOptionalTouched.graded,
+      intakeOptionalTouched.memorabilia,
+      intakeOptionalTouched.numbered,
+    ]
+  );
+
   const applySuggestions = useCallback(
     (suggestions: Record<string, string>, suggestionConfidence?: Record<string, number | null | undefined>) => {
       const confidenceFor = (field: string): number => {
@@ -2766,107 +2904,153 @@ export default function AdminUploads() {
     },
     [session?.token]
   );
-
-
-  const fetchOcrSuggestions = useCallback(async (cardId: string) => {
-    if (!session?.token) {
-      setOcrStatus("error");
-      setOcrError("Your session expired. Sign in again and retry.");
-      return;
-    }
-    if (!cardId) {
-      setOcrStatus("error");
-      setOcrError("Card asset not ready yet. Wait a moment and retry.");
-      return;
-    }
-    const requestId = ocrRequestIdRef.current + 1;
-    ocrRequestIdRef.current = requestId;
-    ocrCardIdRef.current = cardId;
-    try {
-      setOcrStatus("running");
-      setOcrError(null);
-      const params = new URLSearchParams();
-      const hintYear = sanitizeNullableText(intakeRequired.year);
-      const hintManufacturer = sanitizeNullableText(intakeRequired.manufacturer);
-      const hintSport = sanitizeNullableText(intakeRequired.sport);
-      const hintProductLine = sanitizeNullableText(intakeOptional.productLine);
-      const hintLayoutClass = normalizeTeachLayoutClass(teachLayoutClass);
-      if (hintYear) {
-        params.set("year", hintYear);
-      }
-      if (hintManufacturer) {
-        params.set("manufacturer", hintManufacturer);
-      }
-      if (hintSport) {
-        params.set("sport", hintSport);
-      }
-      if (hintProductLine) {
-        params.set("productLine", hintProductLine);
-        params.set("setId", hintProductLine);
-      }
-      if (hintLayoutClass) {
-        params.set("layoutClass", hintLayoutClass);
-      }
-      const endpoint =
-        params.size > 0
-          ? `/api/admin/cards/${cardId}/ocr-suggest?${params.toString()}`
-          : `/api/admin/cards/${cardId}/ocr-suggest`;
-      const res = await fetch(endpoint, {
-        headers: buildAdminHeaders(session.token),
-      });
-      if (ocrRequestIdRef.current !== requestId || ocrCardIdRef.current !== cardId) {
-        return;
-      }
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
+  const fetchOcrSuggestions = useCallback(
+    async (cardId: string, options?: OcrFetchOptions) => {
+      const purpose = options?.purpose ?? "default";
+      const retryAttempt = options?.retryAttempt ?? 0;
+      const isProductSetPrefetch = purpose === "product_set_prefetch";
+      if (!session?.token) {
         setOcrStatus("error");
-        setOcrError(payload?.message ?? "OCR request failed");
-        return;
-      }
-      const payload = await res.json();
-      if (ocrRequestIdRef.current !== requestId || ocrCardIdRef.current !== cardId) {
-        return;
-      }
-      setOcrAudit(payload?.audit ?? null);
-      if (payload?.status === "pending") {
-        setOcrStatus("pending");
-        if (ocrRetryRef.current < 6) {
-          ocrRetryRef.current += 1;
-          setTimeout(() => {
-            if (ocrCardIdRef.current !== cardId) {
-              return;
-            }
-            void fetchOcrSuggestions(cardId);
-          }, 1500);
+        setOcrError("Your session expired. Sign in again and retry.");
+        if (isProductSetPrefetch) {
+          setScreen2PrefetchStatus("error");
         }
         return;
       }
-      const suggestions = payload?.suggestions ?? {};
-      const suggestionConfidence =
-        (payload?.audit?.confidence as Record<string, number | null | undefined> | undefined) ?? undefined;
-      if (Object.keys(suggestions).length > 0) {
-        applySuggestions(suggestions, suggestionConfidence);
-        setOcrMode("high");
-        setOcrStatus("ready");
-      } else {
-        setOcrApplied(false);
-        setOcrMode(null);
-        setOcrStatus("empty");
+      if (!cardId) {
+        setOcrStatus("error");
+        setOcrError("Card asset not ready yet. Wait a moment and retry.");
+        if (isProductSetPrefetch) {
+          setScreen2PrefetchStatus("error");
+        }
+        return;
       }
-    } catch {
-      setOcrStatus("error");
-      setOcrError("OCR request failed");
-      // ignore suggestion failures
-    }
-  }, [
-    applySuggestions,
-    intakeOptional.productLine,
-    intakeRequired.manufacturer,
-    intakeRequired.sport,
-    intakeRequired.year,
-    teachLayoutClass,
-    session?.token,
-  ]);
+      const requestId = ocrRequestIdRef.current + 1;
+      ocrRequestIdRef.current = requestId;
+      ocrRetryRef.current = retryAttempt;
+      ocrCardIdRef.current = cardId;
+      if (ocrRetryTimerRef.current) {
+        clearTimeout(ocrRetryTimerRef.current);
+        ocrRetryTimerRef.current = null;
+      }
+      try {
+        setOcrStatus("running");
+        setOcrError(null);
+        if (isProductSetPrefetch) {
+          setScreen2PrefetchStatus("loading");
+        }
+        const params = new URLSearchParams();
+        const hintYear = sanitizeNullableText(intakeRequired.year);
+        const hintManufacturer = sanitizeNullableText(intakeRequired.manufacturer);
+        const hintSport = sanitizeNullableText(intakeRequired.sport);
+        const hintProductLine = sanitizeNullableText(options?.hintProductLine ?? intakeOptional.productLine);
+        const hintCardNumber = sanitizeNullableText(options?.hintCardNumber ?? intakeOptional.cardNumber);
+        const hintLayoutClass = normalizeTeachLayoutClass(teachLayoutClass);
+        if (hintYear) {
+          params.set("year", hintYear);
+        }
+        if (hintManufacturer) {
+          params.set("manufacturer", hintManufacturer);
+        }
+        if (hintSport) {
+          params.set("sport", hintSport);
+        }
+        if (hintProductLine) {
+          params.set("productLine", hintProductLine);
+          params.set("setId", hintProductLine);
+        }
+        if (hintCardNumber) {
+          params.set("cardNumber", hintCardNumber);
+        }
+        if (hintLayoutClass) {
+          params.set("layoutClass", hintLayoutClass);
+        }
+        const endpoint =
+          params.size > 0
+            ? `/api/admin/cards/${cardId}/ocr-suggest?${params.toString()}`
+            : `/api/admin/cards/${cardId}/ocr-suggest`;
+        const res = await fetch(endpoint, {
+          headers: buildAdminHeaders(session.token),
+        });
+        if (ocrRequestIdRef.current !== requestId || ocrCardIdRef.current !== cardId) {
+          return;
+        }
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}));
+          setOcrStatus("error");
+          setOcrError(payload?.message ?? "OCR request failed");
+          if (isProductSetPrefetch) {
+            setScreen2PrefetchStatus("error");
+          }
+          return;
+        }
+        const payload = await res.json();
+        if (ocrRequestIdRef.current !== requestId || ocrCardIdRef.current !== cardId) {
+          return;
+        }
+        setOcrAudit(payload?.audit ?? null);
+        if (payload?.status === "pending") {
+          setOcrStatus("pending");
+          if (isProductSetPrefetch) {
+            setScreen2PrefetchStatus("loading");
+          }
+          if (retryAttempt < 6) {
+            const nextOptions = {
+              ...(options ?? {}),
+              retryAttempt: retryAttempt + 1,
+            };
+            ocrRetryTimerRef.current = setTimeout(() => {
+              if (ocrCardIdRef.current !== cardId) {
+                return;
+              }
+              void fetchOcrSuggestions(cardId, nextOptions);
+            }, 1000);
+          }
+          return;
+        }
+        ocrRetryRef.current = 0;
+        const audit = payload?.audit ?? null;
+        const suggestions = payload?.suggestions ?? {};
+        const suggestionConfidence =
+          (audit?.confidence as Record<string, number | null | undefined> | undefined) ?? undefined;
+        syncOptionalFieldsFromOcrAudit(
+          (audit?.fields as Record<string, string | null> | undefined) ?? undefined,
+          suggestionConfidence
+        );
+        if (Object.keys(suggestions).length > 0) {
+          applySuggestions(suggestions, suggestionConfidence);
+          setOcrMode("high");
+          setOcrStatus("ready");
+        } else {
+          setOcrApplied(false);
+          setOcrMode(null);
+          setOcrStatus("empty");
+        }
+        if (isProductSetPrefetch) {
+          setScreen2PrefetchStatus("ready");
+        }
+      } catch {
+        ocrRetryRef.current = 0;
+        setOcrStatus("error");
+        setOcrError("OCR request failed");
+        if (isProductSetPrefetch) {
+          setScreen2PrefetchStatus("error");
+        }
+        // ignore suggestion failures
+      }
+    },
+    [
+      applySuggestions,
+      intakeOptional.cardNumber,
+      intakeOptional.productLine,
+      intakeRequired.manufacturer,
+      intakeRequired.sport,
+      intakeRequired.year,
+      session?.token,
+      syncOptionalFieldsFromOcrAudit,
+      teachLayoutClass,
+    ]
+  );
 
   useEffect(() => {
     if (!pendingAutoOcrCardId) {
@@ -2881,6 +3065,84 @@ export default function AdminUploads() {
     setPendingAutoOcrCardId(null);
     void fetchOcrSuggestions(pendingAutoOcrCardId);
   }, [fetchOcrSuggestions, intakeCardId, ocrStatus, pendingAutoOcrCardId]);
+
+  useEffect(() => {
+    if (!intakeCardId || intakeRequired.category !== "sport") {
+      screen2PrefetchKeyRef.current = null;
+      setScreen2PrefetchStatus(null);
+      return;
+    }
+    if (intakeStep !== "required" && intakeStep !== "optional") {
+      return;
+    }
+    const scopedProductSetId =
+      sanitizeNullableText(variantScopeSummary?.selectedSetId) || sanitizeNullableText(intakeOptional.productLine);
+    if (!scopedProductSetId) {
+      screen2PrefetchKeyRef.current = null;
+      setScreen2PrefetchStatus("idle");
+      return;
+    }
+    const scopedCardNumber = sanitizeNullableText(intakeOptional.cardNumber);
+    const prefetchKey = [
+      intakeCardId,
+      scopedProductSetId.toLowerCase(),
+      scopedCardNumber.toLowerCase(),
+      sanitizeNullableText(intakeRequired.year).toLowerCase(),
+      sanitizeNullableText(intakeRequired.manufacturer).toLowerCase(),
+      sanitizeNullableText(intakeRequired.sport).toLowerCase(),
+      normalizeTeachLayoutClass(teachLayoutClass),
+    ].join("::");
+    if (screen2PrefetchKeyRef.current === prefetchKey) {
+      return;
+    }
+    screen2PrefetchKeyRef.current = prefetchKey;
+    setScreen2PrefetchStatus("loading");
+    setIntakeOptional((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      if (!intakeOptionalTouched.insertSet && prev.insertSet.trim()) {
+        next.insertSet = "";
+        changed = true;
+      }
+      if (!intakeOptionalTouched.parallel && prev.parallel.trim()) {
+        next.parallel = "";
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+    setIntakeSuggested((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      if (next.insertSet) {
+        delete next.insertSet;
+        changed = true;
+      }
+      if (next.parallel) {
+        delete next.parallel;
+        changed = true;
+      }
+      return changed ? next : prev;
+    });
+    void fetchOcrSuggestions(intakeCardId, {
+      purpose: "product_set_prefetch",
+      hintProductLine: scopedProductSetId,
+      hintCardNumber: scopedCardNumber || undefined,
+    });
+  }, [
+    fetchOcrSuggestions,
+    intakeCardId,
+    intakeOptional.cardNumber,
+    intakeOptional.productLine,
+    intakeOptionalTouched.insertSet,
+    intakeOptionalTouched.parallel,
+    intakeRequired.category,
+    intakeRequired.manufacturer,
+    intakeRequired.sport,
+    intakeRequired.year,
+    intakeStep,
+    teachLayoutClass,
+    variantScopeSummary?.selectedSetId,
+  ]);
 
   const startOcrForCard = useCallback(
     (cardId: string) => {
@@ -5278,13 +5540,20 @@ export default function AdminUploads() {
                             ? "text-white"
                             : !hasResolvedVariantSetScope
                             ? "text-slate-400"
+                            : screen2PrefetchStatus === "loading"
+                            ? "text-sky-200"
+                            : screen2PrefetchStatus === "error"
+                            ? "text-rose-200"
                             : taxonomyUnknownReasons.insertSet
                             ? "text-rose-200"
                             : "text-slate-400"
                         }
                       >
                         {intakeOptional.insertSet ||
-                          (!hasResolvedVariantSetScope ? "Select Product Set first" : taxonomyUnknownReasons.insertSet) ||
+                          (!hasResolvedVariantSetScope ? "Select Product Set first" : "") ||
+                          (screen2PrefetchStatus === "loading" ? "Loading insert suggestion..." : "") ||
+                          (screen2PrefetchStatus === "error" ? "Insert suggestion unavailable" : "") ||
+                          taxonomyUnknownReasons.insertSet ||
                           "Insert Set"}
                       </span>
                       <span className="text-base text-slate-400">▾</span>
@@ -5319,13 +5588,20 @@ export default function AdminUploads() {
                             ? "text-white"
                             : !hasResolvedVariantSetScope
                             ? "text-slate-400"
+                            : screen2PrefetchStatus === "loading"
+                            ? "text-sky-200"
+                            : screen2PrefetchStatus === "error"
+                            ? "text-rose-200"
                             : taxonomyUnknownReasons.parallel
                             ? "text-rose-200"
                             : "text-slate-400"
                         }
                       >
                         {intakeOptional.parallel ||
-                          (!hasResolvedVariantSetScope ? "Select Product Set first" : taxonomyUnknownReasons.parallel) ||
+                          (!hasResolvedVariantSetScope ? "Select Product Set first" : "") ||
+                          (screen2PrefetchStatus === "loading" ? "Loading parallel suggestion..." : "") ||
+                          (screen2PrefetchStatus === "error" ? "Parallel suggestion unavailable" : "") ||
+                          taxonomyUnknownReasons.parallel ||
                           "Variant / Parallel"}
                       </span>
                       <span className="text-base text-slate-400">▾</span>

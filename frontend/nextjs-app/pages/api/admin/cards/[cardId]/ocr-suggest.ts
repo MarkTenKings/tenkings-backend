@@ -220,6 +220,7 @@ type TaxonomyConstraintAudit = {
     sport: string | null;
     productLine: string | null;
     setId: string | null;
+    cardNumber: string | null;
     layoutClass: string | null;
   };
   pool: {
@@ -933,13 +934,14 @@ async function resolveScopedSetCard(params: {
     game: string | null;
     productLine: string | null;
     setId: string | null;
+    cardNumber: string | null;
     layoutClass: string | null;
   };
 }): Promise<SetCardResolutionAudit> {
   const year = sanitizeText(params.queryHints.year || params.fields.year || "");
   const manufacturer = sanitizeText(params.queryHints.manufacturer || params.fields.manufacturer || "");
   const sport = sanitizeText(params.queryHints.sport || params.fields.sport || "") || null;
-  const normalizedCardNumber = normalizeTaxonomyCardNumber(params.fields.cardNumber);
+  const normalizedCardNumber = normalizeTaxonomyCardNumber(params.queryHints.cardNumber || params.fields.cardNumber);
   if (!year || !manufacturer) {
     return {
       matched: false,
@@ -2436,6 +2438,7 @@ async function constrainTaxonomyFields(params: {
     sport: string | null;
     productLine: string | null;
     setId: string | null;
+    cardNumber: string | null;
     layoutClass: string | null;
   };
 }): Promise<TaxonomyConstraintAudit> {
@@ -2689,6 +2692,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       game: sanitizeText(req.query.game) || null,
       productLine: sanitizeText(req.query.productLine) || null,
       setId: sanitizeText(req.query.setId) || null,
+      cardNumber: sanitizeText(req.query.cardNumber) || null,
       layoutClass: sanitizeText(req.query.layoutClass) || null,
     };
 
@@ -3281,6 +3285,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       confidence.numbered = null;
     }
 
+    const hintedCardNumber = normalizeTaxonomyCardNumber(queryHints.cardNumber);
+    if (hintedCardNumber && (!fields.cardNumber || fields.cardNumber.toUpperCase() === "ALL")) {
+      fields.cardNumber = hintedCardNumber;
+      confidence.cardNumber = Math.max(confidence.cardNumber ?? 0, 0.96);
+    }
+
     let ocrCardNumberGroundingAudit: CardNumberGroundingAudit | null = null;
     try {
       ocrCardNumberGroundingAudit = await groundScopedCardNumberFromOcr({
@@ -3377,7 +3387,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       | null = null;
 
     const suggestedSetId = fields.setName?.trim() || null;
-    const suggestedCardNumber = fields.cardNumber?.trim() || null;
+    const suggestedCardNumber = fields.cardNumber?.trim() || sanitizeText(queryHints.cardNumber || "") || null;
     const suggestedNumbered = fields.numbered?.trim() || null;
     if (suggestedSetId) {
       try {
