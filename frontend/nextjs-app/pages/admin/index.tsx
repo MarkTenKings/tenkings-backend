@@ -80,6 +80,18 @@ const ADMIN_SECTIONS: AdminSection[] = [
     ],
   },
   {
+    title: "Pack Management",
+    desktopColumns: 4,
+    routes: [
+      {
+        label: "Pack Types",
+        href: "/admin/pack-types",
+        posterSrc: "/images/pack-tier-50.png",
+        videoSrc: "/admin/launch/assigned-locations.mp4",
+      },
+    ],
+  },
+  {
     title: "Monitoring",
     desktopColumns: 4,
     routes: [

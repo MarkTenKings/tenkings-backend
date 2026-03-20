@@ -2,6 +2,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useSession } from "../hooks/useSession";
 import { formatTkd } from "../lib/formatters";
+import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -39,6 +40,7 @@ export default function AppShell({
 }: AppShellProps) {
   const { session, ensureSession, logout } = useSession();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const isAdmin = hasAdminAccess(session?.user.id) || hasAdminPhoneAccess(session?.user.phone);
 
   const handleToggleMenu = () => {
     setMobileMenuOpen((prev) => !prev);
@@ -132,6 +134,17 @@ export default function AppShell({
                     Profile
                   </Link>
                 )}
+                {isAdmin ? (
+                  <>
+                    <div className="h-px bg-white/10" aria-hidden />
+                    <Link className="transition hover:text-white" href="/admin" onClick={handleCloseMenu}>
+                      Admin Portal
+                    </Link>
+                    <Link className="transition hover:text-white" href="/admin/pack-types" onClick={handleCloseMenu}>
+                      Pack Types
+                    </Link>
+                  </>
+                ) : null}
                 <div className="h-px bg-white/10" aria-hidden />
                 {session ? (
                   <button

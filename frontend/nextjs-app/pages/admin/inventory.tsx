@@ -29,6 +29,7 @@ import {
   type PackTierValue,
 } from "../../lib/adminInventory";
 import { buildAdminHeaders } from "../../lib/adminHeaders";
+import { type AdminPackType } from "../../lib/adminPackTypes";
 import { useSession } from "../../hooks/useSession";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 
@@ -72,6 +73,9 @@ export default function InventoryPage() {
   const [assignForm, setAssignForm] = useState(INITIAL_ASSIGN_FORM);
   const [assignBusy, setAssignBusy] = useState(false);
   const [assignError, setAssignError] = useState<string | null>(null);
+  const [packTypes, setPackTypes] = useState<AdminPackType[]>([]);
+  const [packTypesLoading, setPackTypesLoading] = useState(false);
+  const [packTypesError, setPackTypesError] = useState<string | null>(null);
   const [returnBusy, setReturnBusy] = useState(false);
   const [purgeBusy, setPurgeBusy] = useState(false);
   const [activeCard, setActiveCard] = useState<InventoryCardSummary | null>(null);
@@ -218,6 +222,37 @@ export default function InventoryPage() {
 
     return () => controller.abort();
   }, [adminHeaders, isAdmin, queryState, refreshNonce, session?.token]);
+
+  useEffect(() => {
+    if (!assignModalOpen || !session?.token || !isAdmin) {
+      return;
+    }
+
+    const controller = new AbortController();
+    setPackTypesLoading(true);
+    setPackTypesError(null);
+
+    fetch("/api/admin/pack-types", {
+      headers: adminHeaders,
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        const payload = (await response.json()) as { packTypes?: AdminPackType[]; message?: string };
+        if (!response.ok || !payload.packTypes) {
+          throw new Error(payload.message ?? "Failed to load pack types");
+        }
+        setPackTypes(payload.packTypes.filter((packType) => packType.isActive));
+      })
+      .catch((fetchError: unknown) => {
+        if ((fetchError as Error).name === "AbortError") {
+          return;
+        }
+        setPackTypesError(fetchError instanceof Error ? fetchError.message : "Failed to load pack types");
+      })
+      .finally(() => setPackTypesLoading(false));
+
+    return () => controller.abort();
+  }, [adminHeaders, assignModalOpen, isAdmin, session?.token]);
 
   const visibleCards = cardsResponse?.cards ?? [];
   const bulkSelectionActive = useMemo(() => sameSelection(bulkSelection, selectedIds), [bulkSelection, selectedIds]);
@@ -697,6 +732,9 @@ export default function InventoryPage() {
           totalValue={selectedTotalValue}
           selectedCategories={selectedCategories}
           locations={filterOptions?.locations ?? []}
+          packTypes={packTypes}
+          packTypesLoading={packTypesLoading}
+          packTypesError={packTypesError}
           values={assignForm}
           busy={assignBusy}
           error={assignError}

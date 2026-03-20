@@ -1,19 +1,24 @@
+import Link from "next/link";
 import {
-  CATEGORY_OPTIONS,
-  PACK_TIER_OPTIONS,
   buildPackDefinitionName,
   formatCurrencyFromMinor,
   formatCategoryLabel,
+  formatPackTierLabel,
   type CollectibleCategoryValue,
   type PackTierValue,
 } from "../../lib/adminInventory";
-import { adminInputClass, adminSelectClass, adminTextareaClass } from "./AdminPrimitives";
+import { buildPackTypeDisplayName, packTypeMatchesSelection, type AdminPackType } from "../../lib/adminPackTypes";
+import { adminTextareaClass } from "./AdminPrimitives";
+import { PackTypeCard } from "./PackTypeCard";
 
 type AssignToLocationModalProps = {
   selectedCount: number;
   totalValue: number;
   selectedCategories: Array<{ category: string | null; count: number }>;
   locations: Array<{ id: string; name: string }>;
+  packTypes: AdminPackType[];
+  packTypesLoading?: boolean;
+  packTypesError?: string | null;
   values: {
     packCategory: CollectibleCategoryValue | "";
     packTier: PackTierValue | "";
@@ -32,6 +37,9 @@ export function AssignToLocationModal({
   totalValue,
   selectedCategories,
   locations,
+  packTypes,
+  packTypesLoading,
+  packTypesError,
   values,
   busy,
   error,
@@ -43,12 +51,13 @@ export function AssignToLocationModal({
   const mismatchWarning =
     values.packCategory &&
     selectedCategories.some((entry) => entry.category && entry.category !== values.packCategory);
+  const selectedPackType = packTypes.find((packType) => packTypeMatchesSelection(packType, values)) ?? null;
 
   const canAssign = Boolean(values.packCategory && values.packTier && values.locationId && !busy);
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/75 px-4 py-8 backdrop-blur-sm">
-      <div className="w-full max-w-xl rounded-[30px] border border-white/10 bg-night-900 p-6 shadow-[0_28px_90px_rgba(0,0,0,0.55)]">
+      <div className="w-full max-w-5xl rounded-[30px] border border-white/10 bg-night-900 p-6 shadow-[0_28px_90px_rgba(0,0,0,0.55)]">
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-2">
             <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">Inventory Assignment</p>
@@ -65,45 +74,87 @@ export function AssignToLocationModal({
           </button>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-2">
-          <label className="flex flex-col gap-2 text-sm text-slate-200">
-            <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Pack Category</span>
-            <select
-              value={values.packCategory}
-              onChange={(event) => onChange({ packCategory: event.currentTarget.value as CollectibleCategoryValue })}
-              className={adminSelectClass()}
-            >
-              <option value="">Select category</option>
-              {CATEGORY_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="mt-6 space-y-4">
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Select Pack Type *</span>
+              <Link
+                href="/admin/pack-types"
+                className="text-[11px] uppercase tracking-[0.22em] text-gold-200 transition hover:text-white"
+              >
+                Manage Pack Types →
+              </Link>
+            </div>
 
-          <label className="flex flex-col gap-2 text-sm text-slate-200">
-            <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Pack Price</span>
-            <select
-              value={values.packTier}
-              onChange={(event) => onChange({ packTier: event.currentTarget.value as PackTierValue })}
-              className={adminSelectClass()}
-            >
-              <option value="">Select price</option>
-              {PACK_TIER_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+            {packTypesLoading ? (
+              <div className="rounded-[24px] border border-white/10 bg-black/40 px-4 py-10 text-center text-sm text-slate-400">
+                Loading pack types...
+              </div>
+            ) : packTypes.length === 0 ? (
+              <div className="rounded-[24px] border border-dashed border-white/12 bg-black/35 px-4 py-10 text-center">
+                <p className="font-heading text-xl uppercase tracking-[0.14em] text-white">No active pack types found</p>
+                <p className="mt-2 text-sm text-slate-400">
+                  Create or activate a pack type before assigning inventory to a location.
+                </p>
+              </div>
+            ) : (
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {packTypes.map((packType) => {
+                  const selected = packTypeMatchesSelection(packType, values);
+                  return (
+                    <PackTypeCard
+                      key={packType.id}
+                      packType={packType}
+                      mode="selector"
+                      selected={selected}
+                      onClick={() =>
+                        onChange(
+                          selected
+                            ? { packCategory: "", packTier: "" }
+                            : {
+                                packCategory: packType.category,
+                                packTier: packType.tier,
+                              }
+                        )
+                      }
+                    />
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
-          <label className="flex flex-col gap-2 text-sm text-slate-200 md:col-span-2">
+          {selectedPackType ? (
+            <div className="rounded-[24px] border border-gold-300/25 bg-gold-500/10 px-4 py-4">
+              <p className="text-sm font-medium text-gold-50">Selected: {buildPackTypeDisplayName(selectedPackType)}</p>
+              <p className="mt-2 text-sm text-slate-200">
+                Pack Category: {formatCategoryLabel(selectedPackType.category)}{" "}
+                <span className="text-slate-500">•</span> Pack Price: {formatPackTierLabel(selectedPackType.tier)}
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                Auto-filled from the selected pack type above and sent to the existing assignment API unchanged.
+              </p>
+            </div>
+          ) : (
+            <div className="rounded-[24px] border border-white/10 bg-black/35 px-4 py-4 text-sm text-slate-400">
+              Select a pack type to auto-fill the category and price for this assignment.
+            </div>
+          )}
+
+          {packTypesError ? (
+            <p className="rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+              {packTypesError}
+            </p>
+          ) : null}
+        </div>
+
+        <div className="mt-5 grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
+          <label className="flex flex-col gap-2 text-sm text-slate-200">
             <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Location</span>
             <select
               value={values.locationId}
               onChange={(event) => onChange({ locationId: event.currentTarget.value })}
-              className={adminSelectClass()}
+              className="h-11 rounded-xl border border-white/12 bg-black px-3 text-sm text-white outline-none transition focus:border-white/40"
             >
               <option value="">Select location</option>
               {locations.map((location) => (
@@ -113,17 +164,18 @@ export function AssignToLocationModal({
               ))}
             </select>
           </label>
-        </div>
 
-        <div className="mt-5 rounded-[24px] border border-white/10 bg-black/45 p-4">
-          <div className="grid gap-3 text-sm text-slate-300 md:grid-cols-2">
+          <div className="rounded-[24px] border border-white/10 bg-black/45 p-4">
+            <div className="grid gap-3 text-sm text-slate-300">
             <p>Card Count: {selectedCount}</p>
             <p>Total Value: {formatCurrencyFromMinor(totalValue)}</p>
             <p>Avg Value / Card: {formatCurrencyFromMinor(averageValue)}</p>
             <p>
               Pack Definition:{" "}
-              {values.packCategory && values.packTier
-                ? buildPackDefinitionName(values.packCategory, values.packTier)
+              {selectedPackType
+                ? buildPackTypeDisplayName(selectedPackType)
+                : values.packCategory && values.packTier
+                  ? buildPackDefinitionName(values.packCategory, values.packTier)
                 : "Select category and tier"}
             </p>
           </div>
@@ -136,6 +188,7 @@ export function AssignToLocationModal({
               ))}
             </div>
           ) : null}
+          </div>
         </div>
 
         {mismatchWarning ? (

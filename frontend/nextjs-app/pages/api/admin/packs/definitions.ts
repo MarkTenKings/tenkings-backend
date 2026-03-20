@@ -30,6 +30,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         price: definition.price,
         category: definition.category,
         tier: definition.tier,
+        imageUrl: definition.imageUrl ?? null,
+        isActive: definition.isActive,
         inventoryCount: definition.inventoryCount,
         createdAt: definition.createdAt.toISOString(),
         updatedAt: definition.updatedAt.toISOString(),

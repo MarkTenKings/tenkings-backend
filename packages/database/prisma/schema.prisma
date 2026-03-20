@@ -509,6 +509,8 @@ model PackDefinition {
   inventoryCount Int                 @default(0)
   category       CollectibleCategory @default(SPORTS)
   tier           PackTier            @default(TIER_50)
+  imageUrl       String?
+  isActive       Boolean             @default(true)
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
   packs          PackInstance[]

@@ -10,6 +10,8 @@ interface PackDefinitionResponse {
     inventoryCount: number;
     category: string | null;
     tier: string | null;
+    imageUrl: string | null;
+    isActive: boolean;
     metadata: Record<string, unknown> | null;
   }>;
 }
@@ -24,6 +26,9 @@ export default async function handler(
 
   try {
     const definitions = await prisma.packDefinition.findMany({
+      where: {
+        isActive: true,
+      },
       orderBy: { name: "asc" },
       select: {
         id: true,
@@ -33,6 +38,8 @@ export default async function handler(
         inventoryCount: true,
         category: true,
         tier: true,
+        imageUrl: true,
+        isActive: true,
       },
     });
 

@@ -88,6 +88,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             category: packCategory,
             tier: packTier,
             price: PACK_TIER_PRICE_MINOR[packTier],
+            isActive: true,
           },
           select: { id: true },
         });
