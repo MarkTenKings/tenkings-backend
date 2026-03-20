@@ -207,6 +207,24 @@ export function RecipeForm({
     setClientError(null);
   }, [initialValue]);
 
+  const updateValue = (updater: (current: RecipeFormValue) => RecipeFormValue) => {
+    setValue((current) => normalizeRecipeFormValue(updater(normalizeRecipeFormValue(current))));
+  };
+
+  const updateItem = (
+    index: number,
+    updater: (item: RecipeFormItemValue) => RecipeFormItemValue
+  ) => {
+    updateValue((current) => ({
+      ...current,
+      items: current.items.map((entry, itemIndex) =>
+        itemIndex === index
+          ? normalizeRecipeFormItemValue(updater(normalizeRecipeFormItemValue(entry)))
+          : normalizeRecipeFormItemValue(entry)
+      ),
+    }));
+  };
+
   const previewExtraCostPerPack = useMemo(() => {
     const now = new Date();
 
@@ -275,7 +293,7 @@ export function RecipeForm({
             <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Recipe Name</span>
             <input
               value={formValue.name}
-              onChange={(event) => setValue((current) => ({ ...current, name: event.currentTarget.value }))}
+              onChange={(event) => updateValue((current) => ({ ...current, name: event.currentTarget.value }))}
               className={adminInputClass()}
               placeholder="Ex: Dallas Sports $50 Pack"
             />
@@ -286,7 +304,7 @@ export function RecipeForm({
             <select
               value={formValue.isActive ? "active" : "inactive"}
               onChange={(event) =>
-                setValue((current) => ({ ...current, isActive: event.currentTarget.value === "active" }))
+                updateValue((current) => ({ ...current, isActive: event.currentTarget.value === "active" }))
               }
               className={adminSelectClass()}
             >
@@ -301,7 +319,7 @@ export function RecipeForm({
               value={formValue.category}
               disabled={mode === "edit"}
               onChange={(event) =>
-                setValue((current) => ({
+                updateValue((current) => ({
                   ...current,
                   category: event.currentTarget.value as CollectibleCategoryValue,
                 }))
@@ -323,7 +341,7 @@ export function RecipeForm({
               value={formValue.tier}
               disabled={mode === "edit"}
               onChange={(event) =>
-                setValue((current) => ({ ...current, tier: event.currentTarget.value as PackTierValue }))
+                updateValue((current) => ({ ...current, tier: event.currentTarget.value as PackTierValue }))
               }
               className={adminSelectClass(mode === "edit" ? "opacity-70" : undefined)}
             >
@@ -344,7 +362,7 @@ export function RecipeForm({
               step={1}
               value={formValue.slabCardsPerPack}
               onChange={(event) =>
-                setValue((current) => ({
+                updateValue((current) => ({
                   ...current,
                   slabCardsPerPack: Number.parseInt(event.currentTarget.value || "1", 10) || 1,
                 }))
@@ -361,7 +379,7 @@ export function RecipeForm({
               step={1}
               value={formValue.bonusCardsPerPack}
               onChange={(event) =>
-                setValue((current) => ({
+                updateValue((current) => ({
                   ...current,
                   bonusCardsPerPack: Math.max(0, Number.parseInt(event.currentTarget.value || "0", 10) || 0),
                 }))
@@ -375,7 +393,7 @@ export function RecipeForm({
             <input
               value={formValue.bonusCardMaxValueInput}
               onChange={(event) =>
-                setValue((current) => ({ ...current, bonusCardMaxValueInput: event.currentTarget.value }))
+                updateValue((current) => ({ ...current, bonusCardMaxValueInput: event.currentTarget.value }))
               }
               className={adminInputClass()}
               placeholder="3.00"
@@ -386,7 +404,7 @@ export function RecipeForm({
             <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Notes</span>
             <textarea
               value={formValue.notes}
-              onChange={(event) => setValue((current) => ({ ...current, notes: event.currentTarget.value }))}
+              onChange={(event) => updateValue((current) => ({ ...current, notes: event.currentTarget.value }))}
               rows={4}
               className={adminTextareaClass("min-h-[110px] resize-y")}
               placeholder="Optional packer notes, seasonal guidance, or handling instructions"
@@ -405,9 +423,9 @@ export function RecipeForm({
             <button
               type="button"
               onClick={() =>
-                setValue((current) => ({
+                updateValue((current) => ({
                   ...current,
-                  items: [...normalizeRecipeFormValue(current).items, createEmptyItem()],
+                  items: [...current.items, createEmptyItem()],
                 }))
               }
               className="rounded-full border border-gold-400/45 px-4 py-2 text-[11px] uppercase tracking-[0.22em] text-gold-100 transition hover:border-gold-300 hover:text-white"
@@ -427,9 +445,9 @@ export function RecipeForm({
                     <button
                       type="button"
                       onClick={() =>
-                        setValue((current) => ({
+                        updateValue((current) => ({
                           ...current,
-                          items: normalizeRecipeFormValue(current).items.filter((_, itemIndex) => itemIndex !== index),
+                          items: current.items.filter((_, itemIndex) => itemIndex !== index),
                         }))
                       }
                       className="rounded-full border border-rose-400/30 px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-rose-100 transition hover:border-rose-300/60 hover:text-white"
@@ -443,14 +461,7 @@ export function RecipeForm({
                       <span className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Name</span>
                       <input
                         value={item.name}
-                        onChange={(event) =>
-                          setValue((current) => ({
-                            ...current,
-                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
-                              itemIndex === index ? { ...entry, name: event.currentTarget.value } : entry
-                            ),
-                          }))
-                        }
+                        onChange={(event) => updateItem(index, (entry) => ({ ...entry, name: event.currentTarget.value }))}
                         className={adminInputClass()}
                         placeholder="Ex: Spring coupon insert"
                       />
@@ -461,13 +472,9 @@ export function RecipeForm({
                       <select
                         value={item.itemType}
                         onChange={(event) =>
-                          setValue((current) => ({
-                            ...current,
-                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
-                              itemIndex === index
-                                ? { ...entry, itemType: event.currentTarget.value as PackRecipeItemTypeValue }
-                                : entry
-                            ),
+                          updateItem(index, (entry) => ({
+                            ...entry,
+                            itemType: event.currentTarget.value as PackRecipeItemTypeValue,
                           }))
                         }
                         className={adminSelectClass()}
@@ -485,11 +492,9 @@ export function RecipeForm({
                       <input
                         value={item.costPerUnitInput}
                         onChange={(event) =>
-                          setValue((current) => ({
-                            ...current,
-                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
-                              itemIndex === index ? { ...entry, costPerUnitInput: event.currentTarget.value } : entry
-                            ),
+                          updateItem(index, (entry) => ({
+                            ...entry,
+                            costPerUnitInput: event.currentTarget.value,
                           }))
                         }
                         className={adminInputClass()}
@@ -505,19 +510,9 @@ export function RecipeForm({
                         step={1}
                         value={item.quantity}
                         onChange={(event) =>
-                          setValue((current) => ({
-                            ...current,
-                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
-                              itemIndex === index
-                                ? {
-                                    ...entry,
-                                    quantity: Math.max(
-                                      1,
-                                      Number.parseInt(event.currentTarget.value || "1", 10) || 1
-                                    ),
-                                  }
-                                : entry
-                            ),
+                          updateItem(index, (entry) => ({
+                            ...entry,
+                            quantity: Math.max(1, Number.parseInt(event.currentTarget.value || "1", 10) || 1),
                           }))
                         }
                         className={adminInputClass()}
@@ -529,12 +524,7 @@ export function RecipeForm({
                       <input
                         value={item.description}
                         onChange={(event) =>
-                          setValue((current) => ({
-                            ...current,
-                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
-                              itemIndex === index ? { ...entry, description: event.currentTarget.value } : entry
-                            ),
-                          }))
+                          updateItem(index, (entry) => ({ ...entry, description: event.currentTarget.value }))
                         }
                         className={adminInputClass()}
                         placeholder="Optional operator-facing description"
@@ -548,12 +538,7 @@ export function RecipeForm({
                         type="checkbox"
                         checked={item.isActive}
                         onChange={(event) =>
-                          setValue((current) => ({
-                            ...current,
-                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
-                              itemIndex === index ? { ...entry, isActive: event.currentTarget.checked } : entry
-                            ),
-                          }))
+                          updateItem(index, (entry) => ({ ...entry, isActive: event.currentTarget.checked }))
                         }
                         className="h-4 w-4 rounded border-white/20 bg-black text-gold-400"
                       />
@@ -565,18 +550,11 @@ export function RecipeForm({
                         type="checkbox"
                         checked={item.isSeasonal}
                         onChange={(event) =>
-                          setValue((current) => ({
-                            ...current,
-                            items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
-                              itemIndex === index
-                                ? {
-                                    ...entry,
-                                    isSeasonal: event.currentTarget.checked,
-                                    seasonStart: event.currentTarget.checked ? entry.seasonStart : "",
-                                    seasonEnd: event.currentTarget.checked ? entry.seasonEnd : "",
-                                  }
-                                : entry
-                            ),
+                          updateItem(index, (entry) => ({
+                            ...entry,
+                            isSeasonal: event.currentTarget.checked,
+                            seasonStart: event.currentTarget.checked ? entry.seasonStart : "",
+                            seasonEnd: event.currentTarget.checked ? entry.seasonEnd : "",
                           }))
                         }
                         className="h-4 w-4 rounded border-white/20 bg-black text-gold-400"
@@ -593,12 +571,7 @@ export function RecipeForm({
                           type="date"
                           value={formatAsDateInput(item.seasonStart)}
                           onChange={(event) =>
-                            setValue((current) => ({
-                              ...current,
-                              items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
-                                itemIndex === index ? { ...entry, seasonStart: event.currentTarget.value } : entry
-                              ),
-                            }))
+                            updateItem(index, (entry) => ({ ...entry, seasonStart: event.currentTarget.value }))
                           }
                           className={adminInputClass()}
                         />
@@ -610,12 +583,7 @@ export function RecipeForm({
                           type="date"
                           value={formatAsDateInput(item.seasonEnd)}
                           onChange={(event) =>
-                            setValue((current) => ({
-                              ...current,
-                              items: normalizeRecipeFormValue(current).items.map((entry, itemIndex) =>
-                                itemIndex === index ? { ...entry, seasonEnd: event.currentTarget.value } : entry
-                              ),
-                            }))
+                            updateItem(index, (entry) => ({ ...entry, seasonEnd: event.currentTarget.value }))
                           }
                           className={adminInputClass()}
                         />

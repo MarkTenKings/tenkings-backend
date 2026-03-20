@@ -235,6 +235,7 @@ export default function AssignedLocationDetailPage() {
   const [recipesNonce, setRecipesNonce] = useState(0);
   const [recipeFormMode, setRecipeFormMode] = useState<"create" | "edit" | null>(null);
   const [recipeFormInitial, setRecipeFormInitial] = useState<RecipeFormValue>(buildEmptyRecipeForm);
+  const [recipeFormInstanceKey, setRecipeFormInstanceKey] = useState(0);
   const [recipeEditing, setRecipeEditing] = useState<LocationRecipeSummary | null>(null);
   const [recipeSubmitBusy, setRecipeSubmitBusy] = useState(false);
   const [recipeSubmitError, setRecipeSubmitError] = useState<string | null>(null);
@@ -450,6 +451,7 @@ export default function AssignedLocationDetailPage() {
   }, [selectedIds, selectedMeta]);
 
   const openCreateRecipe = () => {
+    setRecipeFormInstanceKey((current) => current + 1);
     setRecipeFormMode("create");
     setRecipeEditing(null);
     setRecipeFormInitial(buildEmptyRecipeForm());
@@ -475,6 +477,7 @@ export default function AssignedLocationDetailPage() {
       : "";
 
     setActiveTab("recipes");
+    setRecipeFormInstanceKey((current) => current + 1);
     setRecipeFormMode("create");
     setRecipeEditing(null);
     setRecipeFormInitial(buildPrefilledRecipeForm(category, tier));
@@ -498,6 +501,7 @@ export default function AssignedLocationDetailPage() {
   }, [locationId, router]);
 
   const openEditRecipe = (recipe: LocationRecipeSummary) => {
+    setRecipeFormInstanceKey((current) => current + 1);
     setRecipeFormMode("edit");
     setRecipeEditing(recipe);
     setRecipeFormInitial(buildRecipeEditForm(recipe));
@@ -1291,7 +1295,7 @@ export default function AssignedLocationDetailPage() {
 
       {recipeFormMode ? (
         <RecipeForm
-          key={`${recipeFormMode}-${recipeEditing?.id ?? "new"}-${locationId ?? "location"}`}
+          key={`${recipeFormMode}-${recipeEditing?.id ?? "new"}-${locationId ?? "location"}-${recipeFormInstanceKey}`}
           mode={recipeFormMode}
           locationName={detail?.location.name ?? "Assigned Location"}
           initialValue={recipeFormInitial}

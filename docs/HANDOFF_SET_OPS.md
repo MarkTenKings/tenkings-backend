@@ -6307,3 +6307,20 @@ Build Set Ops UI flow with:
   - `git branch --contains df43737` -> `main`
   - `git log --oneline origin/main` shows `df43737` below later docs/KingsReview commits and above older Add Cards work
 - No rebase, cherry-pick, conflict resolution, deploy, restart, migration, runtime mutation, or DB mutation was needed or executed in this session.
+
+## Session Update (2026-03-20, Task 15 recipe detail crash hardening)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then ran `git pull --ff-only` on `main` before editing:
+  - `git pull --ff-only` -> `Already up to date.`
+- Traced the recipe-create flow on `/admin/assigned-locations/[locationId]` and confirmed the detail page already mounts `RecipeForm`; the remaining unsafe path was form-state mutation and modal instance reuse on the detail page.
+- Shipped the Task 15 fix in:
+  - `frontend/nextjs-app/components/admin/RecipeForm.tsx`
+  - `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx`
+- What changed:
+  - `RecipeForm` now routes every top-level and nested item edit through normalized `updateValue` / `updateItem` helpers so malformed form state cannot survive a keystroke on create or edit flows.
+  - extra-item add/remove/edit toggles now operate on already-normalized arrays before writing back to state.
+  - the assigned-location detail page now increments a `recipeFormInstanceKey` whenever create/edit opens, and includes that key in the modal mount key so each launch starts from a fresh form instance.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/admin/RecipeForm.tsx --file 'pages/admin/assigned-locations/[locationId].tsx'` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.

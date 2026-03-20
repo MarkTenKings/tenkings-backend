@@ -12107,3 +12107,29 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this push-sync step.
+
+## 2026-03-20 - Task 15 recipe detail crash hardening
+
+### Summary
+- Re-read the mandatory context, runbook, and handoff docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Pulled current `main` before editing and confirmed the checkout was already current with `origin/main`.
+- Hardened the recipe-create flow for `/admin/assigned-locations/[locationId]` so keystroke edits keep the form state normalized and each create/edit launch mounts a fresh modal instance.
+
+### Files Updated
+- `frontend/nextjs-app/components/admin/RecipeForm.tsx`
+- `frontend/nextjs-app/pages/admin/assigned-locations/[locationId].tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `git pull --ff-only`
+  - `Already up to date.`
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/admin/RecipeForm.tsx --file 'pages/admin/assigned-locations/[locationId].tsx'`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.
