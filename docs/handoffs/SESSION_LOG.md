@@ -12179,3 +12179,83 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.
+
+## 2026-03-20 - Task 14 pack types admin page + visual assign selector
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Confirmed `git pull --ff-only` reported `Already up to date.` before editing.
+- Important repo-state note: local `main` was already ahead of `origin/main` by two existing commits on session entry:
+  - `2d4ab1d` `fix(recipes): fix recipe creation crash on location detail page [locationId].tsx`
+  - `8f69a50` `fix(add-cards): fix screen 2 insert/parallel pre-fetch stuck + fix KingsReview send API failure`
+- Implemented the requested Pack Types admin page, pack-type image upload flow, and visual selector grid in the inventory assignment modal.
+
+### Files Updated
+- `frontend/nextjs-app/components/AppShell.tsx`
+- `frontend/nextjs-app/components/admin/AssignToLocationModal.tsx`
+- `frontend/nextjs-app/components/admin/PackTypeCard.tsx`
+- `frontend/nextjs-app/components/admin/PackTypeEditorModal.tsx`
+- `frontend/nextjs-app/lib/adminPackTypes.ts`
+- `frontend/nextjs-app/lib/server/packTypes.ts`
+- `frontend/nextjs-app/pages/admin/index.tsx`
+- `frontend/nextjs-app/pages/admin/inventory.tsx`
+- `frontend/nextjs-app/pages/admin/pack-types.tsx`
+- `frontend/nextjs-app/pages/api/admin/inventory/assign.ts`
+- `frontend/nextjs-app/pages/api/admin/packs/definitions.ts`
+- `frontend/nextjs-app/pages/api/admin/pack-types/index.ts`
+- `frontend/nextjs-app/pages/api/admin/pack-types/[id].ts`
+- `frontend/nextjs-app/pages/api/admin/pack-types/[id]/image.ts`
+- `frontend/nextjs-app/pages/api/packs/definitions.ts`
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260320120000_add_pack_definition_image_fields/migration.sql`
+
+### Implementation Notes
+- Added PackDefinition admin/image fields:
+  - `imageUrl`
+  - `isActive`
+- Added the new admin route:
+  - `/admin/pack-types`
+- Added admin APIs:
+  - `GET /api/admin/pack-types`
+  - `POST /api/admin/pack-types`
+  - `PUT /api/admin/pack-types/[id]`
+  - `PUT /api/admin/pack-types/[id]/image`
+- API behavior:
+  - create/update enforces application-level uniqueness on `category + tier`
+  - pack image upload accepts JPG/PNG/WebP up to 5MB and stores into the existing storage abstraction under `pack-types/<id>/...`
+  - public `/api/packs/definitions` now returns `imageUrl` and `isActive`, and only returns active definitions
+- Inventory assignment UI:
+  - removed the raw category/tier dropdown selection from the modal
+  - fetches active pack types when the modal opens
+  - shows a responsive image/placeholder card grid with single-select toggle behavior and gold selected state
+  - still submits the unchanged `packCategory` and `packTier` payload to `/api/admin/inventory/assign`
+- Admin navigation:
+  - added a new `Pack Types` tile on `/admin`
+  - added admin-only `Admin Portal` and `Pack Types` entries to the AppShell hamburger menu
+
+### Validation
+- `git pull --ff-only`
+  - `Already up to date.`
+- `pnpm --filter @tenkings/database exec prisma migrate dev --name add-pack-definition-image-fields`
+  - failed locally because this checkout does not expose a development `DATABASE_URL`
+  - no live DB migration was run
+  - equivalent SQL migration file was added manually instead
+- `pnpm --filter @tenkings/database generate`
+  - pass
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/pack-types.tsx --file pages/admin/index.tsx --file pages/admin/inventory.tsx --file components/AppShell.tsx --file components/admin/AssignToLocationModal.tsx --file components/admin/PackTypeCard.tsx --file components/admin/PackTypeEditorModal.tsx --file pages/api/admin/pack-types/index.ts --file 'pages/api/admin/pack-types/[id].ts' --file 'pages/api/admin/pack-types/[id]/image.ts' --file pages/api/admin/inventory/assign.ts --file pages/api/packs/definitions.ts --file pages/api/admin/packs/definitions.ts --file lib/adminPackTypes.ts --file lib/server/packTypes.ts`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Git State
+- feature commit created:
+  - `7e16df2` `feat(pack-types): add Pack Types admin page with image upload + visual selector in Assign modal`
+- post-feature-commit status:
+  - `git status -sb` -> `## main...origin/main [ahead 3]`
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.

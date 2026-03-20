@@ -1,15 +1,16 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-17` (Task 13 recipe modal crash fix and first handoff sync pushed to `origin/main`; no deploy/restart/migration or DB writes)
+- Last reviewed: `2026-03-20` (Task 14 pack types admin + visual selector feature committed locally on `main`; no deploy/restart/migration or DB writes in this session)
 - Branch: `main`
-- Short HEAD: `274694c`
+- Short HEAD: `7e16df2`
+- Current local git state: `git status -sb` -> `## main...origin/main [ahead 3]`; local `main` was already `[ahead 2]` on session entry before Task 14 work, and after this handoff sync the working tree differs only in `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`
 - Latest repo commits:
+  - `7e16df2` feat(pack-types): add Pack Types admin page with image upload + visual selector in Assign modal
+  - `8f69a50` fix(add-cards): fix screen 2 insert/parallel pre-fetch stuck + fix KingsReview send API failure
+  - `2d4ab1d` fix(recipes): fix recipe creation crash on location detail page [locationId].tsx
+  - `cbdf543` docs(handoff): sync task13 pushed state
   - `274694c` docs(handoff): sync task13 implementation state
-  - `71385e1` fix(recipes): fix crash on recipe name input + rename Manage Recipes to Pack Recipes
-  - `dc08ef3` docs(handoff): sync task10b pushed state
-  - `492347a` docs(handoff): sync task10b implementation state
-  - `fff0b60` fix(add-cards): pre-fetch screen 2 data on product set selection, not on screen transition
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
@@ -61,6 +62,45 @@
 - Local log search result:
   - no runtime log files were present in the repo, `~/.pm2`, `~/Library/Logs`, or `~/.local/state`, so the teach failure analysis in the investigation doc is based on route/error-path tracing rather than observed logs.
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this investigation.
+
+## Session Update (2026-03-20, Task 14 pack types admin + visual selector)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then ran `git pull --ff-only` and confirmed local `main` was already current with `origin/main`.
+- Important repo-state note:
+  - local `main` was already `## main...origin/main [ahead 2]` on session entry because commits `2d4ab1d` and `8f69a50` were present locally before this task started.
+- Shipped the new pack-type management flow in:
+  - `frontend/nextjs-app/pages/admin/pack-types.tsx`
+  - `frontend/nextjs-app/components/admin/PackTypeCard.tsx`
+  - `frontend/nextjs-app/components/admin/PackTypeEditorModal.tsx`
+  - `frontend/nextjs-app/lib/adminPackTypes.ts`
+  - `frontend/nextjs-app/lib/server/packTypes.ts`
+  - `frontend/nextjs-app/pages/api/admin/pack-types/index.ts`
+  - `frontend/nextjs-app/pages/api/admin/pack-types/[id].ts`
+  - `frontend/nextjs-app/pages/api/admin/pack-types/[id]/image.ts`
+- Added PackDefinition support for visual/admin state:
+  - `packages/database/prisma/schema.prisma`
+  - `packages/database/prisma/migrations/20260320120000_add_pack_definition_image_fields/migration.sql`
+  - new fields: `imageUrl`, `isActive`
+- Inventory assignment UI changes:
+  - `/admin/inventory` now fetches active pack types when the assign modal opens
+  - the assign modal now renders a visual pack-type selector grid with image/placeholder cards and gold selected-state styling
+  - the submit payload is unchanged and still posts `packCategory` + `packTier` to `/api/admin/inventory/assign`
+- Navigation changes:
+  - added a `Pack Types` launch tile to `/admin`
+  - added `Admin Portal` and `Pack Types` links to the AppShell hamburger menu for admin users
+- API/runtime behavior changes:
+  - public `/api/packs/definitions` now exposes `imageUrl` and `isActive`, and filters to active definitions
+  - admin inventory assignment auto-created pack definitions now mark `isActive: true`
+- Validation:
+  - `pnpm --filter @tenkings/database exec prisma migrate dev --name add-pack-definition-image-fields`
+    - failed locally because this checkout does not expose a development `DATABASE_URL`
+    - no DB migration was executed against any live environment
+    - added the equivalent SQL migration file manually under `packages/database/prisma/migrations/20260320120000_add_pack_definition_image_fields/`
+  - `pnpm --filter @tenkings/database generate` -> pass
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/pack-types.tsx --file pages/admin/index.tsx --file pages/admin/inventory.tsx --file components/AppShell.tsx --file components/admin/AssignToLocationModal.tsx --file components/admin/PackTypeCard.tsx --file components/admin/PackTypeEditorModal.tsx --file pages/api/admin/pack-types/index.ts --file 'pages/api/admin/pack-types/[id].ts' --file 'pages/api/admin/pack-types/[id]/image.ts' --file pages/api/admin/inventory/assign.ts --file pages/api/packs/definitions.ts --file pages/api/admin/packs/definitions.ts --file lib/adminPackTypes.ts --file lib/server/packTypes.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
 
 ## What Works
 - Card-number-aware seeding for 2020 set.
