@@ -1,16 +1,16 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-20` (Task 14 pack types admin + visual selector feature committed locally on `main`; no deploy/restart/migration or DB writes in this session)
+- Last reviewed: `2026-03-20` (Task 14 pack types admin + visual selector feature plus handoff sync pushed to `origin/main`; no deploy/restart/migration or DB writes in this session)
 - Branch: `main`
-- Short HEAD: `7e16df2`
-- Current local git state: `git status -sb` -> `## main...origin/main [ahead 3]`; local `main` was already `[ahead 2]` on session entry before Task 14 work, and after this handoff sync the working tree differs only in `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`
+- Short HEAD: `97610f4`
+- Current local git state: `git status -sb` -> `## main...origin/main`; local `main` was already `[ahead 2]` on session entry before Task 14 work, and after this handoff sync the working tree differs only in `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`
 - Latest repo commits:
+  - `97610f4` docs(handoff): sync task14 implementation state
   - `7e16df2` feat(pack-types): add Pack Types admin page with image upload + visual selector in Assign modal
   - `8f69a50` fix(add-cards): fix screen 2 insert/parallel pre-fetch stuck + fix KingsReview send API failure
   - `2d4ab1d` fix(recipes): fix recipe creation crash on location detail page [locationId].tsx
   - `cbdf543` docs(handoff): sync task13 pushed state
-  - `274694c` docs(handoff): sync task13 implementation state
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
@@ -101,6 +101,18 @@
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
+## Session Update (2026-03-20, Task 14 push sync)
+- Pushed the Task 14 feature commit and the first handoff-sync commit from local `main` to `origin/main`.
+- Verified post-push parity:
+  - `git status -sb` -> `## main...origin/main`
+  - `git rev-parse --short HEAD` -> `97610f4`
+  - `git rev-parse --short origin/main` -> `97610f4`
+- Top pushed commits:
+  - `97610f4` `docs(handoff): sync task14 implementation state`
+  - `7e16df2` `feat(pack-types): add Pack Types admin page with image upload + visual selector in Assign modal`
+  - `8f69a50` `fix(add-cards): fix screen 2 insert/parallel pre-fetch stuck + fix KingsReview send API failure`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this push-sync step.
 
 ## What Works
 - Card-number-aware seeding for 2020 set.
