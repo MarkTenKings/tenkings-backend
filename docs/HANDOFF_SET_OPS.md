@@ -6308,6 +6308,32 @@ Build Set Ops UI flow with:
   - `git log --oneline origin/main` shows `df43737` below later docs/KingsReview commits and above older Add Cards work
 - No rebase, cherry-pick, conflict resolution, deploy, restart, migration, runtime mutation, or DB mutation was needed or executed in this session.
 
+## Session Update (2026-03-20, Task 16 add-cards prefetch + KingsReview send fix)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then confirmed local `main` was already current with `origin/main` before editing.
+- Wrote the requested pre-coding trace to:
+  - `docs/handoffs/TASK16_ANALYSIS.md`
+- Root cause findings captured there:
+  - Screen 2 prefetch did fire, but `fetchOcrSuggestions(...)` used a raw relative `/ocr-suggest` path instead of `resolveApiUrl(...)`
+  - `/api/admin/cards/[cardId]/ocr-suggest` was not wrapped with `withAdminCors(...)`
+  - product-set prefetch could remain stuck forever when `/ocr-suggest` stayed `pending` after retries because no terminal fallback cleared `screen2PrefetchStatus`
+  - the strongest current send-path risk remained the fire-and-forget PhotoRoom request starting immediately before KingsReview enqueue, based on current code plus existing session-log diagnosis
+- Fixes implemented:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - Screen 2 OCR prefetch and warm-up requests now use `resolveApiUrl(...)`
+    - those OCR requests now set `mode: isRemoteApi ? "cors" : "same-origin"` like the other remote-admin API calls
+    - added a 5-second Screen 2 prefetch timeout that converts stuck loading into the existing unavailable state
+    - added terminal fallback when product-set prefetch remains `pending` after the retry budget
+    - added console warnings for prefetch transport/non-ok/pending-timeout failures
+    - moved the background PhotoRoom trigger to after successful KingsReview enqueue so it no longer competes with the critical send request
+    - added stage-specific console warnings for metadata-save, enqueue transport, and enqueue non-ok failures
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - wrapped the route with `withAdminCors(...)`
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts'` -> pass with existing `uploads.tsx` `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
 ## Session Update (2026-03-20, Task 15 recipe detail crash hardening)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then ran `git pull --ff-only` on `main` before editing:
   - `git pull --ff-only` -> `Already up to date.`

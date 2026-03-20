@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import crypto from "node:crypto";
 import { prisma, SetIngestionJobStatus, type Prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
+import { withAdminCors } from "../../../../../lib/server/cors";
 import { normalizeStorageUrl } from "../../../../../lib/server/storage";
 import { runGoogleVisionOcr } from "../../../../../lib/server/googleVisionOcr";
 import { extractCardAttributes, resolveOcrLlmAttempt } from "@tenkings/shared";
@@ -2671,7 +2672,7 @@ function isEvalBypassAuthorized(req: NextApiRequest): boolean {
   return crypto.timingSafeEqual(secretBuffer, providedBuffer);
 }
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse>) {
+async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse>) {
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
     return res.status(405).json({ message: "Method not allowed" });
@@ -3546,3 +3547,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     return res.status(response.status).json({ message: response.message });
   }
 }
+
+export default withAdminCors(handler);

@@ -784,6 +784,7 @@ export default function AdminUploads() {
   const ocrOptionalBackupRef = useRef<IntakeOptionalFields | null>(null);
   const ocrAppliedOptionalFieldsRef = useRef<(keyof IntakeOptionalFields)[]>([]);
   const screen2PrefetchKeyRef = useRef<string | null>(null);
+  const screen2PrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const parallelPrefetchKeyRef = useRef<string | null>(null);
   const parallelPrefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const restoredDraftRef = useRef(false);
@@ -1608,6 +1609,10 @@ export default function AdminUploads() {
       clearTimeout(ocrRetryTimerRef.current);
       ocrRetryTimerRef.current = null;
     }
+    if (screen2PrefetchTimeoutRef.current) {
+      clearTimeout(screen2PrefetchTimeoutRef.current);
+      screen2PrefetchTimeoutRef.current = null;
+    }
     ocrRequestIdRef.current = 0;
     ocrCardIdRef.current = null;
     ocrBackupRef.current = null;
@@ -1695,6 +1700,10 @@ export default function AdminUploads() {
     setParallelPrefetchStatus(null);
     setParallelPrefetchMessage(null);
     screen2PrefetchKeyRef.current = null;
+    if (screen2PrefetchTimeoutRef.current) {
+      clearTimeout(screen2PrefetchTimeoutRef.current);
+      screen2PrefetchTimeoutRef.current = null;
+    }
     parallelPrefetchKeyRef.current = null;
     if (parallelPrefetchTimerRef.current) {
       clearTimeout(parallelPrefetchTimerRef.current);
@@ -2881,11 +2890,12 @@ export default function AdminUploads() {
       if (!token || !cardId) {
         return;
       }
-      const endpoint = `/api/admin/cards/${encodeURIComponent(cardId)}/ocr-suggest`;
+      const endpoint = resolveApiUrl(`/api/admin/cards/${encodeURIComponent(cardId)}/ocr-suggest`);
       for (let attempt = 0; attempt < 6; attempt += 1) {
         try {
           const response = await fetch(endpoint, {
             headers: buildAdminHeaders(token),
+            mode: isRemoteApi ? "cors" : "same-origin",
           });
           if (!response.ok) {
             return;
@@ -2902,7 +2912,7 @@ export default function AdminUploads() {
         }
       }
     },
-    [session?.token]
+    [isRemoteApi, resolveApiUrl, session?.token]
   );
   const fetchOcrSuggestions = useCallback(
     async (cardId: string, options?: OcrFetchOptions) => {
@@ -2913,6 +2923,10 @@ export default function AdminUploads() {
         setOcrStatus("error");
         setOcrError("Your session expired. Sign in again and retry.");
         if (isProductSetPrefetch) {
+          if (screen2PrefetchTimeoutRef.current) {
+            clearTimeout(screen2PrefetchTimeoutRef.current);
+            screen2PrefetchTimeoutRef.current = null;
+          }
           setScreen2PrefetchStatus("error");
         }
         return;
@@ -2921,6 +2935,10 @@ export default function AdminUploads() {
         setOcrStatus("error");
         setOcrError("Card asset not ready yet. Wait a moment and retry.");
         if (isProductSetPrefetch) {
+          if (screen2PrefetchTimeoutRef.current) {
+            clearTimeout(screen2PrefetchTimeoutRef.current);
+            screen2PrefetchTimeoutRef.current = null;
+          }
           setScreen2PrefetchStatus("error");
         }
         return;
@@ -2969,8 +2987,10 @@ export default function AdminUploads() {
           params.size > 0
             ? `/api/admin/cards/${cardId}/ocr-suggest?${params.toString()}`
             : `/api/admin/cards/${cardId}/ocr-suggest`;
-        const res = await fetch(endpoint, {
+        const requestUrl = resolveApiUrl(endpoint);
+        const res = await fetch(requestUrl, {
           headers: buildAdminHeaders(session.token),
+          mode: isRemoteApi ? "cors" : "same-origin",
         });
         if (ocrRequestIdRef.current !== requestId || ocrCardIdRef.current !== cardId) {
           return;
@@ -2980,6 +3000,17 @@ export default function AdminUploads() {
           setOcrStatus("error");
           setOcrError(payload?.message ?? "OCR request failed");
           if (isProductSetPrefetch) {
+            if (screen2PrefetchTimeoutRef.current) {
+              clearTimeout(screen2PrefetchTimeoutRef.current);
+              screen2PrefetchTimeoutRef.current = null;
+            }
+            console.warn("[AddCards][Screen2Prefetch] OCR suggest returned non-ok response", {
+              cardId,
+              endpoint: requestUrl,
+              status: res.status,
+              message: payload?.message ?? null,
+              purpose,
+            });
             setScreen2PrefetchStatus("error");
           }
           return;
@@ -3005,6 +3036,18 @@ export default function AdminUploads() {
               }
               void fetchOcrSuggestions(cardId, nextOptions);
             }, 1000);
+          } else if (isProductSetPrefetch) {
+            if (screen2PrefetchTimeoutRef.current) {
+              clearTimeout(screen2PrefetchTimeoutRef.current);
+              screen2PrefetchTimeoutRef.current = null;
+            }
+            console.warn("[AddCards][Screen2Prefetch] OCR suggest stayed pending after retries", {
+              cardId,
+              endpoint: requestUrl,
+              purpose,
+              retryAttempt,
+            });
+            setScreen2PrefetchStatus("error");
           }
           return;
         }
@@ -3027,13 +3070,27 @@ export default function AdminUploads() {
           setOcrStatus("empty");
         }
         if (isProductSetPrefetch) {
+          if (screen2PrefetchTimeoutRef.current) {
+            clearTimeout(screen2PrefetchTimeoutRef.current);
+            screen2PrefetchTimeoutRef.current = null;
+          }
           setScreen2PrefetchStatus("ready");
         }
-      } catch {
+      } catch (error) {
         ocrRetryRef.current = 0;
         setOcrStatus("error");
         setOcrError("OCR request failed");
         if (isProductSetPrefetch) {
+          if (screen2PrefetchTimeoutRef.current) {
+            clearTimeout(screen2PrefetchTimeoutRef.current);
+            screen2PrefetchTimeoutRef.current = null;
+          }
+          console.warn("[AddCards][Screen2Prefetch] OCR suggest transport failure", {
+            cardId,
+            purpose,
+            retryAttempt,
+            message: error instanceof Error ? error.message : String(error),
+          });
           setScreen2PrefetchStatus("error");
         }
         // ignore suggestion failures
@@ -3046,6 +3103,8 @@ export default function AdminUploads() {
       intakeRequired.manufacturer,
       intakeRequired.sport,
       intakeRequired.year,
+      isRemoteApi,
+      resolveApiUrl,
       session?.token,
       syncOptionalFieldsFromOcrAudit,
       teachLayoutClass,
@@ -3069,6 +3128,10 @@ export default function AdminUploads() {
   useEffect(() => {
     if (!intakeCardId || intakeRequired.category !== "sport") {
       screen2PrefetchKeyRef.current = null;
+      if (screen2PrefetchTimeoutRef.current) {
+        clearTimeout(screen2PrefetchTimeoutRef.current);
+        screen2PrefetchTimeoutRef.current = null;
+      }
       setScreen2PrefetchStatus(null);
       return;
     }
@@ -3079,6 +3142,10 @@ export default function AdminUploads() {
       sanitizeNullableText(variantScopeSummary?.selectedSetId) || sanitizeNullableText(intakeOptional.productLine);
     if (!scopedProductSetId) {
       screen2PrefetchKeyRef.current = null;
+      if (screen2PrefetchTimeoutRef.current) {
+        clearTimeout(screen2PrefetchTimeoutRef.current);
+        screen2PrefetchTimeoutRef.current = null;
+      }
       setScreen2PrefetchStatus("idle");
       return;
     }
@@ -3096,7 +3163,23 @@ export default function AdminUploads() {
       return;
     }
     screen2PrefetchKeyRef.current = prefetchKey;
+    if (screen2PrefetchTimeoutRef.current) {
+      clearTimeout(screen2PrefetchTimeoutRef.current);
+      screen2PrefetchTimeoutRef.current = null;
+    }
     setScreen2PrefetchStatus("loading");
+    screen2PrefetchTimeoutRef.current = setTimeout(() => {
+      if (screen2PrefetchKeyRef.current !== prefetchKey) {
+        return;
+      }
+      console.warn("[AddCards][Screen2Prefetch] timed out waiting for insert/parallel suggestions", {
+        cardId: intakeCardId,
+        productSetId: scopedProductSetId,
+        cardNumber: scopedCardNumber || null,
+      });
+      setScreen2PrefetchStatus((current) => (current === "loading" ? "error" : current));
+      screen2PrefetchTimeoutRef.current = null;
+    }, 5000);
     setIntakeOptional((prev) => {
       let changed = false;
       const next = { ...prev };
@@ -3128,6 +3211,12 @@ export default function AdminUploads() {
       hintProductLine: scopedProductSetId,
       hintCardNumber: scopedCardNumber || undefined,
     });
+    return () => {
+      if (screen2PrefetchTimeoutRef.current) {
+        clearTimeout(screen2PrefetchTimeoutRef.current);
+        screen2PrefetchTimeoutRef.current = null;
+      }
+    };
   }, [
     fetchOcrSuggestions,
     intakeCardId,
@@ -4639,13 +4728,10 @@ export default function AdminUploads() {
       try {
         await saveIntakeMetadata(true, recordTeachOnSend);
       } catch (error) {
+        console.warn("[AddCards][SendToKingsReview] metadata save failed", error);
         setIntakeError(humanizeRequestFailure(error, "Failed to save card metadata before sending to KingsReview."));
         return;
       }
-
-      triggerPhotoroomForCard(sendingCardId).catch((err) =>
-        console.warn("[PhotoRoom] background processing failed:", err)
-      );
 
       const query = buildIntakeQuery();
       const sourceList =
@@ -4670,6 +4756,7 @@ export default function AdminUploads() {
           }),
         });
       } catch (error) {
+        console.warn("[AddCards][SendToKingsReview] enqueue transport failed", error);
         setIntakeError(
           humanizeRequestFailure(
             error,
@@ -4681,6 +4768,11 @@ export default function AdminUploads() {
 
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
+        console.warn("[AddCards][SendToKingsReview] enqueue returned non-ok response", {
+          cardId: sendingCardId,
+          status: res.status,
+          message: payload?.message ?? null,
+        });
         setIntakeError(payload?.message ?? `Failed to enqueue KingsReview job (${res.status}).`);
         return;
       }
@@ -4699,7 +4791,11 @@ export default function AdminUploads() {
         void openIntakeCapture("front");
       }
       void refreshQueuedReviewCards();
+      triggerPhotoroomForCard(sendingCardId).catch((err) =>
+        console.warn("[PhotoRoom] background processing failed:", err)
+      );
     } catch (err) {
+      console.warn("[AddCards][SendToKingsReview] unexpected client failure", err);
       const message = humanizeRequestFailure(err, "Unexpected client error while sending to KingsReview.");
       setIntakeError(message);
     } finally {

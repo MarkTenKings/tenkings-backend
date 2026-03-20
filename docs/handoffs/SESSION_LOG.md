@@ -12108,6 +12108,52 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this push-sync step.
 
+## 2026-03-20 - Task 16 Add Cards Screen 2 prefetch + KingsReview send fix
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Verified local `main` against `origin/main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Wrote the requested pre-coding analysis to `docs/handoffs/TASK16_ANALYSIS.md` before changing code.
+- Fixed the Screen 2 prefetch stuck-loading path and hardened the `Send to KingsReview AI` critical path.
+
+### Files Updated
+- `docs/handoffs/TASK16_ANALYSIS.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+
+### Root Cause
+- Screen 2 product-set prefetch was firing, but the request path in `uploads.tsx` used a raw relative `/api/admin/cards/[cardId]/ocr-suggest` fetch instead of `resolveApiUrl(...)`.
+- The OCR suggest route itself was not wrapped with `withAdminCors(...)`, unlike the save and enqueue endpoints used in the send flow.
+- The client left `screen2PrefetchStatus` in `loading` if `/ocr-suggest` kept returning `status: "pending"` after the retry budget, so the UI could show `Loading insert suggestion...` / `Loading parallel suggestion...` forever.
+- Existing repo evidence in the session log already identified the remaining likely `Send to KingsReview AI` transport risk as the fire-and-forget PhotoRoom request starting immediately before the enqueue call.
+
+### Implementation Notes
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - switched OCR suggest fetches and warm-up calls onto `resolveApiUrl(...)`
+  - added `mode: isRemoteApi ? "cors" : "same-origin"` to those OCR suggest requests
+  - added a 5-second Screen 2 prefetch timeout that converts stuck loading into the existing unavailable state
+  - added a terminal fallback when product-set prefetch remains `pending` after retries
+  - added console warnings for non-ok, transport-failure, retry-exhaustion, and timeout cases in the Screen 2 prefetch path
+  - moved the background PhotoRoom trigger to after successful KingsReview enqueue so the send/enqueue request stays on the critical path by itself
+  - added stage-specific console warnings for metadata-save and enqueue failures
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - wrapped the handler with `withAdminCors(...)`
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts'`
+  - pass
+  - warnings only: existing `@next/next/no-img-element` warnings in `pages/admin/uploads.tsx`
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Notes
+- No deploy, restart, migration, runtime, or DB operation was executed for this task.
+
 ## 2026-03-20 - Task 15 recipe detail crash hardening
 
 ### Summary
