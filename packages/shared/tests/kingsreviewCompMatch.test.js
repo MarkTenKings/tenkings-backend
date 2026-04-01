@@ -72,12 +72,54 @@ test("scoreKingsreviewComp demotes graded mismatch into close range", () => {
   const result = scoreKingsreviewComp(context, {
     title: "2025 Topps Chrome Victor Wembanyam DD-11 The Daily Dribble Gold Refractor /50 PSA 10",
     condition: "Graded",
+    itemSpecifics: {
+      set: ["2025 Topps Chrome Basketball"],
+      "card number": ["DD-11"],
+    },
   });
 
   assert.ok(result);
   assert.equal(result.matchQuality, "close");
-  assert.ok(result.score >= 55 && result.score < 80);
+  assert.ok(result.score >= 65 && result.score < 80);
   assert.ok(result.penalties.includes("graded"));
+  assert.deepEqual(result.keyComparison.graded, {
+    expected: "Raw",
+    actual: "PSA 10",
+    matched: false,
+  });
+});
+
+test("scoreKingsreviewComp extracts serial denominator from card-name specifics", () => {
+  const context = {
+    playerName: "Victor Wembanyama",
+    setName: "2025 Topps Chrome Basketball",
+    cardNumber: "DD-11",
+    year: "2025",
+    parallel: "Gold Refractor",
+    insertSet: null,
+    autograph: false,
+    memorabilia: false,
+    numbered: "7/10",
+    graded: false,
+    gradingCompany: null,
+    gradeScore: null,
+  };
+
+  const result = scoreKingsreviewComp(context, {
+    title: "2025 Topps Chrome Victor Wembanyama DD-11 Gold Refractor",
+    condition: "Ungraded",
+    itemSpecifics: {
+      "card name": ["The Daily Dribble Gold Refractor /10"],
+    },
+  });
+
+  assert.ok(result);
+  assert.ok(result.matchedFields.includes("serialDenominator"));
+  assert.deepEqual(result.keyComparison.numbered, {
+    expected: "/10",
+    actual: "/10",
+    matched: true,
+  });
 });
 
 test("annotateAndSortKingsreviewComps ranks exact matches above graded mismatches and wrong parallels", () => {
@@ -105,6 +147,10 @@ test("annotateAndSortKingsreviewComps ranks exact matches above graded mismatche
     {
       title: "2025 Topps Chrome Victor Wembanyama DD-11 The Daily Dribble Gold Refractor /50 PSA 10",
       condition: "Graded",
+      itemSpecifics: {
+        set: ["2025 Topps Chrome Basketball"],
+        "card number": ["DD-11"],
+      },
       url: "https://example.com/close",
     },
     {

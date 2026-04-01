@@ -12709,6 +12709,37 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
+## 2026-04-01 - Task 21 KingsReview comp scoring tuning + key comparison chips
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Synced `main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Tuned KingsReview comp scoring and added reviewer-facing key comparison chips without changing search query generation, ribbon badges, panel layout, drag handles, or mobile tabs.
+
+### Files Updated
+- `packages/shared/src/kingsreviewCompMatch.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/kingsreviewCompMatch.test.js`
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added `CARD_NAME_KEYS` to serial denominator extraction so eBay `card name`/`name`/`card title` specifics can contribute numbering like `/10` and `/50`.
+- Raised serial denominator scoring impact, increased autograph and memorabilia mismatch penalties, and moved the `close` threshold from `55` to `65`.
+- Extended the shared scorer result with `keyComparison` data for numbered, parallel, and graded values so the frontend can render side-by-side comparisons from scorer output rather than re-deriving display values locally.
+- Added compact comparison chips to KingsReview comp cards showing the reviewer card value on the left and the comp value on the right, with green/red state on the comp chip for match vs mismatch.
+- Updated the shared tests to cover the new card-name denominator extraction path and the tightened `close` threshold behavior.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared test` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` passed with the existing `pages/admin/kingsreview.tsx` `<img>` warning only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
 ## 2026-04-01 - Task 20e KingsReview mobile tabbed layout
 
 ### Summary

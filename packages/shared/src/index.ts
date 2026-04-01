@@ -89,6 +89,8 @@ export {
 export type {
   KingsreviewCompMatchQuality,
   KingsreviewCompMatchContext,
+  KingsreviewCompKeyComparisonField,
+  KingsreviewCompKeyComparison,
   KingsreviewCompMatchResult,
   KingsreviewCompCandidate,
 } from "./kingsreviewCompMatch";

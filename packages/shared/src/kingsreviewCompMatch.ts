@@ -19,11 +19,24 @@ export type KingsreviewCompMatchContext = {
   gradeScore: string | null;
 };
 
+export type KingsreviewCompKeyComparisonField = {
+  expected: string | null;
+  actual: string | null;
+  matched: boolean;
+};
+
+export type KingsreviewCompKeyComparison = {
+  numbered: KingsreviewCompKeyComparisonField | null;
+  parallel: KingsreviewCompKeyComparisonField | null;
+  graded: KingsreviewCompKeyComparisonField | null;
+};
+
 export type KingsreviewCompMatchResult = {
   score: number;
   matchQuality: KingsreviewCompMatchQuality;
   matchedFields: string[];
   penalties: string[];
+  keyComparison: KingsreviewCompKeyComparison;
 };
 
 export type KingsreviewCompCandidate = {
@@ -32,6 +45,7 @@ export type KingsreviewCompCandidate = {
   itemSpecifics?: Record<string, string[]> | null;
   matchScore?: number | null;
   matchQuality?: KingsreviewCompMatchQuality | null;
+  keyComparison?: KingsreviewCompKeyComparison | null;
 };
 
 const BASE_PARALLEL_TOKENS = new Set(["", "base", "none", "no parallel", "standard", "regular"]);
@@ -51,6 +65,7 @@ const CARD_NUMBER_KEYS = ["card number", "card no", "number"];
 const YEAR_KEYS = ["season", "year", "year manufactured"];
 const PARALLEL_KEYS = ["parallel variety", "parallel", "variety variation", "variation", "variety"];
 const FEATURES_KEYS = ["features", "card attributes"];
+const CARD_NAME_KEYS = ["card name", "name", "card title"];
 const INSERT_KEYS = ["insert set", "insert", "subset", "card type", "program"];
 const CONDITION_KEYS = ["condition"];
 const GRADER_KEYS = ["professional grader", "grader", "grading company"];
@@ -431,6 +446,139 @@ function hasExplicitNonBaseParallelSignal(title: string | null | undefined, spec
   return NON_BASE_PARALLEL_RE.test(parallelTexts);
 }
 
+function formatSerialDenominatorLabel(value: string | null | undefined): string | null {
+  return value ? `/${value}` : null;
+}
+
+function toDisplayTitleCase(value: string): string {
+  return value
+    .split(" ")
+    .map((token) => {
+      if (!token) {
+        return token;
+      }
+      const upper = token.toUpperCase();
+      if (["PSA", "BGS", "SGC", "CGC", "CSG", "HGA", "BVG", "TAG"].includes(upper)) {
+        return upper;
+      }
+      return token.charAt(0).toUpperCase() + token.slice(1);
+    })
+    .join(" ");
+}
+
+function formatParallelComparisonLabel(value: string | null | undefined): string | null {
+  const normalizedBase = normalizeParallelBase(value);
+  if (!normalizedBase) {
+    return null;
+  }
+  if (BASE_PARALLEL_TOKENS.has(normalizedBase)) {
+    return "Base";
+  }
+  if (normalizedBase.length <= 32) {
+    return toDisplayTitleCase(normalizedBase);
+  }
+  const signalTokens = [
+    ...new Set(
+      tokenizeCompMatchText(value)
+        .filter((token) => NON_BASE_PARALLEL_RE.test(token) || token === "refractor" || token === "prizm" || token === "prism")
+    ),
+  ];
+  if (signalTokens.length < 1) {
+    return null;
+  }
+  return signalTokens.slice(0, 3).map((token) => toDisplayTitleCase(token)).join(" ");
+}
+
+function formatGradedComparisonLabel(
+  graded: boolean,
+  grader: string | null | undefined,
+  grade: string | null | undefined
+): string {
+  if (!graded) {
+    return "Raw";
+  }
+  const parts = [compactWhitespace(String(grader ?? "")) || null, compactWhitespace(String(grade ?? "")) || null].filter(
+    (value): value is string => Boolean(value)
+  );
+  return parts.join(" ") || "Graded";
+}
+
+function selectParallelComparisonActualValue(
+  expected: string | null | undefined,
+  pool: ReturnType<typeof buildCompValuePool>,
+  parallelMatched: boolean
+): string | null {
+  const specificParallelValues = getSpecificsValues(pool.specifics, PARALLEL_KEYS);
+  const matchingSpecific = specificParallelValues.find((value) => fuzzyParallelMatch(expected, value));
+  if (matchingSpecific) {
+    return formatParallelComparisonLabel(matchingSpecific);
+  }
+
+  const nonBaseSpecific = specificParallelValues.find((value) => !isBaseParallel(value));
+  if (nonBaseSpecific) {
+    return formatParallelComparisonLabel(nonBaseSpecific);
+  }
+
+  if (parallelMatched) {
+    const expectedLabel = formatParallelComparisonLabel(expected);
+    if (expectedLabel && expectedLabel !== "Base") {
+      return expectedLabel;
+    }
+  }
+
+  if (hasExplicitNonBaseParallelSignal(pool.title, pool.specifics)) {
+    return formatParallelComparisonLabel(pool.title);
+  }
+
+  return "Base";
+}
+
+function buildKeyComparison(
+  context: KingsreviewCompMatchContext,
+  pool: ReturnType<typeof buildCompValuePool>,
+  compGrading: ReturnType<typeof detectGradedState>,
+  expectedDenominator: string | null,
+  actualDenominator: string | null,
+  parallelMatched: boolean
+): KingsreviewCompKeyComparison {
+  const numbered =
+    expectedDenominator || actualDenominator
+      ? {
+          expected: formatSerialDenominatorLabel(expectedDenominator),
+          actual: formatSerialDenominatorLabel(actualDenominator),
+          matched: Boolean(expectedDenominator && actualDenominator && expectedDenominator === actualDenominator),
+        }
+      : null;
+
+  const expectedParallel = formatParallelComparisonLabel(context.parallel) ?? "Base";
+  const actualParallel = selectParallelComparisonActualValue(context.parallel, pool, parallelMatched) ?? "Base";
+  const parallel =
+    expectedParallel === "Base" && actualParallel === "Base"
+      ? null
+      : {
+          expected: expectedParallel,
+          actual: actualParallel,
+          matched: parallelMatched,
+        };
+
+  const expectedGraded = formatGradedComparisonLabel(context.graded, context.gradingCompany, context.gradeScore);
+  const actualGraded = formatGradedComparisonLabel(compGrading.graded, compGrading.grader, compGrading.grade);
+  const graded =
+    expectedGraded === "Raw" && actualGraded === "Raw"
+      ? null
+      : {
+          expected: expectedGraded,
+          actual: actualGraded,
+          matched: normalizeCompMatchText(expectedGraded) === normalizeCompMatchText(actualGraded),
+        };
+
+  return {
+    numbered,
+    parallel,
+    graded,
+  };
+}
+
 function buildCompValuePool(comp: KingsreviewCompCandidate) {
   const specifics = comp.itemSpecifics ?? null;
   const title = comp.title ?? "";
@@ -455,7 +603,7 @@ function buildQuality(score: number): KingsreviewCompMatchQuality {
   if (score >= 80) {
     return "exact";
   }
-  if (score >= 55) {
+  if (score >= 65) {
     return "close";
   }
   return "weak";
@@ -563,6 +711,20 @@ export function scoreKingsreviewComp(
   }
 
   const pool = buildCompValuePool(comp);
+  const compGrading = detectGradedState(pool.title, comp.condition ?? null, pool.specifics);
+  const expectedDenominator = extractSerialDenominator(context.numbered);
+  const actualDenominator = extractSerialDenominator(
+    [
+      pool.title,
+      ...getSpecificsValues(pool.specifics, PARALLEL_KEYS),
+      ...getSpecificsValues(pool.specifics, FEATURES_KEYS),
+      ...getSpecificsValues(pool.specifics, CARD_NAME_KEYS),
+    ].join(" ")
+  );
+  let parallelMatched = false;
+  if (context.parallel) {
+    parallelMatched = pool.parallelValues.some((value) => fuzzyParallelMatch(context.parallel, value));
+  }
   const matchedFields: string[] = [];
   const penalties: string[] = [];
   let score = 0;
@@ -574,6 +736,14 @@ export function scoreKingsreviewComp(
       matchQuality: "weak",
       matchedFields,
       penalties: ["player"],
+      keyComparison: buildKeyComparison(
+        context,
+        pool,
+        compGrading,
+        expectedDenominator,
+        actualDenominator,
+        parallelMatched
+      ),
     };
   }
   score += 20;
@@ -604,7 +774,6 @@ export function scoreKingsreviewComp(
   }
 
   if (context.parallel) {
-    const parallelMatched = pool.parallelValues.some((value) => fuzzyParallelMatch(context.parallel, value));
     if (parallelMatched) {
       score += 15;
       matchedFields.push("parallel");
@@ -619,7 +788,6 @@ export function scoreKingsreviewComp(
     }
   }
 
-  const compGrading = detectGradedState(pool.title, comp.condition ?? null, pool.specifics);
   if (context.graded === compGrading.graded) {
     score += 10;
     matchedFields.push("graded");
@@ -660,7 +828,7 @@ export function scoreKingsreviewComp(
     score += 5;
     matchedFields.push("autograph");
   } else if (context.autograph || compAutograph) {
-    score -= 6;
+    score -= 15;
     penalties.push("autograph");
   }
 
@@ -669,20 +837,16 @@ export function scoreKingsreviewComp(
     score += 5;
     matchedFields.push("memorabilia");
   } else if (context.memorabilia || compMemorabilia) {
-    score -= 6;
+    score -= 12;
     penalties.push("memorabilia");
   }
 
-  const expectedDenominator = extractSerialDenominator(context.numbered);
-  const actualDenominator = extractSerialDenominator(
-    [pool.title, ...getSpecificsValues(pool.specifics, PARALLEL_KEYS), ...getSpecificsValues(pool.specifics, FEATURES_KEYS)].join(" ")
-  );
   if (expectedDenominator && actualDenominator) {
     if (expectedDenominator === actualDenominator) {
-      score += 8;
+      score += 15;
       matchedFields.push("serialDenominator");
     } else {
-      score -= 20;
+      score -= 30;
       penalties.push("serialDenominator");
     }
   }
@@ -693,19 +857,28 @@ export function scoreKingsreviewComp(
     matchQuality: buildQuality(normalizedScore),
     matchedFields,
     penalties,
+    keyComparison: buildKeyComparison(
+      context,
+      pool,
+      compGrading,
+      expectedDenominator,
+      actualDenominator,
+      parallelMatched
+    ),
   };
 }
 
 export function annotateAndSortKingsreviewComps<T extends KingsreviewCompCandidate>(
   context: KingsreviewCompMatchContext | null | undefined,
   comps: T[]
-): Array<T & { matchScore: number | null; matchQuality: KingsreviewCompMatchQuality | null }> {
+): Array<T & { matchScore: number | null; matchQuality: KingsreviewCompMatchQuality | null; keyComparison: KingsreviewCompKeyComparison | null }> {
   const annotated = comps.map((comp, index) => {
     const scored = scoreKingsreviewComp(context, comp);
     return {
       ...comp,
       matchScore: scored?.score ?? null,
       matchQuality: scored?.matchQuality ?? null,
+      keyComparison: scored?.keyComparison ?? null,
       __sortIndex: index,
     };
   });
@@ -714,6 +887,7 @@ export function annotateAndSortKingsreviewComps<T extends KingsreviewCompCandida
     return annotated.map(({ __sortIndex, ...comp }) => comp as T & {
       matchScore: number | null;
       matchQuality: KingsreviewCompMatchQuality | null;
+      keyComparison: KingsreviewCompKeyComparison | null;
     });
   }
 
@@ -729,5 +903,6 @@ export function annotateAndSortKingsreviewComps<T extends KingsreviewCompCandida
   return annotated.map(({ __sortIndex, ...comp }) => comp as T & {
     matchScore: number | null;
     matchQuality: KingsreviewCompMatchQuality | null;
+    keyComparison: KingsreviewCompKeyComparison | null;
   });
 }

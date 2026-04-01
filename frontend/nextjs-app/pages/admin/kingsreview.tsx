@@ -6,6 +6,7 @@ import {
   annotateAndSortKingsreviewComps,
   buildKingsreviewCompMatchContext,
   KingsreviewCompMatchQuality,
+  type KingsreviewCompKeyComparison,
   normalizeEbayItemSpecifics,
 } from "@tenkings/shared";
 import AppShell from "../../components/AppShell";
@@ -127,6 +128,7 @@ type JobResultComp = {
   itemSpecifics?: Record<string, string[]> | null;
   matchScore?: number | null;
   matchQuality?: KingsreviewCompMatchQuality | null;
+  keyComparison?: KingsreviewCompKeyComparison | null;
   notes?: string | null;
   patternMatch?: {
     score: number;
@@ -209,6 +211,39 @@ const normalizeMatchQuality = (value: unknown): KingsreviewCompMatchQuality | un
   return undefined;
 };
 
+const normalizeKeyComparisonField = (value: unknown): KingsreviewCompKeyComparison[keyof KingsreviewCompKeyComparison] => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.matched !== "boolean") {
+    return null;
+  }
+  return {
+    expected: normalizeNullableText(typeof raw.expected === "string" ? raw.expected : null),
+    actual: normalizeNullableText(typeof raw.actual === "string" ? raw.actual : null),
+    matched: raw.matched,
+  };
+};
+
+const normalizeKeyComparison = (value: unknown): KingsreviewCompKeyComparison | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const raw = value as Record<string, unknown>;
+  const numbered = normalizeKeyComparisonField(raw.numbered);
+  const parallel = normalizeKeyComparisonField(raw.parallel);
+  const graded = normalizeKeyComparisonField(raw.graded);
+  if (!numbered && !parallel && !graded) {
+    return null;
+  }
+  return {
+    numbered,
+    parallel,
+    graded,
+  };
+};
+
 const normalizeJobResultComp = (value: unknown): JobResultComp | null => {
   if (!value || typeof value !== "object") {
     return null;
@@ -244,6 +279,7 @@ const normalizeJobResultComp = (value: unknown): JobResultComp | null => {
         ? Math.max(0, Math.min(100, Math.round(raw.matchScore)))
         : undefined,
     matchQuality: normalizeMatchQuality(raw.matchQuality),
+    keyComparison: normalizeKeyComparison(raw.keyComparison),
     notes: normalizeNullableText(typeof raw.notes === "string" ? raw.notes : null),
     patternMatch: normalizePatternMatch(raw.patternMatch),
   };
@@ -495,6 +531,90 @@ type CompCardProps = {
   onUnattach: (compUrl: string) => void;
 };
 
+type CompComparisonStripItem = {
+  id: "numbered" | "parallel" | "graded";
+  expected: string;
+  actual: string;
+  matched: boolean;
+  title: string;
+};
+
+const truncateComparisonValue = (value: string, maxLength: number) =>
+  value.length > maxLength ? `${value.slice(0, maxLength - 1)}…` : value;
+
+const buildCompComparisonStripItems = (
+  keyComparison: KingsreviewCompKeyComparison | null | undefined
+): CompComparisonStripItem[] => {
+  if (!keyComparison) {
+    return [];
+  }
+
+  const rows: CompComparisonStripItem[] = [];
+  ([
+    { id: "numbered", label: "Numbered", field: keyComparison.numbered },
+    { id: "parallel", label: "Parallel", field: keyComparison.parallel },
+    { id: "graded", label: "Graded", field: keyComparison.graded },
+  ] as const).forEach((entry) => {
+    if (!entry.field) {
+      return;
+    }
+    rows.push({
+      id: entry.id,
+      expected: entry.field.expected ?? "—",
+      actual: entry.field.actual ?? "—",
+      matched: entry.field.matched,
+      title: `${entry.label}: ${entry.field.expected ?? "—"} vs ${entry.field.actual ?? "—"}`,
+    });
+  });
+  return rows;
+};
+
+const CompComparisonStrip = ({ keyComparison }: { keyComparison: KingsreviewCompKeyComparison | null | undefined }) => {
+  const rows = buildCompComparisonStripItems(keyComparison);
+  if (rows.length < 1) {
+    return null;
+  }
+
+  return (
+    <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "6px" }}>
+      {rows.map((row) => {
+        const expectedLabel = row.id === "parallel" ? truncateComparisonValue(row.expected, 12) : row.expected;
+        const actualLabel = row.id === "parallel" ? truncateComparisonValue(row.actual, 12) : row.actual;
+        return (
+          <div key={row.id} title={row.title} style={{ display: "flex", gap: "2px" }}>
+            <span
+              style={{
+                fontSize: "10px",
+                fontWeight: 600,
+                padding: "2px 6px",
+                borderRadius: "3px",
+                backgroundColor: "rgba(34,197,94,0.2)",
+                color: "#22c55e",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {expectedLabel}
+            </span>
+            <span
+              style={{
+                fontSize: "10px",
+                fontWeight: 600,
+                padding: "2px 6px",
+                borderRadius: "3px",
+                backgroundColor: row.matched ? "rgba(34,197,94,0.2)" : "rgba(239,68,68,0.2)",
+                color: row.matched ? "#22c55e" : "#ef4444",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {actualLabel}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const CompCard = memo(function CompCard({
   comp,
   index,
@@ -585,6 +705,7 @@ const CompCard = memo(function CompCard({
               </div>
             </div>
             <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
+            <CompComparisonStrip keyComparison={comp.keyComparison} />
             <div className="flex flex-wrap gap-2">
               <a
                 href={comp.url}
@@ -654,6 +775,7 @@ const CompCard = memo(function CompCard({
               </div>
             </div>
             <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
+            <CompComparisonStrip keyComparison={comp.keyComparison} />
             <div className="flex flex-wrap gap-2">
               {comp.patternMatch && (
                 <span className="text-[10px] uppercase tracking-[0.3em] text-slate-300">

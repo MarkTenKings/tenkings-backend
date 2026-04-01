@@ -1,18 +1,38 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-01` (Task 20e KingsReview mobile tabbed layout completed in this session; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-01` (Task 21 KingsReview comp scoring tuning + key comparison chips completed in this session; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state at Task 20e handoff refresh start:
+- Current local git state at Task 21 handoff refresh start:
   - `git status -sb` -> `## main...origin/main`
-- Latest committed baseline before Task 20e edit:
+- Latest committed baseline before Task 21 edit:
+  - `b23d758` feat(kingsreview): add mobile tabbed layout with breakpoint switch
   - `3967912` style(kingsreview): restyle comp badges as upper-right corner ribbons
   - `8bcaa83` feat(kingsreview): add draggable resize handles between panels
   - `68a9076` fix(kingsreview): restore panel scrolling + add draggable resize handles
   - `11ea1b7` style(kingsreview): flush flexible columns + badge pill styling
-  - `4ad4656` fix(add-cards): stabilize identify-set and screen2 prefetch effect lifecycles
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-01, Task 21 KingsReview comp scoring tuning + key comparison chips)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Updated the requested KingsReview scoring and reviewer-comparison behavior in:
+  - `packages/shared/src/kingsreviewCompMatch.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/kingsreviewCompMatch.test.js`
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- What changed:
+  - added `CARD_NAME_KEYS` to serial denominator extraction so `/10`, `/50`, and similar numbering can be pulled from eBay `Card Name`/`Name`/`Card Title` item specifics without removing any prior extraction sources
+  - tuned scoring weights by increasing serial denominator reward/penalty, increasing autograph and memorabilia mismatch penalties, and raising the `close` threshold from `55` to `65`
+  - added structured `keyComparison` output to the shared scorer so each comp now carries numbered, parallel, and graded comparison values for UI display
+  - rendered compact two-chip comparison strips on KingsReview comp cards using the scorer output, while leaving ribbon badges, panel layout, drag handles, mobile tabs, and data flow unchanged
+- Validation:
+  - `pnpm --filter @tenkings/shared test` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` -> pass with the existing `pages/admin/kingsreview.tsx` `<img>` warning only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-01, Task 20e KingsReview mobile tabbed layout)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
