@@ -12288,3 +12288,58 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this push-sync step.
+
+## 2026-03-31 - Task 17 cross-set Product Set identification
+
+### Summary
+- Re-read the mandatory context, runbook, and handoff docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Confirmed local `main` was already current with `origin/main` before editing via `git pull --ff-only` -> `Already up to date.`
+- Wrote the requested pre-coding trace to `docs/handoffs/TASK17_ANALYSIS.md`.
+- Implemented cross-set Product Set identification for Add Cards using `cardNumber + playerName`, with Chrome/Optic front-text tie-breaking.
+
+### Files Updated
+- `docs/handoffs/TASK17_ANALYSIS.md`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/lib/server/cardSetIdentification.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/identify-set.ts`
+- `packages/shared/src/cardIdentity.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/cardIdentity.test.js`
+
+### Implementation Notes
+- Added shared player-name normalization utilities that:
+  - strip accents/diacritics
+  - remove punctuation noise
+  - normalize suffix variants like `Jr.`, `Junior`, `III`
+- Added reusable server helper `frontend/nextjs-app/lib/server/cardSetIdentification.ts` that:
+  - loads all candidate sets for the current year/manufacturer/sport scope
+  - queries published `SetCard` rows by exact `cardNumber`
+  - matches `playerName` using normalized exact/fuzzy comparison
+  - groups duplicate `SetCard` rows by set before choosing the best candidate
+  - applies the requested `Chrome` / `Optic` front-text tiebreaker, defaulting to the non-Chrome/non-Optic set when neither keyword is present
+- Added `POST /api/admin/cards/identify-set` for explicit Add Cards set identification.
+- Updated `/admin/uploads` so Screen 1:
+  - no longer auto-fills Product Set from the old scope-only preselection path
+  - calls the new identify-set endpoint once OCR has year/manufacturer/sport/card number/player name
+  - auto-applies only exact/fuzzy identify-set matches
+  - otherwise leaves Product Set blank for manual selection while keeping the dropdown narrowed by year/manufacturer/sport
+- Updated Screen 2 prefetch to wait for the actual selected Product Set instead of using `variantScopeSummary.selectedSetId`.
+
+### Validation
+- `pnpm --filter @tenkings/shared test`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/identify-set.ts --file lib/server/cardSetIdentification.ts`
+  - pass with the existing `uploads.tsx` `<img>` warnings only
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Git State
+- feature commit created:
+  - `b32c049` `feat(add-cards): cross-set identification using card number + player name lookup with Chrome/Optic tiebreaker`
+- post-feature-commit status before this handoff append:
+  - `git status -sb` -> `## main...origin/main [ahead 1]`
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.

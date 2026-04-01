@@ -1,16 +1,16 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-20` (Task 14 pack types admin + visual selector feature plus handoff sync pushed to `origin/main`; no deploy/restart/migration or DB writes in this session)
+- Last reviewed: `2026-03-31` (Task 17 cross-set Add Cards identification implemented at feature commit `b32c049`; before final handoff sync commit, local `main` differs from `origin/main` by that feature commit plus pending handoff-doc updates; no deploy/restart/migration or DB writes in this session)
 - Branch: `main`
-- Short HEAD: `97610f4`
-- Current local git state: `git status -sb` -> `## main...origin/main`; local `main` was already `[ahead 2]` on session entry before Task 14 work, and after this handoff sync the working tree differs only in `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`
+- Short HEAD: `b32c049`
+- Current local git state: `git status -sb` -> `## main...origin/main [ahead 1]`; after the Task 17 feature commit, the working tree differs only in `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md` before final handoff sync
 - Latest repo commits:
+  - `b32c049` feat(add-cards): cross-set identification using card number + player name lookup with Chrome/Optic tiebreaker
+  - `891e0bc` docs(handoff): sync task14 pushed state
   - `97610f4` docs(handoff): sync task14 implementation state
   - `7e16df2` feat(pack-types): add Pack Types admin page with image upload + visual selector in Assign modal
   - `8f69a50` fix(add-cards): fix screen 2 insert/parallel pre-fetch stuck + fix KingsReview send API failure
-  - `2d4ab1d` fix(recipes): fix recipe creation crash on location detail page [locationId].tsx
-  - `cbdf543` docs(handoff): sync task13 pushed state
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
@@ -6399,6 +6399,32 @@ Build Set Ops UI flow with:
   - the assigned-location detail page now increments a `recipeFormInstanceKey` whenever create/edit opens, and includes that key in the modal mount key so each launch starts from a fresh form instance.
 - Validation:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/admin/RecipeForm.tsx --file 'pages/admin/assigned-locations/[locationId].tsx'` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
+## Session Update (2026-03-31, Task 17 cross-set Product Set identification)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then confirmed local `main` was already current with `origin/main` before editing:
+  - `git pull --ff-only` -> `Already up to date.`
+- Wrote the requested pre-coding trace to:
+  - `docs/handoffs/TASK17_ANALYSIS.md`
+- Shipped the Task 17 implementation at feature commit `b32c049` in:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `frontend/nextjs-app/lib/server/cardSetIdentification.ts`
+  - `frontend/nextjs-app/pages/api/admin/cards/identify-set.ts`
+  - `packages/shared/src/cardIdentity.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/cardIdentity.test.js`
+- What changed:
+  - Add Cards Screen 1 no longer auto-selects Product Set from the old scope-only preselection path.
+  - Added a dedicated admin endpoint, `POST /api/admin/cards/identify-set`, that identifies a set across all scoped candidate sets using `cardNumber + playerName`.
+  - Added shared player-name normalization that strips accents/punctuation and normalizes suffixes like `Jr.` / `Junior` / `III`.
+  - The cross-set matcher queries published `SetCard` rows once for the manufacturer/year/sport scope, groups results by set, and applies a Chrome/Optic front-text tiebreaker when multiple sets share the same player/card identity.
+  - `uploads.tsx` now calls the new endpoint after OCR yields year/manufacturer/sport/card number/player name, auto-applies only exact/fuzzy identify-set matches, and otherwise leaves Product Set blank for manual selection.
+  - Screen 2 prefetch now waits for the actual selected Product Set instead of using `variantScopeSummary.selectedSetId`, so downstream Track A lookup no longer runs against a heuristic preselected set.
+- Validation:
+  - `pnpm --filter @tenkings/shared test` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/identify-set.ts --file lib/server/cardSetIdentification.ts` -> pass with the existing `uploads.tsx` `<img>` warnings only
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
