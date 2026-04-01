@@ -1,23 +1,12 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-31` (Task 18 KingsReview eBay comp scoring by structured/title-derived field matching is implemented in the local working tree on `main`; no deploy/restart/migration or DB writes were executed in this session)
+- Last reviewed: `2026-03-31` (Task 18 KingsReview eBay comp scoring by structured/title-derived field matching is implemented at feature commit `48d4bb1`; local `main` matches `origin/main` after push; no deploy/restart/migration or DB writes were executed in this session)
 - Branch: `main`
-- Short HEAD: `7102e01`
-- Current local git state: `git status -sb` -> `## main...origin/main` plus Task 18 implementation changes in:
-  - `backend/bytebot-lite-service/package.json`
-  - `backend/bytebot-lite-service/src/index.ts`
-  - `backend/bytebot-lite-service/src/sources/ebay.ts`
-  - `frontend/nextjs-app/lib/server/kingsreviewEbayComps.ts`
-  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
-  - `frontend/nextjs-app/pages/api/admin/kingsreview/comps.ts`
-  - `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
-  - `packages/shared/src/index.ts`
-  - `packages/shared/src/kingsreviewCompMatch.ts`
-  - `packages/shared/tests/kingsreviewCompMatch.test.js`
-  - `docs/handoffs/TASK18_ANALYSIS.md`
-  - `pnpm-lock.yaml`
+- Short HEAD: `48d4bb1`
+- Current local git state: `git status -sb` -> `## main...origin/main`
 - Latest repo commits:
+  - `48d4bb1` feat(kingsreview): score and sort eBay comps by structured field matching with fuzzy match support
   - `7102e01` docs(handoff): refresh task17 implementation state
   - `b32c049` feat(add-cards): cross-set identification using card number + player name lookup with Chrome/Optic tiebreaker
   - `891e0bc` docs(handoff): sync task14 pushed state
@@ -42,6 +31,9 @@
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
   - `pnpm install --ignore-scripts` -> executed once to refresh workspace links after adding `@tenkings/shared` to the Bytebot worker package
+- Git:
+  - feature commit created and pushed: `48d4bb1` `feat(kingsreview): score and sort eBay comps by structured field matching with fuzzy match support`
+  - post-push parity: `git status -sb` -> `## main...origin/main`
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
 
 ## Session Update (2026-03-17, Task 13 recipe modal crash fix)
