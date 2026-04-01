@@ -1,18 +1,34 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-01` (Task 20b KingsReview scrolling + draggable resize update completed in this session; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-01` (Task 20c KingsReview divider/resize refinement completed in this session; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state at Task 20b handoff refresh start:
+- Current local git state at Task 20c handoff refresh start:
   - `git status -sb` -> `## main...origin/main`
-- Latest committed baseline before Task 20b edit:
+- Latest committed baseline before Task 20c edit:
+  - `68a9076` fix(kingsreview): restore panel scrolling + add draggable resize handles
   - `11ea1b7` style(kingsreview): flush flexible columns + badge pill styling
   - `4ad4656` fix(add-cards): stabilize identify-set and screen2 prefetch effect lifecycles
   - `f7e2173` fix(add-cards): fix screen 2 prefetch timeout + remove T17-DEBUG instrumentation
   - `75bb924` docs(handoff): record task17 debug instrumentation
-  - `c904718` debug(add-cards): add T17-DEBUG console instrumentation to product set resolution
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-01, Task 20c KingsReview divider/resize refinement)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Updated the requested KingsReview panel-resize behavior in:
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- What changed:
+  - changed the left panel default width from `320` to the requested `280`
+  - replaced the Task 20b generic resize helper with the simpler explicit left/right divider mouse handlers requested for Task 20c
+  - replaced the raw divider markup with a reusable inline `DragDivider` helper using the requested `6px` drag target and subtle `rgba(255,255,255,0.1)` center line
+  - kept the Task 20b independent panel scrolling, the Task 20 pill badges, the top nav, and all existing KingsReview page logic/content unchanged
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` -> pass with the existing `pages/admin/kingsreview.tsx` `<img>` warning only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-01, Task 20b KingsReview scrolling + draggable resize)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:

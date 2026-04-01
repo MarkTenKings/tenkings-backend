@@ -685,7 +685,7 @@ export default function KingsReview() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
   const [stage, setStage] = useState<QueueFilterStage>("IN_REVIEW");
-  const [leftPanelWidth, setLeftPanelWidth] = useState(320);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(280);
   const [rightPanelWidth, setRightPanelWidth] = useState(400);
   const [topChromeHeight, setTopChromeHeight] = useState(56);
   const [cards, setCards] = useState<CardSummary[]>([]);
@@ -733,9 +733,9 @@ export default function KingsReview() {
   const [deleteSelection, setDeleteSelection] = useState<string[]>([]);
   const [playbookRules, setPlaybookRules] = useState<PlaybookRule[]>([]);
   const topChromeRef = useRef<HTMLDivElement | null>(null);
-  const leftDragStartRef = useRef(320);
+  const leftDragStartRef = useRef(280);
   const rightDragStartRef = useRef(400);
-  const dragCleanupRef = useRef<(() => void) | null>(null);
+  const isDraggingRef = useRef(false);
   const lastJobIdRef = useRef<string | null>(null);
   const cardDetailCacheRef = useRef<Map<string, CardDetail>>(new Map());
   const inflightCardRef = useRef<Map<string, Promise<CardDetail | null>>>(new Map());
@@ -988,58 +988,87 @@ export default function KingsReview() {
 
   useEffect(() => {
     return () => {
-      dragCleanupRef.current?.();
+      isDraggingRef.current = false;
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
   }, []);
 
-  const startColumnResize = useCallback((clientX: number, onDrag: (deltaX: number) => void) => {
-    dragCleanupRef.current?.();
-
-    const startX = clientX;
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      onDrag(moveEvent.clientX - startX);
-    };
-    const cleanup = () => {
-      document.removeEventListener("mousemove", handleMouseMove);
-      document.removeEventListener("mouseup", cleanup);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      if (dragCleanupRef.current === cleanup) {
-        dragCleanupRef.current = null;
-      }
-    };
-
+  const handleLeftDividerMouseDown = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    leftDragStartRef.current = leftPanelWidth;
+    isDraggingRef.current = true;
     document.body.style.cursor = "col-resize";
     document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", handleMouseMove);
-    document.addEventListener("mouseup", cleanup);
-    dragCleanupRef.current = cleanup;
-  }, []);
 
-  const handleLeftDividerDown = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      leftDragStartRef.current = leftPanelWidth;
-      startColumnResize(event.clientX, (deltaX) => {
-        const nextWidth = Math.max(200, Math.min(500, leftDragStartRef.current + deltaX));
-        setLeftPanelWidth(nextWidth);
-      });
-    },
-    [leftPanelWidth, startColumnResize]
-  );
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientX - startX;
+      const nextWidth = Math.max(200, Math.min(500, leftDragStartRef.current + delta));
+      setLeftPanelWidth(nextWidth);
+    };
 
-  const handleRightDividerDown = useCallback(
-    (event: ReactMouseEvent<HTMLDivElement>) => {
-      event.preventDefault();
-      rightDragStartRef.current = rightPanelWidth;
-      startColumnResize(event.clientX, (deltaX) => {
-        const nextWidth = Math.max(280, Math.min(600, rightDragStartRef.current - deltaX));
-        setRightPanelWidth(nextWidth);
-      });
-    },
-    [rightPanelWidth, startColumnResize]
+    const onMouseUp = () => {
+      isDraggingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [leftPanelWidth]);
+
+  const handleRightDividerMouseDown = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    rightDragStartRef.current = rightPanelWidth;
+    isDraggingRef.current = true;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
+    const onMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientX - startX;
+      const nextWidth = Math.max(280, Math.min(600, rightDragStartRef.current - delta));
+      setRightPanelWidth(nextWidth);
+    };
+
+    const onMouseUp = () => {
+      isDraggingRef.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [rightPanelWidth]);
+
+  const DragDivider = ({ onMouseDown }: { onMouseDown: (event: ReactMouseEvent<HTMLDivElement>) => void }) => (
+    <div
+      onMouseDown={onMouseDown}
+      style={{
+        width: "6px",
+        flexShrink: 0,
+        cursor: "col-resize",
+        position: "relative",
+        zIndex: 10,
+      }}
+    >
+      <div
+        style={{
+          position: "absolute",
+          top: 0,
+          bottom: 0,
+          left: "2px",
+          width: "1px",
+          backgroundColor: "rgba(255,255,255,0.1)",
+          transition: "background-color 0.15s",
+        }}
+      />
+    </div>
   );
 
   useEffect(() => {
@@ -2623,14 +2652,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            onMouseDown={handleLeftDividerDown}
-            className="group relative h-full w-1 shrink-0 cursor-col-resize bg-black"
-          >
-            <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/[0.08] transition-colors group-hover:bg-white/20" />
-          </div>
+          <DragDivider onMouseDown={handleLeftDividerMouseDown} />
 
           <section
             className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4"
@@ -3283,14 +3305,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <div
-            role="separator"
-            aria-orientation="vertical"
-            onMouseDown={handleRightDividerDown}
-            className="group relative h-full w-1 shrink-0 cursor-col-resize bg-black"
-          >
-            <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/[0.08] transition-colors group-hover:bg-white/20" />
-          </div>
+          <DragDivider onMouseDown={handleRightDividerMouseDown} />
 
           <section
             className="flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4"

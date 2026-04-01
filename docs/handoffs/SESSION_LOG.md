@@ -12709,6 +12709,32 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
+## 2026-04-01 - Task 20c KingsReview divider/resize refinement
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Synced `main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Refined the KingsReview panel resize behavior to match the requested Task 20c defaults and divider pattern without changing scrolling or page logic.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Changed the left panel default width and left drag-start ref from `320` to `280`.
+- Replaced the generic resize helper from Task 20b with explicit left/right mouse-down handlers using the requested min/max clamp behavior.
+- Added the inline `DragDivider` helper with a `6px` drag target, `col-resize` cursor, and subtle `rgba(255,255,255,0.1)` divider line.
+- Kept the Task 20b independent panel scrolling, the Task 20 badge pills, the nav bar, and all existing KingsReview content/data flow intact.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` passed with the existing `pages/admin/kingsreview.tsx` `<img>` warning only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
 ## 2026-04-01 - Task 20b KingsReview scrolling + draggable resize
 
 ### Summary
