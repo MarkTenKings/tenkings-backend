@@ -1,20 +1,37 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-31` (Task 17b Add Cards identify-set fallback repair is implemented at feature commit `512665d`, and that feature commit was pushed to `origin/main` before this handoff refresh; no deploy/restart/migration or DB writes were executed in this session)
+- Last reviewed: `2026-04-01` (temporary Task 17 debug console instrumentation for Add Cards Product Set resolution is implemented at feature commit `c904718`; no deploy/restart/migration or DB writes were executed in this session)
 - Branch: `main`
-- Task 17b feature commit: `512665d`
-- Current local git state at handoff refresh start: `git status -sb` -> `## main...origin/main`
+- Task 17 debug feature commit: `c904718`
+- Current local git state at handoff refresh start: `git status -sb` -> `## main...origin/main [ahead 1]`
 - Latest repo commits at handoff refresh start:
+  - `c904718` debug(add-cards): add T17-DEBUG console instrumentation to product set resolution
+  - `1105555` docs(handoff): finalize task17b metadata
+  - `6da1cbd` docs(handoff): sync task17b implementation state
   - `512665d` fix(add-cards): fix identify-set SetCard ID mismatch + restore product set fallbacks
-  - `48d4bb1` feat(kingsreview): score and sort eBay comps by structured field matching with fuzzy match support
-  - `7102e01` docs(handoff): refresh task17 implementation state
-  - `b32c049` feat(add-cards): cross-set identification using card number + player name lookup with Chrome/Optic tiebreaker
-  - `891e0bc` docs(handoff): sync task14 pushed state
-  - `97610f4` docs(handoff): sync task14 implementation state
-  - `7e16df2` feat(pack-types): add Pack Types admin page with image upload + visual selector in Assign modal
+  - `0f78d42` docs(handoff): sync task18 implementation state
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-01, Task 17 debug console instrumentation for Product Set resolution)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then confirmed local `main` was already current with `origin/main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Shipped the requested temporary debug-only instrumentation in:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+- What changed:
+  - added `[T17-DEBUG]` console logs to the identify-set effect so runtime traces now show the sanitized inputs, request key, resolved identify-set payload, and skipped/cancelled paths
+  - added `[T17-DEBUG]` console logs to the Product Set auto-selection effect so runtime traces now show the current options, identify-set values, chosen branch, and final candidate
+  - added `[T17-DEBUG]` console logs to the Screen 2 prefetch trigger effect so runtime traces now show the selected/scoped Product Set inputs and whether prefetch proceeds or bails
+  - no state/update/fetch logic was intentionally changed; this task is instrumentation only
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx` -> pass with the existing `uploads.tsx` `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- Git:
+  - feature commit created:
+    - `c904718` `debug(add-cards): add T17-DEBUG console instrumentation to product set resolution`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
 
 ## Session Update (2026-03-31, Task 17b identify-set fallback repair)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, confirmed `git pull --ff-only origin main` reported `Already up to date.`, and wrote the requested investigation to `docs/handoffs/TASK17B_ANALYSIS.md` before changing code.

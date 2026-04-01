@@ -12508,3 +12508,52 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.
+
+## 2026-04-01 - Task 17 debug console instrumentation for Product Set resolution
+
+### Summary
+- Re-read the mandatory context, runbook, and handoff docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Confirmed local `main` was already current with `origin/main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Added temporary `[T17-DEBUG]` console instrumentation to the Add Cards Product Set resolution flow in `frontend/nextjs-app/pages/admin/uploads.tsx`.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added `[T17-DEBUG]` console logs to the identify-set `useEffect` to trace:
+  - when the effect fires
+  - sanitized `year`, `manufacturer`, `sport`, `cardNumber`, `playerName`
+  - generated `requestKey`
+  - identify-set result fields (`confidence`, `reason`, `setId`, `candidateCount`) plus the returned payload
+  - skipped, stale, error, and cancelled paths
+- Added `[T17-DEBUG]` console logs to the Product Set auto-selection `useEffect` to trace:
+  - effect entry
+  - `identifiedSetMatch` scalar fields
+  - `matchedCurrent` and resolved `identifiedSetId`
+  - branch selection across identify-set match, matched-current return, scope fallback, single-option, OCR heuristic, and no-candidate paths
+  - final candidate value and available `productLineOptions`
+- Added `[T17-DEBUG]` console logs to the Screen 2 prefetch trigger `useEffect` to trace:
+  - `intakeOptional.productLine`
+  - `variantScopeSummary?.selectedSetId`
+  - computed `scopedProductSetId`
+  - whether prefetch proceeds or bails
+- No runtime logic was intentionally changed; this task was instrumentation only.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx`
+  - pass with the existing `uploads.tsx` `<img>` warnings only
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Git State
+- feature commit created:
+  - `c904718` `debug(add-cards): add T17-DEBUG console instrumentation to product set resolution`
+- post-feature-commit status before this handoff append:
+  - `git status -sb` -> `## main...origin/main [ahead 1]`
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.
