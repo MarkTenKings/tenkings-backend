@@ -6500,3 +6500,29 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
+## Session Update (2026-04-01, Task 19 Screen 2 prefetch timeout)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then confirmed local `main` was current before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Wrote the requested investigation trace to:
+  - `docs/handoffs/TASK19_ANALYSIS.md`
+- Root cause findings captured there:
+  - Screen 2 prefetch was still calling the full `/api/admin/cards/[cardId]/ocr-suggest` pipeline and timing out against the frontend’s `5000ms` timeout
+  - the live production route for the reported card returned `HTTP 200` in about `13.9s`, so transport was not the failure mode
+  - the card already had persisted `ocrSuggestionJson`, so the prefetch was redoing unnecessary OCR/LLM work
+  - the insert/parallel preview effect treated empty-string previews as uncached and re-fetched them forever, explaining the observed request flood
+- Fixes implemented:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - added a lightweight `purpose=product_set_prefetch` fast path
+    - reused persisted OCR suggestion state and skipped Google Vision + LLM for Screen 2 prefetch
+    - reran only scoped set-card resolution, variant match, and taxonomy constraint logic before returning suggestions
+    - persisted the refreshed audit back to `ocrSuggestionJson`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+    - Screen 2 prefetch now sends `purpose=product_set_prefetch`
+    - fixed the preview cache check so `""` is treated as a cached terminal result instead of a perpetual miss
+    - removed all temporary `[T17-DEBUG]` console instrumentation
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts'` -> pass with the existing `uploads.tsx` `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.

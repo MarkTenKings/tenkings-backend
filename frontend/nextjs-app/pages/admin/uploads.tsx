@@ -2480,39 +2480,13 @@ export default function AdminUploads() {
   useEffect(() => {
     const identifiedSetMatchConfidence = identifiedSetMatch?.confidence ?? null;
     const identifiedSetMatchSetId = sanitizeNullableText(identifiedSetMatch?.setId);
-    const identifiedSetMatchReason = identifiedSetMatch?.reason ?? null;
-    console.log("[T17-DEBUG] product-set auto-selection effect fired", {
-      category: intakeRequired.category,
-      currentProductLine: sanitizeNullableText(intakeOptional.productLine),
-      productLineManualMode,
-      intakeOptionalTouchedProductLine: intakeOptionalTouched.productLine,
-      identifiedSetMatch: {
-        confidence: identifiedSetMatchConfidence,
-        setId: identifiedSetMatchSetId || null,
-        reason: identifiedSetMatchReason,
-      },
-      productLineOptionsLength: productLineOptions.length,
-      productLineOptions,
-    });
     if (intakeRequired.category !== "sport" || productLineOptions.length === 0) {
-      console.log("[T17-DEBUG] product-set auto-selection skipped", {
-        reason: intakeRequired.category !== "sport" ? "non-sport category" : "no product line options",
-        category: intakeRequired.category,
-        productLineOptionsLength: productLineOptions.length,
-        productLineOptions,
-      });
       return;
     }
     if (productLineManualMode) {
-      console.log("[T17-DEBUG] product-set auto-selection skipped", {
-        reason: "manual mode enabled",
-      });
       return;
     }
     if (intakeOptionalTouched.productLine) {
-      console.log("[T17-DEBUG] product-set auto-selection skipped", {
-        reason: "product line already touched by operator",
-      });
       return;
     }
     const current = sanitizeNullableText(intakeOptional.productLine);
@@ -2521,112 +2495,38 @@ export default function AdminUploads() {
       : "";
     const identifiedSetId =
       identifiedSetMatchConfidence && identifiedSetMatchConfidence !== "none" ? identifiedSetMatchSetId : "";
-    console.log("[T17-DEBUG] product-set auto-selection resolved inputs", {
-      identifiedSetMatch: {
-        confidence: identifiedSetMatchConfidence,
-        setId: identifiedSetMatchSetId || null,
-        reason: identifiedSetMatchReason,
-      },
-      matchedCurrent,
-      identifiedSetId,
-    });
     const resolveKnownProductLine = (value: string) =>
       productLineOptions.find((option) => option.toLowerCase() === value.toLowerCase()) ?? value;
 
     let candidate = "";
-    let branch = "";
     if (identifiedSetId) {
-      branch = "identify-set match";
       candidate = resolveKnownProductLine(identifiedSetId);
     } else if (matchedCurrent) {
-      branch = "matchedCurrent return";
-      console.log("[T17-DEBUG] product-set auto-selection branch", {
-        branch,
-        matchedCurrent,
-        identifiedSetId,
-      });
-      console.log("[T17-DEBUG] product-set auto-selection final candidate", {
-        branch,
-        candidate: matchedCurrent,
-        current,
-        productLineOptionsLength: productLineOptions.length,
-        productLineOptions,
-      });
       return;
     } else {
       const resolvedScopedSetId = sanitizeNullableText(variantScopeSummary?.selectedSetId);
       if (resolvedScopedSetId) {
-        branch = "scope fallback";
         candidate = resolveKnownProductLine(resolvedScopedSetId);
       } else if (!current && productLineOptions.length === 1) {
-        branch = "single-option";
         candidate = productLineOptions[0] ?? "";
       } else if (!current) {
         const suggestedSetName = sanitizeNullableText(intakeSuggested.setName);
         const actionableSuggestedSetName = isActionableProductLineHint(suggestedSetName) ? suggestedSetName : "";
         if (!actionableSuggestedSetName) {
-          branch = "no candidate";
-          console.log("[T17-DEBUG] product-set auto-selection branch", {
-            branch,
-            matchedCurrent,
-            identifiedSetId,
-            suggestedSetName,
-          });
-          console.log("[T17-DEBUG] product-set auto-selection final candidate", {
-            branch,
-            candidate: "",
-            current,
-            productLineOptionsLength: productLineOptions.length,
-            productLineOptions,
-          });
           return;
         }
         candidate = pickBestCandidate(productLineOptions, [actionableSuggestedSetName], 1.1) ?? "";
-        branch = candidate ? "OCR heuristic" : "no candidate";
       } else {
-        branch = "no candidate";
-        console.log("[T17-DEBUG] product-set auto-selection branch", {
-          branch,
-          matchedCurrent,
-          identifiedSetId,
-          current,
-        });
-        console.log("[T17-DEBUG] product-set auto-selection final candidate", {
-          branch,
-          candidate: "",
-          current,
-          productLineOptionsLength: productLineOptions.length,
-          productLineOptions,
-        });
         return;
       }
     }
-    console.log("[T17-DEBUG] product-set auto-selection branch", {
-      branch,
-      matchedCurrent,
-      identifiedSetId,
-    });
-    console.log("[T17-DEBUG] product-set auto-selection final candidate", {
-      branch,
-      candidate,
-      current,
-      productLineOptionsLength: productLineOptions.length,
-      productLineOptions,
-    });
     if (!candidate || (current && current.toLowerCase() === candidate.toLowerCase())) {
-      console.log("[T17-DEBUG] product-set auto-selection skipped", {
-        reason: !candidate ? "empty candidate" : "candidate already selected",
-        branch,
-        candidate,
-        current,
-      });
       return;
     }
     setIntakeOptional((prev) => ({ ...prev, productLine: candidate }));
     setIntakeSuggested((prev) => ({ ...prev, setName: candidate }));
   }, [
     identifiedSetMatch?.confidence,
-    identifiedSetMatch?.reason,
     identifiedSetMatch?.setId,
     intakeOptional.productLine,
     intakeOptionalTouched.productLine,
@@ -3163,6 +3063,9 @@ export default function AdminUploads() {
         if (hintLayoutClass) {
           params.set("layoutClass", hintLayoutClass);
         }
+        if (purpose) {
+          params.set("purpose", purpose);
+        }
         const endpoint =
           params.size > 0
             ? `/api/admin/cards/${cardId}/ocr-suggest?${params.toString()}`
@@ -3306,20 +3209,7 @@ export default function AdminUploads() {
   }, [fetchOcrSuggestions, intakeCardId, ocrStatus, pendingAutoOcrCardId]);
 
   useEffect(() => {
-    console.log("[T17-DEBUG] screen2 prefetch effect fired", {
-      intakeOptionalProductLine: intakeOptional.productLine,
-      variantScopeSelectedSetId: variantScopeSummary?.selectedSetId ?? null,
-      intakeCardId,
-      intakeStep,
-      category: intakeRequired.category,
-    });
     if (!intakeCardId || intakeRequired.category !== "sport") {
-      console.log("[T17-DEBUG] screen2 prefetch bail", {
-        reason: !intakeCardId ? "missing intakeCardId" : "non-sport category",
-        intakeOptionalProductLine: intakeOptional.productLine,
-        variantScopeSelectedSetId: variantScopeSummary?.selectedSetId ?? null,
-        scopedProductSetId: null,
-      });
       screen2PrefetchKeyRef.current = null;
       if (screen2PrefetchTimeoutRef.current) {
         clearTimeout(screen2PrefetchTimeoutRef.current);
@@ -3329,28 +3219,11 @@ export default function AdminUploads() {
       return;
     }
     if (intakeStep !== "required" && intakeStep !== "optional") {
-      console.log("[T17-DEBUG] screen2 prefetch bail", {
-        reason: "intake step not eligible",
-        intakeStep,
-        intakeOptionalProductLine: intakeOptional.productLine,
-        variantScopeSelectedSetId: variantScopeSummary?.selectedSetId ?? null,
-      });
       return;
     }
     const scopedProductSetId =
       sanitizeNullableText(intakeOptional.productLine) || sanitizeNullableText(variantScopeSummary?.selectedSetId);
-    console.log("[T17-DEBUG] screen2 prefetch scoped product set", {
-      intakeOptionalProductLine: intakeOptional.productLine,
-      variantScopeSelectedSetId: variantScopeSummary?.selectedSetId ?? null,
-      scopedProductSetId,
-    });
     if (!scopedProductSetId) {
-      console.log("[T17-DEBUG] screen2 prefetch bail", {
-        reason: "no scoped product set",
-        intakeOptionalProductLine: intakeOptional.productLine,
-        variantScopeSelectedSetId: variantScopeSummary?.selectedSetId ?? null,
-        scopedProductSetId,
-      });
       screen2PrefetchKeyRef.current = null;
       if (screen2PrefetchTimeoutRef.current) {
         clearTimeout(screen2PrefetchTimeoutRef.current);
@@ -3370,23 +3243,9 @@ export default function AdminUploads() {
       normalizeTeachLayoutClass(teachLayoutClass),
     ].join("::");
     if (screen2PrefetchKeyRef.current === prefetchKey) {
-      console.log("[T17-DEBUG] screen2 prefetch bail", {
-        reason: "duplicate prefetch key",
-        prefetchKey,
-        intakeOptionalProductLine: intakeOptional.productLine,
-        variantScopeSelectedSetId: variantScopeSummary?.selectedSetId ?? null,
-        scopedProductSetId,
-      });
       return;
     }
     screen2PrefetchKeyRef.current = prefetchKey;
-    console.log("[T17-DEBUG] screen2 prefetch proceed", {
-      prefetchKey,
-      intakeOptionalProductLine: intakeOptional.productLine,
-      variantScopeSelectedSetId: variantScopeSummary?.selectedSetId ?? null,
-      scopedProductSetId,
-      scopedCardNumber,
-    });
     if (screen2PrefetchTimeoutRef.current) {
       clearTimeout(screen2PrefetchTimeoutRef.current);
       screen2PrefetchTimeoutRef.current = null;
@@ -4026,7 +3885,7 @@ export default function AdminUploads() {
           .filter(Boolean)
       )
     );
-    const pending = candidates.filter((option) => !optionPreviewUrls[option]);
+    const pending = candidates.filter((option) => !Object.prototype.hasOwnProperty.call(optionPreviewUrls, option));
     if (!pending.length) {
       return;
     }
@@ -4107,48 +3966,16 @@ export default function AdminUploads() {
     const teamName = sanitizeNullableText(intakeOptional.teamName);
     const insertSet = sanitizeNullableText(intakeOptional.insertSet);
 
-    console.log("[T17-DEBUG] identify-set effect fired", {
-      year,
-      manufacturer,
-      sport,
-      cardNumber,
-      playerName,
-    });
     if (!session?.token || !isAdmin || intakeRequired.category !== "sport") {
-      console.log("[T17-DEBUG] identify-set effect skipped", {
-        reason: !session?.token ? "missing session token" : !isAdmin ? "not admin" : "non-sport category",
-        year,
-        manufacturer,
-        sport,
-        cardNumber,
-        playerName,
-      });
       identifySetRequestKeyRef.current = null;
       setIdentifiedSetMatch(null);
       return;
     }
     if (ocrStatus === "running" || ocrStatus === "pending") {
-      console.log("[T17-DEBUG] identify-set effect skipped", {
-        reason: "ocr in progress",
-        ocrStatus,
-        year,
-        manufacturer,
-        sport,
-        cardNumber,
-        playerName,
-      });
       return;
     }
 
     if (!year || !manufacturer || !sport || !cardNumber || !playerName) {
-      console.log("[T17-DEBUG] identify-set effect skipped", {
-        reason: "missing required identify-set inputs",
-        year,
-        manufacturer,
-        sport,
-        cardNumber,
-        playerName,
-      });
       identifySetRequestKeyRef.current = null;
       setIdentifiedSetMatch(null);
       return;
@@ -4165,15 +3992,8 @@ export default function AdminUploads() {
       identifiedFrontCardText.toLowerCase(),
       identifiedCombinedOcrText.toLowerCase(),
     ].join("::");
-    console.log("[T17-DEBUG] identify-set requestKey", {
-      requestKey,
-    });
 
     if (identifySetRequestKeyRef.current === requestKey) {
-      console.log("[T17-DEBUG] identify-set effect skipped", {
-        reason: "duplicate requestKey",
-        requestKey,
-      });
       return;
     }
     identifySetRequestKeyRef.current = requestKey;
@@ -4192,21 +4012,8 @@ export default function AdminUploads() {
     })
       .then((result) => {
         if (cancelled || identifySetRequestKeyRef.current !== requestKey) {
-          console.log("[T17-DEBUG] identify-set result skipped", {
-            requestKey,
-            cancelled,
-            activeRequestKey: identifySetRequestKeyRef.current,
-          });
           return;
         }
-        console.log("[T17-DEBUG] identify-set result", {
-          requestKey,
-          confidence: result.confidence,
-          reason: result.reason,
-          setId: result.setId,
-          candidateCount: result.candidateCount,
-          result,
-        });
         setIdentifiedSetMatch(result);
         const resolvedSetId = sanitizeNullableText(result.setId);
         if (result.confidence !== "none" && resolvedSetId) {
@@ -4215,26 +4022,14 @@ export default function AdminUploads() {
       })
       .catch((error) => {
         if (cancelled || identifySetRequestKeyRef.current !== requestKey) {
-          console.log("[T17-DEBUG] identify-set error skipped", {
-            requestKey,
-            cancelled,
-            activeRequestKey: identifySetRequestKeyRef.current,
-          });
           return;
         }
-        console.log("[T17-DEBUG] identify-set error", {
-          requestKey,
-          message: error instanceof Error ? error.message : String(error),
-        });
         identifySetRequestKeyRef.current = null;
         setIdentifiedSetMatch(null);
       });
 
     return () => {
       cancelled = true;
-      console.log("[T17-DEBUG] identify-set effect cancelled", {
-        requestKey,
-      });
     };
   }, [
     fetchIdentifiedSetMatch,

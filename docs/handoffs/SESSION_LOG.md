@@ -12557,3 +12557,50 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.
+
+## 2026-04-01 - Task 19 Screen 2 prefetch timeout fix
+
+### Summary
+- Re-read the mandatory context, runbook, and handoff docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Confirmed local `main` was already current with `origin/main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Wrote the requested investigation notes to:
+  - `docs/handoffs/TASK19_ANALYSIS.md`
+- Confirmed the reported Add Cards Screen 2 prefetch issue was primarily a timeout, not a transport failure:
+  - live production `/api/admin/cards/[cardId]/ocr-suggest` for the reported card returned `HTTP 200` in about `13.9s`
+  - the client timeout in `uploads.tsx` is `5000ms`
+- Confirmed the request flood came from the preview-image effect re-fetching options whose preview had already settled to `""`.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `docs/handoffs/TASK19_ANALYSIS.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added a lightweight `purpose=product_set_prefetch` fast path to `pages/api/admin/cards/[cardId]/ocr-suggest.ts`.
+- The new fast path:
+  - loads persisted `ocrSuggestionJson`
+  - reuses the stored OCR-derived fields/confidence
+  - skips Google Vision + LLM
+  - reruns only scoped set-card resolution, variant match, and taxonomy constraint steps
+  - writes the refreshed audit back to `ocrSuggestionJson`
+- Updated `fetchOcrSuggestions(...)` in `pages/admin/uploads.tsx` to send the request `purpose`, which allows Screen 2 prefetch to hit the new fast path.
+- Fixed the insert/parallel preview cache filter to use property presence rather than truthiness, so options with no preview image are cached as terminal misses instead of being re-requested forever.
+- Removed all temporary `[T17-DEBUG]` instrumentation from `pages/admin/uploads.tsx`.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts'`
+  - pass with the existing `uploads.tsx` `<img>` warnings only
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Git State
+- post-change status before commit:
+  - `git status -sb` -> `## main...origin/main` with modified `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`, `frontend/nextjs-app/pages/admin/uploads.tsx`, `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`, and new `docs/handoffs/TASK19_ANALYSIS.md`
+
+### Notes
+- For the reported card, `TC-HG` still does not exist inside `2025-26_Topps_Chrome_Basketball`, so the expected fast result is `insertSet = BASE` with `parallel` remaining unavailable.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.

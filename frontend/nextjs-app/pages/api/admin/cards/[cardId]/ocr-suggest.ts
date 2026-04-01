@@ -58,6 +58,38 @@ type SuggestionFields = {
 
 type SuggestionConfidence = Record<keyof SuggestionFields, number | null>;
 
+type OcrQueryHints = {
+  year: string | null;
+  manufacturer: string | null;
+  sport: string | null;
+  game: string | null;
+  productLine: string | null;
+  setId: string | null;
+  cardNumber: string | null;
+  layoutClass: string | null;
+};
+
+type VariantMatchAudit =
+  | {
+      ok: boolean;
+      message?: string;
+      matchedSetId?: string;
+      matchedCardNumber?: string;
+      candidates?: Array<{ parallelId: string; confidence: number; reason: string }>;
+      topCandidate?: { parallelId: string; confidence: number; reason: string } | null;
+    }
+  | null;
+
+type StoredSuggestionSnapshot = {
+  fields: SuggestionFields;
+  confidence: SuggestionConfidence;
+  photoOcr: Record<string, unknown> | null;
+  readiness: Record<string, unknown> | null;
+  memory: Record<string, unknown> | null;
+  regionTemplates: Record<string, unknown> | null;
+  ocrCardNumberGrounding: Record<string, unknown> | null;
+};
+
 const DEFAULT_THRESHOLD = 0.7;
 const OCR_LLM_MODEL_RAW = (process.env.OCR_LLM_MODEL ?? "").trim();
 const OCR_LLM_MODEL = OCR_LLM_MODEL_RAW && OCR_LLM_MODEL_RAW !== "gpt-5" ? OCR_LLM_MODEL_RAW : "gpt-5.2";
@@ -312,6 +344,69 @@ function fieldThreshold(field: keyof SuggestionFields): number {
     return TAXONOMY_FIELD_THRESHOLD[field];
   }
   return DEFAULT_THRESHOLD;
+}
+
+function extractStoredSuggestionSnapshot(raw: unknown): StoredSuggestionSnapshot | null {
+  if (!raw || typeof raw !== "object") {
+    return null;
+  }
+  const typed = raw as Record<string, unknown>;
+  const rawFields =
+    typed.fields && typeof typed.fields === "object" ? (typed.fields as Record<string, unknown>) : {};
+  const rawConfidence =
+    typed.confidence && typeof typed.confidence === "object"
+      ? (typed.confidence as Record<string, unknown>)
+      : {};
+
+  const fields = {} as SuggestionFields;
+  const confidence = {} as SuggestionConfidence;
+  FIELD_KEYS.forEach((key) => {
+    fields[key] = coerceNullableString(rawFields[key]);
+    confidence[key] = coerceConfidence(rawConfidence[key]);
+  });
+
+  const readSection = (key: string): Record<string, unknown> | null => {
+    const value = typed[key];
+    return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  };
+
+  return {
+    fields,
+    confidence,
+    photoOcr: readSection("photoOcr"),
+    readiness: readSection("readiness"),
+    memory: readSection("memory"),
+    regionTemplates: readSection("regionTemplates"),
+    ocrCardNumberGrounding: readSection("ocrCardNumberGrounding"),
+  };
+}
+
+function cloneSuggestionFields(source: SuggestionFields): SuggestionFields {
+  const clone = {} as SuggestionFields;
+  FIELD_KEYS.forEach((key) => {
+    clone[key] = source[key] ?? null;
+  });
+  return clone;
+}
+
+function cloneSuggestionConfidence(source: SuggestionConfidence): SuggestionConfidence {
+  const clone = {} as SuggestionConfidence;
+  FIELD_KEYS.forEach((key) => {
+    clone[key] = source[key] ?? null;
+  });
+  return clone;
+}
+
+function collectSuggestions(fields: SuggestionFields, confidence: SuggestionConfidence): Record<string, string> {
+  const suggestions: Record<string, string> = {};
+  FIELD_KEYS.forEach((key) => {
+    const value = fields[key];
+    const score = confidence[key];
+    if (value && score != null && score >= fieldThreshold(key)) {
+      suggestions[key] = value;
+    }
+  });
+  return suggestions;
 }
 
 function publishedTaxonomyWhereInput(): Prisma.SetCardWhereInput {
@@ -928,16 +1023,7 @@ async function resolveScopedLegacyVariantCard(params: {
 
 async function resolveScopedSetCard(params: {
   fields: SuggestionFields;
-  queryHints: {
-    year: string | null;
-    manufacturer: string | null;
-    sport: string | null;
-    game: string | null;
-    productLine: string | null;
-    setId: string | null;
-    cardNumber: string | null;
-    layoutClass: string | null;
-  };
+  queryHints: OcrQueryHints;
 }): Promise<SetCardResolutionAudit> {
   const year = sanitizeText(params.queryHints.year || params.fields.year || "");
   const manufacturer = sanitizeText(params.queryHints.manufacturer || params.fields.manufacturer || "");
@@ -2433,15 +2519,7 @@ async function applyFeedbackMemoryHints(params: {
 async function constrainTaxonomyFields(params: {
   fields: SuggestionFields;
   confidence: SuggestionConfidence;
-  queryHints: {
-    year: string | null;
-    manufacturer: string | null;
-    sport: string | null;
-    productLine: string | null;
-    setId: string | null;
-    cardNumber: string | null;
-    layoutClass: string | null;
-  };
+  queryHints: OcrQueryHints;
 }): Promise<TaxonomyConstraintAudit> {
   const { fields, confidence, queryHints } = params;
   const year = sanitizeText(queryHints.year || fields.year || "");
@@ -2571,6 +2649,156 @@ async function constrainTaxonomyFields(params: {
   };
 }
 
+async function resolveScopedSuggestionContext(params: {
+  cardId: string;
+  fields: SuggestionFields;
+  confidence: SuggestionConfidence;
+  queryHints: OcrQueryHints;
+}): Promise<{
+  setCardResolutionAudit: SetCardResolutionAudit | null;
+  variantMatchAudit: VariantMatchAudit;
+  taxonomyConstraintAudit: TaxonomyConstraintAudit | null;
+}> {
+  const { cardId, fields, confidence, queryHints } = params;
+
+  let setCardResolutionAudit: SetCardResolutionAudit | null = null;
+  try {
+    setCardResolutionAudit = await resolveScopedSetCard({
+      fields,
+      queryHints,
+    });
+    if (setCardResolutionAudit.matched && setCardResolutionAudit.setId) {
+      fields.setName = setCardResolutionAudit.setId;
+      confidence.setName = Math.max(confidence.setName ?? 0, 0.99);
+      if (setCardResolutionAudit.programLabel) {
+        fields.insertSet = setCardResolutionAudit.programLabel;
+        confidence.insertSet = Math.max(confidence.insertSet ?? 0, 0.98);
+      }
+      if (setCardResolutionAudit.cardNumber) {
+        fields.cardNumber = setCardResolutionAudit.cardNumber;
+        confidence.cardNumber = Math.max(confidence.cardNumber ?? 0, 0.98);
+      }
+      if (setCardResolutionAudit.playerName) {
+        fields.playerName = setCardResolutionAudit.playerName;
+        confidence.playerName = Math.max(confidence.playerName ?? 0, 0.94);
+      }
+      if (setCardResolutionAudit.teamName) {
+        fields.teamName = setCardResolutionAudit.teamName;
+        confidence.teamName = Math.max(confidence.teamName ?? 0, 0.94);
+      }
+    }
+  } catch (error) {
+    console.warn("Scoped set-card resolution failed", error);
+    setCardResolutionAudit = {
+      matched: false,
+      reason: error instanceof Error ? error.message : "set_card_resolution_failed",
+      candidateSetIds: [],
+      candidateCount: 0,
+      setId: null,
+      programId: null,
+      programLabel: null,
+      cardNumber: null,
+      playerName: null,
+      teamName: null,
+    };
+  }
+
+  let variantMatchAudit: VariantMatchAudit = null;
+  const suggestedSetId = fields.setName?.trim() || null;
+  const suggestedCardNumber = fields.cardNumber?.trim() || sanitizeText(queryHints.cardNumber || "") || null;
+  const suggestedNumbered = fields.numbered?.trim() || null;
+  if (suggestedSetId) {
+    try {
+      const matchResult = await runVariantMatch({
+        cardAssetId: cardId,
+        setId: suggestedSetId,
+        cardNumber: suggestedCardNumber,
+        numbered: suggestedNumbered,
+        program: fields.insertSet,
+      });
+      if (matchResult.ok) {
+        const topCandidate = matchResult.candidates[0] ?? null;
+        variantMatchAudit = {
+          ok: true,
+          matchedSetId: matchResult.matchedSetId,
+          matchedCardNumber: matchResult.matchedCardNumber,
+          candidates: matchResult.candidates,
+          topCandidate,
+        };
+        if (!fields.setName) {
+          fields.setName = matchResult.matchedSetId;
+          confidence.setName = Math.max(confidence.setName ?? 0, 0.86);
+        }
+        if (
+          (!fields.cardNumber || fields.cardNumber.toUpperCase() === "ALL") &&
+          matchResult.matchedCardNumber &&
+          matchResult.matchedCardNumber.toUpperCase() !== "ALL"
+        ) {
+          fields.cardNumber = matchResult.matchedCardNumber;
+          confidence.cardNumber = Math.max(confidence.cardNumber ?? 0, 0.82);
+        }
+        if (topCandidate) {
+          const boostedConfidence = Math.min(0.95, Math.max(0.72, topCandidate.confidence));
+          if (!fields.parallel || (confidence.parallel ?? 0) < boostedConfidence) {
+            fields.parallel = topCandidate.parallelId;
+            confidence.parallel = boostedConfidence;
+          }
+        }
+      } else {
+        variantMatchAudit = {
+          ok: false,
+          message: matchResult.message,
+          matchedSetId: matchResult.matchedSetId,
+          matchedCardNumber: matchResult.matchedCardNumber,
+          candidates: matchResult.candidates,
+          topCandidate: matchResult.candidates?.[0] ?? null,
+        };
+      }
+    } catch (error) {
+      console.warn("Auto variant match failed after OCR", error);
+      variantMatchAudit = {
+        ok: false,
+        message: error instanceof Error ? error.message : "variant_match_failed",
+      };
+    }
+  }
+
+  let taxonomyConstraintAudit: TaxonomyConstraintAudit | null = null;
+  try {
+    taxonomyConstraintAudit = await constrainTaxonomyFields({
+      fields,
+      confidence,
+      queryHints,
+    });
+  } catch (error) {
+    console.warn("Failed to constrain taxonomy suggestions", error);
+    const fallbackFieldStatus: TaxonomyConstraintAudit["fieldStatus"] = {
+      setName: fields.setName ? "kept" : "cleared_no_set_scope",
+      insertSet: fields.insertSet ? "kept" : "cleared_no_set_scope",
+      parallel: fields.parallel ? "kept" : "cleared_no_set_scope",
+    };
+    taxonomyConstraintAudit = {
+      selectedSetId: null,
+      queryHints,
+      pool: {
+        approvedSetCount: 0,
+        scopedSetCount: 0,
+        selectedSetId: null,
+        setOptions: [],
+        insertOptions: [],
+        parallelOptions: [],
+      },
+      fieldStatus: fallbackFieldStatus,
+    };
+  }
+
+  return {
+    setCardResolutionAudit,
+    variantMatchAudit,
+    taxonomyConstraintAudit,
+  };
+}
+
 function buildOcrProxySignaturePayload(params: {
   url: string;
   exp: number;
@@ -2686,6 +2914,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
     if (typeof cardId !== "string" || !cardId.trim()) {
       return res.status(400).json({ message: "cardId is required" });
     }
+    const totalStartMs = Date.now();
+    const requestPurpose = sanitizeText(req.query.purpose) || null;
     const queryHints = {
       year: sanitizeText(req.query.year) || null,
       manufacturer: sanitizeText(req.query.manufacturer) || null,
@@ -2701,6 +2931,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
       where: { id: cardId },
       select: {
         ocrText: true,
+        ocrSuggestionJson: true,
         imageUrl: true,
         thumbnailUrl: true,
         photos: {
@@ -2751,6 +2982,91 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
       tiltImageUrl: tiltImageUrl ?? null,
       results: [],
     });
+    const storedSuggestionSnapshot = extractStoredSuggestionSnapshot(card.ocrSuggestionJson);
+
+    if (requestPurpose === "product_set_prefetch" && storedSuggestionSnapshot) {
+      try {
+        const fields = cloneSuggestionFields(storedSuggestionSnapshot.fields);
+        const confidence = cloneSuggestionConfidence(storedSuggestionSnapshot.confidence);
+
+        const hintedCardNumber = normalizeTaxonomyCardNumber(queryHints.cardNumber) || queryHints.cardNumber;
+        if (hintedCardNumber && (!fields.cardNumber || fields.cardNumber.toUpperCase() === "ALL")) {
+          fields.cardNumber = hintedCardNumber;
+          confidence.cardNumber = Math.max(confidence.cardNumber ?? 0, 0.96);
+        }
+        if (queryHints.year && !fields.year) {
+          fields.year = queryHints.year;
+          confidence.year = Math.max(confidence.year ?? 0, 0.96);
+        }
+        if (queryHints.manufacturer && !fields.manufacturer) {
+          fields.manufacturer = queryHints.manufacturer;
+          confidence.manufacturer = Math.max(confidence.manufacturer ?? 0, 0.96);
+        }
+        if (queryHints.sport && !fields.sport) {
+          fields.sport = queryHints.sport;
+          confidence.sport = Math.max(confidence.sport ?? 0, 0.96);
+        }
+
+        const { setCardResolutionAudit, variantMatchAudit, taxonomyConstraintAudit } =
+          await resolveScopedSuggestionContext({
+            cardId,
+            fields,
+            confidence,
+            queryHints,
+          });
+
+        const audit = {
+          source: "stored-ocr-suggestion",
+          model: "stored-ocr-suggestion",
+          threshold: DEFAULT_THRESHOLD,
+          fieldThresholds: {
+            default: DEFAULT_THRESHOLD,
+            taxonomy: TAXONOMY_FIELD_THRESHOLD,
+          },
+          createdAt: new Date().toISOString(),
+          fields,
+          confidence,
+          llm: null,
+          taxonomyPromptCandidates: {
+            setOptions: [],
+            insertOptions: [],
+            parallelOptions: [],
+          },
+          taxonomyPromptPoolError: null,
+          timings: {
+            totalMs: Date.now() - totalStartMs,
+            ocrMs: 0,
+            llmMs: 0,
+          },
+          tokens: [],
+          photoOcr: storedSuggestionSnapshot.photoOcr ?? pendingPhotoState.byId,
+          readiness: storedSuggestionSnapshot.readiness ?? pendingPhotoState.readiness,
+          memory: storedSuggestionSnapshot.memory ?? null,
+          regionTemplates: storedSuggestionSnapshot.regionTemplates ?? null,
+          ocrCardNumberGrounding: storedSuggestionSnapshot.ocrCardNumberGrounding ?? null,
+          setCardResolution: setCardResolutionAudit,
+          variantMatch: variantMatchAudit,
+          taxonomyConstraints: taxonomyConstraintAudit,
+        };
+
+        await prisma.cardAsset.update({
+          where: { id: cardId },
+          data: {
+            ocrSuggestionJson: audit as Prisma.InputJsonValue,
+            ocrSuggestionUpdatedAt: new Date(),
+          },
+        });
+
+        return res.status(200).json({
+          suggestions: collectSuggestions(fields, confidence),
+          threshold: DEFAULT_THRESHOLD,
+          audit,
+          status: "ok",
+        });
+      } catch (error) {
+        console.warn("Stored OCR suggestion prefetch failed; falling back to full OCR path", error);
+      }
+    }
 
     if ((!card.ocrText || !card.ocrText.trim()) && !frontProxyUrl && !backProxyUrl && !tiltProxyUrl) {
       return res.status(200).json({
@@ -2815,7 +3131,6 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
       });
     }
 
-    const totalStartMs = Date.now();
     const ocrStartMs = Date.now();
     const ocrResponse = await runGoogleVisionOcr(images);
     const ocrElapsedMs = Date.now() - ocrStartMs;
@@ -3334,155 +3649,14 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
       };
     }
 
-    let setCardResolutionAudit: SetCardResolutionAudit | null = null;
-    try {
-      setCardResolutionAudit = await resolveScopedSetCard({
-        fields,
-        queryHints,
-      });
-      if (setCardResolutionAudit.matched && setCardResolutionAudit.setId) {
-        fields.setName = setCardResolutionAudit.setId;
-        confidence.setName = Math.max(confidence.setName ?? 0, 0.99);
-        if (setCardResolutionAudit.programLabel) {
-          fields.insertSet = setCardResolutionAudit.programLabel;
-          confidence.insertSet = Math.max(confidence.insertSet ?? 0, 0.98);
-        }
-        if (setCardResolutionAudit.cardNumber) {
-          fields.cardNumber = setCardResolutionAudit.cardNumber;
-          confidence.cardNumber = Math.max(confidence.cardNumber ?? 0, 0.98);
-        }
-        if (setCardResolutionAudit.playerName) {
-          fields.playerName = setCardResolutionAudit.playerName;
-          confidence.playerName = Math.max(confidence.playerName ?? 0, 0.94);
-        }
-        if (setCardResolutionAudit.teamName) {
-          fields.teamName = setCardResolutionAudit.teamName;
-          confidence.teamName = Math.max(confidence.teamName ?? 0, 0.94);
-        }
-      }
-    } catch (error) {
-      console.warn("Scoped set-card resolution failed", error);
-      setCardResolutionAudit = {
-        matched: false,
-        reason: error instanceof Error ? error.message : "set_card_resolution_failed",
-        candidateSetIds: [],
-        candidateCount: 0,
-        setId: null,
-        programId: null,
-        programLabel: null,
-        cardNumber: null,
-        playerName: null,
-        teamName: null,
-      };
-    }
-
-    let variantMatchAudit:
-      | {
-          ok: boolean;
-          message?: string;
-          matchedSetId?: string;
-          matchedCardNumber?: string;
-          candidates?: Array<{ parallelId: string; confidence: number; reason: string }>;
-          topCandidate?: { parallelId: string; confidence: number; reason: string } | null;
-        }
-      | null = null;
-
-    const suggestedSetId = fields.setName?.trim() || null;
-    const suggestedCardNumber = fields.cardNumber?.trim() || sanitizeText(queryHints.cardNumber || "") || null;
-    const suggestedNumbered = fields.numbered?.trim() || null;
-    if (suggestedSetId) {
-      try {
-        const matchResult = await runVariantMatch({
-          cardAssetId: cardId,
-          setId: suggestedSetId,
-          cardNumber: suggestedCardNumber,
-          numbered: suggestedNumbered,
-          program: fields.insertSet,
-        });
-        if (matchResult.ok) {
-          const topCandidate = matchResult.candidates[0] ?? null;
-          variantMatchAudit = {
-            ok: true,
-            matchedSetId: matchResult.matchedSetId,
-            matchedCardNumber: matchResult.matchedCardNumber,
-            candidates: matchResult.candidates,
-            topCandidate,
-          };
-          if (!fields.setName) {
-            fields.setName = matchResult.matchedSetId;
-            confidence.setName = Math.max(confidence.setName ?? 0, 0.86);
-          }
-          if (
-            (!fields.cardNumber || fields.cardNumber.toUpperCase() === "ALL") &&
-            matchResult.matchedCardNumber &&
-            matchResult.matchedCardNumber.toUpperCase() !== "ALL"
-          ) {
-            fields.cardNumber = matchResult.matchedCardNumber;
-            confidence.cardNumber = Math.max(confidence.cardNumber ?? 0, 0.82);
-          }
-          if (topCandidate) {
-            const boostedConfidence = Math.min(0.95, Math.max(0.72, topCandidate.confidence));
-            if (!fields.parallel || (confidence.parallel ?? 0) < boostedConfidence) {
-              fields.parallel = topCandidate.parallelId;
-              confidence.parallel = boostedConfidence;
-            }
-          }
-        } else {
-          variantMatchAudit = {
-            ok: false,
-            message: matchResult.message,
-            matchedSetId: matchResult.matchedSetId,
-            matchedCardNumber: matchResult.matchedCardNumber,
-            candidates: matchResult.candidates,
-            topCandidate: matchResult.candidates?.[0] ?? null,
-          };
-        }
-      } catch (error) {
-        console.warn("Auto variant match failed after OCR", error);
-        variantMatchAudit = {
-          ok: false,
-          message: error instanceof Error ? error.message : "variant_match_failed",
-        };
-      }
-    }
-
-    let taxonomyConstraintAudit: TaxonomyConstraintAudit | null = null;
-    try {
-      taxonomyConstraintAudit = await constrainTaxonomyFields({
-        fields,
-        confidence,
-        queryHints,
-      });
-    } catch (error) {
-      console.warn("Failed to constrain taxonomy suggestions", error);
-      const fallbackFieldStatus: TaxonomyConstraintAudit["fieldStatus"] = {
-        setName: fields.setName ? "kept" : "cleared_no_set_scope",
-        insertSet: fields.insertSet ? "kept" : "cleared_no_set_scope",
-        parallel: fields.parallel ? "kept" : "cleared_no_set_scope",
-      };
-      taxonomyConstraintAudit = {
-        selectedSetId: null,
-        queryHints,
-        pool: {
-          approvedSetCount: 0,
-          scopedSetCount: 0,
-          selectedSetId: null,
-          setOptions: [],
-          insertOptions: [],
-          parallelOptions: [],
-        },
-        fieldStatus: fallbackFieldStatus,
-      };
-    }
-
-    const suggestions: Record<string, string> = {};
-    FIELD_KEYS.forEach((key) => {
-      const value = fields[key];
-      const score = confidence[key];
-      if (value && score != null && score >= fieldThreshold(key)) {
-        suggestions[key] = value;
-      }
+    const { setCardResolutionAudit, variantMatchAudit, taxonomyConstraintAudit } = await resolveScopedSuggestionContext({
+      cardId,
+      fields,
+      confidence,
+      queryHints,
     });
+
+    const suggestions = collectSuggestions(fields, confidence);
 
     const llmAudit = llmMeta
       ? {
