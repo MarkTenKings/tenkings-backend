@@ -12203,6 +12203,27 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this push-sync step.
 
+## 2026-03-31 - Task 17b push sync and handoff refresh
+
+### Summary
+- Pushed the Task 17b feature commit on `main` to `origin/main`.
+- Refreshed `docs/HANDOFF_SET_OPS.md` so the living handoff reflects the Task 17b investigation, implementation, validation, and pushed feature hash.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Git State
+- `git push origin main`
+  - remote updated from `0f78d42` to `512665d`
+- `git status -sb` at handoff refresh start
+  - `## main...origin/main`
+- feature commit pushed:
+  - `512665d` `fix(add-cards): fix identify-set SetCard ID mismatch + restore product set fallbacks`
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this sync step.
+
 ## 2026-03-31 - Task 17b identify-set fallback repair
 
 ### Summary

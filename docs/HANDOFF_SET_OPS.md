@@ -1,11 +1,12 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-31` (Task 18 KingsReview eBay comp scoring by structured/title-derived field matching is implemented at feature commit `48d4bb1`; local `main` matches `origin/main` after push; no deploy/restart/migration or DB writes were executed in this session)
+- Last reviewed: `2026-03-31` (Task 17b Add Cards identify-set fallback repair is implemented at feature commit `512665d`, and that feature commit was pushed to `origin/main` before this handoff refresh; no deploy/restart/migration or DB writes were executed in this session)
 - Branch: `main`
-- Short HEAD: `48d4bb1`
-- Current local git state: `git status -sb` -> `## main...origin/main`
+- Short HEAD: `512665d`
+- Current local git state at handoff refresh start: `git status -sb` -> `## main...origin/main`
 - Latest repo commits:
+  - `512665d` fix(add-cards): fix identify-set SetCard ID mismatch + restore product set fallbacks
   - `48d4bb1` feat(kingsreview): score and sort eBay comps by structured field matching with fuzzy match support
   - `7102e01` docs(handoff): refresh task17 implementation state
   - `b32c049` feat(add-cards): cross-set identification using card number + player name lookup with Chrome/Optic tiebreaker
@@ -14,6 +15,38 @@
   - `7e16df2` feat(pack-types): add Pack Types admin page with image upload + visual selector in Assign modal
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-03-31, Task 17b identify-set fallback repair)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, confirmed `git pull --ff-only origin main` reported `Already up to date.`, and wrote the requested investigation to `docs/handoffs/TASK17B_ANALYSIS.md` before changing code.
+- Live data findings:
+  - `loadVariantOptionPool(...).scopedSetIds` are product-line string IDs such as `2025-26_Topps_Basketball` and `2025-26_Topps_Chrome_Basketball`
+  - `SetCard.setId` is also a product-line string key per `schema.prisma`, not `SetTaxonomySource.id`
+  - the current DB has `SetDraft=242`, `SetProgram=4027`, `SetCard=0`, `SetTaxonomySource=1120`, so Task 17's helper failed because it depended only on `SetCard`
+- Shipped the fix in:
+  - `frontend/nextjs-app/lib/server/cardSetIdentification.ts`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `docs/handoffs/TASK17B_ANALYSIS.md`
+- What changed:
+  - `identifySetByCardIdentity()` now keeps the Task 17 `SetCard` path for future checklist data but falls back to the existing legacy `CardVariant` card-number path when `SetCard` has no rows, matching the working `ocr-suggest.ts` behavior
+  - legacy fallback matches now stay `confidence: none` when ambiguous, so Screen 1 can fall back to the restored OCR/scope/manual Product Set flows instead of forcing a bad auto-selection
+  - `/admin/uploads` now again auto-falls back from identify-set to:
+    - `variantScopeSummary.selectedSetId`
+    - single-option Product Set scope
+    - OCR `setName` heuristic via `pickBestCandidate(...)`
+  - `applySuggestions(...)` again constrains OCR `setName` into `productLine`
+  - Screen 2 prefetch again triggers from `intakeOptional.productLine || variantScopeSummary?.selectedSetId`
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file lib/server/cardSetIdentification.ts` -> pass with the existing `uploads.tsx` `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+  - live helper probe after patch:
+    - `TC-HG` -> `confidence: none`, `reason: legacy_ambiguous_card_number_scope`
+    - `NS-27` -> `confidence: none`, `reason: legacy_ambiguous_card_number_scope`
+    - `80B2-DV` -> `confidence: none`, `reason: card_number_not_found_in_scope`
+  - this is the intended repaired behavior because the first two now fall through to restored Screen 1 Product Set fallbacks and the third remains the manual-selection case
+- Git:
+  - feature commit created and pushed: `512665d` `fix(add-cards): fix identify-set SetCard ID mismatch + restore product set fallbacks`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
 
 ## Session Update (2026-03-31, Task 18 precise eBay sold comps)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then confirmed local `main` was already current with `origin/main` via `git pull --ff-only` -> `Already up to date.`
