@@ -12203,6 +12203,18 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this push-sync step.
 
+## 2026-03-31 - Task 17b final handoff metadata normalization
+
+### Summary
+- Updated `docs/HANDOFF_SET_OPS.md` current-state labels so they reference the shipped Task 17b feature commit historically instead of claiming a transient `Short HEAD` that would immediately drift on follow-up docs sync commits.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this metadata-only sync step.
+
 ## 2026-03-31 - Task 17b push sync and handoff refresh
 
 ### Summary

@@ -3,9 +3,9 @@
 ## Current State
 - Last reviewed: `2026-03-31` (Task 17b Add Cards identify-set fallback repair is implemented at feature commit `512665d`, and that feature commit was pushed to `origin/main` before this handoff refresh; no deploy/restart/migration or DB writes were executed in this session)
 - Branch: `main`
-- Short HEAD: `512665d`
+- Task 17b feature commit: `512665d`
 - Current local git state at handoff refresh start: `git status -sb` -> `## main...origin/main`
-- Latest repo commits:
+- Latest repo commits at handoff refresh start:
   - `512665d` fix(add-cards): fix identify-set SetCard ID mismatch + restore product set fallbacks
   - `48d4bb1` feat(kingsreview): score and sort eBay comps by structured field matching with fuzzy match support
   - `7102e01` docs(handoff): refresh task17 implementation state
