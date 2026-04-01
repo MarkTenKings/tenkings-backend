@@ -4,7 +4,7 @@ import {
   normalizeCardIdentityPlayerNameBase,
 } from "@tenkings/shared";
 import { loadVariantOptionPool, normalizeVariantLabelKey, sanitizeText } from "./variantOptionPool";
-import { normalizeTaxonomyCardNumber } from "./taxonomyV2Utils";
+import { normalizeProgramId, normalizeTaxonomyCardNumber } from "./taxonomyV2Utils";
 
 export type IdentifySetConfidence = "exact" | "fuzzy" | "none";
 export type IdentifySetMatchType = Exclude<IdentifySetConfidence, "none">;
@@ -58,6 +58,15 @@ type NameMatchResult = {
   matched: boolean;
   matchType: IdentifySetMatchType | null;
   score: number;
+};
+
+type LegacyVariantGroupRow = {
+  setId: string;
+  programId: string;
+  cardNumber: string;
+  _count: {
+    _all: number;
+  };
 };
 
 function publishedSetCardWhereInput(): Prisma.SetCardWhereInput {
@@ -208,6 +217,125 @@ function rankCandidateByTiebreak(setId: string, tiebreaker: IdentifySetTiebreake
   }
 }
 
+async function loadProgramLabelByKey(
+  programKeyValues: string[],
+  options?: { publishedOnly?: boolean }
+): Promise<Map<string, string>> {
+  if (programKeyValues.length < 1) {
+    return new Map();
+  }
+
+  const keyConditions = programKeyValues.map((entry) => {
+    const [setId, programId] = entry.split("::");
+    return { setId, programId };
+  });
+  const where = options?.publishedOnly
+    ? {
+        AND: [{ OR: keyConditions }, publishedSetProgramWhereInput()],
+      }
+    : {
+        OR: keyConditions,
+      };
+  const programs = await prisma.setProgram.findMany({
+    where,
+    select: {
+      setId: true,
+      programId: true,
+      label: true,
+    },
+  });
+
+  return new Map(programs.map((program) => [`${program.setId}::${program.programId}`, program.label]));
+}
+
+async function loadLegacyVariantCandidates(params: {
+  candidateSetIds: string[];
+  selectedSetId: string | null;
+  normalizedCardNumber: string;
+  insertSet?: string | null | undefined;
+}): Promise<{ candidates: IdentifySetCandidate[]; reason: string }> {
+  const { candidateSetIds, selectedSetId, normalizedCardNumber } = params;
+  if (candidateSetIds.length < 1) {
+    return {
+      candidates: [],
+      reason: "no_scoped_sets",
+    };
+  }
+
+  const normalizedProgram = sanitizeText(params.insertSet || "") ? normalizeProgramId(params.insertSet) : null;
+  const findLegacyRows = async (programId: string | null): Promise<LegacyVariantGroupRow[]> => {
+    const result = await prisma.cardVariant.groupBy({
+      by: ["setId", "programId", "cardNumber"],
+      where: {
+        setId: { in: candidateSetIds },
+        cardNumber: normalizedCardNumber,
+        ...(programId ? { programId } : {}),
+      },
+      _count: {
+        _all: true,
+      },
+      orderBy: [{ setId: "asc" }, { programId: "asc" }, { cardNumber: "asc" }],
+      take: 200,
+    });
+    return result as LegacyVariantGroupRow[];
+  };
+
+  let rows = await findLegacyRows(normalizedProgram);
+  if (rows.length < 1 && normalizedProgram) {
+    rows = await findLegacyRows(null);
+  }
+  if (rows.length < 1) {
+    return {
+      candidates: [],
+      reason: "legacy_card_number_not_found_in_scope",
+    };
+  }
+
+  const programLabelByKey = await loadProgramLabelByKey(
+    Array.from(new Set(rows.map((row) => `${row.setId}::${row.programId}`)))
+  );
+  const normalizedInsertSet = normalizeVariantLabelKey(params.insertSet || "");
+  const bestCandidateBySet = new Map<string, IdentifySetCandidate>();
+
+  rows.forEach((row) => {
+    const programLabel = programLabelByKey.get(`${row.setId}::${row.programId}`) ?? null;
+    const rowProgramKey = normalizeVariantLabelKey(programLabel || row.programId || "");
+    let score = selectedSetId && row.setId === selectedSetId ? 3 : 1;
+    if (normalizedInsertSet && rowProgramKey) {
+      if (rowProgramKey === normalizedInsertSet) {
+        score += 4;
+      } else if (rowProgramKey.includes(normalizedInsertSet) || normalizedInsertSet.includes(rowProgramKey)) {
+        score += 2;
+      }
+    }
+    score += Math.min(1.2, Math.max(0, Number(row._count?._all ?? 0) - 1) * 0.15);
+
+    const nextCandidate: IdentifySetCandidate = {
+      setId: row.setId,
+      setName: row.setId,
+      programId: row.programId,
+      programLabel,
+      cardNumber: row.cardNumber,
+      playerName: null,
+      teamName: null,
+      matchType: "fuzzy",
+      score,
+      tieBreakRank: 0,
+    };
+
+    const previous = bestCandidateBySet.get(row.setId);
+    if (!previous || nextCandidate.score > previous.score) {
+      bestCandidateBySet.set(row.setId, nextCandidate);
+    }
+  });
+
+  const candidates = Array.from(bestCandidateBySet.values());
+  return {
+    candidates,
+    reason: candidates.length > 0 ? "legacy_candidates_found" : "legacy_card_number_not_found_in_scope",
+  };
+}
+
 export async function identifySetByCardIdentity(params: IdentifySetParams): Promise<IdentifySetResult> {
   const year = sanitizeText(params.year || "");
   const manufacturer = sanitizeText(params.manufacturer || "");
@@ -320,42 +448,102 @@ export async function identifySetByCardIdentity(params: IdentifySetParams): Prom
     take: 200,
   });
 
-  if (rows.length < 1) {
-    return {
-      setId: null,
-      setName: null,
-      programId: null,
-      programLabel: null,
-      cardNumber: normalizedCardNumber,
-      playerName: null,
-      teamName: null,
-      confidence: "none",
-      reason: "card_number_not_found_in_scope",
+  const legacyFallback = async () =>
+    loadLegacyVariantCandidates({
       candidateSetIds,
-      candidateCount: 0,
+      selectedSetId: pool.selectedSetId ?? null,
+      normalizedCardNumber,
+      insertSet: params.insertSet,
+    });
+
+  if (rows.length < 1) {
+    const legacy = await legacyFallback();
+    if (legacy.candidates.length < 1) {
+      const legacyReason =
+        legacy.reason === "legacy_card_number_not_found_in_scope" ? "card_number_not_found_in_scope" : legacy.reason;
+      return {
+        setId: null,
+        setName: null,
+        programId: null,
+        programLabel: null,
+        cardNumber: normalizedCardNumber,
+        playerName: null,
+        teamName: null,
+        confidence: "none",
+        reason: legacyReason,
+        candidateSetIds,
+        candidateCount: 0,
+        scopedSetCount: candidateSetIds.length,
+        candidates: [],
+        tiebreaker: "none",
+        textSource: "none",
+      };
+    }
+    const { tiebreaker, textSource } = detectTiebreakSignal(
+      params.frontCardText,
+      params.combinedText,
+      legacy.candidates.length > 1
+    );
+    const rankedLegacyCandidates = legacy.candidates
+      .map((candidate) => ({
+        ...candidate,
+        tieBreakRank: rankCandidateByTiebreak(candidate.setId, tiebreaker),
+      }))
+      .sort(
+        (left, right) =>
+          right.score - left.score ||
+          right.tieBreakRank - left.tieBreakRank ||
+          left.setId.localeCompare(right.setId) ||
+          (left.programId ?? "").localeCompare(right.programId ?? "")
+      );
+    const best = rankedLegacyCandidates[0] ?? null;
+    const runnerUp = rankedLegacyCandidates[1] ?? null;
+    const decisiveBest = Boolean(
+      best &&
+        (!runnerUp || best.score - runnerUp.score >= 1.2 || best.tieBreakRank > runnerUp.tieBreakRank)
+    );
+    if (!best || !decisiveBest) {
+      return {
+        setId: null,
+        setName: null,
+        programId: null,
+        programLabel: null,
+        cardNumber: normalizedCardNumber,
+        playerName: null,
+        teamName: null,
+        confidence: "none",
+        reason: rankedLegacyCandidates.length > 1 ? "legacy_ambiguous_card_number_scope" : "legacy_unresolved_best_candidate",
+        candidateSetIds,
+        candidateCount: rankedLegacyCandidates.length,
+        scopedSetCount: candidateSetIds.length,
+        candidates: rankedLegacyCandidates,
+        tiebreaker,
+        textSource,
+      };
+    }
+    return {
+      setId: best.setId,
+      setName: best.setName,
+      programId: best.programId,
+      programLabel: best.programLabel,
+      cardNumber: best.cardNumber,
+      playerName: best.playerName,
+      teamName: best.teamName,
+      confidence: best.matchType,
+      reason: rankedLegacyCandidates.length > 1 ? "legacy_scored_card_match" : "legacy_single_set_card_match",
+      candidateSetIds,
+      candidateCount: rankedLegacyCandidates.length,
       scopedSetCount: candidateSetIds.length,
-      candidates: [],
-      tiebreaker: "none",
-      textSource: "none",
+      candidates: rankedLegacyCandidates,
+      tiebreaker,
+      textSource,
     };
   }
 
-  const programKeyValues = Array.from(new Set(rows.map((row) => `${row.setId}::${row.programId}`)));
-  const programs = await prisma.setProgram.findMany({
-    where: {
-      OR: programKeyValues.map((entry) => {
-        const [setId, programId] = entry.split("::");
-        return { setId, programId };
-      }),
-      ...publishedSetProgramWhereInput(),
-    },
-    select: {
-      setId: true,
-      programId: true,
-      label: true,
-    },
-  });
-  const programLabelByKey = new Map(programs.map((program) => [`${program.setId}::${program.programId}`, program.label]));
+  const programLabelByKey = await loadProgramLabelByKey(
+    Array.from(new Set(rows.map((row) => `${row.setId}::${row.programId}`))),
+    { publishedOnly: true }
+  );
 
   const normalizedTeamName = normalizeIdentityTextBase(params.teamName);
   const normalizedInsertSet = normalizeVariantLabelKey(params.insertSet || "");
@@ -400,6 +588,68 @@ export async function identifySetByCardIdentity(params: IdentifySetParams): Prom
 
   const candidates = Array.from(bestCandidateBySet.values());
   if (candidates.length < 1) {
+    const legacy = await legacyFallback();
+    if (legacy.candidates.length > 0) {
+      const { tiebreaker, textSource } = detectTiebreakSignal(
+        params.frontCardText,
+        params.combinedText,
+        legacy.candidates.length > 1
+      );
+      const rankedLegacyCandidates = legacy.candidates
+        .map((candidate) => ({
+          ...candidate,
+          tieBreakRank: rankCandidateByTiebreak(candidate.setId, tiebreaker),
+        }))
+        .sort(
+          (left, right) =>
+            right.score - left.score ||
+            right.tieBreakRank - left.tieBreakRank ||
+            left.setId.localeCompare(right.setId) ||
+            (left.programId ?? "").localeCompare(right.programId ?? "")
+        );
+      const best = rankedLegacyCandidates[0] ?? null;
+      const runnerUp = rankedLegacyCandidates[1] ?? null;
+      const decisiveBest = Boolean(
+        best &&
+          (!runnerUp || best.score - runnerUp.score >= 1.2 || best.tieBreakRank > runnerUp.tieBreakRank)
+      );
+      if (best && decisiveBest) {
+        return {
+          setId: best.setId,
+          setName: best.setName,
+          programId: best.programId,
+          programLabel: best.programLabel,
+          cardNumber: best.cardNumber,
+          playerName: best.playerName,
+          teamName: best.teamName,
+          confidence: best.matchType,
+          reason: rankedLegacyCandidates.length > 1 ? "legacy_scored_card_match" : "legacy_single_set_card_match",
+          candidateSetIds,
+          candidateCount: rankedLegacyCandidates.length,
+          scopedSetCount: candidateSetIds.length,
+          candidates: rankedLegacyCandidates,
+          tiebreaker,
+          textSource,
+        };
+      }
+      return {
+        setId: null,
+        setName: null,
+        programId: null,
+        programLabel: null,
+        cardNumber: normalizedCardNumber,
+        playerName: null,
+        teamName: null,
+        confidence: "none",
+        reason: rankedLegacyCandidates.length > 1 ? "legacy_ambiguous_card_number_scope" : "legacy_unresolved_best_candidate",
+        candidateSetIds,
+        candidateCount: rankedLegacyCandidates.length,
+        scopedSetCount: candidateSetIds.length,
+        candidates: rankedLegacyCandidates,
+        tiebreaker,
+        textSource,
+      };
+    }
     return {
       setId: null,
       setName: null,

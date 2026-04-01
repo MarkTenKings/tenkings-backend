@@ -2487,17 +2487,40 @@ export default function AdminUploads() {
     if (intakeOptionalTouched.productLine) {
       return;
     }
+    const current = sanitizeNullableText(intakeOptional.productLine);
+    const matchedCurrent = current
+      ? productLineOptions.find((option) => option.toLowerCase() === current.toLowerCase()) ?? ""
+      : "";
     const identifiedSetId =
       identifiedSetMatch?.confidence && identifiedSetMatch.confidence !== "none"
         ? sanitizeNullableText(identifiedSetMatch.setId)
         : "";
-    if (!identifiedSetId) {
+    const resolveKnownProductLine = (value: string) =>
+      productLineOptions.find((option) => option.toLowerCase() === value.toLowerCase()) ?? value;
+
+    let candidate = "";
+    if (identifiedSetId) {
+      candidate = resolveKnownProductLine(identifiedSetId);
+    } else if (matchedCurrent) {
       return;
+    } else {
+      const resolvedScopedSetId = sanitizeNullableText(variantScopeSummary?.selectedSetId);
+      if (resolvedScopedSetId) {
+        candidate = resolveKnownProductLine(resolvedScopedSetId);
+      } else if (!current && productLineOptions.length === 1) {
+        candidate = productLineOptions[0] ?? "";
+      } else if (!current) {
+        const suggestedSetName = sanitizeNullableText(intakeSuggested.setName);
+        const actionableSuggestedSetName = isActionableProductLineHint(suggestedSetName) ? suggestedSetName : "";
+        if (!actionableSuggestedSetName) {
+          return;
+        }
+        candidate = pickBestCandidate(productLineOptions, [actionableSuggestedSetName], 1.1) ?? "";
+      } else {
+        return;
+      }
     }
-    const candidate =
-      productLineOptions.find((option) => option.toLowerCase() === identifiedSetId.toLowerCase()) ?? identifiedSetId;
-    const current = sanitizeNullableText(intakeOptional.productLine);
-    if (current && current.toLowerCase() === candidate.toLowerCase()) {
+    if (!candidate || (current && current.toLowerCase() === candidate.toLowerCase())) {
       return;
     }
     setIntakeOptional((prev) => ({ ...prev, productLine: candidate }));
@@ -2508,8 +2531,10 @@ export default function AdminUploads() {
     intakeOptional.productLine,
     intakeOptionalTouched.productLine,
     intakeRequired.category,
+    intakeSuggested.setName,
     productLineManualMode,
     productLineOptions,
+    variantScopeSummary?.selectedSetId,
   ]);
 
   const selectedProductLineOption = useMemo(() => {
@@ -2769,6 +2794,19 @@ export default function AdminUploads() {
           : "";
         const suggestedInsertSet = sanitizeNullableText(suggestions.insertSet);
         const suggestedParallel = sanitizeNullableText(suggestions.parallel);
+        const constrainedProductLine =
+          suggestedProductLine && productLineOptions.length > 0
+            ? pickBestCandidate(productLineOptions, [
+                suggestedProductLine,
+                `${sanitizeNullableText(intakeRequired.year)} ${sanitizeNullableText(intakeRequired.manufacturer)} ${sanitizeNullableText(
+                  intakeRequired.sport
+                )}`.trim(),
+              ], 1.1)
+            : null;
+        if (constrainedProductLine && !intakeOptionalTouched.productLine && !prev.productLine.trim()) {
+          next.productLine = constrainedProductLine;
+          ocrAppliedOptionalFieldsRef.current.push("productLine");
+        }
         const constrainedInsert =
           suggestedInsertSet && insertSetOptions.length > 0
             ? pickBestCandidate(insertSetOptions, [suggestedInsertSet, suggestedProductLine, suggestedParallel], 0.6)
@@ -2852,10 +2890,12 @@ export default function AdminUploads() {
       ocrApplied,
       intakeOptionalTouched.cardNumber,
       intakeOptionalTouched.teamName,
+      intakeOptionalTouched.productLine,
       intakeOptionalTouched.insertSet,
       intakeOptionalTouched.parallel,
       insertSetOptions,
       parallelOptions,
+      productLineOptions,
       intakeOptionalTouched.numbered,
       intakeOptionalTouched.autograph,
       intakeOptionalTouched.memorabilia,
@@ -3178,7 +3218,8 @@ export default function AdminUploads() {
     if (intakeStep !== "required" && intakeStep !== "optional") {
       return;
     }
-    const scopedProductSetId = sanitizeNullableText(intakeOptional.productLine);
+    const scopedProductSetId =
+      sanitizeNullableText(intakeOptional.productLine) || sanitizeNullableText(variantScopeSummary?.selectedSetId);
     if (!scopedProductSetId) {
       screen2PrefetchKeyRef.current = null;
       if (screen2PrefetchTimeoutRef.current) {
@@ -3269,6 +3310,7 @@ export default function AdminUploads() {
     intakeRequired.year,
     intakeStep,
     teachLayoutClass,
+    variantScopeSummary?.selectedSetId,
   ]);
 
   const startOcrForCard = useCallback(

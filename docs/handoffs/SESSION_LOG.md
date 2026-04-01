@@ -12203,6 +12203,59 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this push-sync step.
 
+## 2026-03-31 - Task 17b identify-set fallback repair
+
+### Summary
+- Re-read the mandatory context, runbook, and handoff docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Confirmed local `main` was already current with `origin/main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Wrote the requested pre-coding trace to `docs/handoffs/TASK17B_ANALYSIS.md`.
+- Investigated the live data path and found the reported `SetTaxonomySource.id` mismatch theory was incorrect in this repo.
+- Confirmed the actual production-style blocker: `SetCard.setId` and `loadVariantOptionPool().scopedSetIds` are both product-line string IDs, but the current DB has `SetCard` row count `0`, so Task 17's new helper always returned `card_number_not_found_in_scope`.
+- Implemented the Task 17b repair by restoring the existing legacy `CardVariant` compatibility path inside `identifySetByCardIdentity()` and restoring the deleted Product Set fallback behavior in `/admin/uploads`.
+
+### Files Updated
+- `docs/handoffs/TASK17B_ANALYSIS.md`
+- `frontend/nextjs-app/lib/server/cardSetIdentification.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+
+### Implementation Notes
+- Runtime evidence collected from the current DB:
+  - `loadVariantOptionPool({ year: "2025-26", manufacturer: "Topps", sport: "Basketball" }).scopedSetIds` returned product-line strings such as `2025-26_Topps_Basketball` and `2025-26_Topps_Chrome_Basketball`
+  - checklist table counts: `SetDraft=242`, `SetProgram=4027`, `SetCard=0`, `SetTaxonomySource=1120`
+- Server fix:
+  - kept the Task 17 `SetCard` path intact for future taxonomy-backed checklist rows
+  - added the same legacy `CardVariant.groupBy(setId, programId, cardNumber)` fallback pattern already used by `resolveScopedSetCard()` in `ocr-suggest.ts`
+  - preserved `confidence: "none"` for ambiguous legacy matches so the UI fallback/manual override path can take over instead of forcing a weak auto-pick
+  - corrected local `SetProgram` label loading in `cardSetIdentification.ts` so published program filtering does not overwrite the requested set/program key filter
+- UI fix in `/admin/uploads`:
+  - restored Product Set auto-selection fallbacks behind identify-set:
+    - existing valid Product Set value
+    - `variantScopeSummary.selectedSetId`
+    - single-option scope auto-pick
+    - OCR `setName` heuristic via `pickBestCandidate(...)`
+  - restored the removed `constrainedProductLine` block in `applySuggestions(...)`
+  - restored Screen 2 prefetch gating from `intakeOptional.productLine || variantScopeSummary?.selectedSetId`
+- Targeted live helper probe after patch:
+  - `TC-HG` -> `confidence: none`, `reason: legacy_ambiguous_card_number_scope`, `tiebreaker: chrome`
+  - `NS-27` -> `confidence: none`, `reason: legacy_ambiguous_card_number_scope`
+  - `80B2-DV` -> `confidence: none`, `reason: card_number_not_found_in_scope`
+  - this is the intended repaired behavior because the restored UI fallbacks now handle the first two cases and the manual dropdown path handles the third
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file lib/server/cardSetIdentification.ts`
+  - pass with the existing `uploads.tsx` legacy `<img>` warnings only
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Git State
+- pre-commit status after implementation:
+  - `git status -sb` -> `## main...origin/main` plus Task 17b implementation/doc changes
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.
+
 ## 2026-03-31 - Task 18 precise eBay sold comps
 
 ### Summary
