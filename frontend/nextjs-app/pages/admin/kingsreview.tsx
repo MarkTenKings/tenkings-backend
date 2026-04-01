@@ -1,7 +1,7 @@
 import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   annotateAndSortKingsreviewComps,
   buildKingsreviewCompMatchContext,
@@ -685,6 +685,9 @@ export default function KingsReview() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
   const [stage, setStage] = useState<QueueFilterStage>("IN_REVIEW");
+  const [leftPanelWidth, setLeftPanelWidth] = useState(320);
+  const [rightPanelWidth, setRightPanelWidth] = useState(400);
+  const [topChromeHeight, setTopChromeHeight] = useState(56);
   const [cards, setCards] = useState<CardSummary[]>([]);
   const [cardsLoading, setCardsLoading] = useState(false);
   const [cardsOffset, setCardsOffset] = useState(0);
@@ -729,6 +732,10 @@ export default function KingsReview() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deleteSelection, setDeleteSelection] = useState<string[]>([]);
   const [playbookRules, setPlaybookRules] = useState<PlaybookRule[]>([]);
+  const topChromeRef = useRef<HTMLDivElement | null>(null);
+  const leftDragStartRef = useRef(320);
+  const rightDragStartRef = useRef(400);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
   const lastJobIdRef = useRef<string | null>(null);
   const cardDetailCacheRef = useRef<Map<string, CardDetail>>(new Map());
   const inflightCardRef = useRef<Map<string, Promise<CardDetail | null>>>(new Map());
@@ -943,6 +950,7 @@ export default function KingsReview() {
     }
     return null;
   }, [autosavingDraft, draftSaveStatus, draftSavedAt]);
+  const panelViewportHeight = useMemo(() => `calc(100vh - ${Math.max(topChromeHeight, 0)}px)`, [topChromeHeight]);
 
   useEffect(() => {
     const previousHtmlOverflow = document.documentElement.style.overflow;
@@ -954,6 +962,85 @@ export default function KingsReview() {
       document.body.style.overflow = previousBodyOverflow;
     };
   }, []);
+
+  useEffect(() => {
+    const measureTopChrome = () => {
+      const nextHeight = topChromeRef.current?.getBoundingClientRect().height ?? 56;
+      setTopChromeHeight(Math.max(0, Math.round(nextHeight)));
+    };
+
+    measureTopChrome();
+    window.addEventListener("resize", measureTopChrome);
+
+    let observer: ResizeObserver | null = null;
+    if (topChromeRef.current && typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => {
+        measureTopChrome();
+      });
+      observer.observe(topChromeRef.current);
+    }
+
+    return () => {
+      window.removeEventListener("resize", measureTopChrome);
+      observer?.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      dragCleanupRef.current?.();
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, []);
+
+  const startColumnResize = useCallback((clientX: number, onDrag: (deltaX: number) => void) => {
+    dragCleanupRef.current?.();
+
+    const startX = clientX;
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      onDrag(moveEvent.clientX - startX);
+    };
+    const cleanup = () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", cleanup);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      if (dragCleanupRef.current === cleanup) {
+        dragCleanupRef.current = null;
+      }
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", cleanup);
+    dragCleanupRef.current = cleanup;
+  }, []);
+
+  const handleLeftDividerDown = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      leftDragStartRef.current = leftPanelWidth;
+      startColumnResize(event.clientX, (deltaX) => {
+        const nextWidth = Math.max(200, Math.min(500, leftDragStartRef.current + deltaX));
+        setLeftPanelWidth(nextWidth);
+      });
+    },
+    [leftPanelWidth, startColumnResize]
+  );
+
+  const handleRightDividerDown = useCallback(
+    (event: ReactMouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      rightDragStartRef.current = rightPanelWidth;
+      startColumnResize(event.clientX, (deltaX) => {
+        const nextWidth = Math.max(280, Math.min(600, rightDragStartRef.current - deltaX));
+        setRightPanelWidth(nextWidth);
+      });
+    },
+    [rightPanelWidth, startColumnResize]
+  );
 
   useEffect(() => {
     if (!session || !isAdmin) {
@@ -2297,23 +2384,31 @@ export default function KingsReview() {
 
     return (
       <div className="flex h-screen flex-1 flex-col overflow-hidden bg-night-950 text-white">
-        <header className="shrink-0 px-4 pb-3 pt-4 sm:px-6">
-          <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black p-2">
-            <Link
-              href="/admin/uploads"
-              className="inline-flex rounded-full border border-white/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
-            >
-              ← Add Cards
-            </Link>
-            <p className="px-2 font-heading text-sm uppercase tracking-[0.24em] text-gold-300">KingsReview</p>
-            <Link
-              href="/admin/inventory"
-              className="inline-flex rounded-full border border-white/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
-            >
-              Inventory →
-            </Link>
-          </div>
-        </header>
+        <div ref={topChromeRef} className="shrink-0">
+          <header className="px-4 pb-3 pt-4 sm:px-6">
+            <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black p-2">
+              <Link
+                href="/admin/uploads"
+                className="inline-flex rounded-full border border-white/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
+              >
+                ← Add Cards
+              </Link>
+              <p className="px-2 font-heading text-sm uppercase tracking-[0.24em] text-gold-300">KingsReview</p>
+              <Link
+                href="/admin/inventory"
+                className="inline-flex rounded-full border border-white/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
+              >
+                Inventory →
+              </Link>
+            </div>
+          </header>
+
+          {error && (
+            <div className="mx-4 mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200 sm:mx-6">
+              {error}
+            </div>
+          )}
+        </div>
 
         {showDeleteDialog && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
@@ -2409,15 +2504,19 @@ export default function KingsReview() {
           </div>
         )}
 
-        {error && (
-          <div className="mx-4 mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200 sm:mx-6">
-            {error}
-          </div>
-        )}
-
-        <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div
+          className="flex min-h-0 flex-1 overflow-hidden bg-black"
+          style={{ height: panelViewportHeight, maxHeight: panelViewportHeight }}
+        >
           <section
-            className="flex h-full min-h-0 min-w-[280px] flex-[0.9_1_300px] flex-col gap-3 overflow-hidden border-r border-white/[0.08] bg-black p-3 md:gap-4 md:p-4"
+            className="flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4"
+            style={{
+              width: leftPanelWidth,
+              minWidth: 200,
+              maxWidth: 500,
+              height: panelViewportHeight,
+              flexShrink: 0,
+            }}
           >
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-2">
               <div className="flex flex-wrap items-center gap-3">
@@ -2463,7 +2562,7 @@ export default function KingsReview() {
               </div>
             </div>
             <div
-              className="min-h-0 flex-1 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2"
+              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2"
               onScroll={(event) => {
                 const target = event.currentTarget;
                 if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
@@ -2524,7 +2623,19 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 min-w-0 flex-[1.35_1_0%] flex-col gap-3 overflow-hidden border-r border-white/[0.08] bg-black p-3 md:gap-4 md:p-4">
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            onMouseDown={handleLeftDividerDown}
+            className="group relative h-full w-1 shrink-0 cursor-col-resize bg-black"
+          >
+            <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/[0.08] transition-colors group-hover:bg-white/20" />
+          </div>
+
+          <section
+            className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4"
+            style={{ minWidth: 300, height: panelViewportHeight }}
+          >
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -2545,7 +2656,7 @@ export default function KingsReview() {
                 </button>
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-scroll overscroll-contain">
+            <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
             <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
               {aiStatus && (
                 <div className="mt-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2">
@@ -3172,7 +3283,25 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 min-w-[350px] flex-[1_1_380px] flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4">
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            onMouseDown={handleRightDividerDown}
+            className="group relative h-full w-1 shrink-0 cursor-col-resize bg-black"
+          >
+            <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-white/[0.08] transition-colors group-hover:bg-white/20" />
+          </div>
+
+          <section
+            className="flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4"
+            style={{
+              width: rightPanelWidth,
+              minWidth: 280,
+              maxWidth: 600,
+              height: panelViewportHeight,
+              flexShrink: 0,
+            }}
+          >
             <div className="border-b border-white/10 pb-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
@@ -3227,7 +3356,7 @@ export default function KingsReview() {
                 )}
               </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-scroll overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
+            <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
               {activeCompError && (
                 <div className="mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
                   {activeCompError}

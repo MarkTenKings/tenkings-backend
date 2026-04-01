@@ -12708,3 +12708,29 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-01 - Task 20b KingsReview scrolling + draggable resize
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Synced `main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Restored independent KingsReview panel scrolling and added draggable resize handles without changing page logic, backend behavior, or badge styling.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Measured the current top-page chrome height and used it to constrain the three-panel workspace to the remaining viewport height.
+- Restored panel-local `overflow-y-auto` scrolling for Card Queue, Evidence Scroll, and Comp Detail while keeping the outer page locked.
+- Added two plain React draggable divider handles with `col-resize` cursor behavior, `user-select: none` during drag, and min/max width clamps for the left and right panels.
+- Kept the Task 20 pill badges, the existing nav bar, the panel order, and all KingsReview content/data flow intact.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` passed with the existing `pages/admin/kingsreview.tsx` `<img>` warning only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.

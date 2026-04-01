@@ -1,18 +1,34 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-01` (Task 20 KingsReview layout and badge styling update completed in this session; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-01` (Task 20b KingsReview scrolling + draggable resize update completed in this session; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state at Task 20 handoff refresh start:
-  - `git status -sb` -> `## main...origin/main` with modified handoff docs from the prior docs-refresh session
-- Latest committed baseline before Task 20 edit:
+- Current local git state at Task 20b handoff refresh start:
+  - `git status -sb` -> `## main...origin/main`
+- Latest committed baseline before Task 20b edit:
+  - `11ea1b7` style(kingsreview): flush flexible columns + badge pill styling
   - `4ad4656` fix(add-cards): stabilize identify-set and screen2 prefetch effect lifecycles
   - `f7e2173` fix(add-cards): fix screen 2 prefetch timeout + remove T17-DEBUG instrumentation
   - `75bb924` docs(handoff): record task17 debug instrumentation
   - `c904718` debug(add-cards): add T17-DEBUG console instrumentation to product set resolution
-  - `1105555` docs(handoff): finalize task17b metadata
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-01, Task 20b KingsReview scrolling + draggable resize)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Shipped the requested KingsReview layout-shell fix in:
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- What changed:
+  - restored fixed viewport-constrained panel height using the measured top-page chrome height so the three-panel workspace fills the remaining screen space without making the outer page scroll
+  - restored independent panel scrolling for Card Queue, Evidence Scroll, and Comp Detail via dedicated `overflow-y-auto` panel content regions
+  - added plain React mouse-driven resize handles between left/middle and middle/right panels with min/max width guards
+  - kept the Task 20 badge pill styling, top nav, panel order, and all KingsReview data/state behavior unchanged
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` -> pass with the existing `pages/admin/kingsreview.tsx` `<img>` warning only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-01, Task 20 KingsReview layout + badge styling)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
