@@ -26,6 +26,11 @@ const QUEUE_FILTERS = [
   { id: "ESCALATED_REVIEW", label: "Escalated" },
   { id: "REVIEW_COMPLETE", label: "Complete" },
 ] as const;
+const MOBILE_TABS = [
+  { id: "queue", label: "QUEUE" },
+  { id: "evidence", label: "EVIDENCE" },
+  { id: "comps", label: "COMPS" },
+] as const;
 
 const SOURCE_LABELS: Record<string, string> = {
   ebay_sold: "eBay Sold",
@@ -40,6 +45,7 @@ const PHOTO_CAROUSEL_ORDER = ["FRONT", "BACK", "TILT"] as const;
 const LOAD_MORE_COMPS_PAGE_SIZE = 10;
 const PRICE_REQUIRED_MESSAGE = "Price valuation field must be complete before moving a card to inventory ready.";
 type QueueFilterStage = (typeof QUEUE_FILTERS)[number]["id"];
+type MobileTab = (typeof MOBILE_TABS)[number]["id"];
 
 type CardSummary = {
   id: string;
@@ -691,6 +697,8 @@ export default function KingsReview() {
   const router = useRouter();
   const { session, loading, ensureSession, logout } = useSession();
   const [stage, setStage] = useState<QueueFilterStage>("IN_REVIEW");
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileTab, setMobileTab] = useState<MobileTab>("queue");
   const [leftPanelWidth, setLeftPanelWidth] = useState(280);
   const [rightPanelWidth, setRightPanelWidth] = useState(400);
   const [topChromeHeight, setTopChromeHeight] = useState(56);
@@ -966,6 +974,19 @@ export default function KingsReview() {
     return () => {
       document.documentElement.style.overflow = previousHtmlOverflow;
       document.body.style.overflow = previousBodyOverflow;
+    };
+  }, []);
+
+  useEffect(() => {
+    const checkViewport = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+
+    checkViewport();
+    window.addEventListener("resize", checkViewport);
+
+    return () => {
+      window.removeEventListener("resize", checkViewport);
     };
   }, []);
 
@@ -2375,6 +2396,955 @@ export default function KingsReview() {
   const handleAttachSoldComp = useCallback((comp: JobResultComp) => {
     void handleAttachComp(comp, "SOLD_COMP");
   }, [handleAttachComp]);
+  const handleSelectCard = useCallback((cardId: string) => {
+    setActiveCardId(cardId);
+    if (isMobile) {
+      setMobileTab("evidence");
+    }
+  }, [isMobile]);
+  const renderQueuePanel = (mobile = false) => (
+    <section
+      className={`flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4${mobile ? " w-full" : ""}`}
+      style={
+        mobile
+          ? { height: "100%" }
+          : {
+              width: leftPanelWidth,
+              minWidth: 200,
+              maxWidth: 500,
+              height: panelViewportHeight,
+              flexShrink: 0,
+            }
+      }
+    >
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-2">
+        <div className="flex flex-wrap items-center gap-3">
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
+          <label className="flex items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
+            <span>View</span>
+            <select
+              value={stage}
+              onChange={(event) => handleQueueFilterChange(event.target.value as QueueFilterStage)}
+              className="rounded-full border border-white/10 bg-night-800 px-3 py-1.5 text-[10px] uppercase tracking-[0.28em] text-slate-200 outline-none transition focus:border-gold-400/60"
+            >
+              {QUEUE_FILTERS.map((filterOption) => (
+                <option key={filterOption.id} value={filterOption.id}>
+                  {filterOption.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <div className="flex items-center gap-2">
+          <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteSelection([]);
+              setShowDeleteDialog(true);
+            }}
+            className="inline-flex items-center justify-center rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1.5 text-[9px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
+            disabled={purging}
+            aria-label="Delete cards"
+            title="Delete cards"
+          >
+            <svg aria-hidden="true" className="h-3 w-3" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M6 7h12M9 7v11m6-11v11M10 4h4a1 1 0 0 1 1 1v2H9V5a1 1 0 0 1 1-1zM5 7h14l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7z"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div
+        className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2"
+        onScroll={(event) => {
+          const target = event.currentTarget;
+          if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
+            loadMoreCards().catch(() => undefined);
+          }
+        }}
+      >
+        <div>
+          {cards.map((card) => {
+            const status = queueStatusMeta(card);
+            return (
+              <button
+                key={card.id}
+                type="button"
+                onClick={() => handleSelectCard(card.id)}
+                onMouseEnter={() => {
+                  void preloadCardAssets(card.id);
+                }}
+                title={card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
+                className={`group w-full rounded-xl px-3 py-3 text-left transition ${
+                  activeCardId === card.id
+                    ? "border border-gold-400/40 bg-gold-500/15 text-gold-200"
+                    : "border border-transparent text-slate-300 hover:bg-white/5"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <span className="line-clamp-2 text-sm font-semibold leading-tight">
+                    {card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
+                  </span>
+                  {status.label && (
+                    <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] uppercase tracking-[0.2em] ${status.className}`}>
+                      {status.label}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-1 text-[10px] uppercase tracking-[0.24em] text-slate-500">
+                  {new Date(card.updatedAt).toLocaleString()}
+                </div>
+              </button>
+            );
+          })}
+          {cards.length === 0 && !cardsLoading && (
+            <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
+              No cards in this queue
+            </p>
+          )}
+          {cards.length === 0 && cardsLoading && (
+            <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
+              Loading cards…
+            </p>
+          )}
+          {cardsLoadingMore && (
+            <p className="px-3 py-2 text-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
+              Loading more…
+            </p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+  const renderEvidencePanel = (mobile = false) => (
+    <section
+      className={`flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4${mobile ? " w-full" : ""}`}
+      style={mobile ? { height: "100%" } : { minWidth: 300, height: panelViewportHeight }}
+    >
+      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
+        <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.1))}
+            className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
+          >
+            -
+          </button>
+          <span className="text-xs text-slate-400">{Math.round(zoom * 100)}%</span>
+          <button
+            type="button"
+            onClick={() => setZoom((prev) => Math.min(2, prev + 0.1))}
+            className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
+          >
+            +
+          </button>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+        <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+          {aiStatus && (
+            <div className="mt-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2">
+              <span className="inline-flex h-4 w-4 items-center justify-center">
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />
+              </span>
+              <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">{aiStatus}</div>
+              {aiMessage && <div className="text-xs text-slate-500">{aiMessage}</div>}
+            </div>
+          )}
+          {sources.some((source) => source.error) && (
+            <div className="mt-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+              {sources
+                .filter((source) => source.error)
+                .map((source) => (
+                  <div key={source.source}>
+                    <span className="uppercase tracking-[0.3em]">{SOURCE_LABELS[source.source] ?? source.source}</span>
+                    {": "}
+                    {source.error}
+                  </div>
+                ))}
+            </div>
+          )}
+
+          {activeCard ? (
+            <div className="mt-4 flex flex-col gap-4">
+              <div className="mx-auto w-full max-w-[300px]">
+                <div className="relative aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-950">
+                  <div
+                    className="flex h-full w-full transition-transform duration-300 ease-out"
+                    style={{ transform: `translateX(-${activePhotoIndex * 100}%)` }}
+                  >
+                    {PHOTO_CAROUSEL_ORDER.map((kind) => {
+                      const isFront = kind === "FRONT";
+                      const photo = isFront ? null : activePhotos[kind];
+                      const cdnHdUrl = isFront ? activeCard.cdnHdUrl : photo?.cdnHdUrl ?? null;
+                      const cdnThumbUrl = isFront ? activeCard.cdnThumbUrl : photo?.cdnThumbUrl ?? null;
+                      const imageUrl = isFront ? activeCard.imageUrl : photo?.imageUrl ?? null;
+                      const thumbnailUrl = isFront ? activeCard.thumbnailUrl : photo?.thumbnailUrl ?? null;
+                      return (
+                        <div key={kind} className="relative h-full w-full shrink-0">
+                          {cdnHdUrl || cdnThumbUrl || imageUrl || thumbnailUrl ? (
+                            <CardImage
+                              cdnHdUrl={cdnHdUrl}
+                              cdnThumbUrl={cdnThumbUrl}
+                              fallbackUrl={imageUrl ?? thumbnailUrl}
+                              variant="hd"
+                              alt={`${activeCard.fileName} ${kind.toLowerCase()}`}
+                              fill
+                              className="object-cover"
+                              sizes="(min-width: 1024px) 400px, 80vw"
+                              priority={activePhotoKind === kind}
+                            />
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                              Missing
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActivePhotoKind(
+                        PHOTO_CAROUSEL_ORDER[
+                          (activePhotoIndex - 1 + PHOTO_CAROUSEL_ORDER.length) % PHOTO_CAROUSEL_ORDER.length
+                        ]
+                      )
+                    }
+                    className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full border border-white/30 bg-black/60 px-2 py-1 text-xs uppercase tracking-[0.2em] text-white"
+                  >
+                    ←
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActivePhotoKind(
+                        PHOTO_CAROUSEL_ORDER[(activePhotoIndex + 1) % PHOTO_CAROUSEL_ORDER.length]
+                      )
+                    }
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full border border-white/30 bg-black/60 px-2 py-1 text-xs uppercase tracking-[0.2em] text-white"
+                  >
+                    →
+                  </button>
+                </div>
+                <div className="mt-2 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-400">
+                  {PHOTO_CAROUSEL_ORDER.map((kind, index) => (
+                    <button
+                      key={kind}
+                      type="button"
+                      onClick={() => setActivePhotoKind(kind)}
+                      className={`rounded-full border px-2 py-0.5 ${
+                        activePhotoIndex === index
+                          ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
+                          : "border-white/20 text-slate-400"
+                      }`}
+                    >
+                      {kind}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <details open className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                <summary className="cursor-pointer text-[10px] uppercase tracking-[0.3em] text-slate-400">
+                  Card Details
+                </summary>
+                <div className="mt-3 grid gap-2">
+                  <input
+                    value={
+                      activeCard.resolvedPlayerName ??
+                      (activeAttributes?.playerName as string | undefined) ??
+                      ""
+                    }
+                    readOnly
+                    placeholder="Player name"
+                    className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                  <input
+                    value={
+                      (activeAttributes?.sport as string | undefined) ??
+                      (activeCard.classificationNormalized as any)?.sport?.sport ??
+                      ""
+                    }
+                    readOnly
+                    placeholder="Sport"
+                    className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                  <input
+                    value={
+                      (activeAttributes?.brand as string | undefined) ??
+                      (activeCard.classificationNormalized as any)?.company ??
+                      ""
+                    }
+                    readOnly
+                    placeholder="Manufacturer"
+                    className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                  <input
+                    value={
+                      (activeCard.classificationNormalized as any)?.year ??
+                      (activeAttributes?.year as string | undefined) ??
+                      ""
+                    }
+                    readOnly
+                    placeholder="Year"
+                    className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                  <input
+                    value={
+                      activeCard.resolvedTeamName ??
+                      (activeAttributes?.teamName as string | undefined) ??
+                      ""
+                    }
+                    readOnly
+                    placeholder="Team name"
+                    className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                  <input
+                    value={
+                      (activeCard.classificationNormalized as any)?.setName ??
+                      (activeCard.classificationNormalized as any)?.setCode ??
+                      (activeAttributes?.setName as string | undefined) ??
+                      ""
+                    }
+                    readOnly
+                    placeholder="Set"
+                    className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                  <input
+                    value={
+                      (activeCard.classificationNormalized as any)?.cardNumber ??
+                      (activeCard.classification as any)?.cardNumber ??
+                      ""
+                    }
+                    readOnly
+                    placeholder="Card number"
+                    className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                  <input
+                    value={(activeAttributes?.numbered as string | undefined) ?? ""}
+                    readOnly
+                    placeholder="Numbered (e.g. 3/10)"
+                    className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                  />
+                  <div className="flex flex-wrap gap-4 text-xs uppercase tracking-[0.24em] text-slate-400">
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(activeAttributes?.autograph)}
+                        readOnly
+                        className="h-4 w-4 accent-sky-400"
+                      />
+                      Autograph
+                    </label>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(activeAttributes?.memorabilia)}
+                        readOnly
+                        className="h-4 w-4 accent-sky-400"
+                      />
+                      Patch
+                    </label>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(activeAttributes?.graded)}
+                        readOnly
+                        className="h-4 w-4 accent-sky-400"
+                      />
+                      Graded
+                    </label>
+                  </div>
+                  {Boolean(activeAttributes?.graded) && (
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <input
+                        value={(activeAttributes?.gradeCompany as string | undefined) ?? ""}
+                        readOnly
+                        placeholder="Grade company"
+                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                      />
+                      <input
+                        value={(activeAttributes?.gradeValue as string | undefined) ?? ""}
+                        readOnly
+                        placeholder="Grade value"
+                        className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
+                      />
+                    </div>
+                  )}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-[10px] uppercase tracking-[0.3em] text-rose-300">Price Valuation (USD)</span>
+                    <div
+                      className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
+                        valuationError || !valuationInput.trim()
+                          ? "border-rose-400/70 bg-rose-500/10"
+                          : "border-emerald-400/60 bg-emerald-500/10"
+                      }`}
+                    >
+                      <span className="text-sm text-rose-200">$</span>
+                      <input
+                        ref={valuationInputRef}
+                        inputMode="decimal"
+                        placeholder="13.00"
+                        value={valuationInput}
+                        onChange={(event) => {
+                          const nextInput = event.target.value;
+                          setValuationInput(nextInput);
+                          setValuationError(null);
+                          const parsed = parseDollarInputToMinor(nextInput);
+                          if (parsed !== undefined) {
+                            setActiveCard((prev) => (prev ? { ...prev, valuationMinor: parsed } : prev));
+                          }
+                        }}
+                        onBlur={() => {
+                          const parsed = parseDollarInputToMinor(valuationInput);
+                          if (parsed === undefined) {
+                            setValuationError("Enter a valid dollar amount (example: 13.00).");
+                          } else if (valuationError && parsed != null && parsed > 0) {
+                            setValuationError(null);
+                          }
+                        }}
+                        className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-rose-200/60"
+                      />
+                    </div>
+                    <span className={`text-[10px] ${valuationError ? "text-rose-300" : "text-slate-500"}`}>
+                      {valuationError
+                        ? valuationError
+                        : autosavingValuation
+                          ? "Auto-saving valuation..."
+                          : "Valuation auto-saves as you type."}
+                    </span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => handleStageUpdate("INVENTORY_READY_FOR_SALE")}
+                    disabled={saving}
+                    className="rounded-full border border-gold-500/80 bg-gold-500 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-night-900 transition hover:bg-gold-400 disabled:opacity-60"
+                  >
+                    Move To Inventory Ready
+                  </button>
+                  <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                    <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Attached Evidence</p>
+                    <div className="mt-3 space-y-2">
+                      {evidenceItems.map((item) => (
+                        <div
+                          key={item.id}
+                          className="grid h-[150px] grid-cols-[96px_1fr] gap-3 rounded-2xl border border-white/20 bg-black/90 p-2.5 text-xs text-white sm:grid-cols-[120px_1fr]"
+                        >
+                          <div className="mx-auto h-full w-full max-w-[96px] overflow-hidden rounded-xl border border-white/20 bg-black sm:max-w-[120px]">
+                            {item.screenshotUrl ? (
+                              <img
+                                src={item.screenshotUrl}
+                                alt={item.title ?? "Evidence"}
+                                className="h-full w-full object-contain p-2"
+                                referrerPolicy="no-referrer"
+                                loading="lazy"
+                                decoding="async"
+                              />
+                            ) : null}
+                          </div>
+                          <div className="flex min-h-[120px] flex-col justify-between gap-2">
+                            <div>
+                              <div className="text-lg font-bold text-emerald-400">
+                                {item.price ?? "—"}
+                              </div>
+                              <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300">
+                                {item.soldDate ? `Sold ${item.soldDate}` : ""}
+                              </div>
+                            </div>
+                            <div className="line-clamp-2 text-xs text-white">
+                              {item.title ?? item.url}
+                            </div>
+                            <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.3em]">
+                              <a
+                                href={item.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-white underline"
+                              >
+                                Open
+                              </a>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteEvidence(item.id)}
+                                className="text-rose-700"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                      {evidenceItems.length === 0 && (
+                        <p className="text-xs text-slate-500">No evidence attached yet.</p>
+                      )}
+                    </div>
+                  </div>
+                  <details className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                    <summary className="cursor-pointer text-[10px] uppercase tracking-[0.3em] text-slate-400">
+                      Advanced Controls
+                    </summary>
+                    <div className="mt-3 space-y-3 text-xs text-slate-300">
+                      <div className="rounded-2xl border border-white/10 bg-night-900/60 px-3 py-3 text-[11px] text-slate-300">
+                        <div className="mb-2 text-[9px] tracking-[0.24em] text-slate-500">
+                          {activeCard.variantDecision?.selectedParallelId || activeCard.variantId
+                            ? "Status: Matched"
+                            : activeCard.variantDecision?.candidates?.length
+                              ? "Status: No confident match"
+                              : "Status: Not attempted"}
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="text-slate-500">Variant</span>
+                          <span className="text-slate-200">
+                            {activeCard.variantDecision?.selectedParallelId ??
+                              activeCard.variantId ??
+                              "Not set"}
+                          </span>
+                        </div>
+                        <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
+                          <span>
+                            Confidence{" "}
+                            {activeCard.variantDecision?.confidence ??
+                              activeCard.variantConfidence ??
+                              "—"}
+                          </span>
+                          {activeCard.variantDecision?.humanOverride && (
+                            <span className="rounded-full border border-amber-400/60 bg-amber-500/20 px-2 py-1 text-[9px] text-amber-200">
+                              Human Override
+                            </span>
+                          )}
+                        </div>
+                        <div className="mt-3 grid gap-2">
+                          <input
+                            value={variantNotes}
+                            onChange={(event) => setVariantNotes(event.target.value)}
+                            placeholder="Variant notes / reason"
+                            className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] text-white"
+                          />
+                          {draftAutosaveLabel && (
+                            <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">{draftAutosaveLabel}</p>
+                          )}
+                          <div className="grid gap-2 md:grid-cols-2">
+                            <input
+                              value={variantSetId}
+                              onChange={(event) => setVariantSetId(event.target.value)}
+                              placeholder="Set ID"
+                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] text-white"
+                            />
+                            <input
+                              value={variantCardNumber}
+                              onChange={(event) => setVariantCardNumber(event.target.value)}
+                              placeholder="Card #"
+                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] text-white"
+                            />
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={handleVariantMatch}
+                              disabled={saving}
+                              className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-emerald-200 disabled:opacity-60"
+                            >
+                              Run Matcher
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleVariantDecision(
+                                  activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "",
+                                  activeCard.variantDecision?.confidence ?? activeCard.variantConfidence ?? null,
+                                  true
+                                )
+                              }
+                              disabled={saving}
+                              className="rounded-full border border-sky-400/60 bg-sky-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-sky-200 disabled:opacity-60"
+                            >
+                              Confirm Variant
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleVariantDecision("Unknown", null, true)}
+                              disabled={saving}
+                              className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-rose-200 disabled:opacity-60"
+                            >
+                              Mark Unknown
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="grid gap-2">
+                        <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                          Stage override
+                          <select
+                            value={activeCard.reviewStage ?? "READY_FOR_HUMAN_REVIEW"}
+                            onChange={(event) => handleStageUpdate(event.target.value)}
+                            className="rounded-full border border-white/10 bg-night-800 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200 outline-none transition focus:border-gold-400/60"
+                          >
+                            {REVIEW_STAGES.map((reviewStage) => (
+                              <option key={reviewStage.id} value={reviewStage.id}>
+                                {reviewStage.label}
+                              </option>
+                            ))}
+                            <option value="INVENTORY_READY_FOR_SALE">Inventory Ready</option>
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleStageUpdate("ESCALATED_REVIEW")}
+                          disabled={saving}
+                          className="rounded-full border border-rose-400/60 bg-rose-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
+                        >
+                          Escalate Review
+                        </button>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
+                        <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Research Query</p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <input
+                            value={query}
+                            onChange={(event) => {
+                              setQuery(event.target.value);
+                              setQueryTouched(true);
+                            }}
+                            className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleEnqueue}
+                            disabled={enqueueing}
+                            className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 disabled:opacity-60"
+                          >
+                            {enqueueing ? "Running…" : "Run"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleRegenerateComps}
+                            disabled={regenerating}
+                            className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-200 disabled:opacity-60"
+                          >
+                            {regenerating ? "Regenerating…" : "Regenerate Comps"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setShowTeach((prev) => !prev)}
+                            className="rounded-full border border-sky-400/40 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300"
+                          >
+                            {showTeach ? "Hide Bytebot Teach" : "Show Bytebot Teach"}
+                          </button>
+                        </div>
+                      </div>
+                      {showTeach && (
+                        <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-[10px] uppercase tracking-[0.3em] text-sky-300">Bytebot Teach</p>
+                            <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                              Space = Pause · T = Toggle
+                            </span>
+                          </div>
+                          <p className="mt-2 text-xs text-slate-400">
+                            This panel saves Bytebot click-selector rules only. OCR teach-from-corrections lives in Add Cards.
+                          </p>
+                          <div className="mt-2">
+                            <Link
+                              href="/admin/bytebot/teach"
+                              className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-400 transition hover:border-white/40 hover:text-white"
+                            >
+                              Open Live Teach Session →
+                            </Link>
+                          </div>
+                          <div className="mt-3 grid gap-2">
+                            <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                              Source
+                              <select
+                                value={teachForm.source}
+                                onChange={(event) =>
+                                  setTeachForm((prev) => ({ ...prev, source: event.target.value }))
+                                }
+                                className="rounded-full border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200"
+                              >
+                                <option value="ebay_sold">eBay Sold</option>
+                              </select>
+                            </label>
+                            <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                              Selector (Playwright)
+                              <textarea
+                                value={teachForm.selector}
+                                onChange={(event) =>
+                                  setTeachForm((prev) => ({ ...prev, selector: event.target.value }))
+                                }
+                                placeholder="text=Sports or a[href*='sports']"
+                                rows={2}
+                                className="resize-y rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                              />
+                            </label>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                URL Contains (optional)
+                                <input
+                                  value={teachForm.urlContains}
+                                  onChange={(event) =>
+                                    setTeachForm((prev) => ({ ...prev, urlContains: event.target.value }))
+                                  }
+                                  placeholder="e.g. ebay.com/sch"
+                                  className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                                />
+                              </label>
+                              <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                Priority
+                                <input
+                                  type="number"
+                                  value={teachForm.priority}
+                                  onChange={(event) =>
+                                    setTeachForm((prev) => ({
+                                      ...prev,
+                                      priority: Number(event.target.value) || 0,
+                                    }))
+                                  }
+                                  className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
+                                />
+                              </label>
+                            </div>
+                            <label className="flex items-center gap-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                              <input
+                                type="checkbox"
+                                checked={teachForm.enabled}
+                                onChange={(event) =>
+                                  setTeachForm((prev) => ({ ...prev, enabled: event.target.checked }))
+                                }
+                                className="h-4 w-4 accent-sky-400"
+                              />
+                              Enabled
+                            </label>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={handleCreateRule}
+                            className="mt-3 rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200"
+                          >
+                            Save Rule
+                          </button>
+                          <div className="mt-4 space-y-2">
+                            {rulesForActiveSource.length === 0 && (
+                              <p className="text-xs text-slate-500">No rules for this source yet.</p>
+                            )}
+                            {rulesForActiveSource.map((rule) => (
+                              <div
+                                key={rule.id}
+                                className="flex items-center justify-between gap-2 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2 text-xs text-slate-300"
+                              >
+                                <div className="flex-1">
+                                  <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
+                                    {rule.action} · {rule.source}
+                                  </div>
+                                  <div className="break-words whitespace-normal">{rule.selector}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteRule(rule.id)}
+                                  className="text-[10px] uppercase tracking-[0.3em] text-rose-300"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </details>
+                </div>
+              </details>
+            </div>
+          ) : (
+            <div className="flex flex-1 items-center justify-center text-xs uppercase tracking-[0.3em] text-slate-500">
+              Select a card to review
+            </div>
+          )}
+        </div>
+        <div className="rounded-2xl border border-white/10 bg-night-950/40 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
+          Evidence captured in real time. Use Comp Detail to review and attach comps.
+        </div>
+      </div>
+    </section>
+  );
+  const renderCompDetailPanel = (mobile = false) => (
+    <section
+      className={`flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4${mobile ? " w-full" : ""}`}
+      style={
+        mobile
+          ? { height: "100%" }
+          : {
+              width: rightPanelWidth,
+              minWidth: 280,
+              maxWidth: 600,
+              height: panelViewportHeight,
+              flexShrink: 0,
+            }
+      }
+    >
+      <div className="border-b border-white/10 pb-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {(sources.length ? sources : [{ source: "ebay_sold" } as { source: string }]).map((source) => (
+              <button
+                key={source.source}
+                type="button"
+                onClick={() => {
+                  setActiveSource(source.source);
+                  setActiveCompIndex(null);
+                }}
+                className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.28em] transition ${
+                  activeSourceData?.source === source.source
+                    ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
+                    : "border-white/10 text-slate-400"
+                }`}
+              >
+                {SOURCE_LABELS[source.source] ?? source.source}
+              </button>
+            ))}
+            {activeSourceData && (
+              <button
+                type="button"
+                onClick={handleAttachSearch}
+                className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.28em] text-emerald-200"
+              >
+                Attach Search
+              </button>
+            )}
+            {activeSourceData?.searchUrl && (
+              <a
+                href={activeSourceData.searchUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center rounded-full border border-sky-400/70 bg-sky-500/20 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-100 transition hover:bg-sky-500/30"
+              >
+                Open eBay Search
+              </a>
+            )}
+          </div>
+        </div>
+        <div className="mt-3 rounded-2xl border border-white/10 bg-night-950/50 px-3 py-3">
+          <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">eBay Query</p>
+          <p className="mt-1 break-words text-xs text-slate-300">
+            {activeCompSearchQuery ? `"${activeCompSearchQuery}"` : "No eBay query captured yet."}
+          </p>
+          {queryTouched && query.trim() && query.trim() !== activeCompSearchQuery && (
+            <p className="mt-2 text-[10px] uppercase tracking-[0.24em] text-amber-300">
+              Search field edited locally. Run or regenerate comps to refresh results.
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
+        {activeCompError && (
+          <div className="mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+            {activeCompError}
+          </div>
+        )}
+        {comps.length === 0 && (
+          <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
+        )}
+        <div className="space-y-2">
+          {comps.map((comp, index) => {
+            const compAttached = attachedCompKeys.has(normalizeCompUrl(comp.url));
+            return (
+              <CompCard
+                key={`${comp.url}-${index}`}
+                comp={comp}
+                index={index}
+                isExpanded={activeCompIndex === index}
+                attached={compAttached}
+                showConfirmVariantLabel={shouldConfirmVariantOnCompAttach}
+                onToggle={handleToggleComp}
+                onAttach={handleAttachSoldComp}
+                onUnattach={handleUnattachComp}
+              />
+            );
+          })}
+        </div>
+        {canLoadMoreComps && activeCompHasMore && (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => {
+                void handleLoadMoreComps();
+              }}
+              disabled={activeCompLoadingMore}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-sky-400/70 bg-sky-500/20 px-4 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-sky-100 transition hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {activeCompLoadingMore && (
+                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-sky-100 border-t-transparent" />
+              )}
+              Load 10 More Comps
+            </button>
+          </div>
+        )}
+        {canLoadMoreComps && !activeCompHasMore && comps.length > 0 && (
+          <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-center text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-500">
+            No more comps available
+          </div>
+        )}
+      </div>
+    </section>
+  );
+  const renderDesktopWorkspace = () => (
+    <div
+      className="flex min-h-0 flex-1 overflow-hidden bg-black"
+      style={{ height: panelViewportHeight, maxHeight: panelViewportHeight }}
+    >
+      {renderQueuePanel()}
+      <DragDivider onMouseDown={handleLeftDividerMouseDown} />
+      {renderEvidencePanel()}
+      <DragDivider onMouseDown={handleRightDividerMouseDown} />
+      {renderCompDetailPanel()}
+    </div>
+  );
+  const renderMobileWorkspace = () => (
+    <div
+      className="flex min-h-0 flex-1 flex-col overflow-hidden bg-black"
+      style={{ height: panelViewportHeight, maxHeight: panelViewportHeight }}
+    >
+      <div className="sticky top-0 z-20 flex shrink-0 border-b border-white/10 bg-black">
+        {MOBILE_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => setMobileTab(tab.id)}
+            style={{
+              flex: 1,
+              padding: "12px 0",
+              background: "none",
+              border: "none",
+              borderBottom: mobileTab === tab.id ? "2px solid #d4a843" : "2px solid transparent",
+              color: mobileTab === tab.id ? "#ffffff" : "rgba(255,255,255,0.5)",
+              fontSize: "12px",
+              fontWeight: 600,
+              letterSpacing: "1px",
+              textTransform: "uppercase",
+              cursor: "pointer",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden">
+        {mobileTab === "queue"
+          ? renderQueuePanel(true)
+          : mobileTab === "evidence"
+            ? renderEvidencePanel(true)
+            : renderCompDetailPanel(true)}
+      </div>
+    </div>
+  );
 
   const renderContent = () => {
     if (loading) {
@@ -2539,896 +3509,7 @@ export default function KingsReview() {
           </div>
         )}
 
-        <div
-          className="flex min-h-0 flex-1 overflow-hidden bg-black"
-          style={{ height: panelViewportHeight, maxHeight: panelViewportHeight }}
-        >
-          <section
-            className="flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4"
-            style={{
-              width: leftPanelWidth,
-              minWidth: 200,
-              maxWidth: 500,
-              height: panelViewportHeight,
-              flexShrink: 0,
-            }}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-2">
-              <div className="flex flex-wrap items-center gap-3">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Card Queue</p>
-                <label className="flex items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
-                  <span>View</span>
-                  <select
-                    value={stage}
-                    onChange={(event) => handleQueueFilterChange(event.target.value as QueueFilterStage)}
-                    className="rounded-full border border-white/10 bg-night-800 px-3 py-1.5 text-[10px] uppercase tracking-[0.28em] text-slate-200 outline-none transition focus:border-gold-400/60"
-                  >
-                    {QUEUE_FILTERS.map((filterOption) => (
-                      <option key={filterOption.id} value={filterOption.id}>
-                        {filterOption.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <div className="flex items-center gap-2">
-                <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">{cards.length} cards</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeleteSelection([]);
-                    setShowDeleteDialog(true);
-                  }}
-                  className="inline-flex items-center justify-center rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-1.5 text-[9px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
-                  disabled={purging}
-                  aria-label="Delete cards"
-                  title="Delete cards"
-                >
-                  <svg aria-hidden="true" className="h-3 w-3" viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M6 7h12M9 7v11m6-11v11M10 4h4a1 1 0 0 1 1 1v2H9V5a1 1 0 0 1 1-1zM5 7h14l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7z"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </button>
-              </div>
-            </div>
-            <div
-              className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/50 p-2 pr-1 md:pr-2"
-              onScroll={(event) => {
-                const target = event.currentTarget;
-                if (target.scrollTop + target.clientHeight >= target.scrollHeight - 40) {
-                  loadMoreCards().catch(() => undefined);
-                }
-              }}
-            >
-              <div>
-                {cards.map((card) => {
-                  const status = queueStatusMeta(card);
-                  return (
-                    <button
-                      key={card.id}
-                      type="button"
-                      onClick={() => setActiveCardId(card.id)}
-                      onMouseEnter={() => {
-                        void preloadCardAssets(card.id);
-                      }}
-                      title={card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
-                      className={`group w-full rounded-xl px-3 py-3 text-left transition ${
-                        activeCardId === card.id
-                          ? "border border-gold-400/40 bg-gold-500/15 text-gold-200"
-                          : "border border-transparent text-slate-300 hover:bg-white/5"
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="line-clamp-2 text-sm font-semibold leading-tight">
-                          {card.customTitle ?? card.resolvedPlayerName ?? card.fileName}
-                        </span>
-                        {status.label && (
-                          <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] uppercase tracking-[0.2em] ${status.className}`}>
-                            {status.label}
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-1 text-[10px] uppercase tracking-[0.24em] text-slate-500">
-                        {new Date(card.updatedAt).toLocaleString()}
-                      </div>
-                    </button>
-                  );
-                })}
-                {cards.length === 0 && !cardsLoading && (
-                  <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
-                    No cards in this queue
-                  </p>
-                )}
-                {cards.length === 0 && cardsLoading && (
-                  <p className="px-3 py-6 text-center text-xs uppercase tracking-[0.3em] text-slate-500">
-                    Loading cards…
-                  </p>
-                )}
-                {cardsLoadingMore && (
-                  <p className="px-3 py-2 text-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                    Loading more…
-                  </p>
-                )}
-              </div>
-            </div>
-          </section>
-
-          <DragDivider onMouseDown={handleLeftDividerMouseDown} />
-
-          <section
-            className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4"
-            style={{ minWidth: 300, height: panelViewportHeight }}
-          >
-            <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setZoom((prev) => Math.max(0.5, prev - 0.1))}
-                  className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
-                >
-                  -
-                </button>
-                <span className="text-xs text-slate-400">{Math.round(zoom * 100)}%</span>
-                <button
-                  type="button"
-                  onClick={() => setZoom((prev) => Math.min(2, prev + 0.1))}
-                  className="rounded-full border border-white/20 px-3 py-1 text-xs text-slate-300"
-                >
-                  +
-                </button>
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
-            <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-              {aiStatus && (
-                <div className="mt-3 flex items-center gap-3 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2">
-                  <span className="inline-flex h-4 w-4 items-center justify-center">
-                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-sky-400 border-t-transparent" />
-                  </span>
-                  <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">{aiStatus}</div>
-                  {aiMessage && <div className="text-xs text-slate-500">{aiMessage}</div>}
-                </div>
-              )}
-              {sources.some((source) => source.error) && (
-                <div className="mt-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
-                  {sources
-                    .filter((source) => source.error)
-                    .map((source) => (
-                      <div key={source.source}>
-                        <span className="uppercase tracking-[0.3em]">{SOURCE_LABELS[source.source] ?? source.source}</span>
-                        {": "}
-                        {source.error}
-                      </div>
-                    ))}
-                </div>
-              )}
-
-              {activeCard ? (
-                <div className="mt-4 flex flex-col gap-4">
-                  <div className="mx-auto w-full max-w-[300px]">
-                    <div className="relative aspect-[4/5] overflow-hidden rounded-2xl border border-white/10 bg-night-950">
-                      <div
-                        className="flex h-full w-full transition-transform duration-300 ease-out"
-                        style={{ transform: `translateX(-${activePhotoIndex * 100}%)` }}
-                      >
-                        {PHOTO_CAROUSEL_ORDER.map((kind) => {
-                          const isFront = kind === "FRONT";
-                          const photo = isFront ? null : activePhotos[kind];
-                          const cdnHdUrl = isFront ? activeCard.cdnHdUrl : photo?.cdnHdUrl ?? null;
-                          const cdnThumbUrl = isFront ? activeCard.cdnThumbUrl : photo?.cdnThumbUrl ?? null;
-                          const imageUrl = isFront ? activeCard.imageUrl : photo?.imageUrl ?? null;
-                          const thumbnailUrl = isFront ? activeCard.thumbnailUrl : photo?.thumbnailUrl ?? null;
-                          return (
-                            <div key={kind} className="relative h-full w-full shrink-0">
-                              {cdnHdUrl || cdnThumbUrl || imageUrl || thumbnailUrl ? (
-                                <CardImage
-                                  cdnHdUrl={cdnHdUrl}
-                                  cdnThumbUrl={cdnThumbUrl}
-                                  fallbackUrl={imageUrl ?? thumbnailUrl}
-                                  variant="hd"
-                                  alt={`${activeCard.fileName} ${kind.toLowerCase()}`}
-                                  fill
-                                  className="object-cover"
-                                  sizes="(min-width: 1024px) 400px, 80vw"
-                                  priority={activePhotoKind === kind}
-                                />
-                              ) : (
-                                <div className="flex h-full items-center justify-center text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                                  Missing
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setActivePhotoKind(
-                            PHOTO_CAROUSEL_ORDER[
-                              (activePhotoIndex - 1 + PHOTO_CAROUSEL_ORDER.length) % PHOTO_CAROUSEL_ORDER.length
-                            ]
-                          )
-                        }
-                        className="absolute left-2 top-1/2 -translate-y-1/2 rounded-full border border-white/30 bg-black/60 px-2 py-1 text-xs uppercase tracking-[0.2em] text-white"
-                      >
-                        ←
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setActivePhotoKind(
-                            PHOTO_CAROUSEL_ORDER[(activePhotoIndex + 1) % PHOTO_CAROUSEL_ORDER.length]
-                          )
-                        }
-                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full border border-white/30 bg-black/60 px-2 py-1 text-xs uppercase tracking-[0.2em] text-white"
-                      >
-                        →
-                      </button>
-                    </div>
-                    <div className="mt-2 flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-400">
-                      {PHOTO_CAROUSEL_ORDER.map((kind, index) => (
-                        <button
-                          key={kind}
-                          type="button"
-                          onClick={() => setActivePhotoKind(kind)}
-                          className={`rounded-full border px-2 py-0.5 ${
-                            activePhotoIndex === index
-                              ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
-                              : "border-white/20 text-slate-400"
-                          }`}
-                        >
-                          {kind}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <details open className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-                    <summary className="cursor-pointer text-[10px] uppercase tracking-[0.3em] text-slate-400">
-                      Card Details
-                    </summary>
-                    <div className="mt-3 grid gap-2">
-                    <input
-                      value={
-                        activeCard.resolvedPlayerName ??
-                        (activeAttributes?.playerName as string | undefined) ??
-                        ""
-                      }
-                      readOnly
-                      placeholder="Player name"
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
-                    />
-                    <input
-                      value={
-                        (activeAttributes?.sport as string | undefined) ??
-                        (activeCard.classificationNormalized as any)?.sport?.sport ??
-                        ""
-                      }
-                      readOnly
-                      placeholder="Sport"
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
-                    />
-                    <input
-                      value={
-                        (activeAttributes?.brand as string | undefined) ??
-                        (activeCard.classificationNormalized as any)?.company ??
-                        ""
-                      }
-                      readOnly
-                      placeholder="Manufacturer"
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
-                    />
-                    <input
-                      value={
-                        (activeCard.classificationNormalized as any)?.year ??
-                        (activeAttributes?.year as string | undefined) ??
-                        ""
-                      }
-                      readOnly
-                      placeholder="Year"
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
-                    />
-                    <input
-                      value={
-                        activeCard.resolvedTeamName ??
-                        (activeAttributes?.teamName as string | undefined) ??
-                        ""
-                      }
-                      readOnly
-                      placeholder="Team name"
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
-                    />
-                    <input
-                      value={
-                        (activeCard.classificationNormalized as any)?.setName ??
-                        (activeCard.classificationNormalized as any)?.setCode ??
-                        (activeAttributes?.setName as string | undefined) ??
-                        ""
-                      }
-                      readOnly
-                      placeholder="Set"
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
-                    />
-                    <input
-                      value={
-                        (activeCard.classificationNormalized as any)?.cardNumber ??
-                        (activeCard.classification as any)?.cardNumber ??
-                        ""
-                      }
-                      readOnly
-                      placeholder="Card number"
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
-                    />
-                    <input
-                      value={(activeAttributes?.numbered as string | undefined) ?? ""}
-                      readOnly
-                      placeholder="Numbered (e.g. 3/10)"
-                      className="w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
-                    />
-                    <div className="flex flex-wrap gap-4 text-xs uppercase tracking-[0.24em] text-slate-400">
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(activeAttributes?.autograph)}
-                          readOnly
-                          className="h-4 w-4 accent-sky-400"
-                        />
-                        Autograph
-                      </label>
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(activeAttributes?.memorabilia)}
-                          readOnly
-                          className="h-4 w-4 accent-sky-400"
-                        />
-                        Patch
-                      </label>
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={Boolean(activeAttributes?.graded)}
-                          readOnly
-                          className="h-4 w-4 accent-sky-400"
-                        />
-                        Graded
-                      </label>
-                    </div>
-                    {Boolean(activeAttributes?.graded) && (
-                      <div className="grid gap-2 md:grid-cols-2">
-                        <input
-                          value={(activeAttributes?.gradeCompany as string | undefined) ?? ""}
-                          readOnly
-                          placeholder="Grade company"
-                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
-                        />
-                        <input
-                          value={(activeAttributes?.gradeValue as string | undefined) ?? ""}
-                          readOnly
-                          placeholder="Grade value"
-                          className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white"
-                        />
-                      </div>
-                    )}
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[10px] uppercase tracking-[0.3em] text-rose-300">Price Valuation (USD)</span>
-                      <div
-                        className={`flex items-center gap-2 rounded-2xl border px-3 py-2 ${
-                          valuationError || !valuationInput.trim()
-                            ? "border-rose-400/70 bg-rose-500/10"
-                            : "border-emerald-400/60 bg-emerald-500/10"
-                        }`}
-                      >
-                        <span className="text-sm text-rose-200">$</span>
-                        <input
-                          ref={valuationInputRef}
-                          inputMode="decimal"
-                          placeholder="13.00"
-                          value={valuationInput}
-                          onChange={(event) => {
-                            const nextInput = event.target.value;
-                            setValuationInput(nextInput);
-                            setValuationError(null);
-                            const parsed = parseDollarInputToMinor(nextInput);
-                            if (parsed !== undefined) {
-                              setActiveCard((prev) => (prev ? { ...prev, valuationMinor: parsed } : prev));
-                            }
-                          }}
-                          onBlur={() => {
-                            const parsed = parseDollarInputToMinor(valuationInput);
-                            if (parsed === undefined) {
-                              setValuationError("Enter a valid dollar amount (example: 13.00).");
-                            } else if (valuationError && parsed != null && parsed > 0) {
-                              setValuationError(null);
-                            }
-                          }}
-                          className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-rose-200/60"
-                        />
-                      </div>
-                      <span className={`text-[10px] ${valuationError ? "text-rose-300" : "text-slate-500"}`}>
-                        {valuationError
-                          ? valuationError
-                          : autosavingValuation
-                          ? "Auto-saving valuation..."
-                          : "Valuation auto-saves as you type."}
-                      </span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => handleStageUpdate("INVENTORY_READY_FOR_SALE")}
-                      disabled={saving}
-                      className="rounded-full border border-gold-500/80 bg-gold-500 px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.28em] text-night-900 transition hover:bg-gold-400 disabled:opacity-60"
-                    >
-                      Move To Inventory Ready
-                    </button>
-                    <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-                      <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Attached Evidence</p>
-                      <div className="mt-3 space-y-2">
-                        {evidenceItems.map((item) => (
-                          <div
-                            key={item.id}
-                            className="grid h-[150px] grid-cols-[96px_1fr] gap-3 rounded-2xl border border-white/20 bg-black/90 p-2.5 text-xs text-white sm:grid-cols-[120px_1fr]"
-                          >
-                            <div className="mx-auto h-full w-full max-w-[96px] overflow-hidden rounded-xl border border-white/20 bg-black sm:max-w-[120px]">
-                              {item.screenshotUrl ? (
-                                <img
-                                  src={item.screenshotUrl}
-                                  alt={item.title ?? "Evidence"}
-                                  className="h-full w-full object-contain p-2"
-                                  referrerPolicy="no-referrer"
-                                  loading="lazy"
-                                  decoding="async"
-                                />
-                              ) : null}
-                            </div>
-                            <div className="flex min-h-[120px] flex-col justify-between gap-2">
-                              <div>
-                                <div className="text-lg font-bold text-emerald-400">
-                                  {item.price ?? "—"}
-                                </div>
-                                <div className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-300">
-                                  {item.soldDate ? `Sold ${item.soldDate}` : ""}
-                                </div>
-                              </div>
-                              <div className="line-clamp-2 text-xs text-white">
-                                {item.title ?? item.url}
-                              </div>
-                              <div className="flex items-center gap-3 text-[10px] uppercase tracking-[0.3em]">
-                                <a
-                                  href={item.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-white underline"
-                                >
-                                  Open
-                                </a>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteEvidence(item.id)}
-                                  className="text-rose-700"
-                                >
-                                  Remove
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                        {evidenceItems.length === 0 && (
-                          <p className="text-xs text-slate-500">No evidence attached yet.</p>
-                        )}
-                      </div>
-                    </div>
-                    <details className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-                      <summary className="cursor-pointer text-[10px] uppercase tracking-[0.3em] text-slate-400">
-                        Advanced Controls
-                      </summary>
-                      <div className="mt-3 space-y-3 text-xs text-slate-300">
-                        <div className="rounded-2xl border border-white/10 bg-night-900/60 px-3 py-3 text-[11px] text-slate-300">
-                          <div className="mb-2 text-[9px] tracking-[0.24em] text-slate-500">
-                            {activeCard.variantDecision?.selectedParallelId || activeCard.variantId
-                              ? "Status: Matched"
-                              : activeCard.variantDecision?.candidates?.length
-                              ? "Status: No confident match"
-                              : "Status: Not attempted"}
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-slate-500">Variant</span>
-                            <span className="text-slate-200">
-                              {activeCard.variantDecision?.selectedParallelId ??
-                                activeCard.variantId ??
-                                "Not set"}
-                            </span>
-                          </div>
-                          <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
-                            <span>
-                              Confidence{" "}
-                              {activeCard.variantDecision?.confidence ??
-                                activeCard.variantConfidence ??
-                                "—"}
-                            </span>
-                            {activeCard.variantDecision?.humanOverride && (
-                              <span className="rounded-full border border-amber-400/60 bg-amber-500/20 px-2 py-1 text-[9px] text-amber-200">
-                                Human Override
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-3 grid gap-2">
-                            <input
-                              value={variantNotes}
-                              onChange={(event) => setVariantNotes(event.target.value)}
-                              placeholder="Variant notes / reason"
-                              className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] text-white"
-                            />
-                            {draftAutosaveLabel && (
-                              <p className="text-[10px] uppercase tracking-[0.24em] text-slate-500">{draftAutosaveLabel}</p>
-                            )}
-                            <div className="grid gap-2 md:grid-cols-2">
-                              <input
-                                value={variantSetId}
-                                onChange={(event) => setVariantSetId(event.target.value)}
-                                placeholder="Set ID"
-                                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] text-white"
-                              />
-                              <input
-                                value={variantCardNumber}
-                                onChange={(event) => setVariantCardNumber(event.target.value)}
-                                placeholder="Card #"
-                                className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-[11px] text-white"
-                              />
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <button
-                                type="button"
-                                onClick={handleVariantMatch}
-                                disabled={saving}
-                                className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-emerald-200 disabled:opacity-60"
-                              >
-                                Run Matcher
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleVariantDecision(
-                                    activeCard.variantDecision?.selectedParallelId ?? activeCard.variantId ?? "",
-                                    activeCard.variantDecision?.confidence ?? activeCard.variantConfidence ?? null,
-                                    true
-                                  )
-                                }
-                                disabled={saving}
-                                className="rounded-full border border-sky-400/60 bg-sky-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-sky-200 disabled:opacity-60"
-                              >
-                                Confirm Variant
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleVariantDecision("Unknown", null, true)}
-                                disabled={saving}
-                                className="rounded-full border border-rose-400/60 bg-rose-500/20 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-rose-200 disabled:opacity-60"
-                              >
-                                Mark Unknown
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="grid gap-2">
-                          <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                            Stage override
-                            <select
-                              value={activeCard.reviewStage ?? "READY_FOR_HUMAN_REVIEW"}
-                              onChange={(event) => handleStageUpdate(event.target.value)}
-                              className="rounded-full border border-white/10 bg-night-800 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200 outline-none transition focus:border-gold-400/60"
-                            >
-                              {REVIEW_STAGES.map((reviewStage) => (
-                                <option key={reviewStage.id} value={reviewStage.id}>
-                                  {reviewStage.label}
-                                </option>
-                              ))}
-                              <option value="INVENTORY_READY_FOR_SALE">Inventory Ready</option>
-                            </select>
-                          </label>
-                          <button
-                            type="button"
-                            onClick={() => handleStageUpdate("ESCALATED_REVIEW")}
-                            disabled={saving}
-                            className="rounded-full border border-rose-400/60 bg-rose-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-rose-200 transition hover:border-rose-300 disabled:opacity-60"
-                          >
-                            Escalate Review
-                          </button>
-                        </div>
-                        <div className="rounded-2xl border border-white/10 bg-night-950/60 p-3">
-                          <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">Research Query</p>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            <input
-                              value={query}
-                              onChange={(event) => {
-                                setQuery(event.target.value);
-                                setQueryTouched(true);
-                              }}
-                              className="flex-1 rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
-                            />
-                            <button
-                              type="button"
-                              onClick={handleEnqueue}
-                              disabled={enqueueing}
-                              className="rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 disabled:opacity-60"
-                            >
-                              {enqueueing ? "Running…" : "Run"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={handleRegenerateComps}
-                              disabled={regenerating}
-                              className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-200 disabled:opacity-60"
-                            >
-                              {regenerating ? "Regenerating…" : "Regenerate Comps"}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setShowTeach((prev) => !prev)}
-                              className="rounded-full border border-sky-400/40 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-sky-200 transition hover:border-sky-300"
-                            >
-                              {showTeach ? "Hide Bytebot Teach" : "Show Bytebot Teach"}
-                            </button>
-                          </div>
-                        </div>
-                        {showTeach && (
-                          <div className="rounded-2xl border border-sky-400/30 bg-sky-500/5 p-3">
-                            <div className="flex items-center justify-between">
-                              <p className="text-[10px] uppercase tracking-[0.3em] text-sky-300">Bytebot Teach</p>
-                              <span className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                                Space = Pause · T = Toggle
-                              </span>
-                            </div>
-                            <p className="mt-2 text-xs text-slate-400">
-                              This panel saves Bytebot click-selector rules only. OCR teach-from-corrections lives in Add Cards.
-                            </p>
-                            <div className="mt-2">
-                              <Link
-                                href="/admin/bytebot/teach"
-                                className="inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 text-[10px] uppercase tracking-[0.3em] text-slate-400 transition hover:border-white/40 hover:text-white"
-                              >
-                                Open Live Teach Session →
-                              </Link>
-                            </div>
-                            <div className="mt-3 grid gap-2">
-                              <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                                Source
-                                <select
-                                  value={teachForm.source}
-                                  onChange={(event) =>
-                                    setTeachForm((prev) => ({ ...prev, source: event.target.value }))
-                                  }
-                                  className="rounded-full border border-white/10 bg-night-800 px-3 py-2 text-[11px] uppercase tracking-[0.3em] text-slate-200"
-                                >
-                                  <option value="ebay_sold">eBay Sold</option>
-                                </select>
-                              </label>
-                              <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                                Selector (Playwright)
-                                <textarea
-                                  value={teachForm.selector}
-                                  onChange={(event) =>
-                                    setTeachForm((prev) => ({ ...prev, selector: event.target.value }))
-                                  }
-                                  placeholder="text=Sports or a[href*='sports']"
-                                  rows={2}
-                                  className="resize-y rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
-                                />
-                              </label>
-                              <div className="grid gap-2 sm:grid-cols-2">
-                                <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                                  URL Contains (optional)
-                                  <input
-                                    value={teachForm.urlContains}
-                                    onChange={(event) =>
-                                      setTeachForm((prev) => ({ ...prev, urlContains: event.target.value }))
-                                    }
-                                    placeholder="e.g. ebay.com/sch"
-                                    className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
-                                  />
-                                </label>
-                                <label className="flex flex-col gap-1 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                                  Priority
-                                  <input
-                                    type="number"
-                                    value={teachForm.priority}
-                                    onChange={(event) =>
-                                      setTeachForm((prev) => ({
-                                        ...prev,
-                                        priority: Number(event.target.value) || 0,
-                                      }))
-                                    }
-                                    className="rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-xs text-white"
-                                  />
-                                </label>
-                              </div>
-                              <label className="flex items-center gap-2 text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                                <input
-                                  type="checkbox"
-                                  checked={teachForm.enabled}
-                                  onChange={(event) =>
-                                    setTeachForm((prev) => ({ ...prev, enabled: event.target.checked }))
-                                  }
-                                  className="h-4 w-4 accent-sky-400"
-                                />
-                                Enabled
-                              </label>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={handleCreateRule}
-                              className="mt-3 rounded-full border border-sky-400/60 bg-sky-500/20 px-4 py-2 text-[11px] uppercase tracking-[0.3em] text-sky-200"
-                            >
-                              Save Rule
-                            </button>
-                            <div className="mt-4 space-y-2">
-                              {rulesForActiveSource.length === 0 && (
-                                <p className="text-xs text-slate-500">No rules for this source yet.</p>
-                              )}
-                              {rulesForActiveSource.map((rule) => (
-                                <div
-                                  key={rule.id}
-                                  className="flex items-center justify-between gap-2 rounded-2xl border border-white/10 bg-night-950/60 px-3 py-2 text-xs text-slate-300"
-                                >
-                                  <div className="flex-1">
-                                    <div className="text-[10px] uppercase tracking-[0.3em] text-slate-500">
-                                      {rule.action} · {rule.source}
-                                    </div>
-                                    <div className="break-words whitespace-normal">{rule.selector}</div>
-                                  </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDeleteRule(rule.id)}
-                                    className="text-[10px] uppercase tracking-[0.3em] text-rose-300"
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </details>
-                    </div>
-                  </details>
-                </div>
-              ) : (
-                <div className="flex flex-1 items-center justify-center text-xs uppercase tracking-[0.3em] text-slate-500">
-                  Select a card to review
-                </div>
-              )}
-            </div>
-            <div className="rounded-2xl border border-white/10 bg-night-950/40 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-slate-500">
-              Evidence captured in real time. Use Comp Detail to review and attach comps.
-            </div>
-            </div>
-          </section>
-
-          <DragDivider onMouseDown={handleRightDividerMouseDown} />
-
-          <section
-            className="flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4"
-            style={{
-              width: rightPanelWidth,
-              minWidth: 280,
-              maxWidth: 600,
-              height: panelViewportHeight,
-              flexShrink: 0,
-            }}
-          >
-            <div className="border-b border-white/10 pb-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>
-                <div className="flex flex-wrap items-center gap-2">
-                  {(sources.length ? sources : [{ source: "ebay_sold" } as { source: string }]).map((source) => (
-                    <button
-                      key={source.source}
-                      type="button"
-                      onClick={() => {
-                        setActiveSource(source.source);
-                        setActiveCompIndex(null);
-                      }}
-                      className={`rounded-full border px-3 py-1 text-[10px] uppercase tracking-[0.28em] transition ${
-                        activeSourceData?.source === source.source
-                          ? "border-sky-400/60 bg-sky-500/20 text-sky-200"
-                          : "border-white/10 text-slate-400"
-                      }`}
-                    >
-                      {SOURCE_LABELS[source.source] ?? source.source}
-                    </button>
-                  ))}
-                  {activeSourceData && (
-                    <button
-                      type="button"
-                      onClick={handleAttachSearch}
-                      className="rounded-full border border-emerald-400/60 bg-emerald-500/20 px-3 py-1 text-[10px] uppercase tracking-[0.28em] text-emerald-200"
-                    >
-                      Attach Search
-                    </button>
-                  )}
-                  {activeSourceData?.searchUrl && (
-                    <a
-                      href={activeSourceData.searchUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center rounded-full border border-sky-400/70 bg-sky-500/20 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-sky-100 transition hover:bg-sky-500/30"
-                    >
-                      Open eBay Search
-                    </a>
-                  )}
-                </div>
-              </div>
-              <div className="mt-3 rounded-2xl border border-white/10 bg-night-950/50 px-3 py-3">
-                <p className="text-[10px] uppercase tracking-[0.3em] text-slate-500">eBay Query</p>
-                <p className="mt-1 break-words text-xs text-slate-300">
-                  {activeCompSearchQuery ? `"${activeCompSearchQuery}"` : "No eBay query captured yet."}
-                </p>
-                {queryTouched && query.trim() && query.trim() !== activeCompSearchQuery && (
-                  <p className="mt-2 text-[10px] uppercase tracking-[0.24em] text-amber-300">
-                    Search field edited locally. Run or regenerate comps to refresh results.
-                  </p>
-                )}
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-night-950/60 p-2 sm:p-3">
-              {activeCompError && (
-                <div className="mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
-                  {activeCompError}
-                </div>
-              )}
-              {comps.length === 0 && (
-                <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
-              )}
-              <div className="space-y-2">
-                {comps.map((comp, index) => {
-                  const compAttached = attachedCompKeys.has(normalizeCompUrl(comp.url));
-                  return (
-                    <CompCard
-                      key={`${comp.url}-${index}`}
-                      comp={comp}
-                      index={index}
-                      isExpanded={activeCompIndex === index}
-                      attached={compAttached}
-                      showConfirmVariantLabel={shouldConfirmVariantOnCompAttach}
-                      onToggle={handleToggleComp}
-                      onAttach={handleAttachSoldComp}
-                      onUnattach={handleUnattachComp}
-                    />
-                  );
-                })}
-              </div>
-              {canLoadMoreComps && activeCompHasMore && (
-                <div className="mt-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      void handleLoadMoreComps();
-                    }}
-                    disabled={activeCompLoadingMore}
-                    className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-sky-400/70 bg-sky-500/20 px-4 py-3 text-xs font-semibold uppercase tracking-[0.28em] text-sky-100 transition hover:bg-sky-500/30 disabled:cursor-not-allowed disabled:opacity-70"
-                  >
-                    {activeCompLoadingMore && (
-                      <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-sky-100 border-t-transparent" />
-                    )}
-                    Load 10 More Comps
-                  </button>
-                </div>
-              )}
-              {canLoadMoreComps && !activeCompHasMore && comps.length > 0 && (
-                <div className="mt-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-center text-[10px] font-semibold uppercase tracking-[0.28em] text-slate-500">
-                  No more comps available
-                </div>
-              )}
-            </div>
-          </section>
-        </div>
+        {isMobile ? renderMobileWorkspace() : renderDesktopWorkspace()}
         {variantInspectOpen && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-6 py-10">
             <div className="w-full max-w-5xl rounded-3xl border border-white/10 bg-night-900 p-6 text-slate-200 shadow-2xl">

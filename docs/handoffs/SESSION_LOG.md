@@ -12709,6 +12709,32 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
+## 2026-04-01 - Task 20e KingsReview mobile tabbed layout
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Synced `main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Added a mobile-only tabbed KingsReview layout for screens narrower than `768px` while preserving the existing desktop three-panel draggable workspace.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added `isMobile` viewport state and a client-side breakpoint switch so only one layout mounts at a time.
+- Reused the existing queue, evidence, and comp panel sections in both layouts so desktop drag handles, independent scrolling, and comp ribbon badges stay intact.
+- Added a sticky mobile tab bar with `QUEUE`, `EVIDENCE`, and `COMPS` tabs plus the requested gold active underline styling.
+- Updated the queue-card selection handler so mobile card selection automatically switches to the Evidence tab.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` passed with the existing `pages/admin/kingsreview.tsx` `<img>` warning only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
 ## 2026-04-01 - Task 20d validation completion
 
 ### Summary

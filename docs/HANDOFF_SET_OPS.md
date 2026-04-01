@@ -1,18 +1,34 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-01` (Task 20d KingsReview comp badge ribbon restyle completed in this session; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-01` (Task 20e KingsReview mobile tabbed layout completed in this session; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state at Task 20d handoff refresh start:
+- Current local git state at Task 20e handoff refresh start:
   - `git status -sb` -> `## main...origin/main`
-- Latest committed baseline before Task 20d edit:
+- Latest committed baseline before Task 20e edit:
+  - `3967912` style(kingsreview): restyle comp badges as upper-right corner ribbons
   - `8bcaa83` feat(kingsreview): add draggable resize handles between panels
   - `68a9076` fix(kingsreview): restore panel scrolling + add draggable resize handles
   - `11ea1b7` style(kingsreview): flush flexible columns + badge pill styling
   - `4ad4656` fix(add-cards): stabilize identify-set and screen2 prefetch effect lifecycles
-  - `f7e2173` fix(add-cards): fix screen 2 prefetch timeout + remove T17-DEBUG instrumentation
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-01, Task 20e KingsReview mobile tabbed layout)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Updated the requested KingsReview mobile layout in:
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- What changed:
+  - added a client-side `<768px` breakpoint switch so the desktop three-panel draggable layout only mounts on desktop and a mobile-only single-panel layout mounts on small screens
+  - added a sticky mobile tab bar for `QUEUE`, `EVIDENCE`, and `COMPS` with gold active-state underline styling and full-width tabs
+  - reused the existing queue, evidence, and comp panel content in the mobile render path so panel internals, scrolling behavior, resize logic, and ribbon badges stay unchanged on desktop
+  - added mobile workflow behavior so tapping a card in the queue automatically switches to the Evidence tab
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` -> pass with the existing `pages/admin/kingsreview.tsx` `<img>` warning only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-01, Task 20d KingsReview comp badge ribbon restyle)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
