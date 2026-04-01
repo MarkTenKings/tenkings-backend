@@ -82,6 +82,10 @@ export {
   buildSetDeleteConfirmationPhrase,
   isSetDeleteConfirmationValid,
 } from "./setOpsNormalizer";
+export {
+  normalizeCardIdentityPlayerName,
+  normalizeCardIdentityPlayerNameBase,
+} from "./cardIdentity";
 export type {
   OcrLlmAttemptFormat,
   OcrLlmAttempt,

@@ -118,6 +118,37 @@ type VariantOptionItem = {
   primarySetId: string | null;
 };
 
+type IdentifySetCandidate = {
+  setId: string;
+  setName: string;
+  programId: string | null;
+  programLabel: string | null;
+  cardNumber: string;
+  playerName: string | null;
+  teamName: string | null;
+  matchType: "exact" | "fuzzy";
+  score: number;
+  tieBreakRank: number;
+};
+
+type IdentifySetPayload = {
+  setId: string | null;
+  setName: string | null;
+  programId: string | null;
+  programLabel: string | null;
+  cardNumber: string | null;
+  playerName: string | null;
+  teamName: string | null;
+  confidence: "exact" | "fuzzy" | "none";
+  reason: string;
+  candidateSetIds: string[];
+  candidateCount: number;
+  scopedSetCount: number;
+  candidates: IdentifySetCandidate[];
+  tiebreaker: "chrome" | "optic" | "default" | "none";
+  textSource: "front" | "combined" | "none";
+};
+
 type OcrPhotoAudit = {
   id: "FRONT" | "BACK" | "TILT";
   hasImage: boolean;
@@ -128,6 +159,7 @@ type OcrPhotoAudit = {
 };
 
 type OcrAuditPayload = {
+  ocrText?: string | null;
   fields?: Record<string, string | null>;
   confidence?: Record<string, number | null>;
   photoOcr?: Record<string, OcrPhotoAudit>;
@@ -742,6 +774,7 @@ export default function AdminUploads() {
   const [ocrApplied, setOcrApplied] = useState(false);
   const [ocrMode, setOcrMode] = useState<null | "high" | "low">(null);
   const [ocrError, setOcrError] = useState<string | null>(null);
+  const [identifiedSetMatch, setIdentifiedSetMatch] = useState<IdentifySetPayload | null>(null);
   const [screen2PrefetchStatus, setScreen2PrefetchStatus] = useState<null | "idle" | "loading" | "ready" | "error">(
     null
   );
@@ -783,6 +816,7 @@ export default function AdminUploads() {
   const ocrAppliedFieldsRef = useRef<OcrApplyField[]>([]);
   const ocrOptionalBackupRef = useRef<IntakeOptionalFields | null>(null);
   const ocrAppliedOptionalFieldsRef = useRef<(keyof IntakeOptionalFields)[]>([]);
+  const identifySetRequestKeyRef = useRef<string | null>(null);
   const screen2PrefetchKeyRef = useRef<string | null>(null);
   const screen2PrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const parallelPrefetchKeyRef = useRef<string | null>(null);
@@ -1602,6 +1636,7 @@ export default function AdminUploads() {
     setOcrApplied(false);
     setOcrMode(null);
     setOcrError(null);
+    setIdentifiedSetMatch(null);
     setScreen2PrefetchStatus(null);
     ocrSuggestRef.current = false;
     ocrRetryRef.current = 0;
@@ -1619,6 +1654,7 @@ export default function AdminUploads() {
     ocrAppliedFieldsRef.current = [];
     ocrOptionalBackupRef.current = null;
     ocrAppliedOptionalFieldsRef.current = [];
+    identifySetRequestKeyRef.current = null;
     screen2PrefetchKeyRef.current = null;
   }, []);
 
@@ -1676,6 +1712,7 @@ export default function AdminUploads() {
     setIntakeTouched({});
     setIntakeOptionalTouched({});
     setProductLineManualMode(false);
+    setIdentifiedSetMatch(null);
     setTrainAiEnabled(false);
     setTeachBusy(false);
     setTeachFeedback(null);
@@ -1699,6 +1736,7 @@ export default function AdminUploads() {
     setScreen2PrefetchStatus(null);
     setParallelPrefetchStatus(null);
     setParallelPrefetchMessage(null);
+    identifySetRequestKeyRef.current = null;
     screen2PrefetchKeyRef.current = null;
     if (screen2PrefetchTimeoutRef.current) {
       clearTimeout(screen2PrefetchTimeoutRef.current);
@@ -2449,45 +2487,29 @@ export default function AdminUploads() {
     if (intakeOptionalTouched.productLine) {
       return;
     }
+    const identifiedSetId =
+      identifiedSetMatch?.confidence && identifiedSetMatch.confidence !== "none"
+        ? sanitizeNullableText(identifiedSetMatch.setId)
+        : "";
+    if (!identifiedSetId) {
+      return;
+    }
+    const candidate =
+      productLineOptions.find((option) => option.toLowerCase() === identifiedSetId.toLowerCase()) ?? identifiedSetId;
     const current = sanitizeNullableText(intakeOptional.productLine);
-    const matchedCurrentOption = current
-      ? productLineOptions.find((option) => option.toLowerCase() === current.toLowerCase()) ?? ""
-      : "";
-    if (matchedCurrentOption) {
+    if (current && current.toLowerCase() === candidate.toLowerCase()) {
       return;
     }
-    const resolvedScopedSetId = sanitizeNullableText(variantScopeSummary?.selectedSetId);
-    const serverResolvedCandidate = resolvedScopedSetId
-      ? productLineOptions.find((option) => option.toLowerCase() === resolvedScopedSetId.toLowerCase()) ??
-        resolvedScopedSetId
-      : "";
-    let candidate = "";
-    if (serverResolvedCandidate) {
-      candidate = serverResolvedCandidate;
-    } else if (!current && productLineOptions.length === 1) {
-      candidate = productLineOptions[0] ?? "";
-    } else if (!current) {
-      const suggestedSetName = sanitizeNullableText(intakeSuggested.setName);
-      const actionableSuggestedSetName = isActionableProductLineHint(suggestedSetName) ? suggestedSetName : "";
-      // Phase 3 unknown-first policy: avoid heuristic-only set auto-picks unless scope already resolves cleanly.
-      if (!actionableSuggestedSetName) {
-        return;
-      }
-      candidate = pickBestCandidate(productLineOptions, [actionableSuggestedSetName], 1.1) ?? "";
-    } else {
-      return;
-    }
-    if (candidate) {
-      setIntakeOptional((prev) => ({ ...prev, productLine: candidate }));
-    }
+    setIntakeOptional((prev) => ({ ...prev, productLine: candidate }));
+    setIntakeSuggested((prev) => ({ ...prev, setName: candidate }));
   }, [
+    identifiedSetMatch?.confidence,
+    identifiedSetMatch?.setId,
     intakeOptional.productLine,
     intakeOptionalTouched.productLine,
     intakeRequired.category,
-    intakeSuggested.setName,
     productLineManualMode,
     productLineOptions,
-    variantScopeSummary?.selectedSetId,
   ]);
 
   const selectedProductLineOption = useMemo(() => {
@@ -2747,19 +2769,6 @@ export default function AdminUploads() {
           : "";
         const suggestedInsertSet = sanitizeNullableText(suggestions.insertSet);
         const suggestedParallel = sanitizeNullableText(suggestions.parallel);
-        const constrainedProductLine =
-          suggestedProductLine && productLineOptions.length > 0
-            ? pickBestCandidate(productLineOptions, [
-                suggestedProductLine,
-                `${sanitizeNullableText(intakeRequired.year)} ${sanitizeNullableText(intakeRequired.manufacturer)} ${sanitizeNullableText(
-                  intakeRequired.sport
-                )}`.trim(),
-              ], 1.1)
-            : null;
-        if (constrainedProductLine && !intakeOptionalTouched.productLine && !prev.productLine.trim()) {
-          next.productLine = constrainedProductLine;
-          ocrAppliedOptionalFieldsRef.current.push("productLine");
-        }
         const constrainedInsert =
           suggestedInsertSet && insertSetOptions.length > 0
             ? pickBestCandidate(insertSetOptions, [suggestedInsertSet, suggestedProductLine, suggestedParallel], 0.6)
@@ -2840,11 +2849,9 @@ export default function AdminUploads() {
       intakeTouched.year,
       intakeOptional,
       intakeRequired,
-      productLineOptions,
       ocrApplied,
       intakeOptionalTouched.cardNumber,
       intakeOptionalTouched.teamName,
-      intakeOptionalTouched.productLine,
       intakeOptionalTouched.insertSet,
       intakeOptionalTouched.parallel,
       insertSetOptions,
@@ -2911,6 +2918,39 @@ export default function AdminUploads() {
           return;
         }
       }
+    },
+    [isRemoteApi, resolveApiUrl, session?.token]
+  );
+
+  const fetchIdentifiedSetMatch = useCallback(
+    async (payload: {
+      year: string;
+      manufacturer: string;
+      sport: string;
+      cardNumber: string;
+      playerName: string;
+      teamName?: string;
+      insertSet?: string;
+      frontCardText?: string;
+      combinedText?: string;
+    }): Promise<IdentifySetPayload> => {
+      if (!session?.token) {
+        throw new Error("Your session expired. Sign in again and retry.");
+      }
+      const response = await fetch(resolveApiUrl("/api/admin/cards/identify-set"), {
+        method: "POST",
+        mode: isRemoteApi ? "cors" : "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          ...buildAdminHeaders(session.token),
+        },
+        body: JSON.stringify(payload),
+      });
+      const body = (await response.json().catch(() => null)) as IdentifySetPayload | { message?: string } | null;
+      if (!response.ok) {
+        throw new Error((body as { message?: string } | null)?.message ?? "Set identification failed.");
+      }
+      return body as IdentifySetPayload;
     },
     [isRemoteApi, resolveApiUrl, session?.token]
   );
@@ -3138,8 +3178,7 @@ export default function AdminUploads() {
     if (intakeStep !== "required" && intakeStep !== "optional") {
       return;
     }
-    const scopedProductSetId =
-      sanitizeNullableText(variantScopeSummary?.selectedSetId) || sanitizeNullableText(intakeOptional.productLine);
+    const scopedProductSetId = sanitizeNullableText(intakeOptional.productLine);
     if (!scopedProductSetId) {
       screen2PrefetchKeyRef.current = null;
       if (screen2PrefetchTimeoutRef.current) {
@@ -3230,7 +3269,6 @@ export default function AdminUploads() {
     intakeRequired.year,
     intakeStep,
     teachLayoutClass,
-    variantScopeSummary?.selectedSetId,
   ]);
 
   const startOcrForCard = useCallback(
@@ -3861,6 +3899,109 @@ export default function AdminUploads() {
   }, [intakeCardId, resetOcrState]);
 
   const typedOcrAudit = useMemo(() => (ocrAudit as OcrAuditPayload | null) ?? null, [ocrAudit]);
+  const identifiedFrontCardText = useMemo(
+    () => sanitizeNullableText(typedOcrAudit?.photoOcr?.FRONT?.ocrText ?? null),
+    [typedOcrAudit]
+  );
+  const identifiedCombinedOcrText = useMemo(
+    () =>
+      [typedOcrAudit?.photoOcr?.FRONT?.ocrText, typedOcrAudit?.photoOcr?.BACK?.ocrText, typedOcrAudit?.photoOcr?.TILT?.ocrText]
+        .map((value) => sanitizeNullableText(value ?? null))
+        .filter(Boolean)
+        .join("\n"),
+    [typedOcrAudit]
+  );
+
+  useEffect(() => {
+    if (!session?.token || !isAdmin || intakeRequired.category !== "sport") {
+      identifySetRequestKeyRef.current = null;
+      setIdentifiedSetMatch(null);
+      return;
+    }
+    if (ocrStatus === "running" || ocrStatus === "pending") {
+      return;
+    }
+
+    const year = sanitizeNullableText(intakeRequired.year);
+    const manufacturer = sanitizeNullableText(intakeRequired.manufacturer);
+    const sport = sanitizeNullableText(intakeRequired.sport);
+    const cardNumber = sanitizeNullableText(intakeOptional.cardNumber);
+    const playerName = sanitizeNullableText(intakeRequired.playerName);
+    const teamName = sanitizeNullableText(intakeOptional.teamName);
+    const insertSet = sanitizeNullableText(intakeOptional.insertSet);
+
+    if (!year || !manufacturer || !sport || !cardNumber || !playerName) {
+      identifySetRequestKeyRef.current = null;
+      setIdentifiedSetMatch(null);
+      return;
+    }
+
+    const requestKey = [
+      year.toLowerCase(),
+      manufacturer.toLowerCase(),
+      sport.toLowerCase(),
+      cardNumber.toLowerCase(),
+      playerName.toLowerCase(),
+      teamName.toLowerCase(),
+      insertSet.toLowerCase(),
+      identifiedFrontCardText.toLowerCase(),
+      identifiedCombinedOcrText.toLowerCase(),
+    ].join("::");
+
+    if (identifySetRequestKeyRef.current === requestKey) {
+      return;
+    }
+    identifySetRequestKeyRef.current = requestKey;
+
+    let cancelled = false;
+    void fetchIdentifiedSetMatch({
+      year,
+      manufacturer,
+      sport,
+      cardNumber,
+      playerName,
+      teamName: teamName || undefined,
+      insertSet: insertSet || undefined,
+      frontCardText: identifiedFrontCardText || undefined,
+      combinedText: identifiedCombinedOcrText || undefined,
+    })
+      .then((result) => {
+        if (cancelled || identifySetRequestKeyRef.current !== requestKey) {
+          return;
+        }
+        setIdentifiedSetMatch(result);
+        const resolvedSetId = sanitizeNullableText(result.setId);
+        if (result.confidence !== "none" && resolvedSetId) {
+          setIntakeSuggested((prev) => ({ ...prev, setName: resolvedSetId }));
+        }
+      })
+      .catch(() => {
+        if (cancelled || identifySetRequestKeyRef.current !== requestKey) {
+          return;
+        }
+        identifySetRequestKeyRef.current = null;
+        setIdentifiedSetMatch(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    fetchIdentifiedSetMatch,
+    identifiedCombinedOcrText,
+    identifiedFrontCardText,
+    intakeOptional.cardNumber,
+    intakeOptional.insertSet,
+    intakeOptional.teamName,
+    intakeRequired.category,
+    intakeRequired.manufacturer,
+    intakeRequired.playerName,
+    intakeRequired.sport,
+    intakeRequired.year,
+    isAdmin,
+    ocrStatus,
+    session?.token,
+  ]);
 
   useEffect(() => {
     const token = session?.token;
