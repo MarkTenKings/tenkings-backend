@@ -12180,6 +12180,62 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.
 
+## 2026-03-31 - Task 18 precise eBay sold comps
+
+### Summary
+- Re-read the mandatory context, runbook, and handoff docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Confirmed local `main` was already current with `origin/main` before editing via `git pull --ff-only` -> `Already up to date.`
+- Wrote the requested pre-coding trace to `docs/handoffs/TASK18_ANALYSIS.md`.
+- Implemented structured/title-derived eBay comp scoring for KingsReview so exact matches rank above graded mismatches and wrong parallels without changing the existing search query.
+
+### Files Updated
+- `docs/handoffs/TASK18_ANALYSIS.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `packages/shared/src/index.ts`
+- `packages/shared/src/kingsreviewCompMatch.ts`
+- `packages/shared/tests/kingsreviewCompMatch.test.js`
+- `backend/bytebot-lite-service/package.json`
+- `backend/bytebot-lite-service/src/index.ts`
+- `backend/bytebot-lite-service/src/sources/ebay.ts`
+- `frontend/nextjs-app/lib/server/kingsreviewEbayComps.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/comps.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `pnpm-lock.yaml`
+
+### Implementation Notes
+- Added shared matcher utilities for:
+  - normalization/token overlap
+  - typo-tolerant player matching with Levenshtein fallback
+  - set/parallel matching
+  - graded/raw detection
+  - comp scoring and sort annotation
+- Corrected a graded-state parsing bug so `Ungraded` listings are no longer misclassified as graded.
+- Bytebot eBay sold results now preserve `condition`, normalize any available structured specifics, and attach `matchScore` / `matchQuality` before saving job results.
+- KingsReview load-more eBay results now rebuild a card-scoped match context server-side via `cardAssetId` and return scored/sorted comps.
+- The KingsReview page now shows `EXACT` / `CLOSE` / `WEAK` badges and re-scores merged comp lists client-side when card context is present so legacy jobs and appended results stay ordered consistently.
+- Ran `pnpm install --ignore-scripts` once to refresh workspace links after adding `@tenkings/shared` to the Bytebot worker package.
+
+### Validation
+- `pnpm --filter @tenkings/shared test`
+  - pass
+- `pnpm --filter @tenkings/bytebot-lite-service build`
+  - pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/api/admin/kingsreview/comps.ts --file pages/api/admin/kingsreview/enqueue.ts --file lib/server/kingsreviewEbayComps.ts`
+  - pass with the existing `pages/admin/kingsreview.tsx` legacy `<img>` warning only
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Git State
+- pre-commit status before final task commit:
+  - `git status -sb` -> `## main...origin/main` plus Task 18 implementation changes
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.
+
 ## 2026-03-20 - Task 14 pack types admin page + visual assign selector
 
 ### Summary

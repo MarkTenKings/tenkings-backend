@@ -1,5 +1,6 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import { CardPhotoKind, CardReviewStage, enqueueBytebotLiteJob, prisma } from "@tenkings/database";
+import { buildKingsreviewCompMatchContext } from "@tenkings/shared";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { withAdminCors } from "../../../../lib/server/cors";
 import { readTaxonomyV2Flags } from "../../../../lib/server/taxonomyV2Flags";
@@ -359,7 +360,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
     const categoryType = typeof body.categoryType === "string" ? body.categoryType : null;
 
     let query = rawQuery;
-    if (cardAssetId && !useManual) {
+    let matchContext = null;
+    if (cardAssetId) {
       const flags = readTaxonomyV2Flags();
       const card = await prisma.cardAsset.findFirst({
         where: { id: cardAssetId, batch: { uploadedById: admin.user.id } },
@@ -374,20 +376,28 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
         },
       });
       if (card) {
-        const useTaxonomyQuery = flags.kingsreviewQuery || !flags.allowLegacyFallback;
-        const taxonomyGenerated = useTaxonomyQuery ? await buildCompSearchQueryV2(card) : "";
-        const legacyGenerated = buildCompSearchQuery(card);
-        const candidateQueries = useTaxonomyQuery
-          ? [legacyGenerated, taxonomyGenerated, rawQuery]
-          : [legacyGenerated, rawQuery, taxonomyGenerated];
-        const selected = candidateQueries.find((candidate) => queryHasSignal(candidate));
-        if (selected) {
-          query = selected;
-        } else {
-          query =
-            fallbackQueryFromText(card.customTitle) ||
-            fallbackQueryFromText(card.ocrText) ||
-            normalizeWhitespace(rawQuery);
+        matchContext = buildKingsreviewCompMatchContext({
+          resolvedPlayerName: card.resolvedPlayerName,
+          classification: card.classificationJson,
+          customTitle: card.customTitle,
+          variantId: card.variantId,
+        });
+        if (!useManual) {
+          const useTaxonomyQuery = flags.kingsreviewQuery || !flags.allowLegacyFallback;
+          const taxonomyGenerated = useTaxonomyQuery ? await buildCompSearchQueryV2(card) : "";
+          const legacyGenerated = buildCompSearchQuery(card);
+          const candidateQueries = useTaxonomyQuery
+            ? [legacyGenerated, taxonomyGenerated, rawQuery]
+            : [legacyGenerated, rawQuery, taxonomyGenerated];
+          const selected = candidateQueries.find((candidate) => queryHasSignal(candidate));
+          if (selected) {
+            query = selected;
+          } else {
+            query =
+              fallbackQueryFromText(card.customTitle) ||
+              fallbackQueryFromText(card.ocrText) ||
+              normalizeWhitespace(rawQuery);
+          }
         }
       }
     }
@@ -430,6 +440,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
         query,
         sources,
         categoryType,
+        matchContext,
       },
     });
 

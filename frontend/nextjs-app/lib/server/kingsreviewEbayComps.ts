@@ -1,3 +1,10 @@
+import {
+  annotateAndSortKingsreviewComps,
+  KingsreviewCompMatchContext,
+  KingsreviewCompMatchQuality,
+  normalizeEbayItemSpecifics,
+} from "@tenkings/shared";
+
 const SERPAPI_ENDPOINT = "https://serpapi.com/search.json";
 const MAX_RETURN_SIZE = 50;
 const DEFAULT_RETURN_SIZE = 10;
@@ -14,6 +21,10 @@ export type KingsreviewEbayComp = {
   screenshotUrl: string;
   listingImageUrl: string | null;
   thumbnail: string | null;
+  condition?: string | null;
+  itemSpecifics?: Record<string, string[]> | null;
+  matchScore?: number | null;
+  matchQuality?: KingsreviewCompMatchQuality | null;
   notes: string;
 };
 
@@ -93,6 +104,42 @@ const normalizePrice = (value: unknown): string | null => {
   const to = record.to && typeof record.to === "object" ? normalizeText((record.to as Record<string, unknown>).raw) : null;
   return [from, to].filter((entry): entry is string => Boolean(entry)).join(" - ") || null;
 };
+
+const mergeItemSpecifics = (...values: unknown[]): Record<string, string[]> | null => {
+  const merged: Record<string, string[]> = {};
+
+  values.forEach((value) => {
+    const normalized = normalizeEbayItemSpecifics(value);
+    if (!normalized) {
+      return;
+    }
+    Object.entries(normalized).forEach(([key, entries]) => {
+      const nextEntries = merged[key] ?? [];
+      entries.forEach((entry) => {
+        if (!nextEntries.includes(entry)) {
+          nextEntries.push(entry);
+        }
+      });
+      if (nextEntries.length > 0) {
+        merged[key] = nextEntries;
+      }
+    });
+  });
+
+  return Object.keys(merged).length > 0 ? merged : null;
+};
+
+const extractSerpItemSpecifics = (item: Record<string, unknown>) =>
+  mergeItemSpecifics(
+    item.item_specifics,
+    item.itemSpecifics,
+    item.specifics,
+    item.specifications,
+    item.item_details,
+    item.extensions,
+    item.highlights,
+    typeof item.condition === "string" ? { condition: item.condition } : null
+  );
 
 export function buildKingsreviewEbaySoldUrl(query: string, page = 1, limit = 20) {
   const normalizedPage = normalizePositiveInt(page, 1);
@@ -241,6 +288,8 @@ async function fetchKingsreviewEbaySoldSerpPage(options: {
         price: normalizePrice(item.price),
         soldDate: normalizeText(item.sold_date),
         thumbnail,
+        condition: normalizeText(item.condition),
+        itemSpecifics: extractSerpItemSpecifics(item),
         sponsored: Boolean(item.sponsored),
       };
     })
@@ -253,6 +302,8 @@ async function fetchKingsreviewEbaySoldSerpPage(options: {
         price: string | null;
         soldDate: string | null;
         thumbnail: string;
+        condition: string | null;
+        itemSpecifics: Record<string, string[]> | null;
         sponsored: boolean;
       } => Boolean(entry)
     );
@@ -274,6 +325,8 @@ async function fetchKingsreviewEbaySoldSerpPage(options: {
       screenshotUrl: item.thumbnail,
       listingImageUrl: item.thumbnail || null,
       thumbnail: item.thumbnail || null,
+      condition: item.condition,
+      itemSpecifics: item.itemSpecifics,
       notes:
         options.page > 1
           ? `SerpApi eBay sold results (page ${options.page})`
@@ -287,6 +340,7 @@ export async function fetchKingsreviewEbaySoldCompPage(options: {
   offset?: number;
   page?: number;
   limit?: number;
+  matchContext?: KingsreviewCompMatchContext | null;
 }): Promise<KingsreviewEbayCompPage> {
   const apiKey = process.env.SERPAPI_KEY ?? "";
   if (!apiKey) {
@@ -343,6 +397,14 @@ export async function fetchKingsreviewEbaySoldCompPage(options: {
 
   const nextOffset = offset + comps.length;
 
+  const annotatedComps = annotateAndSortKingsreviewComps(options.matchContext ?? null, comps).map((item) => ({
+    ...item,
+    notes:
+      offset > 0
+        ? `SerpApi eBay sold results (${offset + 1}-${nextOffset})`
+        : item.notes,
+  }));
+
   return {
     source: "ebay_sold",
     searchUrl,
@@ -351,12 +413,6 @@ export async function fetchKingsreviewEbaySoldCompPage(options: {
     nextOffset,
     limit,
     hasMore,
-    comps: comps.map((item) => ({
-      ...item,
-      notes:
-        offset > 0
-          ? `SerpApi eBay sold results (${offset + 1}-${nextOffset})`
-          : item.notes,
-    })),
+    comps: annotatedComps,
   };
 }

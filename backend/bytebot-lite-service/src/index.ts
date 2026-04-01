@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import { KingsreviewCompMatchContext, KingsreviewCompMatchQuality } from "@tenkings/shared";
 import {
   fetchNextQueuedBytebotLiteJob,
   markBytebotLiteJobStatus,
@@ -43,6 +44,10 @@ type JobResult = {
       screenshotUrl: string;
       listingImageUrl?: string | null;
       thumbnail?: string | null;
+      condition?: string | null;
+      itemSpecifics?: Record<string, string[]> | null;
+      matchScore?: number | null;
+      matchQuality?: KingsreviewCompMatchQuality | null;
       notes?: string | null;
       patternMatch?: {
         score: number;
@@ -161,7 +166,7 @@ async function processJob(
     searchQuery: string;
     sources: string[];
     maxComps: number;
-    payload?: { categoryType?: string | null };
+    payload?: { categoryType?: string | null; matchContext?: KingsreviewCompMatchContext | null };
   },
   browserType = chromium
 ) {
@@ -220,6 +225,7 @@ async function processJob(
             rules: rulesBySource[source] ?? [],
             patternSignature: cardPatternSignature,
             patternMinScore: PATTERN_MIN_SCORE,
+            matchContext: job.payload?.matchContext ?? null,
           });
         }
 

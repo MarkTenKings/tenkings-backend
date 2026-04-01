@@ -1,18 +1,48 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-03-31` (Task 17 cross-set Add Cards identification implemented at feature commit `b32c049`; before final handoff sync commit, local `main` differs from `origin/main` by that feature commit plus pending handoff-doc updates; no deploy/restart/migration or DB writes in this session)
+- Last reviewed: `2026-03-31` (Task 18 KingsReview eBay comp scoring by structured/title-derived field matching is implemented in the local working tree on `main`; no deploy/restart/migration or DB writes were executed in this session)
 - Branch: `main`
-- Short HEAD: `b32c049`
-- Current local git state: `git status -sb` -> `## main...origin/main [ahead 1]`; after the Task 17 feature commit, the working tree differs only in `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md` before final handoff sync
+- Short HEAD: `7102e01`
+- Current local git state: `git status -sb` -> `## main...origin/main` plus Task 18 implementation changes in:
+  - `backend/bytebot-lite-service/package.json`
+  - `backend/bytebot-lite-service/src/index.ts`
+  - `backend/bytebot-lite-service/src/sources/ebay.ts`
+  - `frontend/nextjs-app/lib/server/kingsreviewEbayComps.ts`
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/comps.ts`
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/src/kingsreviewCompMatch.ts`
+  - `packages/shared/tests/kingsreviewCompMatch.test.js`
+  - `docs/handoffs/TASK18_ANALYSIS.md`
+  - `pnpm-lock.yaml`
 - Latest repo commits:
+  - `7102e01` docs(handoff): refresh task17 implementation state
   - `b32c049` feat(add-cards): cross-set identification using card number + player name lookup with Chrome/Optic tiebreaker
   - `891e0bc` docs(handoff): sync task14 pushed state
   - `97610f4` docs(handoff): sync task14 implementation state
   - `7e16df2` feat(pack-types): add Pack Types admin page with image upload + visual selector in Assign modal
-  - `8f69a50` fix(add-cards): fix screen 2 insert/parallel pre-fetch stuck + fix KingsReview send API failure
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-03-31, Task 18 precise eBay sold comps)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then confirmed local `main` was already current with `origin/main` via `git pull --ff-only` -> `Already up to date.`
+- Wrote the requested pre-coding trace to `docs/handoffs/TASK18_ANALYSIS.md`, including the observed SerpApi eBay sold field names and the recommendation to rely on title parsing plus `condition` because sold search results did not expose populated structured item specifics in the sampled live payloads.
+- Implemented shared comp-scoring utilities in `packages/shared/src/kingsreviewCompMatch.ts` and exported them from `packages/shared/src/index.ts`.
+- KingsReview implementation changes:
+  - initial Bytebot eBay sold comps now carry `condition`, normalized `itemSpecifics` when present, and `matchScore` / `matchQuality`, and they are sorted by the new scorer before being saved into the job result
+  - the KingsReview enqueue route now passes a card-scoped match context through the Bytebot job payload without changing the existing search query generation
+  - the load-more eBay comps API now accepts `cardAssetId`, rebuilds the same match context server-side, and returns scored/sorted load-more batches
+  - the `/admin/kingsreview` UI now shows `EXACT`, `CLOSE`, or `WEAK` badges on comp cards and re-applies the scorer client-side when card context is available so legacy saved jobs and merged load-more batches stay sorted consistently
+- Validation:
+  - `pnpm --filter @tenkings/shared test` -> pass
+  - `pnpm --filter @tenkings/bytebot-lite-service build` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx --file pages/api/admin/kingsreview/comps.ts --file pages/api/admin/kingsreview/enqueue.ts --file lib/server/kingsreviewEbayComps.ts` -> pass with the existing `pages/admin/kingsreview.tsx` legacy `<img>` warning only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+  - `pnpm install --ignore-scripts` -> executed once to refresh workspace links after adding `@tenkings/shared` to the Bytebot worker package
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
 
 ## Session Update (2026-03-17, Task 13 recipe modal crash fix)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then pulled `origin/main` with `--ff-only` before editing.

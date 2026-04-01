@@ -13,6 +13,7 @@
     "@aws-sdk/client-s3": "^3.650.0",
     "@prisma/client": "^5.18.0",
     "@tenkings/database": "workspace:*",
+    "@tenkings/shared": "workspace:*",
     "playwright": "^1.47.0",
     "sharp": "^0.34.2"
   },

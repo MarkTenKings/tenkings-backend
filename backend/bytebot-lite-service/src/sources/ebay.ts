@@ -1,4 +1,10 @@
 import { BrowserContext } from "playwright";
+import {
+  annotateAndSortKingsreviewComps,
+  KingsreviewCompMatchContext,
+  KingsreviewCompMatchQuality,
+  normalizeEbayItemSpecifics,
+} from "@tenkings/shared";
 import { applyPlaybookRules, safeScreenshot, safeWaitForTimeout, toSafeKeyPart } from "../utils";
 import { compareImageSignatures, computeImageSignature, ImageSignature } from "../pattern";
 
@@ -11,6 +17,10 @@ export type Comp = {
   screenshotUrl: string;
   listingImageUrl?: string | null;
   thumbnail?: string | null;
+  condition?: string | null;
+  itemSpecifics?: Record<string, string[]> | null;
+  matchScore?: number | null;
+  matchQuality?: KingsreviewCompMatchQuality | null;
   notes?: string | null;
 };
 
@@ -23,6 +33,43 @@ export type SourceResult = {
 
 type UploadFn = (buffer: Buffer, key: string, contentType: string) => Promise<{ url: string }>;
 const SERPAPI_ENDPOINT = "https://serpapi.com/search.json";
+
+function mergeItemSpecifics(...values: unknown[]): Record<string, string[]> | null {
+  const merged: Record<string, string[]> = {};
+
+  values.forEach((value) => {
+    const normalized = normalizeEbayItemSpecifics(value);
+    if (!normalized) {
+      return;
+    }
+    Object.entries(normalized).forEach(([key, entries]) => {
+      const nextEntries = merged[key] ?? [];
+      entries.forEach((entry) => {
+        if (!nextEntries.includes(entry)) {
+          nextEntries.push(entry);
+        }
+      });
+      if (nextEntries.length > 0) {
+        merged[key] = nextEntries;
+      }
+    });
+  });
+
+  return Object.keys(merged).length > 0 ? merged : null;
+}
+
+function extractSerpItemSpecifics(item: Record<string, unknown>) {
+  return mergeItemSpecifics(
+    item.item_specifics,
+    item.itemSpecifics,
+    item.specifics,
+    item.specifications,
+    item.item_details,
+    item.extensions,
+    item.highlights,
+    typeof item.condition === "string" ? { condition: item.condition } : null
+  );
+}
 
 export function buildEbaySoldUrl(query: string) {
   const params = new URLSearchParams({
@@ -124,6 +171,7 @@ export async function fetchEbaySoldComps(options: {
   rules?: { action: string; selector: string; urlContains?: string | null }[];
   patternSignature?: ImageSignature | null;
   patternMinScore?: number;
+  matchContext?: KingsreviewCompMatchContext | null;
 }) {
   const serpApiKey = process.env.SERPAPI_KEY ?? "";
   if (!serpApiKey) {
@@ -136,6 +184,7 @@ async function fetchEbaySoldCompsSerpApi(options: {
   query: string;
   maxComps: number;
   apiKey: string;
+  matchContext?: KingsreviewCompMatchContext | null;
 }) {
   const trimmedQuery = options.query.trim();
   if (!trimmedQuery) {
@@ -182,18 +231,25 @@ async function fetchEbaySoldCompsSerpApi(options: {
     price: string | null;
     soldDate: string | null;
     thumbnail: string;
+    condition: string | null;
+    itemSpecifics: Record<string, string[]> | null;
     sponsored: boolean;
   };
 
   const items: EbaySerpItem[] = rawItems
-    .map((item: any) => ({
-      title: typeof item.title === "string" ? item.title.trim() : "",
-      link: typeof item.link === "string" ? item.link.trim() : "",
-      price: normalizePrice(item.price),
-      soldDate: typeof item.sold_date === "string" ? item.sold_date.trim() : null,
-      thumbnail: typeof item.thumbnail === "string" ? item.thumbnail.trim() : "",
-      sponsored: Boolean(item.sponsored),
-    }))
+    .map((item: any) => {
+      const record = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+      return {
+        title: typeof item.title === "string" ? item.title.trim() : "",
+        link: typeof item.link === "string" ? item.link.trim() : "",
+        price: normalizePrice(item.price),
+        soldDate: typeof item.sold_date === "string" ? item.sold_date.trim() : null,
+        thumbnail: typeof item.thumbnail === "string" ? item.thumbnail.trim() : "",
+        condition: typeof item.condition === "string" ? item.condition.trim() : null,
+        itemSpecifics: extractSerpItemSpecifics(record),
+        sponsored: Boolean(item.sponsored),
+      };
+    })
     .filter((item: { link: string; title: string }) => item.link && item.title);
 
   const organicItems = items.filter((item) => !item.sponsored);
@@ -204,17 +260,22 @@ async function fetchEbaySoldCompsSerpApi(options: {
   const searchScreenshotUrl =
     targetItems.find((item) => item.thumbnail)?.thumbnail ??
     (items[0]?.thumbnail ?? "");
-  const comps: Comp[] = targetItems.map((item) => ({
-    source: "ebay_sold",
-    title: item.title || null,
-    url: item.link,
-    price: item.price ?? null,
-    soldDate: item.soldDate,
-    screenshotUrl: item.thumbnail || "",
-    listingImageUrl: item.thumbnail || null,
-    thumbnail: item.thumbnail || null,
-    notes: "SerpApi eBay sold results",
-  }));
+  const comps = annotateAndSortKingsreviewComps(
+    options.matchContext ?? null,
+    targetItems.map<Comp>((item) => ({
+      source: "ebay_sold",
+      title: item.title || null,
+      url: item.link,
+      price: item.price ?? null,
+      soldDate: item.soldDate,
+      screenshotUrl: item.thumbnail || "",
+      listingImageUrl: item.thumbnail || null,
+      thumbnail: item.thumbnail || null,
+      condition: item.condition,
+      itemSpecifics: item.itemSpecifics,
+      notes: "SerpApi eBay sold results",
+    }))
+  );
 
   return {
     source: "ebay_sold",

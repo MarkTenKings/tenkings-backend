@@ -2,6 +2,12 @@ import Head from "next/head";
 import Link from "next/link";
 import { useRouter } from "next/router";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  annotateAndSortKingsreviewComps,
+  buildKingsreviewCompMatchContext,
+  KingsreviewCompMatchQuality,
+  normalizeEbayItemSpecifics,
+} from "@tenkings/shared";
 import AppShell from "../../components/AppShell";
 import { CardImage } from "../../components/CardImage";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
@@ -111,6 +117,10 @@ type JobResultComp = {
   screenshotUrl: string;
   listingImageUrl?: string | null;
   thumbnail?: string | null;
+  condition?: string | null;
+  itemSpecifics?: Record<string, string[]> | null;
+  matchScore?: number | null;
+  matchQuality?: KingsreviewCompMatchQuality | null;
   notes?: string | null;
   patternMatch?: {
     score: number;
@@ -186,6 +196,13 @@ const normalizePatternMatch = (value: unknown): JobResultComp["patternMatch"] =>
   };
 };
 
+const normalizeMatchQuality = (value: unknown): KingsreviewCompMatchQuality | undefined => {
+  if (value === "exact" || value === "close" || value === "weak") {
+    return value;
+  }
+  return undefined;
+};
+
 const normalizeJobResultComp = (value: unknown): JobResultComp | null => {
   if (!value || typeof value !== "object") {
     return null;
@@ -214,6 +231,13 @@ const normalizeJobResultComp = (value: unknown): JobResultComp | null => {
     screenshotUrl,
     listingImageUrl,
     thumbnail: normalizeNullableText(typeof raw.thumbnail === "string" ? raw.thumbnail : null),
+    condition: normalizeNullableText(typeof raw.condition === "string" ? raw.condition : null),
+    itemSpecifics: normalizeEbayItemSpecifics(raw.itemSpecifics),
+    matchScore:
+      typeof raw.matchScore === "number" && Number.isFinite(raw.matchScore)
+        ? Math.max(0, Math.min(100, Math.round(raw.matchScore)))
+        : undefined,
+    matchQuality: normalizeMatchQuality(raw.matchQuality),
     notes: normalizeNullableText(typeof raw.notes === "string" ? raw.notes : null),
     patternMatch: normalizePatternMatch(raw.patternMatch),
   };
@@ -292,6 +316,17 @@ const patternBadgeClass = (tier: PatternTier) => {
       return "border-amber-400/60 bg-amber-500/20 text-amber-200";
     default:
       return "border-white/10 text-slate-400";
+  }
+};
+
+const compMatchBadgeClass = (quality: KingsreviewCompMatchQuality) => {
+  switch (quality) {
+    case "exact":
+      return "border-emerald-400/60 bg-emerald-500/20 text-emerald-200";
+    case "close":
+      return "border-amber-400/60 bg-amber-500/20 text-amber-200";
+    default:
+      return "border-rose-400/50 bg-rose-500/15 text-rose-200";
   }
 };
 
@@ -465,6 +500,7 @@ const CompCard = memo(function CompCard({
   onUnattach,
 }: CompCardProps) {
   const compPreview = getCompPreviewUrls(comp);
+  const matchLabel = comp.matchQuality ? comp.matchQuality.toUpperCase() : null;
 
   return (
     <button
@@ -520,6 +556,15 @@ const CompCard = memo(function CompCard({
             </div>
             <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
             <div className="flex flex-wrap gap-2">
+              {matchLabel && (
+                <span
+                  className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] ${compMatchBadgeClass(
+                    comp.matchQuality as KingsreviewCompMatchQuality
+                  )}`}
+                >
+                  {matchLabel}
+                </span>
+              )}
               <a
                 href={comp.url}
                 target="_blank"
@@ -588,11 +633,22 @@ const CompCard = memo(function CompCard({
               </div>
             </div>
             <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
-            {comp.patternMatch && (
-              <div className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
-                Pattern {comp.patternMatch.tier}
-              </div>
-            )}
+            <div className="flex flex-wrap gap-2">
+              {matchLabel && (
+                <span
+                  className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.26em] ${compMatchBadgeClass(
+                    comp.matchQuality as KingsreviewCompMatchQuality
+                  )}`}
+                >
+                  {matchLabel}
+                </span>
+              )}
+              {comp.patternMatch && (
+                <span className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
+                  Pattern {comp.patternMatch.tier}
+                </span>
+              )}
+            </div>
             <div className="flex flex-wrap gap-2">
               {attached ? (
                 <button
@@ -770,6 +826,19 @@ export default function KingsReview() {
   const sourceComps = useMemo(() => activeSourceData?.comps ?? [], [activeSourceData?.comps]);
   const appendedComps = useMemo(() => extraCompsBySource[activeSourceKey] ?? [], [activeSourceKey, extraCompsBySource]);
   const activeCompSearchQuery = useMemo(() => (job?.searchQuery ?? query).trim(), [job?.searchQuery, query]);
+  const compMatchContext = useMemo(
+    () =>
+      activeCard
+        ? buildKingsreviewCompMatchContext({
+            resolvedPlayerName: activeCard.resolvedPlayerName,
+            classification: activeCard.classification,
+            normalized: activeCard.classificationNormalized,
+            customTitle: activeCard.customTitle,
+            variantId: activeCard.variantId ?? null,
+          })
+        : null,
+    [activeCard]
+  );
   const comps = useMemo(() => {
     const seen = new Set<string>();
     const merged: JobResultComp[] = [];
@@ -782,8 +851,11 @@ export default function KingsReview() {
       seen.add(key);
       merged.push(comp);
     });
-    return merged;
-  }, [appendedComps, normalizeCompUrl, sourceComps]);
+    if (!compMatchContext) {
+      return merged;
+    }
+    return annotateAndSortKingsreviewComps(compMatchContext, merged);
+  }, [appendedComps, compMatchContext, normalizeCompUrl, sourceComps]);
   const activeCompNextOffset = compNextOffsetBySource[activeSourceKey] ?? sourceComps.length;
   const activeCompLoadingMore = compLoadingBySource[activeSourceKey] ?? false;
   const activeCompHasMore =
@@ -1981,6 +2053,9 @@ export default function KingsReview() {
         offset: String(activeCompNextOffset),
         limit: String(LOAD_MORE_COMPS_PAGE_SIZE),
       });
+      if (activeCardId) {
+        params.set("cardAssetId", activeCardId);
+      }
       const res = await fetch(`/api/admin/kingsreview/comps?${params.toString()}`, {
         headers: adminHeaders(),
         cache: "no-store",
@@ -2030,6 +2105,7 @@ export default function KingsReview() {
       setCompLoadingBySource((prev) => ({ ...prev, [activeSourceKey]: false }));
     }
   }, [
+    activeCardId,
     activeCompHasMore,
     activeCompLoadingMore,
     activeCompNextOffset,

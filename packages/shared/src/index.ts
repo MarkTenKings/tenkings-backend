@@ -87,6 +87,24 @@ export {
   normalizeCardIdentityPlayerNameBase,
 } from "./cardIdentity";
 export type {
+  KingsreviewCompMatchQuality,
+  KingsreviewCompMatchContext,
+  KingsreviewCompMatchResult,
+  KingsreviewCompCandidate,
+} from "./kingsreviewCompMatch";
+export {
+  normalizeCompMatchText,
+  tokenizeCompMatchText,
+  tokenOverlapScore,
+  normalizeEbayItemSpecifics,
+  buildKingsreviewCompMatchContext,
+  fuzzyPlayerMatch,
+  fuzzySetMatch,
+  fuzzyParallelMatch,
+  scoreKingsreviewComp,
+  annotateAndSortKingsreviewComps,
+} from "./kingsreviewCompMatch";
+export type {
   OcrLlmAttemptFormat,
   OcrLlmAttempt,
   OcrLlmAttemptResult,
