@@ -1,18 +1,34 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-01` (Task 20c KingsReview divider/resize refinement completed in this session; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-01` (Task 20d KingsReview comp badge ribbon restyle completed in this session; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state at Task 20c handoff refresh start:
+- Current local git state at Task 20d handoff refresh start:
   - `git status -sb` -> `## main...origin/main`
-- Latest committed baseline before Task 20c edit:
+- Latest committed baseline before Task 20d edit:
+  - `8bcaa83` feat(kingsreview): add draggable resize handles between panels
   - `68a9076` fix(kingsreview): restore panel scrolling + add draggable resize handles
   - `11ea1b7` style(kingsreview): flush flexible columns + badge pill styling
   - `4ad4656` fix(add-cards): stabilize identify-set and screen2 prefetch effect lifecycles
   - `f7e2173` fix(add-cards): fix screen 2 prefetch timeout + remove T17-DEBUG instrumentation
-  - `75bb924` docs(handoff): record task17 debug instrumentation
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-01, Task 20d KingsReview comp badge ribbon restyle)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Updated the requested KingsReview comp badge styling in:
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- What changed:
+  - replaced the inline EXACT / CLOSE / WEAK badge pills with upper-right corner ribbon badges rendered as absolute-positioned clipped flags
+  - switched ribbon colors to the requested green / amber / red palette while keeping the existing match-quality categorization logic unchanged
+  - removed the inline badge elements from the expanded and collapsed comp card body layouts
+  - kept the Task 20c resize handles, Task 20b panel scrolling, and all KingsReview data/state behavior unchanged
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` -> pass with the existing `pages/admin/kingsreview.tsx` `<img>` warning only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-01, Task 20c KingsReview divider/resize refinement)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:

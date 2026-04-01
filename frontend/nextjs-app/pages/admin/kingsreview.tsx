@@ -319,14 +319,14 @@ const patternBadgeClass = (tier: PatternTier) => {
   }
 };
 
-const compMatchBadgeClass = (quality: KingsreviewCompMatchQuality) => {
+const compMatchRibbonColor = (quality: KingsreviewCompMatchQuality) => {
   switch (quality) {
     case "exact":
-      return "border-emerald-400/25 bg-emerald-500/10 text-emerald-300";
+      return "#22c55e";
     case "close":
-      return "border-amber-400/25 bg-amber-500/10 text-amber-300";
+      return "#eab308";
     default:
-      return "border-slate-400/20 bg-slate-400/10 text-slate-300";
+      return "#ef4444";
   }
 };
 
@@ -501,6 +501,7 @@ const CompCard = memo(function CompCard({
 }: CompCardProps) {
   const compPreview = getCompPreviewUrls(comp);
   const matchLabel = comp.matchQuality ? comp.matchQuality.toUpperCase() : null;
+  const matchRibbonColor = comp.matchQuality ? compMatchRibbonColor(comp.matchQuality) : null;
 
   return (
     <button
@@ -513,13 +514,36 @@ const CompCard = memo(function CompCard({
       }`}
     >
       {attached && (
-        <div className="absolute right-2 top-2 z-10 flex flex-col items-center">
+        <div className={`absolute z-10 flex flex-col items-center ${matchLabel ? "right-2 top-12" : "right-2 top-2"}`}>
           <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-emerald-400/80 bg-emerald-500/20 text-[13px] font-bold text-emerald-300">
             ✓
           </span>
           <span className="mt-1 text-[9px] font-semibold uppercase tracking-[0.26em] text-emerald-300">
             Comp
           </span>
+        </div>
+      )}
+      {matchLabel && matchRibbonColor && (
+        <div
+          className="pointer-events-none absolute z-20 text-white"
+          style={{
+            top: 0,
+            right: "12px",
+            width: "44px",
+            padding: "6px 0 8px 0",
+            textAlign: "center",
+            color: "#ffffff",
+            fontSize: "9px",
+            fontWeight: 700,
+            letterSpacing: "0.5px",
+            textTransform: "uppercase",
+            lineHeight: 1.2,
+            backgroundColor: matchRibbonColor,
+            clipPath: "polygon(0 0, 100% 0, 100% calc(100% - 6px), 50% 100%, 0 calc(100% - 6px))",
+          }}
+        >
+          <div style={{ fontSize: "9px", fontWeight: 700 }}>{matchLabel}</div>
+          <div style={{ fontSize: "7px", fontWeight: 400, opacity: 0.85, textTransform: "lowercase" }}>match</div>
         </div>
       )}
       {isExpanded ? (
@@ -556,15 +580,6 @@ const CompCard = memo(function CompCard({
             </div>
             <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
             <div className="flex flex-wrap gap-2">
-              {matchLabel && (
-                <span
-                  className={`pointer-events-none inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.32em] ${compMatchBadgeClass(
-                    comp.matchQuality as KingsreviewCompMatchQuality
-                  )}`}
-                >
-                  {matchLabel}
-                </span>
-              )}
               <a
                 href={comp.url}
                 target="_blank"
@@ -634,15 +649,6 @@ const CompCard = memo(function CompCard({
             </div>
             <div className="line-clamp-2 text-xs">{comp.title ?? comp.url}</div>
             <div className="flex flex-wrap gap-2">
-              {matchLabel && (
-                <span
-                  className={`pointer-events-none inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.32em] ${compMatchBadgeClass(
-                    comp.matchQuality as KingsreviewCompMatchQuality
-                  )}`}
-                >
-                  {matchLabel}
-                </span>
-              )}
               {comp.patternMatch && (
                 <span className="text-[10px] uppercase tracking-[0.3em] text-slate-300">
                   Pattern {comp.patternMatch.tier}

@@ -12709,6 +12709,44 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
+## 2026-04-01 - Task 20d validation completion
+
+### Summary
+- Recorded final pre-commit validation for the Task 20d KingsReview ribbon-badge change after the earlier handoff entry.
+
+### Validation Evidence
+- `git diff --check` passed.
+
+### Notes
+- This completes the earlier Task 20d note where `git diff --check` was still pending.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-01 - Task 20d KingsReview comp badge ribbon restyle
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Synced `main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Restyled the KingsReview comp match badges as upper-right corner ribbons without changing comp scoring, panel layout, panel scrolling, or resize behavior.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Replaced the inline EXACT / CLOSE / WEAK badge pills with absolute-positioned clipped ribbon flags in the upper-right corner of each comp card.
+- Switched the badge visuals to the requested green / amber / red ribbon colors while preserving the existing `matchQuality` mapping logic.
+- Removed the inline badge elements from both expanded and collapsed comp-card body layouts.
+- Shifted the existing attached-comp marker downward when a ribbon is present so the two indicators do not overlap.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` passed with the existing `pages/admin/kingsreview.tsx` `<img>` warning only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+
+### Notes
+- `git diff --check` was still pending when this handoff entry was appended; run it before commit.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
 ## 2026-04-01 - Task 20c KingsReview divider/resize refinement
 
 ### Summary
