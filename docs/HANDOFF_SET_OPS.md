@@ -1,18 +1,46 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-01` (temporary Task 17 debug console instrumentation for Add Cards Product Set resolution is implemented at feature commit `c904718`; no deploy/restart/migration or DB writes were executed in this session)
+- Last reviewed: `2026-04-01` (Task 20 KingsReview layout and badge styling update completed in this session; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Task 17 debug feature commit: `c904718`
-- Current local git state at handoff refresh start: `git status -sb` -> `## main...origin/main [ahead 1]`
-- Latest repo commits at handoff refresh start:
+- Current local git state at Task 20 handoff refresh start:
+  - `git status -sb` -> `## main...origin/main` with modified handoff docs from the prior docs-refresh session
+- Latest committed baseline before Task 20 edit:
+  - `4ad4656` fix(add-cards): stabilize identify-set and screen2 prefetch effect lifecycles
+  - `f7e2173` fix(add-cards): fix screen 2 prefetch timeout + remove T17-DEBUG instrumentation
+  - `75bb924` docs(handoff): record task17 debug instrumentation
   - `c904718` debug(add-cards): add T17-DEBUG console instrumentation to product set resolution
   - `1105555` docs(handoff): finalize task17b metadata
-  - `6da1cbd` docs(handoff): sync task17b implementation state
-  - `512665d` fix(add-cards): fix identify-set SetCard ID mismatch + restore product set fallbacks
-  - `0f78d42` docs(handoff): sync task18 implementation state
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-01, Task 20 KingsReview layout + badge styling)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Shipped the requested KingsReview styling-only update in:
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- What changed:
+  - restyled the EXACT / CLOSE / WEAK comp quality labels into smaller non-interactive pill badges with muted green / amber / gray treatments
+  - removed the card-shell gap-based three-column layout and converted the page to adjacent flexible panels with subtle vertical divider lines
+  - made the left queue panel narrower, the middle evidence panel dominant, and the right comp detail panel moderately wide without changing any data flow or UI behavior inside the panels
+  - removed the outer page padding around the three-panel workspace while keeping the top nav unchanged
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` -> pass with the existing `pages/admin/kingsreview.tsx` `<img>` warning only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-01, docs-only repo state refresh)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `4ad4656`
+- Confirmed the latest code baseline remains Add Cards Task 19B lifecycle stabilization at commit `4ad4656`.
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-01, Task 17 debug console instrumentation for Product Set resolution)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then confirmed local `main` was already current with `origin/main` before editing:

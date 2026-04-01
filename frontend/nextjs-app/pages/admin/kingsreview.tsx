@@ -322,11 +322,11 @@ const patternBadgeClass = (tier: PatternTier) => {
 const compMatchBadgeClass = (quality: KingsreviewCompMatchQuality) => {
   switch (quality) {
     case "exact":
-      return "border-emerald-400/60 bg-emerald-500/20 text-emerald-200";
+      return "border-emerald-400/25 bg-emerald-500/10 text-emerald-300";
     case "close":
-      return "border-amber-400/60 bg-amber-500/20 text-amber-200";
+      return "border-amber-400/25 bg-amber-500/10 text-amber-300";
     default:
-      return "border-rose-400/50 bg-rose-500/15 text-rose-200";
+      return "border-slate-400/20 bg-slate-400/10 text-slate-300";
   }
 };
 
@@ -558,7 +558,7 @@ const CompCard = memo(function CompCard({
             <div className="flex flex-wrap gap-2">
               {matchLabel && (
                 <span
-                  className={`inline-flex items-center rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.24em] ${compMatchBadgeClass(
+                  className={`pointer-events-none inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.32em] ${compMatchBadgeClass(
                     comp.matchQuality as KingsreviewCompMatchQuality
                   )}`}
                 >
@@ -636,7 +636,7 @@ const CompCard = memo(function CompCard({
             <div className="flex flex-wrap gap-2">
               {matchLabel && (
                 <span
-                  className={`inline-flex items-center rounded-full border px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.26em] ${compMatchBadgeClass(
+                  className={`pointer-events-none inline-flex items-center rounded-full border px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.32em] ${compMatchBadgeClass(
                     comp.matchQuality as KingsreviewCompMatchQuality
                   )}`}
                 >
@@ -2296,8 +2296,8 @@ export default function KingsReview() {
     }
 
     return (
-      <div className="flex h-screen flex-1 flex-col gap-3 overflow-hidden bg-gold-500/90 px-4 py-4 sm:px-6 lg:px-[50px]">
-        <header className="shrink-0">
+      <div className="flex h-screen flex-1 flex-col overflow-hidden bg-night-950 text-white">
+        <header className="shrink-0 px-4 pb-3 pt-4 sm:px-6">
           <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-white/10 bg-black p-2">
             <Link
               href="/admin/uploads"
@@ -2410,14 +2410,14 @@ export default function KingsReview() {
         )}
 
         {error && (
-          <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+          <div className="mx-4 mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-3 text-xs text-rose-200 sm:mx-6">
             {error}
           </div>
         )}
 
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden lg:h-[calc(100vh-140px)] lg:max-h-[calc(100vh-140px)] lg:flex-row lg:items-stretch lg:justify-center lg:gap-[72px]">
+        <div className="flex min-h-0 flex-1 overflow-hidden">
           <section
-            className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:h-[calc(100vh-140px)] lg:max-h-[calc(100vh-140px)] lg:w-[425px]"
+            className="flex h-full min-h-0 min-w-[280px] flex-[0.9_1_300px] flex-col gap-3 overflow-hidden border-r border-white/[0.08] bg-black p-3 md:gap-4 md:p-4"
           >
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-2">
               <div className="flex flex-wrap items-center gap-3">
@@ -2524,7 +2524,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:h-[calc(100vh-140px)] lg:max-h-[calc(100vh-140px)] lg:w-[425px]">
+          <section className="flex h-full min-h-0 min-w-0 flex-[1.35_1_0%] flex-col gap-3 overflow-hidden border-r border-white/[0.08] bg-black p-3 md:gap-4 md:p-4">
             <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-night-900/95 pb-2 backdrop-blur">
               <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Evidence Scroll</p>
               <div className="flex items-center gap-2">
@@ -3172,7 +3172,7 @@ export default function KingsReview() {
             </div>
           </section>
 
-          <section className="flex h-full min-h-0 flex-col gap-3 overflow-hidden rounded-2xl border border-white/10 bg-black p-3 md:gap-4 md:rounded-3xl lg:h-[calc(100vh-140px)] lg:max-h-[calc(100vh-140px)] lg:w-[425px]">
+          <section className="flex h-full min-h-0 min-w-[350px] flex-[1_1_380px] flex-col gap-3 overflow-hidden bg-black p-3 md:gap-4 md:p-4">
             <div className="border-b border-white/10 pb-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Comp Detail</p>

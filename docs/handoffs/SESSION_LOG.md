@@ -12655,3 +12655,56 @@
 ### Notes
 - This task did not change backend behavior or the underlying Product Set matching rules.
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.
+
+## 2026-04-01 - Docs-only repo state refresh
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified the current workstation repo state in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- No code edits outside handoff docs, deploys, restarts, migrations, runtime mutations, or DB mutations were executed.
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Git State
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `4ad4656`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- Current code baseline remains `4ad4656` `fix(add-cards): stabilize identify-set and screen2 prefetch effect lifecycles`.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-01 - Task 20 KingsReview layout + badge styling
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Synced `main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Updated the KingsReview admin page layout and badge styling only; no logic, backend, or API behavior changed.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Restyled EXACT / CLOSE / WEAK comp quality labels into smaller pill-style status tags with muted green, amber, and gray treatments.
+- Removed the wide gutter-based three-column shell and converted the page to adjacent flexible panels with subtle vertical dividers.
+- Set the panel proportions so Card Queue stays narrow, Evidence Scroll takes the majority of the width, and Comp Detail remains moderately wide.
+- Preserved the top nav, panel order, and all existing KingsReview content and data flow.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/kingsreview.tsx` passed with the existing `pages/admin/kingsreview.tsx` `<img>` warning only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
