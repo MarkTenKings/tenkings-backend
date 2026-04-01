@@ -12604,3 +12604,54 @@
 ### Notes
 - For the reported card, `TC-HG` still does not exist inside `2025-26_Topps_Chrome_Basketball`, so the expected fast result is `insertSet = BASE` with `parallel` remaining unavailable.
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.
+
+## 2026-04-01 - Task 19B identify-set and Screen 2 prefetch lifecycle stabilization
+
+### Summary
+- Re-read the mandatory context, runbook, and handoff docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Confirmed local `main` was already current with `origin/main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Wrote the requested investigation notes to:
+  - `docs/handoffs/TASK19B_ANALYSIS.md`
+- Confirmed by code trace that:
+  - `cardNumber` lives in `intakeOptional`
+  - OCR writes `cardNumber` into `intakeOptional` immediately while the UI is still on the required step
+  - the Next button does not perform any delayed optional-field commit
+- Confirmed the current breakage was effect lifecycle churn:
+  - identify-set was keying/cancelling off a broader surface than the actual identify inputs
+  - Screen 2 prefetch was using a broader key than the actual scoped set/card identity
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/handoffs/TASK19B_ANALYSIS.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added a stable OCR-backed `cardNumber` resolver in `uploads.tsx` that:
+  - prefers `intakeOptional.cardNumber`
+  - respects operator edits/touched state
+  - falls back to OCR/suggested card number only while the field is still untouched
+- Stabilized identify-set:
+  - narrowed the identify request key to `year + manufacturer + sport + cardNumber + playerName`
+  - switched the fetch/cleanup lifecycle to refs so an in-flight identify request is only cancelled when that key actually changes
+  - stopped tying request cancellation to optional helper fields such as `insertSet`, `teamName`, or later unrelated rerenders
+- Stabilized Screen 2 prefetch:
+  - narrowed the prefetch key to `cardId + scopedProductSetId + scopedCardNumber`
+  - removed unrelated fields like year/manufacturer/sport/layout class from the prefetch identity
+  - used refs for the latest fetch callback, touched-state reads, and key tracking so same-target rerenders do not tear down the in-flight timeout/request lifecycle
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx`
+  - pass with the existing `uploads.tsx` `<img>` warnings only
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit`
+  - pass
+- `git diff --check`
+  - pass
+
+### Git State
+- post-change status before commit:
+  - `git status -sb` -> `## main...origin/main` with modified `frontend/nextjs-app/pages/admin/uploads.tsx` and new `docs/handoffs/TASK19B_ANALYSIS.md`
+
+### Notes
+- This task did not change backend behavior or the underlying Product Set matching rules.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this task session.

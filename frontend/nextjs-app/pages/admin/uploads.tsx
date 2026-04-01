@@ -817,7 +817,9 @@ export default function AdminUploads() {
   const ocrOptionalBackupRef = useRef<IntakeOptionalFields | null>(null);
   const ocrAppliedOptionalFieldsRef = useRef<(keyof IntakeOptionalFields)[]>([]);
   const identifySetRequestKeyRef = useRef<string | null>(null);
+  const identifySetLatestKeyRef = useRef<string | null>(null);
   const screen2PrefetchKeyRef = useRef<string | null>(null);
+  const screen2PrefetchLatestKeyRef = useRef<string | null>(null);
   const screen2PrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const parallelPrefetchKeyRef = useRef<string | null>(null);
   const parallelPrefetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1655,7 +1657,9 @@ export default function AdminUploads() {
     ocrOptionalBackupRef.current = null;
     ocrAppliedOptionalFieldsRef.current = [];
     identifySetRequestKeyRef.current = null;
+    identifySetLatestKeyRef.current = null;
     screen2PrefetchKeyRef.current = null;
+    screen2PrefetchLatestKeyRef.current = null;
   }, []);
 
   const clearActiveIntakeState = useCallback(() => {
@@ -1737,7 +1741,9 @@ export default function AdminUploads() {
     setParallelPrefetchStatus(null);
     setParallelPrefetchMessage(null);
     identifySetRequestKeyRef.current = null;
+    identifySetLatestKeyRef.current = null;
     screen2PrefetchKeyRef.current = null;
+    screen2PrefetchLatestKeyRef.current = null;
     if (screen2PrefetchTimeoutRef.current) {
       clearTimeout(screen2PrefetchTimeoutRef.current);
       screen2PrefetchTimeoutRef.current = null;
@@ -2905,6 +2911,18 @@ export default function AdminUploads() {
     ]
   );
 
+  const resolvedOcrCardNumber = useMemo(() => {
+    const directCardNumber = sanitizeNullableText(intakeOptional.cardNumber);
+    if (directCardNumber || intakeOptionalTouched.cardNumber) {
+      return directCardNumber;
+    }
+    const suggestedCardNumber = sanitizeNullableText(intakeSuggested.cardNumber);
+    if (suggestedCardNumber) {
+      return suggestedCardNumber;
+    }
+    return sanitizeNullableText((ocrAudit as OcrAuditPayload | null)?.fields?.cardNumber ?? null);
+  }, [intakeOptional.cardNumber, intakeOptionalTouched.cardNumber, intakeSuggested.cardNumber, ocrAudit]);
+
   const triggerPhotoroomForCard = useCallback(
     async (cardId: string) => {
       if (!session?.token) {
@@ -3042,7 +3060,7 @@ export default function AdminUploads() {
         const hintManufacturer = sanitizeNullableText(intakeRequired.manufacturer);
         const hintSport = sanitizeNullableText(intakeRequired.sport);
         const hintProductLine = sanitizeNullableText(options?.hintProductLine ?? intakeOptional.productLine);
-        const hintCardNumber = sanitizeNullableText(options?.hintCardNumber ?? intakeOptional.cardNumber);
+        const hintCardNumber = sanitizeNullableText(options?.hintCardNumber ?? resolvedOcrCardNumber);
         const hintLayoutClass = normalizeTeachLayoutClass(teachLayoutClass);
         if (hintYear) {
           params.set("year", hintYear);
@@ -3181,18 +3199,34 @@ export default function AdminUploads() {
     },
     [
       applySuggestions,
-      intakeOptional.cardNumber,
       intakeOptional.productLine,
       intakeRequired.manufacturer,
       intakeRequired.sport,
       intakeRequired.year,
       isRemoteApi,
       resolveApiUrl,
+      resolvedOcrCardNumber,
       session?.token,
       syncOptionalFieldsFromOcrAudit,
       teachLayoutClass,
     ]
   );
+
+  const fetchIdentifiedSetMatchRef = useRef(fetchIdentifiedSetMatch);
+  const fetchOcrSuggestionsRef = useRef(fetchOcrSuggestions);
+  const intakeOptionalTouchedRef = useRef(intakeOptionalTouched);
+
+  useEffect(() => {
+    fetchIdentifiedSetMatchRef.current = fetchIdentifiedSetMatch;
+  }, [fetchIdentifiedSetMatch]);
+
+  useEffect(() => {
+    fetchOcrSuggestionsRef.current = fetchOcrSuggestions;
+  }, [fetchOcrSuggestions]);
+
+  useEffect(() => {
+    intakeOptionalTouchedRef.current = intakeOptionalTouched;
+  }, [intakeOptionalTouched]);
 
   useEffect(() => {
     if (!pendingAutoOcrCardId) {
@@ -3208,6 +3242,18 @@ export default function AdminUploads() {
     void fetchOcrSuggestions(pendingAutoOcrCardId);
   }, [fetchOcrSuggestions, intakeCardId, ocrStatus, pendingAutoOcrCardId]);
 
+  const scopedScreen2ProductSetId = useMemo(
+    () => sanitizeNullableText(intakeOptional.productLine) || sanitizeNullableText(variantScopeSummary?.selectedSetId),
+    [intakeOptional.productLine, variantScopeSummary?.selectedSetId]
+  );
+  const screen2PrefetchRequestKey = useMemo(() => {
+    if (!intakeCardId || !scopedScreen2ProductSetId) {
+      return null;
+    }
+    return [intakeCardId, scopedScreen2ProductSetId.toLowerCase(), resolvedOcrCardNumber.toLowerCase()].join("::");
+  }, [intakeCardId, resolvedOcrCardNumber, scopedScreen2ProductSetId]);
+  screen2PrefetchLatestKeyRef.current = screen2PrefetchRequestKey;
+
   useEffect(() => {
     if (!intakeCardId || intakeRequired.category !== "sport") {
       screen2PrefetchKeyRef.current = null;
@@ -3221,9 +3267,7 @@ export default function AdminUploads() {
     if (intakeStep !== "required" && intakeStep !== "optional") {
       return;
     }
-    const scopedProductSetId =
-      sanitizeNullableText(intakeOptional.productLine) || sanitizeNullableText(variantScopeSummary?.selectedSetId);
-    if (!scopedProductSetId) {
+    if (!scopedScreen2ProductSetId || !screen2PrefetchRequestKey) {
       screen2PrefetchKeyRef.current = null;
       if (screen2PrefetchTimeoutRef.current) {
         clearTimeout(screen2PrefetchTimeoutRef.current);
@@ -3232,33 +3276,23 @@ export default function AdminUploads() {
       setScreen2PrefetchStatus("idle");
       return;
     }
-    const scopedCardNumber = sanitizeNullableText(intakeOptional.cardNumber);
-    const prefetchKey = [
-      intakeCardId,
-      scopedProductSetId.toLowerCase(),
-      scopedCardNumber.toLowerCase(),
-      sanitizeNullableText(intakeRequired.year).toLowerCase(),
-      sanitizeNullableText(intakeRequired.manufacturer).toLowerCase(),
-      sanitizeNullableText(intakeRequired.sport).toLowerCase(),
-      normalizeTeachLayoutClass(teachLayoutClass),
-    ].join("::");
-    if (screen2PrefetchKeyRef.current === prefetchKey) {
+    if (screen2PrefetchKeyRef.current === screen2PrefetchRequestKey) {
       return;
     }
-    screen2PrefetchKeyRef.current = prefetchKey;
+    screen2PrefetchKeyRef.current = screen2PrefetchRequestKey;
     if (screen2PrefetchTimeoutRef.current) {
       clearTimeout(screen2PrefetchTimeoutRef.current);
       screen2PrefetchTimeoutRef.current = null;
     }
     setScreen2PrefetchStatus("loading");
     screen2PrefetchTimeoutRef.current = setTimeout(() => {
-      if (screen2PrefetchKeyRef.current !== prefetchKey) {
+      if (screen2PrefetchKeyRef.current !== screen2PrefetchRequestKey) {
         return;
       }
       console.warn("[AddCards][Screen2Prefetch] timed out waiting for insert/parallel suggestions", {
         cardId: intakeCardId,
-        productSetId: scopedProductSetId,
-        cardNumber: scopedCardNumber || null,
+        productSetId: scopedScreen2ProductSetId,
+        cardNumber: resolvedOcrCardNumber || null,
       });
       setScreen2PrefetchStatus((current) => (current === "loading" ? "error" : current));
       screen2PrefetchTimeoutRef.current = null;
@@ -3266,11 +3300,11 @@ export default function AdminUploads() {
     setIntakeOptional((prev) => {
       let changed = false;
       const next = { ...prev };
-      if (!intakeOptionalTouched.insertSet && prev.insertSet.trim()) {
+      if (!intakeOptionalTouchedRef.current.insertSet && prev.insertSet.trim()) {
         next.insertSet = "";
         changed = true;
       }
-      if (!intakeOptionalTouched.parallel && prev.parallel.trim()) {
+      if (!intakeOptionalTouchedRef.current.parallel && prev.parallel.trim()) {
         next.parallel = "";
         changed = true;
       }
@@ -3289,31 +3323,24 @@ export default function AdminUploads() {
       }
       return changed ? next : prev;
     });
-    void fetchOcrSuggestions(intakeCardId, {
+    void fetchOcrSuggestionsRef.current(intakeCardId, {
       purpose: "product_set_prefetch",
-      hintProductLine: scopedProductSetId,
-      hintCardNumber: scopedCardNumber || undefined,
+      hintProductLine: scopedScreen2ProductSetId,
+      hintCardNumber: resolvedOcrCardNumber || undefined,
     });
     return () => {
-      if (screen2PrefetchTimeoutRef.current) {
+      if (screen2PrefetchLatestKeyRef.current !== screen2PrefetchRequestKey && screen2PrefetchTimeoutRef.current) {
         clearTimeout(screen2PrefetchTimeoutRef.current);
         screen2PrefetchTimeoutRef.current = null;
       }
     };
   }, [
-    fetchOcrSuggestions,
     intakeCardId,
-    intakeOptional.cardNumber,
-    intakeOptional.productLine,
-    intakeOptionalTouched.insertSet,
-    intakeOptionalTouched.parallel,
     intakeRequired.category,
-    intakeRequired.manufacturer,
-    intakeRequired.sport,
-    intakeRequired.year,
     intakeStep,
-    teachLayoutClass,
-    variantScopeSummary?.selectedSetId,
+    resolvedOcrCardNumber,
+    scopedScreen2ProductSetId,
+    screen2PrefetchRequestKey,
   ]);
 
   const startOcrForCard = useCallback(
@@ -3956,18 +3983,42 @@ export default function AdminUploads() {
         .join("\n"),
     [typedOcrAudit]
   );
+  const identifySetRequestKey = useMemo(() => {
+    const year = sanitizeNullableText(intakeRequired.year);
+    const manufacturer = sanitizeNullableText(intakeRequired.manufacturer);
+    const sport = sanitizeNullableText(intakeRequired.sport);
+    const playerName = sanitizeNullableText(intakeRequired.playerName);
+    if (!year || !manufacturer || !sport || !resolvedOcrCardNumber || !playerName) {
+      return null;
+    }
+    return [
+      year.toLowerCase(),
+      manufacturer.toLowerCase(),
+      sport.toLowerCase(),
+      resolvedOcrCardNumber.toLowerCase(),
+      playerName.toLowerCase(),
+    ].join("::");
+  }, [
+    intakeRequired.manufacturer,
+    intakeRequired.playerName,
+    intakeRequired.sport,
+    intakeRequired.year,
+    resolvedOcrCardNumber,
+  ]);
+  identifySetLatestKeyRef.current = identifySetRequestKey;
 
   useEffect(() => {
     const year = sanitizeNullableText(intakeRequired.year);
     const manufacturer = sanitizeNullableText(intakeRequired.manufacturer);
     const sport = sanitizeNullableText(intakeRequired.sport);
-    const cardNumber = sanitizeNullableText(intakeOptional.cardNumber);
+    const cardNumber = resolvedOcrCardNumber;
     const playerName = sanitizeNullableText(intakeRequired.playerName);
     const teamName = sanitizeNullableText(intakeOptional.teamName);
     const insertSet = sanitizeNullableText(intakeOptional.insertSet);
 
     if (!session?.token || !isAdmin || intakeRequired.category !== "sport") {
       identifySetRequestKeyRef.current = null;
+      identifySetLatestKeyRef.current = null;
       setIdentifiedSetMatch(null);
       return;
     }
@@ -3975,31 +4026,20 @@ export default function AdminUploads() {
       return;
     }
 
-    if (!year || !manufacturer || !sport || !cardNumber || !playerName) {
+    if (!identifySetRequestKey || !year || !manufacturer || !sport || !cardNumber || !playerName) {
       identifySetRequestKeyRef.current = null;
+      identifySetLatestKeyRef.current = null;
       setIdentifiedSetMatch(null);
       return;
     }
 
-    const requestKey = [
-      year.toLowerCase(),
-      manufacturer.toLowerCase(),
-      sport.toLowerCase(),
-      cardNumber.toLowerCase(),
-      playerName.toLowerCase(),
-      teamName.toLowerCase(),
-      insertSet.toLowerCase(),
-      identifiedFrontCardText.toLowerCase(),
-      identifiedCombinedOcrText.toLowerCase(),
-    ].join("::");
-
-    if (identifySetRequestKeyRef.current === requestKey) {
+    if (identifySetRequestKeyRef.current === identifySetRequestKey) {
       return;
     }
-    identifySetRequestKeyRef.current = requestKey;
+    identifySetRequestKeyRef.current = identifySetRequestKey;
 
     let cancelled = false;
-    void fetchIdentifiedSetMatch({
+    void fetchIdentifiedSetMatchRef.current({
       year,
       manufacturer,
       sport,
@@ -4011,7 +4051,7 @@ export default function AdminUploads() {
       combinedText: identifiedCombinedOcrText || undefined,
     })
       .then((result) => {
-        if (cancelled || identifySetRequestKeyRef.current !== requestKey) {
+        if (cancelled || identifySetRequestKeyRef.current !== identifySetRequestKey) {
           return;
         }
         setIdentifiedSetMatch(result);
@@ -4021,7 +4061,7 @@ export default function AdminUploads() {
         }
       })
       .catch((error) => {
-        if (cancelled || identifySetRequestKeyRef.current !== requestKey) {
+        if (cancelled || identifySetRequestKeyRef.current !== identifySetRequestKey) {
           return;
         }
         identifySetRequestKeyRef.current = null;
@@ -4029,13 +4069,14 @@ export default function AdminUploads() {
       });
 
     return () => {
-      cancelled = true;
+      if (identifySetLatestKeyRef.current !== identifySetRequestKey) {
+        cancelled = true;
+      }
     };
   }, [
-    fetchIdentifiedSetMatch,
+    identifySetRequestKey,
     identifiedCombinedOcrText,
     identifiedFrontCardText,
-    intakeOptional.cardNumber,
     intakeOptional.insertSet,
     intakeOptional.teamName,
     intakeRequired.category,
@@ -4045,6 +4086,7 @@ export default function AdminUploads() {
     intakeRequired.year,
     isAdmin,
     ocrStatus,
+    resolvedOcrCardNumber,
     session?.token,
   ]);
 

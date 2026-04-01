@@ -6526,3 +6526,25 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
+## Session Update (2026-04-01, Task 19B uploads lifecycle stabilization)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Wrote the requested investigation trace to:
+  - `docs/handoffs/TASK19B_ANALYSIS.md`
+- Investigation findings captured there:
+  - `cardNumber` lives in `intakeOptional`, not `intakeRequired`
+  - OCR writes `cardNumber` directly into `intakeOptional` as soon as OCR resolves, while the UI is still on the required step
+  - `Next fields` only saves metadata and advances the step; it does not “commit” optional fields into state
+  - the real instability came from the identify-set and Screen 2 prefetch effect lifecycles, not from a delayed Screen 2-only card-number state transfer
+- Fixes implemented in `frontend/nextjs-app/pages/admin/uploads.tsx`:
+  - added a stable OCR-backed `cardNumber` resolver that prefers the live form state and falls back to untouched OCR/suggested state
+  - narrowed the identify-set request key to the actual identify inputs (`year`, `manufacturer`, `sport`, `cardNumber`, `playerName`)
+  - used refs so identify-set cleanup only cancels when those inputs actually change, instead of on unrelated rerenders
+  - narrowed the Screen 2 prefetch key to card + scoped product set + scoped card number
+  - used refs so Screen 2 prefetch keeps its timeout/request lifecycle alive across unrelated rerenders with the same scoped target
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx` -> pass with the existing `uploads.tsx` `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
