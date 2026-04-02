@@ -1,6 +1,7 @@
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from "next";
 import {
   CardAssetStatus,
+  CardReviewStage,
   Prisma,
   prisma,
 } from "@tenkings/database";
@@ -9,6 +10,7 @@ import {
   buildThumbnailKey,
   getStorageMode,
   normalizeStorageUrl,
+  publicUrlFor,
   readStorageBuffer,
   uploadBuffer,
 } from "../../../../lib/server/storage";
@@ -21,7 +23,14 @@ interface CompletePayload {
   fileName?: unknown;
   mimeType?: unknown;
   size?: unknown;
+  reviewStage?: unknown;
 }
+
+const REVIEW_STAGE_VALUES = Object.values(CardReviewStage);
+const REVIEW_STAGE_SET = new Set<string>(REVIEW_STAGE_VALUES);
+const LEGACY_REVIEW_STAGE_ALIASES: Record<string, CardReviewStage> = {
+  ADD_ITEMS: CardReviewStage.READY_FOR_HUMAN_REVIEW,
+};
 
 const handler: NextApiHandler<{ message: string }> = async function handler(
   req: NextApiRequest,
@@ -38,6 +47,9 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
     if (typeof payload?.assetId !== "string" || !payload.assetId.trim()) {
       return res.status(400).json({ message: "assetId is required" });
     }
+    if (typeof payload.reviewStage !== "string" && typeof payload.reviewStage !== "undefined") {
+      return res.status(400).json({ message: "reviewStage must be a string when provided" });
+    }
 
     const asset = await prisma.cardAsset.findUnique({
       where: { id: payload.assetId },
@@ -52,10 +64,31 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
       return res.status(403).json({ message: "You do not own this batch" });
     }
 
+    const reviewStageRaw = typeof payload.reviewStage === "string" ? payload.reviewStage.trim() : "";
+    if (typeof payload.reviewStage === "string" && !reviewStageRaw) {
+      return res.status(400).json({ message: "reviewStage cannot be empty when provided" });
+    }
+    const reviewStageAlias =
+      reviewStageRaw && Object.prototype.hasOwnProperty.call(LEGACY_REVIEW_STAGE_ALIASES, reviewStageRaw)
+        ? LEGACY_REVIEW_STAGE_ALIASES[reviewStageRaw]
+        : undefined;
+    if (reviewStageRaw && !REVIEW_STAGE_SET.has(reviewStageRaw) && !reviewStageAlias) {
+      return res.status(400).json({
+        message: `reviewStage must be one of: ${REVIEW_STAGE_VALUES.join(", ")}, ADD_ITEMS`,
+      });
+    }
+    const resolvedReviewStage = reviewStageRaw
+      ? REVIEW_STAGE_SET.has(reviewStageRaw)
+        ? (reviewStageRaw as CardReviewStage)
+        : reviewStageAlias
+      : asset.reviewStage ?? null;
+    const resolvedImageUrl = normalizeStorageUrl(publicUrlFor(asset.storageKey)) ?? publicUrlFor(asset.storageKey);
+
     const updates: Prisma.CardAssetUpdateInput = {
       processingStartedAt: null,
       processingCompletedAt: null,
       errorMessage: null,
+      imageUrl: resolvedImageUrl,
     };
 
     if (typeof payload.fileName === "string" && payload.fileName.trim()) {
@@ -105,7 +138,15 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
       const message = error instanceof Error ? error.message : String(error);
       await prisma.cardAsset.update({
         where: { id: asset.id },
-        data: { errorMessage: `Thumbnail failed: ${message}` },
+        data: {
+          errorMessage: `Source image unavailable: ${message}`,
+          status: CardAssetStatus.UPLOADING,
+          reviewStage: null,
+          reviewStageUpdatedAt: null,
+        },
+      });
+      return res.status(409).json({
+        message: "Uploaded file is not available in storage yet. Retry the upload once.",
       });
     }
 
@@ -126,7 +167,12 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
 
     await prisma.cardAsset.update({
       where: { id: asset.id },
-      data: { status: CardAssetStatus.READY },
+      data: {
+        imageUrl: resolvedImageUrl,
+        status: CardAssetStatus.READY,
+        reviewStage: resolvedReviewStage,
+        reviewStageUpdatedAt: resolvedReviewStage ? new Date() : null,
+      },
     });
 
     return res.status(200).json({ message: "Upload recorded." });

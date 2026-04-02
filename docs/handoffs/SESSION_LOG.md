@@ -12709,6 +12709,37 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
+## 2026-04-02 - Task 22 upload pipeline skip-OCR regression
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Synced `main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Investigated the April 2 Add Cards regression, wrote the trace to `docs/handoffs/TASK22_ANALYSIS.md`, and fixed the upload/intake pipeline so incomplete uploads do not skip straight into review-visible queues.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/uploads/presign.ts`
+- `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/cards.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/handoffs/TASK22_ANALYSIS.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Confirmed with read-only production DB/storage evidence that the broken April 2 rows were created as `status=UPLOADING` but already had `reviewStage=READY_FOR_HUMAN_REVIEW`, which made them review-visible before the upload pipeline had actually finished.
+- Removed review-stage assignment from `presign.ts` so front assets stay hidden until completion succeeds.
+- Updated `complete.ts` to accept and validate the intended `reviewStage`, restore `imageUrl` from `publicUrlFor(storageKey)`, and fail closed with `409` plus reset-to-`UPLOADING` when the uploaded source object is not yet readable from storage.
+- Tightened the KingsReview list query so `UPLOADING` rows are excluded and `READY_FOR_HUMAN_REVIEW` still requires both `BACK` and `TILT` photos.
+- Added bounded retry handling for network-style fetch failures and serialized background finalization in `pages/admin/uploads.tsx` to reduce the observed `Load failed` capture-queue race.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/uploads/presign.ts --file pages/api/admin/uploads/complete.ts --file pages/api/admin/kingsreview/cards.ts` passed with the existing `pages/admin/uploads.tsx` legacy `<img>` warnings only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
 ## 2026-04-01 - Task 21 KingsReview comp scoring tuning + key comparison chips
 
 ### Summary

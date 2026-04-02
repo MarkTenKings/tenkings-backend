@@ -1,18 +1,45 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-01` (Task 21 KingsReview comp scoring tuning + key comparison chips completed in this session; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-02` (Task 22 upload pipeline fix completed in this session; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state at Task 21 handoff refresh start:
+- Current local git state at Task 22 handoff refresh start:
   - `git status -sb` -> `## main...origin/main`
-- Latest committed baseline before Task 21 edit:
-  - `b23d758` feat(kingsreview): add mobile tabbed layout with breakpoint switch
-  - `3967912` style(kingsreview): restyle comp badges as upper-right corner ribbons
-  - `8bcaa83` feat(kingsreview): add draggable resize handles between panels
-  - `68a9076` fix(kingsreview): restore panel scrolling + add draggable resize handles
-  - `11ea1b7` style(kingsreview): flush flexible columns + badge pill styling
+- Latest committed baseline before Task 22 edit:
+  - `6bc33fe` feat(kingsreview): tune comp scoring weights + add key data comparison chips
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-02, Task 22 upload pipeline skip-OCR regression)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Wrote the requested investigation trace to:
+  - `docs/handoffs/TASK22_ANALYSIS.md`
+- Root-cause findings captured there:
+  - `pages/api/admin/uploads/presign.ts` created `CardAsset` rows with `reviewStage=READY_FOR_HUMAN_REVIEW` before the front upload was actually complete
+  - `pages/api/admin/uploads/complete.ts` still advanced rows to `READY` too permissively, even when storage reads failed
+  - `pages/api/admin/kingsreview/cards.ts` surfaced review-stage rows without excluding incomplete `UPLOADING` assets
+  - the Add Cards background finalization path in `pages/admin/uploads.tsx` was concurrency-fragile, which matched the observed April 2 `Load failed` transport error and the stranded front-only rows
+- Read-only production evidence gathered during the investigation:
+  - broken April 2 rows were present as `status=UPLOADING` plus `reviewStage=READY_FOR_HUMAN_REVIEW`, with no OCR text, no thumbnails/CDN variants, and no `BACK`/`TILT` photos
+  - working April 1 rows were `READY`, had `BACK` + `TILT`, and had populated OCR/custom-title data
+  - broken `imageUrl` values in the DB were still full Spaces URLs; the broken-image symptom came from missing/inaccessible objects, not filename-only persistence
+- Fixes implemented in:
+  - `frontend/nextjs-app/pages/api/admin/uploads/presign.ts`
+  - `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/cards.ts`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `docs/handoffs/TASK22_ANALYSIS.md`
+- What changed:
+  - moved review-stage assignment out of `presign.ts` so newly created front assets stay hidden from review flows until upload completion succeeds
+  - made `complete.ts` validate and persist the intended review stage only after the storage object is readable, restore `imageUrl` from `publicUrlFor(storageKey)`, and fail closed with `409` plus reset-to-`UPLOADING` if the source object is not yet available
+  - tightened the KingsReview card query so `UPLOADING` assets do not appear there and `READY_FOR_HUMAN_REVIEW` cards still require `BACK` + `TILT`
+  - added bounded network retry behavior and serialized background finalization in the Add Cards UI so repeated capture cycles are less likely to strand later cards mid-upload
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/uploads/presign.ts --file pages/api/admin/uploads/complete.ts --file pages/api/admin/kingsreview/cards.ts` -> pass with the existing `pages/admin/uploads.tsx` legacy `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-01, Task 21 KingsReview comp scoring tuning + key comparison chips)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:

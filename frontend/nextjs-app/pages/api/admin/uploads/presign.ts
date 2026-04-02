@@ -84,12 +84,6 @@ const handler: NextApiHandler<PresignResponse | { message: string }> = async fun
         message: `reviewStage must be one of: ${REVIEW_STAGE_VALUES.join(", ")}, ADD_ITEMS`,
       });
     }
-    const reviewStageValue = reviewStageRaw
-      ? REVIEW_STAGE_SET.has(reviewStageRaw)
-        ? (reviewStageRaw as CardReviewStage)
-        : reviewStageAlias
-      : undefined;
-
     const assetId = randomUUID().replace(/-/g, "");
     const storageKey = buildStorageKey(admin.user.id, assetId, fileName);
     const mode = getStorageMode();
@@ -128,8 +122,6 @@ const handler: NextApiHandler<PresignResponse | { message: string }> = async fun
           mimeType,
           imageUrl: publicUrlFor(storageKey),
           status: CardAssetStatus.UPLOADING,
-          reviewStage: reviewStageValue,
-          reviewStageUpdatedAt: reviewStageValue ? new Date() : undefined,
         },
       });
 

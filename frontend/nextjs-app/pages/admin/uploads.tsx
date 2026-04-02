@@ -592,9 +592,36 @@ const shouldRefreshLoadedOcrSuggestions = (params: {
   return !(setResolved && hasCardNumber && (setCardResolved || groundedCardNumber));
 };
 
+const RETRYABLE_REQUEST_ERROR_PATTERN = /load failed|failed to fetch|network request failed/i;
+
+const isRetryableRequestError = (error: unknown): error is Error =>
+  error instanceof Error && RETRYABLE_REQUEST_ERROR_PATTERN.test(error.message);
+
+const waitFor = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const fetchWithNetworkRetry = async (url: string, init: RequestInit, label: string) => {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await fetch(url, init);
+    } catch (error) {
+      if (!isRetryableRequestError(error) || attempt === 1) {
+        throw error;
+      }
+      console.warn("[admin/uploads] Retrying request after network failure", {
+        label,
+        url,
+        attempt: attempt + 1,
+        message: error.message,
+      });
+      await waitFor(350 * (attempt + 1));
+    }
+  }
+  throw new Error(`${label} failed`);
+};
+
 const humanizeRequestFailure = (error: unknown, fallback: string): string => {
   if (error instanceof Error) {
-    if (/load failed|failed to fetch|network request failed/i.test(error.message)) {
+    if (RETRYABLE_REQUEST_ERROR_PATTERN.test(error.message)) {
       return "Network request to the admin API failed. Retry once; if it repeats, the API origin/CORS path still needs attention.";
     }
     return error.message;
@@ -832,6 +859,7 @@ export default function AdminUploads() {
   const teachRegionTelemetryDedupRef = useRef<Record<string, number>>({});
   const activeFrontUploadRef = useRef<Promise<IntakeFrontUploadPayload> | null>(null);
   const activeFrontUploadTokenRef = useRef(0);
+  const backgroundFinalizeQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   const apiBase = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_ADMIN_API_BASE_URL ?? "";
@@ -1900,7 +1928,7 @@ export default function AdminUploads() {
       }
 
       const optimizedFile = file;
-      const presignRes = await fetch(resolveApiUrl("/api/admin/uploads/presign"), {
+      const presignRes = await fetchWithNetworkRetry(resolveApiUrl("/api/admin/uploads/presign"), {
         method: "POST",
         mode: isRemoteApi ? "cors" : "same-origin",
         headers: {
@@ -1913,7 +1941,7 @@ export default function AdminUploads() {
           mimeType: optimizedFile.type || file.type,
           reviewStage: ADD_CARD_INTAKE_REVIEW_STAGE,
         }),
-      });
+      }, "front-presign");
 
       if (!presignRes.ok) {
         const payload = await presignRes.json().catch(() => ({}));
@@ -1947,14 +1975,14 @@ export default function AdminUploads() {
         Object.assign(uploadHeaders, buildAdminHeaders(token));
       }
 
-      const uploadRes = await fetch(resolveApiUrl(presignPayload.uploadUrl), {
+      const uploadRes = await fetchWithNetworkRetry(resolveApiUrl(presignPayload.uploadUrl), {
         method: "PUT",
         mode: presignPayload.storageMode === "s3" ? "cors" : isRemoteApi ? "cors" : "same-origin",
         headers: {
           ...uploadHeaders,
         },
         body: optimizedFile,
-      });
+      }, "front-upload");
 
       if (!uploadRes.ok) {
         const text = await uploadRes.text().catch(() => "");
@@ -1965,7 +1993,7 @@ export default function AdminUploads() {
         throw error;
       }
 
-      const completeRes = await fetch(resolveApiUrl("/api/admin/uploads/complete"), {
+      const completeRes = await fetchWithNetworkRetry(resolveApiUrl("/api/admin/uploads/complete"), {
         method: "POST",
         mode: isRemoteApi ? "cors" : "same-origin",
         headers: {
@@ -1977,8 +2005,9 @@ export default function AdminUploads() {
           fileName: optimizedFile.name,
           mimeType: optimizedFile.type || file.type,
           size: optimizedFile.size,
+          reviewStage: ADD_CARD_INTAKE_REVIEW_STAGE,
         }),
-      });
+      }, "front-complete");
 
       if (!completeRes.ok) {
         const payload = await completeRes.json().catch(() => ({}));
@@ -2001,15 +2030,15 @@ export default function AdminUploads() {
         return false;
       }
       try {
-        const response = await fetch(resolveApiUrl("/api/admin/uploads/complete"), {
+        const response = await fetchWithNetworkRetry(resolveApiUrl("/api/admin/uploads/complete"), {
           method: "POST",
           mode: isRemoteApi ? "cors" : "same-origin",
           headers: {
             "Content-Type": "application/json",
             ...buildAdminHeaders(token),
           },
-          body: JSON.stringify({ assetId }),
-        });
+          body: JSON.stringify({ assetId, reviewStage: ADD_CARD_INTAKE_REVIEW_STAGE }),
+        }, "ensure-front-complete");
         return response.ok;
       } catch {
         return false;
@@ -2065,7 +2094,7 @@ export default function AdminUploads() {
       }
 
       const optimizedFile = file;
-      const presignRes = await fetch(resolveApiUrl("/api/admin/kingsreview/photos/presign"), {
+      const presignRes = await fetchWithNetworkRetry(resolveApiUrl("/api/admin/kingsreview/photos/presign"), {
         method: "POST",
         mode: isRemoteApi ? "cors" : "same-origin",
         headers: {
@@ -2079,7 +2108,7 @@ export default function AdminUploads() {
           size: optimizedFile.size,
           mimeType: optimizedFile.type || file.type,
         }),
-      });
+      }, `${kind.toLowerCase()}-presign`);
 
       if (!presignRes.ok) {
         const payload = await presignRes.json().catch(() => ({}));
@@ -2111,14 +2140,14 @@ export default function AdminUploads() {
         Object.assign(uploadHeaders, buildAdminHeaders(token));
       }
 
-      const uploadRes = await fetch(resolveApiUrl(presignPayload.uploadUrl), {
+      const uploadRes = await fetchWithNetworkRetry(resolveApiUrl(presignPayload.uploadUrl), {
         method: "PUT",
         mode: presignPayload.storageMode === "s3" ? "cors" : isRemoteApi ? "cors" : "same-origin",
         headers: {
           ...uploadHeaders,
         },
         body: optimizedFile,
-      });
+      }, `${kind.toLowerCase()}-upload`);
 
       if (!uploadRes.ok) {
         const text = await uploadRes.text().catch(() => "");
@@ -3487,6 +3516,24 @@ export default function AdminUploads() {
     [ensureFrontAssetQueued, refreshQueuedReviewCards, uploadQueuedPhoto, warmOcrSuggestionsInBackground]
   );
 
+  const enqueueCapturedCardFinalize = useCallback(
+    (params: {
+      existingCardId: string | null;
+      frontUploadPromise: Promise<IntakeFrontUploadPayload> | null;
+      backBlob: Blob | null;
+      tiltBlob: Blob;
+    }) => {
+      const next = backgroundFinalizeQueueRef.current
+        .catch(() => undefined)
+        .then(() => finalizeCapturedCardInBackground(params));
+      backgroundFinalizeQueueRef.current = next.catch((error) => {
+        console.warn("[admin/uploads] Background finalize queue failed", error);
+      });
+      return next;
+    },
+    [finalizeCapturedCardInBackground]
+  );
+
   const confirmIntakeCapture = useCallback(
     async (target: "front" | "back" | "tilt", blob: Blob) => {
       try {
@@ -3546,7 +3593,7 @@ export default function AdminUploads() {
           const backgroundCardId = intakeCardId;
           const backgroundFrontUploadPromise = activeFrontUploadRef.current;
           const backgroundBackBlob = pendingBackBlob;
-          void finalizeCapturedCardInBackground({
+          void enqueueCapturedCardFinalize({
             existingCardId: backgroundCardId,
             frontUploadPromise: backgroundFrontUploadPromise,
             backBlob: backgroundBackBlob,
@@ -3554,7 +3601,16 @@ export default function AdminUploads() {
           });
           clearActiveIntakeState();
           closeCamera();
-          void openIntakeCapture("front");
+          void (async () => {
+            try {
+              if (backgroundFrontUploadPromise) {
+                await backgroundFrontUploadPromise.catch(() => undefined);
+              }
+              await openIntakeCapture("front");
+            } catch (error) {
+              console.warn("[admin/uploads] Failed to reopen intake capture after background finalize", error);
+            }
+          })();
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to capture photo.";
@@ -3568,8 +3624,8 @@ export default function AdminUploads() {
     [
       clearActiveIntakeState,
       closeCamera,
-      finalizeCapturedCardInBackground,
       intakeCardId,
+      enqueueCapturedCardFinalize,
       openIntakeCapture,
       pendingBackBlob,
       uploadCardAsset,

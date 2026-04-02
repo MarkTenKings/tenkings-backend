@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from "next";
-import { prisma } from "@tenkings/database";
+import { CardAssetStatus, CardPhotoKind, CardReviewStage, prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { sanitizeListImageUrl } from "../../../../lib/server/storage";
 
@@ -18,20 +18,43 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const includeUnstaged = req.query.includeUnstaged === "1";
     const limit = Math.min(Number(req.query.limit ?? DEFAULT_LIMIT) || DEFAULT_LIMIT, MAX_LIMIT);
     const offset = Number(req.query.offset ?? 0) || 0;
+    const nonUploadingFilter = { status: { not: CardAssetStatus.UPLOADING } };
+    const readyForHumanReviewFilter = {
+      ...nonUploadingFilter,
+      reviewStage: CardReviewStage.READY_FOR_HUMAN_REVIEW,
+      AND: [
+        { photos: { some: { kind: CardPhotoKind.BACK } } },
+        { photos: { some: { kind: CardPhotoKind.TILT } } },
+      ],
+    };
+    const bytebotRunningFilter = {
+      ...nonUploadingFilter,
+      reviewStage: CardReviewStage.BYTEBOT_RUNNING,
+    };
+    const unstagedFilter = {
+      ...nonUploadingFilter,
+      reviewStage: null,
+    };
+    const stageFilter =
+      stage === "IN_REVIEW"
+        ? {
+            OR: [
+              bytebotRunningFilter,
+              readyForHumanReviewFilter,
+              ...(includeUnstaged ? [unstagedFilter] : []),
+            ],
+          }
+        : includeUnstaged && stage === "READY_FOR_HUMAN_REVIEW"
+          ? { OR: [readyForHumanReviewFilter, unstagedFilter] }
+          : stage === "READY_FOR_HUMAN_REVIEW"
+            ? readyForHumanReviewFilter
+            : {
+                ...nonUploadingFilter,
+                reviewStage: stage as any,
+              };
 
     const cards = await prisma.cardAsset.findMany({
-      where:
-        stage === "IN_REVIEW"
-          ? {
-              OR: [
-                { reviewStage: "BYTEBOT_RUNNING" as any },
-                { reviewStage: "READY_FOR_HUMAN_REVIEW" as any },
-                ...(includeUnstaged ? [{ reviewStage: null }] : []),
-              ],
-            }
-          : includeUnstaged && stage === "READY_FOR_HUMAN_REVIEW"
-            ? { OR: [{ reviewStage: stage as any }, { reviewStage: null }] }
-            : { reviewStage: stage as any },
+      where: stageFilter,
       orderBy: { updatedAt: "desc" },
       take: limit,
       skip: offset,
