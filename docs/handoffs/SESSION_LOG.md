@@ -12968,3 +12968,149 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-02 - Docs-only repo state refresh
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified current workstation repo state:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `5047226`
+- Confirmed the latest committed baseline is `5047226` `fix(add-cards): unblock auto-OCR from pending status deadlock`.
+- No code edits, deploys, restarts, migrations, or DB operations were executed.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- Runtime evidence at handoff refresh showed a clean `main` checkout on the workstation.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-02 - Docs-only handoff sync after repo-state verification
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified current workstation repo state before further doc edits:
+  - `git status -sb` -> `## main...origin/main`
+  - `M docs/HANDOFF_SET_OPS.md`
+  - `M docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `5047226`
+- Confirmed the only uncommitted changes are the handoff docs and the latest committed baseline remains `5047226` `fix(add-cards): unblock auto-OCR from pending status deadlock`.
+- No code edits, deploys, restarts, migrations, or DB operations were executed.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- This handoff sync corrects the repo-state narrative so it matches the current working tree evidence.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-02 - Task 26 exact Product Set selection trace
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified current workstation repo state during final trace handoff:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `5047226`
+- Note: the user request referenced branch `main`, but the actual checked-out branch for this read-only trace was `feature/kingshunt`; no checkout or branch change was executed.
+- Observed unrelated pre-existing working tree changes and left them untouched:
+  - `frontend/nextjs-app/package.json`
+  - `pnpm-lock.yaml`
+- Traced the complete Add Cards Product Set selection pipeline from OCR completion to `intakeOptional.productLine`.
+- Wrote the requested report to `docs/handoffs/TASK26_SET_SELECTION_TRACE.md`.
+- Confirmed from code that there is no helper that maps OCR year `2025` to season `2024-25`; year scoping is literal token/regex matching inside `loadVariantOptionPool()`.
+- Confirmed the highest-priority Product Set source is `identifiedSetMatch.setId`, and the identify-set request key omits `teamName`, `insertSet`, `frontCardText`, and `combinedText` even though the server uses them for scoring/tiebreaks.
+- Confirmed the server-side normal `SetCard` identify path can still return a winning set on unresolved ties via lexical `setId` ordering with `reason=\"ambiguous_post_tiebreak_first_candidate\"`.
+- No source code, deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Reviewed
+- `AGENTS.md`
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/identify-set.ts`
+- `frontend/nextjs-app/pages/api/admin/variants/options.ts`
+- `frontend/nextjs-app/lib/server/cardSetIdentification.ts`
+- `frontend/nextjs-app/lib/server/variantOptionPool.ts`
+- `frontend/nextjs-app/lib/server/variantSetScope.ts`
+- `packages/shared/src/setOpsNormalizer.ts`
+
+### Files Updated
+- `docs/handoffs/TASK26_SET_SELECTION_TRACE.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- This was a read-only trace task; the only workspace changes are documentation artifacts.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-02 - Task 27 Kings Hunt locator + wayfinding build
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Created and switched to the requested branch via `git switch -c feature/kingshunt`.
+- Added the requested map dependencies only:
+  - `pnpm --filter @tenkings/nextjs-app add maplibre-gl leaflet`
+  - `pnpm --filter @tenkings/nextjs-app add -D @types/leaflet`
+- Implemented the Kings Hunt feature set on `feature/kingshunt`:
+  - additive Prisma `Location` map/wayfinding fields
+  - new `NavigationSession` and `LocationVisit` models
+  - migration scaffold and location backfill script
+  - `/locations` interactive map hero upgrade
+  - new `/kingshunt` pages, reusable map components, shared geo helpers, and `/api/kingshunt/*` routes
+- Left the pre-existing unrelated workspace artifact `docs/handoffs/TASK26_SET_SELECTION_TRACE.md` untouched.
+
+### Files Updated
+- `frontend/nextjs-app/package.json`
+- `frontend/nextjs-app/pages/_app.tsx`
+- `frontend/nextjs-app/pages/api/locations/index.ts`
+- `frontend/nextjs-app/pages/locations.tsx`
+- `frontend/nextjs-app/styles/globals.css`
+- `packages/database/prisma/schema.prisma`
+- `pnpm-lock.yaml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Added
+- `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+- `frontend/nextjs-app/components/maps/IndoorMap.tsx`
+- `frontend/nextjs-app/components/maps/VenueMapSVG.tsx`
+- `frontend/nextjs-app/components/maps/FolsomOutletsSVG.tsx`
+- `frontend/nextjs-app/components/maps/WalkingDirections.tsx`
+- `frontend/nextjs-app/components/maps/CheckpointProgress.tsx`
+- `frontend/nextjs-app/components/maps/KingsHuntHeader.tsx`
+- `frontend/nextjs-app/components/maps/TKDCounter.tsx`
+- `frontend/nextjs-app/components/maps/StatsBar.tsx`
+- `frontend/nextjs-app/components/maps/NotAtLocationCard.tsx`
+- `frontend/nextjs-app/lib/geo.ts`
+- `frontend/nextjs-app/lib/kingsHunt.ts`
+- `frontend/nextjs-app/lib/mapStyles.ts`
+- `frontend/nextjs-app/lib/server/kingsHunt.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/detect.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/session.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/checkpoint.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/[slug].ts`
+- `frontend/nextjs-app/pages/kingshunt/index.tsx`
+- `frontend/nextjs-app/pages/kingshunt/[locationSlug].tsx`
+- `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`
+- `scripts/backfill-location-data.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database generate` passed.
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` passed.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- Targeted `next lint` for the Kings Hunt/locator files passed with one warning only:
+  - `pages/kingshunt/[locationSlug].tsx` uses a plain `<img>` for optional machine photos.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, backfill execution, runtime mutation, or DB mutation was executed in this session.
+- `LocationVisit` was added for the requested schema/integration path but is not yet wired to a downstream purchase/visit event source in this branch.

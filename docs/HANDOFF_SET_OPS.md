@@ -1,14 +1,98 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-02` (Task 23b identify-set timing fix completed in this session; no deploy/restart/migration or DB writes were executed)
-- Branch: `main`
-- Current local git state at Task 23b handoff refresh start:
-  - `git status -sb` -> `## main...origin/main`
-- Latest committed baseline before Task 23b edit:
-  - `2eeb20e` fix(uploads): fix card pipeline skipping OCR queue + broken image URLs
+- Last reviewed: `2026-04-02` (Task 27 Kings Hunt locator + wayfinding implementation completed in this session; verified `feature/kingshunt` at `5047226`; no deploy/restart/migration or DB writes were executed)
+- Branch: `feature/kingshunt`
+- Current local git state at latest handoff refresh:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`, `frontend/nextjs-app/package.json`, `frontend/nextjs-app/pages/_app.tsx`, `frontend/nextjs-app/pages/api/locations/index.ts`, `frontend/nextjs-app/pages/locations.tsx`, `frontend/nextjs-app/styles/globals.css`, `packages/database/prisma/schema.prisma`, `pnpm-lock.yaml`
+  - new Kings Hunt paths: `frontend/nextjs-app/components/maps/*`, `frontend/nextjs-app/lib/{geo.ts,kingsHunt.ts,mapStyles.ts}`, `frontend/nextjs-app/lib/server/kingsHunt.ts`, `frontend/nextjs-app/pages/api/kingshunt/*`, `frontend/nextjs-app/pages/kingshunt/*`, `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`, `scripts/backfill-location-data.ts`
+  - unrelated pre-existing workspace artifact left untouched: `docs/handoffs/TASK26_SET_SELECTION_TRACE.md`
+- Latest committed baseline at handoff refresh:
+  - `5047226` fix(add-cards): unblock auto-OCR from pending status deadlock
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-02, Task 27 Kings Hunt locator + wayfinding build)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then created/switched to the requested branch:
+  - `git switch -c feature/kingshunt` -> pass
+- Added only the requested frontend map dependencies:
+  - `pnpm --filter @tenkings/nextjs-app add maplibre-gl leaflet` -> pass
+  - `pnpm --filter @tenkings/nextjs-app add -D @types/leaflet` -> pass
+- Implemented the additive database layer for Kings Hunt:
+  - appended new map/wayfinding fields to `Location` in `packages/database/prisma/schema.prisma`
+  - added `NavigationSession` and `LocationVisit` models in `packages/database/prisma/schema.prisma`
+  - created migration scaffold `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`
+  - created `scripts/backfill-location-data.ts` for coordinate and metadata backfill
+- Implemented the public experience:
+  - upgraded `frontend/nextjs-app/pages/locations.tsx` with a MapLibre hero map while leaving the existing location cards and Live Rip sections intact below it
+  - added reusable map/wayfinding components under `frontend/nextjs-app/components/maps/`
+  - added shared helpers in `frontend/nextjs-app/lib/geo.ts`, `frontend/nextjs-app/lib/kingsHunt.ts`, `frontend/nextjs-app/lib/mapStyles.ts`, and `frontend/nextjs-app/lib/server/kingsHunt.ts`
+  - added new API routes under `frontend/nextjs-app/pages/api/kingshunt/`
+  - added new Kings Hunt pages under `frontend/nextjs-app/pages/kingshunt/`
+- Validation:
+  - `pnpm --filter @tenkings/database generate` -> pass
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/locations.tsx --file pages/kingshunt/index.tsx --file 'pages/kingshunt/[locationSlug].tsx' --file pages/api/locations/index.ts --file pages/api/kingshunt/detect.ts --file pages/api/kingshunt/session.ts --file pages/api/kingshunt/checkpoint.ts --file 'pages/api/kingshunt/[slug].ts' --file components/maps/StoreLocatorMap.tsx --file components/maps/IndoorMap.tsx --file components/maps/VenueMapSVG.tsx --file components/maps/FolsomOutletsSVG.tsx --file components/maps/WalkingDirections.tsx --file components/maps/CheckpointProgress.tsx --file components/maps/NotAtLocationCard.tsx --file components/maps/KingsHuntHeader.tsx --file components/maps/TKDCounter.tsx --file components/maps/StatsBar.tsx --file lib/geo.ts --file lib/kingsHunt.ts --file lib/mapStyles.ts --file lib/server/kingsHunt.ts` -> pass with one `pages/kingshunt/[locationSlug].tsx` `<img>` warning only
+  - `git diff --check` -> pass
+- Notes:
+  - no deploy, restart, migration, or backfill execution was performed in this session
+  - `docs/handoffs/TASK26_SET_SELECTION_TRACE.md` was a pre-existing unrelated workspace artifact and was left untouched
+  - `LocationVisit` was added for the requested schema/integration path but is not yet wired to a purchase/visit event source in this branch
+
+## Session Update (2026-04-02, Task 26 exact Product Set selection trace)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Verified current workstation repo state during final trace handoff:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `5047226`
+- Note: the user request referenced branch `main`, but the actual checked-out branch for this read-only trace was `feature/kingshunt`; no checkout or branch change was executed.
+- Observed unrelated pre-existing working tree changes and left them untouched:
+  - `frontend/nextjs-app/package.json`
+  - `pnpm-lock.yaml`
+- Traced the full Add Cards Product Set selection pipeline from OCR completion to `intakeOptional.productLine` without changing source/runtime state:
+  - client OCR apply path in `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - variant option scope path in `frontend/nextjs-app/pages/api/admin/variants/options.ts`, `frontend/nextjs-app/lib/server/variantOptionPool.ts`, and `frontend/nextjs-app/lib/server/variantSetScope.ts`
+  - identify-set path in `frontend/nextjs-app/pages/api/admin/cards/identify-set.ts` and `frontend/nextjs-app/lib/server/cardSetIdentification.ts`
+  - OCR set-name canonicalization in `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- Wrote the requested downloadable trace to:
+  - `docs/handoffs/TASK26_SET_SELECTION_TRACE.md`
+- Code-level conclusion from the trace:
+  - there is no helper that maps OCR year `2025` to season `2024-25`; year scoping is literal token/regex matching in `loadVariantOptionPool()`
+  - the client gives absolute Product Set priority to `identifiedSetMatch.setId`
+  - the identify-set request key excludes `teamName`, `insertSet`, `frontCardText`, and `combinedText`, even though the server uses those to break ties
+  - the server-side `SetCard` identify path still returns a winning set on unresolved ties via lexical `setId` order using `reason="ambiguous_post_tiebreak_first_candidate"`
+- Updated docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+  - `docs/handoffs/TASK26_SET_SELECTION_TRACE.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-02, docs-only handoff sync after repo-state verification)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Verified current workstation repo state before further doc edits:
+  - `git status -sb` -> `## main...origin/main`
+  - `M docs/HANDOFF_SET_OPS.md`
+  - `M docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `5047226`
+- Confirmed the only uncommitted changes are the handoff docs and the latest committed baseline remains Task 25 auto-OCR pending-status deadlock fix at `5047226`.
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-02, docs-only repo state refresh)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `5047226`
+- Confirmed the latest committed baseline is Task 25 auto-OCR pending-status deadlock fix at commit `5047226`.
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-02, Task 23b identify-set timing fix after OCR queue load)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
