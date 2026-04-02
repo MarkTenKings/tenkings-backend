@@ -13065,3 +13065,113 @@
 ### Notes
 - This was a production DB write task limited to `SetCard` inserts.
 - No deploy, restart, migration, or Prisma schema change was executed.
+
+## 2026-04-02 - Task 27 skipped-set breakdown and checklist-only follow-up analysis
+
+### Summary
+- Reviewed `/tmp/task27-setcard-live.log` after the production run to classify all `141` skipped sets from `populate-set-cards.ts`.
+
+### Skip Breakdown
+- `skipped_no_checklist_approval`: `106`
+- `skipped_no_programs`: `30`
+- `skipped_no_candidate_rows`: `5`
+
+### Checklist-Only Limitation
+- Confirmed the current script requires existing `SetProgram` rows and hard-skips the set when none exist.
+- Relevant code path:
+  - `frontend/nextjs-app/scripts/populate-set-cards.ts:554-583`
+- Implication:
+  - sets with an approved checklist draft but no parallel-derived `SetProgram` rows still cannot populate `SetCard`
+  - this affects both:
+    - the `30` `skipped_no_programs` sets
+    - additional processed sets that still showed high `unmatchedProgramRows`
+
+### Recommended Next Change
+- Enhance the script to derive missing `SetProgram` rows from approved checklist `Card_Type` labels before building candidate `SetCard` rows.
+- Use the checklist `SetTaxonomySource.id` as `sourceId` for those synthesized program rows.
+- Apply this not only to zero-program sets, but to any set missing checklist-derived programs, so the remaining unmatched checklist rows can also populate.
+
+## 2026-04-02 - Task 27 SetCard duplicate integrity verification
+
+### Summary
+- Ran the requested read-only production duplicate/integrity checks against `SetCard` after the population run.
+
+### Query Results
+- Duplicate query:
+  - `SELECT setId, programId, cardNumber, COUNT(*) as cnt FROM "SetCard" GROUP BY setId, programId, cardNumber HAVING COUNT(*) > 1 LIMIT 20`
+  - result: no rows
+- Total vs distinct query:
+  - `SELECT COUNT(*) as total, COUNT(DISTINCT (setId || programId || cardNumber)) as distinct_keys FROM "SetCard"`
+  - result:
+    - `total = 31587`
+    - `distinct_keys = 31587`
+
+### Notes
+- No duplicate `(setId, programId, cardNumber)` keys were observed.
+- This was a read-only production verification step; no writes, deploy, restart, or migration were executed.
+
+## 2026-04-02 - Task 27 checklist-derived SetProgram backfill patch + production rerun
+
+### Summary
+- Patched `frontend/nextjs-app/scripts/populate-set-cards.ts` so checklist-only approved sets can synthesize missing `SetProgram` rows from checklist `Card_Type` labels before `SetCard` insertion.
+- Also fixed the legacy `prefix_match` remap problem by:
+  - de-duplicating `buildProgramLookup(...)` buckets
+  - treating `prefix_match` as too weak to suppress creation of an exact checklist-derived program
+  - reloading `SetProgram` rows after live `createMany(...)`
+  - moving legacy mis-assigned `SetCard` rows to the exact checklist-derived `programId` instead of duplicating them
+
+### Validation Before Live Write
+- Targeted Allen & Ginter dry-run:
+  - `pnpm --dir /Users/markthomas/tenkings-task27-main --filter @tenkings/nextjs-app exec tsx scripts/populate-set-cards.ts --dry-run --verbose --set-id 2024_Topps_Allen_and_Ginter_Baseball`
+  - result:
+    - `would create SetProgram rows: 27`
+    - `would insert rows: 1444`
+    - `would move rows: 300`
+    - `unchanged existing rows: 371`
+    - `unmatched program rows: 0`
+- Full production dry-run log:
+  - `/tmp/task27-setcard-program-dryrun-v2.log`
+- Full production dry-run summary:
+  - processed sets: `122`
+  - skipped sets: `106`
+  - would create `SetProgram` rows: `855`
+  - would insert `SetCard` rows: `40430`
+  - would move `SetCard` rows: `350`
+  - would update rows: `0`
+  - unchanged existing rows: `31237`
+  - unmatched program rows: `0`
+  - missing card-number rows: `1`
+  - blocking draft rows skipped: `0`
+- Reconciliation check before live run:
+  - current production `SetCard` total before rerun: `31587`
+  - `unchanged existing rows (31237) + would move rows (350) = 31587`
+
+### Live Production Write Evidence
+- Full production live run log:
+  - `/tmp/task27-setcard-live-v2.log`
+- Live summary:
+  - processed sets: `122`
+  - skipped sets: `106`
+  - created `SetProgram` rows: `855`
+  - inserted `SetCard` rows: `40430`
+  - moved `SetCard` rows: `350`
+  - updated rows: `0`
+  - unchanged existing rows: `31237`
+  - unmatched program rows: `0`
+  - missing card-number rows: `1`
+  - blocking draft rows skipped: `0`
+
+### Post-Run Production Verification
+- `SetCard.count()` -> `72017`
+- `SetProgram.count()` -> `4828`
+- Duplicate/integrity query result:
+  - `total = 72017`
+  - `distinct_keys = 72017`
+  - duplicate query returned no rows
+- `2024_Topps_Allen_and_Ginter_Baseball` verification after the `350` total move set:
+  - `mini-base-cards = 300`
+  - `buzzin = 15`
+
+### Notes
+- This session included production DB writes limited to `SetProgram` inserts plus `SetCard` inserts/moves from the patched script.
+- No deploy, restart, migration, or Prisma schema change was executed.

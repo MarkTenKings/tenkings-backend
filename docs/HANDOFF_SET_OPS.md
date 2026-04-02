@@ -6811,3 +6811,107 @@ Build Set Ops UI flow with:
     - matching `SetProgram` rows already materialized in the existing pipeline
   - the remaining skipped sets are largely older sets without approved checklist drafts or sets where `SetProgram` was never created
 - No deploy, restart, migration, Prisma schema change, or source-flow modification was executed after the script run.
+
+## Session Update (2026-04-02, Task 27 skipped-set breakdown + checklist-only limitation)
+- Reviewed the production live-run log `/tmp/task27-setcard-live.log` to classify the `141` skipped sets from `populate-set-cards.ts`.
+- Exact skip counts:
+  - `skipped_no_checklist_approval`: `106`
+  - `skipped_no_programs`: `30`
+  - `skipped_no_candidate_rows`: `5`
+- Root cause for checklist-only sets still failing:
+  - current script loads `SetProgram` rows and immediately skips the set if none exist
+  - code: `frontend/nextjs-app/scripts/populate-set-cards.ts:554-583`
+- Important implication:
+  - checklist-only sets that have an approved `PLAYER_WORKSHEET` draft but no `PARALLEL_DB` ingestion currently cannot populate `SetCard`, because the script never creates the required parent `SetProgram` rows
+  - this same dependency also leaves many processed sets with large `unmatchedProgramRows` totals when some checklist card types have no matching `SetProgram`
+- Required future enhancement if checklist-only sets should populate fully:
+  1. derive unique program labels from approved checklist rows before candidate-card processing
+  2. create missing `SetProgram` rows from those checklist labels using the checklist `SetTaxonomySource.id`
+  3. then rerun the existing `Card_Type` -> `programId` matching and `SetCard` insert path
+- Preferred scope for that enhancement:
+  - do not limit it to zero-program sets
+  - instead, backfill missing checklist-derived `SetProgram` rows for any approved set, which would also reduce the current `unmatchedProgramRows = 28916` tail
+
+## Session Update (2026-04-02, Task 27 SetCard duplicate integrity check)
+- Ran the requested read-only production integrity queries against `SetCard` after the populate run.
+- Exact duplicate query executed:
+  - `SELECT setId, programId, cardNumber, COUNT(*) as cnt FROM "SetCard" GROUP BY setId, programId, cardNumber HAVING COUNT(*) > 1 LIMIT 20`
+- Result:
+  - no rows returned
+- Exact total-vs-distinct query executed:
+  - `SELECT COUNT(*) as total, COUNT(DISTINCT (setId || programId || cardNumber)) as distinct_keys FROM "SetCard"`
+- Result:
+  - `total = 31587`
+  - `distinct_keys = 31587`
+- Interpretation:
+  - no duplicate `(setId, programId, cardNumber)` keys were introduced by the population script
+  - the current `SetCard` table is key-unique for the script’s target uniqueness shape
+
+## Session Update (2026-04-02, Task 27 checklist-derived SetProgram backfill + production rerun)
+- Patched `frontend/nextjs-app/scripts/populate-set-cards.ts` in the local `main` worktree to address the checklist-only gap and the legacy prefix-match remap issue.
+- Script changes in this session:
+  - `buildProgramLookup(...)` now de-duplicates lookup buckets so a single `SetProgram` cannot appear twice under the same normalized key
+  - `collectMissingChecklistPrograms(...)` now creates checklist-derived `SetProgram` rows when the prior match was only a weak `prefix_match`, instead of treating that as a valid canonical mapping
+  - after live `SetProgram.createMany(...)`, the script reloads `SetProgram` rows from the DB before building the final lookup
+  - candidate rows now carry legacy `prefix_match` metadata so previously mis-assigned `SetCard` rows can be moved to the exact checklist-derived `programId` instead of duplicated
+  - summary output now includes `created SetProgram rows` and `moved rows`
+- Root cause found while validating the first draft of this patch:
+  - `2024_Topps_Allen_and_Ginter_Baseball` had `300` checklist rows labeled `MINI BASE CARDS`
+  - the original script’s `prefix_match` logic had previously parked those rows under the wrong legacy program
+  - the patched script now creates the exact checklist program and moves those `300` rows instead of inserting duplicates
+- Targeted production dry-run after the fix:
+  - command: `pnpm --dir /Users/markthomas/tenkings-task27-main --filter @tenkings/nextjs-app exec tsx scripts/populate-set-cards.ts --dry-run --verbose --set-id 2024_Topps_Allen_and_Ginter_Baseball`
+  - result:
+    - `would create SetProgram rows: 27`
+    - `would insert rows: 1444`
+    - `would move rows: 300`
+    - `unchanged existing rows: 371`
+    - `unmatched program rows: 0`
+- Full production dry-run with the patched script:
+  - log: `/tmp/task27-setcard-program-dryrun-v2.log`
+  - summary:
+    - processed sets: `122`
+    - skipped sets: `106`
+    - would create `SetProgram` rows: `855`
+    - would insert `SetCard` rows: `40430`
+    - would move `SetCard` rows: `350`
+    - would update rows: `0`
+    - unchanged existing rows: `31237`
+    - unmatched program rows: `0`
+    - missing card-number rows: `1`
+    - blocking draft rows skipped: `0`
+  - reconciliation check before live write:
+    - current production `SetCard` total before the rerun was `31587`
+    - `unchanged existing rows (31237) + would move rows (350) = 31587`
+    - that verified the rerun would not strand or duplicate previously written rows
+- Full production live rerun with the patched script:
+  - log: `/tmp/task27-setcard-live-v2.log`
+  - summary:
+    - processed sets: `122`
+    - skipped sets: `106`
+    - created `SetProgram` rows: `855`
+    - inserted `SetCard` rows: `40430`
+    - moved `SetCard` rows: `350`
+    - updated rows: `0`
+    - unchanged existing rows: `31237`
+    - unmatched program rows: `0`
+    - missing card-number rows: `1`
+    - blocking draft rows skipped: `0`
+- Post-rerun production verification:
+  - `SetCard.count()` -> `72017`
+  - `SetProgram.count()` -> `4828`
+  - duplicate integrity check:
+    - `total = 72017`
+    - `distinct_keys = 72017`
+    - duplicate query returned no rows
+  - `2024_Topps_Allen_and_Ginter_Baseball` now includes the expected exact checklist program rows in `SetCard`, including:
+    - `mini-base-cards = 300`
+    - `buzzin = 15`
+    - no duplicate key regression observed
+- Current local repo state after this session’s code/docs work:
+  - branch: `main`
+  - local worktree is dirty with:
+    - `frontend/nextjs-app/scripts/populate-set-cards.ts`
+    - `docs/HANDOFF_SET_OPS.md`
+    - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, Prisma schema change, Add Cards change, or KingsReview change was executed in this session.

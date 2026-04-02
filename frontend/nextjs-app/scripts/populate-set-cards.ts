@@ -30,6 +30,8 @@ type CandidateSetCardRow = {
   team: string | null;
   isRookie: boolean | null;
   sourceId: string | null;
+  legacyProgramId: string | null;
+  legacyStrategy: string | null;
 };
 
 type ExistingSetCardRow = {
@@ -64,6 +66,7 @@ type SetProcessResult = {
     | "skipped_no_checklist_source"
     | "skipped_no_programs"
     | "skipped_no_candidate_rows";
+  createdPrograms: number;
   approvalId: string | null;
   draftVersionId: string | null;
   ingestionJobId: string | null;
@@ -76,6 +79,7 @@ type SetProcessResult = {
   unmatchedProgramRows: number;
   duplicateCandidateRows: number;
   inserted: number;
+  moved: number;
   updated: number;
   existingUnchanged: number;
   sampleUnmatchedPrograms: string[];
@@ -245,6 +249,15 @@ function uniqueStrings(values: Array<string | null | undefined>) {
   return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
 }
 
+function appendLookupProgram(map: Map<string, ProgramRow[]>, key: string, program: ProgramRow) {
+  if (!key) return;
+  const existing = map.get(key) ?? [];
+  if (existing.some((candidate) => candidate.programId === program.programId && candidate.label === program.label)) {
+    return;
+  }
+  map.set(key, [...existing, program]);
+}
+
 function buildProgramLookup(programs: ProgramRow[]) {
   const byExactLabel = new Map<string, ProgramRow[]>();
   const byProgramId = new Map<string, ProgramRow[]>();
@@ -256,18 +269,18 @@ function buildProgramLookup(programs: ProgramRow[]) {
     const idKey = normalizeProgramId(program.label);
 
     if (exactKey) {
-      byExactLabel.set(exactKey, [...(byExactLabel.get(exactKey) ?? []), program]);
+      appendLookupProgram(byExactLabel, exactKey, program);
     }
     if (idKey) {
-      byProgramId.set(idKey, [...(byProgramId.get(idKey) ?? []), program]);
+      appendLookupProgram(byProgramId, idKey, program);
     }
     if (strippedKey) {
-      byStrippedLabel.set(strippedKey, [...(byStrippedLabel.get(strippedKey) ?? []), program]);
+      appendLookupProgram(byStrippedLabel, strippedKey, program);
     }
 
     const storedProgramIdKey = normalizeProgramId(program.programId);
     if (storedProgramIdKey) {
-      byProgramId.set(storedProgramIdKey, [...(byProgramId.get(storedProgramIdKey) ?? []), program]);
+      appendLookupProgram(byProgramId, storedProgramIdKey, program);
     }
   }
 
@@ -277,6 +290,15 @@ function buildProgramLookup(programs: ProgramRow[]) {
     byProgramId,
     byStrippedLabel,
   };
+}
+
+function inferProgramClass(label: string | null): string | null {
+  const text = sanitizeTaxonomyText(label).toLowerCase();
+  if (!text) return null;
+  if (/auto|autograph|signature/.test(text)) return "autograph";
+  if (/relic|memorabilia|patch|jersey/.test(text)) return "relic";
+  if (/base/.test(text)) return "base";
+  return "insert";
 }
 
 function pickUniqueProgram(candidates: ProgramRow[] | undefined) {
@@ -398,6 +420,78 @@ function buildSetCardKey(programId: string, cardNumber: string) {
   return `${programId}::${cardNumber}`;
 }
 
+function extractChecklistProgramLabel(row: DraftRow): string {
+  return sanitizeTaxonomyText(
+    row.cardType ??
+      firstText(asRecord(row.raw), ["cardType", "program", "programLabel", "subset"]) ??
+      ""
+  );
+}
+
+function collectMissingChecklistPrograms(params: {
+  setId: string;
+  rows: DraftRow[];
+  lookup: ReturnType<typeof buildProgramLookup>;
+}): ProgramRow[] {
+  const missingByProgramId = new Map<string, { label: string; count: number }>();
+
+  for (const row of params.rows) {
+    if (normalizeSetLabel(row.setId) !== params.setId) {
+      continue;
+    }
+
+    if (row.errors.some((issue) => issue.blocking)) {
+      continue;
+    }
+
+    const rawProgramLabel = extractChecklistProgramLabel(row);
+    if (!rawProgramLabel) {
+      continue;
+    }
+
+    const programId = normalizeProgramId(rawProgramLabel);
+    const existingResolution = resolveProgramIdForChecklistRow(rawProgramLabel, params.lookup);
+    const hasExactLabel = (params.lookup.byExactLabel.get(normalizeProgramLabelKey(rawProgramLabel)) ?? []).length > 0;
+    const hasProgramId = (params.lookup.byProgramId.get(programId) ?? []).length > 0;
+    const canReuseExistingProgram =
+      existingResolution.strategy != null &&
+      existingResolution.strategy !== "prefix_match";
+
+    if (canReuseExistingProgram || hasExactLabel || hasProgramId) {
+      continue;
+    }
+
+    const existing = missingByProgramId.get(programId);
+    if (!existing) {
+      missingByProgramId.set(programId, {
+        label: rawProgramLabel,
+        count: 1,
+      });
+      continue;
+    }
+
+    const nextCount = existing.count + 1;
+    const preferNextLabel =
+      rawProgramLabel.length > existing.label.length ||
+      (rawProgramLabel.length === existing.label.length && rawProgramLabel.localeCompare(existing.label) < 0);
+    missingByProgramId.set(programId, {
+      label: preferNextLabel ? rawProgramLabel : existing.label,
+      count: nextCount,
+    });
+  }
+
+  return Array.from(missingByProgramId.entries())
+    .sort(([leftId, left], [rightId, right]) => {
+      if (right.count !== left.count) return right.count - left.count;
+      if (left.label !== right.label) return left.label.localeCompare(right.label);
+      return leftId.localeCompare(rightId);
+    })
+    .map(([programId, value]) => ({
+      programId,
+      label: value.label,
+    }));
+}
+
 function sliceIntoBatches<T>(values: T[], batchSize: number): T[][] {
   const batches: T[][] = [];
   for (let index = 0; index < values.length; index += batchSize) {
@@ -506,6 +600,7 @@ async function processSet(params: {
     return {
       setId,
       status: "skipped_no_checklist_approval",
+      createdPrograms: 0,
       approvalId: null,
       draftVersionId: null,
       ingestionJobId: null,
@@ -518,6 +613,7 @@ async function processSet(params: {
       unmatchedProgramRows: 0,
       duplicateCandidateRows: 0,
       inserted: 0,
+      moved: 0,
       updated: 0,
       existingUnchanged: 0,
       sampleUnmatchedPrograms: [],
@@ -533,6 +629,7 @@ async function processSet(params: {
     return {
       setId,
       status: "skipped_no_checklist_source",
+      createdPrograms: 0,
       approvalId: checklistVersion.approvalId,
       draftVersionId: checklistVersion.draftVersionId,
       ingestionJobId: checklistVersion.ingestionJobId,
@@ -545,13 +642,14 @@ async function processSet(params: {
       unmatchedProgramRows: 0,
       duplicateCandidateRows: 0,
       inserted: 0,
+      moved: 0,
       updated: 0,
       existingUnchanged: 0,
       sampleUnmatchedPrograms: [],
     };
   }
 
-  const programs = await db.setProgram.findMany({
+  let programs = await db.setProgram.findMany({
     where: { setId },
     orderBy: [{ label: "asc" }],
     select: {
@@ -559,11 +657,50 @@ async function processSet(params: {
       label: true,
     },
   });
+  const legacyLookup = buildProgramLookup(programs);
+  let lookup = legacyLookup;
+  const missingPrograms = collectMissingChecklistPrograms({
+    setId,
+    rows: checklistVersion.rows,
+    lookup: legacyLookup,
+  });
+  let createdPrograms = 0;
+
+  if (missingPrograms.length > 0) {
+    if (!params.dryRun) {
+      const created = await db.setProgram.createMany({
+        data: missingPrograms.map((program) => ({
+          setId,
+          programId: program.programId,
+          label: program.label,
+          codePrefix: null,
+          programClass: inferProgramClass(program.label),
+          sourceId,
+        })),
+        skipDuplicates: true,
+      });
+      createdPrograms = created.count;
+      programs = await db.setProgram.findMany({
+        where: { setId },
+        orderBy: [{ label: "asc" }],
+        select: {
+          programId: true,
+          label: true,
+        },
+      });
+    } else {
+      createdPrograms = missingPrograms.length;
+      programs = [...programs, ...missingPrograms];
+    }
+    lookup = buildProgramLookup(programs);
+  }
+
   if (programs.length < 1) {
     console.log("  skip: no SetProgram rows exist for set");
     return {
       setId,
       status: "skipped_no_programs",
+      createdPrograms,
       approvalId: checklistVersion.approvalId,
       draftVersionId: checklistVersion.draftVersionId,
       ingestionJobId: checklistVersion.ingestionJobId,
@@ -576,13 +713,13 @@ async function processSet(params: {
       unmatchedProgramRows: 0,
       duplicateCandidateRows: 0,
       inserted: 0,
+      moved: 0,
       updated: 0,
       existingUnchanged: 0,
       sampleUnmatchedPrograms: [],
     };
   }
 
-  const lookup = buildProgramLookup(programs);
   const candidateMap = new Map<string, CandidateSetCardRow>();
   const unmatchedPrograms = new Set<string>();
   let blockingRows = 0;
@@ -607,11 +744,8 @@ async function processSet(params: {
       continue;
     }
 
-    const rawProgramLabel = sanitizeTaxonomyText(
-      row.cardType ??
-        firstText(asRecord(row.raw), ["cardType", "program", "programLabel", "subset"]) ??
-        ""
-    );
+    const rawProgramLabel = extractChecklistProgramLabel(row);
+    const legacyProgramResolution = resolveProgramIdForChecklistRow(rawProgramLabel, legacyLookup);
     const programResolution = resolveProgramIdForChecklistRow(rawProgramLabel, lookup);
     if (!programResolution.programId) {
       unmatchedProgramRows += 1;
@@ -637,6 +771,8 @@ async function processSet(params: {
       team,
       isRookie,
       sourceId,
+      legacyProgramId: legacyProgramResolution.programId,
+      legacyStrategy: legacyProgramResolution.strategy,
     };
 
     const key = buildSetCardKey(candidate.programId, candidate.cardNumber);
@@ -665,6 +801,7 @@ async function processSet(params: {
     return {
       setId,
       status: "skipped_no_candidate_rows",
+      createdPrograms,
       approvalId: checklistVersion.approvalId,
       draftVersionId: checklistVersion.draftVersionId,
       ingestionJobId: checklistVersion.ingestionJobId,
@@ -677,6 +814,7 @@ async function processSet(params: {
       unmatchedProgramRows,
       duplicateCandidateRows,
       inserted: 0,
+      moved: 0,
       updated: 0,
       existingUnchanged: 0,
       sampleUnmatchedPrograms: Array.from(unmatchedPrograms).slice(0, 8),
@@ -699,34 +837,90 @@ async function processSet(params: {
   );
 
   const inserts: CandidateSetCardRow[] = [];
+  const moves: Array<{
+    fromProgramId: string;
+    candidate: CandidateSetCardRow;
+  }> = [];
   const updates: CandidateSetCardRow[] = [];
   let existingUnchanged = 0;
 
   for (const candidate of candidates) {
     const key = buildSetCardKey(candidate.programId, candidate.cardNumber);
     const existing = existingByKey.get(key);
-    if (!existing) {
-      inserts.push(candidate);
+    if (existing) {
+      if (needsSetCardUpdate(existing, candidate)) {
+        updates.push(candidate);
+      } else {
+        existingUnchanged += 1;
+      }
       continue;
     }
-    if (needsSetCardUpdate(existing, candidate)) {
-      updates.push(candidate);
-    } else {
-      existingUnchanged += 1;
+
+    if (
+      candidate.legacyStrategy === "prefix_match" &&
+      candidate.legacyProgramId &&
+      candidate.legacyProgramId !== candidate.programId
+    ) {
+      const legacyKey = buildSetCardKey(candidate.legacyProgramId, candidate.cardNumber);
+      const legacyExisting = existingByKey.get(legacyKey);
+      if (legacyExisting) {
+        moves.push({
+          fromProgramId: candidate.legacyProgramId,
+          candidate,
+        });
+        existingByKey.delete(legacyKey);
+        existingByKey.set(key, {
+          programId: candidate.programId,
+          cardNumber: candidate.cardNumber,
+          playerName: legacyExisting.playerName ?? candidate.playerName,
+          team: legacyExisting.team ?? candidate.team,
+          isRookie: legacyExisting.isRookie ?? candidate.isRookie,
+          sourceId: legacyExisting.sourceId ?? candidate.sourceId,
+        });
+        continue;
+      }
     }
+
+    inserts.push(candidate);
   }
 
   console.log(
     `  checklist rows=${checklistVersion.rows.length} eligible=${eligibleDraftRows} candidates=${candidates.length} missingCardNumber=${missingCardNumberRows} unmatchedProgram=${unmatchedProgramRows} duplicateCandidates=${duplicateCandidateRows}`
   );
+  if (createdPrograms > 0) {
+    console.log(`  ${params.dryRun ? "would create" : "created"} SetProgram rows=${createdPrograms}`);
+  }
   console.log(
-    `  ${params.dryRun ? "would write" : "writes"}: insert=${inserts.length} update=${updates.length} unchanged=${existingUnchanged} sourceId=${sourceId}`
+    `  ${params.dryRun ? "would write" : "writes"}: insert=${inserts.length} move=${moves.length} update=${updates.length} unchanged=${existingUnchanged} sourceId=${sourceId}`
   );
   if (params.verbose && unmatchedPrograms.size > 0) {
     console.log(`  unmatched card types: ${Array.from(unmatchedPrograms).slice(0, 20).join(" | ")}`);
   }
 
   if (!params.dryRun) {
+    for (const batch of sliceIntoBatches(moves, UPDATE_BATCH_SIZE)) {
+      await db.$transaction(
+        batch.map((entry) =>
+          db.setCard.update({
+            where: {
+              setId_programId_cardNumber: {
+                setId: entry.candidate.setId,
+                programId: entry.fromProgramId,
+                cardNumber: entry.candidate.cardNumber,
+              },
+            },
+            data: {
+              programId: entry.candidate.programId,
+              playerName: entry.candidate.playerName ?? undefined,
+              team: entry.candidate.team ?? undefined,
+              isRookie: entry.candidate.isRookie ?? undefined,
+              sourceId: entry.candidate.sourceId ?? undefined,
+            },
+          })
+        )
+      );
+    }
+
     for (const batch of sliceIntoBatches(inserts, params.batchSize)) {
       await db.setCard.createMany({
         data: batch.map((row) => ({
@@ -768,6 +962,7 @@ async function processSet(params: {
   return {
     setId,
     status: "processed",
+    createdPrograms,
     approvalId: checklistVersion.approvalId,
     draftVersionId: checklistVersion.draftVersionId,
     ingestionJobId: checklistVersion.ingestionJobId,
@@ -780,6 +975,7 @@ async function processSet(params: {
     unmatchedProgramRows,
     duplicateCandidateRows,
     inserted: inserts.length,
+    moved: moves.length,
     updated: updates.length,
     existingUnchanged,
     sampleUnmatchedPrograms: Array.from(unmatchedPrograms).slice(0, 8),
@@ -839,7 +1035,9 @@ async function main() {
     (accumulator, result) => {
       accumulator.processed += result.status === "processed" ? 1 : 0;
       accumulator.skipped += result.status === "processed" ? 0 : 1;
+      accumulator.createdPrograms += result.createdPrograms;
       accumulator.inserted += result.inserted;
+      accumulator.moved += result.moved;
       accumulator.updated += result.updated;
       accumulator.unchanged += result.existingUnchanged;
       accumulator.unmatchedProgramRows += result.unmatchedProgramRows;
@@ -850,7 +1048,9 @@ async function main() {
     {
       processed: 0,
       skipped: 0,
+      createdPrograms: 0,
       inserted: 0,
+      moved: 0,
       updated: 0,
       unchanged: 0,
       unmatchedProgramRows: 0,
@@ -862,7 +1062,9 @@ async function main() {
   console.log("\nSummary");
   console.log(`  processed sets: ${summary.processed}`);
   console.log(`  skipped sets: ${summary.skipped}`);
+  console.log(`  ${options.dryRun ? "would create" : "created"} SetProgram rows: ${summary.createdPrograms}`);
   console.log(`  ${options.dryRun ? "would insert" : "inserted"} rows: ${summary.inserted}`);
+  console.log(`  ${options.dryRun ? "would move" : "moved"} rows: ${summary.moved}`);
   console.log(`  ${options.dryRun ? "would update" : "updated"} rows: ${summary.updated}`);
   console.log(`  unchanged existing rows: ${summary.unchanged}`);
   console.log(`  unmatched program rows: ${summary.unmatchedProgramRows}`);
