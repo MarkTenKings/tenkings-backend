@@ -1,14 +1,36 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-02` (Task 22 upload pipeline fix completed in this session; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-02` (Task 23b identify-set timing fix completed in this session; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state at Task 22 handoff refresh start:
+- Current local git state at Task 23b handoff refresh start:
   - `git status -sb` -> `## main...origin/main`
-- Latest committed baseline before Task 22 edit:
-  - `6bc33fe` feat(kingsreview): tune comp scoring weights + add key data comparison chips
+- Latest committed baseline before Task 23b edit:
+  - `2eeb20e` fix(uploads): fix card pipeline skipping OCR queue + broken image URLs
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-02, Task 23b identify-set timing fix after OCR queue load)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Included the requested diagnostic artifact in this task:
+  - `docs/handoffs/TASK23_DIAGNOSTIC.md`
+- Root-cause findings from that diagnostic:
+  - Task 22 did not directly change the identify-set or Product Set auto-selection logic
+  - queue-loaded cards could enter OCR review with `ocrStatus="empty"` while `pendingAutoOcrCardId` was already scheduled
+  - the identify-set effect therefore fired once before OCR completed, using weak pre-OCR inputs, and the resulting wrong `productLine` then stuck because OCR suggestions only filled blank Product Set values
+- Fix implemented in:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `docs/handoffs/TASK23_DIAGNOSTIC.md`
+- What changed:
+  - `loadQueuedCardForReview()` now computes `shouldAutoRunOcr` first and sets `ocrStatus` to `pending` whenever queue-loaded auto-OCR will run, so the existing identify-set guard blocks until OCR finishes
+  - `applySuggestions()` now allows OCR-constrained `productLine` values to overwrite prior auto-filled Product Set values as long as the operator has not manually touched Product Set
+  - no identify-set endpoint logic, OCR backend logic, upload API logic, or KingsReview layout/scoring code was changed
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx` -> pass with the existing `pages/admin/uploads.tsx` legacy `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-02, Task 22 upload pipeline skip-OCR regression)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:

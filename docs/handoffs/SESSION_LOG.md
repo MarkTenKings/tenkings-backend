@@ -12709,6 +12709,32 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
+## 2026-04-02 - Task 23b identify-set timing fix after OCR queue load
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Synced `main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Committed the Task 23 diagnostic write-up and fixed the queue-load timing bug that let identify-set fire before OCR-backed inputs were ready.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/handoffs/TASK23_DIAGNOSTIC.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- In `loadQueuedCardForReview(...)`, computed `shouldAutoRunOcr` first and now set `ocrStatus` to `pending` whenever queue-loaded auto-OCR will run, so the existing identify-set effect guard blocks until OCR completes.
+- In `applySuggestions(...)`, removed the `!prev.productLine.trim()` restriction while keeping `!intakeOptionalTouched.productLine`, allowing OCR-backed Product Set suggestions to correct earlier auto-filled identify-set values without overriding manual operator choices.
+- Left `cardSetIdentification.ts`, `identify-set.ts`, `ocr-suggest.ts`, and the existing identify-set priority chain unchanged.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx` passed with the existing `pages/admin/uploads.tsx` legacy `<img>` warnings only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
 ## 2026-04-02 - Task 22 upload pipeline skip-OCR regression
 
 ### Summary

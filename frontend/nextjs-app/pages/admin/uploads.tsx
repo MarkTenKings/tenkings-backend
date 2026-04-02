@@ -2406,13 +2406,6 @@ export default function AdminUploads() {
       setTeachBusy(false);
       setTeachFeedback(null);
       setTeachCapturedFromCorrections(false);
-      setOcrStatus(hasExistingOcrSuggestions ? "ready" : "empty");
-      setOcrError(null);
-      setOcrApplied(false);
-      setOcrMode(null);
-      setIntakeReviewMode("review");
-      setIntakeStep("required");
-      setIntakeError(null);
       const shouldRefreshExistingOcr =
         hasExistingOcrSuggestions &&
         shouldRefreshLoadedOcrSuggestions({
@@ -2422,9 +2415,15 @@ export default function AdminUploads() {
           year: sanitizeNullableText(ocrFields.year ?? normalized.year ?? attributes.year ?? ""),
           manufacturer: sanitizeNullableText(ocrFields.manufacturer ?? normalized.company ?? attributes.brand ?? ""),
         });
-      setPendingAutoOcrCardId(
-        hasRequiredIntakePhotos && (!hasExistingOcrSuggestions || shouldRefreshExistingOcr) ? cardId : null
-      );
+      const shouldAutoRunOcr = hasRequiredIntakePhotos && (!hasExistingOcrSuggestions || shouldRefreshExistingOcr);
+      setOcrStatus(shouldAutoRunOcr ? "pending" : hasExistingOcrSuggestions ? "ready" : "empty");
+      setOcrError(null);
+      setOcrApplied(false);
+      setOcrMode(null);
+      setIntakeReviewMode("review");
+      setIntakeStep("required");
+      setIntakeError(null);
+      setPendingAutoOcrCardId(shouldAutoRunOcr ? cardId : null);
     },
     [resolveApiUrl, session?.token]
   );
@@ -2838,7 +2837,7 @@ export default function AdminUploads() {
                 )}`.trim(),
               ], 1.1)
             : null;
-        if (constrainedProductLine && !intakeOptionalTouched.productLine && !prev.productLine.trim()) {
+        if (constrainedProductLine && !intakeOptionalTouched.productLine) {
           next.productLine = constrainedProductLine;
           ocrAppliedOptionalFieldsRef.current.push("productLine");
         }
