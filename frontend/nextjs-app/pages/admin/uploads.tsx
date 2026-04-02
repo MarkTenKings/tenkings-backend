@@ -3263,7 +3263,7 @@ export default function AdminUploads() {
     if (intakeCardId !== pendingAutoOcrCardId) {
       return;
     }
-    if (ocrStatus === "running" || ocrStatus === "pending") {
+    if (ocrStatus === "running") {
       return;
     }
     setPendingAutoOcrCardId(null);

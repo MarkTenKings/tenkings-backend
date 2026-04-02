@@ -12709,6 +12709,31 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
+## 2026-04-02 - Task 25 auto-OCR pending-status deadlock fix
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Synced `main` before editing via `git pull --ff-only origin main` -> `Already up to date.`
+- Applied the requested one-line fix so queue-loaded auto-OCR is no longer blocked when `ocrStatus` starts at `pending`.
+- Included the previously created `docs/handoffs/TASK24_AUDIT.md` in the commit for this task.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/handoffs/TASK24_AUDIT.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Changed the pending-auto-OCR effect guard in `/admin/uploads` from `if (ocrStatus === "running" || ocrStatus === "pending") return;` to `if (ocrStatus === "running") return;`.
+- No other source logic was changed.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx` passed with the existing `pages/admin/uploads.tsx` legacy `<img>` warnings only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
 ## 2026-04-02 - Task 23b identify-set timing fix after OCR queue load
 
 ### Summary
@@ -12734,6 +12759,37 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-02 - Task 24 Add Cards capture-to-OCR-queue audit
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Performed a read-only audit of the current `main` HEAD Add Cards pipeline from camera capture through OCR queue review loading.
+- Wrote the requested trace and findings to `docs/handoffs/TASK24_AUDIT.md`.
+
+### Files Reviewed
+- `AGENTS.md`
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/uploads/presign.ts`
+- `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`
+- `frontend/nextjs-app/pages/api/admin/uploads/ocr-queue.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/photos/presign.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId].ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/identify-set.ts`
+
+### Files Updated
+- `docs/handoffs/TASK24_AUDIT.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- No source code, deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+- The audit captured current-HEAD behavior only and did not rely on git history or diffs.
 
 ## 2026-04-02 - Task 22 upload pipeline skip-OCR regression
 
