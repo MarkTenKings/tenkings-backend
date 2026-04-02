@@ -6767,3 +6767,47 @@ Build Set Ops UI flow with:
     - `raw.programLabel`
   - verified matching checklist `SetTaxonomySource` rows exist even when labeled `adapter-missing`
 - No deploy, restart, migration, or Add Cards/KingsReview source-flow changes were executed in this task segment.
+
+## Session Update (2026-04-02, Task 27 push + production SetCard population complete)
+- Committed and pushed the Task 27 implementation on `main`:
+  - commit: `5d1a6be`
+  - push result: `5047226..5d1a6be  main -> main`
+- Post-push local repo state in the clean worktree:
+  - branch: `main`
+  - `git status -sb` -> clean (`## main...origin/main`)
+- Ran the new script against production in the required order:
+  1. dry-run
+  2. live execution
+- Dry-run command:
+  - `pnpm --dir /Users/markthomas/tenkings-task27-main --filter @tenkings/nextjs-app exec tsx scripts/populate-set-cards.ts --dry-run`
+  - using the production `DATABASE_URL` fetched from the droplet/container environment
+- Dry-run summary:
+  - processed sets: `87`
+  - skipped sets: `141`
+  - would insert rows: `31587`
+  - would update rows: `0`
+  - unchanged existing rows: `0`
+  - unmatched program rows: `28916`
+  - missing card-number rows: `0`
+  - blocking draft rows skipped: `0`
+- Live execution command:
+  - `pnpm --dir /Users/markthomas/tenkings-task27-main --filter @tenkings/nextjs-app exec tsx scripts/populate-set-cards.ts`
+  - using the same production `DATABASE_URL`
+- Live execution summary:
+  - processed sets: `87`
+  - skipped sets: `141`
+  - inserted rows: `31587`
+  - updated rows: `0`
+  - unchanged existing rows: `0`
+  - unmatched program rows: `28916`
+  - missing card-number rows: `0`
+  - blocking draft rows skipped: `0`
+- Post-run production verification:
+  - read-only Prisma count against production `SetCard` returned `31587`
+- Operational interpretation:
+  - `SetCard` is no longer empty
+  - the rows were populated only for sets that had both:
+    - an approved `PLAYER_WORKSHEET` draft version
+    - matching `SetProgram` rows already materialized in the existing pipeline
+  - the remaining skipped sets are largely older sets without approved checklist drafts or sets where `SetProgram` was never created
+- No deploy, restart, migration, Prisma schema change, or source-flow modification was executed after the script run.

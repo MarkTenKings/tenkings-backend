@@ -13022,3 +13022,46 @@
 
 ### Notes
 - No deploy, restart, migration, or source-code changes to Add Cards or KingsReview were executed in this task segment.
+
+## 2026-04-02 - Task 27 production SetCard population
+
+### Summary
+- Committed and pushed the Task 27 implementation on `main`:
+  - `5d1a6be` - `feat(set-ops): document ingestion pipeline + add SetCard population script`
+- Ran the new `frontend/nextjs-app/scripts/populate-set-cards.ts` script against production after the push.
+- Executed the required sequence:
+  1. full production `--dry-run`
+  2. full production live run
+
+### Dry-Run Evidence
+- Dry-run summary from `/tmp/task27-setcard-dryrun.log`:
+  - processed sets: `87`
+  - skipped sets: `141`
+  - would insert rows: `31587`
+  - would update rows: `0`
+  - unchanged existing rows: `0`
+  - unmatched program rows: `28916`
+  - missing card-number rows: `0`
+  - blocking draft rows skipped: `0`
+
+### Live Run Evidence
+- Live summary from `/tmp/task27-setcard-live.log`:
+  - processed sets: `87`
+  - skipped sets: `141`
+  - inserted rows: `31587`
+  - updated rows: `0`
+  - unchanged existing rows: `0`
+  - unmatched program rows: `28916`
+  - missing card-number rows: `0`
+  - blocking draft rows skipped: `0`
+
+### Production Verification
+- Verified post-run production `SetCard` count from the workstation with Prisma using the production `DATABASE_URL`:
+  - `31587`
+- Local clean-worktree state after push and runtime work:
+  - branch: `main`
+  - `git status -sb` -> `## main...origin/main`
+
+### Notes
+- This was a production DB write task limited to `SetCard` inserts.
+- No deploy, restart, migration, or Prisma schema change was executed.
