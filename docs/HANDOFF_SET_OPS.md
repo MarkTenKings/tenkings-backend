@@ -6709,3 +6709,61 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
+## Session Update (2026-04-02, Task 27 set ingestion guide + SetCard population script)
+- Re-read the required startup docs per `AGENTS.md`, but worked in a clean `main` worktree at:
+  - `/Users/markthomas/tenkings-task27-main`
+  - reason: the original workspace was on dirty branch `feature/kingshunt` with unrelated local changes
+- Investigated the full Set Ops CSV pipeline and wrote the guide:
+  - `docs/handoffs/TASK27_SET_INGESTION_GUIDE.md`
+- Main investigation conclusions:
+  - current approved-set CSV path is `/admin/set-ops-review` Step 1 upload -> `POST /api/admin/set-ops/ingestion` -> `POST /api/admin/set-ops/drafts/build` -> `POST /api/admin/set-ops/approval`
+  - uploaded checklist/odds data lands first in `SetIngestionJob.rawPayload`
+  - approved checklist card-level rows remain preserved in `SetDraftVersion.dataJson.rows[*].raw`
+  - `SetProgram` / `SetParallel` are materialized via taxonomy ingest from `PARALLEL_DB` adapter output
+  - checklist `PLAYER_WORKSHEET` taxonomy ingest is blocked by `canRunManufacturerAdapter(...)` returning `false` for that dataset type
+  - approval `runSeedJob(...)` only syncs `CardVariant` and never writes `SetCard`
+  - this is why production currently shows `SetCard = 0` even though checklist rows exist in approved draft versions
+- Added the requested SetCard repair script at:
+  - `frontend/nextjs-app/scripts/populate-set-cards.ts`
+- Script behavior:
+  - reads approved `PLAYER_WORKSHEET` draft versions
+  - extracts preserved checklist card rows from `SetDraftVersion.dataJson`
+  - matches checklist `Card_Type` to existing `SetProgram`
+  - writes idempotent batched `SetCard` inserts and safe fill-only updates
+  - supports `--dry-run`, `--batch-size`, `--limit`, `--set-id`, and `--verbose`
+  - intended runtime command:
+    - `pnpm --filter @tenkings/nextjs-app exec tsx scripts/populate-set-cards.ts --dry-run`
+- Important implementation detail:
+  - `pnpm --filter @tenkings/nextjs-app exec pwd` confirms the filtered exec runs inside `frontend/nextjs-app`, so the script path is correct there
+- Local validation completed so far:
+  - `pnpm --dir /Users/markthomas/tenkings-task27-main --filter @tenkings/nextjs-app exec pwd` -> `/Users/markthomas/tenkings-task27-main/frontend/nextjs-app`
+  - `pnpm --dir /Users/markthomas/tenkings-task27-main --filter @tenkings/nextjs-app exec tsx scripts/populate-set-cards.ts --help` -> pass
+- Repo state in the clean worktree before final Task 27 validation/push:
+  - branch: `main`
+  - HEAD: `5047226`
+  - modified:
+    - `frontend/nextjs-app/package.json`
+    - `pnpm-lock.yaml`
+    - `docs/HANDOFF_SET_OPS.md`
+    - `docs/handoffs/SESSION_LOG.md`
+  - untracked:
+    - `docs/handoffs/TASK27_SET_INGESTION_GUIDE.md`
+    - `frontend/nextjs-app/scripts/populate-set-cards.ts`
+- Production evidence gathered during this task:
+  - table counts:
+    - `SetCard = 0`
+    - `SetProgram = 3973`
+    - `SetDraft = 241`
+    - `SetTaxonomySource = 1116`
+    - `SetVariation = 0`
+    - `SetParallel = 6853`
+    - `CardVariant = 83991`
+  - verified approved checklist draft rows still contain card-level fields such as:
+    - `cardNumber`
+    - `raw.playerName`
+    - `raw.team`
+    - `raw.isRookie`
+    - `raw.programLabel`
+  - verified matching checklist `SetTaxonomySource` rows exist even when labeled `adapter-missing`
+- No deploy, restart, migration, or Add Cards/KingsReview source-flow changes were executed in this task segment.
