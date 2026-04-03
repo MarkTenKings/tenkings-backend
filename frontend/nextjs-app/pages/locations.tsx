@@ -1,11 +1,18 @@
 import Head from "next/head";
 import Image from "next/image";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
 import LiveRipPreview from "../components/LiveRipPreview";
 import { useSession } from "../hooks/useSession";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
+import type { StoreLocatorMapLocation } from "../components/maps/StoreLocatorMap";
+
+const StoreLocatorMap = dynamic(() => import("../components/maps/StoreLocatorMap"), {
+  ssr: false,
+  loading: () => <div className="h-full w-full animate-pulse bg-white/[0.04]" />,
+});
 
 interface RipEntry {
   title: string;
@@ -30,6 +37,20 @@ interface LocationRecord {
   address: string;
   mapsUrl: string | null;
   mediaUrl: string | null;
+  locationType: string | null;
+  locationStatus: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  venueCenterLat: number | null;
+  venueCenterLng: number | null;
+  geofenceRadiusM: number | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  hours: string | null;
+  hasIndoorMap: boolean;
+  walkingTimeMin: number | null;
+  landmarks: string[];
   recentRips: RipEntry[];
   liveRips: LiveRipClip[];
   createdAt: string;
@@ -134,6 +155,10 @@ function LocationsPage() {
                   createdAt: rip.createdAt ?? new Date().toISOString(),
                 }))
               : [],
+            landmarks: Array.isArray((location as { landmarks?: string[] }).landmarks)
+              ? ((location as { landmarks: string[] }).landmarks ?? []).filter((landmark) => typeof landmark === "string")
+              : [],
+            hasIndoorMap: Boolean((location as { hasIndoorMap?: boolean }).hasIndoorMap),
           }));
           setLocations(sanitized);
         }
@@ -166,6 +191,35 @@ function LocationsPage() {
     const timeout = window.setTimeout(() => setFlash(null), 5000);
     return () => window.clearTimeout(timeout);
   }, [flash]);
+
+  const mapLocations = useMemo<StoreLocatorMapLocation[]>(
+    () =>
+      locations
+        .filter((location) => typeof location.latitude === "number" && typeof location.longitude === "number")
+        .map((location) => ({
+          id: location.id,
+          slug: location.slug,
+          name: location.name,
+          address: location.address,
+          latitude: location.latitude as number,
+          longitude: location.longitude as number,
+          locationType: location.locationType,
+          city: location.city,
+          state: location.state,
+        })),
+    [locations],
+  );
+
+  const handleMapMarkerClick = useCallback((slug: string) => {
+    const card = document.getElementById(`location-${slug}`);
+    if (!card) {
+      return;
+    }
+
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.add("highlight-pulse");
+    window.setTimeout(() => card.classList.remove("highlight-pulse"), 2000);
+  }, []);
 
   const beginCreate = useCallback(() => {
     setEditMode("create");
@@ -342,13 +396,26 @@ function LocationsPage() {
       </Head>
 
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6 py-12">
-        <header className="space-y-4">
-          <p className="text-sm uppercase tracking-[0.3em] text-violet-300">Find a location</p>
-          <h1 className="font-heading text-4xl uppercase tracking-[0.2em] text-white md:text-5xl">Pick & Rip in Person</h1>
-          <p className="text-sm text-slate-400">
-            Ten Kings Collectibles machines are stocked, authenticated, and ready for live ripping. Visit a location, scan your
-            code, and capture the moment.
-          </p>
+        <header className="space-y-6">
+          <div className="space-y-4">
+            <p className="text-sm uppercase tracking-[0.3em] text-violet-300">Find a location</p>
+            <h1 className="font-heading text-4xl uppercase tracking-[0.2em] text-white md:text-5xl">Pick & Rip in Person</h1>
+            <p className="max-w-3xl text-sm text-slate-400">
+              Ten Kings Collectibles machines are stocked, authenticated, and ready for live ripping. Visit a location, scan your
+              code, and capture the moment.
+            </p>
+          </div>
+          <div className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))] p-3 shadow-card md:p-5">
+            <div className="overflow-hidden rounded-[1.5rem] border border-white/10 bg-[#09090b]">
+              <div className="h-[300px] md:h-[400px]">
+                <StoreLocatorMap locations={mapLocations} onMarkerClick={handleMapMarkerClick} />
+              </div>
+            </div>
+            <div className="flex flex-col gap-3 px-2 pt-4 text-xs uppercase tracking-[0.24em] text-slate-500 md:flex-row md:items-center md:justify-between">
+              <span>{mapLocations.length} mapped venues across the Ten Kings network</span>
+              <span>Tap a gold crown to jump to that location below</span>
+            </div>
+          </div>
         </header>
 
         {flash && (
@@ -381,99 +448,95 @@ function LocationsPage() {
         ) : (
           <div className="space-y-16">
             {locations.map((location) => (
-              <section
-                key={location.id}
-                id={location.slug}
-                className="space-y-6 rounded-[2.5rem] border border-white/10 bg-night-900/70 p-6 shadow-card md:p-10"
-              >
-                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                  <div className="space-y-3">
-                    <h2 className="font-heading text-3xl uppercase tracking-[0.24em] text-white">{location.name}</h2>
-                    {location.description && <p className="text-sm text-slate-300">{location.description}</p>}
-                    <p className="text-xs uppercase tracking-[0.3em] text-slate-400">{location.address}</p>
-                    {location.mapsUrl && (
-                      <Link href={location.mapsUrl} target="_blank" rel="noreferrer" className="inline-flex items-center text-xs uppercase tracking-[0.3em] text-gold-300 underline">
-                        Open in Google Maps
-                      </Link>
+              <div key={location.id} id={`location-${location.slug}`} className="scroll-mt-28 rounded-[2.5rem] transition-shadow duration-500">
+                <section id={location.slug} className="space-y-6 rounded-[2.5rem] border border-white/10 bg-night-900/70 p-6 shadow-card md:p-10">
+                  <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                    <div className="space-y-3">
+                      <h2 className="font-heading text-3xl uppercase tracking-[0.24em] text-white">{location.name}</h2>
+                      {location.description && <p className="text-sm text-slate-300">{location.description}</p>}
+                      <p className="text-xs uppercase tracking-[0.3em] text-slate-400">{location.address}</p>
+                      {location.mapsUrl && (
+                        <Link href={location.mapsUrl} target="_blank" rel="noreferrer" className="inline-flex items-center text-xs uppercase tracking-[0.3em] text-gold-300 underline">
+                          Open in Google Maps
+                        </Link>
+                      )}
+                    </div>
+                    {isAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => beginEdit(location)}
+                        className="self-start rounded-full border border-white/20 px-5 py-2 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
+                      >
+                        Edit location
+                      </button>
                     )}
                   </div>
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      onClick={() => beginEdit(location)}
-                      className="self-start rounded-full border border-white/20 px-5 py-2 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
-                    >
-                      Edit location
-                    </button>
-                  )}
-                </div>
 
-                {renderMedia(location.mediaUrl)}
+                  {renderMedia(location.mediaUrl)}
 
-                <div className="space-y-6">
-                  <div className="space-y-4">
-                    <h3 className="font-heading text-xl uppercase tracking-[0.24em] text-white">Live rip highlights</h3>
-                    {location.liveRips && location.liveRips.length > 0 ? (
-                      <div className="grid gap-4 md:grid-cols-2">
-                        {location.liveRips.map((rip) => (
-                          <div key={rip.id} className="space-y-3 rounded-2xl border border-white/10 bg-night-900/80 p-5">
-                            <div className="space-y-2">
-                              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
-                                {new Date(rip.createdAt).toLocaleDateString()}
-                              </p>
-                              <h4 className="text-sm uppercase tracking-[0.24em] text-white">{rip.title}</h4>
+                  <div className="space-y-6">
+                    <div className="space-y-4">
+                      <h3 className="font-heading text-xl uppercase tracking-[0.24em] text-white">Live rip highlights</h3>
+                      {location.liveRips && location.liveRips.length > 0 ? (
+                        <div className="grid gap-4 md:grid-cols-2">
+                          {location.liveRips.map((rip) => (
+                            <div key={rip.id} className="space-y-3 rounded-2xl border border-white/10 bg-night-900/80 p-5">
+                              <div className="space-y-2">
+                                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">
+                                  {new Date(rip.createdAt).toLocaleDateString()}
+                                </p>
+                                <h4 className="text-sm uppercase tracking-[0.24em] text-white">{rip.title}</h4>
+                              </div>
+                              <LiveRipPreview
+                                id={rip.id}
+                                title={rip.title}
+                                videoUrl={rip.videoUrl}
+                                thumbnailUrl={rip.thumbnailUrl}
+                                muted={activePreviewId !== rip.id}
+                                onToggleMute={() => setActivePreviewId((prev) => (prev === rip.id ? null : rip.id))}
+                                viewCount={rip.viewCount}
+                                aspectClassName="pb-[56.25%]"
+                              />
+                              <div className="flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.3em] text-slate-400">
+                                <Link
+                                  href={`/live/${rip.slug}`}
+                                  className="rounded-full border border-white/20 px-3 py-1 text-xs text-sky-300 transition hover:border-sky-300 hover:text-sky-100"
+                                >
+                                  View page
+                                </Link>
+                              </div>
                             </div>
-                            <LiveRipPreview
-                              id={rip.id}
-                              title={rip.title}
-                              videoUrl={rip.videoUrl}
-                              thumbnailUrl={rip.thumbnailUrl}
-                              muted={activePreviewId !== rip.id}
-                              onToggleMute={() =>
-                                setActivePreviewId((prev) => (prev === rip.id ? null : rip.id))
-                              }
-                              viewCount={rip.viewCount}
-                              aspectClassName="pb-[56.25%]"
-                            />
-                            <div className="flex flex-wrap items-center gap-3 text-[11px] uppercase tracking-[0.3em] text-slate-400">
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Live rip videos will appear here after the next session.</p>
+                      )}
+                    </div>
+
+                    {location.recentRips && location.recentRips.length > 0 && (
+                      <div className="space-y-4">
+                        <h4 className="font-heading text-sm uppercase tracking-[0.3em] text-white">Featured pulls</h4>
+                        <div className="grid gap-4 md:grid-cols-2">
+                          {location.recentRips.map((rip, idx) => (
+                            <div key={`${location.id}-rip-${idx}`} className="space-y-2 rounded-2xl border border-white/10 bg-night-900/80 p-5">
+                              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">{rip.title}</p>
                               <Link
-                                href={`/live/${rip.slug}`}
-                                className="rounded-full border border-white/20 px-3 py-1 text-xs text-sky-300 transition hover:border-sky-300 hover:text-sky-100"
+                                href={rip.videoUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-gold-300 underline"
                               >
-                                View page
+                                Watch the rip
+                                <span aria-hidden>→</span>
                               </Link>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
-                    ) : (
-                      <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Live rip videos will appear here after the next session.</p>
                     )}
                   </div>
-
-                  {location.recentRips && location.recentRips.length > 0 && (
-                    <div className="space-y-4">
-                      <h4 className="font-heading text-sm uppercase tracking-[0.3em] text-white">Featured pulls</h4>
-                      <div className="grid gap-4 md:grid-cols-2">
-                        {location.recentRips.map((rip, idx) => (
-                          <div key={`${location.id}-rip-${idx}`} className="space-y-2 rounded-2xl border border-white/10 bg-night-900/80 p-5">
-                            <p className="text-xs uppercase tracking-[0.3em] text-slate-400">{rip.title}</p>
-                            <Link
-                              href={rip.videoUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-gold-300 underline"
-                            >
-                              Watch the rip
-                              <span aria-hidden>→</span>
-                            </Link>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </section>
+                </section>
+              </div>
             ))}
           </div>
         )}

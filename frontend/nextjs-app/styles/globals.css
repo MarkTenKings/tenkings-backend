@@ -25,3 +25,129 @@ a {
 button {
   font: inherit;
 }
+
+.tk-map-theme .maplibregl-canvas-container,
+.tk-map-theme .maplibregl-canvas {
+  filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(1.1) saturate(0.3);
+}
+
+.tk-map-theme .maplibregl-ctrl-group {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(17, 17, 17, 0.92);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.32);
+}
+
+.tk-map-theme .maplibregl-ctrl button {
+  background: transparent;
+  color: #f4f4f5;
+}
+
+.tk-map-theme .maplibregl-popup-content {
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: rgba(17, 17, 17, 0.95);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
+}
+
+.tk-map-theme .maplibregl-popup-tip {
+  border-top-color: rgba(17, 17, 17, 0.95) !important;
+}
+
+.tk-map-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transform: translateZ(0);
+  transition: transform 180ms ease, filter 180ms ease;
+}
+
+.tk-map-marker:hover,
+.tk-map-marker:focus-visible {
+  transform: scale(1.08);
+  filter: drop-shadow(0 0 18px rgba(212, 168, 67, 0.38));
+}
+
+.tk-map-popup {
+  min-width: 190px;
+  padding: 0.9rem 1rem 0.95rem;
+  color: #f5f5f7;
+}
+
+.tk-map-popup__title {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.tk-map-popup__meta {
+  margin: 0.3rem 0 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9e9ea6;
+}
+
+.tk-map-popup__action {
+  margin-top: 0.8rem;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #d4a843;
+  cursor: pointer;
+}
+
+@keyframes tk-pulse {
+  0% {
+    filter: drop-shadow(0 0 0 rgba(212, 168, 67, 0.45));
+  }
+  70% {
+    filter: drop-shadow(0 0 16px rgba(212, 168, 67, 0));
+  }
+  100% {
+    filter: drop-shadow(0 0 0 rgba(212, 168, 67, 0));
+  }
+}
+
+@keyframes tk-card-highlight {
+  0% {
+    box-shadow: 0 0 0 rgba(212, 168, 67, 0);
+  }
+  18% {
+    box-shadow: 0 0 0 2px rgba(212, 168, 67, 0.48), 0 18px 60px rgba(212, 168, 67, 0.16);
+  }
+  100% {
+    box-shadow: 0 0 0 rgba(212, 168, 67, 0);
+  }
+}
+
+@keyframes tk-checkpoint-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+  }
+}
+
+.tk-machine-marker {
+  animation: tk-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.tk-checkpoint-current {
+  animation: tk-checkpoint-pulse 1.8s ease-in-out infinite;
+  transform-origin: center;
+}
+
+.highlight-pulse {
+  animation: tk-card-highlight 2s ease forwards;
+}

@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma } from "@tenkings/database";
+import { prisma, type Prisma } from "@tenkings/database";
 import { z } from "zod";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
 import { requireUserSession, toUserErrorResponse } from "../../../lib/server/session";
@@ -43,7 +43,30 @@ const slugify = (value: string) =>
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method === "GET") {
     try {
+      const mapOnly = req.query.mapOnly === "true";
+      const includeInactive = req.query.includeInactive === "true";
+      const stateFilter = typeof req.query.state === "string" ? req.query.state.trim().toUpperCase() : null;
+      const locationTypeFilter =
+        typeof req.query.locationType === "string" ? req.query.locationType.trim().toLowerCase() : null;
+
+      const where: Prisma.LocationWhereInput = {
+        ...(stateFilter ? { state: stateFilter } : {}),
+        ...(locationTypeFilter ? { locationType: locationTypeFilter } : {}),
+        ...(mapOnly
+          ? {
+              latitude: { not: null },
+              longitude: { not: null },
+            }
+          : {}),
+        ...(includeInactive
+          ? {}
+          : {
+              OR: [{ locationStatus: "active" }, { locationStatus: null }],
+            }),
+      };
+
       const locations = await prisma.location.findMany({
+        where,
         orderBy: { name: "asc" },
         include: {
           liveRips: {
@@ -56,6 +79,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         locations: locations.map((location) => ({
           ...location,
           recentRips: Array.isArray(location.recentRips) ? (location.recentRips as Array<Record<string, unknown>>) : [],
+          landmarks: Array.isArray(location.landmarks) ? location.landmarks : [],
           liveRips: Array.isArray(location.liveRips)
             ? location.liveRips.map((liveRip) => ({
                 id: liveRip.id,
@@ -107,6 +131,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         location: {
           ...location,
           recentRips: Array.isArray(location.recentRips) ? (location.recentRips as Array<Record<string, unknown>>) : [],
+          landmarks: Array.isArray(location.landmarks) ? location.landmarks : [],
         },
       });
     } catch (error) {
