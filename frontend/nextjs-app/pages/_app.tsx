@@ -1,4 +1,6 @@
 import "../styles/globals.css";
+import "maplibre-gl/dist/maplibre-gl.css";
+import "leaflet/dist/leaflet.css";
 
 import type { AppProps } from "next/app";
 import Head from "next/head";

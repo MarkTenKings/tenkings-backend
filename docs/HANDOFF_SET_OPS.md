@@ -1,7 +1,7 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-02` (Task 27 Kings Hunt locator + wayfinding implementation completed in this session; verified `feature/kingshunt` at `5047226`; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-03` (docs-only repo-state refresh; verified `feature/kingshunt` at `09d602f`; no deploy/restart/migration or DB writes were executed)
 - Branch: `feature/kingshunt`
 - Current local git state at latest handoff refresh:
   - `git status -sb` -> `## feature/kingshunt`
@@ -9,9 +9,63 @@
   - new Kings Hunt paths: `frontend/nextjs-app/components/maps/*`, `frontend/nextjs-app/lib/{geo.ts,kingsHunt.ts,mapStyles.ts}`, `frontend/nextjs-app/lib/server/kingsHunt.ts`, `frontend/nextjs-app/pages/api/kingshunt/*`, `frontend/nextjs-app/pages/kingshunt/*`, `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`, `scripts/backfill-location-data.ts`
   - unrelated pre-existing workspace artifact left untouched: `docs/handoffs/TASK26_SET_SELECTION_TRACE.md`
 - Latest committed baseline at handoff refresh:
-  - `5047226` fix(add-cards): unblock auto-OCR from pending status deadlock
+  - `09d602f` docs(handoff): add task 26 set selection trace
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-03, docs-only repo state refresh)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - tracked modifications still present: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`, `frontend/nextjs-app/package.json`, `frontend/nextjs-app/pages/_app.tsx`, `frontend/nextjs-app/pages/api/locations/index.ts`, `frontend/nextjs-app/pages/locations.tsx`, `frontend/nextjs-app/styles/globals.css`, `packages/database/prisma/schema.prisma`, `pnpm-lock.yaml`
+  - untracked Kings Hunt paths still present: `frontend/nextjs-app/components/maps/*`, `frontend/nextjs-app/lib/{geo.ts,kingsHunt.ts,mapStyles.ts}`, `frontend/nextjs-app/lib/server/kingsHunt.ts`, `frontend/nextjs-app/pages/api/kingshunt/*`, `frontend/nextjs-app/pages/kingshunt/*`, `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`, `scripts/backfill-location-data.ts`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `09d602f`
+  - `git log --oneline -n 1` -> `09d602f docs(handoff): add task 26 set selection trace`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-02, production CardVariant sample query)
+- Re-used the documented SSH-to-droplet read path and queried production from the live `bytebot-lite-service` container using a read-only Prisma Client script.
+- Local schema confirmation before query:
+  - `packages/database/prisma/schema.prisma` `model CardVariant` contains `setId`, `programId`, `cardNumber`, `parallelId`, `parallelFamily`, `keywords`, `oddsInfo`, timestamps, and `taxonomyMap`
+  - `CardVariant` does not have a `playerName` column, so the sample output only includes `setId`, `programId`, and `cardNumber`
+- Production filter used:
+  - `CardVariant.where.AND = [{ setId contains '2025' }, { setId contains 'Topps' }, { setId contains 'Basketball' }]`
+  - order by `setId asc, programId asc, cardNumber asc, parallelId asc`
+  - `take: 5`
+- Production sample rows observed:
+  - `2025-26_Topps_Basketball` | `1980-81-topps-chrome-basketball` | `ALL`
+  - `2025-26_Topps_Basketball` | `1980-81-topps-chrome-basketball` | `ALL`
+  - `2025-26_Topps_Basketball` | `1980-81-topps-chrome-basketball` | `ALL`
+  - `2025-26_Topps_Basketball` | `1980-81-topps-chrome-basketball` | `TC-AB`
+  - `2025-26_Topps_Basketball` | `1980-81-topps-chrome-basketball` | `TC-AD`
+- Notes:
+  - duplicate-looking rows are expected from `CardVariant` because uniqueness includes `parallelId`, which was not part of the requested output
+  - no deploy, restart, migration, schema change, or DB write was executed in this session
+
+## Session Update (2026-04-02, production DB row-count snapshot)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Verified current workstation repo state before the DB read:
+  - `git status -sb` -> `## feature/kingshunt`
+  - tracked modifications still present in the Kings Hunt worktree: `frontend/nextjs-app/package.json`, `frontend/nextjs-app/pages/_app.tsx`, `frontend/nextjs-app/pages/api/locations/index.ts`, `frontend/nextjs-app/pages/locations.tsx`, `frontend/nextjs-app/styles/globals.css`, `packages/database/prisma/schema.prisma`, `pnpm-lock.yaml`
+  - untracked Kings Hunt paths still present: `frontend/nextjs-app/components/maps/*`, `frontend/nextjs-app/lib/{geo.ts,kingsHunt.ts,mapStyles.ts}`, `frontend/nextjs-app/lib/server/kingsHunt.ts`, `frontend/nextjs-app/pages/api/kingshunt/*`, `frontend/nextjs-app/pages/kingshunt/*`, `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`, `scripts/backfill-location-data.ts`
+  - `git log --oneline -n 1` -> `09d602f docs(handoff): add task 26 set selection trace`
+- Ran a read-only production count query over SSH on the droplet inside the live `bytebot-lite-service` container using Prisma Client and the service's existing `DATABASE_URL`.
+- Production row counts observed:
+  - `SetCard`: `0`
+  - `SetProgram`: `3973`
+  - `SetDraft`: `241`
+  - `SetTaxonomySource`: `1116`
+  - `SetVariation`: `0`
+  - `SetParallel`: `6853`
+  - `CardVariant`: `83991`
+- Notes:
+  - local shell evidence before SSH: `DATABASE_URL` unset and `psql` unavailable
+  - first SSH attempt failed only on shell quoting; second attempt succeeded without changing runtime state
+  - no deploy, restart, migration, schema change, or DB write was executed in this session
 
 ## Session Update (2026-04-02, Task 27 Kings Hunt locator + wayfinding build)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then created/switched to the requested branch:

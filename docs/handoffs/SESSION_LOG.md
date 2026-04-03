@@ -258,6 +258,7 @@
 - `packages/database/prisma/schema.prisma`
 - `packages/database/prisma/migrations/20260316160000_inventory_system_v2_foundation/migration.sql`
 - `scripts/migrate-inventory-v2.ts`
+
 - `tsconfig.scripts.json`
 - `docs/HANDOFF_SET_OPS.md`
 - `docs/handoffs/SESSION_LOG.md`
@@ -13114,3 +13115,107 @@
 ### Notes
 - No deploy, restart, migration, backfill execution, runtime mutation, or DB mutation was executed in this session.
 - `LocationVisit` was added for the requested schema/integration path but is not yet wired to a downstream purchase/visit event source in this branch.
+
+## 2026-04-02 - Production DB row-count snapshot (read-only)
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified current workstation repo state on `feature/kingshunt` with latest committed baseline `09d602f`.
+- Queried the production database through the live droplet `bytebot-lite-service` container using a read-only Prisma Client script.
+- Observed row counts:
+  - `SetCard`: `0`
+  - `SetProgram`: `3973`
+  - `SetDraft`: `241`
+  - `SetTaxonomySource`: `1116`
+  - `SetVariation`: `0`
+  - `SetParallel`: `6853`
+  - `CardVariant`: `83991`
+
+### Runtime Evidence
+- Local shell precheck:
+  - `printenv DATABASE_URL | wc -c` -> `0`
+  - `command -v psql` -> unavailable
+- Successful production read path:
+  - `ssh root@104.131.27.245`
+  - `cd /root/tenkings-backend/infra`
+  - `docker compose exec -T bytebot-lite-service node -e "<Prisma count script>"`
+- Container output:
+  - `SetCard	0`
+  - `SetProgram	3973`
+  - `SetDraft	241`
+  - `SetTaxonomySource	1116`
+  - `SetVariation	0`
+  - `SetParallel	6853`
+  - `CardVariant	83991`
+
+### Notes
+- First SSH attempt failed due shell quoting before any query executed; rerun succeeded with equivalent read-only logic.
+- No deploy, restart, migration, schema change, or DB write was executed in this session.
+
+## 2026-04-02 - Production CardVariant sample query (read-only)
+
+### Summary
+- Confirmed locally that `CardVariant` does not have a `playerName` column in `packages/database/prisma/schema.prisma`.
+- Queried production `CardVariant` rows through the live droplet `bytebot-lite-service` container using a read-only Prisma Client script.
+- Filter used:
+  - `setId` contains `2025`
+  - `setId` contains `Topps`
+  - `setId` contains `Basketball`
+- Returned 5 rows ordered by `setId`, `programId`, `cardNumber`, then `parallelId`.
+
+### Runtime Evidence
+- Successful production read path:
+  - `ssh root@104.131.27.245`
+  - `cd /root/tenkings-backend/infra`
+  - `docker compose exec -T bytebot-lite-service node -e "<Prisma sample query script>"`
+- Container output:
+  - `2025-26_Topps_Basketball | 1980-81-topps-chrome-basketball | ALL`
+  - `2025-26_Topps_Basketball | 1980-81-topps-chrome-basketball | ALL`
+  - `2025-26_Topps_Basketball | 1980-81-topps-chrome-basketball | ALL`
+  - `2025-26_Topps_Basketball | 1980-81-topps-chrome-basketball | TC-AB`
+  - `2025-26_Topps_Basketball | 1980-81-topps-chrome-basketball | TC-AD`
+
+### Notes
+- Duplicate-looking rows are expected because `CardVariant` uniqueness includes `parallelId`, and that field was intentionally not selected.
+- No deploy, restart, migration, schema change, or DB write was executed in this session.
+
+## 2026-04-03 - Docs-only repo state refresh
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified current workstation repo state on `feature/kingshunt` with latest committed baseline `09d602f`.
+- Updated handoff docs only.
+- No code edits beyond the handoff docs, and no deploy, restart, migration, or DB mutation was executed.
+
+### Repo State
+- `git status -sb` -> `## feature/kingshunt`
+- Modified tracked files present:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+  - `frontend/nextjs-app/package.json`
+  - `frontend/nextjs-app/pages/_app.tsx`
+  - `frontend/nextjs-app/pages/api/locations/index.ts`
+  - `frontend/nextjs-app/pages/locations.tsx`
+  - `frontend/nextjs-app/styles/globals.css`
+  - `packages/database/prisma/schema.prisma`
+  - `pnpm-lock.yaml`
+- Untracked Kings Hunt paths present:
+  - `frontend/nextjs-app/components/maps/*`
+  - `frontend/nextjs-app/lib/geo.ts`
+  - `frontend/nextjs-app/lib/kingsHunt.ts`
+  - `frontend/nextjs-app/lib/mapStyles.ts`
+  - `frontend/nextjs-app/lib/server/kingsHunt.ts`
+  - `frontend/nextjs-app/pages/api/kingshunt/*`
+  - `frontend/nextjs-app/pages/kingshunt/*`
+  - `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/`
+  - `scripts/backfill-location-data.ts`
+- `git branch --show-current` -> `feature/kingshunt`
+- `git rev-parse --short HEAD` -> `09d602f`
+- `git log --oneline -n 1` -> `09d602f docs(handoff): add task 26 set selection trace`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.

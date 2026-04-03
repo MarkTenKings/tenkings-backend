@@ -355,6 +355,30 @@ model Location {
   inventoryBatches InventoryBatch[]
   autoFillSessions AutoFillSession[]
   packRecipes      PackRecipe[]
+  locationType     String?
+  locationStatus   String?           @default("active")
+  latitude         Float?
+  longitude        Float?
+  venueCenterLat   Float?
+  venueCenterLng   Float?
+  geofenceRadiusM  Int?              @default(500)
+  city             String?
+  state            String?
+  zip              String?
+  hours            String?
+  hasIndoorMap     Boolean           @default(false)
+  walkingDirections Json?            @db.JsonB
+  walkingTimeMin   Int?
+  landmarks        String[]          @default([])
+  machinePhotoUrl  String?
+  venueMapData     Json?             @db.JsonB
+  checkpoints      Json?             @db.JsonB
+  navigationSessions NavigationSession[]
+  locationVisits   LocationVisit[]
+
+  @@index([state])
+  @@index([locationType])
+  @@index([locationStatus])
 }
 
 model LiveRip {
@@ -1743,4 +1767,42 @@ model PackLabel {
   @@index([locationId])
   @@index([batchId])
   @@index([status])
+}
+
+model NavigationSession {
+  id                 String    @id @default(cuid())
+  locationId         String
+  entryMethod        String
+  qrCodeId           String?
+  userLat            Float?
+  userLng            Float?
+  isAtVenue          Boolean   @default(false)
+  distanceToMachineM Float?
+  journeyStartedAt   DateTime?
+  journeyCompletedAt DateTime?
+  checkpointsReached Int       @default(0)
+  tkdEarned          Int       @default(0)
+  userAgent          String?
+  referrer           String?
+  createdAt          DateTime  @default(now())
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+  @@index([createdAt])
+  @@index([entryMethod])
+}
+
+model LocationVisit {
+  id                  String   @id @default(cuid())
+  locationId          String
+  userId              String?
+  visitedAt           DateTime @default(now())
+  source              String?
+  navigationSessionId String?
+
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@index([locationId])
+  @@index([visitedAt])
 }
