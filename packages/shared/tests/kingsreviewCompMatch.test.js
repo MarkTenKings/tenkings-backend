@@ -184,6 +184,36 @@ test("scoreKingsreviewComp already treats Red White and Blue as a non-base paral
   assert.equal(result.keyComparison.parallel?.matched, false);
 });
 
+test("scoreKingsreviewComp penalizes superfractor parallels when the expected card is base", () => {
+  const context = {
+    playerName: "Victor Wembanyama",
+    setName: "2025 Topps Chrome Basketball",
+    cardNumber: "1",
+    year: "2025",
+    parallel: "Base",
+    insertSet: null,
+    autograph: false,
+    memorabilia: false,
+    numbered: null,
+    graded: false,
+    gradingCompany: null,
+    gradeScore: null,
+  };
+
+  const result = scoreKingsreviewComp(context, {
+    title: "2025 Topps Chrome Victor Wembanyama #1 Superfractor",
+    condition: "Ungraded",
+    itemSpecifics: {
+      set: ["2025 Topps Chrome Basketball"],
+      "card number": ["1"],
+    },
+  });
+
+  assert.ok(result);
+  assert.ok(result.penalties.includes("parallel"));
+  assert.equal(result.keyComparison.parallel?.matched, false);
+});
+
 test("annotateAndSortKingsreviewComps ranks exact matches above graded mismatches and wrong parallels", () => {
   const context = {
     playerName: "Victor Wembanyama",

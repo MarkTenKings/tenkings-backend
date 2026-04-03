@@ -56,7 +56,7 @@ const GRADE_RE =
 const AUTO_RE = /\b(auto|autograph|autographs|signed|signature|signatures)\b/i;
 const MEMORABILIA_RE = /\b(patch|relic|jersey|memorabilia|swatch|rpa|game used|game-used|player worn|player-worn)\b/i;
 const NON_BASE_PARALLEL_RE =
-  /\b(gold|silver|green|blue|purple|orange|red|black|white|yellow|pink|teal|bronze|rainbow|refractor|ref|prizm|prism|shimmer|wave|hyper|pulsar|scope|laser|mojo|checkerboard|cracked|ice|snake|tiger|elephant|velocity|flash|sapphire|speckle|camo|lava|magma|marble|disco|genesis|kaboom|downtown|case hit|asia|neon)\b/i;
+  /\b(gold|silver|green|blue|purple|orange|red|black|white|yellow|pink|teal|bronze|rainbow|refractor|ref|prizm|prism|shimmer|wave|hyper|pulsar|scope|laser|mojo|checkerboard|cracked|ice|snake|tiger|elephant|velocity|flash|sapphire|speckle|camo|lava|magma|marble|disco|genesis|kaboom|downtown|case hit|asia|neon|aqua|ruby|emerald|platinum|diamond|crystal|holographic|holo|fluorescent|galactic|cosmic|nebula|atomic|photon|nova|stellar|vintage|heritage|sepia|negative|xfractor|superfractor|mega box|blaster)\b/i;
 const YEAR_RE = /\b((?:19|20)\d{2})(?:-(\d{2,4}))?\b/g;
 
 const PLAYER_KEYS = ["player athlete", "athlete", "player", "name"];

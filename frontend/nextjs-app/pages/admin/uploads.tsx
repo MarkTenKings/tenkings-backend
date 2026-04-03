@@ -130,6 +130,7 @@ type LookupSetCandidate = {
   setId: string;
   insertLabel: string;
   programId: string;
+  scopedParallels: LookupSetParallelOption[];
   parallels: LookupSetParallelOption[];
 };
 
@@ -138,6 +139,7 @@ type LookupSetPayload = {
   setId: string | null;
   insertLabel: string | null;
   programId: string | null;
+  scopedParallels: LookupSetParallelOption[];
   parallels: LookupSetParallelOption[];
   candidates: LookupSetCandidate[];
 };
@@ -487,6 +489,11 @@ const normalizeLookupSetPayload = (value: unknown): LookupSetPayload | null => {
         .map((entry) => normalizeParallel(entry))
         .filter((entry): entry is LookupSetParallelOption => Boolean(entry))
     : [];
+  const scopedParallels = Array.isArray(typed.scopedParallels)
+    ? typed.scopedParallels
+        .map((entry) => normalizeParallel(entry))
+        .filter((entry): entry is LookupSetParallelOption => Boolean(entry))
+    : parallels;
   const candidates = Array.isArray(typed.candidates)
     ? typed.candidates
         .map((entry) => {
@@ -504,8 +511,21 @@ const normalizeLookupSetPayload = (value: unknown): LookupSetPayload | null => {
             setId,
             insertLabel,
             programId,
+            scopedParallels: Array.isArray(typedEntry.scopedParallels)
+              ? typedEntry.scopedParallels
+                  .map((parallel) => normalizeParallel(parallel))
+                  .filter((parallel): parallel is LookupSetParallelOption => Boolean(parallel))
+              : Array.isArray(typedEntry.parallels)
+              ? typedEntry.parallels
+                  .map((parallel) => normalizeParallel(parallel))
+                  .filter((parallel): parallel is LookupSetParallelOption => Boolean(parallel))
+              : [],
             parallels: Array.isArray(typedEntry.parallels)
               ? typedEntry.parallels
+                  .map((parallel) => normalizeParallel(parallel))
+                  .filter((parallel): parallel is LookupSetParallelOption => Boolean(parallel))
+              : Array.isArray(typedEntry.scopedParallels)
+              ? typedEntry.scopedParallels
                   .map((parallel) => normalizeParallel(parallel))
                   .filter((parallel): parallel is LookupSetParallelOption => Boolean(parallel))
               : [],
@@ -519,6 +539,7 @@ const normalizeLookupSetPayload = (value: unknown): LookupSetPayload | null => {
     setId: sanitizeNullableText(typeof typed.setId === "string" ? typed.setId : null) || null,
     insertLabel: sanitizeNullableText(typeof typed.insertLabel === "string" ? typed.insertLabel : null) || null,
     programId: sanitizeNullableText(typeof typed.programId === "string" ? typed.programId : null) || null,
+    scopedParallels,
     parallels,
     candidates,
   };
@@ -2704,6 +2725,7 @@ export default function AdminUploads() {
         setId,
         insertLabel,
         programId,
+        scopedParallels: lookupSetMatch.scopedParallels,
         parallels: lookupSetMatch.parallels,
       },
     ] as LookupSetCandidate[];
@@ -2730,7 +2752,11 @@ export default function AdminUploads() {
     if (!activeLookupSetCandidate || !numberedDenominator) {
       return [] as string[];
     }
-    const matched = activeLookupSetCandidate.parallels
+    const scopedParallels =
+      activeLookupSetCandidate.scopedParallels.length > 0
+        ? activeLookupSetCandidate.scopedParallels
+        : activeLookupSetCandidate.parallels;
+    const matched = scopedParallels
       .filter((parallel) => {
         if (parallel.serialDenominator === numberedDenominator) {
           return true;
@@ -2744,7 +2770,9 @@ export default function AdminUploads() {
 
   const displayParallelOptions = useMemo(() => {
     const baseOptions =
-      activeLookupSetCandidate && activeLookupSetCandidate.parallels.length > 0
+      activeLookupSetCandidate && activeLookupSetCandidate.scopedParallels.length > 0
+        ? activeLookupSetCandidate.scopedParallels.map((parallel) => parallel.label)
+        : activeLookupSetCandidate && activeLookupSetCandidate.parallels.length > 0
         ? activeLookupSetCandidate.parallels.map((parallel) => parallel.label)
         : parallelOptions;
     const uniqueOptions = Array.from(new Set(baseOptions.map((value) => sanitizeNullableText(value)).filter(Boolean)));
@@ -4499,7 +4527,9 @@ export default function AdminUploads() {
       Boolean(
         sanitizeNullableText(intakeOptional.insertSet) &&
           sortedParallelOptions.length > 0 &&
-          ((activeLookupSetCandidate && activeLookupSetCandidate.parallels.length > 0) || hasResolvedVariantSetScope)
+          ((activeLookupSetCandidate &&
+            (activeLookupSetCandidate.scopedParallels.length > 0 || activeLookupSetCandidate.parallels.length > 0)) ||
+            hasResolvedVariantSetScope)
       ),
     [activeLookupSetCandidate, hasResolvedVariantSetScope, intakeOptional.insertSet, sortedParallelOptions.length]
   );
@@ -6085,7 +6115,7 @@ export default function AdminUploads() {
                     <div className="space-y-1">
                       <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Parallel Review</p>
                       {activeLookupSetCandidate ? (
-                        activeLookupSetCandidate.parallels.length > 0 ? (
+                        activeLookupSetCandidate.scopedParallels.length > 0 || activeLookupSetCandidate.parallels.length > 0 ? (
                           <p className="text-xs text-slate-300">Could this be a parallel? Review the options below.</p>
                         ) : (
                           <p className="text-xs text-slate-300">No parallel variants for this card type.</p>
@@ -6101,7 +6131,9 @@ export default function AdminUploads() {
                         <p className="text-xs text-amber-200">
                           Numbered match for /{numberedDenominator}: {serialMatchedParallelLabels.join(", ")}
                         </p>
-                      ) : numberedDenominator && activeLookupSetCandidate && activeLookupSetCandidate.parallels.length > 0 ? (
+                      ) : numberedDenominator &&
+                        activeLookupSetCandidate &&
+                        (activeLookupSetCandidate.scopedParallels.length > 0 || activeLookupSetCandidate.parallels.length > 0) ? (
                         <p className="text-xs text-slate-400">No scoped parallel print runs matched /{numberedDenominator}. Review the full list.</p>
                       ) : null}
                     </div>

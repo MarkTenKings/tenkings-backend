@@ -1,13 +1,13 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-03` (Task 29 ONE PLAN parallel picker + comp scoring + background lookup + PhotoRoom fixes completed in `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-03` (Task 30 parallel regex expansion + explicit scopedParallels picker verification completed in `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state before final Task 29 handoff refresh:
+- Current local git state before final Task 30 handoff refresh:
   - `git status -sb` -> `## main...origin/main`
-  - pending changes include `frontend/nextjs-app/pages/admin/uploads.tsx`, `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`, `frontend/nextjs-app/pages/api/admin/cards/lookup-set.ts`, `frontend/nextjs-app/lib/server/setLookup.ts`, `packages/shared/src/kingsreviewCompMatch.ts`, `packages/shared/tests/kingsreviewCompMatch.test.js`, and handoff docs
+  - pending changes include `frontend/nextjs-app/lib/server/setLookup.ts`, `frontend/nextjs-app/pages/admin/uploads.tsx`, `packages/shared/src/kingsreviewCompMatch.ts`, `packages/shared/tests/kingsreviewCompMatch.test.js`, and handoff docs
 - Latest committed baseline in this checkout:
-  - `082f1c8` feat(add-cards): replace set identification with ONE PLAN direct SetCard lookup
+  - `472f89b` fix(add-cards): parallel picker by setId only + comp scoring sapphire + background set lookup + photoroom front
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
@@ -7020,6 +7020,26 @@ Build Set Ops UI flow with:
 - Validation:
   - `pnpm --filter @tenkings/shared test` -> pass
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/lookup-set.ts --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file lib/server/setLookup.ts` -> pass with the existing `pages/admin/uploads.tsx` legacy `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-03, Task 30 parallel regex expansion + explicit scopedParallels picker verification)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only --autostash origin main` -> `Already up to date.`
+- Implemented the requested Task 30 follow-up in:
+  - `packages/shared/src/kingsreviewCompMatch.ts`
+  - `packages/shared/tests/kingsreviewCompMatch.test.js`
+  - `frontend/nextjs-app/lib/server/setLookup.ts`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+- What changed:
+  - expanded `NON_BASE_PARALLEL_RE` with the additional requested parallel terms: `aqua`, `ruby`, `emerald`, `platinum`, `diamond`, `crystal`, `holographic`, `holo`, `fluorescent`, `galactic`, `cosmic`, `nebula`, `atomic`, `photon`, `nova`, `stellar`, `vintage`, `heritage`, `sepia`, `negative`, `xfractor`, `superfractor`, `mega box`, and `blaster`
+  - added a shared scorer regression test that proves `Superfractor` is now treated as a non-base parallel mismatch, while keeping the earlier Sapphire and Red White & Blue checks
+  - updated the shared lookup result shape to expose explicit `scopedParallels` alongside the existing `parallels` field so the one-plan response matches the Screen 2 picker contract directly
+  - updated `/admin/uploads` to normalize `scopedParallels` from the persisted/API lookup payload, carry it into candidate state, prefer it over the legacy `parallels` field when building Screen 2 option lists, and keep the parallel picker openable whenever those scoped lookup parallels exist
+- Validation:
+  - `pnpm --filter @tenkings/shared test` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/lookup-set.ts --file lib/server/setLookup.ts` -> pass with the existing `pages/admin/uploads.tsx` legacy `<img>` warnings only
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.

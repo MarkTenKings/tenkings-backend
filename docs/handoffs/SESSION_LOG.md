@@ -13330,3 +13330,29 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+## 2026-04-03 - Task 30 parallel regex expansion + explicit scopedParallels picker verification
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Pulled latest `origin/main` with `git pull --ff-only --autostash origin main`, which returned `Already up to date.`
+- Expanded the non-base parallel regex in `packages/shared/src/kingsreviewCompMatch.ts` with the additional requested parallel terms, without changing any scoring weights or thresholds.
+- Added a new shared regression test proving `Superfractor` is penalized as a non-base parallel mismatch.
+- Verified the Screen 2 parallel picker still uses the ONE PLAN lookup response path and tightened the contract by exposing explicit `scopedParallels` from `frontend/nextjs-app/lib/server/setLookup.ts` and making `pages/admin/uploads.tsx` prefer `scopedParallels` over the legacy `parallels` field when building picker options.
+
+### Files Updated
+- `packages/shared/src/kingsreviewCompMatch.ts`
+- `packages/shared/tests/kingsreviewCompMatch.test.js`
+- `frontend/nextjs-app/lib/server/setLookup.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared test` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/lookup-set.ts --file lib/server/setLookup.ts` passed with the existing `pages/admin/uploads.tsx` `<img>` warnings only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.

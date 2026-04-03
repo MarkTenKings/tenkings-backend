@@ -13,6 +13,7 @@ export type LookupSetCandidate = {
   setId: string;
   insertLabel: string;
   programId: string;
+  scopedParallels: LookupSetParallelOption[];
   parallels: LookupSetParallelOption[];
 };
 
@@ -21,6 +22,7 @@ export type LookupSetResult = {
   setId: string | null;
   insertLabel: string | null;
   programId: string | null;
+  scopedParallels: LookupSetParallelOption[];
   parallels: LookupSetParallelOption[];
   candidates: LookupSetCandidate[];
 };
@@ -39,6 +41,7 @@ function emptyLookupSetResult(): LookupSetResult {
     setId: null,
     insertLabel: null,
     programId: null,
+    scopedParallels: [],
     parallels: [],
     candidates: [],
   };
@@ -202,12 +205,16 @@ export async function lookupSetByCardIdentity(
   }
 
   const candidates = await Promise.all(
-    matchedRows.map(async (row) => ({
-      setId: row.setId,
-      insertLabel: collapseLookupSetWhitespace(row.program.label),
-      programId: row.programId,
-      parallels: await loadSetParallels(row.setId),
-    }))
+    matchedRows.map(async (row) => {
+      const scopedParallels = await loadSetParallels(row.setId);
+      return {
+        setId: row.setId,
+        insertLabel: collapseLookupSetWhitespace(row.program.label),
+        programId: row.programId,
+        scopedParallels,
+        parallels: scopedParallels,
+      };
+    })
   );
 
   const primary = candidates[0] ?? null;
@@ -216,6 +223,7 @@ export async function lookupSetByCardIdentity(
     setId: primary?.setId ?? null,
     insertLabel: primary?.insertLabel ?? null,
     programId: primary?.programId ?? null,
+    scopedParallels: primary?.scopedParallels ?? [],
     parallels: primary?.parallels ?? [],
     candidates: candidates.length > 1 ? candidates : [],
   };
