@@ -1,14 +1,45 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-02` (Task 23b identify-set timing fix completed in this session; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-02` (Task 28 ONE PLAN direct SetCard lookup completed in `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state at Task 23b handoff refresh start:
+- Current local git state before final Task 28 handoff refresh:
   - `git status -sb` -> `## main...origin/main`
-- Latest committed baseline before Task 23b edit:
-  - `2eeb20e` fix(uploads): fix card pipeline skipping OCR queue + broken image URLs
-- Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
+  - pending commit includes `frontend/nextjs-app/pages/admin/uploads.tsx`, `frontend/nextjs-app/pages/api/admin/cards/lookup-set.ts`, and handoff docs
+- Latest committed baseline before Task 28 edit:
+  - `734e24f` fix(set-ops): backfill checklist programs for set cards
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-02, Task 28 ONE PLAN direct SetCard lookup)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Implemented the requested ONE PLAN workflow in:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `frontend/nextjs-app/pages/api/admin/cards/lookup-set.ts`
+- What changed:
+  - removed the `/api/admin/cards/identify-set` client path, `identifiedSetMatch` state, the Product Set auto-selection priority chain, the OCR-driven Product Set/Insert auto-fill path, and the old Screen 2 Card Number / Insert UI
+  - added `POST /api/admin/cards/lookup-set`, which builds the season-year prefix from Year + Sport, performs the direct `SetCard` lookup with normalized card numbers, returns the resolved set/program, and includes program-scoped parallel metadata for the matched candidate
+  - moved Card Number and Insert onto Screen 1, auto-filled Product Set + Insert from the ONE PLAN lookup after OCR is ready, and now require those Screen 1 values before advancing
+  - moved the Parallel picker to the bottom of Screen 2 and defaulted it to `NONE (base card)` while narrowing to the matched program’s `SetParallelScope` list when the lookup resolved a current set/program candidate
+  - kept OCR for the other fields plus the existing product-set OCR prefetch trigger and parallel-reference prefetch trigger, but both now operate off the ONE PLAN result / confirmed Screen 1 selection instead of the removed identify-set priority chain
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/lookup-set.ts` -> pass with the existing `pages/admin/uploads.tsx` legacy `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-02, docs-only repo state refresh in tenkings-task27-main)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified current local repo state without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `734e24f`
+- Confirmed the latest committed baseline in this checkout is `734e24f` `fix(set-ops): backfill checklist programs for set cards`.
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-02, Task 23b identify-set timing fix after OCR queue load)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`, then synced `main` before editing:

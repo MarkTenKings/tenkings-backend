@@ -118,35 +118,28 @@ type VariantOptionItem = {
   primarySetId: string | null;
 };
 
-type IdentifySetCandidate = {
-  setId: string;
-  setName: string;
-  programId: string | null;
-  programLabel: string | null;
-  cardNumber: string;
-  playerName: string | null;
-  teamName: string | null;
-  matchType: "exact" | "fuzzy";
-  score: number;
-  tieBreakRank: number;
+type LookupSetParallelOption = {
+  parallelId: string;
+  label: string;
+  serialDenominator: number | null;
+  serialText: string | null;
+  finishFamily: string | null;
 };
 
-type IdentifySetPayload = {
+type LookupSetCandidate = {
+  setId: string;
+  insertLabel: string;
+  programId: string;
+  parallels: LookupSetParallelOption[];
+};
+
+type LookupSetPayload = {
+  match: "exact" | "multiple" | "none";
   setId: string | null;
-  setName: string | null;
+  insertLabel: string | null;
   programId: string | null;
-  programLabel: string | null;
-  cardNumber: string | null;
-  playerName: string | null;
-  teamName: string | null;
-  confidence: "exact" | "fuzzy" | "none";
-  reason: string;
-  candidateSetIds: string[];
-  candidateCount: number;
-  scopedSetCount: number;
-  candidates: IdentifySetCandidate[];
-  tiebreaker: "chrome" | "optic" | "default" | "none";
-  textSource: "front" | "combined" | "none";
+  parallels: LookupSetParallelOption[];
+  candidates: LookupSetCandidate[];
 };
 
 type OcrPhotoAudit = {
@@ -629,53 +622,6 @@ const humanizeRequestFailure = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
-const scoreOption = (option: string, hints: string[]): number => {
-  if (!option.trim() || hints.length === 0) {
-    return 0;
-  }
-  const optionTokens = new Set(tokenize(option));
-  const optionKey = normalizeVariantLabelKey(option);
-  if (optionTokens.size === 0) {
-    return 0;
-  }
-  let score = 0;
-  hints.forEach((hint) => {
-    const cleanedHint = sanitizeNullableText(hint);
-    if (!cleanedHint) {
-      return;
-    }
-    const hintLower = cleanedHint.toLowerCase();
-    const optionLower = option.toLowerCase();
-    const hintKey = normalizeVariantLabelKey(cleanedHint);
-    if (hintLower === optionLower) {
-      score += 1.5;
-    } else if (optionKey && hintKey && optionKey === hintKey) {
-      score += 1.2;
-    } else if (optionLower.includes(hintLower) || hintLower.includes(optionLower)) {
-      score += 0.9;
-    }
-    tokenize(cleanedHint).forEach((token) => {
-      if (optionTokens.has(token)) {
-        score += 0.25;
-      }
-    });
-  });
-  return score;
-};
-
-const pickBestCandidate = (options: string[], hints: string[], minScore = 0.8): string | null => {
-  let best: string | null = null;
-  let bestScore = 0;
-  options.forEach((option) => {
-    const score = scoreOption(option, hints);
-    if (score > bestScore) {
-      best = option;
-      bestScore = score;
-    }
-  });
-  return bestScore >= minScore ? best : null;
-};
-
 const inferSportFromProductLine = (value: string): string => {
   const normalized = value.trim().toLowerCase();
   if (!normalized) {
@@ -697,6 +643,19 @@ const inferSportFromProductLine = (value: string): string => {
     return "Soccer";
   }
   return "";
+};
+
+const extractNumberedDenominator = (value: string): number | null => {
+  const normalized = sanitizeNullableText(value).replace(/\s+/g, "");
+  if (!normalized) {
+    return null;
+  }
+  const slashMatch = normalized.match(/\/(\d{1,6})$/);
+  if (slashMatch?.[1]) {
+    const parsed = Number.parseInt(slashMatch[1], 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
 };
 
 export default function AdminUploads() {
@@ -801,7 +760,8 @@ export default function AdminUploads() {
   const [ocrApplied, setOcrApplied] = useState(false);
   const [ocrMode, setOcrMode] = useState<null | "high" | "low">(null);
   const [ocrError, setOcrError] = useState<string | null>(null);
-  const [identifiedSetMatch, setIdentifiedSetMatch] = useState<IdentifySetPayload | null>(null);
+  const [lookupSetStatus, setLookupSetStatus] = useState<null | "loading" | "ready" | "error">(null);
+  const [lookupSetMatch, setLookupSetMatch] = useState<LookupSetPayload | null>(null);
   const [screen2PrefetchStatus, setScreen2PrefetchStatus] = useState<null | "idle" | "loading" | "ready" | "error">(
     null
   );
@@ -843,8 +803,8 @@ export default function AdminUploads() {
   const ocrAppliedFieldsRef = useRef<OcrApplyField[]>([]);
   const ocrOptionalBackupRef = useRef<IntakeOptionalFields | null>(null);
   const ocrAppliedOptionalFieldsRef = useRef<(keyof IntakeOptionalFields)[]>([]);
-  const identifySetRequestKeyRef = useRef<string | null>(null);
-  const identifySetLatestKeyRef = useRef<string | null>(null);
+  const lookupSetRequestKeyRef = useRef<string | null>(null);
+  const lookupSetAutoFillRef = useRef<{ setId: string; insertLabel: string } | null>(null);
   const screen2PrefetchKeyRef = useRef<string | null>(null);
   const screen2PrefetchLatestKeyRef = useRef<string | null>(null);
   const screen2PrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1666,7 +1626,8 @@ export default function AdminUploads() {
     setOcrApplied(false);
     setOcrMode(null);
     setOcrError(null);
-    setIdentifiedSetMatch(null);
+    setLookupSetStatus(null);
+    setLookupSetMatch(null);
     setScreen2PrefetchStatus(null);
     ocrSuggestRef.current = false;
     ocrRetryRef.current = 0;
@@ -1684,8 +1645,8 @@ export default function AdminUploads() {
     ocrAppliedFieldsRef.current = [];
     ocrOptionalBackupRef.current = null;
     ocrAppliedOptionalFieldsRef.current = [];
-    identifySetRequestKeyRef.current = null;
-    identifySetLatestKeyRef.current = null;
+    lookupSetRequestKeyRef.current = null;
+    lookupSetAutoFillRef.current = null;
     screen2PrefetchKeyRef.current = null;
     screen2PrefetchLatestKeyRef.current = null;
   }, []);
@@ -1744,7 +1705,8 @@ export default function AdminUploads() {
     setIntakeTouched({});
     setIntakeOptionalTouched({});
     setProductLineManualMode(false);
-    setIdentifiedSetMatch(null);
+    setLookupSetStatus(null);
+    setLookupSetMatch(null);
     setTrainAiEnabled(false);
     setTeachBusy(false);
     setTeachFeedback(null);
@@ -1768,8 +1730,8 @@ export default function AdminUploads() {
     setScreen2PrefetchStatus(null);
     setParallelPrefetchStatus(null);
     setParallelPrefetchMessage(null);
-    identifySetRequestKeyRef.current = null;
-    identifySetLatestKeyRef.current = null;
+    lookupSetRequestKeyRef.current = null;
+    lookupSetAutoFillRef.current = null;
     screen2PrefetchKeyRef.current = null;
     screen2PrefetchLatestKeyRef.current = null;
     if (screen2PrefetchTimeoutRef.current) {
@@ -2402,6 +2364,10 @@ export default function AdminUploads() {
       );
       setIntakeTouched({});
       setIntakeOptionalTouched({});
+      setLookupSetStatus(null);
+      setLookupSetMatch(null);
+      lookupSetRequestKeyRef.current = null;
+      lookupSetAutoFillRef.current = null;
       setOcrAudit((existingOcrAudit as Record<string, unknown> | null) ?? null);
       setTeachBusy(false);
       setTeachFeedback(null);
@@ -2458,6 +2424,12 @@ export default function AdminUploads() {
       if (!intakeOptional.productLine.trim()) {
         return "Product line / set is required.";
       }
+      if (!intakeOptional.cardNumber.trim()) {
+        return "Card number is required.";
+      }
+      if (!intakeOptional.insertSet.trim()) {
+        return "Insert is required.";
+      }
     } else {
       if (!intakeRequired.cardName.trim()) {
         return "Card name is required.";
@@ -2477,6 +2449,8 @@ export default function AdminUploads() {
     intakeBackPhotoId,
     intakeBackPreview,
     intakeCardId,
+    intakeOptional.cardNumber,
+    intakeOptional.insertSet,
     intakeOptional.productLine,
     intakeRequired,
     intakeTiltPhotoId,
@@ -2511,66 +2485,6 @@ export default function AdminUploads() {
     }
   }, [intakeOptional.productLine, productLineManualMode, productLineOptions]);
 
-  useEffect(() => {
-    const identifiedSetMatchConfidence = identifiedSetMatch?.confidence ?? null;
-    const identifiedSetMatchSetId = sanitizeNullableText(identifiedSetMatch?.setId);
-    if (intakeRequired.category !== "sport" || productLineOptions.length === 0) {
-      return;
-    }
-    if (productLineManualMode) {
-      return;
-    }
-    if (intakeOptionalTouched.productLine) {
-      return;
-    }
-    const current = sanitizeNullableText(intakeOptional.productLine);
-    const matchedCurrent = current
-      ? productLineOptions.find((option) => option.toLowerCase() === current.toLowerCase()) ?? ""
-      : "";
-    const identifiedSetId =
-      identifiedSetMatchConfidence && identifiedSetMatchConfidence !== "none" ? identifiedSetMatchSetId : "";
-    const resolveKnownProductLine = (value: string) =>
-      productLineOptions.find((option) => option.toLowerCase() === value.toLowerCase()) ?? value;
-
-    let candidate = "";
-    if (identifiedSetId) {
-      candidate = resolveKnownProductLine(identifiedSetId);
-    } else if (matchedCurrent) {
-      return;
-    } else {
-      const resolvedScopedSetId = sanitizeNullableText(variantScopeSummary?.selectedSetId);
-      if (resolvedScopedSetId) {
-        candidate = resolveKnownProductLine(resolvedScopedSetId);
-      } else if (!current && productLineOptions.length === 1) {
-        candidate = productLineOptions[0] ?? "";
-      } else if (!current) {
-        const suggestedSetName = sanitizeNullableText(intakeSuggested.setName);
-        const actionableSuggestedSetName = isActionableProductLineHint(suggestedSetName) ? suggestedSetName : "";
-        if (!actionableSuggestedSetName) {
-          return;
-        }
-        candidate = pickBestCandidate(productLineOptions, [actionableSuggestedSetName], 1.1) ?? "";
-      } else {
-        return;
-      }
-    }
-    if (!candidate || (current && current.toLowerCase() === candidate.toLowerCase())) {
-      return;
-    }
-    setIntakeOptional((prev) => ({ ...prev, productLine: candidate }));
-    setIntakeSuggested((prev) => ({ ...prev, setName: candidate }));
-  }, [
-    identifiedSetMatch?.confidence,
-    identifiedSetMatch?.setId,
-    intakeOptional.productLine,
-    intakeOptionalTouched.productLine,
-    intakeRequired.category,
-    intakeSuggested.setName,
-    productLineManualMode,
-    productLineOptions,
-    variantScopeSummary?.selectedSetId,
-  ]);
-
   const selectedProductLineOption = useMemo(() => {
     if (productLineManualMode) {
       return PRODUCT_LINE_MANUAL_OPTION;
@@ -2583,63 +2497,93 @@ export default function AdminUploads() {
     return matched ?? "";
   }, [intakeOptional.productLine, productLineManualMode, productLineOptions]);
 
-  useEffect(() => {
-    if (intakeRequired.category !== "sport" || insertSetOptions.length === 0) {
-      return;
-    }
-    if (sanitizeNullableText(intakeOptional.insertSet) || intakeOptionalTouched.insertSet) {
-      return;
-    }
-    const suggestedInsertSet = sanitizeNullableText(intakeSuggested.insertSet);
-    if (!suggestedInsertSet) {
-      return;
-    }
-    const candidate = pickBestCandidate(
-      insertSetOptions,
-      [suggestedInsertSet, sanitizeNullableText(intakeSuggested.parallel), sanitizeNullableText(intakeOptional.productLine)],
-      0.6
-    );
-    if (candidate) {
-      setIntakeOptional((prev) => ({ ...prev, insertSet: candidate }));
-    }
-  }, [
-    intakeOptional.insertSet,
-    intakeOptional.productLine,
-    intakeOptionalTouched.insertSet,
-    intakeRequired.category,
-    intakeSuggested.insertSet,
-    intakeSuggested.parallel,
-    insertSetOptions,
-  ]);
+  const resolvedVariantSetId = useMemo(
+    () => sanitizeNullableText(variantScopeSummary?.selectedSetId),
+    [variantScopeSummary?.selectedSetId]
+  );
 
-  useEffect(() => {
-    if (intakeRequired.category !== "sport" || parallelOptions.length === 0) {
-      return;
+  const hasResolvedVariantSetScope = useMemo(
+    () => Boolean(sanitizeNullableText(intakeOptional.productLine) && resolvedVariantSetId),
+    [intakeOptional.productLine, resolvedVariantSetId]
+  );
+
+  const lookupSetCandidates = useMemo(() => {
+    if (!lookupSetMatch) {
+      return [] as LookupSetCandidate[];
     }
-    if (sanitizeNullableText(intakeOptional.parallel) || intakeOptionalTouched.parallel) {
-      return;
+    if (lookupSetMatch.candidates.length > 0) {
+      return lookupSetMatch.candidates;
     }
-    const suggestedParallel = sanitizeNullableText(intakeSuggested.parallel);
-    if (!suggestedParallel) {
-      return;
+    const setId = sanitizeNullableText(lookupSetMatch.setId);
+    const insertLabel = sanitizeNullableText(lookupSetMatch.insertLabel);
+    const programId = sanitizeNullableText(lookupSetMatch.programId);
+    if (!setId || !insertLabel || !programId) {
+      return [] as LookupSetCandidate[];
     }
-    const candidate = pickBestCandidate(
-      parallelOptions,
-      [suggestedParallel, sanitizeNullableText(intakeSuggested.insertSet), sanitizeNullableText(intakeOptional.productLine)],
-      0.6
+    return [
+      {
+        setId,
+        insertLabel,
+        programId,
+        parallels: lookupSetMatch.parallels,
+      },
+    ] as LookupSetCandidate[];
+  }, [lookupSetMatch]);
+
+  const activeLookupSetCandidate = useMemo(() => {
+    const setId = sanitizeNullableText(intakeOptional.productLine);
+    const insertLabel = sanitizeNullableText(intakeOptional.insertSet);
+    if (!setId || !insertLabel) {
+      return null;
+    }
+    return (
+      lookupSetCandidates.find(
+        (candidate) =>
+          candidate.setId.toLowerCase() === setId.toLowerCase() &&
+          candidate.insertLabel.toLowerCase() === insertLabel.toLowerCase()
+      ) ?? null
     );
-    if (candidate) {
-      setIntakeOptional((prev) => ({ ...prev, parallel: candidate }));
+  }, [intakeOptional.insertSet, intakeOptional.productLine, lookupSetCandidates]);
+
+  const numberedDenominator = useMemo(() => extractNumberedDenominator(intakeOptional.numbered), [intakeOptional.numbered]);
+
+  const serialMatchedParallelLabels = useMemo(() => {
+    if (!activeLookupSetCandidate || !numberedDenominator) {
+      return [] as string[];
     }
-  }, [
-    intakeOptional.parallel,
-    intakeOptional.productLine,
-    intakeOptionalTouched.parallel,
-    intakeRequired.category,
-    intakeSuggested.insertSet,
-    intakeSuggested.parallel,
-    parallelOptions,
-  ]);
+    const matched = activeLookupSetCandidate.parallels
+      .filter((parallel) => {
+        if (parallel.serialDenominator === numberedDenominator) {
+          return true;
+        }
+        const serialText = sanitizeNullableText(parallel.serialText).replace(/\s+/g, "");
+        return Boolean(serialText && serialText.includes(`/${numberedDenominator}`));
+      })
+      .map((parallel) => parallel.label);
+    return Array.from(new Set(matched));
+  }, [activeLookupSetCandidate, numberedDenominator]);
+
+  const displayParallelOptions = useMemo(() => {
+    const baseOptions = activeLookupSetCandidate
+      ? activeLookupSetCandidate.parallels.map((parallel) => parallel.label)
+      : parallelOptions;
+    const uniqueOptions = Array.from(new Set(baseOptions.map((value) => sanitizeNullableText(value)).filter(Boolean)));
+    if (serialMatchedParallelLabels.length < 1) {
+      return uniqueOptions;
+    }
+    const matchedKeys = new Set(serialMatchedParallelLabels.map((value) => normalizeVariantLabelKey(value)));
+    return [...uniqueOptions].sort((a, b) => {
+      const aMatched = matchedKeys.has(normalizeVariantLabelKey(a));
+      const bMatched = matchedKeys.has(normalizeVariantLabelKey(b));
+      if (aMatched !== bMatched) {
+        return aMatched ? -1 : 1;
+      }
+      return a.localeCompare(b, undefined, {
+        sensitivity: "base",
+        numeric: true,
+      });
+    });
+  }, [activeLookupSetCandidate, parallelOptions, serialMatchedParallelLabels]);
 
   const syncOptionalFieldsFromOcrAudit = useCallback(
     (
@@ -2822,41 +2766,6 @@ export default function AdminUploads() {
           next.teamName = suggestions.teamName;
           ocrAppliedOptionalFieldsRef.current.push("teamName");
         }
-        const rawSuggestedProductLine = sanitizeNullableText(suggestions.setName);
-        const suggestedProductLine = isActionableProductLineHint(rawSuggestedProductLine)
-          ? rawSuggestedProductLine
-          : "";
-        const suggestedInsertSet = sanitizeNullableText(suggestions.insertSet);
-        const suggestedParallel = sanitizeNullableText(suggestions.parallel);
-        const constrainedProductLine =
-          suggestedProductLine && productLineOptions.length > 0
-            ? pickBestCandidate(productLineOptions, [
-                suggestedProductLine,
-                `${sanitizeNullableText(intakeRequired.year)} ${sanitizeNullableText(intakeRequired.manufacturer)} ${sanitizeNullableText(
-                  intakeRequired.sport
-                )}`.trim(),
-              ], 1.1)
-            : null;
-        if (constrainedProductLine && !intakeOptionalTouched.productLine) {
-          next.productLine = constrainedProductLine;
-          ocrAppliedOptionalFieldsRef.current.push("productLine");
-        }
-        const constrainedInsert =
-          suggestedInsertSet && insertSetOptions.length > 0
-            ? pickBestCandidate(insertSetOptions, [suggestedInsertSet, suggestedProductLine, suggestedParallel], 0.6)
-            : null;
-        if (constrainedInsert && !intakeOptionalTouched.insertSet && !prev.insertSet.trim()) {
-          next.insertSet = constrainedInsert;
-          ocrAppliedOptionalFieldsRef.current.push("insertSet");
-        }
-        const constrainedParallel =
-          suggestedParallel && parallelOptions.length > 0
-            ? pickBestCandidate(parallelOptions, [suggestedParallel, suggestedInsertSet, suggestedProductLine], 0.6)
-            : null;
-        if (constrainedParallel && !intakeOptionalTouched.parallel && !prev.parallel.trim()) {
-          next.parallel = constrainedParallel;
-          ocrAppliedOptionalFieldsRef.current.push("parallel");
-        }
         if (
           suggestions.cardNumber &&
           !intakeOptionalTouched.cardNumber &&
@@ -2924,12 +2833,6 @@ export default function AdminUploads() {
       ocrApplied,
       intakeOptionalTouched.cardNumber,
       intakeOptionalTouched.teamName,
-      intakeOptionalTouched.productLine,
-      intakeOptionalTouched.insertSet,
-      intakeOptionalTouched.parallel,
-      insertSetOptions,
-      parallelOptions,
-      productLineOptions,
       intakeOptionalTouched.numbered,
       intakeOptionalTouched.autograph,
       intakeOptionalTouched.memorabilia,
@@ -3008,22 +2911,18 @@ export default function AdminUploads() {
     [isRemoteApi, resolveApiUrl, session?.token]
   );
 
-  const fetchIdentifiedSetMatch = useCallback(
+  const fetchLookupSet = useCallback(
     async (payload: {
       year: string;
       manufacturer: string;
       sport: string;
       cardNumber: string;
       playerName: string;
-      teamName?: string;
-      insertSet?: string;
-      frontCardText?: string;
-      combinedText?: string;
-    }): Promise<IdentifySetPayload> => {
+    }): Promise<LookupSetPayload> => {
       if (!session?.token) {
         throw new Error("Your session expired. Sign in again and retry.");
       }
-      const response = await fetch(resolveApiUrl("/api/admin/cards/identify-set"), {
+      const response = await fetch(resolveApiUrl("/api/admin/cards/lookup-set"), {
         method: "POST",
         mode: isRemoteApi ? "cors" : "same-origin",
         headers: {
@@ -3032,11 +2931,11 @@ export default function AdminUploads() {
         },
         body: JSON.stringify(payload),
       });
-      const body = (await response.json().catch(() => null)) as IdentifySetPayload | { message?: string } | null;
+      const body = (await response.json().catch(() => null)) as LookupSetPayload | { message?: string } | null;
       if (!response.ok) {
-        throw new Error((body as { message?: string } | null)?.message ?? "Set identification failed.");
+        throw new Error((body as { message?: string } | null)?.message ?? "Set lookup failed.");
       }
-      return body as IdentifySetPayload;
+      return body as LookupSetPayload;
     },
     [isRemoteApi, resolveApiUrl, session?.token]
   );
@@ -3240,13 +3139,8 @@ export default function AdminUploads() {
     ]
   );
 
-  const fetchIdentifiedSetMatchRef = useRef(fetchIdentifiedSetMatch);
   const fetchOcrSuggestionsRef = useRef(fetchOcrSuggestions);
   const intakeOptionalTouchedRef = useRef(intakeOptionalTouched);
-
-  useEffect(() => {
-    fetchIdentifiedSetMatchRef.current = fetchIdentifiedSetMatch;
-  }, [fetchIdentifiedSetMatch]);
 
   useEffect(() => {
     fetchOcrSuggestionsRef.current = fetchOcrSuggestions;
@@ -3270,10 +3164,7 @@ export default function AdminUploads() {
     void fetchOcrSuggestions(pendingAutoOcrCardId);
   }, [fetchOcrSuggestions, intakeCardId, ocrStatus, pendingAutoOcrCardId]);
 
-  const scopedScreen2ProductSetId = useMemo(
-    () => sanitizeNullableText(intakeOptional.productLine) || sanitizeNullableText(variantScopeSummary?.selectedSetId),
-    [intakeOptional.productLine, variantScopeSummary?.selectedSetId]
-  );
+  const scopedScreen2ProductSetId = useMemo(() => resolvedVariantSetId, [resolvedVariantSetId]);
   const screen2PrefetchRequestKey = useMemo(() => {
     if (!intakeCardId || !scopedScreen2ProductSetId) {
       return null;
@@ -3317,7 +3208,7 @@ export default function AdminUploads() {
       if (screen2PrefetchKeyRef.current !== screen2PrefetchRequestKey) {
         return;
       }
-      console.warn("[AddCards][Screen2Prefetch] timed out waiting for insert/parallel suggestions", {
+      console.warn("[AddCards][Screen2Prefetch] timed out waiting for parallel guidance", {
         cardId: intakeCardId,
         productSetId: scopedScreen2ProductSetId,
         cardNumber: resolvedOcrCardNumber || null,
@@ -3325,32 +3216,6 @@ export default function AdminUploads() {
       setScreen2PrefetchStatus((current) => (current === "loading" ? "error" : current));
       screen2PrefetchTimeoutRef.current = null;
     }, 5000);
-    setIntakeOptional((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      if (!intakeOptionalTouchedRef.current.insertSet && prev.insertSet.trim()) {
-        next.insertSet = "";
-        changed = true;
-      }
-      if (!intakeOptionalTouchedRef.current.parallel && prev.parallel.trim()) {
-        next.parallel = "";
-        changed = true;
-      }
-      return changed ? next : prev;
-    });
-    setIntakeSuggested((prev) => {
-      let changed = false;
-      const next = { ...prev };
-      if (next.insertSet) {
-        delete next.insertSet;
-        changed = true;
-      }
-      if (next.parallel) {
-        delete next.parallel;
-        changed = true;
-      }
-      return changed ? next : prev;
-    });
     void fetchOcrSuggestionsRef.current(intakeCardId, {
       purpose: "product_set_prefetch",
       hintProductLine: scopedScreen2ProductSetId,
@@ -3959,7 +3824,7 @@ export default function AdminUploads() {
       new Set(
         [
           ...insertSetOptions.slice(0, 40),
-          ...parallelOptions.slice(0, 40),
+          ...displayParallelOptions.slice(0, 40),
           intakeOptional.insertSet,
           intakeOptional.parallel,
         ]
@@ -4010,8 +3875,8 @@ export default function AdminUploads() {
     intakeRequired.category,
     optionPreviewUrls,
     optionSetIdMap,
+    displayParallelOptions,
     insertSetOptions,
-    parallelOptions,
     session?.token,
     variantCatalog,
   ]);
@@ -4026,114 +3891,133 @@ export default function AdminUploads() {
   }, [intakeCardId, resetOcrState]);
 
   const typedOcrAudit = useMemo(() => (ocrAudit as OcrAuditPayload | null) ?? null, [ocrAudit]);
-  const identifiedFrontCardText = useMemo(
-    () => sanitizeNullableText(typedOcrAudit?.photoOcr?.FRONT?.ocrText ?? null),
-    [typedOcrAudit]
-  );
-  const identifiedCombinedOcrText = useMemo(
-    () =>
-      [typedOcrAudit?.photoOcr?.FRONT?.ocrText, typedOcrAudit?.photoOcr?.BACK?.ocrText, typedOcrAudit?.photoOcr?.TILT?.ocrText]
-        .map((value) => sanitizeNullableText(value ?? null))
-        .filter(Boolean)
-        .join("\n"),
-    [typedOcrAudit]
-  );
-  const identifySetRequestKey = useMemo(() => {
-    const year = sanitizeNullableText(intakeRequired.year);
-    const manufacturer = sanitizeNullableText(intakeRequired.manufacturer);
-    const sport = sanitizeNullableText(intakeRequired.sport);
-    const playerName = sanitizeNullableText(intakeRequired.playerName);
-    if (!year || !manufacturer || !sport || !resolvedOcrCardNumber || !playerName) {
-      return null;
-    }
-    return [
-      year.toLowerCase(),
-      manufacturer.toLowerCase(),
-      sport.toLowerCase(),
-      resolvedOcrCardNumber.toLowerCase(),
-      playerName.toLowerCase(),
-    ].join("::");
-  }, [
-    intakeRequired.manufacturer,
-    intakeRequired.playerName,
-    intakeRequired.sport,
-    intakeRequired.year,
-    resolvedOcrCardNumber,
-  ]);
-  identifySetLatestKeyRef.current = identifySetRequestKey;
-
   useEffect(() => {
     const year = sanitizeNullableText(intakeRequired.year);
     const manufacturer = sanitizeNullableText(intakeRequired.manufacturer);
     const sport = sanitizeNullableText(intakeRequired.sport);
-    const cardNumber = resolvedOcrCardNumber;
     const playerName = sanitizeNullableText(intakeRequired.playerName);
-    const teamName = sanitizeNullableText(intakeOptional.teamName);
-    const insertSet = sanitizeNullableText(intakeOptional.insertSet);
+    const cardNumber = sanitizeNullableText(intakeOptional.cardNumber);
 
     if (!session?.token || !isAdmin || intakeRequired.category !== "sport") {
-      identifySetRequestKeyRef.current = null;
-      identifySetLatestKeyRef.current = null;
-      setIdentifiedSetMatch(null);
-      return;
-    }
-    if (ocrStatus === "running" || ocrStatus === "pending") {
-      return;
-    }
-
-    if (!identifySetRequestKey || !year || !manufacturer || !sport || !cardNumber || !playerName) {
-      identifySetRequestKeyRef.current = null;
-      identifySetLatestKeyRef.current = null;
-      setIdentifiedSetMatch(null);
+      lookupSetRequestKeyRef.current = null;
+      lookupSetAutoFillRef.current = null;
+      setLookupSetStatus(null);
+      setLookupSetMatch(null);
       return;
     }
 
-    if (identifySetRequestKeyRef.current === identifySetRequestKey) {
+    if (ocrStatus !== "ready") {
       return;
     }
-    identifySetRequestKeyRef.current = identifySetRequestKey;
+
+    if (!year || !manufacturer || !sport || !playerName || !cardNumber) {
+      lookupSetRequestKeyRef.current = null;
+      setLookupSetStatus(null);
+      setLookupSetMatch(null);
+      return;
+    }
+
+    const requestKey = [
+      year.toLowerCase(),
+      manufacturer.toLowerCase(),
+      sport.toLowerCase(),
+      playerName.toLowerCase(),
+      cardNumber.toLowerCase(),
+    ].join("::");
+
+    if (lookupSetRequestKeyRef.current === requestKey) {
+      return;
+    }
+    lookupSetRequestKeyRef.current = requestKey;
+    setLookupSetStatus("loading");
 
     let cancelled = false;
-    void fetchIdentifiedSetMatchRef.current({
+    void fetchLookupSet({
       year,
       manufacturer,
       sport,
-      cardNumber,
       playerName,
-      teamName: teamName || undefined,
-      insertSet: insertSet || undefined,
-      frontCardText: identifiedFrontCardText || undefined,
-      combinedText: identifiedCombinedOcrText || undefined,
+      cardNumber,
     })
       .then((result) => {
-        if (cancelled || identifySetRequestKeyRef.current !== identifySetRequestKey) {
+        if (cancelled || lookupSetRequestKeyRef.current !== requestKey) {
           return;
         }
-        setIdentifiedSetMatch(result);
-        const resolvedSetId = sanitizeNullableText(result.setId);
-        if (result.confidence !== "none" && resolvedSetId) {
-          setIntakeSuggested((prev) => ({ ...prev, setName: resolvedSetId }));
+
+        setLookupSetMatch(result);
+        setLookupSetStatus("ready");
+
+        const nextSetId = sanitizeNullableText(result.setId);
+        const nextInsertLabel = sanitizeNullableText(result.insertLabel);
+        if ((result.match === "exact" || result.match === "multiple") && nextSetId && nextInsertLabel) {
+          lookupSetAutoFillRef.current = {
+            setId: nextSetId,
+            insertLabel: nextInsertLabel,
+          };
+          setIntakeOptional((prev) => {
+            const next = { ...prev };
+            let changed = false;
+            if (next.productLine !== nextSetId) {
+              next.productLine = nextSetId;
+              changed = true;
+            }
+            if (next.insertSet !== nextInsertLabel) {
+              next.insertSet = nextInsertLabel;
+              changed = true;
+            }
+            if (!intakeOptionalTouchedRef.current.parallel && prev.parallel.trim()) {
+              next.parallel = "";
+              changed = true;
+            }
+            return changed ? next : prev;
+          });
+          return;
         }
+
+        const priorAutoFill = lookupSetAutoFillRef.current;
+        lookupSetAutoFillRef.current = null;
+        setIntakeOptional((prev) => {
+          if (!priorAutoFill) {
+            return prev;
+          }
+          const next = { ...prev };
+          let changed = false;
+          if (
+            !intakeOptionalTouchedRef.current.productLine &&
+            sanitizeNullableText(prev.productLine).toLowerCase() === priorAutoFill.setId.toLowerCase()
+          ) {
+            next.productLine = "";
+            changed = true;
+          }
+          if (
+            !intakeOptionalTouchedRef.current.insertSet &&
+            sanitizeNullableText(prev.insertSet).toLowerCase() === priorAutoFill.insertLabel.toLowerCase()
+          ) {
+            next.insertSet = "";
+            changed = true;
+          }
+          if (!intakeOptionalTouchedRef.current.parallel && prev.parallel.trim()) {
+            next.parallel = "";
+            changed = true;
+          }
+          return changed ? next : prev;
+        });
       })
-      .catch((error) => {
-        if (cancelled || identifySetRequestKeyRef.current !== identifySetRequestKey) {
+      .catch(() => {
+        if (cancelled || lookupSetRequestKeyRef.current !== requestKey) {
           return;
         }
-        identifySetRequestKeyRef.current = null;
-        setIdentifiedSetMatch(null);
+        lookupSetRequestKeyRef.current = null;
+        setLookupSetStatus("error");
+        setLookupSetMatch(null);
       });
 
     return () => {
-      if (identifySetLatestKeyRef.current !== identifySetRequestKey) {
-        cancelled = true;
-      }
+      cancelled = true;
     };
   }, [
-    identifySetRequestKey,
-    identifiedCombinedOcrText,
-    identifiedFrontCardText,
-    intakeOptional.insertSet,
-    intakeOptional.teamName,
+    fetchLookupSet,
+    intakeOptional.cardNumber,
     intakeRequired.category,
     intakeRequired.manufacturer,
     intakeRequired.playerName,
@@ -4141,7 +4025,6 @@ export default function AdminUploads() {
     intakeRequired.year,
     isAdmin,
     ocrStatus,
-    resolvedOcrCardNumber,
     session?.token,
   ]);
 
@@ -4159,14 +4042,15 @@ export default function AdminUploads() {
       return;
     }
 
-    const confidence = typedOcrAudit?.confidence ?? {};
-    const setConfidence = typeof confidence.setName === "number" ? confidence.setName : 0;
-    const cardTypeConfidence = typeof confidence.insertSet === "number" ? confidence.insertSet : 0;
-    const ocrReady = setConfidence >= 0.8 && cardTypeConfidence >= 0.8;
     const correctedByUser = Boolean(
       intakeTouched.playerName || intakeOptionalTouched.productLine || intakeOptionalTouched.insertSet || intakeOptionalTouched.cardNumber
     );
-    if (!ocrReady && !correctedByUser) {
+    const onePlanResolvedCurrentSelection =
+      Boolean(activeLookupSetCandidate) ||
+      (lookupSetMatch?.match === "exact" || lookupSetMatch?.match === "multiple") &&
+        sanitizeNullableText(lookupSetMatch?.setId).toLowerCase() === setId.toLowerCase() &&
+        sanitizeNullableText(lookupSetMatch?.insertLabel).toLowerCase() === cardType.toLowerCase();
+    if (!onePlanResolvedCurrentSelection && !correctedByUser) {
       return;
     }
 
@@ -4234,7 +4118,10 @@ export default function AdminUploads() {
     isAdmin,
     isRemoteApi,
     session?.token,
-    typedOcrAudit?.confidence,
+    activeLookupSetCandidate,
+    lookupSetMatch?.insertLabel,
+    lookupSetMatch?.match,
+    lookupSetMatch?.setId,
   ]);
 
   const optionDetailByLabel = useMemo(() => {
@@ -4410,13 +4297,13 @@ export default function AdminUploads() {
 
   const sortedParallelOptions = useMemo(
     () =>
-      [...parallelOptions].sort((a, b) =>
+      [...displayParallelOptions].sort((a, b) =>
         a.localeCompare(b, undefined, {
           sensitivity: "base",
           numeric: true,
         })
       ),
-    [parallelOptions]
+    [displayParallelOptions]
   );
 
   const filteredPickerOptions = useMemo(() => {
@@ -4428,9 +4315,57 @@ export default function AdminUploads() {
     return base.filter((option) => option.toLowerCase().includes(search));
   }, [pickerModalField, pickerSearch, sortedInsertSetOptions, sortedParallelOptions]);
 
-  const hasResolvedVariantSetScope = useMemo(
-    () => Boolean(variantScopeSummary?.selectedSetId),
-    [variantScopeSummary?.selectedSetId]
+  const lookupSetNotice = useMemo(() => {
+    if (intakeRequired.category !== "sport") {
+      return null;
+    }
+    if (lookupSetStatus === "loading") {
+      return {
+        tone: "text-sky-200",
+        message: "Checking approved SetCard rows for Product Set and Insert...",
+      } as const;
+    }
+    if (lookupSetStatus === "error") {
+      return {
+        tone: "text-rose-200",
+        message: "Set lookup unavailable. Select Product Set and Insert manually.",
+      } as const;
+    }
+    if (lookupSetMatch?.match === "multiple") {
+      return {
+        tone: "text-amber-200",
+        message: "Multiple approved set-card matches found. Product Set and Insert were auto-filled from the first candidate.",
+      } as const;
+    }
+    if (lookupSetMatch?.match === "exact") {
+      return {
+        tone: "text-emerald-200",
+        message: "Product Set and Insert auto-filled from an approved SetCard match.",
+      } as const;
+    }
+    if (lookupSetMatch?.match === "none") {
+      return {
+        tone: "text-rose-200",
+        message: "Card not found in set lists.",
+      } as const;
+    }
+    return null;
+  }, [intakeRequired.category, lookupSetMatch?.match, lookupSetStatus]);
+
+  const canOpenInsertPicker = useMemo(
+    () => Boolean(hasResolvedVariantSetScope && sortedInsertSetOptions.length > 0),
+    [hasResolvedVariantSetScope, sortedInsertSetOptions.length]
+  );
+
+  const canOpenParallelPicker = useMemo(
+    () =>
+      Boolean(
+        hasResolvedVariantSetScope &&
+          sanitizeNullableText(intakeOptional.insertSet) &&
+          sortedParallelOptions.length > 0 &&
+          (!activeLookupSetCandidate || activeLookupSetCandidate.parallels.length > 0)
+      ),
+    [activeLookupSetCandidate, hasResolvedVariantSetScope, intakeOptional.insertSet, sortedParallelOptions.length]
   );
 
   useEffect(() => {
@@ -5729,6 +5664,50 @@ export default function AdminUploads() {
                     intakeRequired.year
                   )}`}
                 />
+                {intakeRequired.category === "sport" && (
+                  <>
+                    <input
+                      placeholder="Card number"
+                      value={intakeOptional.cardNumber}
+                      onChange={handleOptionalChange("cardNumber")}
+                      className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
+                        "cardNumber",
+                        intakeOptional.cardNumber
+                      )}`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!canOpenInsertPicker) {
+                          return;
+                        }
+                        setPickerModalField("insertSet");
+                      }}
+                      disabled={!canOpenInsertPicker}
+                      className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2 text-left text-sm text-white ${
+                        !canOpenInsertPicker
+                          ? "cursor-not-allowed border-white/10 bg-night-800/60 opacity-70"
+                          : "border-white/10 bg-night-800"
+                      }`}
+                    >
+                      <span className={intakeOptional.insertSet ? "text-white" : !canOpenInsertPicker ? "text-slate-400" : "text-slate-400"}>
+                        {intakeOptional.insertSet ||
+                          (!sanitizeNullableText(intakeOptional.productLine) ? "Select Product Set first" : "") ||
+                          (!canOpenInsertPicker ? "No insert options for current Product Set" : "") ||
+                          "Insert Set"}
+                      </span>
+                      <span className="text-base text-slate-400">▾</span>
+                    </button>
+                    {intakeOptional.insertSet && optionPreviewUrls[intakeOptional.insertSet] ? (
+                      <img
+                        src={optionPreviewUrls[intakeOptional.insertSet]}
+                        alt={`${intakeOptional.insertSet} example`}
+                        className="h-14 w-14 rounded-lg border border-white/10 object-cover"
+                      />
+                    ) : null}
+                    {lookupSetNotice ? <p className={`text-xs ${lookupSetNotice.tone}`}>{lookupSetNotice.message}</p> : null}
+                  </>
+                )}
                 <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-[0.28em] text-amber-200/80">
                   <button
                     type="button"
@@ -5894,115 +5873,6 @@ export default function AdminUploads() {
                     )}`}
                   />
                 )}
-                {intakeRequired.category === "sport" && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!hasResolvedVariantSetScope) {
-                          return;
-                        }
-                        setPickerModalField("insertSet");
-                      }}
-                      disabled={!hasResolvedVariantSetScope}
-                      className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2 text-left text-sm text-white ${
-                        !hasResolvedVariantSetScope
-                          ? "cursor-not-allowed border-white/10 bg-night-800/60 opacity-70"
-                          : !sanitizeNullableText(intakeOptional.insertSet) && taxonomyUnknownReasons.insertSet
-                          ? "border-rose-400/40 bg-rose-500/10"
-                          : "border-white/10 bg-night-800"
-                      } ${suggestedClass("insertSet", intakeOptional.insertSet)}`}
-                    >
-                      <span
-                        className={
-                          intakeOptional.insertSet
-                            ? "text-white"
-                            : !hasResolvedVariantSetScope
-                            ? "text-slate-400"
-                            : screen2PrefetchStatus === "loading"
-                            ? "text-sky-200"
-                            : screen2PrefetchStatus === "error"
-                            ? "text-rose-200"
-                            : taxonomyUnknownReasons.insertSet
-                            ? "text-rose-200"
-                            : "text-slate-400"
-                        }
-                      >
-                        {intakeOptional.insertSet ||
-                          (!hasResolvedVariantSetScope ? "Select Product Set first" : "") ||
-                          (screen2PrefetchStatus === "loading" ? "Loading insert suggestion..." : "") ||
-                          (screen2PrefetchStatus === "error" ? "Insert suggestion unavailable" : "") ||
-                          taxonomyUnknownReasons.insertSet ||
-                          "Insert Set"}
-                      </span>
-                      <span className="text-base text-slate-400">▾</span>
-                    </button>
-                    {intakeOptional.insertSet && optionPreviewUrls[intakeOptional.insertSet] ? (
-                      <img
-                        src={optionPreviewUrls[intakeOptional.insertSet]}
-                        alt={`${intakeOptional.insertSet} example`}
-                        className="h-14 w-14 rounded-lg border border-white/10 object-cover"
-                      />
-                    ) : null}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!hasResolvedVariantSetScope) {
-                          return;
-                        }
-                        setPickerModalField("parallel");
-                      }}
-                      disabled={!hasResolvedVariantSetScope}
-                      className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2 text-left text-sm text-white ${
-                        !hasResolvedVariantSetScope
-                          ? "cursor-not-allowed border-white/10 bg-night-800/60 opacity-70"
-                          : !sanitizeNullableText(intakeOptional.parallel) && taxonomyUnknownReasons.parallel
-                          ? "border-rose-400/40 bg-rose-500/10"
-                          : "border-white/10 bg-night-800"
-                      } ${suggestedClass("parallel", intakeOptional.parallel)}`}
-                    >
-                      <span
-                        className={
-                          intakeOptional.parallel
-                            ? "text-white"
-                            : !hasResolvedVariantSetScope
-                            ? "text-slate-400"
-                            : screen2PrefetchStatus === "loading"
-                            ? "text-sky-200"
-                            : screen2PrefetchStatus === "error"
-                            ? "text-rose-200"
-                            : taxonomyUnknownReasons.parallel
-                            ? "text-rose-200"
-                            : "text-slate-400"
-                        }
-                      >
-                        {intakeOptional.parallel ||
-                          (!hasResolvedVariantSetScope ? "Select Product Set first" : "") ||
-                          (screen2PrefetchStatus === "loading" ? "Loading parallel suggestion..." : "") ||
-                          (screen2PrefetchStatus === "error" ? "Parallel suggestion unavailable" : "") ||
-                          taxonomyUnknownReasons.parallel ||
-                          "Variant / Parallel"}
-                      </span>
-                      <span className="text-base text-slate-400">▾</span>
-                    </button>
-                    {intakeOptional.parallel && optionPreviewUrls[intakeOptional.parallel] ? (
-                      <img
-                        src={optionPreviewUrls[intakeOptional.parallel]}
-                        alt={`${intakeOptional.parallel} example`}
-                        className="h-14 w-14 rounded-lg border border-white/10 object-cover"
-                      />
-                    ) : null}
-                  </>
-                )}
-                <input
-                  placeholder="Card number"
-                  value={intakeOptional.cardNumber}
-                  onChange={handleOptionalChange("cardNumber")}
-                  className={`w-full rounded-2xl border border-white/10 bg-night-800 px-3 py-2 text-sm text-white ${suggestedClass(
-                    "cardNumber",
-                    intakeOptional.cardNumber
-                  )}`}
-                />
                 <div className="grid gap-2 md:grid-cols-2">
                   <input
                     placeholder="Numbered (e.g. 3/10)"
@@ -6072,6 +5942,79 @@ export default function AdminUploads() {
                         intakeOptional.gradeValue
                       )}`}
                     />
+                  </div>
+                )}
+                {intakeRequired.category === "sport" && (
+                  <div className="space-y-3 rounded-2xl border border-white/10 bg-night-900/50 p-3">
+                    <div className="space-y-1">
+                      <p className="text-xs uppercase tracking-[0.24em] text-slate-400">Parallel Review</p>
+                      {activeLookupSetCandidate ? (
+                        activeLookupSetCandidate.parallels.length > 0 ? (
+                          <p className="text-xs text-slate-300">Could this be a parallel? Review the options below.</p>
+                        ) : (
+                          <p className="text-xs text-slate-300">No parallel variants for this card type.</p>
+                        )
+                      ) : sanitizeNullableText(intakeOptional.insertSet) ? (
+                        <p className="text-xs text-slate-300">
+                          Review the Product Set options below. Program-scoped parallel data was not available for the current selection.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-slate-400">Confirm Insert on Screen 1 to narrow the parallel list.</p>
+                      )}
+                      {serialMatchedParallelLabels.length > 0 ? (
+                        <p className="text-xs text-amber-200">
+                          Numbered match for /{numberedDenominator}: {serialMatchedParallelLabels.join(", ")}
+                        </p>
+                      ) : numberedDenominator && activeLookupSetCandidate && activeLookupSetCandidate.parallels.length > 0 ? (
+                        <p className="text-xs text-slate-400">No scoped parallel print runs matched /{numberedDenominator}. Review the full list.</p>
+                      ) : null}
+                    </div>
+                    {canOpenParallelPicker ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (!canOpenParallelPicker) {
+                              return;
+                            }
+                            setPickerModalField("parallel");
+                          }}
+                          disabled={!canOpenParallelPicker}
+                          className={`flex w-full items-center justify-between rounded-2xl border px-3 py-2 text-left text-sm text-white ${
+                            !canOpenParallelPicker
+                              ? "cursor-not-allowed border-white/10 bg-night-800/60 opacity-70"
+                              : !sanitizeNullableText(intakeOptional.parallel) && taxonomyUnknownReasons.parallel
+                              ? "border-rose-400/40 bg-rose-500/10"
+                              : "border-white/10 bg-night-800"
+                          } ${suggestedClass("parallel", intakeOptional.parallel)}`}
+                        >
+                          <span
+                            className={
+                              intakeOptional.parallel
+                                ? "text-white"
+                                : screen2PrefetchStatus === "loading"
+                                ? "text-sky-200"
+                                : screen2PrefetchStatus === "error"
+                                ? "text-rose-200"
+                                : "text-slate-400"
+                            }
+                          >
+                            {intakeOptional.parallel ||
+                              (screen2PrefetchStatus === "loading" ? "Loading parallel guidance..." : "") ||
+                              (screen2PrefetchStatus === "error" ? "Parallel guidance unavailable" : "") ||
+                              "NONE (base card)"}
+                          </span>
+                          <span className="text-base text-slate-400">▾</span>
+                        </button>
+                        {intakeOptional.parallel && optionPreviewUrls[intakeOptional.parallel] ? (
+                          <img
+                            src={optionPreviewUrls[intakeOptional.parallel]}
+                            alt={`${intakeOptional.parallel} example`}
+                            className="h-14 w-14 rounded-lg border border-white/10 object-cover"
+                          />
+                        ) : null}
+                      </>
+                    ) : null}
                   </div>
                 )}
                 {intakeRequired.category === "tcg" && (

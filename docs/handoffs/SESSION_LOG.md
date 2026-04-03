@@ -1031,6 +1031,28 @@
 - `docs/HANDOFF_SET_OPS.md`
 - `docs/handoffs/SESSION_LOG.md`
 
+## 2026-04-02 - Task 28 ONE PLAN direct SetCard lookup
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Synced `main` with `git pull --ff-only origin main` -> `Already up to date.`
+- Replaced the Add Cards identify-set client flow with the ONE PLAN direct `SetCard` lookup path and moved Card Number + Insert onto Screen 1.
+- Added a new admin lookup endpoint and changed Screen 2 parallel review to default to `NONE` while using program-scoped parallel data when the SetCard lookup resolved the current set/program.
+
+### Files Updated
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/lookup-set.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/lookup-set.ts` -> pass with the existing `pages/admin/uploads.tsx` legacy `<img>` warnings only
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- `git diff --check` -> pass
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
 ### Notes
 - No runtime/API/DB evidence was collected in this session.
 - Existing Set Ops `Next Actions (Ordered)` in `docs/HANDOFF_SET_OPS.md` remain unchanged.
@@ -13175,3 +13197,20 @@
 ### Notes
 - This session included production DB writes limited to `SetProgram` inserts plus `SetCard` inserts/moves from the patched script.
 - No deploy, restart, migration, or Prisma schema change was executed.
+
+## 2026-04-02 - Docs-only repo state refresh in tenkings-task27-main
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified the current local checkout state in `/Users/markthomas/tenkings-task27-main`.
+- Updated handoff docs only; no code, runtime, deploy, restart, migration, or DB changes were executed.
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `734e24f`
+- `git log -1 --oneline` -> `734e24f fix(set-ops): backfill checklist programs for set cards`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
