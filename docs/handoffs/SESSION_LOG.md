@@ -13582,3 +13582,54 @@
 
 ### Notes
 - This entry records the planned retry before re-attempting the migration/backfill, per `AGENTS.md`.
+
+## 2026-04-03 - Kings Hunt migration recovery + production location backfill completed
+
+### Summary
+- Pushed the UUID fix as `517bbe2` `fix(db): align kingshunt location FKs with uuid`.
+- Fast-forwarded the droplet checkout to `517bbe2`.
+- Verified the first failed Kings Hunt migration had not left partial `Location`, `NavigationSession`, or `LocationVisit` schema objects behind.
+- Marked `20260402183000_kingshunt_location_wayfinding` as rolled back in Prisma migration state, then reran `migrate:deploy` successfully.
+- Regenerated the Prisma client on the droplet so the new `Location` fields were visible to runtime scripts.
+- Executed the location backfill dataset against production using inline Node + Prisma from the `@tenkings/database` workspace because `tsx` is not installed in the droplet dependency set.
+
+### Verification Evidence
+- Droplet checkout sync:
+  - `ssh root@104.131.27.245 'cd /root/tenkings-backend && git pull --ff-only origin main'` -> fast-forward `ec6eace..517bbe2`
+- Partial-schema check before recovery:
+  - queried `information_schema.columns` for the new Kings Hunt `Location`, `NavigationSession`, and `LocationVisit` objects -> `0 rows`
+- Prisma recovery:
+  - `pnpm --filter @tenkings/database exec prisma migrate resolve --rolled-back 20260402183000_kingshunt_location_wayfinding --schema prisma/schema.prisma` -> pass
+  - `pnpm --filter @tenkings/database migrate:deploy` -> pass
+  - migration output confirmed `Applying migration 20260402183000_kingshunt_location_wayfinding`
+  - `pnpm --filter @tenkings/database generate` -> pass
+- Backfill execution:
+  - direct droplet command `pnpm --filter @tenkings/nextjs-app exec tsx ../../scripts/backfill-location-data.ts` failed because `tsx` was not installed
+  - equivalent inline Node + Prisma run updated:
+    - `dallas-stars-coamerica-center`
+    - `dallas-stars-mckinney`
+    - `dallas-stars-plano`
+    - `folsom-premium-outlets`
+    - `north-premium-outlet-mall`
+    - `ohkay-hotel-casino`
+    - `online-collect-tenkings-co`
+    - `sacramento-kings-golden-1-center`
+    - `sutter-health-park`
+    - `the-nerd-neonopolis`
+  - skipped: `folsom-outlet-mall`
+- Production verification:
+  - `select count(*) as locations_with_coords from "Location" where "latitude" is not null and "longitude" is not null;` -> `9`
+  - `select "slug", "locationType", "locationStatus", "city", "state", "hasIndoorMap", "walkingTimeMin", array_length("landmarks", 1) as landmark_count from "Location" where "slug" = 'folsom-premium-outlets';` -> `folsom-premium-outlets | mall | active | Folsom | CA | t | 3 | 4`
+  - `_prisma_migrations` entries for the two touched migrations:
+    - `20260320120000_add_pack_definition_image_fields | finished=true | rolled_back=false`
+    - `20260402183000_kingshunt_location_wayfinding | finished=false | rolled_back=true`
+    - `20260402183000_kingshunt_location_wayfinding | finished=true | rolled_back=false`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- No deploy or restart was executed.
+- Production now has Kings Hunt schema support plus the requested location metadata backfill.
+- The production dataset currently contains `folsom-premium-outlets` but not `folsom-outlet-mall`, which is why the backfill skipped one entry.

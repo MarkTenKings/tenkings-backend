@@ -1,15 +1,34 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-03` (Kings Hunt migration fix in progress on `main`; patched `NavigationSession.locationId` and `LocationVisit.locationId` to UUID-backed columns in both Prisma schema and migration SQL after the earlier production `P3018`; retry migration/backfill pending)
+- Last reviewed: `2026-04-03` (Kings Hunt migration recovery completed on production from `main`; corrected UUID migration applied and location backfill executed; no deploy or restart was run)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb` -> `## main...origin/main`
-  - modified tracked paths: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`, `packages/database/prisma/schema.prisma`, `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`
+  - modified tracked paths: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
 - Latest committed baseline in this checkout:
-  - `ec6eace` fix(build): add leaflet type declarations
+  - `517bbe2` fix(db): align kingshunt location FKs with uuid
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; production droplet checkout `/root/tenkings-backend`; no deploy/restart executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-03, Kings Hunt migration recovery + production backfill completed)
+- Continued from the same session after the UUID fix was committed and pushed as `517bbe2` `fix(db): align kingshunt location FKs with uuid`.
+- Fast-forwarded the droplet checkout to `517bbe2` with `git pull --ff-only origin main`.
+- Verified the first failed Kings Hunt migration had not left partial schema objects behind:
+  - queried `information_schema.columns` for the new `Location`, `NavigationSession`, and `LocationVisit` objects and observed `0 rows`
+- Recovery steps executed on the droplet:
+  - `pnpm --filter @tenkings/database exec prisma migrate resolve --rolled-back 20260402183000_kingshunt_location_wayfinding --schema prisma/schema.prisma` -> pass
+  - `pnpm --filter @tenkings/database migrate:deploy` -> pass; applied `20260402183000_kingshunt_location_wayfinding`
+  - `pnpm --filter @tenkings/database generate` -> pass; refreshed the droplet Prisma client so the new `Location` fields were available to runtime scripts
+- Backfill execution:
+  - `pnpm --filter @tenkings/nextjs-app exec tsx ../../scripts/backfill-location-data.ts` could not run on the droplet because `tsx` is not installed in that production dependency set
+  - executed an equivalent inline Node + Prisma script from the `@tenkings/database` workspace using the same checked-in backfill dataset
+  - updated 10 existing slugs and skipped `folsom-outlet-mall` because that slug is not present in production
+- Verification evidence:
+  - `select count(*) as locations_with_coords from "Location" where "latitude" is not null and "longitude" is not null;` -> `9`
+  - `select "slug", "locationType", "locationStatus", "city", "state", "hasIndoorMap", "walkingTimeMin", array_length("landmarks", 1) from "Location" where "slug" = 'folsom-premium-outlets';` -> `mall`, `active`, `Folsom`, `CA`, `hasIndoorMap=true`, `walkingTimeMin=3`, `landmark_count=4`
+  - `_prisma_migrations` now shows one rolled-back record and one successful finished record for `20260402183000_kingshunt_location_wayfinding`, which matches the recovery sequence
+- No deploy or restart was executed in this session.
 
 ## Session Update (2026-04-03, Kings Hunt migration UUID fix)
 - Investigated the failed production migration and confirmed the root cause in checked-in code:
