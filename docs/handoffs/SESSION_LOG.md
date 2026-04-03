@@ -13460,3 +13460,30 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-03 - Build hotfix for missing Leaflet declarations
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Investigated the reported Vercel build failure for `frontend/nextjs-app/components/maps/IndoorMap.tsx`.
+- Confirmed `frontend/nextjs-app/package.json` already included `leaflet`, but the app was missing `@types/leaflet`.
+- Installed `@types/leaflet` as a dev dependency in the Next.js app and updated `pnpm-lock.yaml`.
+- Refreshed the local generated Prisma client so validation used the current schema-generated types only.
+- No deploy, restart, Prisma migration, backfill script execution, or DB mutation was performed.
+
+### Files Updated
+- `frontend/nextjs-app/package.json`
+- `pnpm-lock.yaml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app add -D @types/leaflet` -> pass
+- `pnpm --filter @tenkings/database generate` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- `git diff --check` -> pass
+
+### Notes
+- The original reported failure was the missing TypeScript declaration package for `leaflet`.
+- Local post-fix validation no longer reports the `Could not find a declaration file for module 'leaflet'` error.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.

@@ -1,15 +1,32 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-03` (merged `feature/kingshunt` into `main`; current checkout baseline is `b512b60` `merge(feature/kingshunt): integrate locator and wayfinding`; no deploy/restart/migration/backfill or DB writes were executed)
+- Last reviewed: `2026-04-03` (build hotfix in progress on `main`: added `@types/leaflet` to fix the Vercel `leaflet` declaration failure; current committed baseline before this handoff refresh is `9cd12e7` `docs(handoff): record kingshunt merge on main`; no deploy/restart/migration/backfill or DB writes were executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
-  - `git status -sb` -> `## main...origin/main [ahead 4]`
-  - working tree was clean before updating handoff docs after the merge
+  - `git status -sb` -> `## main...origin/main`
+  - modified tracked paths: `frontend/nextjs-app/package.json`, `pnpm-lock.yaml`
 - Latest committed baseline in this checkout:
-  - `b512b60` merge(feature/kingshunt): integrate locator and wayfinding
+  - `9cd12e7` docs(handoff): record kingshunt merge on main
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-03, build hotfix for missing Leaflet declarations)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Investigated the reported Vercel build failure in `frontend/nextjs-app/components/maps/IndoorMap.tsx` and confirmed the app already depended on `leaflet` but was missing the `@types/leaflet` dev dependency.
+- Installed the missing types in the Next.js app via:
+  - `pnpm --filter @tenkings/nextjs-app add -D @types/leaflet`
+- Refreshed the generated Prisma client locally to remove stale generated-type noise before validation:
+  - `pnpm --filter @tenkings/database generate`
+- Validation after the dependency fix:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- Files changed for this fix:
+  - `frontend/nextjs-app/package.json`
+  - `pnpm-lock.yaml`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, backfill execution, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-03, feature/kingshunt merged into main)
 - Continued from the same session after following the `AGENTS.md` startup-doc requirement earlier.
