@@ -1053,10 +1053,6 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed.
 
-### Notes
-- No runtime/API/DB evidence was collected in this session.
-- Existing Set Ops `Next Actions (Ordered)` in `docs/HANDOFF_SET_OPS.md` remain unchanged.
-
 ## 2026-02-23 - Ref Seed Follow-up #17 (Canonical Parallel + Alias-Aware Matching for QA Photos)
 
 ### Summary
@@ -13330,6 +13326,28 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+## 2026-04-03 - Docs-only repo state refresh in tenkings-task27-main after Task 31 commit
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified the current local checkout state in `/Users/markthomas/tenkings-task27-main`.
+- Confirmed the latest committed baseline is `e635586` `fix: HD images + verify OCR + filter weak comps + fuzzy parallel picker`.
+- Updated handoff docs only; no code, runtime, deploy, restart, migration, or DB changes were executed.
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `e635586`
+- `git log -1 --oneline` -> `e635586 fix: HD images + verify OCR + filter weak comps + fuzzy parallel picker`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- No runtime/API/DB evidence was collected in this session.
+- Existing Set Ops `Next Actions (Ordered)` in `docs/HANDOFF_SET_OPS.md` remain unchanged.
 
 ## 2026-04-03 - Task 30 parallel regex expansion + explicit scopedParallels picker verification
 

@@ -1,15 +1,28 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-03` (Task 31 HD image path repair + OCR verification + weak comp filtering + fuzzy parallel scoping completed in `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-03` (docs-only repo state refresh completed in `/Users/markthomas/tenkings-task27-main`; current checkout is clean at `e635586` `fix: HD images + verify OCR + filter weak comps + fuzzy parallel picker`; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state before final Task 31 handoff refresh:
+- Current local git state before this docs-only refresh:
   - `git status -sb` -> `## main...origin/main`
-  - pending tracked paths include `frontend/nextjs-app/lib/server/setLookup.ts`, `frontend/nextjs-app/pages/admin/kingsreview.tsx`, `frontend/nextjs-app/pages/admin/uploads.tsx`, `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`, `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`, and handoff docs
+  - working tree was clean before updating handoff docs
 - Latest committed baseline in this checkout:
-  - `4924aab` fix(comps+parallel): expand parallel regex + verify parallel picker from lookup-set
+  - `e635586` fix: HD images + verify OCR + filter weak comps + fuzzy parallel picker
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-03, docs-only repo state refresh in tenkings-task27-main after Task 31 commit)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified current local repo state without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `e635586`
+  - `git log -1 --oneline` -> `e635586 fix: HD images + verify OCR + filter weak comps + fuzzy parallel picker`
+- Confirmed the latest committed baseline in this checkout is `e635586` `fix: HD images + verify OCR + filter weak comps + fuzzy parallel picker`.
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-03, Task 31 HD images + OCR verification + weak comps + fuzzy parallel scoping)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`, then synced `main` before editing:
