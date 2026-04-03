@@ -26,15 +26,23 @@ interface CompletePayload {
   reviewStage?: unknown;
 }
 
+interface CompleteResponse {
+  message: string;
+  imageUrl?: string;
+  thumbnailUrl?: string | null;
+  cdnHdUrl?: string | null;
+  cdnThumbUrl?: string | null;
+}
+
 const REVIEW_STAGE_VALUES = Object.values(CardReviewStage);
 const REVIEW_STAGE_SET = new Set<string>(REVIEW_STAGE_VALUES);
 const LEGACY_REVIEW_STAGE_ALIASES: Record<string, CardReviewStage> = {
   ADD_ITEMS: CardReviewStage.READY_FOR_HUMAN_REVIEW,
 };
 
-const handler: NextApiHandler<{ message: string }> = async function handler(
+const handler: NextApiHandler<CompleteResponse> = async function handler(
   req: NextApiRequest,
-  res: NextApiResponse<{ message: string }>
+  res: NextApiResponse<CompleteResponse>
 ) {
   if (req.method !== "POST") {
     return res.status(405).json({ message: "Method not allowed" });
@@ -109,6 +117,9 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
     });
 
     const thumbnailKey = buildThumbnailKey(asset.storageKey);
+    let thumbnailUrl: string | null = asset.thumbnailUrl ?? null;
+    let cdnHdUrl: string | null = asset.cdnHdUrl ?? null;
+    let cdnThumbUrl: string | null = asset.cdnThumbUrl ?? null;
     const ensureThumbnail = async (sourceBuffer: Buffer) => {
       try {
         const thumbBuffer = await createThumbnailPng(sourceBuffer);
@@ -127,11 +138,11 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
     let sourceBuffer: Buffer | null = null;
     try {
       sourceBuffer = await readStorageBuffer(asset.storageKey);
-      const thumbUrl = await ensureThumbnail(sourceBuffer);
-      if (thumbUrl) {
+      thumbnailUrl = await ensureThumbnail(sourceBuffer);
+      if (thumbnailUrl) {
         await prisma.cardAsset.update({
           where: { id: asset.id },
-          data: { thumbnailUrl: thumbUrl },
+          data: { thumbnailUrl },
         });
       }
     } catch (error) {
@@ -153,11 +164,13 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
     if (getStorageMode() === "s3" && sourceBuffer) {
       try {
         const variants = await generateAndUploadVariants(sourceBuffer, `cards/${asset.id}`);
+        cdnHdUrl = normalizeStorageUrl(variants.hdUrl) ?? variants.hdUrl;
+        cdnThumbUrl = normalizeStorageUrl(variants.thumbUrl) ?? variants.thumbUrl;
         await prisma.cardAsset.update({
           where: { id: asset.id },
           data: {
-            cdnHdUrl: variants.hdUrl,
-            cdnThumbUrl: variants.thumbUrl,
+            cdnHdUrl,
+            cdnThumbUrl,
           },
         });
       } catch (error) {
@@ -175,7 +188,13 @@ const handler: NextApiHandler<{ message: string }> = async function handler(
       },
     });
 
-    return res.status(200).json({ message: "Upload recorded." });
+    return res.status(200).json({
+      message: "Upload recorded.",
+      imageUrl: resolvedImageUrl,
+      thumbnailUrl,
+      cdnHdUrl,
+      cdnThumbUrl,
+    });
   } catch (error) {
     const result = toErrorResponse(error);
     return res.status(result.status).json({ message: result.message });

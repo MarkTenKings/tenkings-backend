@@ -13356,3 +13356,48 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+## 2026-04-03 - Docs-only repo state refresh in tenkings-task27-main (post-Task 30 baseline)
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified the current local checkout state in `/Users/markthomas/tenkings-task27-main`.
+- Confirmed the latest committed baseline is `4924aab` `fix(comps+parallel): expand parallel regex + verify parallel picker from lookup-set`.
+- Updated handoff docs only; no code, runtime, deploy, restart, migration, or DB changes were executed.
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `4924aab`
+- `git log -1 --oneline` -> `4924aab fix(comps+parallel): expand parallel regex + verify parallel picker from lookup-set`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+## 2026-04-03 - Task 31 HD images + OCR verification + weak comps + fuzzy parallel scoping
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Pulled latest `origin/main` with `git pull --ff-only --autostash origin main`, which returned `Already up to date.`
+- Confirmed the front upload pipeline in `pages/api/admin/uploads/complete.ts` still generated Sharp-based S3 variants and persisted `cdnHdUrl` / `cdnThumbUrl`; the blur issue was on the read side because the intake UI still preferred thumb variants and did not hydrate the returned front variant URLs into local state immediately after upload completion.
+- Confirmed `pages/api/admin/cards/[cardId]/ocr-suggest.ts` still uses Google Vision via `runGoogleVisionOcr()` plus the OpenAI Responses API, and verified from `git diff 082f1c8 472f89b -- frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts` that Task 29 only added background `setLookupResult` persistence rather than changing the Vision call or model-selection flow.
+- Confirmed the checked-in OCR LLM defaults are still primary `gpt-5.2` with fallback `gpt-5-mini`; `env | rg '^OCR_LLM_|^GOOGLE_VISION_'` returned no matching variables in this workstation shell, so deployed runtime env may override those defaults.
+- Updated the uploads UI to consume and prefer HD front image URLs, updated OCR to prefer `cdnHdUrl`, filtered WEAK comps behind a reveal toggle, and added fuzzy program-label/programId matching for scoped parallels.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+- `frontend/nextjs-app/lib/server/setLookup.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/uploads/complete.ts --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file pages/admin/kingsreview.tsx --file lib/server/setLookup.ts` passed with the existing `uploads.tsx` and `kingsreview.tsx` `<img>` warnings only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.

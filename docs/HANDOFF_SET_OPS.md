@@ -1,15 +1,56 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-03` (Task 30 parallel regex expansion + explicit scopedParallels picker verification completed in `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-03` (Task 31 HD image path repair + OCR verification + weak comp filtering + fuzzy parallel scoping completed in `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state before final Task 30 handoff refresh:
+- Current local git state before final Task 31 handoff refresh:
   - `git status -sb` -> `## main...origin/main`
-  - pending changes include `frontend/nextjs-app/lib/server/setLookup.ts`, `frontend/nextjs-app/pages/admin/uploads.tsx`, `packages/shared/src/kingsreviewCompMatch.ts`, `packages/shared/tests/kingsreviewCompMatch.test.js`, and handoff docs
+  - pending tracked paths include `frontend/nextjs-app/lib/server/setLookup.ts`, `frontend/nextjs-app/pages/admin/kingsreview.tsx`, `frontend/nextjs-app/pages/admin/uploads.tsx`, `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`, `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`, and handoff docs
 - Latest committed baseline in this checkout:
-  - `472f89b` fix(add-cards): parallel picker by setId only + comp scoring sapphire + background set lookup + photoroom front
+  - `4924aab` fix(comps+parallel): expand parallel regex + verify parallel picker from lookup-set
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-03, Task 31 HD images + OCR verification + weak comps + fuzzy parallel scoping)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only --autostash origin main` -> `Already up to date.`
+- Investigated the requested front-image, OCR, comp-display, and parallel-picker regressions.
+- Investigation findings:
+  - front upload completion in `frontend/nextjs-app/pages/api/admin/uploads/complete.ts` still ran Sharp-based `generateAndUploadVariants()` for S3 uploads and still persisted `cdnHdUrl` / `cdnThumbUrl`
+  - the front blur issue came from the intake UI preferring thumb display variants and not hydrating the returned front variant URLs into local state immediately after `/api/admin/uploads/complete`
+  - OCR still uses Google Cloud Vision as the primary OCR step via `runGoogleVisionOcr()` and still uses the OpenAI Responses API for field extraction
+  - verified with `git diff 082f1c8 472f89b -- frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts` that Task 29 only added background ONE PLAN `setLookupResult` persistence and did not change the Google Vision call, the Responses endpoint, or the checked-in OCR model-selection flow
+  - the checked-in effective OCR LLM defaults remain primary `gpt-5.2` and fallback `gpt-5-mini`; `env | rg '^OCR_LLM_|^GOOGLE_VISION_'` returned no matching variables in this workstation shell, so deployed runtime env may still override those defaults
+- Fixes implemented in:
+  - `frontend/nextjs-app/pages/api/admin/uploads/complete.ts`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - `frontend/nextjs-app/pages/admin/kingsreview.tsx`
+  - `frontend/nextjs-app/lib/server/setLookup.ts`
+- What changed:
+  - `/api/admin/uploads/complete` now returns the resolved front `imageUrl`, `thumbnailUrl`, `cdnHdUrl`, and `cdnThumbUrl` after thumbnail/variant generation so the client can hydrate the actual stored URLs immediately
+  - `/admin/uploads` now captures those returned front URLs into local intake state and uses `CardImage variant="hd"` for the operator-facing front/back/tilt previews instead of preferring the low-res thumb image
+  - `/api/admin/cards/[cardId]/ocr-suggest` now prefers `cdnHdUrl` when building OCR/LLM image inputs, logs configured OCR model overrides once when present, and records configured model override values in the audit metadata
+  - `/admin/kingsreview` now hides `WEAK` comps by default whenever `EXACT` or `CLOSE` comps exist, falls back to showing all comps when there are no strong matches, and exposes the requested weak-match reveal toggle above `Load More`
+  - `frontend/nextjs-app/lib/server/setLookup.ts` now fuzzy-matches `SetCard.programId` / `SetProgram.label` against `SetParallelScope.programId`, while still falling back to all set-level parallels when no scoped fuzzy match is found
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/uploads/complete.ts --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file pages/admin/kingsreview.tsx --file lib/server/setLookup.ts` -> pass with the existing `uploads.tsx` and `kingsreview.tsx` legacy `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-03, docs-only repo state refresh in tenkings-task27-main)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified current local repo state without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `4924aab`
+  - `git log -1 --oneline` -> `4924aab fix(comps+parallel): expand parallel regex + verify parallel picker from lookup-set`
+- Confirmed the latest committed baseline in this checkout is `4924aab` `fix(comps+parallel): expand parallel regex + verify parallel picker from lookup-set`.
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-02, Task 28 ONE PLAN direct SetCard lookup)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`, then synced `main` before editing:

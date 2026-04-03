@@ -97,13 +97,69 @@ function publishedSetParallelScopeWhereInput(): Prisma.SetParallelScopeWhereInpu
   };
 }
 
-async function loadSetParallels(setId: string): Promise<LookupSetParallelOption[]> {
+type SetParallelScopeRow = Awaited<ReturnType<typeof loadSetParallelScopeRows>>[number];
+
+function normalizeProgramMatchText(value: string | null | undefined) {
+  return collapseLookupSetWhitespace(String(value || "").toLowerCase().replace(/[_-]+/g, " "));
+}
+
+function compactProgramMatchText(value: string | null | undefined) {
+  return normalizeProgramMatchText(value).replace(/[^a-z0-9]/g, "");
+}
+
+function isBaseProgramLabel(value: string | null | undefined) {
+  const normalized = normalizeProgramMatchText(value);
+  return normalized === "base" || normalized === "base card" || normalized === "base cards";
+}
+
+function programIdFuzzyMatch(setCardProgramId: string, programLabel: string, scopeProgramId: string) {
+  const normalizedProgramId = normalizeProgramMatchText(setCardProgramId);
+  const normalizedScopeProgramId = normalizeProgramMatchText(scopeProgramId);
+  const normalizedProgramLabel = normalizeProgramMatchText(programLabel);
+  const compactProgramId = compactProgramMatchText(setCardProgramId);
+  const compactScopeProgramId = compactProgramMatchText(scopeProgramId);
+  const compactProgramLabel = compactProgramMatchText(programLabel);
+
+  if (!normalizedProgramId || !normalizedScopeProgramId) {
+    return false;
+  }
+  if (normalizedProgramId === normalizedScopeProgramId || compactProgramId === compactScopeProgramId) {
+    return true;
+  }
+  if (
+    normalizedProgramId.includes(normalizedScopeProgramId) ||
+    normalizedScopeProgramId.includes(normalizedProgramId) ||
+    compactProgramId.includes(compactScopeProgramId) ||
+    compactScopeProgramId.includes(compactProgramId)
+  ) {
+    return true;
+  }
+  if (normalizedProgramLabel) {
+    if (
+      normalizedProgramLabel === normalizedScopeProgramId ||
+      compactProgramLabel === compactScopeProgramId ||
+      normalizedProgramLabel.includes(normalizedScopeProgramId) ||
+      normalizedScopeProgramId.includes(normalizedProgramLabel) ||
+      compactProgramLabel.includes(compactScopeProgramId) ||
+      compactScopeProgramId.includes(compactProgramLabel)
+    ) {
+      return true;
+    }
+  }
+  if ((isBaseProgramLabel(setCardProgramId) || isBaseProgramLabel(programLabel)) && normalizedScopeProgramId.includes("base")) {
+    return true;
+  }
+  return false;
+}
+
+async function loadSetParallelScopeRows(setId: string) {
   const rows = await prisma.setParallelScope.findMany({
     where: {
       setId,
       ...publishedSetParallelScopeWhereInput(),
     },
     select: {
+      programId: true,
       parallelId: true,
       parallel: {
         select: {
@@ -119,6 +175,10 @@ async function loadSetParallels(setId: string): Promise<LookupSetParallelOption[
     take: 1000,
   });
 
+  return rows;
+}
+
+function toLookupSetParallelOptions(rows: SetParallelScopeRow[]): LookupSetParallelOption[] {
   const deduped = new Map<string, LookupSetParallelOption>();
   for (const row of rows) {
     const label = collapseLookupSetWhitespace(row.parallel?.label ?? "");
@@ -138,6 +198,24 @@ async function loadSetParallels(setId: string): Promise<LookupSetParallelOption[
   return Array.from(deduped.values()).sort((a, b) =>
     a.label.localeCompare(b.label, undefined, { sensitivity: "base" })
   );
+}
+
+async function loadSetParallels(
+  setId: string,
+  matchedProgramId: string,
+  matchedProgramLabel: string
+): Promise<{
+  scopedParallels: LookupSetParallelOption[];
+  allParallels: LookupSetParallelOption[];
+}> {
+  const rows = await loadSetParallelScopeRows(setId);
+  const filteredRows = rows.filter((row) =>
+    programIdFuzzyMatch(matchedProgramId, matchedProgramLabel, row.programId)
+  );
+  return {
+    scopedParallels: toLookupSetParallelOptions(filteredRows.length > 0 ? filteredRows : rows),
+    allParallels: toLookupSetParallelOptions(rows),
+  };
 }
 
 export async function lookupSetByCardIdentity(
@@ -206,13 +284,17 @@ export async function lookupSetByCardIdentity(
 
   const candidates = await Promise.all(
     matchedRows.map(async (row) => {
-      const scopedParallels = await loadSetParallels(row.setId);
+      const { scopedParallels, allParallels } = await loadSetParallels(
+        row.setId,
+        row.programId,
+        row.program.label
+      );
       return {
         setId: row.setId,
         insertLabel: collapseLookupSetWhitespace(row.program.label),
         programId: row.programId,
         scopedParallels,
-        parallels: scopedParallels,
+        parallels: allParallels,
       };
     })
   );

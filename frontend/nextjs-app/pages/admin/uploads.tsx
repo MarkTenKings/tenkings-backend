@@ -46,6 +46,10 @@ type IntakeReviewMode = "capture" | "review";
 type IntakeFrontUploadPayload = {
   assetId: string;
   batchId: string;
+  imageUrl: string | null;
+  thumbnailUrl: string | null;
+  cdnHdUrl: string | null;
+  cdnThumbUrl: string | null;
 };
 type IntakeFrontUploadError = Error & {
   assetId?: string;
@@ -2101,7 +2105,21 @@ export default function AdminUploads() {
         throw error;
       }
 
-      return presignPayload;
+      const completePayload = (await completeRes.json().catch(() => ({}))) as {
+        imageUrl?: unknown;
+        thumbnailUrl?: unknown;
+        cdnHdUrl?: unknown;
+        cdnThumbUrl?: unknown;
+      };
+
+      return {
+        assetId: presignPayload.assetId,
+        batchId: presignPayload.batchId,
+        imageUrl: typeof completePayload.imageUrl === "string" ? completePayload.imageUrl : presignPayload.publicUrl,
+        thumbnailUrl: typeof completePayload.thumbnailUrl === "string" ? completePayload.thumbnailUrl : null,
+        cdnHdUrl: typeof completePayload.cdnHdUrl === "string" ? completePayload.cdnHdUrl : null,
+        cdnThumbUrl: typeof completePayload.cdnThumbUrl === "string" ? completePayload.cdnThumbUrl : null,
+      };
     },
     [isRemoteApi, resolveApiUrl, session?.token]
   );
@@ -3652,6 +3670,9 @@ export default function AdminUploads() {
               }
               setIntakeCardId(presign.assetId);
               setIntakeBatchId(presign.batchId);
+              setIntakeFrontPreview(presign.imageUrl);
+              setIntakeFrontCdnHdUrl(presign.cdnHdUrl);
+              setIntakeFrontCdnThumbUrl(presign.cdnThumbUrl);
             } catch (error) {
               if (activeFrontUploadTokenRef.current !== currentToken) {
                 return;
@@ -5596,7 +5617,7 @@ export default function AdminUploads() {
                     cdnHdUrl={intakeFrontCdnHdUrl}
                     cdnThumbUrl={intakeFrontCdnThumbUrl}
                     fallbackUrl={intakeFrontPreview}
-                    variant="thumb"
+                    variant="hd"
                     alt="Front preview"
                     width={300}
                     height={420}
@@ -5629,7 +5650,7 @@ export default function AdminUploads() {
                     cdnHdUrl={intakeBackCdnHdUrl}
                     cdnThumbUrl={intakeBackCdnThumbUrl}
                     fallbackUrl={intakeBackPreview}
-                    variant="thumb"
+                    variant="hd"
                     alt="Back preview"
                     width={300}
                     height={420}
@@ -5664,7 +5685,7 @@ export default function AdminUploads() {
                     cdnHdUrl={intakeTiltCdnHdUrl}
                     cdnThumbUrl={intakeTiltCdnThumbUrl}
                     fallbackUrl={intakeTiltPreview}
-                    variant="thumb"
+                    variant="hd"
                     alt="Tilt preview"
                     width={300}
                     height={420}
@@ -5966,7 +5987,7 @@ export default function AdminUploads() {
                         cdnHdUrl={intakeFrontCdnHdUrl}
                         cdnThumbUrl={intakeFrontCdnThumbUrl}
                         fallbackUrl={intakeFrontPreview}
-                        variant="thumb"
+                        variant="hd"
                         alt="Front"
                         width={300}
                         height={420}
@@ -5983,7 +6004,7 @@ export default function AdminUploads() {
                         cdnHdUrl={intakeBackCdnHdUrl}
                         cdnThumbUrl={intakeBackCdnThumbUrl}
                         fallbackUrl={intakeBackPreview}
-                        variant="thumb"
+                        variant="hd"
                         alt="Back"
                         width={300}
                         height={420}
@@ -6000,7 +6021,7 @@ export default function AdminUploads() {
                         cdnHdUrl={intakeTiltCdnHdUrl}
                         cdnThumbUrl={intakeTiltCdnThumbUrl}
                         fallbackUrl={intakeTiltPreview}
-                        variant="thumb"
+                        variant="hd"
                         alt="Tilt"
                         width={300}
                         height={420}

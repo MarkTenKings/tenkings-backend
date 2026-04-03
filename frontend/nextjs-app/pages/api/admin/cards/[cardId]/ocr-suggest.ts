@@ -99,9 +99,11 @@ type StoredSuggestionSnapshot = {
 const DEFAULT_THRESHOLD = 0.7;
 const OCR_LLM_MODEL_RAW = (process.env.OCR_LLM_MODEL ?? "").trim();
 const OCR_LLM_MODEL = OCR_LLM_MODEL_RAW && OCR_LLM_MODEL_RAW !== "gpt-5" ? OCR_LLM_MODEL_RAW : "gpt-5.2";
-const OCR_LLM_FALLBACK_MODEL = (process.env.OCR_LLM_FALLBACK_MODEL ?? "gpt-5-mini").trim();
+const OCR_LLM_FALLBACK_MODEL_RAW = (process.env.OCR_LLM_FALLBACK_MODEL ?? "").trim();
+const OCR_LLM_FALLBACK_MODEL = OCR_LLM_FALLBACK_MODEL_RAW || "gpt-5-mini";
 const OCR_LLM_REASONING_VALUES = new Set<OcrLlmReasoningEffort>(["none", "low", "medium", "high", "xhigh"]);
 const OCR_LLM_REASONING_EFFORT = parseOcrReasoningEffort(process.env.OCR_LLM_REASONING_EFFORT);
+let loggedOcrModelConfig = false;
 const TCG_KEYWORDS = [
   "pokemon",
   "magic",
@@ -158,6 +160,8 @@ type LlmParseMeta = {
   reasoningEffort: OcrLlmReasoningEffort | null;
   imageUrlMode: "string" | "object" | null;
   reasoningRetried: boolean;
+  configuredPrimaryModel: string | null;
+  configuredFallbackModel: string | null;
 };
 
 type LlmParsedPayload = {
@@ -1397,6 +1401,15 @@ async function parseWithLlm(
   if (!apiKey) {
     return null;
   }
+  if (!loggedOcrModelConfig && (OCR_LLM_MODEL_RAW || OCR_LLM_FALLBACK_MODEL_RAW)) {
+    console.info("[ocr-suggest] OCR LLM model configuration", {
+      configuredPrimaryModel: OCR_LLM_MODEL_RAW || null,
+      effectivePrimaryModel: OCR_LLM_MODEL,
+      configuredFallbackModel: OCR_LLM_FALLBACK_MODEL_RAW || null,
+      effectiveFallbackModel: OCR_LLM_FALLBACK_MODEL,
+    });
+    loggedOcrModelConfig = true;
+  }
   if (!ocrText.trim()) {
     return null;
   }
@@ -1691,6 +1704,8 @@ async function parseWithLlm(
       reasoningEffort: lastAttemptMetaRef.current?.reasoningEffort ?? null,
       imageUrlMode: lastAttemptMetaRef.current?.imageUrlMode ?? null,
       reasoningRetried: lastAttemptMetaRef.current?.reasoningRetried ?? false,
+      configuredPrimaryModel: OCR_LLM_MODEL_RAW || null,
+      configuredFallbackModel: OCR_LLM_FALLBACK_MODEL_RAW || null,
     },
   };
 }
@@ -2870,12 +2885,13 @@ function buildProxyUrl(
   return `${protocol}://${host}/api/public/ocr-image?${params.toString()}`;
 }
 
-function pickImageUrl(primary?: string | null, thumbnail?: string | null): string | null {
-  const candidate = primary ?? thumbnail ?? null;
-  if (!candidate) {
-    return null;
+function pickImageUrl(...candidates: Array<string | null | undefined>): string | null {
+  for (const candidate of candidates) {
+    if (candidate && /^https?:\/\//i.test(candidate)) {
+      return candidate;
+    }
   }
-  return /^https?:\/\//i.test(candidate) ? candidate : null;
+  return null;
 }
 
 function normalizeForNumbered(input: string): string {
@@ -2944,9 +2960,11 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
         ocrSuggestionJson: true,
         imageUrl: true,
         thumbnailUrl: true,
+        cdnHdUrl: true,
+        cdnThumbUrl: true,
         photos: {
           where: { kind: { in: ["BACK", "TILT"] } },
-          select: { kind: true, imageUrl: true, thumbnailUrl: true },
+          select: { kind: true, imageUrl: true, thumbnailUrl: true, cdnHdUrl: true, cdnThumbUrl: true },
         },
       },
     });
@@ -2955,11 +2973,21 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
       return res.status(404).json({ message: "Card not found" });
     }
 
-    const frontImageUrl = pickImageUrl(card.imageUrl, card.thumbnailUrl);
+    const frontImageUrl = pickImageUrl(card.cdnHdUrl, card.imageUrl, card.cdnThumbUrl, card.thumbnailUrl);
     const backPhoto = card.photos.find((photo) => photo.kind === "BACK");
     const tiltPhoto = card.photos.find((photo) => photo.kind === "TILT");
-    const backImageUrl = pickImageUrl(backPhoto?.imageUrl, backPhoto?.thumbnailUrl);
-    const tiltImageUrl = pickImageUrl(tiltPhoto?.imageUrl, tiltPhoto?.thumbnailUrl);
+    const backImageUrl = pickImageUrl(
+      backPhoto?.cdnHdUrl,
+      backPhoto?.imageUrl,
+      backPhoto?.cdnThumbUrl,
+      backPhoto?.thumbnailUrl
+    );
+    const tiltImageUrl = pickImageUrl(
+      tiltPhoto?.cdnHdUrl,
+      tiltPhoto?.imageUrl,
+      tiltPhoto?.cdnThumbUrl,
+      tiltPhoto?.thumbnailUrl
+    );
 
     const frontProxyUrl = frontImageUrl ? buildProxyUrl(req, frontImageUrl) : null;
     const backProxyUrl = backImageUrl ? buildProxyUrl(req, backImageUrl) : null;

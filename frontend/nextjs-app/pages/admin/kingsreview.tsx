@@ -837,6 +837,7 @@ export default function KingsReview() {
   const [activeCompIndex, setActiveCompIndex] = useState<number | null>(null);
   const [activePhotoKind, setActivePhotoKind] = useState<"FRONT" | "BACK" | "TILT">("FRONT");
   const [zoom, setZoom] = useState<number>(1);
+  const [showWeakComps, setShowWeakComps] = useState(false);
   const [query, setQuery] = useState<string>("");
   const [queryTouched, setQueryTouched] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -999,6 +1000,27 @@ export default function KingsReview() {
     }
     return annotateAndSortKingsreviewComps(compMatchContext, merged);
   }, [appendedComps, compMatchContext, normalizeCompUrl, sourceComps]);
+  const compEntries = useMemo(() => comps.map((comp, index) => ({ comp, index })), [comps]);
+  const strongCompEntries = useMemo(
+    () => compEntries.filter(({ comp }) => comp.matchQuality === "exact" || comp.matchQuality === "close"),
+    [compEntries]
+  );
+  const weakCompCount = useMemo(
+    () => compEntries.filter(({ comp }) => comp.matchQuality === "weak").length,
+    [compEntries]
+  );
+  const visibleCompEntries = useMemo(() => {
+    if (showWeakComps || strongCompEntries.length < 1) {
+      return compEntries;
+    }
+    return strongCompEntries;
+  }, [compEntries, showWeakComps, strongCompEntries]);
+  const hiddenWeakCount = useMemo(() => {
+    if (showWeakComps || strongCompEntries.length < 1) {
+      return 0;
+    }
+    return weakCompCount;
+  }, [showWeakComps, strongCompEntries.length, weakCompCount]);
   const activeCompNextOffset = compNextOffsetBySource[activeSourceKey] ?? sourceComps.length;
   const activeCompLoadingMore = compLoadingBySource[activeSourceKey] ?? false;
   const activeCompHasMore =
@@ -1663,6 +1685,19 @@ export default function KingsReview() {
     setCompLoadingBySource({});
     setCompErrorBySource({});
   }, [activeCardId, job?.id]);
+
+  useEffect(() => {
+    setShowWeakComps(false);
+  }, [activeCardId, activeSourceKey, job?.id]);
+
+  useEffect(() => {
+    if (activeCompIndex == null) {
+      return;
+    }
+    if (!visibleCompEntries.some((entry) => entry.index === activeCompIndex)) {
+      setActiveCompIndex(null);
+    }
+  }, [activeCompIndex, visibleCompEntries]);
 
   useEffect(() => {
     if (!activeCardId || !session || !isAdmin) {
@@ -3375,7 +3410,7 @@ export default function KingsReview() {
           <p className="text-xs text-slate-500">No comps captured yet. Try re-running research.</p>
         )}
         <div className="space-y-2">
-          {comps.map((comp, index) => {
+          {visibleCompEntries.map(({ comp, index }) => {
             const compAttached = attachedCompKeys.has(normalizeCompUrl(comp.url));
             return (
               <CompCard
@@ -3392,6 +3427,17 @@ export default function KingsReview() {
             );
           })}
         </div>
+        {strongCompEntries.length > 0 && weakCompCount > 0 && (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => setShowWeakComps((prev) => !prev)}
+              className="w-full rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-slate-300 transition hover:border-white/20 hover:bg-white/10"
+            >
+              {showWeakComps ? "Hide weak matches" : `Show weak matches (${hiddenWeakCount})`}
+            </button>
+          </div>
+        )}
         {canLoadMoreComps && activeCompHasMore && (
           <div className="mt-3">
             <button
