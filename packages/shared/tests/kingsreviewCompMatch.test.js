@@ -122,6 +122,68 @@ test("scoreKingsreviewComp extracts serial denominator from card-name specifics"
   });
 });
 
+test("scoreKingsreviewComp penalizes sapphire parallels when the expected card is base", () => {
+  const context = {
+    playerName: "Steven Adams",
+    setName: "2025 Topps Chrome Basketball",
+    cardNumber: "123",
+    year: "2025",
+    parallel: "Base",
+    insertSet: null,
+    autograph: false,
+    memorabilia: false,
+    numbered: null,
+    graded: false,
+    gradingCompany: null,
+    gradeScore: null,
+  };
+
+  const result = scoreKingsreviewComp(context, {
+    title: "2025 Topps Chrome Steven Adams #123 Sapphire",
+    condition: "Ungraded",
+    itemSpecifics: {
+      set: ["2025 Topps Chrome Basketball"],
+      "card number": ["123"],
+    },
+  });
+
+  assert.ok(result);
+  assert.ok(result.penalties.includes("parallel"));
+  assert.equal(result.keyComparison.parallel?.expected, "Base");
+  assert.equal(result.keyComparison.parallel?.actual, "Sapphire");
+  assert.equal(result.keyComparison.parallel?.matched, false);
+});
+
+test("scoreKingsreviewComp already treats Red White and Blue as a non-base parallel", () => {
+  const context = {
+    playerName: "Stephen Curry",
+    setName: "2025 Topps Chrome Basketball",
+    cardNumber: "201",
+    year: "2025",
+    parallel: "Base",
+    insertSet: null,
+    autograph: false,
+    memorabilia: false,
+    numbered: null,
+    graded: false,
+    gradingCompany: null,
+    gradeScore: null,
+  };
+
+  const result = scoreKingsreviewComp(context, {
+    title: "2025-26 Topps STEPHEN CURRY Topps Chrome Base Red White & Blue #201",
+    condition: "Ungraded",
+    itemSpecifics: {
+      set: ["2025 Topps Chrome Basketball"],
+      "card number": ["201"],
+    },
+  });
+
+  assert.ok(result);
+  assert.ok(result.penalties.includes("parallel"));
+  assert.equal(result.keyComparison.parallel?.matched, false);
+});
+
 test("annotateAndSortKingsreviewComps ranks exact matches above graded mismatches and wrong parallels", () => {
   const context = {
     playerName: "Victor Wembanyama",

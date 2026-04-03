@@ -13214,3 +13214,119 @@
 ### Files Updated
 - `docs/HANDOFF_SET_OPS.md`
 - `docs/handoffs/SESSION_LOG.md`
+
+## 2026-04-02 - Read-only production SetParallelScope spot check
+
+### Summary
+- Ran a read-only production DB query via the documented droplet path:
+  - `ssh tenkings`
+  - export `DATABASE_URL` from the running `bytebot-lite-service` container env
+  - execute a Prisma count/sample query from `/root/tenkings-backend`
+- Query target:
+  - global `SetParallelScope` row count
+  - rows with `setId ILIKE '%2025-26_Topps_Chrome_Basketball%'`
+
+### Production Evidence
+- `SetParallelScope.count()` -> `43878`
+- Matching scope rows for `2025-26_Topps_Chrome_Basketball` -> `1825`
+- Distinct sample `SetParallelScope` tuples (`setId`, `programId`, `parallelId`):
+  - `2025-26_Topps_Chrome_Basketball | activators | base`
+  - `2025-26_Topps_Chrome_Basketball | activators | refractors`
+  - `2025-26_Topps_Chrome_Basketball | activators | refractors-aqua`
+  - `2025-26_Topps_Chrome_Basketball | activators | refractors-black`
+  - `2025-26_Topps_Chrome_Basketball | activators | refractors-blue`
+- `SetParallel` fallback query was not needed because matching `SetParallelScope` rows existed.
+
+### Notes
+- A first raw projection repeated `activators | base` because many scope rows share the same `(setId, programId, parallelId)` tuple and differ on other scope dimensions.
+- A second read-only query used distinct tuple sampling so the sample list is readable.
+- No DB writes, deploy, restart, or migration were executed.
+
+## 2026-04-03 - Read-only production SetCard vs SetParallelScope programId comparison
+
+### Summary
+- Ran a second read-only production DB query for `setId='2025-26_Topps_Chrome_Basketball'` to compare `programId` values between `SetCard` and `SetParallelScope`.
+- Pulled:
+  - 5 sample `SetCard` rows
+  - 5 distinct `SetParallelScope.programId` values
+  - full distinct `programId` sets from both tables
+  - simple set-difference lists
+
+### Production Evidence
+- Sample `SetCard` rows (`programId`, `cardNumber`, `playerName`):
+  - `activators | AC-1 | Kawhi Leonard`
+  - `activators | AC-10 | Kyrie Irving`
+  - `activators | AC-11 | Cooper Flagg`
+  - `activators | AC-12 | Dylan Harper`
+  - `activators | AC-13 | VJ Edgecombe`
+- First 5 distinct `SetParallelScope.programId` values:
+  - `activators`
+  - `advisory`
+  - `ball-of-duty`
+  - `base`
+  - `base-card`
+- Comparison result:
+  - the two tables overlap, but the distinct `programId` sets do **not** fully match
+  - examples only in `SetCard`:
+    - `base-cards`
+    - `base-card-variations`
+    - `chromographs-rookie`
+    - `infinite-sapphire`
+    - `xs-and-whoas`
+  - examples only in `SetParallelScope`:
+    - `base`
+    - `base-card`
+    - `base-card-image-variation`
+    - `base-refractors`
+    - `x-s-and-whoa-s`
+
+### Notes
+- The production comparison indicates naming drift / normalization mismatch between checklist-card `programId` values and scope `programId` values for this set.
+- No DB writes, deploy, restart, or migration were executed.
+
+## 2026-04-03 - Docs-only repo state refresh in tenkings-task27-main
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified the current local checkout state in `/Users/markthomas/tenkings-task27-main`.
+- Updated handoff docs only; no code, runtime, deploy, restart, migration, or DB changes were executed.
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- pending tracked paths -> `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `082f1c8`
+- `git log -1 --oneline` -> `082f1c8 feat(add-cards): replace set identification with ONE PLAN direct SetCard lookup`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+## 2026-04-03 - Task 29 ONE PLAN parallel picker + comp scoring + background lookup + PhotoRoom
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Pulled latest `origin/main` with `git pull --ff-only --autostash origin main`, which returned `Already up to date.`
+- Fixed the ONE PLAN parallel picker by moving shared lookup logic into `frontend/nextjs-app/lib/server/setLookup.ts` and changing the scoped parallel query to match `SetParallelScope` rows by `setId` only.
+- Added background ONE PLAN persistence in `pages/api/admin/cards/[cardId]/ocr-suggest.ts` so `setLookupResult` is stored in `ocrSuggestionJson` and then hydrated in `pages/admin/uploads.tsx` on queued-card load and live OCR completion.
+- Expanded non-base parallel comp detection in `packages/shared/src/kingsreviewCompMatch.ts` and added regression tests for Sapphire plus Red White & Blue handling.
+- Kept the PhotoRoom server endpoint intact, but moved the front-end trigger earlier in the successful enqueue flow and marked it `keepalive` so front image processing starts before the UI advances.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/setLookup.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/lookup-set.ts`
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/admin/uploads.tsx`
+- `packages/shared/src/kingsreviewCompMatch.ts`
+- `packages/shared/tests/kingsreviewCompMatch.test.js`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared test` passed.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/lookup-set.ts --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file lib/server/setLookup.ts` passed with the existing `pages/admin/uploads.tsx` `<img>` warnings only.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed.
+- `git diff --check` passed.
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.

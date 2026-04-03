@@ -5,7 +5,7 @@ import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/
 import { withAdminCors } from "../../../../../lib/server/cors";
 import { normalizeStorageUrl } from "../../../../../lib/server/storage";
 import { runGoogleVisionOcr } from "../../../../../lib/server/googleVisionOcr";
-import { extractCardAttributes, resolveOcrLlmAttempt } from "@tenkings/shared";
+import { extractCardAttributes, normalizeCardNumber, resolveOcrLlmAttempt } from "@tenkings/shared";
 import { runVariantMatch } from "../../../../../lib/server/variantMatcher";
 import {
   loadVariantOptionPool,
@@ -25,6 +25,11 @@ import {
   type OcrRegionPhotoSide,
   type OcrRegionRect,
 } from "../../../../../lib/server/ocrRegionTemplates";
+import {
+  buildLookupSetYearPrefix,
+  lookupSetByCardIdentity,
+  type LookupSetResult,
+} from "../../../../../lib/server/setLookup";
 import { normalizeProgramId, normalizeTaxonomyCardNumber } from "../../../../../lib/server/taxonomyV2Utils";
 
 type SuggestResponse =
@@ -88,6 +93,7 @@ type StoredSuggestionSnapshot = {
   memory: Record<string, unknown> | null;
   regionTemplates: Record<string, unknown> | null;
   ocrCardNumberGrounding: Record<string, unknown> | null;
+  setLookupResult: LookupSetResult | null;
 };
 
 const DEFAULT_THRESHOLD = 0.7;
@@ -378,6 +384,10 @@ function extractStoredSuggestionSnapshot(raw: unknown): StoredSuggestionSnapshot
     memory: readSection("memory"),
     regionTemplates: readSection("regionTemplates"),
     ocrCardNumberGrounding: readSection("ocrCardNumberGrounding"),
+    setLookupResult:
+      typed.setLookupResult && typeof typed.setLookupResult === "object"
+        ? (typed.setLookupResult as LookupSetResult)
+        : null,
   };
 }
 
@@ -3044,6 +3054,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
           memory: storedSuggestionSnapshot.memory ?? null,
           regionTemplates: storedSuggestionSnapshot.regionTemplates ?? null,
           ocrCardNumberGrounding: storedSuggestionSnapshot.ocrCardNumberGrounding ?? null,
+          setLookupResult: storedSuggestionSnapshot.setLookupResult ?? null,
           setCardResolution: setCardResolutionAudit,
           variantMatch: variantMatchAudit,
           taxonomyConstraints: taxonomyConstraintAudit,
@@ -3656,6 +3667,34 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
       queryHints,
     });
 
+    let setLookupResult: LookupSetResult | null = null;
+    const lookupYear = coerceNullableString(fields.year);
+    const lookupManufacturer = coerceNullableString(fields.manufacturer);
+    const lookupSport = coerceNullableString(fields.sport);
+    const lookupPlayerName = coerceNullableString(fields.playerName);
+    const lookupCardNumber = coerceNullableString(fields.cardNumber);
+    if (
+      lookupYear &&
+      lookupManufacturer &&
+      lookupSport &&
+      lookupPlayerName &&
+      lookupCardNumber &&
+      buildLookupSetYearPrefix(lookupYear, lookupSport) &&
+      normalizeCardNumber(lookupCardNumber)
+    ) {
+      try {
+        setLookupResult = await lookupSetByCardIdentity({
+          year: lookupYear,
+          manufacturer: lookupManufacturer,
+          sport: lookupSport,
+          playerName: lookupPlayerName,
+          cardNumber: lookupCardNumber,
+        });
+      } catch (error) {
+        console.warn("Background ONE PLAN lookup failed", error);
+      }
+    }
+
     const suggestions = collectSuggestions(fields, confidence);
 
     const llmAudit = llmMeta
@@ -3696,6 +3735,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
       memory: memoryAudit,
       regionTemplates: regionTemplateAudit,
       ocrCardNumberGrounding: ocrCardNumberGroundingAudit,
+      setLookupResult,
       setCardResolution: setCardResolutionAudit,
       variantMatch: variantMatchAudit,
       taxonomyConstraints: taxonomyConstraintAudit,

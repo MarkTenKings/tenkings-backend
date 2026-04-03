@@ -1,13 +1,13 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-02` (Task 28 ONE PLAN direct SetCard lookup completed in `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-03` (Task 29 ONE PLAN parallel picker + comp scoring + background lookup + PhotoRoom fixes completed in `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration or DB writes were executed)
 - Branch: `main`
-- Current local git state before final Task 28 handoff refresh:
+- Current local git state before final Task 29 handoff refresh:
   - `git status -sb` -> `## main...origin/main`
-  - pending commit includes `frontend/nextjs-app/pages/admin/uploads.tsx`, `frontend/nextjs-app/pages/api/admin/cards/lookup-set.ts`, and handoff docs
-- Latest committed baseline before Task 28 edit:
-  - `734e24f` fix(set-ops): backfill checklist programs for set cards
+  - pending changes include `frontend/nextjs-app/pages/admin/uploads.tsx`, `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`, `frontend/nextjs-app/pages/api/admin/cards/lookup-set.ts`, `frontend/nextjs-app/lib/server/setLookup.ts`, `packages/shared/src/kingsreviewCompMatch.ts`, `packages/shared/tests/kingsreviewCompMatch.test.js`, and handoff docs
+- Latest committed baseline in this checkout:
+  - `082f1c8` feat(add-cards): replace set identification with ONE PLAN direct SetCard lookup
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
@@ -6946,3 +6946,80 @@ Build Set Ops UI flow with:
     - `docs/HANDOFF_SET_OPS.md`
     - `docs/handoffs/SESSION_LOG.md`
 - No deploy, restart, migration, Prisma schema change, Add Cards change, or KingsReview change was executed in this session.
+
+## Session Update (2026-04-02, read-only production SetParallelScope query)
+- Executed a read-only production DB spot check through the documented droplet path:
+  - `ssh tenkings`
+  - export `DATABASE_URL` from `infra/bytebot-lite-service`
+  - run a Prisma count/sample query from `/root/tenkings-backend`
+- Results:
+  - global `SetParallelScope` rows: `43878`
+  - matching `setId ILIKE '%2025-26_Topps_Chrome_Basketball%'` scope rows: `1825`
+  - distinct sample scope tuples (`setId`, `programId`, `parallelId`):
+    - `2025-26_Topps_Chrome_Basketball | activators | base`
+    - `2025-26_Topps_Chrome_Basketball | activators | refractors`
+    - `2025-26_Topps_Chrome_Basketball | activators | refractors-aqua`
+    - `2025-26_Topps_Chrome_Basketball | activators | refractors-black`
+    - `2025-26_Topps_Chrome_Basketball | activators | refractors-blue`
+- `SetParallel` fallback was not needed because `SetParallelScope` already had matches for that set.
+- Note: a first raw projection repeated `activators | base`; the final sample above uses a second read-only distinct-tuple query so the evidence is readable.
+- No DB writes, deploy, restart, or migration were executed.
+
+## Session Update (2026-04-03, read-only SetCard vs SetParallelScope programId comparison)
+- Executed a second read-only production query for `setId='2025-26_Topps_Chrome_Basketball'` to compare `programId` values between `SetCard` and `SetParallelScope`.
+- Sample `SetCard` rows (`programId`, `cardNumber`, `playerName`):
+  - `activators | AC-1 | Kawhi Leonard`
+  - `activators | AC-10 | Kyrie Irving`
+  - `activators | AC-11 | Cooper Flagg`
+  - `activators | AC-12 | Dylan Harper`
+  - `activators | AC-13 | VJ Edgecombe`
+- First 5 distinct `SetParallelScope.programId` values:
+  - `activators`
+  - `advisory`
+  - `ball-of-duty`
+  - `base`
+  - `base-card`
+- Comparison result:
+  - the tables overlap, but the distinct `programId` sets do **not** fully match
+  - examples only in `SetCard`: `base-cards`, `base-card-variations`, `chromographs-rookie`, `infinite-sapphire`, `xs-and-whoas`
+  - examples only in `SetParallelScope`: `base`, `base-card`, `base-card-image-variation`, `base-refractors`, `x-s-and-whoa-s`
+- Interpretation:
+  - this set currently has naming drift / normalization mismatch between checklist-card `programId` values and scope `programId` values
+- No DB writes, deploy, restart, or migration were executed.
+
+## Session Update (2026-04-03, docs-only repo state refresh in tenkings-task27-main)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified current local repo state without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - pending tracked paths are `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `082f1c8`
+- Confirmed the latest committed baseline in this checkout is `082f1c8` `feat(add-cards): replace set identification with ONE PLAN direct SetCard lookup`.
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-03, Task 29 ONE PLAN parallel picker + comp scoring + background lookup + PhotoRoom)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only --autostash origin main` -> `Already up to date.`
+- Implemented the requested Task 29 fixes in:
+  - `frontend/nextjs-app/lib/server/setLookup.ts`
+  - `frontend/nextjs-app/pages/api/admin/cards/lookup-set.ts`
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+  - `frontend/nextjs-app/pages/admin/uploads.tsx`
+  - `packages/shared/src/kingsreviewCompMatch.ts`
+  - `packages/shared/tests/kingsreviewCompMatch.test.js`
+- What changed:
+  - extracted the ONE PLAN set lookup into `lib/server/setLookup.ts` so both the API endpoint and OCR warm-up use the same SetCard resolver logic
+  - changed the parallel lookup to query `SetParallelScope` by `setId` only, which removes the broken `programId` dependency and returns the full set-level parallel list for the picker
+  - persisted `setLookupResult` into `ocrSuggestionJson` during OCR warm-up and now hydrate that result in `/admin/uploads` when a queued card loads or when OCR finishes live, so Product Set + Insert can auto-fill without waiting on a second client-only lookup
+  - updated the uploads parallel picker to fall back to set-level lookup parallels whenever they exist, instead of requiring a resolved variant scope/program match before the picker can open
+  - expanded non-base comp parallel detection to include `sapphire`, `speckle`, `camo`, `lava`, `magma`, `marble`, `disco`, `genesis`, `kaboom`, `downtown`, `case hit`, `asia`, and `neon`, and added regression tests for Sapphire plus Red White & Blue detection
+  - kept the existing PhotoRoom background endpoint unchanged on the server side, but now trigger it immediately after successful KingsReview enqueue and mark the request `keepalive` so front-asset processing starts before the UI advances to the next card
+- Validation:
+  - `pnpm --filter @tenkings/shared test` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/uploads.tsx --file pages/api/admin/cards/lookup-set.ts --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file lib/server/setLookup.ts` -> pass with the existing `pages/admin/uploads.tsx` legacy `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
