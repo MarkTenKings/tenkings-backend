@@ -13419,3 +13419,44 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+## 2026-04-03 - Merge feature/kingshunt into main
+
+### Summary
+- Continued from the same session after the required `AGENTS.md` startup doc read.
+- Verified `feature/kingshunt` was already committed at `63cb950` `feat(kingshunt): add locator map and QR hunt flow`.
+- Preserved the pre-existing `main` handoff refresh in `68d91d4` `docs(handoff): refresh main repo state after task 31` before merging.
+- Merged `feature/kingshunt` into `main` as `b512b60` `merge(feature/kingshunt): integrate locator and wayfinding`.
+- Merge conflicts were limited to `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`; the feature code, schema additions, migration scaffold, and dependency changes merged cleanly.
+- No deploy, restart, Prisma migration, backfill script execution, or DB mutation was performed.
+
+### Files Brought Forward
+- `frontend/nextjs-app/pages/locations.tsx`
+- `frontend/nextjs-app/pages/kingshunt/[locationSlug].tsx`
+- `frontend/nextjs-app/pages/kingshunt/index.tsx`
+- `frontend/nextjs-app/pages/api/kingshunt/[slug].ts`
+- `frontend/nextjs-app/pages/api/kingshunt/checkpoint.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/detect.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/session.ts`
+- `frontend/nextjs-app/components/maps/*`
+- `frontend/nextjs-app/lib/geo.ts`
+- `frontend/nextjs-app/lib/kingsHunt.ts`
+- `frontend/nextjs-app/lib/mapStyles.ts`
+- `frontend/nextjs-app/lib/server/kingsHunt.ts`
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`
+- `scripts/backfill-location-data.ts`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database generate` passed on `feature/kingshunt` before the merge commit.
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` passed on `feature/kingshunt` before the merge commit.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` passed on `feature/kingshunt` before the merge commit.
+- Targeted `next lint` for the Kings Hunt and locator files passed with one existing `pages/kingshunt/[locationSlug].tsx` plain `<img>` warning.
+- `git status -sb` after the merge commit and before this handoff refresh -> `## main...origin/main [ahead 4]`.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.

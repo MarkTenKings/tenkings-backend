@@ -1,15 +1,23 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-03` (docs-only repo state refresh completed in `/Users/markthomas/tenkings-task27-main`; current checkout is clean at `e635586` `fix: HD images + verify OCR + filter weak comps + fuzzy parallel picker`; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-03` (merged `feature/kingshunt` into `main`; current checkout baseline is `b512b60` `merge(feature/kingshunt): integrate locator and wayfinding`; no deploy/restart/migration/backfill or DB writes were executed)
 - Branch: `main`
-- Current local git state before this docs-only refresh:
-  - `git status -sb` -> `## main...origin/main`
-  - working tree was clean before updating handoff docs
+- Current local git state before this handoff refresh:
+  - `git status -sb` -> `## main...origin/main [ahead 4]`
+  - working tree was clean before updating handoff docs after the merge
 - Latest committed baseline in this checkout:
-  - `e635586` fix: HD images + verify OCR + filter weak comps + fuzzy parallel picker
+  - `b512b60` merge(feature/kingshunt): integrate locator and wayfinding
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-03, feature/kingshunt merged into main)
+- Continued from the same session after following the `AGENTS.md` startup-doc requirement earlier.
+- Preserved the pre-existing `main` handoff refresh first as `68d91d4` `docs(handoff): refresh main repo state after task 31` so the merge could proceed without dropping local docs context.
+- Merged `feature/kingshunt` commit `63cb950` `feat(kingshunt): add locator map and QR hunt flow` into `main` as merge commit `b512b60` `merge(feature/kingshunt): integrate locator and wayfinding`.
+- Merge conflicts were limited to `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`; application code, schema, migration scaffold, and lockfile changes merged cleanly.
+- Kings Hunt changes now present on `main` include the `/locations` interactive map hero, new `/kingshunt` pages and `/api/kingshunt/*` routes, reusable map components, shared geo utilities, additive Prisma location/navigation models, and the location backfill script scaffold.
+- No deploy, restart, Prisma migration, backfill execution, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-03, docs-only repo state refresh in tenkings-task27-main after Task 31 commit)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
