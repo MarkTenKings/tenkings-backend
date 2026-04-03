@@ -1771,7 +1771,7 @@ model PackLabel {
 
 model NavigationSession {
   id                 String    @id @default(cuid())
-  locationId         String
+  locationId         String    @db.Uuid
   entryMethod        String
   qrCodeId           String?
   userLat            Float?
@@ -1795,7 +1795,7 @@ model NavigationSession {
 
 model LocationVisit {
   id                  String   @id @default(cuid())
-  locationId          String
+  locationId          String   @db.Uuid
   userId              String?
   visitedAt           DateTime @default(now())
   source              String?

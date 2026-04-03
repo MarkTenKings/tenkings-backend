@@ -20,7 +20,7 @@ ADD COLUMN "checkpoints" JSONB;
 
 CREATE TABLE "NavigationSession" (
     "id" TEXT NOT NULL,
-    "locationId" TEXT NOT NULL,
+    "locationId" UUID NOT NULL,
     "entryMethod" TEXT NOT NULL,
     "qrCodeId" TEXT,
     "userLat" DOUBLE PRECISION,
@@ -40,7 +40,7 @@ CREATE TABLE "NavigationSession" (
 
 CREATE TABLE "LocationVisit" (
     "id" TEXT NOT NULL,
-    "locationId" TEXT NOT NULL,
+    "locationId" UUID NOT NULL,
     "userId" TEXT,
     "visitedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "source" TEXT,

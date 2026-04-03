@@ -13487,3 +13487,98 @@
 - The original reported failure was the missing TypeScript declaration package for `leaflet`.
 - Local post-fix validation no longer reports the `Could not find a declaration file for module 'leaflet'` error.
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-03 - Planned production location migration + Kings Hunt backfill
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified current local checkout state before attempting the requested DB actions:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `ec6eace`
+- Confirmed the workstation shell does not currently expose `DATABASE_URL`:
+  - `printenv DATABASE_URL | wc -c` -> `0`
+- Planned actions, per user request:
+  - run the additive Prisma migration for the Kings Hunt schema changes
+  - run `scripts/backfill-location-data.ts` to populate the new location metadata fields
+
+### Notes
+- This entry records the planned DB actions before any migration or backfill execution, per `AGENTS.md`.
+
+## 2026-04-03 - Attempted production location migration + Kings Hunt backfill
+
+### Summary
+- Re-used the documented production `DATABASE_URL` retrieval path from the live `bytebot-lite-service` environment.
+- Tried the requested Prisma migration from the workstation first; Prisma reached the target DB but failed locally with a generic `Schema engine error`.
+- Switched to the production droplet checkout, fast-forwarded `/root/tenkings-backend` from `1105555` to `ec6eace`, and retried in-place against the live service `DATABASE_URL`.
+- Prisma applied `20260320120000_add_pack_definition_image_fields`, then failed on `20260402183000_kingshunt_location_wayfinding` with `P3018`.
+- `prisma migrate status` now reports `20260402183000_kingshunt_location_wayfinding` as a failed migration.
+- The Kings Hunt backfill script was not run because the target schema migration did not complete.
+
+### Verification Evidence
+- Workstation DB URL precheck:
+  - `printenv DATABASE_URL | wc -c` -> `0`
+- Live service DB URL retrieval:
+  - `ssh root@104.131.27.245 'cd /root/tenkings-backend && DATABASE_URL=$(cd infra && docker compose exec -T bytebot-lite-service sh -lc '\''echo -n "$DATABASE_URL"'\'') && printf "%s" "${#DATABASE_URL}"'` -> `145`
+- Workstation migration attempt:
+  - `export DATABASE_URL="$(ssh root@104.131.27.245 'cd /root/tenkings-backend && cd infra && docker compose exec -T bytebot-lite-service sh -lc '\''echo -n "$DATABASE_URL"'\''')" ; pnpm --filter @tenkings/database migrate:deploy`
+  - observed result: reached the target database, then failed with `Schema engine error`
+- Droplet checkout sync:
+  - `ssh root@104.131.27.245 'cd /root/tenkings-backend && git pull --ff-only origin main'` -> fast-forward `1105555..ec6eace`
+- Droplet migration attempt:
+  - `ssh root@104.131.27.245 'cd /root/tenkings-backend && export DATABASE_URL="$(cd infra && docker compose exec -T bytebot-lite-service sh -lc '\''echo -n "$DATABASE_URL"'\'' )" && pnpm --filter @tenkings/database migrate:deploy'`
+  - observed result:
+    - applied `20260320120000_add_pack_definition_image_fields`
+    - failed on `20260402183000_kingshunt_location_wayfinding`
+    - Prisma `P3018`
+    - DB error `42804`
+    - `foreign key constraint "NavigationSession_locationId_fkey" cannot be implemented`
+    - `Key columns "locationId" and "id" are of incompatible types: text and uuid.`
+- Post-failure migration status:
+  - `ssh root@104.131.27.245 'cd /root/tenkings-backend && export DATABASE_URL="$(cd infra && docker compose exec -T bytebot-lite-service sh -lc '\''echo -n "$DATABASE_URL"'\'' )" && pnpm --filter @tenkings/database exec prisma migrate status --schema prisma/schema.prisma'`
+  - observed result: `Following migration have failed: 20260402183000_kingshunt_location_wayfinding`
+- Checked-in schema evidence:
+  - `packages/database/prisma/schema.prisma` shows `NavigationSession.locationId String` and `LocationVisit.locationId String` without `@db.Uuid`
+  - existing production `Location.id` is `uuid`, which explains the incompatible FK column types
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- No deploy or restart was executed.
+- Production DB state changed only insofar as Prisma successfully applied `20260320120000_add_pack_definition_image_fields` before the Kings Hunt migration failed.
+- Do not run `scripts/backfill-location-data.ts` until the failed Prisma migration is fixed and resolved.
+
+## 2026-04-03 - Kings Hunt migration UUID fix
+
+### Summary
+- Investigated the failed production Kings Hunt migration and patched the checked-in schema and migration SQL so the new location foreign keys use UUID-backed columns.
+- Confirmed the original issue was that `NavigationSession.locationId` and `LocationVisit.locationId` were modeled as plain `String`, which generated `TEXT` columns in the migration while `Location.id` is `uuid` in production.
+- Updated both the Prisma schema and the checked-in migration SQL to use UUID for those `locationId` columns.
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database generate` -> pass
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+
+### Notes
+- No migration, backfill, deploy, restart, runtime mutation, or DB mutation was executed during this code-fix step.
+
+## 2026-04-03 - Planned retry of Kings Hunt migration + location backfill after UUID fix
+
+### Summary
+- Planned follow-up after the UUID fix:
+  - commit and push the corrected schema + migration to `main`
+  - fast-forward the droplet checkout
+  - mark `20260402183000_kingshunt_location_wayfinding` as rolled back in Prisma migration state
+  - rerun `pnpm --filter @tenkings/database migrate:deploy`
+  - run `scripts/backfill-location-data.ts` only if the migration succeeds
+
+### Notes
+- This entry records the planned retry before re-attempting the migration/backfill, per `AGENTS.md`.

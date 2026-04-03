@@ -1,15 +1,64 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-03` (build hotfix in progress on `main`: added `@types/leaflet` to fix the Vercel `leaflet` declaration failure; current committed baseline before this handoff refresh is `9cd12e7` `docs(handoff): record kingshunt merge on main`; no deploy/restart/migration/backfill or DB writes were executed)
+- Last reviewed: `2026-04-03` (Kings Hunt migration fix in progress on `main`; patched `NavigationSession.locationId` and `LocationVisit.locationId` to UUID-backed columns in both Prisma schema and migration SQL after the earlier production `P3018`; retry migration/backfill pending)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb` -> `## main...origin/main`
-  - modified tracked paths: `frontend/nextjs-app/package.json`, `pnpm-lock.yaml`
+  - modified tracked paths: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`, `packages/database/prisma/schema.prisma`, `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`
 - Latest committed baseline in this checkout:
-  - `9cd12e7` docs(handoff): record kingshunt merge on main
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migration executed
+  - `ec6eace` fix(build): add leaflet type declarations
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; production droplet checkout `/root/tenkings-backend`; no deploy/restart executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-03, Kings Hunt migration UUID fix)
+- Investigated the failed production migration and confirmed the root cause in checked-in code:
+  - `NavigationSession.locationId` and `LocationVisit.locationId` were plain `String` fields in Prisma
+  - the generated Kings Hunt migration created those columns as `TEXT`
+  - production `Location.id` is `uuid`, so PostgreSQL rejected the foreign keys as incompatible
+- Patched the checked-in source of truth:
+  - `packages/database/prisma/schema.prisma`
+  - `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`
+- Exact fix:
+  - added `@db.Uuid` to `NavigationSession.locationId`
+  - added `@db.Uuid` to `LocationVisit.locationId`
+  - changed the migration SQL column types from `TEXT` to `UUID` for both `locationId` columns
+- Local validation after the patch:
+  - `pnpm --filter @tenkings/database generate` -> pass
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+- No migration, backfill, deploy, or restart was executed during this code-fix step.
+
+## Session Update (2026-04-03, planned retry of Kings Hunt migration + location backfill)
+- Planned next actions after the UUID fix:
+  - commit and push the schema/migration correction to `main`
+  - fast-forward the droplet checkout to the new `main` commit
+  - mark the failed migration `20260402183000_kingshunt_location_wayfinding` as rolled back via Prisma migrate resolve
+  - rerun `pnpm --filter @tenkings/database migrate:deploy`
+  - run `scripts/backfill-location-data.ts` only after the schema migration succeeds
+
+## Session Update (2026-04-03, attempted Kings Hunt migration + location backfill)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Recorded the planned DB action in `docs/handoffs/SESSION_LOG.md` before execution.
+- Verified current workstation state before running:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `ec6eace`
+  - `printenv DATABASE_URL | wc -c` -> `0`
+- Workstation attempt:
+  - pulled `DATABASE_URL` length (`145`) from the running production `bytebot-lite-service` env over SSH
+  - `pnpm --filter @tenkings/database migrate:deploy` from the workstation reached the target DB but failed locally with a generic Prisma `Schema engine error`, so execution moved to the droplet environment for a first-party retry
+- Droplet execution:
+  - fast-forwarded `/root/tenkings-backend` from `1105555` to `ec6eace` with `git pull --ff-only origin main`
+  - ran `pnpm --filter @tenkings/database migrate:deploy` using the live service `DATABASE_URL`
+  - Prisma applied `20260320120000_add_pack_definition_image_fields`, then failed on `20260402183000_kingshunt_location_wayfinding` with `P3018`
+  - database error: `foreign key constraint "NavigationSession_locationId_fkey" cannot be implemented` because key columns `locationId` and `id` are incompatible types: `text` and `uuid`
+  - `pnpm --filter @tenkings/database exec prisma migrate status --schema prisma/schema.prisma` now reports `20260402183000_kingshunt_location_wayfinding` as failed
+- Root-cause evidence in checked-in schema:
+  - `packages/database/prisma/schema.prisma` defines `NavigationSession.locationId String` and `LocationVisit.locationId String` without `@db.Uuid`
+  - existing `Location.id` is backed by `uuid` in production, so the generated FK columns are incompatible
+- Backfill result:
+  - `scripts/backfill-location-data.ts` was not run because the schema migration did not complete successfully
+- No deploy or restart was executed in this session.
 
 ## Session Update (2026-04-03, build hotfix for missing Leaflet declarations)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
