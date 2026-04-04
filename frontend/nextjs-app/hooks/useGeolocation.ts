@@ -22,8 +22,8 @@ export interface UseGeolocationReturn {
   error: GeolocationPositionError | null;
   permissionState: PermissionState | null;
   isWatching: boolean;
-  requestPermission: () => Promise<void>;
-  startWatching: () => void;
+  requestPermission: (overrides?: UseGeolocationOptions) => Promise<void>;
+  startWatching: (overrides?: UseGeolocationOptions) => void;
   stopWatching: () => void;
 }
 
@@ -43,6 +43,7 @@ export function useGeolocation(options?: UseGeolocationOptions): UseGeolocationR
 
   const applyPosition = useCallback((nextPosition: GeolocationPosition) => {
     setError(null);
+    setPermissionState("granted");
     setPosition({
       lat: nextPosition.coords.latitude,
       lng: nextPosition.coords.longitude,
@@ -59,37 +60,6 @@ export function useGeolocation(options?: UseGeolocationOptions): UseGeolocationR
     }
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined" || !("permissions" in navigator) || !navigator.permissions?.query) {
-      return;
-    }
-
-    let cancelled = false;
-    let permissionStatus: PermissionStatus | null = null;
-
-    navigator.permissions
-      .query({ name: "geolocation" })
-      .then((status) => {
-        if (cancelled) {
-          return;
-        }
-
-        permissionStatus = status;
-        setPermissionState(status.state);
-        status.onchange = () => setPermissionState(status.state);
-      })
-      .catch(() => {
-        // Browser support varies; the hook still works without Permissions API.
-      });
-
-    return () => {
-      cancelled = true;
-      if (permissionStatus) {
-        permissionStatus.onchange = null;
-      }
-    };
-  }, []);
-
   const stopWatching = useCallback(() => {
     if (typeof window === "undefined" || watchIdRef.current == null) {
       setIsWatching(false);
@@ -101,15 +71,17 @@ export function useGeolocation(options?: UseGeolocationOptions): UseGeolocationR
     setIsWatching(false);
   }, []);
 
-  const requestPermission = useCallback(async () => {
+  const requestPermission = useCallback(async (overrides?: UseGeolocationOptions) => {
     if (typeof window === "undefined" || !navigator.geolocation) {
       throw new Error("Geolocation is not supported by this browser");
     }
 
+    setError(null);
+    const requestOptions = { ...resolvedOptions, ...overrides };
+
     await new Promise<void>((resolve, reject) => {
       navigator.geolocation.getCurrentPosition(
         (nextPosition) => {
-          setPermissionState("granted");
           applyPosition(nextPosition);
           resolve();
         },
@@ -117,12 +89,12 @@ export function useGeolocation(options?: UseGeolocationOptions): UseGeolocationR
           applyError(nextError);
           reject(nextError);
         },
-        resolvedOptions,
+        requestOptions,
       );
     });
   }, [applyError, applyPosition, resolvedOptions]);
 
-  const startWatching = useCallback(() => {
+  const startWatching = useCallback((overrides?: UseGeolocationOptions) => {
     if (typeof window === "undefined" || !navigator.geolocation) {
       return;
     }
@@ -131,7 +103,8 @@ export function useGeolocation(options?: UseGeolocationOptions): UseGeolocationR
       return;
     }
 
-    watchIdRef.current = navigator.geolocation.watchPosition(applyPosition, applyError, resolvedOptions);
+    const watchOptions = { ...resolvedOptions, ...overrides };
+    watchIdRef.current = navigator.geolocation.watchPosition(applyPosition, applyError, watchOptions);
     setIsWatching(true);
   }, [applyError, applyPosition, resolvedOptions]);
 

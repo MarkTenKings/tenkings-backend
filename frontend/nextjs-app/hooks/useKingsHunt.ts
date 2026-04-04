@@ -64,25 +64,34 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
   const completionSentRef = useRef(false);
   const sessionUpdateRef = useRef(0);
   const lastRouteOriginRef = useRef<LatLng | null>(null);
-
-  const geolocation = useGeolocation({
+  const autoRequestRef = useRef(false);
+  const {
+    position: geolocationPosition,
+    accuracy: geolocationAccuracy,
+    error: geolocationError,
+    permissionState,
+    isWatching,
+    requestPermission,
+    startWatching,
+    stopWatching,
+  } = useGeolocation({
     enableHighAccuracy: true,
-    maximumAge: 0,
-    timeout: 10000,
+    maximumAge: 5000,
+    timeout: 15000,
   });
   const routeComputation = useRouteComputation();
 
   const checkpoints = useMemo(() => location.checkpoints ?? [], [location.checkpoints]);
   const position = useMemo<LatLng | null>(() => {
-    if (!geolocation.position) {
+    if (!geolocationPosition) {
       return null;
     }
 
     return {
-      lat: geolocation.position.lat,
-      lng: geolocation.position.lng,
+      lat: geolocationPosition.lat,
+      lng: geolocationPosition.lng,
     };
-  }, [geolocation.position]);
+  }, [geolocationPosition]);
   const machinePosition = useMemo(() => getMachinePosition(location), [location]);
   const venueCenterPosition = useMemo(() => getVenueCenterPosition(location), [location]);
   const geofence = useMemo(() => {
@@ -141,34 +150,49 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
   const requestGPS = useCallback(async () => {
     setHasRequestedGps(true);
     setErrorMessage(null);
+    stopWatching();
 
-    try {
-      await geolocation.requestPermission();
-      geolocation.startWatching();
-    } catch (error) {
-      const maybeGeolocationError =
-        typeof error === "object" && error !== null && "code" in error
-          ? (error as { code?: number })
-          : null;
+    const requestPosition = async (allowRetryOnTimeout: boolean) => {
+      try {
+        await requestPermission({
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: allowRetryOnTimeout ? 5000 : 0,
+        });
+      } catch (error) {
+        const maybeGeolocationError =
+          typeof error === "object" && error !== null && "code" in error
+            ? (error as { code?: number })
+            : null;
 
-      if (maybeGeolocationError) {
-        if (maybeGeolocationError.code === 1) {
-          setErrorMessage("Location permission is off. Enable GPS to start the hunt.");
+        if (maybeGeolocationError?.code === 3 && allowRetryOnTimeout) {
+          await requestPosition(false);
           return;
         }
 
-        setErrorMessage("We couldn't get a GPS fix. Move closer to open air and try again.");
-        return;
-      }
+        if (maybeGeolocationError) {
+          if (maybeGeolocationError.code === 1) {
+            setErrorMessage("Location permission is off. Enable GPS to start the hunt.");
+            return;
+          }
 
-      setErrorMessage(error instanceof Error ? error.message : "Unable to start geolocation");
-    }
-  }, [geolocation]);
+          setErrorMessage("We couldn't get a GPS fix. Move closer to open air and try again.");
+          return;
+        }
+
+        setErrorMessage(error instanceof Error ? error.message : "Unable to start geolocation");
+      }
+    };
+
+    await requestPosition(true);
+  }, [requestPermission, stopWatching]);
 
   const retry = useCallback(async () => {
     completionSentRef.current = false;
+    lastRouteOriginRef.current = null;
     setHasArrived(false);
     setActiveCheckpoint(null);
+    setNavigationStarted(false);
     await requestGPS();
   }, [requestGPS]);
 
@@ -181,15 +205,32 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
   }, []);
 
   useEffect(() => {
+    if (autoRequestRef.current) {
+      return;
+    }
+
+    autoRequestRef.current = true;
     void requestGPS();
   }, [requestGPS]);
+
+  useEffect(() => {
+    if (!position || !geofence?.isInside || hasArrived || isWatching) {
+      return;
+    }
+
+    startWatching({
+      enableHighAccuracy: true,
+      maximumAge: 3000,
+      timeout: 10000,
+    });
+  }, [geofence?.isInside, hasArrived, isWatching, position, startWatching]);
 
   useEffect(() => {
     if (sessionInitializedRef.current || !visitorId) {
       return;
     }
 
-    if (!hasRequestedGps && !position && !geolocation.error && geolocation.permissionState == null) {
+    if (!hasRequestedGps && !position && !geolocationError) {
       return;
     }
 
@@ -205,14 +246,14 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
         userAgent: typeof navigator === "undefined" ? null : navigator.userAgent,
         screenWidth: typeof window === "undefined" ? null : window.innerWidth,
         screenHeight: typeof window === "undefined" ? null : window.innerHeight,
-        gpsAccuracy: geolocation.accuracy,
+        gpsAccuracy: geolocationAccuracy,
       },
       checkpointsReached: 0,
       tkdEarned: 0,
     }).catch((error: unknown) => {
       setErrorMessage(error instanceof Error ? error.message : "Unable to create navigation session");
     });
-  }, [entryMethod, geolocation.accuracy, geolocation.error, geolocation.permissionState, hasRequestedGps, location.id, position, postSession, qrCodeId, visitorId]);
+  }, [entryMethod, geolocationAccuracy, geolocationError, hasRequestedGps, location.id, position, postSession, qrCodeId, visitorId]);
 
   useEffect(() => {
     if (!sessionId || !position) {
@@ -322,7 +363,7 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
     setNavigationStarted(false);
     setActiveCheckpoint(null);
     navigator.vibrate?.([200, 100, 240]);
-    geolocation.stopWatching();
+    stopWatching();
 
     if (sessionId) {
       void postSession({
@@ -336,10 +377,10 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
         console.error("Failed to complete Kings Hunt session", error);
       });
     }
-  }, [checkpoints, checkpointsHit, geolocation, hasArrived, machinePosition, position, postSession, sessionId]);
+  }, [checkpoints, checkpointsHit, hasArrived, machinePosition, position, postSession, sessionId, stopWatching]);
 
   const state = useMemo<HuntState>(() => {
-    if (errorMessage && geolocation.permissionState !== "denied") {
+    if (errorMessage && geolocationError?.code !== geolocationError?.PERMISSION_DENIED) {
       return "ERROR";
     }
 
@@ -347,7 +388,7 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
       return "LOADING";
     }
 
-    if (geolocation.permissionState === "denied" || geolocation.error?.code === geolocation.error?.PERMISSION_DENIED) {
+    if (geolocationError?.code === geolocationError?.PERMISSION_DENIED) {
       return "PERMISSION_DENIED";
     }
 
@@ -364,13 +405,13 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
     }
 
     return navigationStarted ? "NAVIGATING" : "AT_VENUE";
-  }, [errorMessage, geolocation.error, geolocation.permissionState, geofence?.isInside, hasArrived, hasRequestedGps, navigationStarted, position]);
+  }, [errorMessage, geofence?.isInside, geolocationError, hasArrived, hasRequestedGps, navigationStarted, position]);
 
   return {
     state,
     context: {
       position,
-      accuracyM: geolocation.accuracy,
+      accuracyM: geolocationAccuracy,
       distanceToVenueM: geofence?.distanceM ?? null,
       distanceToMachineM,
       route: routeComputation.lastRoute,
@@ -382,7 +423,7 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
       etaMin,
       error: errorMessage,
       routeError: routeComputation.error,
-      permissionState: geolocation.permissionState,
+      permissionState,
     },
     requestGPS,
     startHunt,

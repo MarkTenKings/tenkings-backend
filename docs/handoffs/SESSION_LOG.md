@@ -13781,3 +13781,31 @@
 
 ### Notes
 - The map fixes were prepared in the synced temp worktree `/tmp/tenkings-main-merge` so the dirty local `main` checkout remained untouched.
+
+## 2026-04-04 - Kings Hunt GPS permission prompt hotfix on main target
+
+### Summary
+- Continued from the synced temporary main-target worktree at `/tmp/tenkings-main-merge` so the dirty canonical local `main` checkout at `/Users/markthomas/tenkings-task27-main` remained untouched.
+- Investigated the on-site regression where `/kingshunt/[locationSlug]` dropped straight to `PERMISSION_DENIED` without showing the browser prompt.
+- Removed the up-front Permissions API query path from `useGeolocation()` so the hunt state is no longer driven by pre-read permission status.
+- Hardened `useKingsHunt()` so the initial GPS request runs once on mount, the prompt is triggered by a real `getCurrentPosition()` call with mobile-friendly timing, and only actual geolocation error code `1` produces `PERMISSION_DENIED`.
+- Added a single timeout retry for the initial GPS fix and moved `watchPosition()` startup so live tracking begins only after the user is inside the venue geofence.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/hooks/useGeolocation.ts`
+- `frontend/nextjs-app/hooks/useKingsHunt.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- Targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file hooks/useGeolocation.ts --file hooks/useKingsHunt.ts --file components/kingshunt/KingsHuntExperience.tsx` -> pass with no warnings or errors
+- Diff hygiene:
+  - `git diff --check` -> pass
+- TypeScript note:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still reports the existing unrelated repo baseline failures
+  - filtered output for `useGeolocation`, `useKingsHunt`, and `KingsHuntExperience` returned no matches
+
+### Notes
+- The hotfix keeps the permission popup trigger on `navigator.geolocation.getCurrentPosition()` and no longer treats a pre-read permission status as a denial path.

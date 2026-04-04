@@ -1,15 +1,35 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-04` (main-target Google Maps bug fixes prepared in the temporary synced worktree; /locations and /kingshunt map fallbacks, marker loading, and sizing were patched; no deploy/restart/migration was executed)
+- Last reviewed: `2026-04-04` (main-target Kings Hunt GPS permission hotfix prepared in the temporary synced worktree; initial geolocation prompt flow was repaired and live tracking now starts only after venue match; no deploy/restart/migration was executed)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
   - temporary synced main-target worktree: `git status -sb` -> `## merge-main-sync...origin/main`
-  - uncommitted bugfix surface in this worktree: `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`, `frontend/nextjs-app/components/maps/{MapErrorBoundary,MapFallback,StoreLocatorMap,TenKingsMap}.tsx`, `frontend/nextjs-app/hooks/useGoogleMaps.ts`, `frontend/nextjs-app/pages/locations.tsx`, `frontend/nextjs-app/styles/globals.css`, and handoff docs
+  - uncommitted hotfix surface in this worktree: `frontend/nextjs-app/hooks/useGeolocation.ts`, `frontend/nextjs-app/hooks/useKingsHunt.ts`, and handoff docs
 - Latest merged feature baseline at handoff refresh:
-  - `59d7d66` docs(handoff): record kingshunt-v2 merge to main
+  - `338eda4` fix(kingshunt): harden google maps loading and fallbacks
 - Environments touched: temporary merge worktree `/tmp/tenkings-main-merge` on branch `merge-main-sync`; existing canonical main worktree `/Users/markthomas/tenkings-task27-main` was left untouched because it still has a pre-existing uncommitted `docs/handoffs/SESSION_LOG.md` change on an older local `main`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-04, Kings Hunt GPS permission prompt hotfix on `main` target)
+- Continued in the synced temporary worktree `/tmp/tenkings-main-merge` so the dirty canonical local `main` checkout stayed untouched.
+- Investigated the live Kings Hunt permission regression in `frontend/nextjs-app/hooks/useGeolocation.ts` and `frontend/nextjs-app/hooks/useKingsHunt.ts`.
+- Root cause in checked-in code:
+  - `useGeolocation()` was still reading the Permissions API up front, which introduced browser-dependent permission state before the actual `getCurrentPosition()` call
+  - `useKingsHunt()` built `requestGPS()` with the entire `geolocation` object as a dependency, so the auto-request effect could re-fire on re-render instead of behaving like a single mount-time permission prompt
+- Hotfix applied:
+  - removed the up-front `navigator.permissions.query({ name: "geolocation" })` path as a driver for the hunt state
+  - kept the permission popup trigger on the actual `navigator.geolocation.getCurrentPosition()` call
+  - made the automatic GPS request run once on mount via a ref guard
+  - increased the one-shot GPS request options to mobile-friendly settings (`enableHighAccuracy: true`, `timeout: 15000`, `maximumAge: 5000`) with a single retry on timeout
+  - changed manual retry to re-run a fresh `getCurrentPosition()` flow
+  - delayed `watchPosition()` until the user has a position inside the venue geofence, then start live tracking with `maximumAge: 3000` and `timeout: 10000`
+  - preserved `PERMISSION_DENIED` only for actual geolocation error code `1`
+- Validation observed locally:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file hooks/useGeolocation.ts --file hooks/useKingsHunt.ts --file components/kingshunt/KingsHuntExperience.tsx` -> pass with no warnings or errors
+  - `git diff --check` -> pass
+  - repo-wide `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still reports the existing unrelated baseline failures outside this hotfix surface; filtering that output for `useGeolocation`, `useKingsHunt`, and `KingsHuntExperience` returned no matches
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-04, Google Maps bugfixes for `/locations` and `/kingshunt` on `main` target)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
