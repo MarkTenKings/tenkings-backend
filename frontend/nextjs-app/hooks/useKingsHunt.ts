@@ -354,11 +354,9 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
           locationSlug: location.slug,
         });
         setApproximateRoutePath(null);
-      } catch {
-        setApproximateRoutePath([
-          { lat: origin.lat, lng: origin.lng },
-          { lat: machinePosition.lat, lng: machinePosition.lng },
-        ]);
+      } catch (error) {
+        setApproximateRoutePath(null);
+        console.error("Kings Hunt route refresh failed", error);
       } finally {
         routeRefreshInFlightRef.current = false;
       }

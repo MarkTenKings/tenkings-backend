@@ -3,6 +3,17 @@ import { z } from "zod";
 import type { ComputeRouteResponse, DirectionStep } from "../../../lib/kingsHunt";
 
 const GOOGLE_ROUTES_API_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
+const GOOGLE_ROUTES_FIELD_MASK = [
+  "routes.polyline.encodedPolyline",
+  "routes.duration",
+  "routes.distanceMeters",
+  "routes.legs.steps.navigationInstruction.instructions",
+  "routes.legs.steps.distanceMeters",
+  "routes.legs.steps.staticDuration",
+  "routes.legs.steps.startLocation.latLng",
+  "routes.legs.steps.endLocation.latLng",
+  "routes.warnings",
+].join(",");
 
 const payloadSchema = z.object({
   originLat: z.number().finite(),
@@ -47,17 +58,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       headers: {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": [
-          "routes.duration",
-          "routes.distanceMeters",
-          "routes.polyline.encodedPolyline",
-          "routes.legs.steps.navigationInstruction.instructions",
-          "routes.legs.steps.distanceMeters",
-          "routes.legs.steps.staticDuration",
-          "routes.legs.steps.startLocation.latLng",
-          "routes.legs.steps.endLocation.latLng",
-          "routes.warnings",
-        ].join(","),
+        "X-Goog-FieldMask": GOOGLE_ROUTES_FIELD_MASK,
       },
       body: JSON.stringify({
         origin: {
@@ -107,6 +108,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       | null;
 
     if (!response.ok) {
+      console.error("kingshunt route google api error", {
+        locationSlug: payload.locationSlug ?? null,
+        originLat: payload.originLat,
+        originLng: payload.originLng,
+        destinationLat,
+        destinationLng,
+        status: response.status,
+        rawPayload,
+      });
       return res.status(502).json({
         message: rawPayload?.error?.message ?? "Failed to compute Google walking route",
       });
@@ -114,6 +124,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const route = rawPayload?.routes?.[0];
     if (!route?.polyline?.encodedPolyline) {
+      console.error("kingshunt route missing polyline", {
+        locationSlug: payload.locationSlug ?? null,
+        originLat: payload.originLat,
+        originLng: payload.originLng,
+        destinationLat,
+        destinationLng,
+        rawPayload,
+      });
       return res.status(404).json({ message: "No walking route found" });
     }
 

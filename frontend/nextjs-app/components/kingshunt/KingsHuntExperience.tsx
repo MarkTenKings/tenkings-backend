@@ -83,7 +83,6 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
       : directionsHref;
   const isLiveRouteState = state === "NAVIGATING" || state === "ARRIVED";
   const isActiveNavigationState = state === "NAVIGATING" || state === "ARRIVED";
-  const isApproximateLiveRoute = isLiveRouteState && !context.route && Boolean(context.routePath);
   const venueDetailLine =
     location.landmarks.length >= 2
       ? `Between ${location.landmarks[0]} & ${location.landmarks[1]}`
@@ -227,7 +226,7 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
                     liveUserAccuracyRef={isLiveRouteState ? context.liveAccuracyRef : null}
                     destination={machinePosition}
                     routePolyline={isLiveRouteState ? context.route?.polyline ?? null : null}
-                    routePath={isLiveRouteState ? context.routePath : staticRoutePath}
+                    routePath={isLiveRouteState ? null : staticRoutePath}
                     checkpoints={[]}
                     checkpointsHit={[]}
                     statusLabel={isActiveNavigationState ? undefined : mapStatusLabel}
@@ -265,11 +264,11 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
                 </div>
               ) : null}
 
-              {isApproximateLiveRoute ? (
+              {isLiveRouteState && !context.route && context.routeError ? (
                 <div className="rounded-[1.4rem] border border-[#d4a843]/20 bg-[#d4a843]/10 px-4 py-3">
-                  <p className="font-kingshunt-body text-[0.68rem] uppercase tracking-[0.28em] text-[#d4a843]">Approximate Route</p>
+                  <p className="font-kingshunt-body text-[0.68rem] uppercase tracking-[0.28em] text-[#d4a843]">Route Unavailable</p>
                   <p className="font-kingshunt-body mt-2 text-sm leading-6 text-[#f0e0af]">
-                    Live walking directions are unavailable right now, so the map is showing a dotted straight-line fallback to the machine.
+                    Live walking directions are unavailable right now. The map is still showing your live position and the machine destination, but no route line is being drawn until the next successful route fetch.
                   </p>
                 </div>
               ) : null}

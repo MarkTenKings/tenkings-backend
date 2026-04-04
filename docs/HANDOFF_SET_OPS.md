@@ -36,6 +36,32 @@
   - `git diff --check` -> pass
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
+## Session Update (2026-04-04, Task 31 Kings Hunt walkable polyline + Safari mobile crash fix)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Diagnosed the two remaining production issues in Kings Hunt:
+  - the live route still had a client-side straight-line fallback, so when route refresh failed the UI drew a misleading diagonal path through buildings instead of showing no route
+  - `frontend/nextjs-app/components/maps/TenKingsMap.tsx` recreated `google.maps.Map()` whenever the `center` prop changed, which meant GPS-driven updates repeatedly tore down and rebuilt the map and likely triggered the Safari mobile OOM reloads seen on-site
+- Implemented the fix in:
+  - `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`
+  - `frontend/nextjs-app/components/maps/TenKingsMap.tsx`
+  - `frontend/nextjs-app/hooks/useKingsHunt.ts`
+  - `frontend/nextjs-app/hooks/useRouteComputation.ts`
+  - `frontend/nextjs-app/pages/api/kingshunt/route.ts`
+- What changed:
+  - removed the live straight-line fallback entirely, so a failed route refresh now clears the route instead of rendering a fake diagonal line
+  - kept live navigation bound to the Google Routes polyline only and changed the live error banner to report that no route line is shown until the next successful fetch
+  - refactored `TenKingsMap` so the Google Map instance is created once, persisted in refs, and only cleaned up on unmount instead of on every prop-driven center change
+  - updated the user-marker sync loop to read current positions from refs so the interval is stable and does not restart on each GPS tick
+  - updated the route overlay to reuse the same polyline instances via `setPath()`/`setMap()` rather than recreating polyline objects on each route update
+  - tightened the route proxy field mask into a single constant and added explicit server logging for upstream Google API failures or missing polyline payloads
+- Verification:
+  - executed the checked-in `pages/api/kingshunt/route.ts` handler locally with the Folsom on-site coordinates and confirmed it returned `200` with an encoded walking polyline, `distanceMeters=278`, `durationSec=226`, and populated steps
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/maps/TenKingsMap.tsx --file components/kingshunt/KingsHuntExperience.tsx --file hooks/useKingsHunt.ts --file hooks/useGeolocation.ts --file hooks/useRouteComputation.ts --file pages/api/kingshunt/route.ts --file lib/kingsHunt.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
 ## Session Update (2026-04-04, docs-only repo state refresh in `/Users/markthomas/tenkings-task27-main` after `a20c84e`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
 - Verified current local repo state without changing code or runtime:

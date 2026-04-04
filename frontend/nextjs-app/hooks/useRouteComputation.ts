@@ -35,6 +35,7 @@ export function useRouteComputation(): UseRouteComputationReturn {
       return payload;
     } catch (routeError) {
       const message = routeError instanceof Error ? routeError.message : "Unable to compute walking route";
+      setLastRoute(null);
       setError(message);
       throw routeError;
     } finally {

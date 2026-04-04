@@ -86,8 +86,25 @@ export default function TenKingsMap({
   const lastAutoPanAtRef = useRef(0);
   const lastRenderedUserPositionKeyRef = useRef<string | null>(null);
   const lastRenderedAccuracyRef = useRef<number | null>(null);
+  const centerRef = useRef(center);
+  const interactiveRef = useRef(interactive);
+  const userPositionPropRef = useRef<LatLng | null>(userPosition);
+  const userAccuracyPropRef = useRef<number | null>(userAccuracyM);
   const [mapError, setMapError] = useState<Error | null>(null);
   const resolvedHeightClassName = heightClassName ?? HUNT_MAP_HEIGHT_CLASS;
+
+  useEffect(() => {
+    centerRef.current = center;
+  }, [center]);
+
+  useEffect(() => {
+    interactiveRef.current = interactive;
+  }, [interactive]);
+
+  useEffect(() => {
+    userPositionPropRef.current = userPosition;
+    userAccuracyPropRef.current = userAccuracyM;
+  }, [userAccuracyM, userPosition]);
 
   useEffect(() => {
     if (!isLoaded || !libraries || !containerRef.current || mapRef.current || mapError) {
@@ -99,7 +116,7 @@ export default function TenKingsMap({
       const mapId = process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID;
 
       mapRef.current = new Map(containerRef.current, {
-        center,
+        center: centerRef.current,
         zoom: 17,
         mapId,
         colorScheme: "DARK" as google.maps.ColorScheme,
@@ -111,13 +128,15 @@ export default function TenKingsMap({
         fullscreenControl: false,
         mapTypeControl: false,
         clickableIcons: false,
-        gestureHandling: interactive ? "greedy" : "none",
+        gestureHandling: interactiveRef.current ? "greedy" : "none",
       });
     } catch (error) {
       console.error("Kings Hunt map initialization failed", error);
       setMapError(error instanceof Error ? error : new Error("Unable to initialize the hunt map"));
     }
+  }, [isLoaded, libraries, mapError]);
 
+  useEffect(() => {
     return () => {
       if (destinationMarkerRef.current) {
         destinationMarkerRef.current.map = null;
@@ -142,7 +161,18 @@ export default function TenKingsMap({
       mapRef.current = null;
       hasFramedInitialViewRef.current = false;
     };
-  }, [center, interactive, isLoaded, libraries, mapError]);
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) {
+      return;
+    }
+
+    map.setOptions({
+      gestureHandling: interactive ? "greedy" : "none",
+    });
+  }, [interactive]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -189,8 +219,8 @@ export default function TenKingsMap({
       try {
         const { AdvancedMarkerElement } = libraries.markerLibrary;
         const { Circle } = libraries.mapsLibrary;
-        const nextUserPosition = liveUserPositionRef?.current ?? userPosition;
-        const nextUserAccuracy = liveUserAccuracyRef?.current ?? userAccuracyM;
+        const nextUserPosition = liveUserPositionRef?.current ?? userPositionPropRef.current;
+        const nextUserAccuracy = liveUserAccuracyRef?.current ?? userAccuracyPropRef.current;
 
         if (!nextUserPosition) {
           if (userMarkerRef.current) {
@@ -266,7 +296,7 @@ export default function TenKingsMap({
 
     const intervalId = window.setInterval(syncUserPosition, 250);
     return () => window.clearInterval(intervalId);
-  }, [followUser, libraries, liveUserAccuracyRef, liveUserPositionRef, mapError, userAccuracyM, userPosition]);
+  }, [followUser, libraries, liveUserAccuracyRef, liveUserPositionRef, mapError]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -303,62 +333,71 @@ export default function TenKingsMap({
       return;
     }
 
-    routeBaseRef.current?.setMap(null);
-    routePatternRef.current?.setMap(null);
-    routeBaseRef.current = null;
-    routePatternRef.current = null;
-
     const staticRoutePath = Array.isArray(routePath) && routePath.length > 1 ? routePath : null;
     if (!routePolyline && !staticRoutePath) {
+      routeBaseRef.current?.setMap(null);
+      routePatternRef.current?.setMap(null);
       return;
     }
 
     try {
       const { Polyline } = libraries.mapsLibrary;
-      if (routePolyline) {
+      if (!routeBaseRef.current) {
         routeBaseRef.current = new Polyline({
           map,
-          path: libraries.geometryLibrary.encoding.decodePath(routePolyline),
-          strokeColor: "#d4a843",
-          strokeOpacity: 0.95,
-          strokeWeight: 5,
           geodesic: true,
           zIndex: 3,
         });
+      }
+
+      if (routePolyline) {
+        routeBaseRef.current.setOptions({
+          map,
+          strokeColor: "#d4a843",
+          strokeOpacity: 0.95,
+          strokeWeight: 5,
+          zIndex: 3,
+        });
+        routeBaseRef.current.setPath(libraries.geometryLibrary.encoding.decodePath(routePolyline));
+        routePatternRef.current?.setMap(null);
         return;
       }
 
-      routeBaseRef.current = new Polyline({
+      routeBaseRef.current.setOptions({
         map,
-        path: staticRoutePath ?? [],
         strokeColor: "rgba(212,168,67,0.34)",
         strokeOpacity: 0.85,
         strokeWeight: 3,
-        geodesic: true,
         zIndex: 2,
       });
+      routeBaseRef.current.setPath(staticRoutePath ?? []);
 
-      routePatternRef.current = new Polyline({
-        map,
-        path: staticRoutePath ?? [],
-        strokeOpacity: 0,
-        strokeWeight: 3,
-        geodesic: true,
-        zIndex: 3,
-        icons: [
-          {
-            icon: {
-              path: google.maps.SymbolPath.CIRCLE,
-              fillColor: "#d4a843",
-              fillOpacity: 0.94,
-              strokeOpacity: 0,
-              scale: 3,
+      if (!routePatternRef.current) {
+        routePatternRef.current = new Polyline({
+          map,
+          strokeOpacity: 0,
+          strokeWeight: 3,
+          geodesic: true,
+          zIndex: 3,
+          icons: [
+            {
+              icon: {
+                path: google.maps.SymbolPath.CIRCLE,
+                fillColor: "#d4a843",
+                fillOpacity: 0.94,
+                strokeOpacity: 0,
+                scale: 3,
+              },
+              offset: "0",
+              repeat: "18px",
             },
-            offset: "0",
-            repeat: "18px",
-          },
-        ],
-      });
+          ],
+        });
+      } else {
+        routePatternRef.current.setMap(map);
+      }
+
+      routePatternRef.current.setPath(staticRoutePath ?? []);
     } catch (error) {
       console.error("Kings Hunt route overlay failed", error);
       setMapError(error instanceof Error ? error : new Error("Unable to render the route overlay"));

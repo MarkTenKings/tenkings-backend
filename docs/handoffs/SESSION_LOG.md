@@ -12727,6 +12727,43 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
+## 2026-04-04 - Kings Hunt walkable route polyline + Safari mobile crash fix on main
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Verified the checked-in route proxy itself returns a real Google walking polyline for the Folsom test coordinates by executing the local API handler with the configured Maps key:
+  - local handler response -> `status=200`, `distanceMeters=278`, `durationSec=226`, encoded polyline present, step list present
+- Root causes fixed in checked-in code:
+  - removed the client-side live straight-line fallback so route failures no longer draw a misleading diagonal line through buildings
+  - fixed the live map lifecycle so `google.maps.Map()` is created once and no longer torn down and recreated on GPS-driven center changes
+  - changed live route rendering to reuse persistent polyline instances and update them in place, reducing memory churn on mobile Safari
+  - stabilized the user sync loop by reading the latest GPS values from refs instead of recreating the interval whenever the throttled user position prop changes
+  - added explicit server logging for upstream Google Routes failures or missing polyline payloads to make future route issues observable
+
+### Files Updated
+- `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`
+- `frontend/nextjs-app/components/maps/TenKingsMap.tsx`
+- `frontend/nextjs-app/hooks/useKingsHunt.ts`
+- `frontend/nextjs-app/hooks/useRouteComputation.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/route.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- Local route proxy execution with Folsom coordinates:
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --eval ...` -> returned `200` with encoded walking polyline, `distanceMeters=278`, `durationSec=226`, and steps
+- Targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/maps/TenKingsMap.tsx --file components/kingshunt/KingsHuntExperience.tsx --file hooks/useKingsHunt.ts --file hooks/useGeolocation.ts --file hooks/useRouteComputation.ts --file pages/api/kingshunt/route.ts --file lib/kingsHunt.ts` -> pass
+- TypeScript:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- Diff hygiene:
+  - `git diff --check` -> pass
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
 ## 2026-04-02 - Task 25 auto-OCR pending-status deadlock fix
 
 ### Summary
