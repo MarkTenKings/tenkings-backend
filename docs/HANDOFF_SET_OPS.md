@@ -1,15 +1,28 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-04` (Phase 1 Google Maps rebuild in separate workstation worktree; branch `feature/kingshunt-v2` remains uncommitted at `3338a00`; no deploy/restart/migration was executed)
-- Branch: `feature/kingshunt-v2`
-- Current local git state before this handoff refresh:
-  - `git status -sb` -> `## feature/kingshunt-v2`
-  - modified tracked paths span the Kings Hunt Phase 1 rewrite in `.env.example`, `frontend/nextjs-app/**`, `pnpm-lock.yaml`, `docs/HANDOFF_SET_OPS.md`, and `docs/handoffs/SESSION_LOG.md`
-- Latest committed baseline in this checkout:
-  - `3338a00` docs(handoff): record kingshunt migration recovery
-- Environments touched: workstation worktree checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-kingshunt-v2`; no deploy/restart/migration executed
+- Last reviewed: `2026-04-04` (Phase 1 Google Maps rebuild fast-forward merged into `main`; handoff docs synced from a temporary merge worktree; no deploy/restart/migration was executed)
+- Branch: `main`
+- Current local git state at latest handoff refresh:
+  - merge worktree pre-doc-commit state: `git status -sb` -> `## merge-main-sync...origin/main [ahead 1]`
+  - merged feature payload now on target branch: `.env.example`, `frontend/nextjs-app/**`, `pnpm-lock.yaml`, `docs/HANDOFF_SET_OPS.md`, and `docs/handoffs/SESSION_LOG.md`
+- Latest merged feature baseline at handoff refresh:
+  - `d58ea60` feat(kingshunt): Phase 1 rebuild on Google Maps Platform
+- Environments touched: temporary merge worktree `/tmp/tenkings-main-merge` on branch `merge-main-sync`; existing canonical main worktree `/Users/markthomas/tenkings-task27-main` was left untouched because it had a pre-existing uncommitted `docs/handoffs/SESSION_LOG.md` change; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-04, merged `feature/kingshunt-v2` into `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified the existing main worktree at `/Users/markthomas/tenkings-task27-main` had a pre-existing uncommitted `docs/handoffs/SESSION_LOG.md` change, so it was intentionally not used for the merge.
+- Created a temporary merge worktree from `origin/main` at `/tmp/tenkings-main-merge` on branch `merge-main-sync`.
+- Verified remote parity before merge:
+  - `git fetch origin main feature/kingshunt-v2` -> pass
+  - `git merge --ff-only origin/main` -> `Already up to date.`
+- Fast-forward merged the feature branch into the temporary main merge worktree:
+  - `git merge --ff-only feature/kingshunt-v2` -> pass
+  - merge advanced target from `3338a00` to `d58ea60`
+- Updated handoff docs in the merge worktree so `main` reflects the merge and the temp-worktree workflow.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-04, Phase 1 Kings Hunt Google Maps rebuild on `feature/kingshunt-v2`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-kingshunt-v2` per `AGENTS.md`.

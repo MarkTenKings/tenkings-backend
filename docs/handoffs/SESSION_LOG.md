@@ -13713,3 +13713,33 @@
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 - The Google Routes API proxy is wired to `GOOGLE_MAPS_API_KEY` per the Phase 1 prompt.
+
+## 2026-04-04 - Merged feature/kingshunt-v2 into main
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified the existing main worktree at `/Users/markthomas/tenkings-task27-main` had a pre-existing uncommitted `docs/handoffs/SESSION_LOG.md` change, so it was intentionally left untouched.
+- Created a temporary merge worktree from `origin/main` at `/tmp/tenkings-main-merge` on branch `merge-main-sync`.
+- Fetched the latest `origin/main` and `origin/feature/kingshunt-v2`, then fast-forward merged `feature/kingshunt-v2` into the temporary merge worktree.
+- Updated handoff docs in the merge worktree to reflect the merge into `main`.
+- No deploy, restart, migration, or DB mutation was executed.
+
+### Verification Evidence
+- Existing main worktree state:
+  - `git status -sb` in `/Users/markthomas/tenkings-task27-main` -> `## main...origin/main`
+  - pre-existing local modification present: `docs/handoffs/SESSION_LOG.md`
+- Temporary merge worktree setup:
+  - `git worktree add -b merge-main-sync /tmp/tenkings-main-merge origin/main` -> pass
+- Remote parity:
+  - `git fetch origin main feature/kingshunt-v2` -> pass
+  - `git merge --ff-only origin/main` -> `Already up to date.`
+- Merge result:
+  - `git merge --ff-only feature/kingshunt-v2` -> pass
+  - target advanced `3338a00..d58ea60`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- This log entry records the merge workflow from the temporary clean worktree so the dirty local main worktree was preserved.
