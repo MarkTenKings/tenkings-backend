@@ -45,7 +45,7 @@ export default function KingsHuntLocationPage({
         <title>Ten Kings · Kings Hunt · {location.name}</title>
         <meta
           name="description"
-          content={`Live GPS wayfinding to the Ten Kings machine at ${location.name}, with checkpoint tracking and arrival status.`}
+          content={`Live GPS wayfinding to the Ten Kings machine at ${location.name}, with real walking directions and arrival status.`}
         />
       </Head>
 

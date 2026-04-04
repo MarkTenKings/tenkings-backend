@@ -1,15 +1,53 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-04` (Kings Hunt live experience follow-up fixes prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest local baseline is `6ba4bb5`; route fallback, mobile map stabilization, TKD removal, active-navigation mobile layout, and Location Services guidance are in the worktree; no deploy/restart/migrate was run)
+- Last reviewed: `2026-04-04` (Kings Hunt mobile navigation fix prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest local baseline before this commit is `a20c84e`; live runtime payload for `folsom-premium-outlets` was verified, the deployed route proxy failure was reproduced, and the local worktree now contains the fullscreen-nav + route-fix patch; no deploy/restart/migrate was run)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
   - `git status -sb` -> `## main...origin/main`
-  - modified tracked paths: `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`, `frontend/nextjs-app/components/maps/TenKingsMap.tsx`, `frontend/nextjs-app/hooks/useKingsHunt.ts`, `frontend/nextjs-app/hooks/useRouteComputation.ts`, `frontend/nextjs-app/lib/kingsHunt.ts`, `frontend/nextjs-app/pages/api/kingshunt/checkpoint.ts`, `frontend/nextjs-app/pages/api/kingshunt/route.ts`, `frontend/nextjs-app/pages/api/kingshunt/session.ts`, `frontend/nextjs-app/pages/kingshunt/[locationSlug].tsx`, `frontend/nextjs-app/styles/globals.css`, and handoff docs
+  - modified tracked paths: `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`, `frontend/nextjs-app/components/maps/TenKingsMap.tsx`, `frontend/nextjs-app/hooks/useGeolocation.ts`, `frontend/nextjs-app/hooks/useKingsHunt.ts`, `frontend/nextjs-app/hooks/useRouteComputation.ts`, `frontend/nextjs-app/lib/kingsHunt.ts`, `frontend/nextjs-app/pages/api/kingshunt/route.ts`, `frontend/nextjs-app/pages/kingshunt/[locationSlug].tsx`, `frontend/nextjs-app/styles/globals.css`, and handoff docs
 - Latest committed baseline in this checkout:
-  - `6ba4bb5` fix(kingshunt): always show map - remove GPS dead ends
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migrate executed
+  - `a20c84e` fix(kingshunt): route line, map glitch, remove TKD, fullscreen map, location services
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; read-only live verification against `https://collect.tenkings.co` and direct Google Routes API; no deploy/restart/migrate executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-04, Kings Hunt fullscreen mobile nav + working walking route fix on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing:
+  - `git pull --ff-only --autostash origin main` -> `Already up to date.`
+- Reproduced and diagnosed the live mobile failures with runtime evidence:
+  - `curl -s https://collect.tenkings.co/kingshunt/folsom-premium-outlets` confirmed the live payload already has the correct Folsom machine coordinates (`38.6438568, -121.1885226`), venue center (`38.6436, -121.1874`), and `geofenceRadiusM=600`
+  - `curl -s https://collect.tenkings.co/api/kingshunt/route ...` returned `{"message":"avoid_highways only applies to DRIVE and TWO_WHEELER travel modes."}`, confirming the deployed proxy is currently rejecting walking-route requests
+  - a direct Google Routes API call with the on-site sign and machine coordinates returned a valid walking route (`distanceMeters=278`, `duration=226s`, encoded polyline present), confirming the proxy request shape was the blocker rather than the destination data
+- Root causes found in checked-in code:
+  - `frontend/nextjs-app/hooks/useKingsHunt.ts` still gated live navigation behind `navigationStarted`, which left the extra `AT_VENUE` / `Start Hunt` step in the mobile flow
+  - `frontend/nextjs-app/pages/api/kingshunt/route.ts` was sending an invalid `avoidHighways` modifier on `travelMode: "WALK"`, so the route proxy failed and the UI fell back to a dotted straight-line preview
+  - `frontend/nextjs-app/components/maps/TenKingsMap.tsx` rendered the live route with a faint overlay and rebuilt route presentation from prop-driven rerenders; the dotted overlay path was also too weak to survive mobile fallback/retry behavior
+  - `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx` still kept the map inside the padded marketing layout on mobile, so active navigation never became true fullscreen
+- Fixes implemented locally:
+  - `frontend/nextjs-app/hooks/useKingsHunt.ts` now auto-enters `NAVIGATING` as soon as GPS confirms the venue geofence, keeps the one allowed `Start Hunt` CTA only in `STATIC_MAP`, raises route refresh threshold to `50m`, serializes route refreshes, and disables checkpoint proximity logic for the current pure-wayfinding mode
+  - `frontend/nextjs-app/hooks/useGeolocation.ts` now stores every watch tick in refs but only commits throttled React state updates, so the page stops rerendering the heavy mobile shell on every GPS update
+  - `frontend/nextjs-app/components/maps/TenKingsMap.tsx` now passes `mapId` and `colorScheme: DARK` into `new google.maps.Map()`, keeps the live user marker moving from refs, auto-pans at most every 5 seconds, and renders the real route as a solid gold polyline (`#d4a843`, weight `5`) while keeping dotted fallback only for the approximate straight-line case
+  - `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx` now gives mobile navigation an edge-to-edge map shell, a floating distance/ETA/venue pill, and a minimal bottom info bar (`Folsom Premium Outlets` + landmark line) instead of the padded hero/cards flow
+  - `frontend/nextjs-app/pages/api/kingshunt/route.ts` now uses a valid walking-route request and requests the step fields the handler parses
+- Validation observed locally:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/kingshunt/KingsHuntExperience.tsx --file components/maps/TenKingsMap.tsx --file hooks/useKingsHunt.ts --file hooks/useGeolocation.ts --file hooks/useRouteComputation.ts --file pages/api/kingshunt/route.ts --file 'pages/kingshunt/[locationSlug].tsx' --file lib/kingsHunt.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-04, docs-only repo state refresh in `/Users/markthomas/tenkings-task27-main` after `a20c84e`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified current local repo state without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `a20c84e`
+  - `git log -1 --oneline` -> `a20c84e fix(kingshunt): route line, map glitch, remove TKD, fullscreen map, location services`
+- Confirmed the latest committed baseline in this checkout is `a20c84e` `fix(kingshunt): route line, map glitch, remove TKD, fullscreen map, location services`.
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-04, Kings Hunt live experience follow-up fixes on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

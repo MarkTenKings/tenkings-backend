@@ -1,7 +1,7 @@
 export const DEFAULT_GEOFENCE_RADIUS_M = 500;
 export const DEFAULT_CHECKPOINT_RADIUS_M = 15;
 export const DEFAULT_ARRIVAL_RADIUS_M = 20;
-export const DEFAULT_ROUTE_RECALC_THRESHOLD_M = 15;
+export const DEFAULT_ROUTE_RECALC_THRESHOLD_M = 50;
 
 export interface LatLng {
   lat: number;
@@ -329,8 +329,9 @@ export function formatDistance(distanceM: number | null | undefined): string {
     return "Distance unavailable";
   }
 
-  if (distanceM < 1000) {
-    return `${Math.round(distanceM)} m`;
+  const feet = distanceM * 3.28084;
+  if (feet < 1000) {
+    return `${Math.max(10, Math.round(feet / 10) * 10)} ft`;
   }
 
   const miles = distanceM / 1609.344;

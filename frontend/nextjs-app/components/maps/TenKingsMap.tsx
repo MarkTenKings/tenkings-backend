@@ -9,6 +9,8 @@ export interface TenKingsMapProps {
   center: LatLng;
   userPosition?: LatLng | null;
   userAccuracyM?: number | null;
+  liveUserPositionRef?: { current: LatLng | null } | null;
+  liveUserAccuracyRef?: { current: number | null } | null;
   destination?: LatLng | null;
   routePolyline?: string | null;
   routePath?: LatLng[] | null;
@@ -17,6 +19,8 @@ export interface TenKingsMapProps {
   statusLabel?: string;
   className?: string;
   interactive?: boolean;
+  followUser?: boolean;
+  heightClassName?: string;
 }
 
 function buildUserMarkerNode(): HTMLDivElement {
@@ -56,6 +60,8 @@ export default function TenKingsMap({
   center,
   userPosition = null,
   userAccuracyM = null,
+  liveUserPositionRef = null,
+  liveUserAccuracyRef = null,
   destination = null,
   routePolyline = null,
   routePath = null,
@@ -64,6 +70,8 @@ export default function TenKingsMap({
   statusLabel,
   className,
   interactive = true,
+  followUser = false,
+  heightClassName,
 }: TenKingsMapProps) {
   const { isLoaded, loadError, libraries } = useGoogleMaps();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -75,7 +83,11 @@ export default function TenKingsMap({
   const routePatternRef = useRef<google.maps.Polyline | null>(null);
   const accuracyCircleRef = useRef<google.maps.Circle | null>(null);
   const hasFramedInitialViewRef = useRef(false);
+  const lastAutoPanAtRef = useRef(0);
+  const lastRenderedUserPositionKeyRef = useRef<string | null>(null);
+  const lastRenderedAccuracyRef = useRef<number | null>(null);
   const [mapError, setMapError] = useState<Error | null>(null);
+  const resolvedHeightClassName = heightClassName ?? HUNT_MAP_HEIGHT_CLASS;
 
   useEffect(() => {
     if (!isLoaded || !libraries || !containerRef.current || mapRef.current || mapError) {
@@ -84,11 +96,14 @@ export default function TenKingsMap({
 
     try {
       const { Map } = libraries.mapsLibrary;
+      const mapId = process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID;
 
       mapRef.current = new Map(containerRef.current, {
         center,
         zoom: 17,
-        mapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID,
+        mapId,
+        colorScheme: "DARK" as google.maps.ColorScheme,
+        backgroundColor: "#050505",
         renderingType: google.maps.RenderingType.VECTOR,
         disableDefaultUI: true,
         zoomControl: true,
@@ -170,58 +185,88 @@ export default function TenKingsMap({
       return;
     }
 
-    try {
-      const { AdvancedMarkerElement } = libraries.markerLibrary;
-      const { Circle } = libraries.mapsLibrary;
+    const syncUserPosition = () => {
+      try {
+        const { AdvancedMarkerElement } = libraries.markerLibrary;
+        const { Circle } = libraries.mapsLibrary;
+        const nextUserPosition = liveUserPositionRef?.current ?? userPosition;
+        const nextUserAccuracy = liveUserAccuracyRef?.current ?? userAccuracyM;
 
-      if (!userPosition) {
-        if (userMarkerRef.current) {
-          userMarkerRef.current.map = null;
-          userMarkerRef.current = null;
+        if (!nextUserPosition) {
+          if (userMarkerRef.current) {
+            userMarkerRef.current.map = null;
+            userMarkerRef.current = null;
+          }
+          accuracyCircleRef.current?.setMap(null);
+          accuracyCircleRef.current = null;
+          lastRenderedUserPositionKeyRef.current = null;
+          lastRenderedAccuracyRef.current = null;
+          return;
         }
-        accuracyCircleRef.current?.setMap(null);
-        accuracyCircleRef.current = null;
-        return;
-      }
 
-      if (!userMarkerRef.current) {
-        userMarkerRef.current = new AdvancedMarkerElement({
-          map,
-          position: userPosition,
-          title: "Your location",
-          content: buildUserMarkerNode(),
-        });
-      } else {
-        userMarkerRef.current.position = userPosition;
-        userMarkerRef.current.map = map;
-      }
+        const nextUserPositionKey = `${nextUserPosition.lat.toFixed(7)},${nextUserPosition.lng.toFixed(7)}`;
+        const positionChanged = nextUserPositionKey !== lastRenderedUserPositionKeyRef.current;
+        const accuracyChanged = nextUserAccuracy !== lastRenderedAccuracyRef.current;
 
-      if (userAccuracyM != null && Number.isFinite(userAccuracyM)) {
-        if (!accuracyCircleRef.current) {
-          accuracyCircleRef.current = new Circle({
+        if (!userMarkerRef.current) {
+          userMarkerRef.current = new AdvancedMarkerElement({
             map,
-            center: userPosition,
-            radius: userAccuracyM,
-            fillColor: "#4aa7ff",
-            fillOpacity: 0.12,
-            strokeColor: "#4aa7ff",
-            strokeOpacity: 0.26,
-            strokeWeight: 1,
+            position: nextUserPosition,
+            title: "Your location",
+            content: buildUserMarkerNode(),
           });
-        } else {
-          accuracyCircleRef.current.setMap(map);
-          accuracyCircleRef.current.setCenter(userPosition);
-          accuracyCircleRef.current.setRadius(userAccuracyM);
+        } else if (positionChanged) {
+          userMarkerRef.current.position = nextUserPosition;
+          userMarkerRef.current.map = map;
         }
-      } else {
-        accuracyCircleRef.current?.setMap(null);
-        accuracyCircleRef.current = null;
+
+        if (nextUserAccuracy != null && Number.isFinite(nextUserAccuracy)) {
+          if (!accuracyCircleRef.current) {
+            accuracyCircleRef.current = new Circle({
+              map,
+              center: nextUserPosition,
+              radius: nextUserAccuracy,
+              fillColor: "#4aa7ff",
+              fillOpacity: 0.12,
+              strokeColor: "#4aa7ff",
+              strokeOpacity: 0.26,
+              strokeWeight: 1,
+            });
+          } else if (positionChanged || accuracyChanged) {
+            accuracyCircleRef.current.setMap(map);
+            accuracyCircleRef.current.setCenter(nextUserPosition);
+            accuracyCircleRef.current.setRadius(nextUserAccuracy);
+          }
+        } else {
+          accuracyCircleRef.current?.setMap(null);
+          accuracyCircleRef.current = null;
+        }
+
+        if (followUser) {
+          const now = Date.now();
+          if (positionChanged && now - lastAutoPanAtRef.current >= 5000) {
+            map.panTo(nextUserPosition);
+            lastAutoPanAtRef.current = now;
+          }
+        }
+
+        lastRenderedUserPositionKeyRef.current = nextUserPositionKey;
+        lastRenderedAccuracyRef.current = nextUserAccuracy;
+      } catch (error) {
+        console.error("Kings Hunt user marker failed", error);
+        setMapError(error instanceof Error ? error : new Error("Unable to update your live position"));
       }
-    } catch (error) {
-      console.error("Kings Hunt user marker failed", error);
-      setMapError(error instanceof Error ? error : new Error("Unable to update your live position"));
+    };
+
+    syncUserPosition();
+
+    if (!liveUserPositionRef && !liveUserAccuracyRef) {
+      return;
     }
-  }, [libraries, mapError, userAccuracyM, userPosition]);
+
+    const intervalId = window.setInterval(syncUserPosition, 250);
+    return () => window.clearInterval(intervalId);
+  }, [followUser, libraries, liveUserAccuracyRef, liveUserPositionRef, mapError, userAccuracyM, userPosition]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -270,50 +315,49 @@ export default function TenKingsMap({
 
     try {
       const { Polyline } = libraries.mapsLibrary;
-      const isApproximate = !routePolyline;
-      const path = routePolyline ? libraries.geometryLibrary.encoding.decodePath(routePolyline) : staticRoutePath ?? [];
+      if (routePolyline) {
+        routeBaseRef.current = new Polyline({
+          map,
+          path: libraries.geometryLibrary.encoding.decodePath(routePolyline),
+          strokeColor: "#d4a843",
+          strokeOpacity: 0.95,
+          strokeWeight: 5,
+          geodesic: true,
+          zIndex: 3,
+        });
+        return;
+      }
 
       routeBaseRef.current = new Polyline({
         map,
-        path,
-        strokeColor: isApproximate ? "rgba(212,168,67,0.18)" : "rgba(212,168,67,0.28)",
-        strokeOpacity: 1,
-        strokeWeight: isApproximate ? 2 : 4,
+        path: staticRoutePath ?? [],
+        strokeColor: "rgba(212,168,67,0.34)",
+        strokeOpacity: 0.85,
+        strokeWeight: 3,
         geodesic: true,
+        zIndex: 2,
       });
 
       routePatternRef.current = new Polyline({
         map,
-        path,
+        path: staticRoutePath ?? [],
         strokeOpacity: 0,
-        strokeWeight: 0,
+        strokeWeight: 3,
         geodesic: true,
-        icons: isApproximate
-          ? [
-              {
-                icon: {
-                  path: google.maps.SymbolPath.CIRCLE,
-                  fillColor: "#d4a843",
-                  fillOpacity: 0.92,
-                  strokeOpacity: 0,
-                  scale: 2.6,
-                },
-                offset: "0",
-                repeat: "16px",
-              },
-            ]
-          : [
-              {
-                icon: {
-                  path: "M 0,-1 0,1",
-                  strokeOpacity: 1,
-                  strokeColor: "#d4a843",
-                  scale: 4,
-                },
-                offset: "0",
-                repeat: "18px",
-              },
-            ],
+        zIndex: 3,
+        icons: [
+          {
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE,
+              fillColor: "#d4a843",
+              fillOpacity: 0.94,
+              strokeOpacity: 0,
+              scale: 3,
+            },
+            offset: "0",
+            repeat: "18px",
+          },
+        ],
       });
     } catch (error) {
       console.error("Kings Hunt route overlay failed", error);
@@ -374,7 +418,7 @@ export default function TenKingsMap({
   if (loadError || mapError) {
     return (
       <MapFallback
-        className={`${HUNT_MAP_HEIGHT_CLASS} ${className ?? ""}`.trim()}
+        className={`${resolvedHeightClassName} ${className ?? ""}`.trim()}
         eyebrow="Map failed to load"
         title="Live route map unavailable"
         body="The hunt can still continue. Use Google Maps directions and the venue details panel while the live map is unavailable."
@@ -383,7 +427,7 @@ export default function TenKingsMap({
   }
 
   if (!isLoaded) {
-    return <div className={`tk-map-loading ${HUNT_MAP_HEIGHT_CLASS} ${className ?? ""}`.trim()}>Loading map</div>;
+    return <div className={`tk-map-loading ${resolvedHeightClassName} ${className ?? ""}`.trim()}>Loading map</div>;
   }
 
   return (
@@ -410,7 +454,7 @@ export default function TenKingsMap({
           Re-center
         </button>
       ) : null}
-      <div ref={containerRef} className={`tk-google-map__canvas ${HUNT_MAP_HEIGHT_CLASS}`.trim()} />
+      <div ref={containerRef} className={`tk-google-map__canvas ${resolvedHeightClassName}`.trim()} />
     </div>
   );
 }

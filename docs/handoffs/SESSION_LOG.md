@@ -13898,3 +13898,64 @@
 
 ### Notes
 - This session used the canonical `main` checkout in `/Users/markthomas/tenkings-task27-main`, unlike the earlier temporary worktree fixes from the same day.
+
+## 2026-04-04 - Docs-only repo state refresh in tenkings-task27-main after latest Kings Hunt fix
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified current local repo state without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `a20c84e`
+  - `git log -1 --oneline` -> `a20c84e fix(kingshunt): route line, map glitch, remove TKD, fullscreen map, location services`
+- Confirmed the latest committed baseline in this checkout is `a20c84e` `fix(kingshunt): route line, map glitch, remove TKD, fullscreen map, location services`.
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-04 - Kings Hunt fullscreen mobile nav + working walking route fix on main
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing:
+  - `git pull --ff-only --autostash origin main` -> `Already up to date.`
+- Verified live runtime data and reproduced the route failure with read-only HTTP checks:
+  - the live `folsom-premium-outlets` page payload already has the correct Folsom machine coordinates (`38.6438568, -121.1885226`), venue center (`38.6436, -121.1874`), and `geofenceRadiusM=600`
+  - the deployed `/api/kingshunt/route` endpoint currently returns `avoid_highways only applies to DRIVE and TWO_WHEELER travel modes.`
+  - a direct Google Routes API call using the on-site sign and machine coordinates returns a valid walking route (`distanceMeters=278`, `duration=226s`, encoded polyline present)
+- Root causes fixed in checked-in code:
+  - removed the extra `Start Hunt` gate from the live geofence-confirmed flow by auto-entering `NAVIGATING`
+  - fixed the route proxy request so Google walking routes succeed again
+  - made the live route render as a solid gold polyline instead of a faint transient overlay
+  - throttled heavy React state churn during live GPS tracking and moved marker updates onto refs for smoother mobile behavior
+  - rebuilt the active mobile layout into a fullscreen map with a floating distance/ETA pill and a minimal bottom info bar
+  - disabled checkpoint proximity/gamification behavior for the current pure-wayfinding mode while keeping the static preview path data intact
+
+### Files Updated
+- `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`
+- `frontend/nextjs-app/components/maps/TenKingsMap.tsx`
+- `frontend/nextjs-app/hooks/useGeolocation.ts`
+- `frontend/nextjs-app/hooks/useKingsHunt.ts`
+- `frontend/nextjs-app/hooks/useRouteComputation.ts`
+- `frontend/nextjs-app/lib/kingsHunt.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/route.ts`
+- `frontend/nextjs-app/pages/kingshunt/[locationSlug].tsx`
+- `frontend/nextjs-app/styles/globals.css`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- Runtime/API diagnosis:
+  - `curl -s https://collect.tenkings.co/kingshunt/folsom-premium-outlets` -> confirmed live payload values for Folsom coordinates and geofence
+  - `curl -s https://collect.tenkings.co/api/kingshunt/route ...` -> returned `avoid_highways only applies to DRIVE and TWO_WHEELER travel modes.`
+  - direct Google Routes API call with the same coordinates -> returned a valid route with polyline, `distanceMeters=278`, `duration=226s`
+- Targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/kingshunt/KingsHuntExperience.tsx --file components/maps/TenKingsMap.tsx --file hooks/useKingsHunt.ts --file hooks/useGeolocation.ts --file hooks/useRouteComputation.ts --file pages/api/kingshunt/route.ts --file 'pages/kingshunt/[locationSlug].tsx' --file lib/kingsHunt.ts` -> pass
+- TypeScript:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- Diff hygiene:
+  - `git diff --check` -> pass
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
