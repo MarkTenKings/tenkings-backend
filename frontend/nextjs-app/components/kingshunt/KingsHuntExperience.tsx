@@ -1,6 +1,6 @@
 'use client';
 
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import Link from "next/link";
 import MapErrorBoundary from "../maps/MapErrorBoundary";
 import MapFallback from "../maps/MapFallback";
@@ -13,6 +13,8 @@ import {
   formatLocationHours,
   getLocationTypeLabel,
   getMachinePosition,
+  getVenueCenterPosition,
+  type LatLng,
   type KingsHuntLocation,
 } from "../../lib/kingsHunt";
 
@@ -43,6 +45,25 @@ function StateCard({
   );
 }
 
+function buildStaticRoutePath(points: Array<LatLng | null>): LatLng[] {
+  const path: LatLng[] = [];
+
+  points.forEach((point) => {
+    if (!point) {
+      return;
+    }
+
+    const previous = path[path.length - 1];
+    if (previous && previous.lat === point.lat && previous.lng === point.lng) {
+      return;
+    }
+
+    path.push(point);
+  });
+
+  return path;
+}
+
 export default function KingsHuntExperience({ location, entryMethod, qrCodeId = null }: KingsHuntExperienceProps) {
   const { state, context, requestGPS, startHunt, retry, dismissCheckpoint } = useKingsHunt({
     location,
@@ -52,9 +73,36 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
 
   const directionsHref = buildDirectionsHref(location, context.position);
   const machinePosition = getMachinePosition(location);
+  const venueCenterPosition = getVenueCenterPosition(location);
   const hoursLabel = formatLocationHours(location.hours);
   const distanceLabel = context.route ? formatDistance(context.route.distanceM) : formatDistance(context.distanceToMachineM);
   const etaLabel = context.route ? formatDuration(context.route.durationSec) : context.etaMin != null ? `${context.etaMin} min` : "ETA unavailable";
+  const walkingDirectionsHref =
+    machinePosition != null
+      ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${machinePosition.lat},${machinePosition.lng}`)}&travelmode=walking`
+      : directionsHref;
+  const isLiveRouteState = state === "AT_VENUE" || state === "NAVIGATING" || state === "ARRIVED";
+  const landmarkSummary = location.landmarks.length ? location.landmarks.join(" • ") : "See map above";
+  const staticRoutePath = useMemo(() => {
+    const checkpointPath = [...context.checkpoints]
+      .sort((left, right) => left.order - right.order)
+      .map((checkpoint) => ({ lat: checkpoint.lat, lng: checkpoint.lng }));
+
+    return buildStaticRoutePath([venueCenterPosition, ...checkpointPath, machinePosition]);
+  }, [context.checkpoints, machinePosition, venueCenterPosition]);
+  const mapCenter = isLiveRouteState
+    ? context.position ?? machinePosition ?? venueCenterPosition
+    : venueCenterPosition ?? machinePosition ?? context.position;
+  const mapStatusLabel =
+    state === "NAVIGATING"
+      ? "Live Route Active"
+      : state === "ARRIVED"
+        ? "Arrival Confirmed"
+        : state === "AT_VENUE"
+          ? "Venue Geofence Matched"
+          : state === "STATIC_MAP"
+            ? "Static Route Preview"
+            : "Venue Route Preview";
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] px-4 py-8 text-white">
@@ -99,71 +147,27 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
           </div>
         </section>
 
-        {state === "LOADING" || state === "LOCATING" ? (
-          <StateCard
-            eyebrow="Acquiring GPS"
-            title="Finding your live position"
-            body="We’re requesting high-accuracy GPS so we can check the venue geofence and compute a real walkable route with Google Routes."
-          />
-        ) : null}
-
-        {state === "PERMISSION_DENIED" ? (
-          <StateCard
-            eyebrow="Location Off"
-            title="Enable GPS to start the hunt"
-            body="Kings Hunt needs live location to place your blue dot, verify you’re at the venue, and draw the real walking route to the machine."
-            actions={
-              <>
-                <button
-                  type="button"
-                  onClick={() => void requestGPS()}
-                  className="font-kingshunt-body rounded-full bg-[#d4a843] px-4 py-3 text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-[#171208]"
-                >
-                  Try Again
-                </button>
-                <Link
-                  href={directionsHref}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-kingshunt-body rounded-full border border-white/10 px-4 py-3 text-[0.68rem] uppercase tracking-[0.26em] text-white/85"
-                >
-                  Open Google Maps
-                </Link>
-              </>
-            }
-          />
-        ) : null}
-
-        {state === "NOT_AT_VENUE" ? (
-          <StateCard
-            eyebrow="Outside Geofence"
-            title="You’re not close enough to this venue yet"
-            body={`We can still point you there now. Current venue-center distance: ${formatDistance(context.distanceToVenueM)}.`}
-            actions={
-              <>
-                <Link
-                  href={directionsHref}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-kingshunt-body rounded-full bg-[#d4a843] px-4 py-3 text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-[#171208]"
-                >
-                  Get Directions
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => void retry()}
-                  className="font-kingshunt-body rounded-full border border-white/10 px-4 py-3 text-[0.68rem] uppercase tracking-[0.26em] text-white/85"
-                >
-                  Retry GPS
-                </button>
-              </>
-            }
-          />
-        ) : null}
-
-        {(state === "AT_VENUE" || state === "NAVIGATING" || state === "ARRIVED") && machinePosition ? (
+        {mapCenter && machinePosition ? (
           <section className="grid gap-6 lg:grid-cols-[1.4fr_0.9fr]">
             <div className="space-y-4">
+              {state === "STATIC_MAP" ? (
+                <div className="flex flex-col gap-3 rounded-[1.4rem] border border-[#d4a843]/25 bg-[#d4a843]/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="font-kingshunt-body text-[0.62rem] uppercase tracking-[0.28em] text-[#d4a843]">Location Optional</p>
+                    <p className="font-kingshunt-body mt-2 text-sm leading-6 text-[#efe1b3]">
+                      Enable location for live tracking. The static venue map and route preview below still work right now.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void requestGPS()}
+                    className="font-kingshunt-body rounded-full bg-[#d4a843] px-4 py-3 text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-[#171208]"
+                  >
+                    Enable
+                  </button>
+                </div>
+              ) : null}
+
               <MapErrorBoundary
                 fallback={
                   <MapFallback
@@ -185,18 +189,19 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
                 }
               >
                 <TenKingsMap
-                  center={context.position ?? machinePosition}
-                  userPosition={context.position}
-                  userAccuracyM={context.accuracyM}
+                  center={mapCenter}
+                  userPosition={isLiveRouteState ? context.position : null}
+                  userAccuracyM={isLiveRouteState ? context.accuracyM : null}
                   destination={machinePosition}
-                  routePolyline={context.route?.polyline ?? null}
+                  routePolyline={isLiveRouteState ? context.route?.polyline ?? null : null}
+                  routePath={isLiveRouteState ? null : staticRoutePath}
                   checkpoints={context.checkpoints}
                   checkpointsHit={context.checkpointsHit}
-                  statusLabel={state === "NAVIGATING" ? "Live Route Active" : state === "ARRIVED" ? "Arrival Confirmed" : "Venue Geofence Matched"}
+                  statusLabel={mapStatusLabel}
                 />
               </MapErrorBoundary>
 
-              {context.route?.warnings?.length ? (
+              {isLiveRouteState && context.route?.warnings?.length ? (
                 <div className="rounded-[1.4rem] border border-[#d4a843]/20 bg-[#d4a843]/10 px-4 py-3">
                   <p className="font-kingshunt-body text-[0.68rem] uppercase tracking-[0.28em] text-[#d4a843]">Route Warning</p>
                   <p className="font-kingshunt-body mt-2 text-sm leading-6 text-[#f0e0af]">{context.route.warnings.join(" • ")}</p>
@@ -205,6 +210,81 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
             </div>
 
             <div className="space-y-4">
+              {state === "LOADING" || state === "LOCATING" ? (
+                <StateCard
+                  eyebrow="Acquiring GPS"
+                  title="Finding your live position"
+                  body="We request high-accuracy GPS immediately so live tracking can start, but the venue route preview is already loaded on the map."
+                />
+              ) : null}
+
+              {state === "STATIC_MAP" ? (
+                <div className="rounded-[1.6rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.04),rgba(255,255,255,0.02))] p-5">
+                  <p className="font-kingshunt-body text-[0.68rem] uppercase tracking-[0.3em] text-[#d4a843]">Find the Machine</p>
+                  <h2 className="font-kingshunt-display mt-3 text-[2rem] leading-none tracking-[0.04em] text-white">{landmarkSummary}</h2>
+                  <p className="font-kingshunt-body mt-4 text-sm leading-6 text-[#c8c8c8]">
+                    Walk the static gold route through the venue to the Ten Kings machine. Approximate walk time: ~{location.walkingTimeMin ?? 3} min.
+                  </p>
+                  {context.error ? <p className="font-kingshunt-body mt-3 text-sm leading-6 text-[#f0ddb0]">{context.error}</p> : null}
+                  {context.checkpoints.length ? (
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      {context.checkpoints.map((checkpoint) => (
+                        <span
+                          key={checkpoint.id}
+                          className="font-kingshunt-body rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[0.62rem] uppercase tracking-[0.24em] text-white/72"
+                        >
+                          {checkpoint.landmark || checkpoint.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void requestGPS()}
+                      className="font-kingshunt-body rounded-full border border-white/10 px-4 py-3 text-[0.68rem] uppercase tracking-[0.26em] text-white/85"
+                    >
+                      Enable Location
+                    </button>
+                    <Link
+                      href={walkingDirectionsHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-kingshunt-body rounded-full bg-[#d4a843] px-4 py-3 text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-[#171208]"
+                    >
+                      Open in Google Maps
+                    </Link>
+                  </div>
+                </div>
+              ) : null}
+
+              {state === "NOT_AT_VENUE" ? (
+                <StateCard
+                  eyebrow="Outside Geofence"
+                  title="You’re not close enough to this venue yet"
+                  body={`We can still point you there now. Current venue-center distance: ${formatDistance(context.distanceToVenueM)}.`}
+                  actions={
+                    <>
+                      <Link
+                        href={directionsHref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-kingshunt-body rounded-full bg-[#d4a843] px-4 py-3 text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-[#171208]"
+                      >
+                        Get Directions
+                      </Link>
+                      <button
+                        type="button"
+                        onClick={() => void retry()}
+                        className="font-kingshunt-body rounded-full border border-white/10 px-4 py-3 text-[0.68rem] uppercase tracking-[0.26em] text-white/85"
+                      >
+                        Retry GPS
+                      </button>
+                    </>
+                  }
+                />
+              ) : null}
+
               {state === "AT_VENUE" ? (
                 <StateCard
                   eyebrow="Venue Confirmed"
@@ -309,23 +389,6 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
               ) : null}
             </div>
           </section>
-        ) : null}
-
-        {state === "ERROR" ? (
-          <StateCard
-            eyebrow="Route Error"
-            title="Something interrupted the hunt"
-            body={context.error || context.routeError || "We hit an unexpected error while loading GPS or route data. Retry to continue."}
-            actions={
-              <button
-                type="button"
-                onClick={() => void retry()}
-                className="font-kingshunt-body rounded-full bg-[#d4a843] px-4 py-3 text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-[#171208]"
-              >
-                Retry Hunt
-              </button>
-            }
-          />
         ) : null}
 
         {context.activeCheckpoint ? (

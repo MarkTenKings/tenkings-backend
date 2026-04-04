@@ -101,13 +101,12 @@ export interface KingsHuntSessionResponse {
 
 export type HuntState =
   | "LOADING"
-  | "PERMISSION_DENIED"
   | "LOCATING"
+  | "STATIC_MAP"
   | "AT_VENUE"
   | "NOT_AT_VENUE"
   | "NAVIGATING"
-  | "ARRIVED"
-  | "ERROR";
+  | "ARRIVED";
 
 function asNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {

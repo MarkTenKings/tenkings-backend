@@ -1,15 +1,33 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-04` (main-target Kings Hunt GPS permission hotfix prepared in the temporary synced worktree; initial geolocation prompt flow was repaired and live tracking now starts only after venue match; no deploy/restart/migration was executed)
+- Last reviewed: `2026-04-04` (main-target Kings Hunt static-map fallback hotfix prepared in the temporary synced worktree; GPS dead-end states were removed and the venue map now stays visible even without location access; no deploy/restart/migration was executed)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
   - temporary synced main-target worktree: `git status -sb` -> `## merge-main-sync...origin/main`
-  - uncommitted hotfix surface in this worktree: `frontend/nextjs-app/hooks/useGeolocation.ts`, `frontend/nextjs-app/hooks/useKingsHunt.ts`, and handoff docs
+  - uncommitted hotfix surface in this worktree: `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`, `frontend/nextjs-app/components/maps/TenKingsMap.tsx`, `frontend/nextjs-app/hooks/useKingsHunt.ts`, `frontend/nextjs-app/lib/kingsHunt.ts`, and handoff docs
 - Latest merged feature baseline at handoff refresh:
-  - `338eda4` fix(kingshunt): harden google maps loading and fallbacks
+  - `6f73842` fix(kingshunt): restore gps permission prompt
 - Environments touched: temporary merge worktree `/tmp/tenkings-main-merge` on branch `merge-main-sync`; existing canonical main worktree `/Users/markthomas/tenkings-task27-main` was left untouched because it still has a pre-existing uncommitted `docs/handoffs/SESSION_LOG.md` change on an older local `main`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-04, Kings Hunt always-show-map fallback hotfix on `main` target)
+- Continued in the synced temporary worktree `/tmp/tenkings-main-merge` so the dirty canonical local `main` checkout stayed untouched.
+- Investigated the follow-up on-site report that GPS denial still left `/kingshunt/[locationSlug]` as a dead end.
+- Hotfix applied across the live Kings Hunt surface:
+  - changed the shared `HuntState` model in `frontend/nextjs-app/lib/kingsHunt.ts` to replace the dead-end `PERMISSION_DENIED` / `ERROR` path with `STATIC_MAP`
+  - hardened `frontend/nextjs-app/hooks/useKingsHunt.ts` so the automatic GPS request fires from `useLayoutEffect`, the prompt is attempted immediately, a 10 second fallback timer moves the experience to `STATIC_MAP`, and geolocation/session errors no longer block the route page behind a blank state
+  - extended `frontend/nextjs-app/components/maps/TenKingsMap.tsx` to accept a non-encoded static route path and render a dashed gold preview polyline through the venue checkpoints
+  - rebuilt `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx` so the map always renders when venue coordinates exist, the static-map experience shows an enable-location banner, venue-route preview, machine-location card, and walking Google Maps link, and the old dead-end permission/error cards are removed
+- Resulting UX behavior:
+  - GPS granted on-site: existing live blue-dot and route experience remains
+  - GPS granted off-site: the venue route preview map stays visible while the geofence warning card shows the distance
+  - GPS denied/unavailable/slow: the page now stays usable via `STATIC_MAP` with destination marker, checkpoint route preview, venue details, and Google Maps fallback
+- Validation observed locally:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/kingsHunt.ts --file hooks/useGeolocation.ts --file hooks/useKingsHunt.ts --file components/maps/TenKingsMap.tsx --file components/kingshunt/KingsHuntExperience.tsx` -> pass with no warnings or errors
+  - `git diff --check` -> pass
+  - repo-wide `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still reports the existing unrelated baseline failures outside this fallback hotfix surface; filtering that output for `lib/kingsHunt`, `useGeolocation`, `useKingsHunt`, `TenKingsMap`, and `KingsHuntExperience` returned no matches
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-04, Kings Hunt GPS permission prompt hotfix on `main` target)
 - Continued in the synced temporary worktree `/tmp/tenkings-main-merge` so the dirty canonical local `main` checkout stayed untouched.

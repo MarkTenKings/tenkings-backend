@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { checkArrival, checkGeofence, estimateWalkingTimeMin, haversineDistance } from "../lib/geo";
 import {
   DEFAULT_ARRIVAL_RADIUS_M,
@@ -60,6 +60,7 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
   const [activeCheckpoint, setActiveCheckpoint] = useState<Checkpoint | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasArrived, setHasArrived] = useState(false);
+  const [showStaticMapFallback, setShowStaticMapFallback] = useState(false);
   const sessionInitializedRef = useRef(false);
   const completionSentRef = useRef(false);
   const sessionUpdateRef = useRef(0);
@@ -149,6 +150,7 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
 
   const requestGPS = useCallback(async () => {
     setHasRequestedGps(true);
+    setShowStaticMapFallback(false);
     setErrorMessage(null);
     stopWatching();
 
@@ -171,6 +173,7 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
         }
 
         if (maybeGeolocationError) {
+          setShowStaticMapFallback(true);
           if (maybeGeolocationError.code === 1) {
             setErrorMessage("Location permission is off. Enable GPS to start the hunt.");
             return;
@@ -180,6 +183,7 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
           return;
         }
 
+        setShowStaticMapFallback(true);
         setErrorMessage(error instanceof Error ? error.message : "Unable to start geolocation");
       }
     };
@@ -191,6 +195,7 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
     completionSentRef.current = false;
     lastRouteOriginRef.current = null;
     setHasArrived(false);
+    setShowStaticMapFallback(false);
     setActiveCheckpoint(null);
     setNavigationStarted(false);
     await requestGPS();
@@ -204,7 +209,7 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
     setActiveCheckpoint(null);
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (autoRequestRef.current) {
       return;
     }
@@ -212,6 +217,26 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
     autoRequestRef.current = true;
     void requestGPS();
   }, [requestGPS]);
+
+  useEffect(() => {
+    if (!position) {
+      return;
+    }
+
+    setShowStaticMapFallback(false);
+  }, [position]);
+
+  useEffect(() => {
+    if (!hasRequestedGps || position || hasArrived || showStaticMapFallback) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setShowStaticMapFallback(true);
+    }, 10000);
+
+    return () => window.clearTimeout(timeout);
+  }, [hasArrived, hasRequestedGps, position, showStaticMapFallback]);
 
   useEffect(() => {
     if (!position || !geofence?.isInside || hasArrived || isWatching) {
@@ -380,32 +405,28 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
   }, [checkpoints, checkpointsHit, hasArrived, machinePosition, position, postSession, sessionId, stopWatching]);
 
   const state = useMemo<HuntState>(() => {
-    if (errorMessage && geolocationError?.code !== geolocationError?.PERMISSION_DENIED) {
-      return "ERROR";
-    }
-
     if (!hasRequestedGps) {
       return "LOADING";
     }
 
-    if (geolocationError?.code === geolocationError?.PERMISSION_DENIED) {
-      return "PERMISSION_DENIED";
+    if (position) {
+      if (hasArrived) {
+        return "ARRIVED";
+      }
+
+      if (!geofence?.isInside) {
+        return "NOT_AT_VENUE";
+      }
+
+      return navigationStarted ? "NAVIGATING" : "AT_VENUE";
     }
 
-    if (!position) {
-      return "LOCATING";
+    if (showStaticMapFallback || geolocationError || errorMessage) {
+      return "STATIC_MAP";
     }
 
-    if (hasArrived) {
-      return "ARRIVED";
-    }
-
-    if (!geofence?.isInside) {
-      return "NOT_AT_VENUE";
-    }
-
-    return navigationStarted ? "NAVIGATING" : "AT_VENUE";
-  }, [errorMessage, geofence?.isInside, geolocationError, hasArrived, hasRequestedGps, navigationStarted, position]);
+    return "LOCATING";
+  }, [errorMessage, geofence?.isInside, geolocationError, hasArrived, hasRequestedGps, navigationStarted, position, showStaticMapFallback]);
 
   return {
     state,

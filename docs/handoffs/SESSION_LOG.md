@@ -13809,3 +13809,33 @@
 
 ### Notes
 - The hotfix keeps the permission popup trigger on `navigator.geolocation.getCurrentPosition()` and no longer treats a pre-read permission status as a denial path.
+
+## 2026-04-04 - Kings Hunt always-show-map fallback hotfix on main target
+
+### Summary
+- Continued from the synced temporary main-target worktree at `/tmp/tenkings-main-merge` so the dirty canonical local `main` checkout at `/Users/markthomas/tenkings-task27-main` remained untouched.
+- Investigated the follow-up on-site requirement to remove GPS dead ends entirely and keep the venue map visible even when location permission is denied, unavailable, or slow.
+- Replaced the dead-end Kings Hunt state model with `STATIC_MAP`, keeping the initial GPS attempt immediate while allowing the page to remain useful without live location.
+- Changed the live route map component so it can render a static gold dashed checkpoint route preview without an encoded Google Routes polyline.
+- Rebuilt the Kings Hunt experience page so the map always stays mounted, denial/error paths now become a static venue-route preview with an enable-location banner, and the machine-location details plus walking Google Maps link remain available.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`
+- `frontend/nextjs-app/components/maps/TenKingsMap.tsx`
+- `frontend/nextjs-app/hooks/useKingsHunt.ts`
+- `frontend/nextjs-app/lib/kingsHunt.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- Targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/kingsHunt.ts --file hooks/useGeolocation.ts --file hooks/useKingsHunt.ts --file components/maps/TenKingsMap.tsx --file components/kingshunt/KingsHuntExperience.tsx` -> pass with no warnings or errors
+- Diff hygiene:
+  - `git diff --check` -> pass
+- TypeScript note:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still reports the existing unrelated repo baseline failures
+  - filtered output for `lib/kingsHunt`, `useGeolocation`, `useKingsHunt`, `TenKingsMap`, and `KingsHuntExperience` returned no matches
+
+### Notes
+- This hotfix removes the dead-end permission/error UI on `/kingshunt/[locationSlug]` and keeps the venue route usable even when live GPS does not resolve.

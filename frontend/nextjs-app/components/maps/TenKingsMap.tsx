@@ -11,6 +11,7 @@ export interface TenKingsMapProps {
   userAccuracyM?: number | null;
   destination?: LatLng | null;
   routePolyline?: string | null;
+  routePath?: LatLng[] | null;
   checkpoints?: Checkpoint[];
   checkpointsHit?: string[];
   statusLabel?: string;
@@ -57,6 +58,7 @@ export default function TenKingsMap({
   userAccuracyM = null,
   destination = null,
   routePolyline = null,
+  routePath = null,
   checkpoints = [],
   checkpointsHit = [],
   statusLabel,
@@ -190,59 +192,76 @@ export default function TenKingsMap({
         bounds.extend({ lat: checkpoint.lat, lng: checkpoint.lng });
       });
 
-      if (routePolyline) {
-        const path = libraries.geometryLibrary.encoding.decodePath(routePolyline);
+      const staticRoutePath = Array.isArray(routePath) && routePath.length > 1 ? routePath : null;
+
+      if (routePolyline || staticRoutePath) {
+        const path = routePolyline ? libraries.geometryLibrary.encoding.decodePath(routePolyline) : staticRoutePath ?? [];
         routeRef.current = new Polyline({
           map,
           path,
-          strokeColor: "rgba(212,168,67,0.38)",
+          strokeColor: routePolyline ? "rgba(212,168,67,0.38)" : "rgba(212,168,67,0.22)",
           strokeOpacity: 1,
-          strokeWeight: 8,
+          strokeWeight: routePolyline ? 8 : 6,
           geodesic: true,
         });
         routeAccentRef.current = new Polyline({
           map,
           path,
           strokeColor: "#d4a843",
-          strokeOpacity: 0.96,
-          strokeWeight: 4,
+          strokeOpacity: routePolyline ? 0.96 : 0,
+          strokeWeight: routePolyline ? 4 : 3,
           geodesic: true,
-          icons: [
-            {
-                icon: {
-                path: google.maps.SymbolPath.CIRCLE,
-                fillColor: "#fff0b4",
-                fillOpacity: 1,
-                strokeOpacity: 0,
-                scale: 3,
-              },
-              offset: "0%",
-              repeat: "96px",
-            },
-          ],
+          icons: routePolyline
+            ? [
+                {
+                  icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    fillColor: "#fff0b4",
+                    fillOpacity: 1,
+                    strokeOpacity: 0,
+                    scale: 3,
+                  },
+                  offset: "0%",
+                  repeat: "96px",
+                },
+              ]
+            : [
+                {
+                  icon: {
+                    path: "M 0,-1 0,1",
+                    strokeOpacity: 1,
+                    strokeColor: "#d4a843",
+                    scale: 4,
+                  },
+                  offset: "0",
+                  repeat: "16px",
+                },
+              ],
         });
 
         path.forEach((point) => bounds.extend(point));
 
-        let offset = 0;
-        routeAnimationRef.current = window.setInterval(() => {
-          offset = (offset + 2) % 100;
-          if (routeAccentRef.current) {
-            routeAccentRef.current.set("icons", [
-              {
-                icon: {
-                  path: google.maps.SymbolPath.CIRCLE,
-                  fillColor: "#fff0b4",
-                  fillOpacity: 1,
-                  strokeOpacity: 0,
-                  scale: 3,
+        if (routePolyline) {
+          let offset = 0;
+          routeAnimationRef.current = window.setInterval(() => {
+            offset = (offset + 2) % 100;
+            if (routeAccentRef.current) {
+              routeAccentRef.current.set("icons", [
+                {
+                  icon: {
+                    path: google.maps.SymbolPath.CIRCLE,
+                    fillColor: "#fff0b4",
+                    fillOpacity: 1,
+                    strokeOpacity: 0,
+                    scale: 3,
+                  },
+                  offset: `${offset}%`,
+                  repeat: "96px",
                 },
-                offset: `${offset}%`,
-                repeat: "96px",
-              },
-            ]);
-          }
-        }, 120);
+              ]);
+            }
+          }, 120);
+        }
       }
 
       if (!bounds.isEmpty()) {
@@ -255,7 +274,7 @@ export default function TenKingsMap({
       console.error("Kings Hunt map overlays failed to render", error);
       setMapError(error instanceof Error ? error : new Error("Unable to render the hunt map"));
     }
-  }, [center, checkpoints, checkpointsHit, destination, libraries, mapError, routePolyline, userAccuracyM, userPosition]);
+  }, [center, checkpoints, checkpointsHit, destination, libraries, mapError, routePath, routePolyline, userAccuracyM, userPosition]);
 
   if (loadError || mapError) {
     return (
