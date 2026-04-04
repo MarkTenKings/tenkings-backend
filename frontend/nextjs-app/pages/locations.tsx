@@ -206,6 +206,8 @@ function LocationsPage() {
           locationType: location.locationType,
           city: location.city,
           state: location.state,
+          hours: location.hours,
+          mapsUrl: location.mapsUrl,
         })),
     [locations],
   );

@@ -13,6 +13,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.588.0",
     "@aws-sdk/s3-request-presigner": "^3.588.0",
+    "@googlemaps/js-api-loader": "^2.0.2",
     "@prisma/client": "^5.22.0",
     "@stripe/react-stripe-js": "^2.3.4",
     "@stripe/stripe-js": "^3.4.1",
@@ -21,8 +22,6 @@
     "@types/pdfkit": "^0.17.3",
     "adm-zip": "^0.5.12",
     "busboy": "^1.6.0",
-    "leaflet": "^1.9.4",
-    "maplibre-gl": "^5.21.1",
     "nanoid": "^5.1.6",
     "next": "14.2.5",
     "obs-websocket-js": "^5.0.5",
@@ -36,7 +35,7 @@
   "devDependencies": {
     "@types/adm-zip": "^0.5.7",
     "@types/busboy": "^1.5.4",
-    "@types/leaflet": "^1.9.21",
+    "@types/google.maps": "^3.58.1",
     "@types/node": "20.14.12",
     "@types/qrcode": "^1.5.6",
     "@types/react": "18.3.3",

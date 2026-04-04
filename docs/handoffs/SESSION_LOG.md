@@ -13633,3 +13633,83 @@
 - No deploy or restart was executed.
 - Production now has Kings Hunt schema support plus the requested location metadata backfill.
 - The production dataset currently contains `folsom-premium-outlets` but not `folsom-outlet-mall`, which is why the backfill skipped one entry.
+
+## 2026-04-04 - Phase 1 Kings Hunt Google Maps rebuild on feature/kingshunt-v2
+
+### Summary
+- Created a separate git worktree from local `main` at `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-kingshunt-v2` on branch `feature/kingshunt-v2`.
+- Rebuilt Phase 1 Kings Hunt around Google Maps Platform:
+  - Google Maps `/locations` hero with `AdvancedMarkerElement`, info windows, branded styling via `mapId`, and Google Maps directions links
+  - GPS auto-detect `/kingshunt` index with venue redirect or nearest-first fallback list
+  - live `/kingshunt/[locationSlug]` route experience with high-accuracy geolocation, Google Routes proxy, checkpoint rewards, and arrival state
+  - new `/api/kingshunt/route` endpoint plus updated detect/session/checkpoint API behavior
+- Removed the old MapLibre/Leaflet-specific Kings Hunt components from this branch and switched app bootstrap/styles to the Google Maps + Fontshare setup.
+- No deploy, restart, migration, or DB mutation was executed.
+
+### Repo State
+- `git status -sb` -> `## feature/kingshunt-v2`
+- `git branch --show-current` -> `feature/kingshunt-v2`
+- `git rev-parse --short HEAD` -> `3338a00`
+- `git log --oneline -n 1` -> `3338a00 docs(handoff): record kingshunt migration recovery`
+
+### Files Updated
+- `.env.example`
+- `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`
+- `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+- `frontend/nextjs-app/components/maps/TenKingsMap.tsx`
+- `frontend/nextjs-app/hooks/useGeolocation.ts`
+- `frontend/nextjs-app/hooks/useGoogleMaps.ts`
+- `frontend/nextjs-app/hooks/useKingsHunt.ts`
+- `frontend/nextjs-app/hooks/useRouteComputation.ts`
+- `frontend/nextjs-app/hooks/useVisitorId.ts`
+- `frontend/nextjs-app/lib/geo.ts`
+- `frontend/nextjs-app/lib/kingsHunt.ts`
+- `frontend/nextjs-app/lib/server/kingsHunt.ts`
+- `frontend/nextjs-app/package.json`
+- `frontend/nextjs-app/pages/_app.tsx`
+- `frontend/nextjs-app/pages/api/kingshunt/[slug].ts`
+- `frontend/nextjs-app/pages/api/kingshunt/checkpoint.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/detect.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/route.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/session.ts`
+- `frontend/nextjs-app/pages/kingshunt/[locationSlug].tsx`
+- `frontend/nextjs-app/pages/kingshunt/index.tsx`
+- `frontend/nextjs-app/pages/locations.tsx`
+- `frontend/nextjs-app/styles/globals.css`
+- `frontend/nextjs-app/tsconfig.json`
+- `pnpm-lock.yaml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Removed
+- `frontend/nextjs-app/components/maps/CheckpointProgress.tsx`
+- `frontend/nextjs-app/components/maps/FolsomOutletsSVG.tsx`
+- `frontend/nextjs-app/components/maps/IndoorMap.tsx`
+- `frontend/nextjs-app/components/maps/KingsHuntHeader.tsx`
+- `frontend/nextjs-app/components/maps/NotAtLocationCard.tsx`
+- `frontend/nextjs-app/components/maps/StatsBar.tsx`
+- `frontend/nextjs-app/components/maps/TKDCounter.tsx`
+- `frontend/nextjs-app/components/maps/VenueMapSVG.tsx`
+- `frontend/nextjs-app/components/maps/WalkingDirections.tsx`
+
+### Local-Only Files
+- `.env.local` created in the `feature/kingshunt-v2` worktree with the provided Google Maps API key + Map ID; this file is ignored and not tracked by git.
+
+### Verification Evidence
+- Removed old map stack references:
+  - `rg -n "maplibre|leaflet|OpenFreeMap" frontend/nextjs-app package.json pnpm-lock.yaml` -> no matches
+- Workspace hydration:
+  - `pnpm install` -> pass overall; optional `iohook` prebuild download logged a non-blocking failure under local Node `v25.6.1`
+- Prisma client:
+  - `pnpm --filter @tenkings/database generate` -> pass
+- Targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/locations.tsx --file pages/kingshunt/index.tsx --file 'pages/kingshunt/[locationSlug].tsx' --file 'pages/api/kingshunt/[slug].ts' --file pages/api/kingshunt/detect.ts --file pages/api/kingshunt/session.ts --file pages/api/kingshunt/checkpoint.ts --file pages/api/kingshunt/route.ts --file components/maps/StoreLocatorMap.tsx --file components/maps/TenKingsMap.tsx --file components/kingshunt/KingsHuntExperience.tsx --file hooks/useGoogleMaps.ts --file hooks/useGeolocation.ts --file hooks/useKingsHunt.ts --file hooks/useRouteComputation.ts --file hooks/useVisitorId.ts --file lib/kingsHunt.ts --file lib/geo.ts --file lib/server/kingsHunt.ts --file pages/_app.tsx` -> pass with no warnings or errors
+- Diff hygiene:
+  - `git diff --check` -> pass
+- TypeScript note:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still reports unrelated baseline failures outside the Kings Hunt rewrite surface on this branch
+  - filtering that output to the changed Kings Hunt files returned no matches
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+- The Google Routes API proxy is wired to `GOOGLE_MAPS_API_KEY` per the Phase 1 prompt.

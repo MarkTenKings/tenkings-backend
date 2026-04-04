@@ -4,7 +4,9 @@ import { z } from "zod";
 
 const payloadSchema = z.object({
   sessionId: z.string().min(1),
-  checkpointId: z.number().int().min(1),
+  checkpointId: z.string().min(1),
+  checkpointsReached: z.number().int().min(0),
+  tkdReward: z.number().int().min(0),
   tkdEarned: z.number().int().min(0),
   journeyCompletedAt: z.string().datetime().optional(),
 });
@@ -17,16 +19,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const payload = payloadSchema.parse(req.body ?? {});
 
-    await prisma.navigationSession.update({
+    const session = await prisma.navigationSession.update({
       where: { id: payload.sessionId },
       data: {
-        checkpointsReached: { increment: 1 },
-        tkdEarned: { increment: payload.tkdEarned },
+        checkpointsReached: payload.checkpointsReached,
+        tkdEarned: payload.tkdEarned,
         journeyCompletedAt: payload.journeyCompletedAt ? new Date(payload.journeyCompletedAt) : undefined,
       },
     });
 
-    return res.status(200).json({ success: true, checkpointId: payload.checkpointId });
+    return res.status(200).json({
+      success: true,
+      checkpointId: payload.checkpointId,
+      checkpointsReached: session.checkpointsReached,
+      tkdEarned: session.tkdEarned,
+    });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: error.issues[0]?.message ?? "Invalid checkpoint payload" });

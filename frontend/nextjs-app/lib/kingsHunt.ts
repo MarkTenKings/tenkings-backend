@@ -1,23 +1,46 @@
-import type { Prisma } from "@prisma/client";
+export const DEFAULT_GEOFENCE_RADIUS_M = 500;
+export const DEFAULT_CHECKPOINT_RADIUS_M = 15;
+export const DEFAULT_CHECKPOINT_REWARD = 5;
+export const DEFAULT_ARRIVAL_RADIUS_M = 20;
+export const DEFAULT_ARRIVAL_REWARD = 25;
+export const DEFAULT_ROUTE_RECALC_THRESHOLD_M = 15;
 
-export type WalkingDirection = {
-  step: number;
+export interface LatLng {
+  lat: number;
+  lng: number;
+}
+
+export interface DirectionStep {
   instruction: string;
-  landmark?: string;
-  distanceFt?: number;
-};
+  distanceM: number;
+  durationSec: number;
+  startLat: number;
+  startLng: number;
+  endLat: number;
+  endLng: number;
+}
 
-export type Checkpoint = {
-  id: number;
+export interface CachedDirections {
+  polyline: string;
+  distanceM: number;
+  durationSec: number;
+  steps: DirectionStep[];
+  cachedAt: string | null;
+  warnings: string[];
+}
+
+export interface Checkpoint {
+  id: string;
   name: string;
   lat: number;
   lng: number;
   radiusM: number;
   tkdReward: number;
-  message: string;
-};
+  order: number;
+  landmark?: string;
+}
 
-export type KingsHuntLocation = {
+export interface KingsHuntLocation {
   id: string;
   slug: string;
   name: string;
@@ -37,121 +60,235 @@ export type KingsHuntLocation = {
   zip: string | null;
   hours: string | null;
   hasIndoorMap: boolean;
-  walkingDirections: Prisma.JsonValue | null;
+  walkingDirections: CachedDirections | null;
   walkingTimeMin: number | null;
   landmarks: string[];
   machinePhotoUrl: string | null;
-  venueMapData: Prisma.JsonValue | null;
-  checkpoints: Prisma.JsonValue | null;
-};
-
-export type VenueMapPoint = {
-  x: number;
-  y: number;
-};
-
-export const FOLSOM_ROUTE_POINTS = {
-  entrance: { x: 188, y: 134 },
-  checkpoints: {
-    1: { x: 186, y: 204 },
-    2: { x: 404, y: 204 },
-    3: { x: 602, y: 280 },
-  } as Record<number, VenueMapPoint>,
-  machine: { x: 628, y: 302 },
-} as const;
-
-export function parseWalkingDirections(value: Prisma.JsonValue | null | undefined): WalkingDirection[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  const directions: WalkingDirection[] = [];
-
-  value.forEach((entry) => {
-    if (!entry || typeof entry !== "object") {
-      return;
-    }
-
-    const record = entry as Record<string, unknown>;
-    const step = typeof record.step === "number" ? record.step : Number(record.step);
-    const instruction = typeof record.instruction === "string" ? record.instruction.trim() : "";
-    const landmark = typeof record.landmark === "string" ? record.landmark.trim() : undefined;
-    const distanceFt =
-      typeof record.distanceFt === "number"
-        ? record.distanceFt
-        : Number.isFinite(Number(record.distanceFt))
-          ? Number(record.distanceFt)
-          : undefined;
-
-    if (!Number.isFinite(step) || !instruction) {
-      return;
-    }
-
-    directions.push({
-      step,
-      instruction,
-      landmark: landmark || undefined,
-      distanceFt,
-    });
-  });
-
-  return directions.sort((left, right) => left.step - right.step);
+  venueMapData: unknown | null;
+  checkpoints: Checkpoint[] | null;
 }
 
-export function parseCheckpoints(value: Prisma.JsonValue | null | undefined): Checkpoint[] {
+export interface DetectVenue {
+  locationId: string;
+  slug: string;
+  name: string;
+  distanceM: number;
+  withinGeofence: boolean;
+}
+
+export interface ComputeRouteRequest {
+  originLat: number;
+  originLng: number;
+  destLat: number;
+  destLng: number;
+  locationSlug?: string;
+}
+
+export interface ComputeRouteResponse {
+  polyline: string;
+  distanceM: number;
+  durationSec: number;
+  steps: DirectionStep[];
+  warnings: string[];
+}
+
+export interface KingsHuntSessionResponse {
+  sessionId: string;
+  checkpointsReached: number;
+  tkdEarned: number;
+  journeyCompletedAt: string | null;
+}
+
+export type HuntState =
+  | "LOADING"
+  | "PERMISSION_DENIED"
+  | "LOCATING"
+  | "AT_VENUE"
+  | "NOT_AT_VENUE"
+  | "NAVIGATING"
+  | "ARRIVED"
+  | "ERROR";
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  return null;
+}
+
+function asString(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized ? normalized : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
+}
+
+export function parseDirectionSteps(value: unknown): DirectionStep[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
   return value
     .map((entry) => {
-      if (!entry || typeof entry !== "object") {
+      const record = asRecord(entry);
+      if (!record) {
         return null;
       }
 
-      const record = entry as Record<string, unknown>;
-      const id = typeof record.id === "number" ? record.id : Number(record.id);
-      const lat = typeof record.lat === "number" ? record.lat : Number(record.lat);
-      const lng = typeof record.lng === "number" ? record.lng : Number(record.lng);
-      const radiusM = typeof record.radiusM === "number" ? record.radiusM : Number(record.radiusM);
-      const tkdReward = typeof record.tkdReward === "number" ? record.tkdReward : Number(record.tkdReward);
-      const name = typeof record.name === "string" ? record.name.trim() : "";
-      const message = typeof record.message === "string" ? record.message.trim() : "";
+      const instruction = asString(record.instruction) ?? "";
+      const distanceM = asNumber(record.distanceM) ?? 0;
+      const durationSec = asNumber(record.durationSec) ?? 0;
+      const startLat = asNumber(record.startLat) ?? 0;
+      const startLng = asNumber(record.startLng) ?? 0;
+      const endLat = asNumber(record.endLat) ?? 0;
+      const endLng = asNumber(record.endLng) ?? 0;
 
-      if (!Number.isFinite(id) || !Number.isFinite(lat) || !Number.isFinite(lng) || !Number.isFinite(radiusM) || !Number.isFinite(tkdReward) || !name) {
+      if (!instruction) {
         return null;
       }
 
       return {
-        id,
-        name,
-        lat,
-        lng,
-        radiusM,
-        tkdReward,
-        message,
-      } satisfies Checkpoint;
+        instruction,
+        distanceM,
+        durationSec,
+        startLat,
+        startLng,
+        endLat,
+        endLng,
+      } satisfies DirectionStep;
     })
-    .filter((entry): entry is Checkpoint => entry !== null)
-    .sort((left, right) => left.id - right.id);
+    .filter((entry): entry is DirectionStep => entry !== null);
+}
+
+export function parseCachedDirections(value: unknown): CachedDirections | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const polyline = asString(record.polyline);
+  if (!polyline) {
+    return null;
+  }
+
+  return {
+    polyline,
+    distanceM: asNumber(record.distanceM) ?? 0,
+    durationSec: asNumber(record.durationSec) ?? 0,
+    steps: parseDirectionSteps(record.steps),
+    cachedAt: asString(record.cachedAt),
+    warnings: Array.isArray(record.warnings) ? record.warnings.map((entry) => asString(entry)).filter((entry): entry is string => Boolean(entry)) : [],
+  };
+}
+
+export function parseCheckpoints(value: unknown): Checkpoint[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const checkpoints: Checkpoint[] = [];
+
+  value.forEach((entry, index) => {
+    const record = asRecord(entry);
+    if (!record) {
+      return;
+    }
+
+    const lat = asNumber(record.lat);
+    const lng = asNumber(record.lng);
+    const name = asString(record.name);
+
+    if (lat == null || lng == null || !name) {
+      return;
+    }
+
+    const order = asNumber(record.order) ?? index + 1;
+    const id = asString(record.id) ?? String(order);
+
+    checkpoints.push({
+      id,
+      name,
+      lat,
+      lng,
+      radiusM: asNumber(record.radiusM) ?? DEFAULT_CHECKPOINT_RADIUS_M,
+      tkdReward: asNumber(record.tkdReward) ?? DEFAULT_CHECKPOINT_REWARD,
+      order,
+      landmark: asString(record.landmark) ?? undefined,
+    });
+  });
+
+  checkpoints.sort((left, right) => left.order - right.order);
+
+  return checkpoints.length > 0 ? checkpoints : null;
 }
 
 export function getLocationTypeLabel(locationType: string | null | undefined): string {
-  switch (locationType) {
+  switch ((locationType ?? "").toLowerCase()) {
     case "mall":
       return "Mall";
-    case "stadium":
-      return "Stadium";
     case "arena":
       return "Arena";
+    case "stadium":
+      return "Stadium";
     case "casino":
       return "Casino";
+    case "park":
+      return "Park";
+    case "online":
+      return "Online";
     default:
-      return "Location";
+      return "Venue";
   }
 }
 
-export function buildDirectionsHref(location: Pick<KingsHuntLocation, "latitude" | "longitude" | "address" | "mapsUrl">): string {
+export function isLocationActive(status: string | null | undefined): boolean {
+  return !status || status === "active";
+}
+
+export function getMachinePosition(location: Pick<KingsHuntLocation, "latitude" | "longitude">): LatLng | null {
+  if (typeof location.latitude !== "number" || typeof location.longitude !== "number") {
+    return null;
+  }
+
+  return { lat: location.latitude, lng: location.longitude };
+}
+
+export function getVenueCenterPosition(
+  location: Pick<KingsHuntLocation, "venueCenterLat" | "venueCenterLng" | "latitude" | "longitude">,
+): LatLng | null {
+  if (typeof location.venueCenterLat === "number" && typeof location.venueCenterLng === "number") {
+    return { lat: location.venueCenterLat, lng: location.venueCenterLng };
+  }
+
+  return getMachinePosition(location);
+}
+
+export function buildDirectionsHref(
+  location: Pick<KingsHuntLocation, "latitude" | "longitude" | "address" | "mapsUrl">,
+  origin?: LatLng | null,
+): string {
+  if (origin && typeof location.latitude === "number" && typeof location.longitude === "number") {
+    const originValue = `${origin.lat},${origin.lng}`;
+    const destinationValue = `${location.latitude},${location.longitude}`;
+    return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(originValue)}&destination=${encodeURIComponent(destinationValue)}&travelmode=walking`;
+  }
+
   if (location.mapsUrl) {
     return location.mapsUrl;
   }
@@ -163,14 +300,67 @@ export function buildDirectionsHref(location: Pick<KingsHuntLocation, "latitude"
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location.address)}`;
 }
 
-export function clamp01(value: number) {
-  return Math.min(1, Math.max(0, value));
+export function formatLocationHours(hours: string | null | undefined): string | null {
+  const rawHours = asString(hours);
+  if (!rawHours) {
+    return null;
+  }
+
+  if (!rawHours.startsWith("{")) {
+    return rawHours;
+  }
+
+  try {
+    const parsed = JSON.parse(rawHours) as Record<string, unknown>;
+    const entries = Object.entries(parsed)
+      .map(([day, value]) => {
+        const label = asString(value);
+        if (!label) {
+          return null;
+        }
+
+        return `${day.slice(0, 3)} ${label}`;
+      })
+      .filter((entry): entry is string => entry !== null);
+
+    return entries.length > 0 ? entries.join(" · ") : rawHours;
+  } catch {
+    return rawHours;
+  }
 }
 
-export function interpolatePoint(start: VenueMapPoint, end: VenueMapPoint, progress: number): VenueMapPoint {
-  const safeProgress = clamp01(progress);
-  return {
-    x: start.x + (end.x - start.x) * safeProgress,
-    y: start.y + (end.y - start.y) * safeProgress,
-  };
+export function formatDistance(distanceM: number | null | undefined): string {
+  if (distanceM == null || !Number.isFinite(distanceM)) {
+    return "Distance unavailable";
+  }
+
+  if (distanceM < 1000) {
+    return `${Math.round(distanceM)} m`;
+  }
+
+  const miles = distanceM / 1609.344;
+  return `${miles.toFixed(miles < 10 ? 1 : 0)} mi`;
+}
+
+export function formatDuration(durationSec: number | null | undefined): string {
+  if (durationSec == null || !Number.isFinite(durationSec) || durationSec <= 0) {
+    return "ETA unavailable";
+  }
+
+  const minutes = Math.round(durationSec / 60);
+  if (minutes < 60) {
+    return `${Math.max(1, minutes)} min`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes > 0 ? `${hours} hr ${remainingMinutes} min` : `${hours} hr`;
+}
+
+export function getCheckpointRewardTotal(checkpoints: Checkpoint[], checkpointIds: string[]): number {
+  const hitIds = new Set(checkpointIds);
+
+  return checkpoints.reduce((sum, checkpoint) => {
+    return hitIds.has(checkpoint.id) ? sum + checkpoint.tkdReward : sum;
+  }, 0);
 }

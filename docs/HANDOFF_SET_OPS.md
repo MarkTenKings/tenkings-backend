@@ -1,15 +1,38 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-03` (Kings Hunt migration recovery completed on production from `main`; corrected UUID migration applied and location backfill executed; no deploy or restart was run)
-- Branch: `main`
+- Last reviewed: `2026-04-04` (Phase 1 Google Maps rebuild in separate workstation worktree; branch `feature/kingshunt-v2` remains uncommitted at `3338a00`; no deploy/restart/migration was executed)
+- Branch: `feature/kingshunt-v2`
 - Current local git state before this handoff refresh:
-  - `git status -sb` -> `## main...origin/main`
-  - modified tracked paths: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git status -sb` -> `## feature/kingshunt-v2`
+  - modified tracked paths span the Kings Hunt Phase 1 rewrite in `.env.example`, `frontend/nextjs-app/**`, `pnpm-lock.yaml`, `docs/HANDOFF_SET_OPS.md`, and `docs/handoffs/SESSION_LOG.md`
 - Latest committed baseline in this checkout:
-  - `517bbe2` fix(db): align kingshunt location FKs with uuid
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; production droplet checkout `/root/tenkings-backend`; no deploy/restart executed
+  - `3338a00` docs(handoff): record kingshunt migration recovery
+- Environments touched: workstation worktree checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-kingshunt-v2`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-04, Phase 1 Kings Hunt Google Maps rebuild on `feature/kingshunt-v2`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-kingshunt-v2` per `AGENTS.md`.
+- Created a separate git worktree from local `main` at `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-kingshunt-v2` because the existing `feature/kingshunt` worktree already had handoff-doc changes that blocked a direct branch switch.
+- Rebuilt the Kings Hunt Phase 1 surface around Google Maps Platform:
+  - replaced the `/locations` hero map with a Google Maps implementation using `AdvancedMarkerElement`, `mapId`, bounds fitting, branded info windows, and Google Maps directions links
+  - rebuilt `/kingshunt` as a GPS auto-detect entry page that redirects on venue geofence match and otherwise shows nearest-first venue cards
+  - rebuilt `/kingshunt/[locationSlug]` around a live Google Maps wayfinding experience with high-accuracy geolocation, route fetching, checkpoint tracking, arrival detection, and TKD summary UI
+  - added a new server-side `/api/kingshunt/route` proxy for Google Routes API walking directions and rewired `/api/kingshunt/detect`, `/api/kingshunt/session`, and `/api/kingshunt/checkpoint` to the new flow
+  - removed the old MapLibre/Leaflet-specific Kings Hunt components from this branch and replaced the app bootstrap/styles with Google Maps + Fontshare wiring
+- Environment/config/package updates:
+  - added Google Maps env documentation to `.env.example`
+  - created local ignored `.env.local` with the provided Google Maps key + Map ID in this worktree
+  - installed `@googlemaps/js-api-loader` and `@types/google.maps`
+  - removed `maplibre-gl`, `leaflet`, and `@types/leaflet`
+- Validation observed locally:
+  - `rg -n "maplibre|leaflet|OpenFreeMap" frontend/nextjs-app package.json pnpm-lock.yaml` -> no matches
+  - `pnpm install` -> pass overall after hydrating the fresh worktree; optional `iohook` prebuild download logged a non-blocking failure under local Node `v25.6.1`
+  - `pnpm --filter @tenkings/database generate` -> pass
+  - targeted lint over the changed Kings Hunt files -> pass with no warnings or errors
+  - `git diff --check` -> pass
+  - repo-wide `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still reports unrelated baseline type failures outside the Kings Hunt files; filtering that output to the changed Kings Hunt surface returned no matches
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-03, Kings Hunt migration recovery + production backfill completed)
 - Continued from the same session after the UUID fix was committed and pushed as `517bbe2` `fix(db): align kingshunt location FKs with uuid`.

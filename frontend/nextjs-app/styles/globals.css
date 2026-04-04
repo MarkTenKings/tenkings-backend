@@ -7,6 +7,15 @@
   --font-body: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-display: "Bebas Neue", sans-serif;
   --font-lightning: "Faster One", cursive;
+  --tk-kingshunt-bg: #0a0a0a;
+  --tk-kingshunt-panel: rgba(13, 13, 13, 0.86);
+  --tk-kingshunt-panel-strong: rgba(19, 19, 19, 0.96);
+  --tk-kingshunt-gold: #d4a843;
+  --tk-kingshunt-gold-soft: rgba(212, 168, 67, 0.14);
+  --tk-kingshunt-text: #ffffff;
+  --tk-kingshunt-muted: #999999;
+  --tk-kingshunt-route: #d4a843;
+  --tk-kingshunt-blue: #4aa7ff;
 }
 
 body {
@@ -26,83 +35,261 @@ button {
   font: inherit;
 }
 
-.tk-map-theme .maplibregl-canvas-container,
-.tk-map-theme .maplibregl-canvas {
-  filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(1.1) saturate(0.3);
+.font-kingshunt-display {
+  font-family: "Clash Display", var(--font-display);
 }
 
-.tk-map-theme .maplibregl-ctrl-group {
+.font-kingshunt-body {
+  font-family: "Satoshi", var(--font-body);
+}
+
+.tk-google-map {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: 1.75rem;
+  background:
+    radial-gradient(circle at top left, rgba(212, 168, 67, 0.16), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02)),
+    #090909;
+}
+
+.tk-google-map::after {
+  pointer-events: none;
+  content: "";
+  position: absolute;
+  inset: 0;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(17, 17, 17, 0.92);
-  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.32);
+  border-radius: inherit;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
-.tk-map-theme .maplibregl-ctrl button {
+.tk-google-map__canvas {
+  height: 100%;
+  width: 100%;
+  min-height: 18rem;
+}
+
+.tk-map-loading {
+  display: flex;
+  height: 100%;
+  width: 100%;
+  min-height: 18rem;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at top, rgba(212, 168, 67, 0.18), transparent 30%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
+    #090909;
+  color: var(--tk-kingshunt-gold);
+  font-family: "Satoshi", var(--font-body);
+  font-size: 0.875rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.tk-map-marker-button {
+  display: inline-flex;
+  border: 0;
   background: transparent;
-  color: #f4f4f5;
-}
-
-.tk-map-theme .maplibregl-popup-content {
   padding: 0;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 18px;
-  background: rgba(17, 17, 17, 0.95);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
-}
-
-.tk-map-theme .maplibregl-popup-tip {
-  border-top-color: rgba(17, 17, 17, 0.95) !important;
+  cursor: pointer;
 }
 
 .tk-map-marker {
+  position: relative;
   display: inline-flex;
+  height: 2.75rem;
+  width: 2.75rem;
   align-items: center;
   justify-content: center;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  transform: translateZ(0);
-  transition: transform 180ms ease, filter 180ms ease;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.18), transparent 48%),
+    linear-gradient(180deg, rgba(212, 168, 67, 0.95), rgba(161, 121, 32, 0.96));
+  color: #120f07;
+  box-shadow:
+    0 12px 28px rgba(0, 0, 0, 0.42),
+    0 0 0 1px rgba(212, 168, 67, 0.26);
+  transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
 }
 
 .tk-map-marker:hover,
 .tk-map-marker:focus-visible {
-  transform: scale(1.08);
-  filter: drop-shadow(0 0 18px rgba(212, 168, 67, 0.38));
+  transform: translateY(-2px) scale(1.04);
+  box-shadow:
+    0 18px 34px rgba(0, 0, 0, 0.48),
+    0 0 0 1px rgba(212, 168, 67, 0.42),
+    0 0 28px rgba(212, 168, 67, 0.24);
+}
+
+.tk-map-marker__crown {
+  font-family: "Clash Display", var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
 }
 
 .tk-map-popup {
-  min-width: 190px;
-  padding: 0.9rem 1rem 0.95rem;
-  color: #f5f5f7;
+  min-width: 15rem;
+  max-width: 17rem;
+  padding: 0.95rem 1rem 1rem;
+  border-radius: 1.25rem;
+  background:
+    radial-gradient(circle at top left, rgba(212, 168, 67, 0.18), transparent 45%),
+    rgba(14, 14, 14, 0.96);
+  color: var(--tk-kingshunt-text);
+  font-family: "Satoshi", var(--font-body);
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.44);
+}
+
+.tk-map-popup__eyebrow {
+  margin: 0 0 0.45rem;
+  color: rgba(212, 168, 67, 0.9);
+  font-size: 0.62rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
 }
 
 .tk-map-popup__title {
   margin: 0;
-  font-size: 0.92rem;
-  font-weight: 700;
+  font-family: "Clash Display", var(--font-display);
+  font-size: 1.15rem;
+  letter-spacing: 0.04em;
 }
 
 .tk-map-popup__meta {
-  margin: 0.3rem 0 0;
-  font-size: 0.72rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #9e9ea6;
+  margin: 0.45rem 0 0;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 0.82rem;
+  line-height: 1.5;
 }
 
-.tk-map-popup__action {
-  margin-top: 0.8rem;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  font-size: 0.7rem;
+.tk-map-popup__hours {
+  margin: 0.55rem 0 0;
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.tk-map-popup__actions {
+  display: flex;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+}
+
+.tk-map-popup__action,
+.tk-map-popup__secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-size: 0.64rem;
   font-weight: 700;
   letter-spacing: 0.22em;
   text-transform: uppercase;
-  color: #d4a843;
-  cursor: pointer;
+}
+
+.tk-map-popup__action {
+  background: rgba(212, 168, 67, 0.94);
+  color: #171208;
+}
+
+.tk-map-popup__secondary {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.tk-map-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 0.5rem 0.85rem;
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.tk-map-status-pill::before {
+  content: "";
+  height: 0.45rem;
+  width: 0.45rem;
+  border-radius: 999px;
+  background: var(--tk-kingshunt-gold);
+  box-shadow: 0 0 14px rgba(212, 168, 67, 0.45);
+}
+
+.tk-user-dot {
+  position: relative;
+  display: inline-flex;
+  height: 1.15rem;
+  width: 1.15rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--tk-kingshunt-blue);
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 0 0 rgba(74, 167, 255, 0.44);
+  animation: tk-blue-dot-pulse 2s ease-out infinite;
+}
+
+.tk-machine-marker {
+  position: relative;
+  display: inline-flex;
+  height: 3.25rem;
+  width: 3.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at center, rgba(255, 242, 198, 0.98), rgba(212, 168, 67, 0.98) 55%, rgba(118, 84, 20, 0.98));
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  color: #130e06;
+  box-shadow: 0 0 0 0 rgba(212, 168, 67, 0.28);
+  animation: tk-gold-pulse 1.8s ease-out infinite;
+}
+
+.tk-machine-marker__icon {
+  font-family: "Clash Display", var(--font-display);
+  font-size: 1.15rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.tk-machine-marker::after {
+  content: "";
+  position: absolute;
+  inset: -0.45rem;
+  border-radius: 999px;
+  border: 1px solid rgba(212, 168, 67, 0.48);
+}
+
+.tk-checkpoint-marker {
+  display: inline-flex;
+  height: 1.4rem;
+  width: 1.4rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  background: rgba(212, 168, 67, 0.95);
+  color: #150f07;
+  font-size: 0.68rem;
+  font-weight: 700;
+  box-shadow: 0 0 16px rgba(212, 168, 67, 0.28);
+}
+
+.tk-checkpoint-marker[data-hit="true"] {
+  background: rgba(78, 200, 154, 0.96);
+  box-shadow: 0 0 16px rgba(78, 200, 154, 0.28);
 }
 
 @keyframes tk-pulse {
@@ -114,6 +301,30 @@ button {
   }
   100% {
     filter: drop-shadow(0 0 0 rgba(212, 168, 67, 0));
+  }
+}
+
+@keyframes tk-gold-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(212, 168, 67, 0.34);
+  }
+  70% {
+    box-shadow: 0 0 0 18px rgba(212, 168, 67, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(212, 168, 67, 0);
+  }
+}
+
+@keyframes tk-blue-dot-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(74, 167, 255, 0.46);
+  }
+  70% {
+    box-shadow: 0 0 0 16px rgba(74, 167, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(74, 167, 255, 0);
   }
 }
 

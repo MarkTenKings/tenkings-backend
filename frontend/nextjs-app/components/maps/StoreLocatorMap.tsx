@@ -1,8 +1,10 @@
-import { useEffect, useRef } from "react";
-import maplibregl from "maplibre-gl";
-import { TEN_KINGS_MAP_STYLE, TEN_KINGS_MARKER_SVG } from "../../lib/mapStyles";
+'use client';
 
-export type StoreLocatorMapLocation = {
+import { useEffect, useRef } from "react";
+import { buildDirectionsHref, formatLocationHours, type KingsHuntLocation } from "../../lib/kingsHunt";
+import { useGoogleMaps } from "../../hooks/useGoogleMaps";
+
+export interface StoreLocatorMapLocation {
   id: string;
   slug: string;
   name: string;
@@ -12,130 +14,178 @@ export type StoreLocatorMapLocation = {
   locationType?: string | null;
   city?: string | null;
   state?: string | null;
-};
+  hours?: string | null;
+  mapsUrl?: string | null;
+}
 
-type StoreLocatorMapProps = {
+export interface StoreLocatorMapProps {
   locations: StoreLocatorMapLocation[];
   onMarkerClick?: (slug: string) => void;
   className?: string;
-};
+}
 
-function buildPopupNode(location: StoreLocatorMapLocation, onMarkerClick?: (slug: string) => void) {
-  const container = document.createElement("div");
-  container.className = "tk-map-popup";
+const DEFAULT_CENTER = { lat: 39.8283, lng: -98.5795 };
+
+function buildMarkerNode(): HTMLDivElement {
+  const marker = document.createElement("div");
+  marker.className = "tk-map-marker";
+
+  const crown = document.createElement("span");
+  crown.className = "tk-map-marker__crown";
+  crown.textContent = "TK";
+  marker.appendChild(crown);
+
+  return marker;
+}
+
+function buildPopupNode(location: StoreLocatorMapLocation, onMarkerClick?: (slug: string) => void): HTMLDivElement {
+  const wrapper = document.createElement("div");
+  wrapper.className = "tk-map-popup";
+
+  const eyebrow = document.createElement("p");
+  eyebrow.className = "tk-map-popup__eyebrow";
+  eyebrow.textContent = "Kings Hunt Venue";
+  wrapper.appendChild(eyebrow);
 
   const title = document.createElement("p");
   title.className = "tk-map-popup__title";
   title.textContent = location.name;
-  container.appendChild(title);
+  wrapper.appendChild(title);
 
   const meta = document.createElement("p");
   meta.className = "tk-map-popup__meta";
-  meta.textContent = [location.city, location.state].filter(Boolean).join(", ") || location.address;
-  container.appendChild(meta);
+  meta.textContent = [location.address, [location.city, location.state].filter(Boolean).join(", ")].filter(Boolean).join(" • ");
+  wrapper.appendChild(meta);
 
-  const action = document.createElement("button");
-  action.type = "button";
-  action.className = "tk-map-popup__action";
-  action.textContent = "View details ↓";
-  action.addEventListener("click", () => onMarkerClick?.(location.slug));
-  container.appendChild(action);
+  const hours = formatLocationHours(location.hours);
+  if (hours) {
+    const hoursNode = document.createElement("p");
+    hoursNode.className = "tk-map-popup__hours";
+    hoursNode.textContent = hours;
+    wrapper.appendChild(hoursNode);
+  }
 
-  return container;
+  const actions = document.createElement("div");
+  actions.className = "tk-map-popup__actions";
+
+  const detailsButton = document.createElement("button");
+  detailsButton.type = "button";
+  detailsButton.className = "tk-map-popup__action";
+  detailsButton.textContent = "View Details";
+  detailsButton.addEventListener("click", () => onMarkerClick?.(location.slug));
+  actions.appendChild(detailsButton);
+
+  const directionsLink = document.createElement("a");
+  directionsLink.className = "tk-map-popup__secondary";
+  directionsLink.href = buildDirectionsHref({
+    latitude: location.latitude,
+    longitude: location.longitude,
+    address: location.address,
+    mapsUrl: location.mapsUrl ?? null,
+  } satisfies Pick<KingsHuntLocation, "latitude" | "longitude" | "address" | "mapsUrl">);
+  directionsLink.target = "_blank";
+  directionsLink.rel = "noreferrer";
+  directionsLink.textContent = "Get Directions";
+  actions.appendChild(directionsLink);
+
+  wrapper.appendChild(actions);
+  return wrapper;
 }
 
 export default function StoreLocatorMap({ locations, onMarkerClick, className }: StoreLocatorMapProps) {
+  const { isLoaded, loadError } = useGoogleMaps();
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const markersRef = useRef<maplibregl.Marker[]>([]);
+  const mapRef = useRef<google.maps.Map | null>(null);
+  const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+  const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
 
   useEffect(() => {
-    if (!containerRef.current || mapRef.current) {
+    if (!isLoaded || !containerRef.current || mapRef.current) {
       return;
     }
 
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: TEN_KINGS_MAP_STYLE,
-      center: [-98.5795, 39.8283],
-      zoom: 3.2,
-      attributionControl: false,
+    mapRef.current = new google.maps.Map(containerRef.current, {
+      center: DEFAULT_CENTER,
+      zoom: 4,
+      minZoom: 3,
+      mapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID,
+      disableDefaultUI: true,
+      zoomControl: true,
+      streetViewControl: false,
+      mapTypeControl: false,
+      fullscreenControl: false,
+      gestureHandling: "cooperative",
     });
-
-    map.dragRotate.disable();
-    map.touchZoomRotate.enable({ around: "center" });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
-
-    const handleResize = () => map.resize();
-    window.addEventListener("resize", handleResize);
-
-    mapRef.current = map;
+    infoWindowRef.current = new google.maps.InfoWindow();
 
     return () => {
-      window.removeEventListener("resize", handleResize);
-      markersRef.current.forEach((marker) => marker.remove());
+      markersRef.current.forEach((marker) => {
+        marker.map = null;
+      });
       markersRef.current = [];
-      map.remove();
+      infoWindowRef.current?.close();
+      infoWindowRef.current = null;
       mapRef.current = null;
     };
-  }, []);
+  }, [isLoaded]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) {
+    const infoWindow = infoWindowRef.current;
+    if (!map || !infoWindow) {
       return;
     }
 
-    markersRef.current.forEach((marker) => marker.remove());
+    markersRef.current.forEach((marker) => {
+      marker.map = null;
+    });
     markersRef.current = [];
 
     if (locations.length === 0) {
+      map.setCenter(DEFAULT_CENTER);
+      map.setZoom(4);
       return;
     }
 
-    const bounds = new maplibregl.LngLatBounds();
+    const bounds = new google.maps.LatLngBounds();
 
     locations.forEach((location) => {
-      const markerNode = document.createElement("button");
-      markerNode.type = "button";
-      markerNode.className = "tk-map-marker";
-      markerNode.setAttribute("aria-label", `View ${location.name}`);
-      markerNode.innerHTML = TEN_KINGS_MARKER_SVG;
-      markerNode.addEventListener("click", () => onMarkerClick?.(location.slug));
+      const marker = new google.maps.marker.AdvancedMarkerElement({
+        map,
+        position: { lat: location.latitude, lng: location.longitude },
+        title: location.name,
+        content: buildMarkerNode(),
+      });
 
-      const popup = new maplibregl.Popup({
-        offset: 18,
-        closeButton: false,
-        maxWidth: "220px",
-      }).setDOMContent(buildPopupNode(location, onMarkerClick));
-
-      const marker = new maplibregl.Marker({
-        element: markerNode,
-        anchor: "center",
-      })
-        .setLngLat([location.longitude, location.latitude])
-        .setPopup(popup)
-        .addTo(map);
+      marker.addListener("gmp-click", () => {
+        infoWindow.setContent(buildPopupNode(location, onMarkerClick));
+        infoWindow.open({ map, anchor: marker });
+      });
 
       markersRef.current.push(marker);
-      bounds.extend([location.longitude, location.latitude]);
+      bounds.extend({ lat: location.latitude, lng: location.longitude });
     });
 
     if (locations.length === 1) {
-      map.flyTo({
-        center: [locations[0].longitude, locations[0].latitude],
-        zoom: 11.5,
-        duration: 800,
-      });
+      map.setCenter({ lat: locations[0].latitude, lng: locations[0].longitude });
+      map.setZoom(12);
       return;
     }
 
-    map.fitBounds(bounds, {
-      padding: 56,
-      maxZoom: 12,
-      duration: 800,
-    });
+    map.fitBounds(bounds, 72);
   }, [locations, onMarkerClick]);
 
-  return <div ref={containerRef} className={`tk-map-theme h-full w-full ${className ?? ""}`.trim()} />;
+  if (loadError) {
+    return <div className={`tk-map-loading ${className ?? ""}`.trim()}>Map failed to load</div>;
+  }
+
+  if (!isLoaded) {
+    return <div className={`tk-map-loading ${className ?? ""}`.trim()}>Loading map</div>;
+  }
+
+  return (
+    <div className={`tk-google-map ${className ?? ""}`.trim()}>
+      <div ref={containerRef} className="tk-google-map__canvas" />
+    </div>
+  );
 }
