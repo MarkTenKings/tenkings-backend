@@ -394,3 +394,15 @@ button {
 .highlight-pulse {
   animation: tk-card-highlight 2s ease forwards;
 }
+
+@media (max-width: 768px) {
+  .kingshunt-map-navigating,
+  .kingshunt-map-navigating::after {
+    border-radius: 0;
+  }
+
+  .kingshunt-map-navigating .tk-google-map__canvas {
+    height: 70vh;
+    min-height: 70vh;
+  }
+}

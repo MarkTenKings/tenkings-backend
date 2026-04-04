@@ -6,8 +6,6 @@ const payloadSchema = z.object({
   sessionId: z.string().min(1),
   checkpointId: z.string().min(1),
   checkpointsReached: z.number().int().min(0),
-  tkdReward: z.number().int().min(0),
-  tkdEarned: z.number().int().min(0),
   journeyCompletedAt: z.string().datetime().optional(),
 });
 
@@ -23,7 +21,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       where: { id: payload.sessionId },
       data: {
         checkpointsReached: payload.checkpointsReached,
-        tkdEarned: payload.tkdEarned,
+        tkdEarned: 0,
         journeyCompletedAt: payload.journeyCompletedAt ? new Date(payload.journeyCompletedAt) : undefined,
       },
     });
@@ -32,7 +30,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       success: true,
       checkpointId: payload.checkpointId,
       checkpointsReached: session.checkpointsReached,
-      tkdEarned: session.tkdEarned,
     });
   } catch (error) {
     if (error instanceof z.ZodError) {

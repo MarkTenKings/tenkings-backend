@@ -14,7 +14,6 @@ const payloadSchema = z.object({
   lat: z.number().finite().optional(),
   lng: z.number().finite().optional(),
   checkpointsReached: z.number().int().min(0).optional(),
-  tkdEarned: z.number().int().min(0).optional(),
   journeyStartedAt: z.string().datetime().optional(),
   journeyCompletedAt: z.string().datetime().optional(),
 });
@@ -55,7 +54,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               ? computeDistanceToMachine(existingSession.location, payload.lat, payload.lng)
               : existingSession.distanceToMachineM,
           checkpointsReached: payload.checkpointsReached,
-          tkdEarned: payload.tkdEarned,
+          tkdEarned: 0,
           journeyStartedAt: payload.journeyStartedAt ? new Date(payload.journeyStartedAt) : existingSession.journeyStartedAt,
           journeyCompletedAt: payload.journeyCompletedAt ? new Date(payload.journeyCompletedAt) : existingSession.journeyCompletedAt,
         },
@@ -64,7 +63,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({
         sessionId: session.id,
         checkpointsReached: session.checkpointsReached,
-        tkdEarned: session.tkdEarned,
         journeyCompletedAt: session.journeyCompletedAt?.toISOString() ?? null,
       });
     }
@@ -99,7 +97,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             ? computeDistanceToMachine(location, payload.lat, payload.lng)
             : null,
         checkpointsReached: payload.checkpointsReached ?? 0,
-        tkdEarned: payload.tkdEarned ?? 0,
+        tkdEarned: 0,
         journeyStartedAt: payload.journeyStartedAt ? new Date(payload.journeyStartedAt) : null,
         journeyCompletedAt: payload.journeyCompletedAt ? new Date(payload.journeyCompletedAt) : null,
         userAgent: req.headers["user-agent"] ?? null,
@@ -123,7 +121,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(200).json({
       sessionId: session.id,
       checkpointsReached: session.checkpointsReached,
-      tkdEarned: session.tkdEarned,
       journeyCompletedAt: session.journeyCompletedAt?.toISOString() ?? null,
     });
   } catch (error) {

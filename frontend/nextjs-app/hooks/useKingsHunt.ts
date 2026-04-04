@@ -4,9 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { checkArrival, checkGeofence, estimateWalkingTimeMin, haversineDistance } from "../lib/geo";
 import {
   DEFAULT_ARRIVAL_RADIUS_M,
-  DEFAULT_ARRIVAL_REWARD,
   DEFAULT_ROUTE_RECALC_THRESHOLD_M,
-  getCheckpointRewardTotal,
   getMachinePosition,
   getVenueCenterPosition,
   type Checkpoint,
@@ -31,11 +29,11 @@ export interface UseKingsHuntContext {
   distanceToVenueM: number | null;
   distanceToMachineM: number | null;
   route: ComputeRouteResponse | null;
+  routePath: LatLng[] | null;
   checkpoints: Checkpoint[];
   checkpointsHit: string[];
   activeCheckpoint: Checkpoint | null;
   sessionId: string | null;
-  tkdEarned: number;
   etaMin: number | null;
   error: string | null;
   routeError: string | null;
@@ -58,6 +56,7 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
   const [navigationStarted, setNavigationStarted] = useState(false);
   const [checkpointsHit, setCheckpointsHit] = useState<string[]>([]);
   const [activeCheckpoint, setActiveCheckpoint] = useState<Checkpoint | null>(null);
+  const [approximateRoutePath, setApproximateRoutePath] = useState<LatLng[] | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasArrived, setHasArrived] = useState(false);
   const [showStaticMapFallback, setShowStaticMapFallback] = useState(false);
@@ -65,6 +64,8 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
   const completionSentRef = useRef(false);
   const sessionUpdateRef = useRef(0);
   const lastRouteOriginRef = useRef<LatLng | null>(null);
+  const lastRouteRequestRef = useRef(0);
+  const latestPositionRef = useRef<LatLng | null>(null);
   const autoRequestRef = useRef(false);
   const {
     position: geolocationPosition,
@@ -109,9 +110,6 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
 
     return haversineDistance(position.lat, position.lng, machinePosition.lat, machinePosition.lng);
   }, [machinePosition, position]);
-  const tkdEarned = useMemo(() => {
-    return getCheckpointRewardTotal(checkpoints, checkpointsHit) + (hasArrived ? DEFAULT_ARRIVAL_REWARD : 0);
-  }, [checkpoints, checkpointsHit, hasArrived]);
   const etaMin = useMemo(() => {
     if (routeComputation.lastRoute) {
       return Math.max(1, Math.round(routeComputation.lastRoute.durationSec / 60));
@@ -123,6 +121,10 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
 
     return estimateWalkingTimeMin(distanceToMachineM);
   }, [distanceToMachineM, location.walkingTimeMin, routeComputation.lastRoute]);
+
+  useEffect(() => {
+    latestPositionRef.current = position;
+  }, [position]);
 
   const postSession = useCallback(
     async (payload: Record<string, unknown>) => {
@@ -175,7 +177,17 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
         if (maybeGeolocationError) {
           setShowStaticMapFallback(true);
           if (maybeGeolocationError.code === 1) {
-            setErrorMessage("Location permission is off. Enable GPS to start the hunt.");
+            setErrorMessage("Location permission is off in this browser. Enable it to start live tracking.");
+            return;
+          }
+
+          if (maybeGeolocationError.code === 2) {
+            setErrorMessage("Location Services are off on this device. Turn them on in Settings, then try again.");
+            return;
+          }
+
+          if (maybeGeolocationError.code === 3) {
+            setErrorMessage("GPS is taking longer than expected. Keep Location Services on and try again.");
             return;
           }
 
@@ -194,9 +206,11 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
   const retry = useCallback(async () => {
     completionSentRef.current = false;
     lastRouteOriginRef.current = null;
+    lastRouteRequestRef.current = 0;
     setHasArrived(false);
     setShowStaticMapFallback(false);
     setActiveCheckpoint(null);
+    setApproximateRoutePath(null);
     setNavigationStarted(false);
     await requestGPS();
   }, [requestGPS]);
@@ -274,7 +288,6 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
         gpsAccuracy: geolocationAccuracy,
       },
       checkpointsReached: 0,
-      tkdEarned: 0,
     }).catch((error: unknown) => {
       setErrorMessage(error instanceof Error ? error.message : "Unable to create navigation session");
     });
@@ -296,40 +309,85 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
       lat: position.lat,
       lng: position.lng,
       checkpointsReached: checkpointsHit.length,
-      tkdEarned,
       journeyStartedAt: navigationStarted ? new Date().toISOString() : undefined,
     }).catch((error: unknown) => {
       console.error("Failed to update Kings Hunt session", error);
     });
-  }, [checkpointsHit.length, navigationStarted, position, postSession, sessionId, tkdEarned]);
+  }, [checkpointsHit.length, navigationStarted, position, postSession, sessionId]);
+
+  const refreshRoute = useCallback(
+    async (origin: LatLng, forceRefresh: boolean) => {
+      if (!machinePosition || !geofence?.isInside || hasArrived) {
+        return;
+      }
+
+      const now = Date.now();
+      const hasMovedEnough =
+        !lastRouteOriginRef.current ||
+        haversineDistance(origin.lat, origin.lng, lastRouteOriginRef.current.lat, lastRouteOriginRef.current.lng) >=
+          DEFAULT_ROUTE_RECALC_THRESHOLD_M;
+      const shouldRefresh = forceRefresh || hasMovedEnough || now - lastRouteRequestRef.current >= 30000;
+
+      if (!shouldRefresh) {
+        return;
+      }
+
+      lastRouteOriginRef.current = origin;
+      lastRouteRequestRef.current = now;
+
+      try {
+        await routeComputation.computeRoute({
+          originLat: origin.lat,
+          originLng: origin.lng,
+          destLat: machinePosition.lat,
+          destLng: machinePosition.lng,
+          locationSlug: location.slug,
+        });
+        setApproximateRoutePath(null);
+      } catch {
+        setApproximateRoutePath([
+          { lat: origin.lat, lng: origin.lng },
+          { lat: machinePosition.lat, lng: machinePosition.lng },
+        ]);
+      }
+    },
+    [geofence?.isInside, hasArrived, location.slug, machinePosition, routeComputation],
+  );
 
   useEffect(() => {
     if (!position || !machinePosition || !geofence?.isInside || hasArrived) {
       return;
     }
 
-    const shouldRecalculate =
-      !lastRouteOriginRef.current ||
-      haversineDistance(position.lat, position.lng, lastRouteOriginRef.current.lat, lastRouteOriginRef.current.lng) >=
-        DEFAULT_ROUTE_RECALC_THRESHOLD_M;
+    void refreshRoute(position, false);
+  }, [geofence?.isInside, hasArrived, machinePosition, position, refreshRoute]);
 
-    if (!shouldRecalculate) {
+  useEffect(() => {
+    if (!machinePosition || !geofence?.isInside || hasArrived) {
       return;
     }
 
-    lastRouteOriginRef.current = position;
-    void routeComputation
-      .computeRoute({
-        originLat: position.lat,
-        originLng: position.lng,
-        destLat: machinePosition.lat,
-        destLng: machinePosition.lng,
-        locationSlug: location.slug,
-      })
-      .catch((error: unknown) => {
-        setErrorMessage(error instanceof Error ? error.message : "Unable to compute walking route");
-      });
-  }, [geofence?.isInside, hasArrived, location.slug, machinePosition, position, routeComputation]);
+    const intervalId = window.setInterval(() => {
+      const latestPosition = latestPositionRef.current;
+      if (latestPosition) {
+        void refreshRoute(latestPosition, true);
+      }
+    }, 30000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [geofence?.isInside, hasArrived, machinePosition, refreshRoute]);
+
+  useEffect(() => {
+    if (geofence?.isInside && machinePosition && !hasArrived) {
+      return;
+    }
+
+    lastRouteOriginRef.current = null;
+    lastRouteRequestRef.current = 0;
+    setApproximateRoutePath(null);
+  }, [geofence?.isInside, hasArrived, machinePosition]);
 
   useEffect(() => {
     if (!navigationStarted || !position || checkpoints.length === 0) {
@@ -365,8 +423,6 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
           sessionId,
           checkpointId: nextCheckpoint.id,
           checkpointsReached: nextCheckpointIds.length,
-          tkdReward: nextCheckpoint.tkdReward,
-          tkdEarned: getCheckpointRewardTotal(checkpoints, nextCheckpointIds) + (hasArrived ? DEFAULT_ARRIVAL_REWARD : 0),
         }),
       }).catch((error) => {
         console.error("Failed to record checkpoint", error);
@@ -396,7 +452,6 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
         lat: position.lat,
         lng: position.lng,
         checkpointsReached: checkpointsHit.length,
-        tkdEarned: getCheckpointRewardTotal(checkpoints, checkpointsHit) + DEFAULT_ARRIVAL_REWARD,
         journeyCompletedAt: new Date().toISOString(),
       }).catch((error: unknown) => {
         console.error("Failed to complete Kings Hunt session", error);
@@ -421,6 +476,10 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
       return navigationStarted ? "NAVIGATING" : "AT_VENUE";
     }
 
+    if (geolocationError?.code === 2) {
+      return "LOCATION_SERVICES_OFF";
+    }
+
     if (showStaticMapFallback || geolocationError || errorMessage) {
       return "STATIC_MAP";
     }
@@ -436,11 +495,11 @@ export function useKingsHunt({ location, entryMethod, qrCodeId = null }: UseKing
       distanceToVenueM: geofence?.distanceM ?? null,
       distanceToMachineM,
       route: routeComputation.lastRoute,
+      routePath: approximateRoutePath,
       checkpoints,
       checkpointsHit,
       activeCheckpoint,
       sessionId,
-      tkdEarned,
       etaMin,
       error: errorMessage,
       routeError: routeComputation.error,

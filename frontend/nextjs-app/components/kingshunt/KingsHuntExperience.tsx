@@ -82,6 +82,8 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
       ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${machinePosition.lat},${machinePosition.lng}`)}&travelmode=walking`
       : directionsHref;
   const isLiveRouteState = state === "AT_VENUE" || state === "NAVIGATING" || state === "ARRIVED";
+  const isActiveNavigationState = state === "AT_VENUE" || state === "NAVIGATING";
+  const isApproximateLiveRoute = isLiveRouteState && !context.route && Boolean(context.routePath);
   const landmarkSummary = location.landmarks.length ? location.landmarks.join(" • ") : "See map above";
   const staticRoutePath = useMemo(() => {
     const checkpointPath = [...context.checkpoints]
@@ -100,6 +102,8 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
         ? "Arrival Confirmed"
         : state === "AT_VENUE"
           ? "Venue Geofence Matched"
+          : state === "LOCATION_SERVICES_OFF"
+            ? "Location Services Off"
           : state === "STATIC_MAP"
             ? "Static Route Preview"
             : "Venue Route Preview";
@@ -122,7 +126,7 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
               <p className="font-kingshunt-body text-[0.68rem] uppercase tracking-[0.34em] text-[#d4a843]">Kings Hunt Live Route</p>
               <h1 className="font-kingshunt-display mt-4 text-4xl leading-none tracking-[0.04em] text-white md:text-6xl">{location.name}</h1>
               <p className="font-kingshunt-body mt-4 max-w-2xl text-sm leading-6 text-[#b7b7b7]">
-                {location.description || "Walk the live gold route, hit checkpoints for TKD, and finish at the Ten Kings machine."}
+                {location.description || "Walk the live gold route, follow the checkpoint path, and finish at the Ten Kings machine."}
               </p>
             </div>
             <div className="rounded-[1.4rem] border border-white/10 bg-white/[0.03] px-4 py-3">
@@ -131,7 +135,7 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
             </div>
           </div>
 
-          <div className="mt-5 grid gap-3 md:grid-cols-3">
+          <div className={`mt-5 gap-3 md:grid-cols-2 ${isActiveNavigationState ? "hidden md:grid" : "grid"}`}>
             <div className="rounded-[1.25rem] border border-white/10 bg-white/[0.03] px-4 py-3">
               <p className="font-kingshunt-body text-[0.62rem] uppercase tracking-[0.26em] text-white/55">Distance</p>
               <p className="font-kingshunt-display mt-2 text-[1.55rem] leading-none tracking-[0.04em] text-white">{distanceLabel}</p>
@@ -140,15 +144,11 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
               <p className="font-kingshunt-body text-[0.62rem] uppercase tracking-[0.26em] text-white/55">ETA</p>
               <p className="font-kingshunt-display mt-2 text-[1.55rem] leading-none tracking-[0.04em] text-white">{etaLabel}</p>
             </div>
-            <div className="rounded-[1.25rem] border border-white/10 bg-white/[0.03] px-4 py-3">
-              <p className="font-kingshunt-body text-[0.62rem] uppercase tracking-[0.26em] text-white/55">TKD Earned</p>
-              <p className="font-kingshunt-display mt-2 text-[1.55rem] leading-none tracking-[0.04em] text-white">+{context.tkdEarned}</p>
-            </div>
           </div>
         </section>
 
         {mapCenter && machinePosition ? (
-          <section className="grid gap-6 lg:grid-cols-[1.4fr_0.9fr]">
+          <section className={`grid gap-6 ${isActiveNavigationState ? "lg:grid-cols-[1.45fr_0.85fr]" : "lg:grid-cols-[1.4fr_0.9fr]"}`}>
             <div className="space-y-4">
               {state === "STATIC_MAP" ? (
                 <div className="flex flex-col gap-3 rounded-[1.4rem] border border-[#d4a843]/25 bg-[#d4a843]/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -168,38 +168,107 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
                 </div>
               ) : null}
 
-              <MapErrorBoundary
-                fallback={
-                  <MapFallback
-                    className="min-h-[28.125rem] lg:min-h-[37.5rem]"
-                    eyebrow="Map failed to load"
-                    title="Live route map unavailable"
-                    body="Use Google Maps and the venue details panel while the live map reconnects."
-                    actions={
-                      <Link
-                        href={directionsHref}
-                        target="_blank"
-                        rel="noreferrer"
+              {state === "LOCATION_SERVICES_OFF" ? (
+                <div className="rounded-[1.6rem] border border-[#d4a843]/30 bg-[linear-gradient(180deg,rgba(212,168,67,0.14),rgba(12,12,12,0.9))] p-5">
+                  <p className="font-kingshunt-body text-[0.68rem] uppercase tracking-[0.3em] text-[#d4a843]">Turn On Location Services</p>
+                  <h2 className="font-kingshunt-display mt-3 text-[2rem] leading-none tracking-[0.04em] text-white">Enable device location first</h2>
+                  <p className="font-kingshunt-body mt-4 text-sm leading-6 text-[#efe1b3]">
+                    Open <strong>Settings &gt; Privacy &amp; Security &gt; Location Services</strong>, turn it on, then come back here and try again.
+                  </p>
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void retry()}
+                      className="font-kingshunt-body rounded-full bg-[#d4a843] px-4 py-3 text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-[#171208]"
+                    >
+                      I Turned It On - Try Again
+                    </button>
+                    <Link
+                      href={walkingDirectionsHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-kingshunt-body rounded-full border border-white/10 px-4 py-3 text-[0.68rem] uppercase tracking-[0.26em] text-white/85"
+                    >
+                      Open in Google Maps
+                    </Link>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className={`relative ${isActiveNavigationState ? "mx-[-1rem] md:mx-0" : ""}`}>
+                <MapErrorBoundary
+                  fallback={
+                    <MapFallback
+                      className="min-h-[28.125rem] lg:min-h-[37.5rem]"
+                      eyebrow="Map failed to load"
+                      title="Live route map unavailable"
+                      body="Use Google Maps and the venue details panel while the live map reconnects."
+                      actions={
+                        <Link
+                          href={directionsHref}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="font-kingshunt-body rounded-full bg-[#d4a843] px-4 py-3 text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-[#171208]"
+                        >
+                          Open Google Maps
+                        </Link>
+                      }
+                    />
+                  }
+                >
+                  <TenKingsMap
+                    center={mapCenter}
+                    userPosition={isLiveRouteState ? context.position : null}
+                    userAccuracyM={isLiveRouteState ? context.accuracyM : null}
+                    destination={machinePosition}
+                    routePolyline={isLiveRouteState ? context.route?.polyline ?? null : null}
+                    routePath={isLiveRouteState ? context.routePath : staticRoutePath}
+                    checkpoints={context.checkpoints}
+                    checkpointsHit={context.checkpointsHit}
+                    statusLabel={mapStatusLabel}
+                    className={isActiveNavigationState ? "kingshunt-map-navigating" : undefined}
+                  />
+                </MapErrorBoundary>
+
+                {isActiveNavigationState ? (
+                  <div className="pointer-events-none absolute inset-x-4 bottom-4 z-[2] flex justify-center">
+                    <div className="rounded-full border border-white/10 bg-[rgba(10,10,10,0.84)] px-4 py-3 text-center shadow-[0_18px_48px_rgba(0,0,0,0.34)] backdrop-blur">
+                      <p className="font-kingshunt-body text-[0.68rem] uppercase tracking-[0.24em] text-white/85">
+                        {distanceLabel} · {etaLabel}
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              {isActiveNavigationState ? (
+                <div className="rounded-[1.45rem] border border-white/10 bg-white/[0.03] p-4 lg:hidden">
+                  <p className="font-kingshunt-body text-[0.62rem] uppercase tracking-[0.26em] text-[#d4a843]">
+                    {state === "AT_VENUE" ? "Venue Confirmed" : "Live Tracking"}
+                  </p>
+                  <h2 className="font-kingshunt-display mt-3 text-[1.9rem] leading-none tracking-[0.04em] text-white">{location.name}</h2>
+                  <p className="font-kingshunt-body mt-3 text-sm leading-6 text-[#c8c8c8]">{landmarkSummary}</p>
+                  <div className="mt-5 flex flex-wrap gap-3">
+                    {state === "AT_VENUE" ? (
+                      <button
+                        type="button"
+                        onClick={startHunt}
                         className="font-kingshunt-body rounded-full bg-[#d4a843] px-4 py-3 text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-[#171208]"
                       >
-                        Open Google Maps
-                      </Link>
-                    }
-                  />
-                }
-              >
-                <TenKingsMap
-                  center={mapCenter}
-                  userPosition={isLiveRouteState ? context.position : null}
-                  userAccuracyM={isLiveRouteState ? context.accuracyM : null}
-                  destination={machinePosition}
-                  routePolyline={isLiveRouteState ? context.route?.polyline ?? null : null}
-                  routePath={isLiveRouteState ? null : staticRoutePath}
-                  checkpoints={context.checkpoints}
-                  checkpointsHit={context.checkpointsHit}
-                  statusLabel={mapStatusLabel}
-                />
-              </MapErrorBoundary>
+                        Start Hunt
+                      </button>
+                    ) : null}
+                    <Link
+                      href={walkingDirectionsHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-kingshunt-body rounded-full border border-white/10 px-4 py-3 text-[0.68rem] uppercase tracking-[0.26em] text-white/85"
+                    >
+                      Open Google Maps
+                    </Link>
+                  </div>
+                </div>
+              ) : null}
 
               {isLiveRouteState && context.route?.warnings?.length ? (
                 <div className="rounded-[1.4rem] border border-[#d4a843]/20 bg-[#d4a843]/10 px-4 py-3">
@@ -207,9 +276,18 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
                   <p className="font-kingshunt-body mt-2 text-sm leading-6 text-[#f0e0af]">{context.route.warnings.join(" • ")}</p>
                 </div>
               ) : null}
+
+              {isApproximateLiveRoute ? (
+                <div className="rounded-[1.4rem] border border-[#d4a843]/20 bg-[#d4a843]/10 px-4 py-3">
+                  <p className="font-kingshunt-body text-[0.68rem] uppercase tracking-[0.28em] text-[#d4a843]">Approximate Route</p>
+                  <p className="font-kingshunt-body mt-2 text-sm leading-6 text-[#f0e0af]">
+                    Live walking directions are unavailable right now, so the map is showing a dotted straight-line fallback to the machine.
+                  </p>
+                </div>
+              ) : null}
             </div>
 
-            <div className="space-y-4">
+            <div className={`space-y-4 ${isActiveNavigationState ? "hidden lg:block" : ""}`}>
               {state === "LOADING" || state === "LOCATING" ? (
                 <StateCard
                   eyebrow="Acquiring GPS"
@@ -338,8 +416,8 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
                       </p>
                     </div>
                     <div className="rounded-[1.2rem] border border-white/10 bg-white/[0.03] px-4 py-3">
-                      <p className="font-kingshunt-body text-[0.62rem] uppercase tracking-[0.26em] text-white/55">Total TKD</p>
-                      <p className="font-kingshunt-display mt-2 text-[1.5rem] leading-none tracking-[0.04em] text-white">+{context.tkdEarned}</p>
+                      <p className="font-kingshunt-body text-[0.62rem] uppercase tracking-[0.26em] text-white/55">Final ETA</p>
+                      <p className="font-kingshunt-display mt-2 text-[1.5rem] leading-none tracking-[0.04em] text-white">{etaLabel}</p>
                     </div>
                   </div>
 
@@ -401,7 +479,7 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
             <p className="font-kingshunt-display mt-2 text-[1.5rem] leading-none tracking-[0.04em] text-white">
               {context.activeCheckpoint.name}
             </p>
-            <p className="font-kingshunt-body mt-2 text-sm text-[#f0ddb0]">+{context.activeCheckpoint.tkdReward} TKD added to your run.</p>
+            <p className="font-kingshunt-body mt-2 text-sm text-[#f0ddb0]">Checkpoint logged for this run.</p>
           </button>
         ) : null}
       </div>

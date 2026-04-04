@@ -1,8 +1,6 @@
 export const DEFAULT_GEOFENCE_RADIUS_M = 500;
 export const DEFAULT_CHECKPOINT_RADIUS_M = 15;
-export const DEFAULT_CHECKPOINT_REWARD = 5;
 export const DEFAULT_ARRIVAL_RADIUS_M = 20;
-export const DEFAULT_ARRIVAL_REWARD = 25;
 export const DEFAULT_ROUTE_RECALC_THRESHOLD_M = 15;
 
 export interface LatLng {
@@ -35,7 +33,6 @@ export interface Checkpoint {
   lat: number;
   lng: number;
   radiusM: number;
-  tkdReward: number;
   order: number;
   landmark?: string;
 }
@@ -95,7 +92,6 @@ export interface ComputeRouteResponse {
 export interface KingsHuntSessionResponse {
   sessionId: string;
   checkpointsReached: number;
-  tkdEarned: number;
   journeyCompletedAt: string | null;
 }
 
@@ -103,6 +99,7 @@ export type HuntState =
   | "LOADING"
   | "LOCATING"
   | "STATIC_MAP"
+  | "LOCATION_SERVICES_OFF"
   | "AT_VENUE"
   | "NOT_AT_VENUE"
   | "NAVIGATING"
@@ -226,7 +223,6 @@ export function parseCheckpoints(value: unknown): Checkpoint[] | null {
       lat,
       lng,
       radiusM: asNumber(record.radiusM) ?? DEFAULT_CHECKPOINT_RADIUS_M,
-      tkdReward: asNumber(record.tkdReward) ?? DEFAULT_CHECKPOINT_REWARD,
       order,
       landmark: asString(record.landmark) ?? undefined,
     });
@@ -354,12 +350,4 @@ export function formatDuration(durationSec: number | null | undefined): string {
   const hours = Math.floor(minutes / 60);
   const remainingMinutes = minutes % 60;
   return remainingMinutes > 0 ? `${hours} hr ${remainingMinutes} min` : `${hours} hr`;
-}
-
-export function getCheckpointRewardTotal(checkpoints: Checkpoint[], checkpointIds: string[]): number {
-  const hitIds = new Set(checkpointIds);
-
-  return checkpoints.reduce((sum, checkpoint) => {
-    return hitIds.has(checkpoint.id) ? sum + checkpoint.tkdReward : sum;
-  }, 0);
 }

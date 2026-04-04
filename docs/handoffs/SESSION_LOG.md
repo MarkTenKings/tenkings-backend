@@ -13634,6 +13634,23 @@
 - Production now has Kings Hunt schema support plus the requested location metadata backfill.
 - The production dataset currently contains `folsom-premium-outlets` but not `folsom-outlet-mall`, which is why the backfill skipped one entry.
 
+## 2026-04-03 - Planned Folsom Premium Outlets coordinate hotfix
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified current local checkout state before the requested DB hotfix:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `3338a00`
+- Planned action, per user request:
+  - run a single production SQL `UPDATE` against `Location.slug = 'folsom-premium-outlets'`
+  - set corrected machine coordinates, venue center, geofence radius, landmarks, hours, checkpoints
+  - clear `walkingDirections`
+  - verify the updated coordinates with a `SELECT`
+
+### Notes
+- This entry records the planned DB update before execution, per `AGENTS.md`.
+
 ## 2026-04-04 - Phase 1 Kings Hunt Google Maps rebuild on feature/kingshunt-v2
 
 ### Summary
@@ -13839,3 +13856,45 @@
 
 ### Notes
 - This hotfix removes the dead-end permission/error UI on `/kingshunt/[locationSlug]` and keeps the venue route usable even when live GPS does not resolve.
+
+## 2026-04-04 - Kings Hunt live experience follow-up fixes on main
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Pulled the latest `main` into the canonical checkout before editing:
+  - `git pull --ff-only --autostash origin main` -> fast-forward `3338a00..6ba4bb5`
+  - the autostash reapplied with conflicts only in `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`; those handoff changes were reconciled manually in this session
+- Implemented the requested Kings Hunt follow-up fixes on the latest `main` code:
+  - live route refresh now runs inside the venue geofence, re-fetches every 30 seconds or after meaningful movement, and falls back to a dotted straight-line route when the Google Routes proxy fails
+  - the live map now keeps a single Google Map instance alive, updates markers and overlays in place, fits bounds only once, and adds a manual `Re-center` control instead of constant re-centering
+  - the active navigation experience now gives the map dominant mobile height, shows a floating distance/ETA pill, and collapses mobile navigation controls into a compact card under the map
+  - Kings Hunt reward UI and reward-posting logic were removed from the experience; checkpoint/session APIs now keep `tkdEarned` pinned to `0`
+  - device-level `POSITION_UNAVAILABLE` geolocation failures now render a dedicated Location Services instructions state instead of the generic static-map banner
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`
+- `frontend/nextjs-app/components/maps/TenKingsMap.tsx`
+- `frontend/nextjs-app/hooks/useKingsHunt.ts`
+- `frontend/nextjs-app/hooks/useRouteComputation.ts`
+- `frontend/nextjs-app/lib/kingsHunt.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/checkpoint.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/route.ts`
+- `frontend/nextjs-app/pages/api/kingshunt/session.ts`
+- `frontend/nextjs-app/pages/kingshunt/[locationSlug].tsx`
+- `frontend/nextjs-app/styles/globals.css`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- Workspace install refresh:
+  - `pnpm install --frozen-lockfile` -> pass
+- Targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/kingshunt/KingsHuntExperience.tsx --file components/maps/TenKingsMap.tsx --file hooks/useKingsHunt.ts --file hooks/useRouteComputation.ts --file pages/api/kingshunt/route.ts --file pages/api/kingshunt/checkpoint.ts --file pages/api/kingshunt/session.ts --file 'pages/kingshunt/[locationSlug].tsx' --file lib/kingsHunt.ts` -> pass with no warnings or errors
+- TypeScript:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass after `pnpm install --frozen-lockfile` restored the local `@types/google.maps` workspace link
+- Diff hygiene:
+  - `git diff --check` -> pass
+
+### Notes
+- This session used the canonical `main` checkout in `/Users/markthomas/tenkings-task27-main`, unlike the earlier temporary worktree fixes from the same day.

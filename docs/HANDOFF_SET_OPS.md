@@ -1,15 +1,37 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-04` (main-target Kings Hunt static-map fallback hotfix prepared in the temporary synced worktree; GPS dead-end states were removed and the venue map now stays visible even without location access; no deploy/restart/migration was executed)
+- Last reviewed: `2026-04-04` (Kings Hunt live experience follow-up fixes prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest local baseline is `6ba4bb5`; route fallback, mobile map stabilization, TKD removal, active-navigation mobile layout, and Location Services guidance are in the worktree; no deploy/restart/migrate was run)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
-  - temporary synced main-target worktree: `git status -sb` -> `## merge-main-sync...origin/main`
-  - uncommitted hotfix surface in this worktree: `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`, `frontend/nextjs-app/components/maps/TenKingsMap.tsx`, `frontend/nextjs-app/hooks/useKingsHunt.ts`, `frontend/nextjs-app/lib/kingsHunt.ts`, and handoff docs
-- Latest merged feature baseline at handoff refresh:
-  - `6f73842` fix(kingshunt): restore gps permission prompt
-- Environments touched: temporary merge worktree `/tmp/tenkings-main-merge` on branch `merge-main-sync`; existing canonical main worktree `/Users/markthomas/tenkings-task27-main` was left untouched because it still has a pre-existing uncommitted `docs/handoffs/SESSION_LOG.md` change on an older local `main`; no deploy/restart/migration executed
+  - `git status -sb` -> `## main...origin/main`
+  - modified tracked paths: `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`, `frontend/nextjs-app/components/maps/TenKingsMap.tsx`, `frontend/nextjs-app/hooks/useKingsHunt.ts`, `frontend/nextjs-app/hooks/useRouteComputation.ts`, `frontend/nextjs-app/lib/kingsHunt.ts`, `frontend/nextjs-app/pages/api/kingshunt/checkpoint.ts`, `frontend/nextjs-app/pages/api/kingshunt/route.ts`, `frontend/nextjs-app/pages/api/kingshunt/session.ts`, `frontend/nextjs-app/pages/kingshunt/[locationSlug].tsx`, `frontend/nextjs-app/styles/globals.css`, and handoff docs
+- Latest committed baseline in this checkout:
+  - `6ba4bb5` fix(kingshunt): always show map - remove GPS dead ends
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migrate executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-04, Kings Hunt live experience follow-up fixes on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Pulled the latest `main` into the canonical checkout before editing:
+  - `git pull --ff-only --autostash origin main` -> fast-forward `3338a00..6ba4bb5`
+  - the autostash reapplied with conflicts only in `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`; those handoff changes were reconciled manually in this session
+- Investigated the five requested live-experience issues against the latest checked-in Kings Hunt surface.
+- Implemented the follow-up fixes:
+  - `frontend/nextjs-app/hooks/useKingsHunt.ts` now refreshes the Google walking route when the user is inside the venue geofence, re-fetches every 30 seconds or after meaningful movement, falls back to a dotted straight-line route when the route API fails, and distinguishes browser permission denial from device-level Location Services being off
+  - `frontend/nextjs-app/components/maps/TenKingsMap.tsx` now keeps one Google Map instance alive, updates markers and route overlays in place instead of rebuilding the full map on every GPS tick, fits bounds only once on initial render, adds a manual `Re-center` control, and renders a dashed live route or dotted approximate fallback
+  - `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx` now removes TKD reward UI/copy, makes the map dominant on mobile during `AT_VENUE` / `NAVIGATING`, adds the floating distance/ETA pill, collapses navigation controls into a compact mobile card, and shows explicit Location Services instructions for error code `2`
+  - `frontend/nextjs-app/pages/api/kingshunt/checkpoint.ts` and `frontend/nextjs-app/pages/api/kingshunt/session.ts` no longer take reward input and now keep `tkdEarned` pinned to `0` for analytics-only session tracking
+  - `frontend/nextjs-app/pages/api/kingshunt/route.ts` now requests a high-quality encoded polyline with a tighter field mask for route distance, duration, warnings, and route geometry
+- Validation observed locally:
+  - `pnpm install --frozen-lockfile` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/kingshunt/KingsHuntExperience.tsx --file components/maps/TenKingsMap.tsx --file hooks/useKingsHunt.ts --file hooks/useRouteComputation.ts --file pages/api/kingshunt/route.ts --file pages/api/kingshunt/checkpoint.ts --file pages/api/kingshunt/session.ts --file 'pages/kingshunt/[locationSlug].tsx' --file lib/kingsHunt.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass after `pnpm install --frozen-lockfile` restored the local `@types/google.maps` workspace link
+  - `git diff --check` -> pass
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-04, Kings Hunt always-show-map fallback hotfix on `main` target)
 - Continued in the synced temporary worktree `/tmp/tenkings-main-merge` so the dirty canonical local `main` checkout stayed untouched.
