@@ -13743,3 +13743,41 @@
 
 ### Notes
 - This log entry records the merge workflow from the temporary clean worktree so the dirty local main worktree was preserved.
+
+## 2026-04-04 - Google Maps bugfixes for /locations and /kingshunt main target
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Preserved the canonical local `main` checkout at `/Users/markthomas/tenkings-task27-main` because it still had a pre-existing uncommitted `docs/handoffs/SESSION_LOG.md` entry and lagged `origin/main`.
+- Continued from the synced temporary main-target worktree at `/tmp/tenkings-main-merge`.
+- Hardened the shared Google Maps loader so synchronous loader failures are caught and the imported `maps`, `marker`, and `geometry` libraries are explicitly available before map construction.
+- Patched `/locations` and the Kings Hunt live map to initialize Google Maps inside `try/catch`, use `AdvancedMarkerElement` only after the marker library is loaded, preserve `mapId`, and show branded fallbacks instead of crashing the page.
+- Added page-level map error boundaries for the `/locations` hero map and the Kings Hunt live route map.
+- Increased the `/locations` map container to `400px` mobile, `550px` tablet, and `650px` desktop; increased the Kings Hunt live route map to `450px` mobile and `600px` desktop minimum height.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`
+- `frontend/nextjs-app/components/maps/MapErrorBoundary.tsx`
+- `frontend/nextjs-app/components/maps/MapFallback.tsx`
+- `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+- `frontend/nextjs-app/components/maps/TenKingsMap.tsx`
+- `frontend/nextjs-app/hooks/useGoogleMaps.ts`
+- `frontend/nextjs-app/pages/locations.tsx`
+- `frontend/nextjs-app/styles/globals.css`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- Workspace hydration:
+  - `pnpm install` -> pass overall; optional `iohook` prebuild download logged a non-blocking failure under local Node `v25.6.1`
+- Targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/maps/MapFallback.tsx --file components/maps/MapErrorBoundary.tsx --file hooks/useGoogleMaps.ts --file components/maps/StoreLocatorMap.tsx --file components/maps/TenKingsMap.tsx --file components/kingshunt/KingsHuntExperience.tsx --file pages/locations.tsx` -> pass with no warnings or errors
+- Diff hygiene:
+  - `git diff --check` -> pass
+- TypeScript note:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still reports the existing unrelated repo baseline failures
+  - filtered output for `StoreLocatorMap`, `TenKingsMap`, `useGoogleMaps`, `MapFallback`, `MapErrorBoundary`, `KingsHuntExperience`, and `pages/locations` returned no matches
+
+### Notes
+- The map fixes were prepared in the synced temp worktree `/tmp/tenkings-main-merge` so the dirty local `main` checkout remained untouched.

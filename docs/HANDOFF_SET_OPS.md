@@ -1,15 +1,33 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-04` (Phase 1 Google Maps rebuild fast-forward merged into `main`; handoff docs synced from a temporary merge worktree; no deploy/restart/migration was executed)
+- Last reviewed: `2026-04-04` (main-target Google Maps bug fixes prepared in the temporary synced worktree; /locations and /kingshunt map fallbacks, marker loading, and sizing were patched; no deploy/restart/migration was executed)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
-  - merge worktree pre-doc-commit state: `git status -sb` -> `## merge-main-sync...origin/main [ahead 1]`
-  - merged feature payload now on target branch: `.env.example`, `frontend/nextjs-app/**`, `pnpm-lock.yaml`, `docs/HANDOFF_SET_OPS.md`, and `docs/handoffs/SESSION_LOG.md`
+  - temporary synced main-target worktree: `git status -sb` -> `## merge-main-sync...origin/main`
+  - uncommitted bugfix surface in this worktree: `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`, `frontend/nextjs-app/components/maps/{MapErrorBoundary,MapFallback,StoreLocatorMap,TenKingsMap}.tsx`, `frontend/nextjs-app/hooks/useGoogleMaps.ts`, `frontend/nextjs-app/pages/locations.tsx`, `frontend/nextjs-app/styles/globals.css`, and handoff docs
 - Latest merged feature baseline at handoff refresh:
-  - `d58ea60` feat(kingshunt): Phase 1 rebuild on Google Maps Platform
-- Environments touched: temporary merge worktree `/tmp/tenkings-main-merge` on branch `merge-main-sync`; existing canonical main worktree `/Users/markthomas/tenkings-task27-main` was left untouched because it had a pre-existing uncommitted `docs/handoffs/SESSION_LOG.md` change; no deploy/restart/migration executed
+  - `59d7d66` docs(handoff): record kingshunt-v2 merge to main
+- Environments touched: temporary merge worktree `/tmp/tenkings-main-merge` on branch `merge-main-sync`; existing canonical main worktree `/Users/markthomas/tenkings-task27-main` was left untouched because it still has a pre-existing uncommitted `docs/handoffs/SESSION_LOG.md` change on an older local `main`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-04, Google Maps bugfixes for `/locations` and `/kingshunt` on `main` target)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Preserved the canonical local `main` checkout because it still had a pre-existing uncommitted `docs/handoffs/SESSION_LOG.md` change and lagged `origin/main`; continued work in the already-synced temporary worktree `/tmp/tenkings-main-merge`.
+- Patched the shared Google Maps loader and map surfaces:
+  - `frontend/nextjs-app/hooks/useGoogleMaps.ts` now waits for the imported `maps`, `marker`, and `geometry` libraries explicitly and catches synchronous loader failures so a missing/bad Maps config does not crash the page
+  - `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx` now initializes the map and `AdvancedMarkerElement` markers inside guarded `try/catch` blocks, builds visible gold crown markers, uses `click` listeners for the info windows, and returns a branded fallback instead of throwing
+  - `frontend/nextjs-app/components/maps/TenKingsMap.tsx` now applies the same guarded map/marker loading pattern for the Kings Hunt live route view, keeps the machine marker styled as a gold destination marker, and returns a branded fallback instead of throwing
+  - added reusable `MapErrorBoundary` and `MapFallback` components, then wrapped the `/locations` hero map and the Kings Hunt wayfinding map so render-time map failures stay isolated to the map container
+- Layout adjustments:
+  - `/locations` hero map height is now `400px` mobile, `550px` tablet, `650px` desktop
+  - Kings Hunt live route map minimum height is now `450px` mobile and `600px` desktop
+- Validation observed locally in `/tmp/tenkings-main-merge`:
+  - `pnpm install` -> pass overall; optional `iohook` prebuild download still logged a non-blocking failure under local Node `v25.6.1`
+  - targeted `next lint` over the changed map files -> pass with no warnings or errors
+  - `git diff --check` -> pass
+  - repo-wide `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` still reports the existing unrelated baseline type failures outside this map bugfix surface; filtering that output for the changed files returned no matches
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-04, merged `feature/kingshunt-v2` into `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

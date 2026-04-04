@@ -5,13 +5,22 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../components/AppShell";
 import LiveRipPreview from "../components/LiveRipPreview";
+import MapErrorBoundary from "../components/maps/MapErrorBoundary";
+import MapFallback from "../components/maps/MapFallback";
 import { useSession } from "../hooks/useSession";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
 import type { StoreLocatorMapLocation } from "../components/maps/StoreLocatorMap";
 
 const StoreLocatorMap = dynamic(() => import("../components/maps/StoreLocatorMap"), {
   ssr: false,
-  loading: () => <div className="h-full w-full animate-pulse bg-white/[0.04]" />,
+  loading: () => (
+    <MapFallback
+      className="h-full"
+      eyebrow="Loading map"
+      title="Loading venue map"
+      body="Fetching the live Ten Kings venue map and marker layer."
+    />
+  ),
 });
 
 interface RipEntry {
@@ -409,8 +418,19 @@ function LocationsPage() {
           </div>
           <div className="rounded-[2rem] border border-white/10 bg-[linear-gradient(180deg,rgba(255,255,255,0.05),rgba(255,255,255,0.02))] p-3 shadow-card md:p-5">
             <div className="overflow-hidden rounded-[1.5rem] border border-white/10 bg-[#09090b]">
-              <div className="h-[300px] md:h-[400px]">
-                <StoreLocatorMap locations={mapLocations} onMarkerClick={handleMapMarkerClick} />
+              <div className="h-[400px] md:h-[550px] lg:h-[650px]">
+                <MapErrorBoundary
+                  fallback={
+                    <MapFallback
+                      className="h-full"
+                      eyebrow="Map failed to load"
+                      title="Venue map unavailable"
+                      body="The live map is temporarily unavailable, but the full location list below still works for directions and hunt links."
+                    />
+                  }
+                >
+                  <StoreLocatorMap locations={mapLocations} onMarkerClick={handleMapMarkerClick} className="h-full" />
+                </MapErrorBoundary>
               </div>
             </div>
             <div className="flex flex-col gap-3 px-2 pt-4 text-xs uppercase tracking-[0.24em] text-slate-500 md:flex-row md:items-center md:justify-between">

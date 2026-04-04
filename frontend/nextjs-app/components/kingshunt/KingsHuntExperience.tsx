@@ -2,6 +2,8 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
+import MapErrorBoundary from "../maps/MapErrorBoundary";
+import MapFallback from "../maps/MapFallback";
 import TenKingsMap from "../maps/TenKingsMap";
 import { useKingsHunt } from "../../hooks/useKingsHunt";
 import {
@@ -162,16 +164,37 @@ export default function KingsHuntExperience({ location, entryMethod, qrCodeId = 
         {(state === "AT_VENUE" || state === "NAVIGATING" || state === "ARRIVED") && machinePosition ? (
           <section className="grid gap-6 lg:grid-cols-[1.4fr_0.9fr]">
             <div className="space-y-4">
-              <TenKingsMap
-                center={context.position ?? machinePosition}
-                userPosition={context.position}
-                userAccuracyM={context.accuracyM}
-                destination={machinePosition}
-                routePolyline={context.route?.polyline ?? null}
-                checkpoints={context.checkpoints}
-                checkpointsHit={context.checkpointsHit}
-                statusLabel={state === "NAVIGATING" ? "Live Route Active" : state === "ARRIVED" ? "Arrival Confirmed" : "Venue Geofence Matched"}
-              />
+              <MapErrorBoundary
+                fallback={
+                  <MapFallback
+                    className="min-h-[28.125rem] lg:min-h-[37.5rem]"
+                    eyebrow="Map failed to load"
+                    title="Live route map unavailable"
+                    body="Use Google Maps and the venue details panel while the live map reconnects."
+                    actions={
+                      <Link
+                        href={directionsHref}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-kingshunt-body rounded-full bg-[#d4a843] px-4 py-3 text-[0.68rem] font-semibold uppercase tracking-[0.26em] text-[#171208]"
+                      >
+                        Open Google Maps
+                      </Link>
+                    }
+                  />
+                }
+              >
+                <TenKingsMap
+                  center={context.position ?? machinePosition}
+                  userPosition={context.position}
+                  userAccuracyM={context.accuracyM}
+                  destination={machinePosition}
+                  routePolyline={context.route?.polyline ?? null}
+                  checkpoints={context.checkpoints}
+                  checkpointsHit={context.checkpointsHit}
+                  statusLabel={state === "NAVIGATING" ? "Live Route Active" : state === "ARRIVED" ? "Arrival Confirmed" : "Venue Geofence Matched"}
+                />
+              </MapErrorBoundary>
 
               {context.route?.warnings?.length ? (
                 <div className="rounded-[1.4rem] border border-[#d4a843]/20 bg-[#d4a843]/10 px-4 py-3">

@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import MapFallback from "./MapFallback";
 import { useGoogleMaps } from "../../hooks/useGoogleMaps";
 import type { Checkpoint, LatLng } from "../../lib/kingsHunt";
 
@@ -27,9 +28,14 @@ function buildDestinationMarkerNode(): HTMLDivElement {
   const node = document.createElement("div");
   node.className = "tk-machine-marker";
 
+  const halo = document.createElement("span");
+  halo.className = "tk-machine-marker__halo";
+  node.appendChild(halo);
+
   const icon = document.createElement("span");
   icon.className = "tk-machine-marker__icon";
-  icon.textContent = "TK";
+  icon.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 16L3 6l5.5 4.8L12 4l3.5 6.8L21 6l-2 10H5z"></path><path d="M19 19H5v-2h14v2z"></path></svg>';
   node.appendChild(icon);
 
   return node;
@@ -43,6 +49,8 @@ function buildCheckpointNode(isHit: boolean): HTMLDivElement {
   return node;
 }
 
+const HUNT_MAP_HEIGHT_CLASS = "min-h-[28.125rem] lg:min-h-[37.5rem]";
+
 export default function TenKingsMap({
   center,
   userPosition = null,
@@ -55,7 +63,7 @@ export default function TenKingsMap({
   className,
   interactive = true,
 }: TenKingsMapProps) {
-  const { isLoaded, loadError } = useGoogleMaps();
+  const { isLoaded, loadError, libraries } = useGoogleMaps();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
@@ -63,24 +71,34 @@ export default function TenKingsMap({
   const routeAccentRef = useRef<google.maps.Polyline | null>(null);
   const accuracyCircleRef = useRef<google.maps.Circle | null>(null);
   const routeAnimationRef = useRef<number | null>(null);
+  const [mapError, setMapError] = useState<Error | null>(null);
 
   useEffect(() => {
-    if (!isLoaded || !containerRef.current || mapRef.current) {
+    if (!isLoaded || !libraries || !containerRef.current || mapRef.current || mapError) {
       return;
     }
 
-    mapRef.current = new google.maps.Map(containerRef.current, {
-      center,
-      zoom: 17,
-      mapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID,
-      disableDefaultUI: true,
-      zoomControl: true,
-      streetViewControl: false,
-      fullscreenControl: false,
-      mapTypeControl: false,
-      clickableIcons: false,
-      gestureHandling: interactive ? "greedy" : "none",
-    });
+    try {
+      const { Map } = libraries.mapsLibrary;
+
+      mapRef.current = new Map(containerRef.current, {
+        center,
+        zoom: 17,
+        mapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID,
+        renderingType: google.maps.RenderingType.VECTOR,
+        disableDefaultUI: true,
+        zoomControl: true,
+        streetViewControl: false,
+        fullscreenControl: false,
+        mapTypeControl: false,
+        clickableIcons: false,
+        gestureHandling: interactive ? "greedy" : "none",
+      });
+    } catch (error) {
+      console.error("Kings Hunt map initialization failed", error);
+      setMapError(error instanceof Error ? error : new Error("Unable to initialize the hunt map"));
+      return;
+    }
 
     return () => {
       markersRef.current.forEach((marker) => {
@@ -95,154 +113,169 @@ export default function TenKingsMap({
       }
       mapRef.current = null;
     };
-  }, [center, interactive, isLoaded]);
+  }, [center, interactive, isLoaded, libraries, mapError]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) {
+    if (!map || !libraries || mapError) {
       return;
     }
 
-    markersRef.current.forEach((marker) => {
-      marker.map = null;
-    });
-    markersRef.current = [];
-    routeRef.current?.setMap(null);
-    routeAccentRef.current?.setMap(null);
-    accuracyCircleRef.current?.setMap(null);
+    try {
+      const { AdvancedMarkerElement } = libraries.markerLibrary;
+      const { Circle, Polyline } = libraries.mapsLibrary;
 
-    if (routeAnimationRef.current != null) {
-      window.clearInterval(routeAnimationRef.current);
-      routeAnimationRef.current = null;
-    }
+      markersRef.current.forEach((marker) => {
+        marker.map = null;
+      });
+      markersRef.current = [];
+      routeRef.current?.setMap(null);
+      routeAccentRef.current?.setMap(null);
+      accuracyCircleRef.current?.setMap(null);
 
-    const bounds = new google.maps.LatLngBounds();
-
-    if (destination) {
-      markersRef.current.push(
-        new google.maps.marker.AdvancedMarkerElement({
-          map,
-          position: destination,
-          title: "Ten Kings machine",
-          content: buildDestinationMarkerNode(),
-        }),
-      );
-      bounds.extend(destination);
-    }
-
-    if (userPosition) {
-      markersRef.current.push(
-        new google.maps.marker.AdvancedMarkerElement({
-          map,
-          position: userPosition,
-          title: "Your location",
-          content: buildUserMarkerNode(),
-        }),
-      );
-      bounds.extend(userPosition);
-
-      if (userAccuracyM != null && Number.isFinite(userAccuracyM)) {
-        accuracyCircleRef.current = new google.maps.Circle({
-          map,
-          center: userPosition,
-          radius: userAccuracyM,
-          fillColor: "#4aa7ff",
-          fillOpacity: 0.12,
-          strokeColor: "#4aa7ff",
-          strokeOpacity: 0.26,
-          strokeWeight: 1,
-        });
+      if (routeAnimationRef.current != null) {
+        window.clearInterval(routeAnimationRef.current);
+        routeAnimationRef.current = null;
       }
-    }
 
-    checkpoints.forEach((checkpoint) => {
-      const isHit = checkpointsHit.includes(checkpoint.id);
-      markersRef.current.push(
-        new google.maps.marker.AdvancedMarkerElement({
+      const bounds = new google.maps.LatLngBounds();
+
+      if (destination) {
+        markersRef.current.push(
+          new AdvancedMarkerElement({
+            map,
+            position: destination,
+            title: "Ten Kings machine",
+            content: buildDestinationMarkerNode(),
+          }),
+        );
+        bounds.extend(destination);
+      }
+
+      if (userPosition) {
+        markersRef.current.push(
+          new AdvancedMarkerElement({
+            map,
+            position: userPosition,
+            title: "Your location",
+            content: buildUserMarkerNode(),
+          }),
+        );
+        bounds.extend(userPosition);
+
+        if (userAccuracyM != null && Number.isFinite(userAccuracyM)) {
+          accuracyCircleRef.current = new Circle({
+            map,
+            center: userPosition,
+            radius: userAccuracyM,
+            fillColor: "#4aa7ff",
+            fillOpacity: 0.12,
+            strokeColor: "#4aa7ff",
+            strokeOpacity: 0.26,
+            strokeWeight: 1,
+          });
+        }
+      }
+
+      checkpoints.forEach((checkpoint) => {
+        const isHit = checkpointsHit.includes(checkpoint.id);
+        markersRef.current.push(
+          new AdvancedMarkerElement({
+            map,
+            position: { lat: checkpoint.lat, lng: checkpoint.lng },
+            title: checkpoint.name,
+            content: buildCheckpointNode(isHit),
+          }),
+        );
+        bounds.extend({ lat: checkpoint.lat, lng: checkpoint.lng });
+      });
+
+      if (routePolyline) {
+        const path = libraries.geometryLibrary.encoding.decodePath(routePolyline);
+        routeRef.current = new Polyline({
           map,
-          position: { lat: checkpoint.lat, lng: checkpoint.lng },
-          title: checkpoint.name,
-          content: buildCheckpointNode(isHit),
-        }),
-      );
-      bounds.extend({ lat: checkpoint.lat, lng: checkpoint.lng });
-    });
-
-    if (routePolyline) {
-      const path = google.maps.geometry.encoding.decodePath(routePolyline);
-      routeRef.current = new google.maps.Polyline({
-        map,
-        path,
-        strokeColor: "rgba(212,168,67,0.38)",
-        strokeOpacity: 1,
-        strokeWeight: 8,
-        geodesic: true,
-      });
-      routeAccentRef.current = new google.maps.Polyline({
-        map,
-        path,
-        strokeColor: "#d4a843",
-        strokeOpacity: 0.96,
-        strokeWeight: 4,
-        geodesic: true,
-        icons: [
-          {
-            icon: {
-              path: google.maps.SymbolPath.CIRCLE,
-              fillColor: "#fff0b4",
-              fillOpacity: 1,
-              strokeOpacity: 0,
-              scale: 3,
-            },
-            offset: "0%",
-            repeat: "96px",
-          },
-        ],
-      });
-
-      path.forEach((point) => bounds.extend(point));
-
-      let offset = 0;
-      routeAnimationRef.current = window.setInterval(() => {
-        offset = (offset + 2) % 100;
-        if (routeAccentRef.current) {
-          routeAccentRef.current.set("icons", [
+          path,
+          strokeColor: "rgba(212,168,67,0.38)",
+          strokeOpacity: 1,
+          strokeWeight: 8,
+          geodesic: true,
+        });
+        routeAccentRef.current = new Polyline({
+          map,
+          path,
+          strokeColor: "#d4a843",
+          strokeOpacity: 0.96,
+          strokeWeight: 4,
+          geodesic: true,
+          icons: [
             {
-              icon: {
+                icon: {
                 path: google.maps.SymbolPath.CIRCLE,
                 fillColor: "#fff0b4",
                 fillOpacity: 1,
                 strokeOpacity: 0,
                 scale: 3,
               },
-              offset: `${offset}%`,
+              offset: "0%",
               repeat: "96px",
             },
-          ]);
-        }
-      }, 120);
-    }
+          ],
+        });
 
-    if (!bounds.isEmpty()) {
-      map.fitBounds(bounds, 88);
-    } else {
-      map.setCenter(center);
-      map.setZoom(17);
-    }
-  }, [center, checkpoints, checkpointsHit, destination, routePolyline, userAccuracyM, userPosition]);
+        path.forEach((point) => bounds.extend(point));
 
-  if (loadError) {
-    return <div className={`tk-map-loading ${className ?? ""}`.trim()}>Map failed to load</div>;
+        let offset = 0;
+        routeAnimationRef.current = window.setInterval(() => {
+          offset = (offset + 2) % 100;
+          if (routeAccentRef.current) {
+            routeAccentRef.current.set("icons", [
+              {
+                icon: {
+                  path: google.maps.SymbolPath.CIRCLE,
+                  fillColor: "#fff0b4",
+                  fillOpacity: 1,
+                  strokeOpacity: 0,
+                  scale: 3,
+                },
+                offset: `${offset}%`,
+                repeat: "96px",
+              },
+            ]);
+          }
+        }, 120);
+      }
+
+      if (!bounds.isEmpty()) {
+        map.fitBounds(bounds, 88);
+      } else {
+        map.setCenter(center);
+        map.setZoom(17);
+      }
+    } catch (error) {
+      console.error("Kings Hunt map overlays failed to render", error);
+      setMapError(error instanceof Error ? error : new Error("Unable to render the hunt map"));
+    }
+  }, [center, checkpoints, checkpointsHit, destination, libraries, mapError, routePolyline, userAccuracyM, userPosition]);
+
+  if (loadError || mapError) {
+    return (
+      <MapFallback
+        className={`${HUNT_MAP_HEIGHT_CLASS} ${className ?? ""}`.trim()}
+        eyebrow="Map failed to load"
+        title="Live route map unavailable"
+        body="The hunt can still continue. Use Google Maps directions and the venue details panel while the live map is unavailable."
+      />
+    );
   }
 
   if (!isLoaded) {
-    return <div className={`tk-map-loading ${className ?? ""}`.trim()}>Loading map</div>;
+    return <div className={`tk-map-loading ${HUNT_MAP_HEIGHT_CLASS} ${className ?? ""}`.trim()}>Loading map</div>;
   }
 
   return (
     <div className={`tk-google-map ${className ?? ""}`.trim()}>
       {statusLabel ? <div className="absolute left-4 top-4 z-[1] tk-map-status-pill">{statusLabel}</div> : null}
-      <div ref={containerRef} className="tk-google-map__canvas min-h-[22rem]" />
+      <div ref={containerRef} className={`tk-google-map__canvas ${HUNT_MAP_HEIGHT_CLASS}`.trim()} />
     </div>
   );
 }

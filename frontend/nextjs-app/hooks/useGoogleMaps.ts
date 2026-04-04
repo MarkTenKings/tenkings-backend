@@ -4,7 +4,15 @@ import { importLibrary, setOptions } from "@googlemaps/js-api-loader";
 import { useEffect, useState } from "react";
 
 let hasConfiguredLoader = false;
-let loadPromise: Promise<typeof google> | null = null;
+
+export interface LoadedGoogleMaps {
+  google: typeof google;
+  mapsLibrary: google.maps.MapsLibrary;
+  markerLibrary: google.maps.MarkerLibrary;
+  geometryLibrary: google.maps.GeometryLibrary;
+}
+
+let loadPromise: Promise<LoadedGoogleMaps> | null = null;
 
 function configureLoader() {
   if (hasConfiguredLoader) {
@@ -28,10 +36,20 @@ function configureLoader() {
   hasConfiguredLoader = true;
 }
 
-export async function loadGoogleMaps(): Promise<typeof google> {
+export async function loadGoogleMaps(): Promise<LoadedGoogleMaps> {
   if (!loadPromise) {
     configureLoader();
-    loadPromise = Promise.all([importLibrary("maps"), importLibrary("marker"), importLibrary("geometry")]).then(() => google);
+    loadPromise = Promise.all([importLibrary("maps"), importLibrary("marker"), importLibrary("geometry")])
+      .then(([mapsLibrary, markerLibrary, geometryLibrary]) => ({
+        google,
+        mapsLibrary: mapsLibrary as google.maps.MapsLibrary,
+        markerLibrary: markerLibrary as google.maps.MarkerLibrary,
+        geometryLibrary: geometryLibrary as google.maps.GeometryLibrary,
+      }))
+      .catch((error) => {
+        loadPromise = null;
+        throw error;
+      });
   }
 
   return loadPromise;
@@ -40,16 +58,21 @@ export async function loadGoogleMaps(): Promise<typeof google> {
 export function useGoogleMaps(): {
   isLoaded: boolean;
   loadError: Error | null;
+  libraries: LoadedGoogleMaps | null;
 } {
   const [isLoaded, setIsLoaded] = useState(false);
   const [loadError, setLoadError] = useState<Error | null>(null);
+  const [libraries, setLibraries] = useState<LoadedGoogleMaps | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    loadGoogleMaps()
-      .then(() => {
+    Promise.resolve()
+      .then(() => loadGoogleMaps())
+      .then((loadedLibraries) => {
         if (!cancelled) {
+          setLibraries(loadedLibraries);
+          setLoadError(null);
           setIsLoaded(true);
         }
       })
@@ -64,5 +87,5 @@ export function useGoogleMaps(): {
     };
   }, []);
 
-  return { isLoaded, loadError };
+  return { isLoaded, loadError, libraries };
 }

@@ -115,6 +115,13 @@ button {
   transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
 }
 
+.tk-map-marker__halo {
+  position: absolute;
+  inset: -0.35rem;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(212, 168, 67, 0.34), rgba(212, 168, 67, 0));
+}
+
 .tk-map-marker:hover,
 .tk-map-marker:focus-visible {
   transform: translateY(-2px) scale(1.04);
@@ -125,10 +132,19 @@ button {
 }
 
 .tk-map-marker__crown {
-  font-family: "Clash Display", var(--font-display);
-  font-size: 1rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  height: 1.2rem;
+  width: 1.2rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.tk-map-marker__crown svg {
+  display: block;
+  height: 100%;
+  width: 100%;
 }
 
 .tk-map-popup {
@@ -257,11 +273,27 @@ button {
   animation: tk-gold-pulse 1.8s ease-out infinite;
 }
 
+.tk-machine-marker__halo {
+  position: absolute;
+  inset: -0.45rem;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(212, 168, 67, 0.26), rgba(212, 168, 67, 0));
+}
+
 .tk-machine-marker__icon {
-  font-family: "Clash Display", var(--font-display);
-  font-size: 1.15rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  height: 1.15rem;
+  width: 1.15rem;
+  align-items: center;
+  justify-content: center;
+}
+
+.tk-machine-marker__icon svg {
+  display: block;
+  height: 100%;
+  width: 100%;
 }
 
 .tk-machine-marker::after {
