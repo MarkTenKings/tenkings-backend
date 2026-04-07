@@ -271,7 +271,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     const since7dMs = now - MS_7D;
 
     const primaryModelRaw = (process.env.OCR_LLM_MODEL ?? "").trim();
-    const primaryModel = primaryModelRaw && primaryModelRaw !== "gpt-5" ? primaryModelRaw : "gpt-5.2";
+    const primaryModel = primaryModelRaw && primaryModelRaw !== "gpt-5" ? primaryModelRaw : "gpt-5.4";
     const fallbackModel = (process.env.OCR_LLM_FALLBACK_MODEL ?? "gpt-5-mini").trim();
 
     const cardRows = await prisma.cardAsset.findMany({

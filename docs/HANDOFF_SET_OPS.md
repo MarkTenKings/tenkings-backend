@@ -1,15 +1,40 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-04` (Kings Hunt mobile navigation fix prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest local baseline before this commit is `a20c84e`; live runtime payload for `folsom-premium-outlets` was verified, the deployed route proxy failure was reproduced, and the local worktree now contains the fullscreen-nav + route-fix patch; no deploy/restart/migrate was run)
+- Last reviewed: `2026-04-07` (Task 32 OCR + KingsReview query fixes prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline before this task is `c1876fe`; no deploy/restart/migrate was run)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
   - `git status -sb` -> `## main...origin/main`
-  - modified tracked paths: `frontend/nextjs-app/components/kingshunt/KingsHuntExperience.tsx`, `frontend/nextjs-app/components/maps/TenKingsMap.tsx`, `frontend/nextjs-app/hooks/useGeolocation.ts`, `frontend/nextjs-app/hooks/useKingsHunt.ts`, `frontend/nextjs-app/hooks/useRouteComputation.ts`, `frontend/nextjs-app/lib/kingsHunt.ts`, `frontend/nextjs-app/pages/api/kingshunt/route.ts`, `frontend/nextjs-app/pages/kingshunt/[locationSlug].tsx`, `frontend/nextjs-app/styles/globals.css`, and handoff docs
+  - modified tracked paths: `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`, `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`, `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`, and handoff docs
 - Latest committed baseline in this checkout:
-  - `a20c84e` fix(kingshunt): route line, map glitch, remove TKD, fullscreen map, location services
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; read-only live verification against `https://collect.tenkings.co` and direct Google Routes API; no deploy/restart/migrate executed
+  - `c1876fe` fix(kingshunt): walkable route polyline, fix mobile memory crash
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; official OpenAI docs verification via public docs search; no deploy/restart/migrate executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-07, Task 32 HD OCR + OCR model target + numbered eBay query fix on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing:
+  - `git pull --ff-only --autostash origin main` -> `Already up to date.`
+- Implemented the requested OCR/KingsReview changes:
+  - `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+    - made the OCR image-source preference explicit for `FRONT`, `BACK`, and `TILT` with the required chain `cdnHdUrl -> imageUrl -> cdnThumbUrl -> thumbnailUrl`
+    - persisted the selected OCR source/url into the `photoOcr` audit payload so HD-vs-fallback choice is visible per photo
+    - changed the checked-in default primary OCR model target from `gpt-5.2` to `gpt-5.4` while keeping the fallback as `gpt-5-mini`
+  - `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+    - updated the reported default OCR primary model to the same `gpt-5.4` target so admin diagnostics match runtime code
+  - `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+    - changed numbered search formatting so values like `42/99`, `3/10`, and `150/199` now contribute only `/99`, `/10`, and `/199` to the eBay sold query
+- Verified the Uploads Screen 1 requirement against current `main` source:
+  - `frontend/nextjs-app/pages/admin/uploads.tsx` already renders the Insert picker inside `intakeStep === "required"` directly below Card Number
+  - no desktop JSX change was required for Fix 4 in this checkout
+- OpenAI model verification note:
+  - current public OpenAI docs did not expose a public `gpt-5.4` model page during this session
+  - the checked-in default was updated per user request, but if Vercel runtime env explicitly pins `OCR_LLM_MODEL=gpt-5.2`, that env var still needs to be changed to `gpt-5.4` for production/runtime parity
+- Validation observed locally:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file pages/api/admin/ai-ops/overview.ts --file pages/api/admin/kingsreview/enqueue.ts --file pages/admin/uploads.tsx` -> pass with the existing `pages/admin/uploads.tsx` `<img>` warnings only
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-04, Kings Hunt fullscreen mobile nav + working walking route fix on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

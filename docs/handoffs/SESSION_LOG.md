@@ -12726,7 +12726,7 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
-
+ 
 ## 2026-04-04 - Kings Hunt walkable route polyline + Safari mobile crash fix on main
 
 ### Summary
@@ -12763,6 +12763,7 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
 
 ## 2026-04-02 - Task 25 auto-OCR pending-status deadlock fix
 
@@ -13996,3 +13997,40 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-07 - Task 32 HD OCR + OCR model target + numbered eBay query fix on main
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing with `git pull --ff-only --autostash origin main`, which returned `Already up to date.`
+- Made the OCR image-source preference explicit for all three OCR photos (`FRONT`, `BACK`, `TILT`) with the chain `cdnHdUrl -> imageUrl -> cdnThumbUrl -> thumbnailUrl`, and surfaced the selected source in the OCR audit payload.
+- Updated the checked-in default OCR primary model target from `gpt-5.2` to `gpt-5.4` in both the OCR handler and the AI-ops overview endpoint while keeping fallback `gpt-5-mini`.
+- Changed KingsReview eBay query generation so numbered cards now search only by print-run suffix (for example `42/99` becomes `/99`).
+- Verified `frontend/nextjs-app/pages/admin/uploads.tsx` already renders the Insert picker on Screen 1 (`intakeStep === "required"`) directly below Card Number on the current `main` tree, so no Uploads JSX change was required for Fix 4.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`
+- `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`
+- `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- Branch sync:
+  - `git pull --ff-only --autostash origin main` -> `Already up to date.`
+- Targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/api/admin/cards/[cardId]/ocr-suggest.ts' --file pages/api/admin/ai-ops/overview.ts --file pages/api/admin/kingsreview/enqueue.ts --file pages/admin/uploads.tsx` -> pass with the existing `pages/admin/uploads.tsx` `<img>` warnings only
+- TypeScript:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- Diff hygiene:
+  - `git diff --check` -> pass
+
+### OpenAI Model Note
+- Current public OpenAI docs checked during this session did not expose a public `gpt-5.4` model page.
+- The checked-in default OCR target now uses `gpt-5.4` per user request.
+- If production/Vercel explicitly sets `OCR_LLM_MODEL=gpt-5.2`, that env var still needs to be updated to `gpt-5.4` to match the new checked-in default.
+
+### Notes
+- `OCR_LLM_MODEL` is the env var to update in Vercel if runtime is pinned to the prior model.
+- `OCR_LLM_FALLBACK_MODEL` remains unchanged at `gpt-5-mini`.

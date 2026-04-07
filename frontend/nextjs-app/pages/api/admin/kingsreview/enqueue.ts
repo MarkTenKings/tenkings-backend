@@ -75,6 +75,15 @@ const normalizeDescriptor = (value: string): string => {
 const hasDescriptorMatch = (values: string[], pattern: RegExp): boolean =>
   values.some((value) => pattern.test(normalizeQueryLabel(value)));
 
+const formatNumberedForSearch = (value: string | null | undefined): string => {
+  const numbered = normalizeWhitespace(value);
+  if (!numbered) {
+    return "";
+  }
+  const match = numbered.match(/\/\s*(\d{1,4})\b/);
+  return match ? `/${match[1]}` : "";
+};
+
 const buildDeterministicCompQuery = (params: {
   year: string;
   manufacturerRaw: string;
@@ -94,7 +103,7 @@ const buildDeterministicCompQuery = (params: {
   const setName = normalizeSetForQuery(params.setNameRaw, year, manufacturerRaw);
   const playerName = normalizeWhitespace(params.playerName);
   const cardNumber = normalizeWhitespace(params.cardNumber);
-  const numbered = normalizeWhitespace(params.numbered);
+  const numbered = formatNumberedForSearch(params.numbered);
   const descriptorCandidates = params.descriptorCandidates
     .map((entry) => normalizeQueryLabel(entry))
     .filter(Boolean);

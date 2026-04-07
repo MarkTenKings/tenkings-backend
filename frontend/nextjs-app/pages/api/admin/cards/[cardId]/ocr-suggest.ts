@@ -98,7 +98,7 @@ type StoredSuggestionSnapshot = {
 
 const DEFAULT_THRESHOLD = 0.7;
 const OCR_LLM_MODEL_RAW = (process.env.OCR_LLM_MODEL ?? "").trim();
-const OCR_LLM_MODEL = OCR_LLM_MODEL_RAW && OCR_LLM_MODEL_RAW !== "gpt-5" ? OCR_LLM_MODEL_RAW : "gpt-5.2";
+const OCR_LLM_MODEL = OCR_LLM_MODEL_RAW && OCR_LLM_MODEL_RAW !== "gpt-5" ? OCR_LLM_MODEL_RAW : "gpt-5.4";
 const OCR_LLM_FALLBACK_MODEL_RAW = (process.env.OCR_LLM_FALLBACK_MODEL ?? "").trim();
 const OCR_LLM_FALLBACK_MODEL = OCR_LLM_FALLBACK_MODEL_RAW || "gpt-5-mini";
 const OCR_LLM_REASONING_VALUES = new Set<OcrLlmReasoningEffort>(["none", "low", "medium", "high", "xhigh"]);
@@ -195,6 +195,8 @@ type PhotoOcrState = {
   ocrText: string;
   tokenCount: number;
   sourceImageId: string | null;
+  selectedImageSource: "cdnHdUrl" | "imageUrl" | "cdnThumbUrl" | "thumbnailUrl" | null;
+  selectedImageUrl: string | null;
 };
 
 type MemoryContext = {
@@ -2168,9 +2170,18 @@ function scoreTokenRefSupport(
 }
 
 function buildPhotoOcrState(params: {
-  frontImageUrl: string | null;
-  backImageUrl: string | null;
-  tiltImageUrl: string | null;
+  frontImage: {
+    url: string | null;
+    source: "cdnHdUrl" | "imageUrl" | "cdnThumbUrl" | "thumbnailUrl" | null;
+  };
+  backImage: {
+    url: string | null;
+    source: "cdnHdUrl" | "imageUrl" | "cdnThumbUrl" | "thumbnailUrl" | null;
+  };
+  tiltImage: {
+    url: string | null;
+    source: "cdnHdUrl" | "imageUrl" | "cdnThumbUrl" | "thumbnailUrl" | null;
+  };
   results: Array<{ id: string | null; text: string; tokenCount: number }>;
 }) {
   const resultById = new Map<OcrPhotoId, { text: string; tokenCount: number; sourceImageId: string | null }>();
@@ -2187,12 +2198,13 @@ function buildPhotoOcrState(params: {
   });
 
   const byId = OCR_PHOTO_IDS.reduce<Record<OcrPhotoId, PhotoOcrState>>((acc, id) => {
-    const hasImage =
+    const selectedImage =
       id === "FRONT"
-        ? Boolean(params.frontImageUrl)
+        ? params.frontImage
         : id === "BACK"
-        ? Boolean(params.backImageUrl)
-        : Boolean(params.tiltImageUrl);
+        ? params.backImage
+        : params.tiltImage;
+    const hasImage = Boolean(selectedImage.url);
     const result = resultById.get(id);
     const text = result?.text ?? "";
     acc[id] = {
@@ -2202,6 +2214,8 @@ function buildPhotoOcrState(params: {
       ocrText: text,
       tokenCount: result?.tokenCount ?? 0,
       sourceImageId: result?.sourceImageId ?? null,
+      selectedImageSource: selectedImage.source,
+      selectedImageUrl: selectedImage.url,
     };
     return acc;
   }, {} as Record<OcrPhotoId, PhotoOcrState>);
@@ -2894,6 +2908,41 @@ function pickImageUrl(...candidates: Array<string | null | undefined>): string |
   return null;
 }
 
+function resolvePreferredOcrImageSource(params: {
+  cdnHdUrl?: string | null;
+  imageUrl?: string | null;
+  cdnThumbUrl?: string | null;
+  thumbnailUrl?: string | null;
+}): {
+  url: string | null;
+  source: "cdnHdUrl" | "imageUrl" | "cdnThumbUrl" | "thumbnailUrl" | null;
+} {
+  const orderedCandidates: Array<{
+    key: "cdnHdUrl" | "imageUrl" | "cdnThumbUrl" | "thumbnailUrl";
+    value: string | null | undefined;
+  }> = [
+    { key: "cdnHdUrl", value: params.cdnHdUrl },
+    { key: "imageUrl", value: params.imageUrl },
+    { key: "cdnThumbUrl", value: params.cdnThumbUrl },
+    { key: "thumbnailUrl", value: params.thumbnailUrl },
+  ];
+
+  for (const candidate of orderedCandidates) {
+    const url = pickImageUrl(candidate.value);
+    if (url) {
+      return {
+        url,
+        source: candidate.key,
+      };
+    }
+  }
+
+  return {
+    url: null,
+    source: null,
+  };
+}
+
 function normalizeForNumbered(input: string): string {
   return input
     .toUpperCase()
@@ -2973,21 +3022,30 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
       return res.status(404).json({ message: "Card not found" });
     }
 
-    const frontImageUrl = pickImageUrl(card.cdnHdUrl, card.imageUrl, card.cdnThumbUrl, card.thumbnailUrl);
+    const frontImage = resolvePreferredOcrImageSource({
+      cdnHdUrl: card.cdnHdUrl,
+      imageUrl: card.imageUrl,
+      cdnThumbUrl: card.cdnThumbUrl,
+      thumbnailUrl: card.thumbnailUrl,
+    });
     const backPhoto = card.photos.find((photo) => photo.kind === "BACK");
     const tiltPhoto = card.photos.find((photo) => photo.kind === "TILT");
-    const backImageUrl = pickImageUrl(
-      backPhoto?.cdnHdUrl,
-      backPhoto?.imageUrl,
-      backPhoto?.cdnThumbUrl,
-      backPhoto?.thumbnailUrl
-    );
-    const tiltImageUrl = pickImageUrl(
-      tiltPhoto?.cdnHdUrl,
-      tiltPhoto?.imageUrl,
-      tiltPhoto?.cdnThumbUrl,
-      tiltPhoto?.thumbnailUrl
-    );
+    const backImage = resolvePreferredOcrImageSource({
+      cdnHdUrl: backPhoto?.cdnHdUrl,
+      imageUrl: backPhoto?.imageUrl,
+      cdnThumbUrl: backPhoto?.cdnThumbUrl,
+      thumbnailUrl: backPhoto?.thumbnailUrl,
+    });
+    const tiltImage = resolvePreferredOcrImageSource({
+      cdnHdUrl: tiltPhoto?.cdnHdUrl,
+      imageUrl: tiltPhoto?.imageUrl,
+      cdnThumbUrl: tiltPhoto?.cdnThumbUrl,
+      thumbnailUrl: tiltPhoto?.thumbnailUrl,
+    });
+
+    const frontImageUrl = frontImage.url;
+    const backImageUrl = backImage.url;
+    const tiltImageUrl = tiltImage.url;
 
     const frontProxyUrl = frontImageUrl ? buildProxyUrl(req, frontImageUrl) : null;
     const backProxyUrl = backImageUrl ? buildProxyUrl(req, backImageUrl) : null;
@@ -3015,9 +3073,9 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
       : null;
 
     const pendingPhotoState = buildPhotoOcrState({
-      frontImageUrl: frontImageUrl ?? null,
-      backImageUrl: backImageUrl ?? null,
-      tiltImageUrl: tiltImageUrl ?? null,
+      frontImage,
+      backImage,
+      tiltImage,
       results: [],
     });
     const storedSuggestionSnapshot = extractStoredSuggestionSnapshot(card.ocrSuggestionJson);
@@ -3174,9 +3232,9 @@ async function handler(req: NextApiRequest, res: NextApiResponse<SuggestResponse
     const ocrResponse = await runGoogleVisionOcr(images);
     const ocrElapsedMs = Date.now() - ocrStartMs;
     const photoState = buildPhotoOcrState({
-      frontImageUrl: frontImageUrl ?? null,
-      backImageUrl: backImageUrl ?? null,
-      tiltImageUrl: tiltImageUrl ?? null,
+      frontImage,
+      backImage,
+      tiltImage,
       results: ocrResponse.results.map((result) => ({
         id: typeof result?.id === "string" ? result.id : null,
         text: typeof result?.text === "string" ? result.text : "",
