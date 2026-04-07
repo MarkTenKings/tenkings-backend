@@ -1,15 +1,58 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-07` (Task 32 OCR + KingsReview query fixes prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline before this task is `c1876fe`; no deploy/restart/migrate was run)
+- Last reviewed: `2026-04-07` (locations page upgrade prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline before this task is `80a57f8`; Vacaville production location row updated; no deploy/restart/migrate was run)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
   - `git status -sb` -> `## main...origin/main`
-  - modified tracked paths: `frontend/nextjs-app/pages/api/admin/ai-ops/overview.ts`, `frontend/nextjs-app/pages/api/admin/cards/[cardId]/ocr-suggest.ts`, `frontend/nextjs-app/pages/api/admin/kingsreview/enqueue.ts`, and handoff docs
+  - modified tracked paths: `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`, `frontend/nextjs-app/package.json`, `frontend/nextjs-app/pages/locations.tsx`, `frontend/nextjs-app/styles/globals.css`, `pnpm-lock.yaml`, `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - untracked paths: `frontend/nextjs-app/components/locations/`, `frontend/nextjs-app/lib/locationUtils.ts`
 - Latest committed baseline in this checkout:
-  - `c1876fe` fix(kingshunt): walkable route polyline, fix mobile memory crash
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; official OpenAI docs verification via public docs search; no deploy/restart/migrate executed
+  - `80a57f8` fix: HD OCR images + GPT-5.4 + eBay numbered query + insert on screen 1 desktop
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; production droplet `/root/tenkings-backend` for the requested `Location` row update + verification; no deploy/restart/migrate executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-07, locations page clustering + GPS sort + open status + sidebar layout on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Implemented the `/locations` page upgrade on the current `main` checkout:
+  - `frontend/nextjs-app/pages/locations.tsx`
+    - switched the public locations surface to a brand-black layout with a responsive split view: mobile keeps map-first stacking while desktop uses a 380px scrollable venue sidebar and a sticky map panel
+    - added silent browser geolocation on page load, nearest-first sorting when GPS is available, per-card distance labels, nearby highlighting, and card-to-map selection sync
+    - filtered the online system location out of the venue list by slug (`online-collect-tenkings-co`) and only rendered physical locations with coordinates
+  - `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+    - added explicit Google Maps dark-theme options with `mapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID!` and `colorScheme: "DARK" as any`
+    - replaced the generic crown marker with the actual Ten Kings header crown path, added cluster rendering via `@googlemaps/markerclusterer`, and wired selected marker/card syncing through a shared map ref
+    - rebuilt marker info windows with inline dark styling, `Start Hunt` / `Directions` actions, and post-open chrome overrides so the Google white shell is suppressed
+    - filtered out the online slug inside the map layer as a second guardrail
+  - `frontend/nextjs-app/components/locations/LocationCard.tsx`
+    - introduced the compact branded venue card with status badge, distance display, recent activity snippet, nearby CTA styling, and admin edit affordance
+  - `frontend/nextjs-app/lib/locationUtils.ts`
+    - added the shared location helpers for slug filtering, nearby threshold, distance formatting, relative time formatting, and hours parsing into `open` / `closed` / `event_only` / `unknown`
+  - `frontend/nextjs-app/styles/globals.css`
+    - updated map marker styling to the spec dimensions/colors, added selected-marker state and `pulse` animation support for the green open-status dot
+  - `frontend/nextjs-app/package.json` and `pnpm-lock.yaml`
+    - added `@googlemaps/markerclusterer`
+- Ran the requested production DB update for Vacaville on the droplet:
+  - `UPDATE "Location" ... WHERE slug = 'vacaville-outlet-mall';` -> `UPDATE 1`
+  - verified row now returns `latitude=38.36593`, `longitude=-121.9571`, `locationType=mall`, `city=Vacaville`, `state=CA`, `zip=95687`
+- Validation observed locally:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/locations.tsx --file components/maps/StoreLocatorMap.tsx --file components/locations/LocationCard.tsx --file lib/locationUtils.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, or migration was executed in this session.
+
+## Session Update (2026-04-07, docs-only repo state refresh in `/Users/markthomas/tenkings-task27-main` after `80a57f8`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified current local repo state without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `80a57f8`
+  - `git log -1 --oneline` -> `80a57f8 fix: HD OCR images + GPT-5.4 + eBay numbered query + insert on screen 1 desktop`
+- Confirmed the latest committed baseline in this checkout is `80a57f8` `fix: HD OCR images + GPT-5.4 + eBay numbered query + insert on screen 1 desktop`.
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-07, Task 32 HD OCR + OCR model target + numbered eBay query fix on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

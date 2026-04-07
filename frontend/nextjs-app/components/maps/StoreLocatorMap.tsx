@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useRef, useState } from "react";
-import MapFallback from "./MapFallback";
-import { buildDirectionsHref, formatLocationHours, type KingsHuntLocation } from "../../lib/kingsHunt";
+import { MarkerClusterer } from "@googlemaps/markerclusterer";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
 import { useGoogleMaps } from "../../hooks/useGoogleMaps";
+import { buildDirectionsHref, getLocationTypeLabel, type KingsHuntLocation } from "../../lib/kingsHunt";
+import { ONLINE_LOCATION_SLUG } from "../../lib/locationUtils";
+import MapFallback from "./MapFallback";
 
 export interface StoreLocatorMapLocation {
   id: string;
@@ -23,102 +25,230 @@ export interface StoreLocatorMapProps {
   locations: StoreLocatorMapLocation[];
   onMarkerClick?: (slug: string) => void;
   className?: string;
+  mapRef?: MutableRefObject<google.maps.Map | null>;
+  selectedSlug?: string | null;
 }
 
 const DEFAULT_CENTER = { lat: 39.8283, lng: -98.5795 };
+const TEN_KINGS_CROWN_PATH = "M6 34 14 13l11 10L32 4l7 19 11-10 8 21-5 2-6-13-12 11-3-16-3 16-12-11-6 13Z";
 
-function buildMarkerNode(): HTMLDivElement {
-  const marker = document.createElement("div");
-  marker.className = "tk-map-marker";
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
 
-  const halo = document.createElement("span");
-  halo.className = "tk-map-marker__halo";
-  marker.appendChild(halo);
+function setMarkerSelected(node: HTMLElement, selected: boolean) {
+  node.dataset.selected = selected ? "true" : "false";
+}
+
+function createCrownMarkerContent(selected = false): HTMLDivElement {
+  const container = document.createElement("div");
+  container.className = "tk-map-marker";
+  setMarkerSelected(container, selected);
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 64 40");
+  svg.setAttribute("width", "22");
+  svg.setAttribute("height", "22");
+  svg.setAttribute("fill", "#0a0a0a");
+  svg.setAttribute("aria-hidden", "true");
+
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", TEN_KINGS_CROWN_PATH);
+  svg.appendChild(path);
 
   const crown = document.createElement("span");
   crown.className = "tk-map-marker__crown";
-  crown.innerHTML =
-    '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 16L3 6l5.5 4.8L12 4l3.5 6.8L21 6l-2 10H5z"></path><path d="M19 19H5v-2h14v2z"></path></svg>';
-  marker.appendChild(crown);
+  crown.appendChild(svg);
+  container.appendChild(crown);
 
-  return marker;
+  return container;
 }
 
-function buildPopupNode(location: StoreLocatorMapLocation, onMarkerClick?: (slug: string) => void): HTMLDivElement {
-  const wrapper = document.createElement("div");
-  wrapper.className = "tk-map-popup";
+function createClusterMarkerContent(count: number): HTMLDivElement {
+  const element = document.createElement("div");
+  element.style.cssText = `
+    width: 44px;
+    height: 44px;
+    border-radius: 999px;
+    background: #d4a843;
+    color: #0a0a0a;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Clash Display', sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+    cursor: pointer;
+    box-shadow: 0 0 16px rgba(212,168,67,0.4);
+    border: 1px solid rgba(10,10,10,0.18);
+  `;
+  element.textContent = String(count);
+  return element;
+}
 
-  const eyebrow = document.createElement("p");
-  eyebrow.className = "tk-map-popup__eyebrow";
-  eyebrow.textContent = "Kings Hunt Venue";
-  wrapper.appendChild(eyebrow);
+function buildInfoWindowContent(location: StoreLocatorMapLocation): string {
+  const typeLabel = escapeHtml(getLocationTypeLabel(location.locationType).toUpperCase());
+  const name = escapeHtml(location.name);
+  const address = escapeHtml(location.address || "");
+  const startHuntHref = `/kingshunt/${encodeURIComponent(location.slug)}`;
+  const directionsButton = location.mapsUrl
+    ? `<a href="${escapeHtml(location.mapsUrl)}" target="_blank" rel="noopener noreferrer" style="
+        display:inline-block;
+        background:transparent;
+        color:#d4a843;
+        padding:8px 16px;
+        border-radius:6px;
+        font-weight:700;
+        font-size:13px;
+        text-decoration:none;
+        border:1px solid #d4a843;
+        text-transform:uppercase;
+        letter-spacing:0.05em;
+        font-family:Satoshi,sans-serif;
+      ">Directions</a>`
+    : "";
 
-  const title = document.createElement("p");
-  title.className = "tk-map-popup__title";
-  title.textContent = location.name;
-  wrapper.appendChild(title);
+  return `
+    <div style="
+      font-family:Satoshi,sans-serif;
+      background:#111111;
+      color:#ffffff;
+      padding:16px;
+      min-width:220px;
+      border-radius:8px;
+    ">
+      <div style="
+        font-size:11px;
+        color:#d4a843;
+        letter-spacing:0.1em;
+        font-weight:700;
+        text-transform:uppercase;
+        margin-bottom:4px;
+      ">${typeLabel}</div>
+      <div style="
+        font-family:'Clash Display',sans-serif;
+        font-size:18px;
+        font-weight:700;
+        color:#ffffff;
+        margin-bottom:8px;
+      ">${name}</div>
+      <div style="
+        font-size:13px;
+        color:#999999;
+        margin-bottom:12px;
+      ">${address}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <a href="${startHuntHref}" style="
+          display:inline-block;
+          background:#d4a843;
+          color:#0a0a0a;
+          padding:8px 16px;
+          border-radius:6px;
+          font-weight:700;
+          font-size:13px;
+          text-decoration:none;
+          text-transform:uppercase;
+          letter-spacing:0.05em;
+          font-family:Satoshi,sans-serif;
+        ">Start Hunt</a>
+        ${directionsButton}
+      </div>
+    </div>
+  `;
+}
 
-  const meta = document.createElement("p");
-  meta.className = "tk-map-popup__meta";
-  meta.textContent = [location.address, [location.city, location.state].filter(Boolean).join(", ")].filter(Boolean).join(" • ");
-  wrapper.appendChild(meta);
-
-  const hours = formatLocationHours(location.hours);
-  if (hours) {
-    const hoursNode = document.createElement("p");
-    hoursNode.className = "tk-map-popup__hours";
-    hoursNode.textContent = hours;
-    wrapper.appendChild(hoursNode);
+function applyInfoWindowChrome() {
+  const frame = document.querySelector(".gm-style .gm-style-iw-c");
+  if (frame instanceof HTMLElement) {
+    frame.style.padding = "0";
+    frame.style.background = "transparent";
+    frame.style.boxShadow = "none";
+    frame.style.borderRadius = "0";
   }
 
-  const actions = document.createElement("div");
-  actions.className = "tk-map-popup__actions";
+  const content = document.querySelector(".gm-style .gm-style-iw-d");
+  if (content instanceof HTMLElement) {
+    content.style.overflow = "hidden";
+    content.style.maxHeight = "none";
+  }
 
-  const detailsButton = document.createElement("button");
-  detailsButton.type = "button";
-  detailsButton.className = "tk-map-popup__action";
-  detailsButton.textContent = "View Details";
-  detailsButton.addEventListener("click", () => onMarkerClick?.(location.slug));
-  actions.appendChild(detailsButton);
-
-  const directionsLink = document.createElement("a");
-  directionsLink.className = "tk-map-popup__secondary";
-  directionsLink.href = buildDirectionsHref({
-    latitude: location.latitude,
-    longitude: location.longitude,
-    address: location.address,
-    mapsUrl: location.mapsUrl ?? null,
-  } satisfies Pick<KingsHuntLocation, "latitude" | "longitude" | "address" | "mapsUrl">);
-  directionsLink.target = "_blank";
-  directionsLink.rel = "noreferrer";
-  directionsLink.textContent = "Get Directions";
-  actions.appendChild(directionsLink);
-
-  wrapper.appendChild(actions);
-  return wrapper;
+  const tail = document.querySelector(".gm-style .gm-style-iw-tc");
+  if (tail instanceof HTMLElement) {
+    tail.style.display = "none";
+  }
 }
 
-export default function StoreLocatorMap({ locations, onMarkerClick, className }: StoreLocatorMapProps) {
+export default function StoreLocatorMap({
+  locations,
+  onMarkerClick,
+  className,
+  mapRef,
+  selectedSlug = null,
+}: StoreLocatorMapProps) {
   const { isLoaded, loadError, libraries } = useGoogleMaps();
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<google.maps.Map | null>(null);
+  const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
-  const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
+  const markerLookupRef = useRef<Map<string, google.maps.marker.AdvancedMarkerElement>>(new Map());
+  const markerNodeLookupRef = useRef<Map<string, HTMLDivElement>>(new Map());
+  const clustererRef = useRef<MarkerClusterer | null>(null);
   const [mapError, setMapError] = useState<Error | null>(null);
 
-  useEffect(() => {
-    if (!isLoaded || !libraries || !containerRef.current || mapRef.current || mapError) {
+  const physicalLocations = useMemo(
+    () =>
+      locations.filter(
+        (location) =>
+          location.slug !== ONLINE_LOCATION_SLUG &&
+          Number.isFinite(location.latitude) &&
+          Number.isFinite(location.longitude),
+      ),
+    [locations],
+  );
+
+  const locationsBySlug = useMemo(
+    () => new Map(physicalLocations.map((location) => [location.slug, location])),
+    [physicalLocations],
+  );
+
+  const updateSelectedMarkers = (slug: string | null) => {
+    markerNodeLookupRef.current.forEach((node, markerSlug) => {
+      setMarkerSelected(node, markerSlug === slug);
+    });
+  };
+
+  const openInfoWindow = (location: StoreLocatorMapLocation, marker: google.maps.marker.AdvancedMarkerElement) => {
+    const map = mapInstanceRef.current;
+    const infoWindow = infoWindowRef.current;
+    if (!map || !infoWindow) {
       return;
     }
+
+    infoWindow.setContent(buildInfoWindowContent(location));
+    infoWindow.open({ anchor: marker, map });
+  };
+
+  useEffect(() => {
+    if (!isLoaded || !libraries || !containerRef.current || mapInstanceRef.current || mapError) {
+      return;
+    }
+
+    const markerLookup = markerLookupRef.current;
+    const markerNodeLookup = markerNodeLookupRef.current;
 
     try {
       const { Map, InfoWindow } = libraries.mapsLibrary;
 
-      mapRef.current = new Map(containerRef.current, {
+      mapInstanceRef.current = new Map(containerRef.current, {
         center: DEFAULT_CENTER,
         zoom: 4,
         minZoom: 3,
-        mapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID,
+        mapId: process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID!,
+        colorScheme: "DARK" as any,
         renderingType: google.maps.RenderingType.VECTOR,
         disableDefaultUI: true,
         zoomControl: true,
@@ -127,7 +257,11 @@ export default function StoreLocatorMap({ locations, onMarkerClick, className }:
         fullscreenControl: false,
         gestureHandling: "cooperative",
       });
-      infoWindowRef.current = new InfoWindow();
+      mapRef && (mapRef.current = mapInstanceRef.current);
+
+      const infoWindow = new InfoWindow();
+      infoWindow.addListener("domready", applyInfoWindowChrome);
+      infoWindowRef.current = infoWindow;
     } catch (error) {
       console.error("Store locator map initialization failed", error);
       setMapError(error instanceof Error ? error : new Error("Unable to initialize the location map"));
@@ -135,18 +269,27 @@ export default function StoreLocatorMap({ locations, onMarkerClick, className }:
     }
 
     return () => {
-      markersRef.current.forEach((marker) => {
+      clustererRef.current?.clearMarkers();
+      clustererRef.current = null;
+
+      markerLookup.forEach((marker) => {
+        google.maps.event.clearInstanceListeners(marker);
         marker.map = null;
       });
-      markersRef.current = [];
+      markerLookup.clear();
+      markerNodeLookup.clear();
+
       infoWindowRef.current?.close();
       infoWindowRef.current = null;
-      mapRef.current = null;
+      mapInstanceRef.current = null;
+      if (mapRef) {
+        mapRef.current = null;
+      }
     };
-  }, [isLoaded, libraries, mapError]);
+  }, [isLoaded, libraries, mapError, mapRef]);
 
   useEffect(() => {
-    const map = mapRef.current;
+    const map = mapInstanceRef.current;
     const infoWindow = infoWindowRef.current;
     if (!map || !infoWindow || !libraries || mapError) {
       return;
@@ -154,53 +297,90 @@ export default function StoreLocatorMap({ locations, onMarkerClick, className }:
 
     try {
       const { AdvancedMarkerElement } = libraries.markerLibrary;
-      const mappableLocations = locations.filter(
-        (location) => Number.isFinite(location.latitude) && Number.isFinite(location.longitude),
-      );
 
-      markersRef.current.forEach((marker) => {
+      clustererRef.current?.clearMarkers();
+      clustererRef.current = null;
+
+      markerLookupRef.current.forEach((marker) => {
+        google.maps.event.clearInstanceListeners(marker);
         marker.map = null;
       });
-      markersRef.current = [];
+      markerLookupRef.current.clear();
+      markerNodeLookupRef.current.clear();
+      infoWindow.close();
 
-      if (mappableLocations.length === 0) {
+      if (physicalLocations.length === 0) {
         map.setCenter(DEFAULT_CENTER);
         map.setZoom(4);
         return;
       }
 
       const bounds = new google.maps.LatLngBounds();
+      const markers: google.maps.marker.AdvancedMarkerElement[] = [];
 
-      mappableLocations.forEach((location) => {
+      physicalLocations.forEach((location) => {
+        const content = createCrownMarkerContent(false);
         const marker = new AdvancedMarkerElement({
           map,
           position: { lat: location.latitude, lng: location.longitude },
           title: location.name,
           gmpClickable: true,
-          content: buildMarkerNode(),
+          content,
         });
 
         marker.addListener("click", () => {
-          infoWindow.setContent(buildPopupNode(location, onMarkerClick));
-          infoWindow.open({ map, anchor: marker });
+          updateSelectedMarkers(location.slug);
+          openInfoWindow(location, marker);
+          onMarkerClick?.(location.slug);
         });
 
-        markersRef.current.push(marker);
+        markerLookupRef.current.set(location.slug, marker);
+        markerNodeLookupRef.current.set(location.slug, content);
+        markers.push(marker);
         bounds.extend({ lat: location.latitude, lng: location.longitude });
       });
 
-      if (mappableLocations.length === 1) {
-        map.setCenter({ lat: mappableLocations[0].latitude, lng: mappableLocations[0].longitude });
-        map.setZoom(12);
-        return;
-      }
+      clustererRef.current = new MarkerClusterer({
+        map,
+        markers,
+        renderer: {
+          render: ({ count, position }) =>
+            new AdvancedMarkerElement({
+              position,
+              zIndex: 1000 + count,
+              content: createClusterMarkerContent(count),
+            }),
+        },
+      });
 
-      map.fitBounds(bounds, 72);
+      if (physicalLocations.length === 1) {
+        map.setCenter({ lat: physicalLocations[0].latitude, lng: physicalLocations[0].longitude });
+        map.setZoom(12);
+      } else {
+        map.fitBounds(bounds, 72);
+      }
     } catch (error) {
       console.error("Store locator markers failed to render", error);
       setMapError(error instanceof Error ? error : new Error("Unable to render location markers"));
     }
-  }, [libraries, locations, mapError, onMarkerClick]);
+  }, [libraries, mapError, onMarkerClick, physicalLocations]);
+
+  useEffect(() => {
+    updateSelectedMarkers(selectedSlug);
+
+    if (!selectedSlug) {
+      infoWindowRef.current?.close();
+      return;
+    }
+
+    const marker = markerLookupRef.current.get(selectedSlug);
+    const location = locationsBySlug.get(selectedSlug);
+    if (!marker || !location) {
+      return;
+    }
+
+    openInfoWindow(location, marker);
+  }, [locationsBySlug, selectedSlug]);
 
   if (loadError || mapError) {
     return (
@@ -221,5 +401,20 @@ export default function StoreLocatorMap({ locations, onMarkerClick, className }:
     <div className={`tk-google-map ${className ?? ""}`.trim()}>
       <div ref={containerRef} className="tk-google-map__canvas" />
     </div>
+  );
+}
+
+export function buildStoreLocatorDirectionsHref(
+  location: Pick<StoreLocatorMapLocation, "latitude" | "longitude" | "address" | "mapsUrl">,
+  origin?: { lat: number; lng: number } | null,
+) {
+  return buildDirectionsHref(
+    {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      address: location.address,
+      mapsUrl: location.mapsUrl ?? null,
+    } satisfies Pick<KingsHuntLocation, "latitude" | "longitude" | "address" | "mapsUrl">,
+    origin ?? null,
   );
 }

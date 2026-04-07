@@ -119,44 +119,36 @@ button {
 .tk-map-marker {
   position: relative;
   display: inline-flex;
-  height: 2.75rem;
-  width: 2.75rem;
+  height: 40px;
+  width: 40px;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  background:
-    radial-gradient(circle at top, rgba(255, 255, 255, 0.18), transparent 48%),
-    linear-gradient(180deg, rgba(212, 168, 67, 0.95), rgba(161, 121, 32, 0.96));
-  color: #120f07;
-  box-shadow:
-    0 12px 28px rgba(0, 0, 0, 0.42),
-    0 0 0 1px rgba(212, 168, 67, 0.26);
+  background: #d4a843;
+  color: #0a0a0a;
+  box-shadow: 0 2px 8px rgba(212, 168, 67, 0.4);
   transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
-}
-
-.tk-map-marker__halo {
-  position: absolute;
-  inset: -0.35rem;
-  border-radius: 999px;
-  background: radial-gradient(circle, rgba(212, 168, 67, 0.34), rgba(212, 168, 67, 0));
 }
 
 .tk-map-marker:hover,
 .tk-map-marker:focus-visible {
   transform: translateY(-2px) scale(1.04);
+  box-shadow: 0 8px 20px rgba(212, 168, 67, 0.45);
+}
+
+.tk-map-marker[data-selected="true"] {
+  transform: scale(1.08);
   box-shadow:
-    0 18px 34px rgba(0, 0, 0, 0.48),
-    0 0 0 1px rgba(212, 168, 67, 0.42),
-    0 0 28px rgba(212, 168, 67, 0.24);
+    0 0 0 2px rgba(212, 168, 67, 0.26),
+    0 10px 24px rgba(212, 168, 67, 0.45);
 }
 
 .tk-map-marker__crown {
   position: relative;
   z-index: 1;
   display: inline-flex;
-  height: 1.2rem;
-  width: 1.2rem;
+  height: 22px;
+  width: 22px;
   align-items: center;
   justify-content: center;
 }
@@ -237,6 +229,10 @@ button {
 .tk-map-popup__secondary {
   background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.82);
+}
+
+.tk-open-status-dot {
+  animation: pulse 2s infinite;
 }
 
 .tk-map-status-pill {
@@ -399,6 +395,16 @@ button {
   }
   50% {
     transform: scale(1.1);
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
   }
 }
 

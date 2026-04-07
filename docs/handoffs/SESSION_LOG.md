@@ -1031,6 +1031,43 @@
 - `docs/HANDOFF_SET_OPS.md`
 - `docs/handoffs/SESSION_LOG.md`
 
+## 2026-04-07 - Locations page clustering, GPS sort, open status, activity, and sidebar layout
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Reworked `/locations` into the requested black-brand responsive layout: map-first on mobile, scrollable 380px venue sidebar on desktop, shared card/marker selection state, and silent GPS-based nearest sorting when geolocation is available.
+- Added new location-card and location-utils modules for distance formatting, open-status parsing, recent-activity display, nearby highlighting, and filtering the online system location by slug.
+- Refactored `StoreLocatorMap` to use the actual Ten Kings crown path, brand-styled marker clusters, explicit dark Google Maps configuration (`mapId` + `colorScheme: "DARK"`), and inline-styled dark info windows with hunt/directions actions.
+- Ran the requested production Vacaville location update on the droplet and verified the row now has coordinates and metadata suitable for `/locations` map rendering.
+- No deploy, restart, or migration was executed.
+
+### Files Updated
+- `frontend/nextjs-app/pages/locations.tsx`
+- `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+- `frontend/nextjs-app/components/locations/LocationCard.tsx`
+- `frontend/nextjs-app/lib/locationUtils.ts`
+- `frontend/nextjs-app/styles/globals.css`
+- `frontend/nextjs-app/package.json`
+- `pnpm-lock.yaml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- Targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/locations.tsx --file components/maps/StoreLocatorMap.tsx --file components/locations/LocationCard.tsx --file lib/locationUtils.ts` -> pass
+- TypeScript:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- Diff hygiene:
+  - `git diff --check` -> pass
+- Production DB evidence:
+  - droplet shell: `echo "DATABASE_URL length: ${#DATABASE_URL}"` -> `145`
+  - `psql "$DATABASE_URL" -c "UPDATE ... WHERE slug = 'vacaville-outlet-mall';"` -> `UPDATE 1`
+  - `psql "$DATABASE_URL" -c "SELECT slug, latitude, longitude, \"locationType\", city, state, zip FROM \"Location\" WHERE slug = 'vacaville-outlet-mall';"` -> row returned `vacaville-outlet-mall | 38.36593 | -121.9571 | mall | Vacaville | CA | 95687`
+
+### Notes
+- The online system location continues to come back from `/api/locations` as `locationType: "other"`, so the UI filter is intentionally slug-based rather than type-based.
+- The new clusterer dependency was added to `@tenkings/nextjs-app`.
+
 ## 2026-04-02 - Task 28 ONE PLAN direct SetCard lookup
 
 ### Summary
@@ -14034,3 +14071,21 @@
 ### Notes
 - `OCR_LLM_MODEL` is the env var to update in Vercel if runtime is pinned to the prior model.
 - `OCR_LLM_FALLBACK_MODEL` remains unchanged at `gpt-5-mini`.
+
+## 2026-04-07 - Docs-only repo state refresh in tenkings-task27-main after Task 32 commit
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified the current local checkout state without changing code or runtime.
+- Confirmed the latest committed baseline is `80a57f8` `fix: HD OCR images + GPT-5.4 + eBay numbered query + insert on screen 1 desktop`.
+- Updated handoff docs only; no code, runtime, deploy, restart, migration, or DB changes were executed.
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `80a57f8`
+- `git log -1 --oneline` -> `80a57f8 fix: HD OCR images + GPT-5.4 + eBay numbered query + insert on screen 1 desktop`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
