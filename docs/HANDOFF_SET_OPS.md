@@ -1,17 +1,29 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-07` (fullscreen `/locations` redesign prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline before this session is `1de33df`; no deploy/restart/migrate was run)
+- Last reviewed: `2026-04-07` (fullscreen `/locations` redesign committed on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline is `6bb0d11`; no deploy/restart/migrate was run)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
-  - `git status -sb` -> `## main...origin/main` with pending redesign changes
-  - modified tracked paths: `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`, `frontend/nextjs-app/pages/locations.tsx`, `frontend/nextjs-app/styles/globals.css`, `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
-  - deleted tracked paths: `frontend/nextjs-app/components/locations/LocationCard.tsx`
-  - untracked paths: `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`, `frontend/nextjs-app/pages/api/locations/[slug]/photo.ts`
+  - `git status -sb` -> `## main...origin/main`
+  - modified tracked paths: none
+  - deleted tracked paths: none
+  - untracked paths: none
 - Latest committed baseline in this checkout:
-  - `1de33df` feat(locations): clustering, GPS sort, open status, activity, sidebar layout
+  - `6bb0d11` feat(locations): fullscreen map, slide-in detail panel, venue photos, live rips
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migrate executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-07, docs-only repo state refresh in `/Users/markthomas/tenkings-task27-main` after `6bb0d11`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified the current local checkout state after pushing the fullscreen `/locations` redesign:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `6bb0d11`
+  - `git log -1 --oneline` -> `6bb0d11 feat(locations): fullscreen map, slide-in detail panel, venue photos, live rips`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-07, `/locations` fullscreen map + slide-in detail panel follow-up on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

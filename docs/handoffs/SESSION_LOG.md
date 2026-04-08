@@ -14127,3 +14127,21 @@
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
 - Diff hygiene:
   - `git diff --check` -> pass
+
+## 2026-04-07 - Docs-only repo state refresh in tenkings-task27-main after fullscreen locations redesign commit
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified the current local checkout state after pushing the fullscreen `/locations` redesign.
+- Confirmed the latest committed baseline is `6bb0d11` `feat(locations): fullscreen map, slide-in detail panel, venue photos, live rips`.
+- Updated handoff docs only; no code, runtime, deploy, restart, migration, or DB changes were executed.
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `6bb0d11`
+- `git log -1 --oneline` -> `6bb0d11 feat(locations): fullscreen map, slide-in detail panel, venue photos, live rips`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
