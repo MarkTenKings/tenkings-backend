@@ -1,9 +1,8 @@
 'use client';
 
 import { MarkerClusterer } from "@googlemaps/markerclusterer";
-import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useGoogleMaps } from "../../hooks/useGoogleMaps";
-import { buildDirectionsHref, getLocationTypeLabel, type KingsHuntLocation } from "../../lib/kingsHunt";
 import { ONLINE_LOCATION_SLUG } from "../../lib/locationUtils";
 import MapFallback from "./MapFallback";
 
@@ -24,22 +23,14 @@ export interface StoreLocatorMapLocation {
 export interface StoreLocatorMapProps {
   locations: StoreLocatorMapLocation[];
   onMarkerClick?: (slug: string) => void;
+  onMapClick?: () => void;
   className?: string;
-  mapRef?: MutableRefObject<google.maps.Map | null>;
   selectedSlug?: string | null;
+  edgeToEdge?: boolean;
 }
 
 const DEFAULT_CENTER = { lat: 39.8283, lng: -98.5795 };
 const TEN_KINGS_CROWN_PATH = "M6 34 14 13l11 10L32 4l7 19 11-10 8 21-5 2-6-13-12 11-3-16-3 16-12-11-6 13Z";
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
 
 function setMarkerSelected(node: HTMLElement, selected: boolean) {
   node.dataset.selected = selected ? "true" : "false";
@@ -53,7 +44,7 @@ function createCrownMarkerContent(selected = false): HTMLDivElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 64 40");
   svg.setAttribute("width", "22");
-  svg.setAttribute("height", "22");
+  svg.setAttribute("height", "18");
   svg.setAttribute("fill", "#0a0a0a");
   svg.setAttribute("aria-hidden", "true");
 
@@ -91,112 +82,43 @@ function createClusterMarkerContent(count: number): HTMLDivElement {
   return element;
 }
 
-function buildInfoWindowContent(location: StoreLocatorMapLocation): string {
-  const typeLabel = escapeHtml(getLocationTypeLabel(location.locationType).toUpperCase());
-  const name = escapeHtml(location.name);
-  const address = escapeHtml(location.address || "");
-  const startHuntHref = `/kingshunt/${encodeURIComponent(location.slug)}`;
-  const directionsButton = location.mapsUrl
-    ? `<a href="${escapeHtml(location.mapsUrl)}" target="_blank" rel="noopener noreferrer" style="
-        display:inline-block;
-        background:transparent;
-        color:#d4a843;
-        padding:8px 16px;
-        border-radius:6px;
-        font-weight:700;
-        font-size:13px;
-        text-decoration:none;
-        border:1px solid #d4a843;
-        text-transform:uppercase;
-        letter-spacing:0.05em;
-        font-family:Satoshi,sans-serif;
-      ">Directions</a>`
-    : "";
+function focusLocation(map: google.maps.Map, location: StoreLocatorMapLocation) {
+  map.panTo({ lat: location.latitude, lng: location.longitude });
 
-  return `
-    <div style="
-      font-family:Satoshi,sans-serif;
-      background:#111111;
-      color:#ffffff;
-      padding:16px;
-      min-width:220px;
-      border-radius:8px;
-    ">
-      <div style="
-        font-size:11px;
-        color:#d4a843;
-        letter-spacing:0.1em;
-        font-weight:700;
-        text-transform:uppercase;
-        margin-bottom:4px;
-      ">${typeLabel}</div>
-      <div style="
-        font-family:'Clash Display',sans-serif;
-        font-size:18px;
-        font-weight:700;
-        color:#ffffff;
-        margin-bottom:8px;
-      ">${name}</div>
-      <div style="
-        font-size:13px;
-        color:#999999;
-        margin-bottom:12px;
-      ">${address}</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <a href="${startHuntHref}" style="
-          display:inline-block;
-          background:#d4a843;
-          color:#0a0a0a;
-          padding:8px 16px;
-          border-radius:6px;
-          font-weight:700;
-          font-size:13px;
-          text-decoration:none;
-          text-transform:uppercase;
-          letter-spacing:0.05em;
-          font-family:Satoshi,sans-serif;
-        ">Start Hunt</a>
-        ${directionsButton}
-      </div>
-    </div>
-  `;
-}
-
-function applyInfoWindowChrome() {
-  const frame = document.querySelector(".gm-style .gm-style-iw-c");
-  if (frame instanceof HTMLElement) {
-    frame.style.padding = "0";
-    frame.style.background = "transparent";
-    frame.style.boxShadow = "none";
-    frame.style.borderRadius = "0";
+  const currentZoom = map.getZoom() ?? 4;
+  if (currentZoom < 14) {
+    map.setZoom(14);
   }
 
-  const content = document.querySelector(".gm-style .gm-style-iw-d");
-  if (content instanceof HTMLElement) {
-    content.style.overflow = "hidden";
-    content.style.maxHeight = "none";
+  if (typeof window === "undefined") {
+    return;
   }
 
-  const tail = document.querySelector(".gm-style .gm-style-iw-tc");
-  if (tail instanceof HTMLElement) {
-    tail.style.display = "none";
-  }
+  window.setTimeout(() => {
+    if (window.innerWidth < 768) {
+      map.panBy(0, 140);
+    } else {
+      map.panBy(-180, 0);
+    }
+  }, 120);
 }
 
 export default function StoreLocatorMap({
   locations,
   onMarkerClick,
+  onMapClick,
   className,
-  mapRef,
   selectedSlug = null,
+  edgeToEdge = false,
 }: StoreLocatorMapProps) {
   const { isLoaded, loadError, libraries } = useGoogleMaps();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
-  const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const markerLookupRef = useRef<Map<string, google.maps.marker.AdvancedMarkerElement>>(new Map());
   const markerNodeLookupRef = useRef<Map<string, HTMLDivElement>>(new Map());
   const clustererRef = useRef<MarkerClusterer | null>(null);
+  const onMarkerClickRef = useRef<StoreLocatorMapProps["onMarkerClick"]>(onMarkerClick);
+  const onMapClickRef = useRef<StoreLocatorMapProps["onMapClick"]>(onMapClick);
   const [mapError, setMapError] = useState<Error | null>(null);
 
   const physicalLocations = useMemo(
@@ -215,22 +137,13 @@ export default function StoreLocatorMap({
     [physicalLocations],
   );
 
-  const updateSelectedMarkers = (slug: string | null) => {
-    markerNodeLookupRef.current.forEach((node, markerSlug) => {
-      setMarkerSelected(node, markerSlug === slug);
-    });
-  };
+  useEffect(() => {
+    onMarkerClickRef.current = onMarkerClick;
+  }, [onMarkerClick]);
 
-  const openInfoWindow = (location: StoreLocatorMapLocation, marker: google.maps.marker.AdvancedMarkerElement) => {
-    const map = mapInstanceRef.current;
-    const infoWindow = infoWindowRef.current;
-    if (!map || !infoWindow) {
-      return;
-    }
-
-    infoWindow.setContent(buildInfoWindowContent(location));
-    infoWindow.open({ anchor: marker, map });
-  };
+  useEffect(() => {
+    onMapClickRef.current = onMapClick;
+  }, [onMapClick]);
 
   useEffect(() => {
     if (!isLoaded || !libraries || !containerRef.current || mapInstanceRef.current || mapError) {
@@ -241,7 +154,7 @@ export default function StoreLocatorMap({
     const markerNodeLookup = markerNodeLookupRef.current;
 
     try {
-      const { Map, InfoWindow } = libraries.mapsLibrary;
+      const { Map } = libraries.mapsLibrary;
 
       mapInstanceRef.current = new Map(containerRef.current, {
         center: DEFAULT_CENTER,
@@ -255,13 +168,12 @@ export default function StoreLocatorMap({
         streetViewControl: false,
         mapTypeControl: false,
         fullscreenControl: false,
-        gestureHandling: "cooperative",
+        gestureHandling: "greedy",
       });
-      mapRef && (mapRef.current = mapInstanceRef.current);
 
-      const infoWindow = new InfoWindow();
-      infoWindow.addListener("domready", applyInfoWindowChrome);
-      infoWindowRef.current = infoWindow;
+      mapInstanceRef.current.addListener("click", () => {
+        onMapClickRef.current?.();
+      });
     } catch (error) {
       console.error("Store locator map initialization failed", error);
       setMapError(error instanceof Error ? error : new Error("Unable to initialize the location map"));
@@ -279,19 +191,16 @@ export default function StoreLocatorMap({
       markerLookup.clear();
       markerNodeLookup.clear();
 
-      infoWindowRef.current?.close();
-      infoWindowRef.current = null;
-      mapInstanceRef.current = null;
-      if (mapRef) {
-        mapRef.current = null;
+      if (mapInstanceRef.current) {
+        google.maps.event.clearInstanceListeners(mapInstanceRef.current);
       }
+      mapInstanceRef.current = null;
     };
-  }, [isLoaded, libraries, mapError, mapRef]);
+  }, [isLoaded, libraries, mapError]);
 
   useEffect(() => {
     const map = mapInstanceRef.current;
-    const infoWindow = infoWindowRef.current;
-    if (!map || !infoWindow || !libraries || mapError) {
+    if (!map || !libraries || mapError) {
       return;
     }
 
@@ -307,7 +216,6 @@ export default function StoreLocatorMap({
       });
       markerLookupRef.current.clear();
       markerNodeLookupRef.current.clear();
-      infoWindow.close();
 
       if (physicalLocations.length === 0) {
         map.setCenter(DEFAULT_CENTER);
@@ -329,9 +237,9 @@ export default function StoreLocatorMap({
         });
 
         marker.addListener("click", () => {
-          updateSelectedMarkers(location.slug);
-          openInfoWindow(location, marker);
-          onMarkerClick?.(location.slug);
+          setMarkerSelected(content, true);
+          onMarkerClickRef.current?.(location.slug);
+          focusLocation(map, location);
         });
 
         markerLookupRef.current.set(location.slug, marker);
@@ -363,23 +271,24 @@ export default function StoreLocatorMap({
       console.error("Store locator markers failed to render", error);
       setMapError(error instanceof Error ? error : new Error("Unable to render location markers"));
     }
-  }, [libraries, mapError, onMarkerClick, physicalLocations]);
+  }, [libraries, mapError, physicalLocations]);
 
   useEffect(() => {
-    updateSelectedMarkers(selectedSlug);
+    markerNodeLookupRef.current.forEach((node, markerSlug) => {
+      setMarkerSelected(node, markerSlug === selectedSlug);
+    });
 
     if (!selectedSlug) {
-      infoWindowRef.current?.close();
       return;
     }
 
-    const marker = markerLookupRef.current.get(selectedSlug);
+    const map = mapInstanceRef.current;
     const location = locationsBySlug.get(selectedSlug);
-    if (!marker || !location) {
+    if (!map || !location) {
       return;
     }
 
-    openInfoWindow(location, marker);
+    focusLocation(map, location);
   }, [locationsBySlug, selectedSlug]);
 
   if (loadError || mapError) {
@@ -388,7 +297,7 @@ export default function StoreLocatorMap({
         className={className}
         eyebrow="Map failed to load"
         title="Venue map unavailable"
-        body="The live map could not load, but every location card below is still available with directions and hunt links."
+        body="The live map could not load, but every location detail panel and hunt link will return once the map service recovers."
       />
     );
   }
@@ -398,23 +307,8 @@ export default function StoreLocatorMap({
   }
 
   return (
-    <div className={`tk-google-map ${className ?? ""}`.trim()}>
+    <div className={`tk-google-map ${edgeToEdge ? "tk-google-map--edge" : ""} ${className ?? ""}`.trim()}>
       <div ref={containerRef} className="tk-google-map__canvas" />
     </div>
-  );
-}
-
-export function buildStoreLocatorDirectionsHref(
-  location: Pick<StoreLocatorMapLocation, "latitude" | "longitude" | "address" | "mapsUrl">,
-  origin?: { lat: number; lng: number } | null,
-) {
-  return buildDirectionsHref(
-    {
-      latitude: location.latitude,
-      longitude: location.longitude,
-      address: location.address,
-      mapsUrl: location.mapsUrl ?? null,
-    } satisfies Pick<KingsHuntLocation, "latitude" | "longitude" | "address" | "mapsUrl">,
-    origin ?? null,
   );
 }

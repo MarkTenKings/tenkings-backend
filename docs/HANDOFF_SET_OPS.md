@@ -1,16 +1,44 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-07` (locations page upgrade prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline before this task is `80a57f8`; Vacaville production location row updated; no deploy/restart/migrate was run)
+- Last reviewed: `2026-04-07` (fullscreen `/locations` redesign prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline before this session is `1de33df`; no deploy/restart/migrate was run)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
-  - `git status -sb` -> `## main...origin/main`
-  - modified tracked paths: `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`, `frontend/nextjs-app/package.json`, `frontend/nextjs-app/pages/locations.tsx`, `frontend/nextjs-app/styles/globals.css`, `pnpm-lock.yaml`, `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
-  - untracked paths: `frontend/nextjs-app/components/locations/`, `frontend/nextjs-app/lib/locationUtils.ts`
+  - `git status -sb` -> `## main...origin/main` with pending redesign changes
+  - modified tracked paths: `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`, `frontend/nextjs-app/pages/locations.tsx`, `frontend/nextjs-app/styles/globals.css`, `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - deleted tracked paths: `frontend/nextjs-app/components/locations/LocationCard.tsx`
+  - untracked paths: `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`, `frontend/nextjs-app/pages/api/locations/[slug]/photo.ts`
 - Latest committed baseline in this checkout:
-  - `80a57f8` fix: HD OCR images + GPT-5.4 + eBay numbered query + insert on screen 1 desktop
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; production droplet `/root/tenkings-backend` for the requested `Location` row update + verification; no deploy/restart/migrate executed
+  - `1de33df` feat(locations): clustering, GPS sort, open status, activity, sidebar layout
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migrate executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-07, `/locations` fullscreen map + slide-in detail panel follow-up on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Reworked the public `/locations` experience around a Google-Maps-style fullscreen surface:
+  - `frontend/nextjs-app/pages/locations.tsx`
+    - removed the old public location list/cards, the public `Add Location` control, and the extra top metrics cards
+    - promoted the map to an edge-to-edge `100dvh` viewport layout with a minimal floating header, route-level black background enforcement, silent GPS sorting, and marker-selected detail state
+  - `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+    - kept the dark Google Maps config and clustering from the prior locations upgrade, but switched the marker artwork to the actual Ten Kings crown mark from the site logo
+    - removed the branded Google Maps info window flow so marker clicks now only select the venue, pan/zoom the map with a sidebar-aware offset, and highlight the chosen crown marker
+    - moved marker/map click handlers behind refs so opening or closing the overlay panel does not tear down and rebuild the Google Map instance
+  - `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+    - added a new overlay venue panel that slides in from the left on desktop and up from the bottom on mobile
+    - panel content includes hero imagery, type/status/address/hours/details, `Start Hunt` and `Directions` actions, and a horizontally scrollable live-rips rail with relative timestamps
+  - `frontend/nextjs-app/pages/api/locations/[slug]/photo.ts`
+    - added a location photo endpoint that returns `machinePhotoUrl` when present and otherwise performs a Google Places text search to construct a venue photo URL
+  - `frontend/nextjs-app/styles/globals.css`
+    - added edge-to-edge map chrome overrides, slide-in/slide-up keyframes, and updated crown marker hover/selection styling for the new fullscreen map UX
+  - `frontend/nextjs-app/components/locations/LocationCard.tsx`
+    - removed the old public card-list component because the overlay panel now owns venue detail presentation
+- Validation observed locally:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/locations.tsx --file components/maps/StoreLocatorMap.tsx --file components/locations/LocationDetailPanel.tsx --file 'pages/api/locations/[slug]/photo.ts' --file lib/locationUtils.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-07, locations page clustering + GPS sort + open status + sidebar layout on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

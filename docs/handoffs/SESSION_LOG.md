@@ -14089,3 +14089,41 @@
 ### Files Updated
 - `docs/HANDOFF_SET_OPS.md`
 - `docs/handoffs/SESSION_LOG.md`
+
+## 2026-04-07 - `/locations` fullscreen map + slide-in detail panel follow-up on main
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing with `git pull --ff-only origin main`, which returned `Already up to date.`
+- Replaced the old split-layout `/locations` page with a fullscreen map experience:
+  - removed the public location card list, public `Add Location` control, and the extra top metric cards
+  - made the map fill the viewport edge to edge with a minimal floating header and hard black route background
+  - kept physical-location filtering and silent GPS sorting, but changed venue detail presentation to an overlay panel instead of cards/info windows
+- Switched the Google Maps markers to the actual Ten Kings crown mark from the site logo and removed the old info-window popup flow.
+- Added a new `LocationDetailPanel` overlay:
+  - desktop uses a left slide-in panel
+  - mobile uses a bottom sheet
+  - panel shows hero image, open status, description, actions, and a horizontal live-rips rail
+- Added `/api/locations/[slug]/photo` so the panel can use `machinePhotoUrl` first and Google Places venue imagery as fallback.
+- Kept the Google Map stable across panel open/close by moving click handlers behind refs instead of rebuilding the map instance on each render.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/pages/locations.tsx`
+- `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+- `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+- `frontend/nextjs-app/pages/api/locations/[slug]/photo.ts`
+- `frontend/nextjs-app/styles/globals.css`
+- `frontend/nextjs-app/components/locations/LocationCard.tsx` (removed)
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- Branch sync:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/locations.tsx --file components/maps/StoreLocatorMap.tsx --file components/locations/LocationDetailPanel.tsx --file 'pages/api/locations/[slug]/photo.ts' --file lib/locationUtils.ts` -> pass
+- TypeScript:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- Diff hygiene:
+  - `git diff --check` -> pass

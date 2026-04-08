@@ -64,6 +64,15 @@ button {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
+.tk-google-map--edge {
+  border-radius: 0;
+  background: #0a0a0a;
+}
+
+.tk-google-map--edge::after {
+  display: none;
+}
+
 .tk-google-map__canvas {
   height: 100%;
   width: 100%;
@@ -132,8 +141,10 @@ button {
 
 .tk-map-marker:hover,
 .tk-map-marker:focus-visible {
-  transform: translateY(-2px) scale(1.04);
-  box-shadow: 0 8px 20px rgba(212, 168, 67, 0.45);
+  transform: scale(1.1);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.4),
+    0 0 16px rgba(212, 168, 67, 0.6);
 }
 
 .tk-map-marker[data-selected="true"] {
@@ -157,78 +168,6 @@ button {
   display: block;
   height: 100%;
   width: 100%;
-}
-
-.tk-map-popup {
-  min-width: 15rem;
-  max-width: 17rem;
-  padding: 0.95rem 1rem 1rem;
-  border-radius: 1.25rem;
-  background:
-    radial-gradient(circle at top left, rgba(212, 168, 67, 0.18), transparent 45%),
-    rgba(14, 14, 14, 0.96);
-  color: var(--tk-kingshunt-text);
-  font-family: "Satoshi", var(--font-body);
-  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.44);
-}
-
-.tk-map-popup__eyebrow {
-  margin: 0 0 0.45rem;
-  color: rgba(212, 168, 67, 0.9);
-  font-size: 0.62rem;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-}
-
-.tk-map-popup__title {
-  margin: 0;
-  font-family: "Clash Display", var(--font-display);
-  font-size: 1.15rem;
-  letter-spacing: 0.04em;
-}
-
-.tk-map-popup__meta {
-  margin: 0.45rem 0 0;
-  color: rgba(255, 255, 255, 0.78);
-  font-size: 0.82rem;
-  line-height: 1.5;
-}
-
-.tk-map-popup__hours {
-  margin: 0.55rem 0 0;
-  color: rgba(255, 255, 255, 0.64);
-  font-size: 0.76rem;
-  line-height: 1.45;
-}
-
-.tk-map-popup__actions {
-  display: flex;
-  gap: 0.55rem;
-  margin-top: 0.85rem;
-}
-
-.tk-map-popup__action,
-.tk-map-popup__secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  padding: 0.55rem 0.8rem;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  font-size: 0.64rem;
-  font-weight: 700;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-}
-
-.tk-map-popup__action {
-  background: rgba(212, 168, 67, 0.94);
-  color: #171208;
-}
-
-.tk-map-popup__secondary {
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.82);
 }
 
 .tk-open-status-dot {
@@ -421,7 +360,46 @@ button {
   animation: tk-card-highlight 2s ease forwards;
 }
 
+.tk-location-panel {
+  animation: slideIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.tk-hide-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.tk-hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 @media (max-width: 768px) {
+  .tk-location-panel {
+    animation: slideUp 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
   .kingshunt-map-navigating,
   .kingshunt-map-navigating::after {
     border-radius: 0;
