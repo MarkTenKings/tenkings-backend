@@ -1,17 +1,29 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-08` (Vercel `/locations` build-fix prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline before this session is `c71ab7e`; no deploy/restart/migrate was run)
+- Last reviewed: `2026-04-08` (Vercel `/locations` build-fix committed on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline is `fab6021`; no deploy/restart/migrate was run)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
-  - `git status -sb` -> `## main...origin/main` with pending route-fix changes
-  - modified tracked paths: `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`, `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
-  - deleted tracked paths: `frontend/nextjs-app/pages/api/locations/[slug]/photo.ts`
-  - untracked paths: `frontend/nextjs-app/pages/api/location-photo/[slug]/index.ts`
+  - `git status -sb` -> `## main...origin/main`
+  - modified tracked paths: none
+  - deleted tracked paths: none
+  - untracked paths: none
 - Latest committed baseline in this checkout:
-  - `c71ab7e` docs(handoff): refresh locations redesign repo state
+  - `fab6021` fix(locations): resolve photo api route conflict
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migrate executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-08, docs-only repo state refresh in `/Users/markthomas/tenkings-task27-main` after `fab6021`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified the current local checkout state after pushing the Vercel route-conflict fix:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `fab6021`
+  - `git log -1 --oneline` -> `fab6021 fix(locations): resolve photo api route conflict`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-08, Vercel build fix for `/locations` photo API route conflict on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
