@@ -125,7 +125,7 @@ function LocationHeroImage({ location }: { location: LocationPanelLocation }) {
       };
     }
 
-    fetch(`/api/locations/${encodeURIComponent(location.slug)}/photo`)
+    fetch(`/api/location-photo/${encodeURIComponent(location.slug)}`)
       .then(async (response) => {
         if (!response.ok) {
           return { photoUrl: null as string | null };

@@ -1,17 +1,35 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-07` (fullscreen `/locations` redesign committed on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline is `6bb0d11`; no deploy/restart/migrate was run)
+- Last reviewed: `2026-04-08` (Vercel `/locations` build-fix prepared on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline before this session is `c71ab7e`; no deploy/restart/migrate was run)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
-  - `git status -sb` -> `## main...origin/main`
-  - modified tracked paths: none
-  - deleted tracked paths: none
-  - untracked paths: none
+  - `git status -sb` -> `## main...origin/main` with pending route-fix changes
+  - modified tracked paths: `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`, `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - deleted tracked paths: `frontend/nextjs-app/pages/api/locations/[slug]/photo.ts`
+  - untracked paths: `frontend/nextjs-app/pages/api/location-photo/[slug]/index.ts`
 - Latest committed baseline in this checkout:
-  - `6bb0d11` feat(locations): fullscreen map, slide-in detail panel, venue photos, live rips
+  - `c71ab7e` docs(handoff): refresh locations redesign repo state
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migrate executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-08, Vercel build fix for `/locations` photo API route conflict on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Investigated the Vercel build failure `You cannot use different slug names for the same dynamic path ('locationId' !== 'slug')`.
+- Root cause found in the checked-in API surface:
+  - `frontend/nextjs-app/pages/api/locations/[locationId].ts` already defined the dynamic segment for `pages/api/locations/*`
+  - `frontend/nextjs-app/pages/api/locations/[slug]/photo.ts` introduced a conflicting dynamic segment name under the same route tree
+- Implemented the non-conflicting fix:
+  - removed `frontend/nextjs-app/pages/api/locations/[slug]/photo.ts`
+  - added `frontend/nextjs-app/pages/api/location-photo/[slug]/index.ts` so venue-photo lookups now live under `/api/location-photo/{slug}`
+  - updated `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx` to fetch the relocated endpoint
+- Validation observed locally:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/locations/LocationDetailPanel.tsx --file 'pages/api/location-photo/[slug]/index.ts'` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-07, docs-only repo state refresh in `/Users/markthomas/tenkings-task27-main` after `6bb0d11`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

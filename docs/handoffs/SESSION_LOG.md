@@ -1031,6 +1031,36 @@
 - `docs/HANDOFF_SET_OPS.md`
 - `docs/handoffs/SESSION_LOG.md`
 
+## 2026-04-08 - Vercel build fix for locations photo API route conflict on main
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing with `git pull --ff-only origin main`, which returned `Already up to date.`
+- Investigated the Vercel build failure `You cannot use different slug names for the same dynamic path ('locationId' !== 'slug')`.
+- Found the conflict between the existing `frontend/nextjs-app/pages/api/locations/[locationId].ts` route and the newer `frontend/nextjs-app/pages/api/locations/[slug]/photo.ts` route.
+- Fixed the route shape by moving the venue-photo endpoint out of the conflicting tree:
+  - removed `frontend/nextjs-app/pages/api/locations/[slug]/photo.ts`
+  - added `frontend/nextjs-app/pages/api/location-photo/[slug]/index.ts`
+  - updated `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx` to fetch `/api/location-photo/{slug}`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+- `frontend/nextjs-app/pages/api/location-photo/[slug]/index.ts`
+- `frontend/nextjs-app/pages/api/locations/[slug]/photo.ts` (removed)
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- Branch sync:
+  - `git pull --ff-only origin main` -> `Already up to date.`
+- Targeted lint:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/locations/LocationDetailPanel.tsx --file 'pages/api/location-photo/[slug]/index.ts'` -> pass
+- TypeScript:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- Diff hygiene:
+  - `git diff --check` -> pass
+
 ## 2026-04-07 - Locations page clustering, GPS sort, open status, activity, and sidebar layout
 
 ### Summary
