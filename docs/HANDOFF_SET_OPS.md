@@ -1,31 +1,80 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-08` (`/locations` fixes implemented and validated locally in the current working tree; root cause for missing new venue pins was confirmed as missing geocoded coordinates on admin-created locations; no deploy, restart, or migration was executed in this session)
+- Last reviewed: `2026-04-09` (Phase 5 Queen website chat widget implemented and validated locally in the current working tree; no deploy, restart, or migration was executed in this session)
 - Branch: `main`
-- Current local git state while preparing the `/locations` fix handoff before commit/push:
+- Current local git state before commit/push for the Queen widget work:
   - `git status -sb` -> `## main...origin/main`
   - modified tracked paths:
     - `docs/HANDOFF_SET_OPS.md`
     - `docs/handoffs/SESSION_LOG.md`
-    - `frontend/nextjs-app/components/AppShell.tsx`
-    - `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
-    - `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+    - `frontend/nextjs-app/.env.example`
+    - `frontend/nextjs-app/next.config.js`
+    - `frontend/nextjs-app/next.config.mjs`
     - `frontend/nextjs-app/package.json`
-    - `frontend/nextjs-app/pages/api/admin/locations/index.ts`
-    - `frontend/nextjs-app/pages/api/locations/index.ts`
-    - `frontend/nextjs-app/pages/locations.tsx`
-    - `frontend/nextjs-app/styles/globals.css`
+    - `frontend/nextjs-app/pages/_app.tsx`
     - `pnpm-lock.yaml`
   - deleted tracked paths: none
   - untracked paths:
-    - `frontend/nextjs-app/components/locations/OpenStatusBadge.tsx`
-    - `frontend/nextjs-app/lib/server/locationGeocoding.ts`
-    - `frontend/nextjs-app/lib/tenKingsBrand.ts`
-- Latest committed baseline before this `/locations` work:
-  - `885a6ad` feat(support): add elevenlabs webhook integration
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main` for `/locations` UI/API fixes and handoff updates; no runtime environment, deploy, restart, or migration was executed in this session
+    - `frontend/nextjs-app/components/QueenWidget.tsx`
+- Latest committed baseline before this widget work:
+  - `be4af61` fix(locations): individual markers, crown logo, admin btn, list view toggle, new locations fix
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main` for frontend widget implementation, dependency install, validation, and handoff updates; no runtime environment, deploy, restart, or migration was executed in this session
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-09, Phase 5 Queen website chat widget on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Implemented the floating Queen concierge widget for the public site in:
+  - `frontend/nextjs-app/components/QueenWidget.tsx`
+  - `frontend/nextjs-app/pages/_app.tsx`
+  - `frontend/nextjs-app/next.config.js`
+  - `frontend/nextjs-app/next.config.mjs`
+  - `frontend/nextjs-app/.env.example`
+  - `frontend/nextjs-app/package.json`
+  - `pnpm-lock.yaml`
+- What changed:
+  - installed the official ElevenLabs React SDK package `@elevenlabs/react`
+  - added a client-only floating widget with collapsed and expanded states, branded gold/black styling, and a site-wide fixed bottom-right mount
+  - added Chat, Voice, and Call modes using `ConversationProvider` + `useConversation`
+  - wired Chat mode to text-only ElevenLabs sessions and Voice mode to microphone-backed browser sessions
+  - injected page/session context into `dynamicVariables` using the current pathname, document title, and logged-in session display name/user id state
+  - added a contextual-update sync so route/title changes are sent into an active conversation without auto-opening the widget
+  - added a 30-second gold pulse attract state for `/shop` and pack-related pages when the widget has not yet been opened
+  - exposed `ELEVENLABS_AGENT_ID` to the browser bundle through Next config while still allowing an explicit `NEXT_PUBLIC_ELEVENLABS_AGENT_ID` override
+  - mounted the widget globally from `pages/_app.tsx` via a client-only dynamic import
+- Validation observed locally:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/QueenWidget.tsx --file pages/_app.tsx` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-09, docs-only git-state verification on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified the current local checkout state without changing code or runtime:
+  - initial requested capture:
+    - `git status -sb` -> `## main...origin/main`
+    - `git branch --show-current` -> `main`
+    - `git rev-parse --short HEAD` -> `be4af61`
+    - `git log -1 --oneline` -> `be4af61 fix(locations): individual markers, crown logo, admin btn, list view toggle, new locations fix`
+  - follow-up sanity check before final handoff:
+    - `git status -sb` -> `## main...origin/main` with modified tracked paths:
+      - `docs/HANDOFF_SET_OPS.md`
+      - `docs/handoffs/SESSION_LOG.md`
+      - `frontend/nextjs-app/package.json`
+      - `pnpm-lock.yaml`
+    - deleted tracked paths observed: none
+    - untracked paths observed: none
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `be4af61`
+  - `git log -1 --oneline` -> `be4af61 fix(locations): individual markers, crown logo, admin btn, list view toggle, new locations fix`
+- Package metadata note:
+  - `frontend/nextjs-app/package.json` now has `@elevenlabs/react` added in dependencies
+  - `pnpm-lock.yaml` now contains the matching lockfile entries
+  - those package metadata changes were not edited as part of this docs-only refresh
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-08, `/locations` map/list/admin fixes + missing-location diagnosis on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`, then synced `main` before editing:

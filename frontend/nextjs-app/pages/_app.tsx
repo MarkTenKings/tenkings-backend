@@ -1,6 +1,7 @@
 import "../styles/globals.css";
 
 import type { AppProps } from "next/app";
+import dynamic from "next/dynamic";
 import Head from "next/head";
 import { useRouter } from "next/router";
 import { SessionProvider } from "../hooks/useSession";
@@ -10,6 +11,7 @@ import { bodyFont, displayFont, lightningFont } from "../components/fonts";
 
 const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
 const stripePromise = publishableKey ? loadStripe(publishableKey) : null;
+const QueenWidget = dynamic(() => import("../components/QueenWidget"), { ssr: false });
 
 export default function App({ Component, pageProps }: AppProps) {
   const router = useRouter();
@@ -20,6 +22,7 @@ export default function App({ Component, pageProps }: AppProps) {
   const content = (
     <SessionProvider>
       <Component {...pageProps} />
+      <QueenWidget />
     </SessionProvider>
   );
 

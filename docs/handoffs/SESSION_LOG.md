@@ -14409,6 +14409,75 @@
 ### Notes
 - Pending tracked paths observed before this docs-only refresh were `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`.
 
+## 2026-04-09 - Phase 5 Queen website chat widget
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Installed the official ElevenLabs React SDK package `@elevenlabs/react` in the Next.js app workspace.
+- Added a floating `Queen` concierge widget for the public site with:
+  - collapsed branded crown button
+  - expanded black/gold panel
+  - Chat, Voice, and Call mode switching
+  - text-only chat sessions and microphone-backed voice sessions through the ElevenLabs React SDK
+  - page-context injection via `dynamicVariables`
+  - a 30-second pulse attract state for `/shop` and pack-related pages when the widget remains unopened
+- Mounted the widget globally from `pages/_app.tsx` using a client-only dynamic import.
+- Exposed the existing `ELEVENLABS_AGENT_ID` to the browser bundle through Next config with support for an explicit `NEXT_PUBLIC_ELEVENLABS_AGENT_ID` override.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/components/QueenWidget.tsx`
+- `frontend/nextjs-app/pages/_app.tsx`
+- `frontend/nextjs-app/next.config.js`
+- `frontend/nextjs-app/next.config.mjs`
+- `frontend/nextjs-app/.env.example`
+- `frontend/nextjs-app/package.json`
+- `pnpm-lock.yaml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `pnpm --filter @tenkings/nextjs-app add @elevenlabs/react` -> success
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/QueenWidget.tsx --file pages/_app.tsx` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- `git diff --check` -> pass
+
+### Notes
+- The user request referenced `@11labs/react`, but the current official ElevenLabs docs and package registry use `@elevenlabs/react`; that official package was installed and used.
+- The client widget reads `NEXT_PUBLIC_ELEVENLABS_AGENT_ID`, and the Next config now derives it from `ELEVENLABS_AGENT_ID` when no explicit public override is present.
+
+## 2026-04-09 - Docs-only git-state verification refresh
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Captured the requested git state first: `main` at `be4af61` with `git status -sb` showing `## main...origin/main`.
+- A follow-up sanity check before final handoff showed four modified tracked files in the working tree:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+  - `frontend/nextjs-app/package.json`
+  - `pnpm-lock.yaml`
+- Updated the handoff docs only to record the requested git-state report.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `be4af61`
+- `git log -1 --oneline` -> `be4af61 fix(locations): individual markers, crown logo, admin btn, list view toggle, new locations fix`
+- follow-up `git status -sb` before final handoff -> modified tracked paths:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+  - `frontend/nextjs-app/package.json`
+  - `pnpm-lock.yaml`
+
+### Notes
+- No deleted tracked paths or untracked paths were observed during this docs-only refresh.
+- The package-metadata diff observed in the follow-up sanity check adds `@elevenlabs/react` to `frontend/nextjs-app/package.json` and the corresponding entries in `pnpm-lock.yaml`; those files were not edited as part of this docs-only refresh.
+
 ## 2026-04-08 - `/locations` fixes: individual pins, exact crown mark, admin button, list toggle, missing-location diagnosis
 
 ### Summary
