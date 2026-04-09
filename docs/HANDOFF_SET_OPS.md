@@ -1,17 +1,106 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-08` (support customer-memory schema + API routes were committed as `2a3d226` and pushed to `origin/main` from `/Users/markthomas/tenkings-task27-main`; Vercel deployment should have been triggered by the push; local Prisma migration still was not run because production DB migration is separate and local Postgres/Docker are unavailable)
+- Last reviewed: `2026-04-08` (Phase 2 ElevenLabs webhook integration implemented locally on `main`; latest committed baseline is still `3fbb4d4` until the requested commit/push step; no deploy, restart, or migration was executed in this session)
 - Branch: `main`
-- Current local git state immediately after the support push:
+- Current local git state after the Phase 2 webhook implementation:
   - `git status -sb` -> `## main...origin/main`
-  - modified tracked paths: none
+  - modified tracked paths:
+    - `docs/HANDOFF_SET_OPS.md`
+    - `docs/handoffs/SESSION_LOG.md`
+    - `frontend/nextjs-app/.env.example`
+    - `frontend/nextjs-app/lib/server/support.ts`
+    - `frontend/nextjs-app/pages/api/support/conversation/[id].ts`
+  - untracked tracked-work files:
+    - `frontend/nextjs-app/lib/server/elevenlabs.ts`
+    - `frontend/nextjs-app/pages/api/support/webhooks/conversation-start.ts`
+    - `frontend/nextjs-app/pages/api/support/webhooks/conversation-end.ts`
+    - `frontend/nextjs-app/pages/api/support/webhooks/elevenlabs-verify.ts`
   - deleted tracked paths: none
-  - untracked paths: none
+  - ignored local env placeholders created:
+    - `frontend/nextjs-app/.env.local`
+    - `frontend/nextjs-app/.env.production`
 - Latest committed baseline in this checkout:
-  - `2a3d226` feat(support): add customer memory layer APIs
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; pushed `main` to `origin`; no restart executed; attempted local Prisma migration did not reach a database
+  - `3fbb4d4` fix(migration): use uuid for conversation location
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main` for the Phase 2 webhook implementation; no deploy/restart/migrate executed in this session
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-08, Phase 2 ElevenLabs Agent webhook integration on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Implemented the Phase 2 support webhook layer for the ElevenLabs agent `Queen` in:
+  - `frontend/nextjs-app/lib/server/elevenlabs.ts`
+  - `frontend/nextjs-app/pages/api/support/webhooks/conversation-start.ts`
+  - `frontend/nextjs-app/pages/api/support/webhooks/conversation-end.ts`
+  - `frontend/nextjs-app/pages/api/support/webhooks/elevenlabs-verify.ts`
+- Updated existing support flow plumbing in:
+  - `frontend/nextjs-app/lib/server/support.ts`
+  - `frontend/nextjs-app/pages/api/support/conversation/[id].ts`
+  - `frontend/nextjs-app/.env.example`
+- What changed:
+  - added shared ElevenLabs webhook utilities for raw-body parsing, request verification, payload normalization, customer lookup/creation, conversation create/update, escalation creation, transcript formatting, and Slack notifications
+  - added `POST /api/support/webhooks/conversation-start` to look up the caller by phone, create a placeholder support customer when needed, create a new `Conversation`, and return ElevenLabs `conversation_initiation_client_data` dynamic variables including `conversation_id`
+  - added `POST /api/support/webhooks/conversation-end` to parse the internal conversation id from ElevenLabs dynamic variables, store the transcript/summary on the Phase 1 `Conversation` row, create an `Escalation` when the outcome is escalated, and post a Slack summary when `SLACK_WEBHOOK_URL` is configured
+  - added `POST /api/support/webhooks/elevenlabs-verify` and wired all webhook routes through the same verification helper
+  - expanded the existing support conversation PATCH schema/route so transcript updates are accepted and escalated conversations also get `endedAt`
+  - documented the new server env vars in `frontend/nextjs-app/.env.example`
+  - created local ignored placeholders in `frontend/nextjs-app/.env.local` and `frontend/nextjs-app/.env.production` for:
+    - `SLACK_WEBHOOK_URL=`
+    - `ELEVENLABS_WEBHOOK_SECRET=`
+- Verification observed locally:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/elevenlabs.ts --file lib/server/support.ts --file 'pages/api/support/conversation/[id].ts' --file pages/api/support/webhooks/conversation-start.ts --file pages/api/support/webhooks/conversation-end.ts --file pages/api/support/webhooks/elevenlabs-verify.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-08, docs-only git-state verification on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified current local repo state for the requested git report without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - pending tracked paths observed before this refresh:
+    - `docs/HANDOFF_SET_OPS.md`
+    - `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `3fbb4d4`
+  - `git log -1 --oneline` -> `3fbb4d4 fix(migration): use uuid for conversation location`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-08, docs-only repo state refresh on `main` after migration handoff)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified current local repo state without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - pending tracked paths observed before this refresh:
+    - `docs/HANDOFF_SET_OPS.md`
+    - `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `3fbb4d4`
+  - `git log -1 --oneline` -> `3fbb4d4 fix(migration): use uuid for conversation location`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-08, production Prisma migration applied for support customer-memory layer)
+- User explicitly requested running the production Prisma migration for `20260408214241_support_customer_memory_layer`.
+- Pre-migration parity confirmed locally:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `96d2d84`
+- First production migration attempt on droplet:
+  - droplet checkout `/root/tenkings-backend` fast-forwarded from `517bbe2` to `96d2d84`
+  - production `DATABASE_URL` was sourced from `bytebot-lite-service` env and reported length `145`
+  - `npx prisma migrate deploy --schema prisma/schema.prisma` failed with `P3018` because `Conversation_locationId_fkey` could not be created: local migration used `TEXT` while production `Location.id` is `UUID`
+- Hotfix applied and pushed:
+  - corrected `Conversation.locationId` to `@db.Uuid` in `packages/database/prisma/schema.prisma`
+  - corrected `locationId` to `UUID` in `packages/database/prisma/migrations/20260408214241_support_customer_memory_layer/migration.sql`
+  - pushed hotfix commit `3fbb4d4` `fix(migration): use uuid for conversation location`
+- Recovery + successful production migration:
+  - droplet checkout fast-forwarded from `96d2d84` to `3fbb4d4`
+  - `npx prisma migrate resolve --rolled-back 20260408214241_support_customer_memory_layer --schema prisma/schema.prisma` -> success
+  - `npx prisma migrate deploy --schema prisma/schema.prisma` -> success
+  - observed result: migration `20260408214241_support_customer_memory_layer` applied successfully to the production database
+- No restart was executed.
 
 ## Session Update (2026-04-08, support customer-memory changes committed and pushed on `main`)
 - Recorded the user-requested push result after committing the Phase 1 support changes.

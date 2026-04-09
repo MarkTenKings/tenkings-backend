@@ -14343,3 +14343,122 @@
 ### Planned Action
 - Use the production `DATABASE_URL` from the environment and run `npx prisma migrate deploy --schema packages/database/prisma/schema.prisma`.
 - Record the observed result with evidence immediately after the command completes.
+
+## 2026-04-08 - Production Prisma migration applied for support customer-memory layer
+
+### Summary
+- Ran the requested production Prisma migration for `20260408214241_support_customer_memory_layer`.
+- First production attempt failed on a real schema mismatch:
+  - `Conversation.locationId` in the migration SQL was `TEXT`
+  - production `Location.id` is `UUID`
+  - Prisma returned `P3018` / Postgres `42804` for incompatible foreign-key column types
+- Patched the migration and Prisma schema locally to use `UUID` / `@db.Uuid`, committed the hotfix as `3fbb4d4`, and pushed it to `origin/main`.
+- Reconnected to the production droplet, pulled `3fbb4d4`, marked the failed migration as rolled back, and re-ran `npx prisma migrate deploy`.
+- The production migration then applied successfully.
+- No restart was executed.
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260408214241_support_customer_memory_layer/migration.sql`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- Local hotfix validation:
+  - `DATABASE_URL=postgresql://tenkings:tenkings@localhost:5432/tenkings pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- Hotfix push:
+  - `git commit -m "fix(migration): use uuid for conversation location"` -> created commit `3fbb4d4`
+  - `git push origin main` -> success (`96d2d84..3fbb4d4  main -> main`)
+- First production attempt on droplet:
+  - droplet git before pull -> branch `main`, HEAD `517bbe2`
+  - `git pull --ff-only` -> fast-forwarded droplet checkout to `96d2d84`
+  - sourced production `DATABASE_URL` from running env -> `DATABASE_URL length: 145`
+  - `npx prisma migrate deploy --schema prisma/schema.prisma` -> failed with `P3018`
+  - database error detail -> `Conversation_locationId_fkey` incompatible types: `text` vs `uuid`
+- Recovery + successful production apply:
+  - droplet git before retry -> branch `main`, HEAD `96d2d84`
+  - `git pull --ff-only` -> fast-forwarded droplet checkout to `3fbb4d4`
+  - `npx prisma migrate resolve --rolled-back 20260408214241_support_customer_memory_layer --schema prisma/schema.prisma` -> success
+  - `npx prisma migrate deploy --schema prisma/schema.prisma` -> success
+  - Prisma reported `All migrations have been successfully applied.`
+
+### Notes
+- The production `DATABASE_URL` was not echoed; only its length was printed.
+- No deploy restart or app restart was executed as part of this migration run.
+
+## 2026-04-08 - Docs-only repo state refresh after migration handoff
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified the current local checkout is still `main` at `3fbb4d4` with only the handoff docs modified in the working tree.
+- Updated the handoff docs only.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `3fbb4d4`
+- `git log -1 --oneline` -> `3fbb4d4 fix(migration): use uuid for conversation location`
+
+### Notes
+- Pending tracked paths observed before this docs-only refresh were `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`.
+
+## 2026-04-08 - Phase 2 ElevenLabs Agent webhook integration on main
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Added the Phase 2 webhook layer that connects the ElevenLabs agent `Queen` to the existing Phase 1 support customer-memory schema and API flows.
+- Added three webhook endpoints:
+  - `POST /api/support/webhooks/conversation-start`
+  - `POST /api/support/webhooks/conversation-end`
+  - `POST /api/support/webhooks/elevenlabs-verify`
+- Added shared server utilities for ElevenLabs request verification, payload parsing, customer lookup/creation, conversation creation/update, escalation creation, transcript formatting, and Slack notifications.
+- Extended the existing support conversation update schema/route so transcript writes are accepted and escalated conversations are closed with `endedAt`.
+- Documented `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, `ELEVENLABS_WEBHOOK_SECRET`, and `SLACK_WEBHOOK_URL` in `frontend/nextjs-app/.env.example`.
+- Created local ignored placeholders in `frontend/nextjs-app/.env.local` and `frontend/nextjs-app/.env.production` for `SLACK_WEBHOOK_URL` and `ELEVENLABS_WEBHOOK_SECRET`.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/elevenlabs.ts`
+- `frontend/nextjs-app/lib/server/support.ts`
+- `frontend/nextjs-app/pages/api/support/conversation/[id].ts`
+- `frontend/nextjs-app/pages/api/support/webhooks/conversation-start.ts`
+- `frontend/nextjs-app/pages/api/support/webhooks/conversation-end.ts`
+- `frontend/nextjs-app/pages/api/support/webhooks/elevenlabs-verify.ts`
+- `frontend/nextjs-app/.env.example`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/elevenlabs.ts --file lib/server/support.ts --file 'pages/api/support/conversation/[id].ts' --file pages/api/support/webhooks/conversation-start.ts --file pages/api/support/webhooks/conversation-end.ts --file pages/api/support/webhooks/elevenlabs-verify.ts` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+
+### Notes
+- `frontend/nextjs-app/.env.local` and `frontend/nextjs-app/.env.production` were created locally as ignored placeholder files and are not part of git status.
+
+## 2026-04-08 - Docs-only git-state verification refresh
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Verified the current local checkout in `/Users/markthomas/tenkings-task27-main` remains `main` at `3fbb4d4` with only the handoff docs modified in the working tree.
+- Updated the handoff docs only to record the requested git-state report.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `3fbb4d4`
+- `git log -1 --oneline` -> `3fbb4d4 fix(migration): use uuid for conversation location`
+
+### Notes
+- Pending tracked paths observed before this docs-only refresh were `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`.

@@ -67,9 +67,10 @@ export const supportConversationUpdateSchema = z
   .object({
     status: z.nativeEnum(ConversationStatus).optional(),
     summary: normalizedStringField().optional(),
+    transcript: normalizedStringField().optional(),
   })
-  .refine((value) => value.status !== undefined || value.summary !== undefined, {
-    message: "status or summary is required",
+  .refine((value) => value.status !== undefined || value.summary !== undefined || value.transcript !== undefined, {
+    message: "status, summary, or transcript is required",
   });
 
 export const supportEscalationCreateSchema = z.object({

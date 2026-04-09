@@ -25,7 +25,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
 
     if (payload.status !== undefined) {
       data.status = payload.status;
-      if (payload.status === ConversationStatus.RESOLVED) {
+      if (payload.status === ConversationStatus.RESOLVED || payload.status === ConversationStatus.ESCALATED) {
         data.endedAt = new Date();
       } else if (payload.status === ConversationStatus.OPEN) {
         data.endedAt = null;
@@ -34,6 +34,10 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
 
     if (payload.summary !== undefined) {
       data.summary = payload.summary;
+    }
+
+    if (payload.transcript !== undefined) {
+      data.transcript = payload.transcript;
     }
 
     const conversation = await prisma.conversation.update({
