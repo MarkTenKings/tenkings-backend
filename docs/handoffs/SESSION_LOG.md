@@ -14193,3 +14193,53 @@
 ### Files Updated
 - `docs/HANDOFF_SET_OPS.md`
 - `docs/handoffs/SESSION_LOG.md`
+
+## 2026-04-08 - Terms of Use page SMS communications section appended on main
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Appended the requested `9. SMS Communications` section to the public Terms of Use page immediately after `8. Contact`.
+- Kept the existing legal-page section structure and styling intact by reusing the same `<section>`, heading, and paragraph classes already used by the prior sections.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/pages/terms.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `pnpm --filter @tenkings/nextjs-app exec eslint pages/terms.tsx` -> pass
+- `git diff --check` -> pass
+- `git status -sb` -> `## main...origin/main` with modified tracked paths:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+  - `frontend/nextjs-app/pages/terms.tsx`
+
+## 2026-04-08 - Docs-only repo state refresh on main with pending Terms of Use edits
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified the current local checkout state on `main` without running deploy, restart, migration, or DB/runtime operations.
+- Confirmed `HEAD` remains `2685750` `docs(handoff): refresh route-fix repo state`.
+- Observed tracked modifications remain limited to `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`, and `frontend/nextjs-app/pages/terms.tsx`.
+
+### Files Reviewed
+- `AGENTS.md`
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `2685750`
+- `git log -1 --oneline` -> `2685750 docs(handoff): refresh route-fix repo state`
+
+### Notes
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.

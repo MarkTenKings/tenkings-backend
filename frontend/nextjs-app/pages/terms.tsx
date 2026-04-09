@@ -80,6 +80,15 @@ export default function Terms() {
               <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">8. Contact</h2>
               <p>Questions? Email <a className="text-gold-300" href="mailto:support@tenkings.co">support@tenkings.co</a>.</p>
             </section>
+
+            <section className="space-y-3">
+              <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">9. SMS Communications</h2>
+              <p>
+                Ten Kings may send SMS messages to phone numbers you provide, including support responses, order updates, and account notifications.
+                Message and data rates may apply. Message frequency varies. Reply HELP for help. Reply STOP at any time to opt out of SMS communications.
+                For support, email support@tenkings.co.
+              </p>
+            </section>
           </article>
         </div>
       </section>

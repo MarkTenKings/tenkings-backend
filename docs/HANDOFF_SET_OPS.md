@@ -1,17 +1,48 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-08` (Vercel `/locations` build-fix committed on `main` in `/Users/markthomas/tenkings-task27-main`; latest committed baseline is `fab6021`; no deploy/restart/migrate was run)
+- Last reviewed: `2026-04-08` (docs-only repo state refresh on `main` in `/Users/markthomas/tenkings-task27-main`; pending tracked changes remain in `frontend/nextjs-app/pages/terms.tsx` plus the handoff docs; latest committed baseline is `2685750`; no deploy/restart/migrate was run)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
   - `git status -sb` -> `## main...origin/main`
-  - modified tracked paths: none
+  - modified tracked paths:
+    - `docs/HANDOFF_SET_OPS.md`
+    - `docs/handoffs/SESSION_LOG.md`
+    - `frontend/nextjs-app/pages/terms.tsx`
   - deleted tracked paths: none
   - untracked paths: none
 - Latest committed baseline in this checkout:
-  - `fab6021` fix(locations): resolve photo api route conflict
+  - `2685750` docs(handoff): refresh route-fix repo state
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migrate executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-08, docs-only repo state refresh on `main` with pending Terms of Use edits)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified the current local checkout state without running deploy, restart, migration, or DB/runtime operations:
+  - `git status -sb` -> `## main...origin/main`
+  - modified tracked paths observed:
+    - `docs/HANDOFF_SET_OPS.md`
+    - `docs/handoffs/SESSION_LOG.md`
+    - `frontend/nextjs-app/pages/terms.tsx`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `2685750`
+  - `git log -1 --oneline` -> `2685750 docs(handoff): refresh route-fix repo state`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-08, Terms of Use page SMS section append on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Appended the requested new Terms of Use section in:
+  - `frontend/nextjs-app/pages/terms.tsx`
+- Change made:
+  - added `9. SMS Communications` immediately after `8. Contact` using the existing section heading/body markup so it renders with the same typography and spacing as the current legal sections
+  - preserved the requested copy, including `HELP`, `STOP`, and `support@tenkings.co`
+- Validation observed locally:
+  - `pnpm --filter @tenkings/nextjs-app exec eslint pages/terms.tsx` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-08, docs-only repo state refresh in `/Users/markthomas/tenkings-task27-main` after `fab6021`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
