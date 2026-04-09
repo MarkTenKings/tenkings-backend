@@ -44,7 +44,7 @@ CREATE TABLE "Conversation" (
     "summary" TEXT,
     "transcript" TEXT,
     "agentId" TEXT,
-    "locationId" TEXT,
+    "locationId" UUID,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 

@@ -545,7 +545,7 @@ model Conversation {
   summary     String?
   transcript  String?
   agentId     String?
-  locationId  String?
+  locationId  String?             @db.Uuid
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   customer    SupportCustomer     @relation(fields: [customerId], references: [id], onDelete: Cascade)

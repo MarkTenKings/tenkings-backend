@@ -14329,3 +14329,17 @@
 
 ### Notes
 - No restart or migration was executed in this session.
+
+## 2026-04-08 - Planned production Prisma deploy migration for support customer-memory layer
+
+### Summary
+- User explicitly requested running the production Prisma migration for `20260408214241_support_customer_memory_layer`.
+- Reconfirmed pre-migration git state on the pushed `main` checkout:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `96d2d84`
+- Re-read `docs/runbooks/DEPLOY_RUNBOOK.md` and confirmed the runbook requirements to print branch/HEAD first, confirm parity before migrate, and record the migration in this session log.
+
+### Planned Action
+- Use the production `DATABASE_URL` from the environment and run `npx prisma migrate deploy --schema packages/database/prisma/schema.prisma`.
+- Record the observed result with evidence immediately after the command completes.
