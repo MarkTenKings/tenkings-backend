@@ -1,7 +1,7 @@
 import Head from "next/head";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { OpenStatusBadge } from "../components/locations/OpenStatusBadge";
 import type { StoreLocatorMapLocation } from "../components/maps/StoreLocatorMap";
 import LocationDetailPanel, { type LocationPanelLocation } from "../components/locations/LocationDetailPanel";
@@ -9,7 +9,9 @@ import MapErrorBoundary from "../components/maps/MapErrorBoundary";
 import MapFallback from "../components/maps/MapFallback";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
 import { useSession } from "../hooks/useSession";
+import { buildAdminHeaders } from "../lib/adminHeaders";
 import { getLocationTypeLabel } from "../lib/kingsHunt";
+import { type LocationStatusValue, isComingSoonLocation } from "../lib/locationStatus";
 import { haversineDistance, ONLINE_LOCATION_SLUG } from "../lib/locationUtils";
 import { TEN_KINGS_COLLECTIBLES_CROWN_PATH, TEN_KINGS_COLLECTIBLES_CROWN_VIEWBOX } from "../lib/tenKingsBrand";
 
@@ -76,6 +78,7 @@ function ListLocationCard({
   onClick: () => void;
 }) {
   const subtitle = [location.city, location.state].filter(Boolean).join(", ") || location.address;
+  const isComingSoon = isComingSoonLocation(location.locationStatus);
 
   return (
     <button
@@ -88,7 +91,7 @@ function ListLocationCard({
           width: "44px",
           height: "44px",
           borderRadius: "999px",
-          background: "#d4a843",
+          background: isComingSoon ? "#888888" : "#d4a843",
           flexShrink: 0,
           display: "flex",
           alignItems: "center",
@@ -100,7 +103,7 @@ function ListLocationCard({
           width="22"
           height="22"
           viewBox={TEN_KINGS_COLLECTIBLES_CROWN_VIEWBOX}
-          fill="#0a0a0a"
+          fill={isComingSoon ? "#ffffff" : "#0a0a0a"}
           aria-hidden="true"
         >
           <path d={TEN_KINGS_COLLECTIBLES_CROWN_PATH} />
@@ -134,7 +137,11 @@ function ListLocationCard({
       </div>
 
       <div className="flex-shrink-0">
-        <OpenStatusBadge hours={location.hours} locationType={location.locationType} />
+        <OpenStatusBadge
+          hours={location.hours}
+          locationType={location.locationType}
+          locationStatus={location.locationStatus}
+        />
       </div>
 
       <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
@@ -159,6 +166,44 @@ export default function LocationsPage() {
     }
     return hasAdminAccess(session.user.id) || hasAdminPhoneAccess(session.user.phone);
   }, [session]);
+
+  const updateLocationStatus = useCallback(
+    async (slug: string, status: LocationStatusValue) => {
+      if (!session?.token) {
+        throw new Error("Admin session required");
+      }
+
+      const response = await fetch(`/api/locations/${encodeURIComponent(slug)}/status`, {
+        method: "PATCH",
+        headers: buildAdminHeaders(session?.token, {
+          "Content-Type": "application/json",
+        }),
+        body: JSON.stringify({ status }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        message?: string;
+        error?: string;
+        location?: Partial<LocationRecord> & { slug: string };
+      };
+
+      if (!response.ok || !payload.location) {
+        throw new Error(payload.message ?? payload.error ?? "Failed to update location status");
+      }
+
+      setLocations((current) =>
+        current.map((location) =>
+          location.slug === payload.location?.slug
+            ? sanitizeLocationRecord({
+                ...location,
+                ...payload.location,
+              } as LocationRecord)
+            : location,
+        ),
+      );
+    },
+    [session?.token],
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -303,6 +348,7 @@ export default function LocationsPage() {
         latitude: location.latitude,
         longitude: location.longitude,
         locationType: location.locationType,
+        locationStatus: location.locationStatus,
         city: location.city,
         state: location.state,
         hours: location.hours,
@@ -492,7 +538,14 @@ export default function LocationsPage() {
           </button>
         </div>
 
-        {viewMode === "map" ? <LocationDetailPanel location={selectedLocation} onClose={() => setSelectedSlug(null)} /> : null}
+        {viewMode === "map" ? (
+          <LocationDetailPanel
+            location={selectedLocation}
+            isAdmin={isAdmin}
+            onClose={() => setSelectedSlug(null)}
+            onLocationStatusChange={updateLocationStatus}
+          />
+        ) : null}
       </div>
     </>
   );

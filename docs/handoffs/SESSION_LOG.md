@@ -14446,6 +14446,41 @@
 - The user request referenced `@11labs/react`, but the current official ElevenLabs docs and package registry use `@elevenlabs/react`; that official package was installed and used.
 - The client widget reads `NEXT_PUBLIC_ELEVENLABS_AGENT_ID`, and the Next config now derives it from `ELEVENLABS_AGENT_ID` when no explicit public override is present.
 
+## 2026-04-09 - Phase 5 Queen widget changes committed and pushed to origin/main
+
+### Summary
+- Committed the Queen website chat widget on `main` as `5c3fc28` `feat(support): add Queen website chat widget`.
+- Pushed `main` to `origin` successfully:
+  - `git push origin main` -> `be4af61..5c3fc28  main -> main`
+- Verified local/remote parity immediately after the push.
+- Pushing to `origin/main` should trigger the connected production/Vercel deployment flow, but deployment completion was not verified from this shell session.
+- Immediately after the push, unrelated `/locations` working-tree edits and new files were present locally; those paths were not modified, staged, or committed as part of the Queen widget work.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `git commit -m "feat(support): add Queen website chat widget"` -> created commit `5c3fc28`
+- `git status -sb` before push -> `## main...origin/main [ahead 1]`
+- `git branch --show-current` before push -> `main`
+- `git rev-parse --short HEAD` before push -> `5c3fc28`
+- `git log -1 --oneline` before push -> `5c3fc28 feat(support): add Queen website chat widget`
+- `git push origin main` -> success (`be4af61..5c3fc28  main -> main`)
+- `git status -sb` immediately after push -> `## main...origin/main`
+
+### Notes
+- Unexpected post-push local paths observed and left untouched:
+  - `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+  - `frontend/nextjs-app/components/locations/OpenStatusBadge.tsx`
+  - `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+  - `frontend/nextjs-app/pages/api/locations/index.ts`
+  - `frontend/nextjs-app/pages/locations.tsx`
+  - `frontend/nextjs-app/styles/globals.css`
+  - `frontend/nextjs-app/lib/locationStatus.ts`
+  - `frontend/nextjs-app/pages/api/locations/[locationId]/`
+
 ## 2026-04-09 - Docs-only git-state verification refresh
 
 ### Summary
@@ -14595,3 +14630,45 @@
 
 ### Notes
 - Pending tracked paths observed before this docs-only refresh were `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`.
+
+## 2026-04-09 - `/locations` admin polish, coming-soon toggle, live hours, and upcoming events
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Synced `main` before editing:
+  - `git pull --ff-only --autostash origin main` -> `Already up to date.`
+- Researched the existing repo patterns first:
+  - public-page admin gating uses `hasAdminAccess(session.user.id) || hasAdminPhoneAccess(session.user.phone)`
+  - admin APIs use `requireAdminSession(req)`
+  - the existing admin location detail/edit surface is `/admin/assigned-locations/[locationId]`, keyed by location `id`
+- Added an admin-only `Edit Location` button to the public location detail panel that links to the existing assigned-location admin detail route.
+- Added an admin-only `LIVE` / `COMING SOON` toggle in the detail panel and a new authenticated `PATCH /api/locations/[locationId]/status` endpoint that updates `Location.locationStatus` by slug.
+- Updated the public locations API so `coming_soon` records remain visible by default.
+- Added a shared `locationStatus` helper module and updated the public map/list/detail UI so `coming_soon` venues render with silver markers, a `COMING SOON` badge, and a disabled `Notify Me` CTA instead of `Start Hunt`.
+- Added `GET /api/locations/[locationId]/live-status` with 1-hour in-memory caching; it uses Google Places Text Search to fetch `openNow` and `weekdayDescriptions`, and returns event-based state for arena/stadium locations without making a Places call.
+- Added `GET /api/locations/[locationId]/events` with Ticketmaster venue-id lookups and graceful empty responses when `TICKETMASTER_API_KEY` is unset or the venue slug is not mapped.
+- Added an upcoming-events section to the detail panel for arena/stadium locations and used same-day event detection to surface `Open Today` for event-based venues.
+- The user explicitly approved pushing the combined `main` history after the earlier Queen widget push.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+- `frontend/nextjs-app/components/locations/OpenStatusBadge.tsx`
+- `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+- `frontend/nextjs-app/pages/api/locations/index.ts`
+- `frontend/nextjs-app/pages/api/locations/[locationId]/status.ts`
+- `frontend/nextjs-app/pages/api/locations/[locationId]/live-status.ts`
+- `frontend/nextjs-app/pages/api/locations/[locationId]/events.ts`
+- `frontend/nextjs-app/pages/locations.tsx`
+- `frontend/nextjs-app/lib/locationStatus.ts`
+- `frontend/nextjs-app/styles/globals.css`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `pnpm --filter @tenkings/nextjs-app exec eslint components/locations/LocationDetailPanel.tsx components/locations/OpenStatusBadge.tsx components/maps/StoreLocatorMap.tsx pages/locations.tsx pages/api/locations/index.ts 'pages/api/locations/[locationId]/status.ts' 'pages/api/locations/[locationId]/live-status.ts' 'pages/api/locations/[locationId]/events.ts' lib/locationStatus.ts` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- `git diff --check` -> pass
+
+### Notes
+- The current admin route family for location editing is `/admin/assigned-locations/[locationId]`, so the public panel edit action targets the existing route with `location.id`.

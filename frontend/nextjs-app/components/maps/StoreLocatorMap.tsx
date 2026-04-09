@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useGoogleMaps } from "../../hooks/useGoogleMaps";
+import { isComingSoonLocation } from "../../lib/locationStatus";
 import { ONLINE_LOCATION_SLUG } from "../../lib/locationUtils";
 import { TEN_KINGS_COLLECTIBLES_CROWN_PATH, TEN_KINGS_COLLECTIBLES_CROWN_VIEWBOX } from "../../lib/tenKingsBrand";
 import MapFallback from "./MapFallback";
@@ -14,6 +15,7 @@ export interface StoreLocatorMapLocation {
   latitude: number;
   longitude: number;
   locationType?: string | null;
+  locationStatus?: string | null;
   city?: string | null;
   state?: string | null;
   hours?: string | null;
@@ -35,16 +37,19 @@ function setMarkerSelected(node: HTMLElement, selected: boolean) {
   node.dataset.selected = selected ? "true" : "false";
 }
 
-function createCrownMarkerContent(selected = false): HTMLDivElement {
+function createCrownMarkerContent(location: Pick<StoreLocatorMapLocation, "locationStatus">, selected = false): HTMLDivElement {
   const container = document.createElement("div");
   container.className = "tk-map-marker";
   setMarkerSelected(container, selected);
+
+  const isComingSoon = isComingSoonLocation(location.locationStatus);
+  container.dataset.variant = isComingSoon ? "silver" : "gold";
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", TEN_KINGS_COLLECTIBLES_CROWN_VIEWBOX);
   svg.setAttribute("width", "22");
   svg.setAttribute("height", "22");
-  svg.setAttribute("fill", "#0a0a0a");
+  svg.setAttribute("fill", isComingSoon ? "#ffffff" : "#0a0a0a");
   svg.setAttribute("aria-hidden", "true");
 
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -196,7 +201,7 @@ export default function StoreLocatorMap({
       const bounds = new google.maps.LatLngBounds();
 
       physicalLocations.forEach((location) => {
-        const content = createCrownMarkerContent(false);
+        const content = createCrownMarkerContent(location, false);
         const marker = new AdvancedMarkerElement({
           map,
           position: { lat: location.latitude, lng: location.longitude },

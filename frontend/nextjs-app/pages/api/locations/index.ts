@@ -56,7 +56,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ...(includeInactive
           ? {}
           : {
-              OR: [{ locationStatus: "active" }, { locationStatus: null }],
+              OR: [{ locationStatus: "active" }, { locationStatus: "coming_soon" }, { locationStatus: null }],
             }),
       };
 

@@ -139,6 +139,11 @@ button {
   transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
 }
 
+.tk-map-marker[data-variant="silver"] {
+  background: #888888;
+  color: #ffffff;
+}
+
 .tk-map-marker:hover,
 .tk-map-marker:focus-visible {
   transform: scale(1.1);
@@ -147,11 +152,24 @@ button {
     0 0 16px rgba(212, 168, 67, 0.6);
 }
 
+.tk-map-marker[data-variant="silver"]:hover,
+.tk-map-marker[data-variant="silver"]:focus-visible {
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.4),
+    0 0 16px rgba(136, 136, 136, 0.6);
+}
+
 .tk-map-marker[data-selected="true"] {
   transform: scale(1.08);
   box-shadow:
     0 0 0 2px rgba(212, 168, 67, 0.26),
     0 10px 24px rgba(212, 168, 67, 0.45);
+}
+
+.tk-map-marker[data-selected="true"][data-variant="silver"] {
+  box-shadow:
+    0 0 0 2px rgba(136, 136, 136, 0.26),
+    0 10px 24px rgba(136, 136, 136, 0.45);
 }
 
 .tk-map-marker__crown {
