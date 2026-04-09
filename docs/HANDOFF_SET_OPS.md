@@ -1,23 +1,28 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-08` (support customer-memory schema + API routes added on `main` in `/Users/markthomas/tenkings-task27-main`; Prisma client regenerated and manual migration SQL added; local `migrate:dev` execution is blocked by missing Postgres/Docker in this environment; latest committed baseline is `2afdb16`; no deploy/restart succeeded and no DB schema mutation was applied)
+- Last reviewed: `2026-04-08` (support customer-memory schema + API routes were committed as `2a3d226` and pushed to `origin/main` from `/Users/markthomas/tenkings-task27-main`; Vercel deployment should have been triggered by the push; local Prisma migration still was not run because production DB migration is separate and local Postgres/Docker are unavailable)
 - Branch: `main`
-- Current local git state at latest handoff refresh:
+- Current local git state immediately after the support push:
   - `git status -sb` -> `## main...origin/main`
-  - modified tracked paths:
-    - `docs/HANDOFF_SET_OPS.md`
-    - `docs/handoffs/SESSION_LOG.md`
-    - `packages/database/prisma/schema.prisma`
+  - modified tracked paths: none
   - deleted tracked paths: none
-  - untracked paths:
-    - `frontend/nextjs-app/lib/server/support.ts`
-    - `frontend/nextjs-app/pages/api/support/`
-    - `packages/database/prisma/migrations/20260408214241_support_customer_memory_layer/`
+  - untracked paths: none
 - Latest committed baseline in this checkout:
-  - `2afdb16` docs(legal): add sms communications terms section
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart executed; attempted local Prisma migration did not reach a database
+  - `2a3d226` feat(support): add customer memory layer APIs
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; pushed `main` to `origin`; no restart executed; attempted local Prisma migration did not reach a database
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-08, support customer-memory changes committed and pushed on `main`)
+- Recorded the user-requested push result after committing the Phase 1 support changes.
+- Observed push evidence:
+  - feature commit created locally -> `2a3d226 feat(support): add customer memory layer APIs`
+  - `git push origin main` -> success, remote advanced `2afdb16..2a3d226`
+  - `git status -sb` immediately after push -> `## main...origin/main`
+  - `git log -1 --oneline` immediately after push -> `2a3d226 feat(support): add customer memory layer APIs`
+- Deployment note:
+  - pushing to `origin/main` should trigger the connected Vercel deployment flow, but the deployed site/runtime was not verified from this shell session
+- No local Prisma migration was executed; production DB migration remains separate from this push.
 
 ## Session Update (2026-04-08, Phase 1 support customer-memory schema + API routes on `main`)
 - Continued in the same session after the required startup docs from `AGENTS.md` had already been read.
