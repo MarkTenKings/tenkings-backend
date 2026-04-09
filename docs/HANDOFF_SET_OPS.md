@@ -1,29 +1,34 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-08` (Phase 2 ElevenLabs webhook integration implemented locally on `main`; latest committed baseline is still `3fbb4d4` until the requested commit/push step; no deploy, restart, or migration was executed in this session)
+- Last reviewed: `2026-04-08` (Phase 2 ElevenLabs webhook integration was committed as `885a6ad` and pushed to `origin/main`; this handoff refresh records the observed push result; no deploy, restart, or migration was executed in this session)
 - Branch: `main`
-- Current local git state after the Phase 2 webhook implementation:
+- Current local git state after the webhook push and this docs refresh:
   - `git status -sb` -> `## main...origin/main`
   - modified tracked paths:
     - `docs/HANDOFF_SET_OPS.md`
     - `docs/handoffs/SESSION_LOG.md`
-    - `frontend/nextjs-app/.env.example`
-    - `frontend/nextjs-app/lib/server/support.ts`
-    - `frontend/nextjs-app/pages/api/support/conversation/[id].ts`
-  - untracked tracked-work files:
-    - `frontend/nextjs-app/lib/server/elevenlabs.ts`
-    - `frontend/nextjs-app/pages/api/support/webhooks/conversation-start.ts`
-    - `frontend/nextjs-app/pages/api/support/webhooks/conversation-end.ts`
-    - `frontend/nextjs-app/pages/api/support/webhooks/elevenlabs-verify.ts`
   - deleted tracked paths: none
   - ignored local env placeholders created:
     - `frontend/nextjs-app/.env.local`
     - `frontend/nextjs-app/.env.production`
 - Latest committed baseline in this checkout:
-  - `3fbb4d4` fix(migration): use uuid for conversation location
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main` for the Phase 2 webhook implementation; no deploy/restart/migrate executed in this session
+  - `885a6ad` feat(support): add elevenlabs webhook integration
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was updated with the Phase 2 webhook commit; no deploy/restart/migrate executed in this session
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-08, Phase 2 webhook changes committed and pushed on `main`)
+- Recorded the user-requested commit + push result for the ElevenLabs webhook integration.
+- Observed push evidence:
+  - `git commit -m "feat(support): add elevenlabs webhook integration"` -> created commit `885a6ad`
+  - `git push origin main` -> success, remote advanced `3fbb4d4..885a6ad`
+  - `git status -sb` immediately after push -> `## main...origin/main`
+  - `git branch --show-current` immediately after push -> `main`
+  - `git rev-parse --short HEAD` immediately after push -> `885a6ad`
+  - `git log -1 --oneline` immediately after push -> `885a6ad feat(support): add elevenlabs webhook integration`
+- Deployment note:
+  - pushing to `origin/main` should trigger the connected production/Vercel deployment flow, but deployed runtime verification was not performed from this shell session
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-08, Phase 2 ElevenLabs Agent webhook integration on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
