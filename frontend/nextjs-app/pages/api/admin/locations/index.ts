@@ -4,6 +4,7 @@ import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { requireAdminSession, toErrorResponse } from "../../../../lib/server/admin";
 import { slugify } from "../../../../lib/slugify";
+import { buildLocationMapsUrl, geocodeLocationAddress } from "../../../../lib/server/locationGeocoding";
 
 type LocationRow = {
   id: string;
@@ -37,16 +38,27 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
         return res.status(400).json({ message: parsed.error.issues[0]?.message ?? "Invalid payload" });
       }
 
+      const trimmedName = parsed.data.name.trim();
+      const trimmedAddress = parsed.data.address.trim();
       const normalizedSlug = slugify(parsed.data.slug || parsed.data.name);
       if (!normalizedSlug) {
         return res.status(400).json({ message: "Unable to derive slug from location name" });
       }
 
+      const geocoded = await geocodeLocationAddress(trimmedAddress);
+
       const location = await prisma.location.create({
         data: {
-          name: parsed.data.name.trim(),
+          name: trimmedName,
           slug: normalizedSlug,
-          address: parsed.data.address.trim(),
+          address: trimmedAddress,
+          locationStatus: "active",
+          mapsUrl: geocoded?.mapsUrl ?? buildLocationMapsUrl({ address: trimmedAddress }),
+          latitude: geocoded?.latitude ?? null,
+          longitude: geocoded?.longitude ?? null,
+          city: geocoded?.city ?? null,
+          state: geocoded?.state ?? null,
+          zip: geocoded?.zip ?? null,
           recentRips: [],
         },
         select: {

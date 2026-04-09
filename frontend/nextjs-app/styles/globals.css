@@ -135,7 +135,7 @@ button {
   border-radius: 999px;
   background: #d4a843;
   color: #0a0a0a;
-  box-shadow: 0 2px 8px rgba(212, 168, 67, 0.4);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
 }
 

@@ -14409,6 +14409,48 @@
 ### Notes
 - Pending tracked paths observed before this docs-only refresh were `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`.
 
+## 2026-04-08 - `/locations` fixes: individual pins, exact crown mark, admin button, list toggle, missing-location diagnosis
+
+### Summary
+- Diagnosed why newly created admin locations showed in `/admin/assigned-locations` but not on the public `/locations` map:
+  - the public page only renders rows with numeric `latitude` / `longitude`
+  - the admin create-location API was saving only `name`, `slug`, `address`, and `recentRips`
+  - the assigned-locations admin surface lists all locations without requiring map coordinates
+- Removed Google marker clustering so the public map always shows individual venue pins.
+- Replaced the marker artwork with the exact crown path from the inline Ten Kings Collectibles logo in `frontend/nextjs-app/components/AppShell.tsx`.
+- Restored a floating `Add Location` button on `/locations` for admin/staff sessions only, linking to `/admin/assigned-locations`.
+- Added a bottom-center `MAP` / `LIST` toggle and a full-screen list view that switches back to map mode when a venue card is tapped.
+- Added server-side geocoding fallback in the public locations API and geocoding-on-create in the admin locations API so existing address-only locations and newly created locations can surface on the public map without creating duplicate rows.
+- Removed the now-unused `@googlemaps/markerclusterer` dependency.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/components/AppShell.tsx`
+- `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+- `frontend/nextjs-app/components/locations/OpenStatusBadge.tsx`
+- `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+- `frontend/nextjs-app/lib/server/locationGeocoding.ts`
+- `frontend/nextjs-app/lib/tenKingsBrand.ts`
+- `frontend/nextjs-app/package.json`
+- `frontend/nextjs-app/pages/api/admin/locations/index.ts`
+- `frontend/nextjs-app/pages/api/locations/index.ts`
+- `frontend/nextjs-app/pages/locations.tsx`
+- `frontend/nextjs-app/styles/globals.css`
+- `pnpm-lock.yaml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `git pull --ff-only --autostash origin main` -> `Already up to date.`
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/locations.tsx --file components/maps/StoreLocatorMap.tsx --file components/locations/LocationDetailPanel.tsx --file components/locations/OpenStatusBadge.tsx --file components/AppShell.tsx --file pages/api/locations/index.ts --file pages/api/admin/locations/index.ts` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec eslint lib/server/locationGeocoding.ts` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- `git diff --check` -> pass
+
+### Notes
+- The public map fix depends on a Google Maps API key already used elsewhere in the app; the geocoding helper reads `GOOGLE_MAPS_API_KEY` first and falls back to `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`.
+- Existing address-only locations now have an API-level geocode fallback for `/api/locations`, while new admin-created locations are geocoded at creation time.
+
 ## 2026-04-08 - Phase 2 ElevenLabs Agent webhook integration on main
 
 ### Summary

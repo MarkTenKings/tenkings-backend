@@ -1,11 +1,17 @@
 import Head from "next/head";
 import dynamic from "next/dynamic";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { OpenStatusBadge } from "../components/locations/OpenStatusBadge";
 import type { StoreLocatorMapLocation } from "../components/maps/StoreLocatorMap";
 import LocationDetailPanel, { type LocationPanelLocation } from "../components/locations/LocationDetailPanel";
 import MapErrorBoundary from "../components/maps/MapErrorBoundary";
 import MapFallback from "../components/maps/MapFallback";
+import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
+import { useSession } from "../hooks/useSession";
+import { getLocationTypeLabel } from "../lib/kingsHunt";
 import { haversineDistance, ONLINE_LOCATION_SLUG } from "../lib/locationUtils";
+import { TEN_KINGS_COLLECTIBLES_CROWN_PATH, TEN_KINGS_COLLECTIBLES_CROWN_VIEWBOX } from "../lib/tenKingsBrand";
 
 const StoreLocatorMap = dynamic(() => import("../components/maps/StoreLocatorMap"), {
   ssr: false,
@@ -43,6 +49,8 @@ interface LocationRecord extends LocationPanelLocation {
   updatedAt: string;
 }
 
+type ViewMode = "map" | "list";
+
 const sanitizeLocationRecord = (location: LocationRecord): LocationRecord => ({
   ...location,
   machinePhotoUrl: location.machinePhotoUrl ?? null,
@@ -60,12 +68,97 @@ const sanitizeLocationRecord = (location: LocationRecord): LocationRecord => ({
   hasIndoorMap: Boolean((location as { hasIndoorMap?: boolean }).hasIndoorMap),
 });
 
+function ListLocationCard({
+  location,
+  onClick,
+}: {
+  location: LocationRecord;
+  onClick: () => void;
+}) {
+  const subtitle = [location.city, location.state].filter(Boolean).join(", ") || location.address;
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex w-full items-center gap-4 rounded-[12px] border border-[#1a1a1a] bg-[#111111] p-4 text-left transition hover:border-[#2a2a2a] hover:bg-[#161616] active:bg-[#1a1a1a]"
+    >
+      <div
+        style={{
+          width: "44px",
+          height: "44px",
+          borderRadius: "999px",
+          background: "#d4a843",
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.5)",
+        }}
+      >
+        <svg
+          width="22"
+          height="22"
+          viewBox={TEN_KINGS_COLLECTIBLES_CROWN_VIEWBOX}
+          fill="#0a0a0a"
+          aria-hidden="true"
+        >
+          <path d={TEN_KINGS_COLLECTIBLES_CROWN_PATH} />
+        </svg>
+      </div>
+
+      <div className="min-w-0 flex-1">
+        <p className="font-kingshunt-body mb-1 text-[10px] font-bold uppercase tracking-[0.1em] text-[#d4a843]">
+          {getLocationTypeLabel(location.locationType)}
+        </p>
+        <p
+          className="font-kingshunt-display mb-1 text-[16px] font-bold text-white"
+          style={{
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {location.name}
+        </p>
+        <p
+          className="font-kingshunt-body text-[13px] text-[#666666]"
+          style={{
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {subtitle}
+        </p>
+      </div>
+
+      <div className="flex-shrink-0">
+        <OpenStatusBadge hours={location.hours} locationType={location.locationType} />
+      </div>
+
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+        <path d="M6 4l4 4-4 4" stroke="#444" strokeWidth="2" fill="none" strokeLinecap="round" />
+      </svg>
+    </button>
+  );
+}
+
 export default function LocationsPage() {
+  const { session } = useSession();
   const [locations, setLocations] = useState<LocationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [userPosition, setUserPosition] = useState<{ lat: number; lng: number } | null>(null);
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("map");
+
+  const isAdmin = useMemo(() => {
+    if (!session) {
+      return false;
+    }
+    return hasAdminAccess(session.user.id) || hasAdminPhoneAccess(session.user.phone);
+  }, [session]);
 
   useEffect(() => {
     let mounted = true;
@@ -137,14 +230,8 @@ export default function LocationsPage() {
     };
   }, []);
 
-  const physicalLocations = useMemo(
-    () =>
-      locations.filter(
-        (location) =>
-          location.slug !== ONLINE_LOCATION_SLUG &&
-          typeof location.latitude === "number" &&
-          typeof location.longitude === "number",
-      ),
+  const publicLocations = useMemo(
+    () => locations.filter((location) => location.slug !== ONLINE_LOCATION_SLUG),
     [locations],
   );
 
@@ -154,7 +241,11 @@ export default function LocationsPage() {
       return distances;
     }
 
-    for (const location of physicalLocations) {
+    for (const location of publicLocations) {
+      if (typeof location.latitude !== "number" || typeof location.longitude !== "number") {
+        continue;
+      }
+
       distances[location.slug] = haversineDistance(
         userPosition.lat,
         userPosition.lng,
@@ -164,19 +255,36 @@ export default function LocationsPage() {
     }
 
     return distances;
-  }, [physicalLocations, userPosition]);
+  }, [publicLocations, userPosition]);
 
   const sortedLocations = useMemo(() => {
     if (!userPosition) {
-      return physicalLocations;
+      return publicLocations;
     }
 
-    return [...physicalLocations].sort((left, right) => {
+    return [...publicLocations].sort((left, right) => {
       const leftDistance = distanceBySlug[left.slug] ?? Number.POSITIVE_INFINITY;
       const rightDistance = distanceBySlug[right.slug] ?? Number.POSITIVE_INFINITY;
-      return leftDistance - rightDistance;
+      if (leftDistance !== rightDistance) {
+        return leftDistance - rightDistance;
+      }
+
+      return left.name.localeCompare(right.name, "en", { sensitivity: "base" });
     });
-  }, [distanceBySlug, physicalLocations, userPosition]);
+  }, [distanceBySlug, publicLocations, userPosition]);
+
+  const physicalLocations = useMemo(
+    () =>
+      sortedLocations.filter(
+        (
+          location,
+        ): location is LocationRecord & {
+          latitude: number;
+          longitude: number;
+        } => typeof location.latitude === "number" && typeof location.longitude === "number",
+      ),
+    [sortedLocations],
+  );
 
   const locationsBySlug = useMemo(
     () => new Map(sortedLocations.map((location) => [location.slug, location])),
@@ -187,20 +295,20 @@ export default function LocationsPage() {
 
   const mapLocations = useMemo<StoreLocatorMapLocation[]>(
     () =>
-      sortedLocations.map((location) => ({
+      physicalLocations.map((location) => ({
         id: location.id,
         slug: location.slug,
         name: location.name,
         address: location.address,
-        latitude: location.latitude as number,
-        longitude: location.longitude as number,
+        latitude: location.latitude,
+        longitude: location.longitude,
         locationType: location.locationType,
         city: location.city,
         state: location.state,
         hours: location.hours,
         mapsUrl: location.mapsUrl,
       })),
-    [sortedLocations],
+    [physicalLocations],
   );
 
   useEffect(() => {
@@ -233,39 +341,72 @@ export default function LocationsPage() {
       </Head>
 
       <div className="relative w-screen overflow-hidden bg-[#0a0a0a]" style={{ height: "100dvh", minHeight: "100vh" }}>
-        <div className="absolute inset-0">
-          <MapErrorBoundary
-            fallback={
-              <MapFallback
-                className="h-full"
-                eyebrow="Map failed to load"
-                title="Venue map unavailable"
-                body="The live map is temporarily unavailable, but location details and hunt links return once the map service recovers."
+        {viewMode === "map" ? (
+          <div className="absolute inset-0">
+            <MapErrorBoundary
+              fallback={
+                <MapFallback
+                  className="h-full"
+                  eyebrow="Map failed to load"
+                  title="Venue map unavailable"
+                  body="The live map is temporarily unavailable, but location details and hunt links return once the map service recovers."
+                />
+              }
+            >
+              <StoreLocatorMap
+                locations={mapLocations}
+                selectedSlug={selectedSlug}
+                onMarkerClick={(slug) => setSelectedSlug(slug)}
+                onMapClick={() => setSelectedSlug(null)}
+                className="h-full w-full"
+                edgeToEdge
               />
-            }
-          >
-            <StoreLocatorMap
-              locations={mapLocations}
-              selectedSlug={selectedSlug}
-              onMarkerClick={(slug) => setSelectedSlug(slug)}
-              onMapClick={() => setSelectedSlug(null)}
-              className="h-full w-full"
-              edgeToEdge
-            />
-          </MapErrorBoundary>
-        </div>
+            </MapErrorBoundary>
+          </div>
+        ) : null}
 
-        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 bg-[linear-gradient(to_bottom,rgba(10,10,10,0.95)_0%,rgba(10,10,10,0)_100%)] px-5 pb-16 pt-5 sm:px-6">
+        {viewMode === "list" ? (
+          <div
+            className="absolute inset-0 z-[15] overflow-y-auto bg-[#0a0a0a] px-4 pb-20 pt-20 sm:px-6"
+            style={{ paddingTop: "80px", paddingBottom: "80px" }}
+          >
+            <div className="mx-auto flex max-w-3xl flex-col gap-2">
+              {sortedLocations.map((location) => (
+                <ListLocationCard
+                  key={location.slug}
+                  location={location}
+                  onClick={() => {
+                    setViewMode("map");
+                    setSelectedSlug(location.slug);
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-20 bg-[linear-gradient(to_bottom,rgba(10,10,10,0.95)_0%,rgba(10,10,10,0)_100%)] px-5 pb-16 pt-5 sm:px-6">
           <div className="pointer-events-auto max-w-[460px]">
             <p className="font-kingshunt-body text-[11px] font-bold uppercase tracking-[0.24em] text-[#d4a843]">
-              FIND A LOCATION · {mapLocations.length} VENUES
+              FIND A LOCATION · {sortedLocations.length} VENUES
             </p>
             <h1 className="font-kingshunt-display mt-2 text-[clamp(28px,4vw,48px)] leading-[0.92] text-white">PICK &amp; RIP IN PERSON</h1>
           </div>
         </div>
 
+        {isAdmin ? (
+          <div className="absolute right-4 top-4 z-30 sm:right-6">
+            <Link
+              href="/admin/assigned-locations"
+              className="font-kingshunt-body inline-flex items-center rounded-full border border-[#d4a843] bg-[#111111] px-4 py-2 text-[11px] font-bold uppercase tracking-[0.18em] text-[#d4a843] shadow-[0_8px_24px_rgba(0,0,0,0.3)] transition hover:bg-[#171717]"
+            >
+              Add Location
+            </Link>
+          </div>
+        ) : null}
+
         {loading ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-6 z-10 flex justify-center px-4">
+          <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center px-4">
             <div className="rounded-full border border-white/10 bg-[rgba(10,10,10,0.86)] px-4 py-2 text-[11px] uppercase tracking-[0.24em] text-[#d4a843] backdrop-blur">
               Loading venues…
             </div>
@@ -273,13 +414,13 @@ export default function LocationsPage() {
         ) : null}
 
         {error ? (
-          <div className="absolute bottom-6 left-4 right-4 z-20 rounded-2xl border border-rose-500/40 bg-[rgba(20,10,10,0.92)] px-5 py-4 text-sm text-rose-200 sm:left-6 sm:right-auto sm:max-w-md">
+          <div className="absolute bottom-24 left-4 right-4 z-20 rounded-2xl border border-rose-500/40 bg-[rgba(20,10,10,0.92)] px-5 py-4 text-sm text-rose-200 sm:left-6 sm:right-auto sm:max-w-md">
             {error}
           </div>
         ) : null}
 
-        {!loading && mapLocations.length === 0 && !error ? (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-6">
+        {!loading && sortedLocations.length === 0 && !error ? (
+          <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center px-6">
             <div className="rounded-[1.5rem] border border-white/10 bg-[rgba(10,10,10,0.88)] px-6 py-5 text-center backdrop-blur">
               <p className="font-kingshunt-body text-[11px] uppercase tracking-[0.24em] text-[#d4a843]">No venues yet</p>
               <p className="font-kingshunt-body mt-2 text-sm text-[#b3b3b3]">Physical Ten Kings locations will appear here once they go live.</p>
@@ -287,7 +428,71 @@ export default function LocationsPage() {
           </div>
         ) : null}
 
-        <LocationDetailPanel location={selectedLocation} onClose={() => setSelectedSlug(null)} />
+        {!loading && !error && viewMode === "map" && sortedLocations.length > 0 && mapLocations.length === 0 ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-24 z-20 flex justify-center px-4">
+            <div className="max-w-md rounded-2xl border border-white/10 bg-[rgba(10,10,10,0.88)] px-5 py-4 text-center text-sm text-[#cccccc] backdrop-blur">
+              Venue cards are available, but map pins need valid coordinates. Newly added venues now geocode from their saved address.
+            </div>
+          </div>
+        ) : null}
+
+        <div
+          style={{
+            position: "absolute",
+            bottom: "24px",
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 30,
+            display: "flex",
+            background: "rgba(10,10,10,0.9)",
+            border: "1px solid #333",
+            borderRadius: "24px",
+            padding: "4px",
+            backdropFilter: "blur(12px)",
+            boxShadow: "0 4px 24px rgba(0,0,0,0.4)",
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setViewMode("map")}
+            style={{
+              padding: "8px 20px",
+              borderRadius: "20px",
+              border: "none",
+              background: viewMode === "map" ? "#d4a843" : "transparent",
+              color: viewMode === "map" ? "#0a0a0a" : "#999",
+              fontFamily: "Satoshi, sans-serif",
+              fontWeight: 700,
+              fontSize: "13px",
+              letterSpacing: "0.05em",
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            MAP
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode("list")}
+            style={{
+              padding: "8px 20px",
+              borderRadius: "20px",
+              border: "none",
+              background: viewMode === "list" ? "#d4a843" : "transparent",
+              color: viewMode === "list" ? "#0a0a0a" : "#999",
+              fontFamily: "Satoshi, sans-serif",
+              fontWeight: 700,
+              fontSize: "13px",
+              letterSpacing: "0.05em",
+              cursor: "pointer",
+              transition: "all 0.2s ease",
+            }}
+          >
+            LIST
+          </button>
+        </div>
+
+        {viewMode === "map" ? <LocationDetailPanel location={selectedLocation} onClose={() => setSelectedSlug(null)} /> : null}
       </div>
     </>
   );

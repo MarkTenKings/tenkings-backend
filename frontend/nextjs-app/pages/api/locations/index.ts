@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma, type Prisma } from "@tenkings/database";
 import { z } from "zod";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
+import { buildLocationMapsUrl, geocodeLocationAddress } from "../../../lib/server/locationGeocoding";
 import { requireUserSession, toUserErrorResponse } from "../../../lib/server/session";
 
 const ripSchema = z
@@ -52,12 +53,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const where: Prisma.LocationWhereInput = {
         ...(stateFilter ? { state: stateFilter } : {}),
         ...(locationTypeFilter ? { locationType: locationTypeFilter } : {}),
-        ...(mapOnly
-          ? {
-              latitude: { not: null },
-              longitude: { not: null },
-            }
-          : {}),
         ...(includeInactive
           ? {}
           : {
@@ -75,23 +70,69 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           },
         },
       });
+
+      const enrichedLocations = await Promise.all(
+        locations.map(async (location) => {
+          const needsGeocodeFallback =
+            location.locationType !== "online" &&
+            Boolean(location.address?.trim()) &&
+            (
+              location.latitude == null ||
+              location.longitude == null ||
+              !location.city ||
+              !location.state ||
+              !location.zip ||
+              !location.mapsUrl
+            );
+
+          const geocoded = needsGeocodeFallback ? await geocodeLocationAddress(location.address) : null;
+          const latitude = location.latitude ?? geocoded?.latitude ?? null;
+          const longitude = location.longitude ?? geocoded?.longitude ?? null;
+          const city = location.city ?? geocoded?.city ?? null;
+          const state = location.state ?? geocoded?.state ?? null;
+          const zip = location.zip ?? geocoded?.zip ?? null;
+          const mapsUrl =
+            location.mapsUrl ??
+            geocoded?.mapsUrl ??
+            buildLocationMapsUrl({
+              address: location.address,
+              latitude,
+              longitude,
+            });
+
+          return {
+            ...location,
+            latitude,
+            longitude,
+            city,
+            state,
+            zip,
+            mapsUrl,
+            recentRips: Array.isArray(location.recentRips) ? (location.recentRips as Array<Record<string, unknown>>) : [],
+            landmarks: Array.isArray(location.landmarks) ? location.landmarks : [],
+            liveRips: Array.isArray(location.liveRips)
+              ? location.liveRips.map((liveRip) => ({
+                  id: liveRip.id,
+                  slug: liveRip.slug,
+                  title: liveRip.title,
+                  videoUrl: liveRip.videoUrl,
+                  thumbnailUrl: liveRip.thumbnailUrl,
+                  viewCount: liveRip.viewCount,
+                  createdAt: liveRip.createdAt.toISOString(),
+                }))
+              : [],
+          };
+        }),
+      );
+
+      const publicLocations = mapOnly
+        ? enrichedLocations.filter(
+            (location) => typeof location.latitude === "number" && typeof location.longitude === "number",
+          )
+        : enrichedLocations;
+
       res.status(200).json({
-        locations: locations.map((location) => ({
-          ...location,
-          recentRips: Array.isArray(location.recentRips) ? (location.recentRips as Array<Record<string, unknown>>) : [],
-          landmarks: Array.isArray(location.landmarks) ? location.landmarks : [],
-          liveRips: Array.isArray(location.liveRips)
-            ? location.liveRips.map((liveRip) => ({
-                id: liveRip.id,
-                slug: liveRip.slug,
-                title: liveRip.title,
-                videoUrl: liveRip.videoUrl,
-                thumbnailUrl: liveRip.thumbnailUrl,
-                viewCount: liveRip.viewCount,
-                createdAt: liveRip.createdAt.toISOString(),
-              }))
-            : [],
-        })),
+        locations: publicLocations,
       });
     } catch (error) {
       const result = toUserErrorResponse(error);

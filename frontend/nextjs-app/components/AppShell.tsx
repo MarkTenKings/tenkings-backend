@@ -2,6 +2,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useSession } from "../hooks/useSession";
 import { formatTkd } from "../lib/formatters";
+import { TEN_KINGS_COLLECTIBLES_CROWN_PATH } from "../lib/tenKingsBrand";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
 
 interface AppShellProps {
@@ -16,10 +17,7 @@ function CollectiblesBrandMark() {
   return (
     <div className="inline-flex flex-col items-center gap-1 leading-none">
       <svg viewBox="0 0 64 40" aria-hidden="true" className="h-7 w-12 text-[#e2ca61]">
-        <path
-          d="M6 34 14 13l11 10L32 4l7 19 11-10 8 21-5 2-6-13-12 11-3-16-3 16-12-11-6 13Z"
-          fill="currentColor"
-        />
+        <path d={TEN_KINGS_COLLECTIBLES_CROWN_PATH} fill="currentColor" />
       </svg>
       <span className="bg-gradient-to-r from-[#c99e29] via-[#f0e274] to-[#c69523] bg-clip-text font-heading text-[1.55rem] tracking-[0.08em] text-transparent md:text-[1.75rem]">
         TEN KINGS

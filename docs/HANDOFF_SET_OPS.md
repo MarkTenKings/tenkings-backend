@@ -1,21 +1,70 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-08` (Phase 2 ElevenLabs webhook integration was committed as `885a6ad` and pushed to `origin/main`; this handoff refresh records the observed push result; no deploy, restart, or migration was executed in this session)
+- Last reviewed: `2026-04-08` (`/locations` fixes implemented and validated locally in the current working tree; root cause for missing new venue pins was confirmed as missing geocoded coordinates on admin-created locations; no deploy, restart, or migration was executed in this session)
 - Branch: `main`
-- Current local git state after the webhook push and this docs refresh:
+- Current local git state while preparing the `/locations` fix handoff before commit/push:
   - `git status -sb` -> `## main...origin/main`
   - modified tracked paths:
     - `docs/HANDOFF_SET_OPS.md`
     - `docs/handoffs/SESSION_LOG.md`
+    - `frontend/nextjs-app/components/AppShell.tsx`
+    - `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+    - `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+    - `frontend/nextjs-app/package.json`
+    - `frontend/nextjs-app/pages/api/admin/locations/index.ts`
+    - `frontend/nextjs-app/pages/api/locations/index.ts`
+    - `frontend/nextjs-app/pages/locations.tsx`
+    - `frontend/nextjs-app/styles/globals.css`
+    - `pnpm-lock.yaml`
   - deleted tracked paths: none
-  - ignored local env placeholders created:
-    - `frontend/nextjs-app/.env.local`
-    - `frontend/nextjs-app/.env.production`
-- Latest committed baseline in this checkout:
+  - untracked paths:
+    - `frontend/nextjs-app/components/locations/OpenStatusBadge.tsx`
+    - `frontend/nextjs-app/lib/server/locationGeocoding.ts`
+    - `frontend/nextjs-app/lib/tenKingsBrand.ts`
+- Latest committed baseline before this `/locations` work:
   - `885a6ad` feat(support): add elevenlabs webhook integration
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was updated with the Phase 2 webhook commit; no deploy/restart/migrate executed in this session
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main` for `/locations` UI/API fixes and handoff updates; no runtime environment, deploy, restart, or migration was executed in this session
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-08, `/locations` map/list/admin fixes + missing-location diagnosis on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`, then synced `main` before editing:
+  - `git pull --ff-only --autostash origin main` -> `Already up to date.`
+- Root cause confirmed for newly added locations not appearing on the public `/locations` map:
+  - `frontend/nextjs-app/pages/locations.tsx` only renders locations with numeric `latitude` and `longitude`
+  - `frontend/nextjs-app/pages/api/locations/index.ts` previously returned raw DB rows without any coordinate fallback
+  - `frontend/nextjs-app/pages/api/admin/locations/index.ts` created new locations with only `name`, `slug`, `address`, and `recentRips`, so admin-created locations landed with no geocoded coordinates
+  - `frontend/nextjs-app/lib/server/adminInventory.ts` / `/api/admin/assigned-locations` list all locations regardless of map fields, which is why the admin assigned-locations UI showed the new rows while the public map omitted them
+- Logo source verified before changing the marker:
+  - used the exact crown path from the inline Ten Kings Collectibles mark in `frontend/nextjs-app/components/AppShell.tsx`
+- Implemented the requested `/locations` fixes:
+  - `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
+    - removed `MarkerClusterer` usage so every venue always renders as an individual `AdvancedMarkerElement`
+    - switched the marker content to the exact Ten Kings crown path from the brand mark and kept the gold circular marker treatment
+  - `frontend/nextjs-app/pages/locations.tsx`
+    - restored a small floating `Add Location` button for authenticated admin/staff users only, linking to `/admin/assigned-locations`
+    - added `viewMode` state with a bottom-center `MAP` / `LIST` toggle
+    - added a full-screen list view of non-online venues; tapping a card switches back to map mode and opens the detail panel
+    - kept public sorting GPS-aware, while allowing list mode to show venues even before coordinate filtering
+  - `frontend/nextjs-app/pages/api/locations/index.ts`
+    - added server-side Google geocode fallback for public location responses when saved coordinates or address metadata are missing
+    - moved `mapOnly` filtering to happen after enrichment so rows with missing DB coordinates can still appear once geocoded from their saved address
+  - `frontend/nextjs-app/pages/api/admin/locations/index.ts`
+    - added geocoding on create so newly added admin locations store `latitude`, `longitude`, `city`, `state`, `zip`, and a usable `mapsUrl` up front
+  - supporting refactors:
+    - `frontend/nextjs-app/lib/server/locationGeocoding.ts`
+    - `frontend/nextjs-app/lib/tenKingsBrand.ts`
+    - `frontend/nextjs-app/components/locations/OpenStatusBadge.tsx`
+    - `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+    - `frontend/nextjs-app/components/AppShell.tsx`
+    - `frontend/nextjs-app/styles/globals.css`
+    - removed the now-unused `@googlemaps/markerclusterer` dependency from `frontend/nextjs-app/package.json` and `pnpm-lock.yaml`
+- Validation observed locally:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/locations.tsx --file components/maps/StoreLocatorMap.tsx --file components/locations/LocationDetailPanel.tsx --file components/locations/OpenStatusBadge.tsx --file components/AppShell.tsx --file pages/api/locations/index.ts --file pages/api/admin/locations/index.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec eslint lib/server/locationGeocoding.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-08, Phase 2 webhook changes committed and pushed on `main`)
 - Recorded the user-requested commit + push result for the ElevenLabs webhook integration.

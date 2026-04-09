@@ -1,9 +1,9 @@
 'use client';
 
-import { MarkerClusterer } from "@googlemaps/markerclusterer";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useGoogleMaps } from "../../hooks/useGoogleMaps";
 import { ONLINE_LOCATION_SLUG } from "../../lib/locationUtils";
+import { TEN_KINGS_COLLECTIBLES_CROWN_PATH, TEN_KINGS_COLLECTIBLES_CROWN_VIEWBOX } from "../../lib/tenKingsBrand";
 import MapFallback from "./MapFallback";
 
 export interface StoreLocatorMapLocation {
@@ -30,7 +30,6 @@ export interface StoreLocatorMapProps {
 }
 
 const DEFAULT_CENTER = { lat: 39.8283, lng: -98.5795 };
-const TEN_KINGS_CROWN_PATH = "M6 34 14 13l11 10L32 4l7 19 11-10 8 21-5 2-6-13-12 11-3-16-3 16-12-11-6 13Z";
 
 function setMarkerSelected(node: HTMLElement, selected: boolean) {
   node.dataset.selected = selected ? "true" : "false";
@@ -42,14 +41,14 @@ function createCrownMarkerContent(selected = false): HTMLDivElement {
   setMarkerSelected(container, selected);
 
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", "0 0 64 40");
+  svg.setAttribute("viewBox", TEN_KINGS_COLLECTIBLES_CROWN_VIEWBOX);
   svg.setAttribute("width", "22");
-  svg.setAttribute("height", "18");
+  svg.setAttribute("height", "22");
   svg.setAttribute("fill", "#0a0a0a");
   svg.setAttribute("aria-hidden", "true");
 
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-  path.setAttribute("d", TEN_KINGS_CROWN_PATH);
+  path.setAttribute("d", TEN_KINGS_COLLECTIBLES_CROWN_PATH);
   svg.appendChild(path);
 
   const crown = document.createElement("span");
@@ -58,28 +57,6 @@ function createCrownMarkerContent(selected = false): HTMLDivElement {
   container.appendChild(crown);
 
   return container;
-}
-
-function createClusterMarkerContent(count: number): HTMLDivElement {
-  const element = document.createElement("div");
-  element.style.cssText = `
-    width: 44px;
-    height: 44px;
-    border-radius: 999px;
-    background: #d4a843;
-    color: #0a0a0a;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-family: 'Clash Display', sans-serif;
-    font-weight: 700;
-    font-size: 16px;
-    cursor: pointer;
-    box-shadow: 0 0 16px rgba(212,168,67,0.4);
-    border: 1px solid rgba(10,10,10,0.18);
-  `;
-  element.textContent = String(count);
-  return element;
 }
 
 function focusLocation(map: google.maps.Map, location: StoreLocatorMapLocation) {
@@ -116,7 +93,6 @@ export default function StoreLocatorMap({
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const markerLookupRef = useRef<Map<string, google.maps.marker.AdvancedMarkerElement>>(new Map());
   const markerNodeLookupRef = useRef<Map<string, HTMLDivElement>>(new Map());
-  const clustererRef = useRef<MarkerClusterer | null>(null);
   const onMarkerClickRef = useRef<StoreLocatorMapProps["onMarkerClick"]>(onMarkerClick);
   const onMapClickRef = useRef<StoreLocatorMapProps["onMapClick"]>(onMapClick);
   const [mapError, setMapError] = useState<Error | null>(null);
@@ -181,9 +157,6 @@ export default function StoreLocatorMap({
     }
 
     return () => {
-      clustererRef.current?.clearMarkers();
-      clustererRef.current = null;
-
       markerLookup.forEach((marker) => {
         google.maps.event.clearInstanceListeners(marker);
         marker.map = null;
@@ -207,9 +180,6 @@ export default function StoreLocatorMap({
     try {
       const { AdvancedMarkerElement } = libraries.markerLibrary;
 
-      clustererRef.current?.clearMarkers();
-      clustererRef.current = null;
-
       markerLookupRef.current.forEach((marker) => {
         google.maps.event.clearInstanceListeners(marker);
         marker.map = null;
@@ -224,7 +194,6 @@ export default function StoreLocatorMap({
       }
 
       const bounds = new google.maps.LatLngBounds();
-      const markers: google.maps.marker.AdvancedMarkerElement[] = [];
 
       physicalLocations.forEach((location) => {
         const content = createCrownMarkerContent(false);
@@ -244,21 +213,7 @@ export default function StoreLocatorMap({
 
         markerLookupRef.current.set(location.slug, marker);
         markerNodeLookupRef.current.set(location.slug, content);
-        markers.push(marker);
         bounds.extend({ lat: location.latitude, lng: location.longitude });
-      });
-
-      clustererRef.current = new MarkerClusterer({
-        map,
-        markers,
-        renderer: {
-          render: ({ count, position }) =>
-            new AdvancedMarkerElement({
-              position,
-              zIndex: 1000 + count,
-              content: createClusterMarkerContent(count),
-            }),
-        },
       });
 
       if (physicalLocations.length === 1) {
