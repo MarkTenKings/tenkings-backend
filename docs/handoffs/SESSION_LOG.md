@@ -12811,7 +12811,7 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
- 
+
 ## 2026-04-04 - Kings Hunt walkable route polyline + Safari mobile crash fix on main
 
 ### Summary
@@ -12848,7 +12848,6 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
-
 
 ## 2026-04-02 - Task 25 auto-OCR pending-status deadlock fix
 
@@ -14243,3 +14242,65 @@
 
 ### Notes
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-08 - Phase 1 support customer-memory schema and API routes
+
+### Summary
+- Continued in the same session after the required startup docs from `/Users/markthomas/tenkings-task27-main/AGENTS.md` had already been read.
+- Added the Phase 1 Prisma schema for the Ten Kings AI customer service memory layer:
+  - models: `SupportCustomer`, `Conversation`, `Message`, `Escalation`, `CustomerNote`, `SupportFAQ`
+  - enums: `ConversationChannel`, `ConversationStatus`, `MessageRole`, `Sentiment`, `EscalationStatus`, `NoteSource`
+- Added internal support API routes guarded by the existing admin-session middleware pattern:
+  - `GET/POST /api/support/customer`
+  - `POST /api/support/customer/[id]/note`
+  - `POST /api/support/conversation`
+  - `PATCH /api/support/conversation/[id]`
+  - `POST /api/support/conversation/[id]/message`
+  - `POST /api/support/escalation`
+  - `PATCH /api/support/escalation/[id]/resolve`
+- Added the shared support server helper for payload validation, identity normalization, transcript appends, and lookup helpers.
+- Generated Prisma client successfully.
+- Added the manual SQL migration file `packages/database/prisma/migrations/20260408214241_support_customer_memory_layer/migration.sql`.
+- Attempted to execute `prisma migrate dev`, but the local environment has no reachable Postgres on `localhost:5432` and no `docker` binary, so no DB schema mutation was actually applied.
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260408214241_support_customer_memory_layer/migration.sql`
+- `frontend/nextjs-app/lib/server/support.ts`
+- `frontend/nextjs-app/pages/api/support/customer.ts`
+- `frontend/nextjs-app/pages/api/support/customer/[id]/note.ts`
+- `frontend/nextjs-app/pages/api/support/conversation/index.ts`
+- `frontend/nextjs-app/pages/api/support/conversation/[id].ts`
+- `frontend/nextjs-app/pages/api/support/conversation/[id]/message.ts`
+- `frontend/nextjs-app/pages/api/support/escalation/index.ts`
+- `frontend/nextjs-app/pages/api/support/escalation/[id]/resolve.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `DATABASE_URL=postgresql://tenkings:tenkings@localhost:5432/tenkings pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+- `DATABASE_URL=postgresql://tenkings:tenkings@localhost:5432/tenkings pnpm --filter @tenkings/database generate` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/support.ts --file pages/api/support/customer.ts --file pages/api/support/conversation/index.ts --file 'pages/api/support/conversation/[id].ts' --file 'pages/api/support/conversation/[id]/message.ts' --file pages/api/support/escalation/index.ts --file 'pages/api/support/escalation/[id]/resolve.ts' --file 'pages/api/support/customer/[id]/note.ts'` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- `pnpm --filter @tenkings/database build` -> pass
+- `git diff --check` -> pass
+- `DATABASE_URL=postgresql://tenkings:tenkings@localhost:5432/tenkings pnpm --filter @tenkings/database migrate:dev --name support_customer_memory_layer` -> failed with `P1001: Can't reach database server at localhost:5432`
+- `docker --version` -> `command not found`
+
+### Notes
+- No deploy or restart was executed.
+- No DB mutation was executed because the local migration target was unavailable in this environment.
+
+## 2026-04-08 - Planned push of support customer-memory changes to main
+
+### Summary
+- User explicitly requested commit + push of the Phase 1 support customer-memory changes on `main` so Vercel deployment can trigger from `origin/main`.
+- Reconfirmed local pre-push repo state:
+  - `git status -sb` -> `## main...origin/main` with pending support schema/API/handoff changes
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `2afdb16`
+- Local Prisma migration execution remains intentionally skipped for this push because the production migration will be applied separately and local `migrate:dev` is blocked by the missing Postgres/Docker environment.
+
+### Planned Action
+- Stage all support customer-memory changes, commit them on `main`, and push `main` to `origin`.
+- After push, append observed result/evidence to the handoff docs before final closeout.

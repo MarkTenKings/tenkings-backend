@@ -1,20 +1,67 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-08` (docs-only repo state refresh on `main` in `/Users/markthomas/tenkings-task27-main`; pending tracked changes remain in `frontend/nextjs-app/pages/terms.tsx` plus the handoff docs; latest committed baseline is `2685750`; no deploy/restart/migrate was run)
+- Last reviewed: `2026-04-08` (support customer-memory schema + API routes added on `main` in `/Users/markthomas/tenkings-task27-main`; Prisma client regenerated and manual migration SQL added; local `migrate:dev` execution is blocked by missing Postgres/Docker in this environment; latest committed baseline is `2afdb16`; no deploy/restart succeeded and no DB schema mutation was applied)
 - Branch: `main`
 - Current local git state at latest handoff refresh:
   - `git status -sb` -> `## main...origin/main`
   - modified tracked paths:
     - `docs/HANDOFF_SET_OPS.md`
     - `docs/handoffs/SESSION_LOG.md`
-    - `frontend/nextjs-app/pages/terms.tsx`
+    - `packages/database/prisma/schema.prisma`
   - deleted tracked paths: none
-  - untracked paths: none
+  - untracked paths:
+    - `frontend/nextjs-app/lib/server/support.ts`
+    - `frontend/nextjs-app/pages/api/support/`
+    - `packages/database/prisma/migrations/20260408214241_support_customer_memory_layer/`
 - Latest committed baseline in this checkout:
-  - `2685750` docs(handoff): refresh route-fix repo state
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart/migrate executed
+  - `2afdb16` docs(legal): add sms communications terms section
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; no deploy/restart executed; attempted local Prisma migration did not reach a database
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-08, Phase 1 support customer-memory schema + API routes on `main`)
+- Continued in the same session after the required startup docs from `AGENTS.md` had already been read.
+- Added the Phase 1 customer-memory schema in:
+  - `packages/database/prisma/schema.prisma`
+- New Prisma models:
+  - `SupportCustomer`
+  - `Conversation`
+  - `Message`
+  - `Escalation`
+  - `CustomerNote`
+  - `SupportFAQ`
+- New Prisma enums:
+  - `ConversationChannel`
+  - `ConversationStatus`
+  - `MessageRole`
+  - `Sentiment`
+  - `EscalationStatus`
+  - `NoteSource`
+- Added the shared support server helper in:
+  - `frontend/nextjs-app/lib/server/support.ts`
+- Added API routes in:
+  - `frontend/nextjs-app/pages/api/support/customer.ts`
+  - `frontend/nextjs-app/pages/api/support/customer/[id]/note.ts`
+  - `frontend/nextjs-app/pages/api/support/conversation/index.ts`
+  - `frontend/nextjs-app/pages/api/support/conversation/[id].ts`
+  - `frontend/nextjs-app/pages/api/support/conversation/[id]/message.ts`
+  - `frontend/nextjs-app/pages/api/support/escalation/index.ts`
+  - `frontend/nextjs-app/pages/api/support/escalation/[id]/resolve.ts`
+- Route/auth pattern used:
+  - internal operator/admin style endpoints guarded by `requireAdminSession` and wrapped in `withAdminCors`, matching the existing repo API pattern for privileged routes
+- Migration artifact created in:
+  - `packages/database/prisma/migrations/20260408214241_support_customer_memory_layer/migration.sql`
+- Validation observed locally:
+  - `DATABASE_URL=postgresql://tenkings:tenkings@localhost:5432/tenkings pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+  - `DATABASE_URL=postgresql://tenkings:tenkings@localhost:5432/tenkings pnpm --filter @tenkings/database generate` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/support.ts --file pages/api/support/customer.ts --file pages/api/support/conversation/index.ts --file 'pages/api/support/conversation/[id].ts' --file 'pages/api/support/conversation/[id]/message.ts' --file pages/api/support/escalation/index.ts --file 'pages/api/support/escalation/[id]/resolve.ts' --file 'pages/api/support/customer/[id]/note.ts'` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `pnpm --filter @tenkings/database build` -> pass
+  - `git diff --check` -> pass
+- Migration execution attempt:
+  - `DATABASE_URL=postgresql://tenkings:tenkings@localhost:5432/tenkings pnpm --filter @tenkings/database migrate:dev --name support_customer_memory_layer` -> failed with `P1001` because no database server was reachable at `localhost:5432`
+  - `docker --version` -> `command not found`, so I could not start the repo’s local Docker Postgres to complete `migrate:dev` in this environment
+- No deploy, restart, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-08, docs-only repo state refresh on `main` with pending Terms of Use edits)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

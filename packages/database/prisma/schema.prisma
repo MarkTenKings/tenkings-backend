@@ -288,6 +288,45 @@ enum TaxonomyAmbiguityStatus {
   DISMISSED
 }
 
+enum ConversationChannel {
+  PHONE
+  SMS
+  CHAT
+  EMAIL
+  VOICE
+}
+
+enum ConversationStatus {
+  OPEN
+  RESOLVED
+  ESCALATED
+}
+
+enum MessageRole {
+  USER
+  AGENT
+  HUMAN
+}
+
+enum Sentiment {
+  POSITIVE
+  NEUTRAL
+  NEGATIVE
+  FRUSTRATED
+}
+
+enum EscalationStatus {
+  PENDING
+  RESPONDED
+  RESOLVED
+  EXPIRED
+}
+
+enum NoteSource {
+  AI_INFERRED
+  HUMAN_ADDED
+}
+
 model User {
   id                      String                @id @default(uuid())
   email                   String?               @unique
@@ -329,6 +368,7 @@ model User {
   setAuditEvents          SetAuditEvent[]       @relation("SetAuditEventActor")
   ocrRegionTemplates      OcrRegionTemplate[]   @relation("OcrRegionTemplateCreatedBy")
   ocrRegionTeachEvents    OcrRegionTeachEvent[] @relation("OcrRegionTeachEventCreatedBy")
+  supportCustomers        SupportCustomer[]
 }
 
 model Location {
@@ -375,6 +415,7 @@ model Location {
   checkpoints      Json?             @db.JsonB
   navigationSessions NavigationSession[]
   locationVisits   LocationVisit[]
+  supportConversations Conversation[]
 
   @@index([state])
   @@index([locationType])
@@ -471,6 +512,100 @@ model Session {
   expiresAt DateTime
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SupportCustomer {
+  id            String         @id @default(cuid())
+  phone         String?        @unique
+  email         String?        @unique
+  name          String?
+  firstSeen     DateTime       @default(now())
+  lastSeen      DateTime       @updatedAt
+  preferredLang String?        @default("en")
+  notes         Json?          @db.JsonB
+  linkedUserId  String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  linkedUser    User?          @relation(fields: [linkedUserId], references: [id], onDelete: SetNull)
+  conversations Conversation[]
+  customerNotes CustomerNote[]
+
+  @@index([linkedUserId])
+  @@index([createdAt])
+  @@index([updatedAt])
+}
+
+model Conversation {
+  id          String              @id @default(cuid())
+  customerId  String
+  channel     ConversationChannel
+  startedAt   DateTime            @default(now())
+  endedAt     DateTime?
+  status      ConversationStatus  @default(OPEN)
+  summary     String?
+  transcript  String?
+  agentId     String?
+  locationId  String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  customer    SupportCustomer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  location    Location?           @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  messages    Message[]
+  escalation  Escalation?
+
+  @@index([customerId, startedAt])
+  @@index([locationId, startedAt])
+  @@index([status, startedAt])
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  role           MessageRole
+  content        String
+  timestamp      DateTime     @default(now())
+  sentiment      Sentiment?
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, timestamp])
+}
+
+model Escalation {
+  id             String           @id @default(cuid())
+  conversationId String           @unique
+  triggeredAt    DateTime         @default(now())
+  resolvedAt     DateTime?
+  assignedTo     String?
+  status         EscalationStatus @default(PENDING)
+  reminderCount  Int              @default(0)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  conversation   Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([status, triggeredAt])
+}
+
+model CustomerNote {
+  id         String          @id @default(cuid())
+  customerId String
+  note       String
+  source     NoteSource      @default(AI_INFERRED)
+  createdAt  DateTime        @default(now())
+  customer   SupportCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, createdAt])
+}
+
+model SupportFAQ {
+  id        String   @id @default(cuid())
+  question  String
+  answer    String
+  category  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isActive, category])
 }
 
 model ItemOwnership {
