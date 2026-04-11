@@ -1,29 +1,105 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-09` (`/locations` polish implemented and validated on `main`; user explicitly approved pushing the combined `main` history after the earlier Queen widget push; no deploy, restart, or migration was executed in this session)
+- Last reviewed: `2026-04-11` (urgent ElevenLabs webhook fail-open fix on `main`; code/docs changed locally before commit; no restart/migration/DB mutation was executed)
 - Branch: `main`
-- Current local git state before commit/push for the `/locations` polish work:
-  - `git status -sb` -> `## main...origin/main`
+- Current local git state before this handoff refresh:
+  - `git status -sb`:
+    - `## main...origin/main`
+    - ` M docs/HANDOFF_SET_OPS.md`
+    - ` M docs/handoffs/SESSION_LOG.md`
+    - ` M frontend/nextjs-app/lib/server/elevenlabs.ts`
+    - ` M frontend/nextjs-app/pages/api/support/webhooks/conversation-end.ts`
+    - ` M frontend/nextjs-app/pages/api/support/webhooks/conversation-start.ts`
   - modified tracked paths:
     - `docs/HANDOFF_SET_OPS.md`
     - `docs/handoffs/SESSION_LOG.md`
-    - `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
-    - `frontend/nextjs-app/components/locations/OpenStatusBadge.tsx`
-    - `frontend/nextjs-app/components/maps/StoreLocatorMap.tsx`
-    - `frontend/nextjs-app/pages/api/locations/index.ts`
-    - `frontend/nextjs-app/pages/locations.tsx`
-    - `frontend/nextjs-app/styles/globals.css`
+    - `frontend/nextjs-app/lib/server/elevenlabs.ts`
+    - `frontend/nextjs-app/pages/api/support/webhooks/conversation-end.ts`
+    - `frontend/nextjs-app/pages/api/support/webhooks/conversation-start.ts`
   - deleted tracked paths: none
-  - untracked paths:
-    - `frontend/nextjs-app/lib/locationStatus.ts`
-    - `frontend/nextjs-app/pages/api/locations/[locationId]/events.ts`
-    - `frontend/nextjs-app/pages/api/locations/[locationId]/live-status.ts`
-    - `frontend/nextjs-app/pages/api/locations/[locationId]/status.ts`
-- Latest committed baseline before this `/locations` polish work:
-  - `5c3fc28` feat(support): add Queen website chat widget
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main` for frontend `/locations` implementation, validation, git sync, and handoff updates; no runtime environment, deploy, restart, or migration was executed in this session
+  - untracked paths: none
+- Latest committed baseline before this handoff refresh:
+  - `210d42c` feat(locations): admin edit btn, coming soon toggle, live hours, upcoming events
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` parity was checked before commit; no restart, migration, runtime mutation, or DB mutation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-11, urgent ElevenLabs webhook fail-open fix on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Reviewed the current ElevenLabs docs for post-call webhooks and Twilio personalization:
+  - post-call transcription webhooks send top-level `type`, `event_timestamp`, and `data`, with `data.conversation_id`, `data.transcript`, `data.metadata`, `data.analysis`, and optional `data.conversation_initiation_client_data.dynamic_variables`
+  - ElevenLabs marks post-call webhooks successful only when the receiver returns HTTP 200
+  - conversation-initiation webhooks must return `type: conversation_initiation_client_data` with all dynamic variables required by the agent
+- Root causes found in code:
+  - `POST /api/support/webhooks/conversation-end` threw `400` when the internal `conversation_id` dynamic variable was missing, and could also return `404`/`500` for Prisma lookup/write failures
+  - `POST /api/support/webhooks/conversation-start` threw `400` when caller phone was absent and could return `401`/`500` when verification or DB lookup/create failed
+- Fix implemented:
+  - added `buildSafeConversationStartResponse()` with the required safe `conversation_initiation_client_data` fallback payload
+  - made `conversation-start` return HTTP 200 with the safe fallback for non-POST requests, webhook validation errors, missing/invalid payload fields, DB failures, and unexpected exceptions
+  - made `conversation-end` return HTTP 200 for missing internal conversation IDs, webhook validation errors, missing conversation rows, DB failures, and unexpected exceptions
+  - changed internal conversation-id extraction to prefer dynamic-variable paths from the official post-call payload shape before considering legacy top-level IDs
+- Validation:
+  - `git fetch origin main` -> success after network approval; `origin/main` remained `210d42c`
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/elevenlabs.ts --file pages/api/support/webhooks/conversation-start.ts --file pages/api/support/webhooks/conversation-end.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `git diff --check` -> pass
+- No restart, migration, runtime mutation, DB read/write, or destructive operation was executed in this session.
+
+## Session Update (2026-04-11, docs-only startup context + git-state report on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Verified the current local checkout state without changing code or runtime:
+  - `git status -sb`:
+    - `## main...origin/main`
+    - ` M docs/HANDOFF_SET_OPS.md`
+    - ` M docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `210d42c`
+  - `git log -1 --oneline` -> `210d42c feat(locations): admin edit btn, coming soon toggle, live hours, upcoming events`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, DB mutation, commit, or push was executed in this session.
+
+## Session Update (2026-04-09, Queen widget live-site investigation on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Verified the current local checkout state without changing code:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `210d42c`
+  - `git log -1 --oneline` -> `210d42c feat(locations): admin edit btn, coming soon toggle, live hours, upcoming events`
+- Reviewed `frontend/nextjs-app/components/QueenWidget.tsx` against the installed SDK surface:
+  - `@elevenlabs/react` import is present and installed locally
+  - installed package version observed in `frontend/nextjs-app/node_modules/@elevenlabs/react/package.json` -> `1.0.3`
+  - `ConversationProvider`, `useConversation`, `startSession({ agentId, textOnly, dynamicVariables, userId })`, `sendUserMessage`, and `sendContextualUpdate` usage match the installed SDK typings/runtime
+  - `AGENT_ID` is read from `process.env.NEXT_PUBLIC_ELEVENLABS_AGENT_ID?.trim() ?? ""`
+- Live-site findings from headless Chrome against `https://collect.tenkings.co`:
+  - browser console showed no Queen widget exception
+  - only unrelated console issues were observed:
+    - `<link rel=preload> uses an unsupported as value`
+    - repeated Mux playlist `404` responses for `https://stream.mux.com/...m3u8`
+  - chat flow worked:
+    - widget opened
+    - input was enabled (`NEXT_PUBLIC_ELEVENLABS_AGENT_ID` is present in the production bundle)
+    - sending a test message produced assistant responses in the widget
+    - network capture showed the live client opening:
+      - `wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_6801knrc5kfxfdkr490815zjjyqk&source=react_sdk&version=1.0.3`
+  - voice mode worked up to the expected browser permission boundary:
+    - clicking/tapping `Voice` switched modes on both desktop pointer and mobile touch tests
+    - the only observed failure was the local permission guard in headless Chrome:
+      - `Microphone access is required for Voice mode.`
+    - no widget runtime exception was observed
+  - call mode worked:
+    - clicking/tapping `Call` switched modes on both desktop pointer and mobile touch tests
+    - the rendered call link was `tel:7705013785`
+- Conclusion:
+  - I could not reproduce the reported “Chat, Voice, and Call buttons do not work when clicked” defect on the live site
+  - no code fix was justified from the evidence gathered
+  - no commit, push, deploy, restart, migration, runtime mutation, or DB mutation was executed in this session
 
 ## Session Update (2026-04-09, `/locations` admin polish + coming-soon toggle + live hours + upcoming events on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`, then synced `main` before editing:

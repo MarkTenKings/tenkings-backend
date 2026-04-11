@@ -386,10 +386,15 @@ export function extractElevenLabsPhone(payload: unknown) {
 
 export function extractInternalConversationId(payload: unknown) {
   return findFirstString(payload, [
-    ["conversation_id"],
     ["data", "conversation_initiation_client_data", "dynamic_variables", "conversation_id"],
+    ["data", "conversation_initiation_client_data", "dynamic_variables", "support_conversation_id"],
     ["data", "dynamic_variables", "conversation_id"],
+    ["data", "dynamic_variables", "support_conversation_id"],
+    ["conversation_initiation_client_data", "dynamic_variables", "conversation_id"],
+    ["conversation_initiation_client_data", "dynamic_variables", "support_conversation_id"],
     ["dynamic_variables", "conversation_id"],
+    ["dynamic_variables", "support_conversation_id"],
+    ["conversation_id"],
   ]);
 }
 
@@ -713,6 +718,19 @@ export function buildConversationStartResponse(params: {
       customer_notes: params.isReturningCustomer ? buildCustomerNotes(params.customer) : "",
       is_returning_customer: params.isReturningCustomer ? "true" : "false",
       conversation_id: params.conversationId,
+    },
+  };
+}
+
+export function buildSafeConversationStartResponse() {
+  return {
+    type: "conversation_initiation_client_data",
+    dynamic_variables: {
+      customer_name: "",
+      customer_history: "",
+      customer_notes: "",
+      is_returning_customer: "false",
+      conversation_id: "",
     },
   };
 }

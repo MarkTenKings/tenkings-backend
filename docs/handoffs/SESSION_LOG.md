@@ -14672,3 +14672,102 @@
 
 ### Notes
 - The current admin route family for location editing is `/admin/assigned-locations/[locationId]`, so the public panel edit action targets the existing route with `location.id`.
+
+## 2026-04-09 - Queen widget live-site investigation on main
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md`.
+- Investigated the reported Queen widget failure against the live site `https://collect.tenkings.co` from a clean `main` checkout at `210d42c`.
+- Reviewed `frontend/nextjs-app/components/QueenWidget.tsx` and the installed `@elevenlabs/react` SDK surface; the local integration matches the installed v`1.0.3` API.
+- Verified that production is reading and passing the public ElevenLabs agent ID:
+  - chat input was enabled on the live site
+  - the live widget opened a ConvAI websocket with `agent_id=agent_6801knrc5kfxfdkr490815zjjyqk`
+- Reproduced successful live behavior instead of the reported failure:
+  - desktop pointer clicks switched between `chat`, `voice`, and `call`
+  - mobile touch taps switched between `chat`, `voice`, and `call`
+  - chat sent a test prompt and returned assistant replies in the widget
+  - call mode rendered `tel:7705013785`
+  - voice mode reached the expected browser microphone-permission boundary in headless Chrome and surfaced the local message `Microphone access is required for Voice mode.`
+- No Queen widget console/runtime exception was observed, so no code change, commit, push, deploy, restart, migration, runtime mutation, or DB mutation was executed.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `210d42c`
+- `git log -1 --oneline` -> `210d42c feat(locations): admin edit btn, coming soon toggle, live hours, upcoming events`
+- installed SDK package observed at `frontend/nextjs-app/node_modules/@elevenlabs/react/package.json` -> `version: 1.0.3`
+- live browser console findings:
+  - no Queen widget exception
+  - unrelated warning: `<link rel=preload> uses an unsupported as value`
+  - unrelated repeated errors: Mux `.m3u8` `404` responses
+- live ElevenLabs network capture after chat submit:
+  - `wss://api.elevenlabs.io/v1/convai/conversation?agent_id=agent_6801knrc5kfxfdkr490815zjjyqk&source=react_sdk&version=1.0.3`
+
+### Notes
+- The reported production failure was not reproducible in browser automation, so no production push was warranted from this session’s evidence.
+
+## 2026-04-11 - Docs-only startup context refresh and git-state report
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings-task27-main`.
+- Verified the current local checkout state and recorded the requested git report.
+- Updated the handoff docs only.
+- No code change, deploy, restart, migration, runtime mutation, DB mutation, commit, or push was executed in this session.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `git status -sb`:
+  - `## main...origin/main`
+  - ` M docs/HANDOFF_SET_OPS.md`
+  - ` M docs/handoffs/SESSION_LOG.md`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `210d42c`
+- `git log -1 --oneline` -> `210d42c feat(locations): admin edit btn, coming soon toggle, live hours, upcoming events`
+
+### Notes
+- The only tracked modifications observed are the handoff docs.
+
+## 2026-04-11 - Urgent ElevenLabs webhook fail-open fix
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings-task27-main`.
+- Reviewed ElevenLabs' current post-call webhook docs and Twilio personalization docs before editing.
+- Fixed both production ElevenLabs webhook handlers so ElevenLabs receives HTTP 200 on all handled paths.
+- No restart, migration, runtime mutation, DB read/write, or destructive operation was executed.
+
+### Failure Investigation
+- `POST /api/support/webhooks/conversation-end` failed because it required an internal `conversation_id` dynamic variable and threw a `400` when it was absent. The official post-call webhook shape sends a top-level event with `data.conversation_id` plus optional `data.conversation_initiation_client_data.dynamic_variables`, so a missing internal dynamic variable must be accepted and skipped instead of rejected.
+- The same endpoint could also return `404` for missing Prisma `Conversation` rows and `500` for unexpected DB/write failures.
+- `POST /api/support/webhooks/conversation-start` failed because caller-phone extraction and DB lookup/create lived inside a catch path that returned `400`, `401`, or `500` instead of the required `conversation_initiation_client_data` response.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/elevenlabs.ts`
+- `frontend/nextjs-app/pages/api/support/webhooks/conversation-start.ts`
+- `frontend/nextjs-app/pages/api/support/webhooks/conversation-end.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### What Changed
+- Added `buildSafeConversationStartResponse()` returning the exact safe fallback:
+  - `type: "conversation_initiation_client_data"`
+  - blank `customer_name`, `customer_history`, `customer_notes`, and `conversation_id`
+  - `is_returning_customer: "false"`
+- `conversation-start` now returns that fallback with HTTP 200 if verification, payload parsing, phone extraction, customer lookup/create, or conversation creation fails.
+- `conversation-end` now returns HTTP 200 for missing internal conversation IDs, webhook validation errors, missing conversation rows, Prisma write failures, and unexpected exceptions.
+- Internal conversation-id parsing now prefers dynamic-variable locations from the official post-call payload shape before legacy top-level values.
+
+### Validation Evidence
+- `git fetch origin main` -> success after network approval; `origin/main` stayed at `210d42c`
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/elevenlabs.ts --file pages/api/support/webhooks/conversation-start.ts --file pages/api/support/webhooks/conversation-end.ts` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+- `git diff --check` -> pass
+
+### Notes
+- The commit/push is intended to be a single `main` commit for both webhook fixes.

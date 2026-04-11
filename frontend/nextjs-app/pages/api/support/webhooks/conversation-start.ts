@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import {
   buildConversationStartResponse,
+  buildSafeConversationStartResponse,
   createSupportConversation,
   findOrCreateSupportCustomer,
   resolveConversationStartContext,
@@ -17,7 +18,7 @@ export const config = {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
-    return res.status(405).json({ message: "Method not allowed" });
+    return res.status(200).json(buildSafeConversationStartResponse());
   }
 
   try {
@@ -47,12 +48,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     );
   } catch (error) {
     if (error instanceof ElevenLabsWebhookError) {
-      return res.status(error.statusCode).json({ message: error.message });
+      console.warn("[support][elevenlabs][conversation-start] returning safe fallback", {
+        statusCode: error.statusCode,
+        message: error.message,
+      });
+      return res.status(200).json(buildSafeConversationStartResponse());
     }
     if (error instanceof Error) {
       console.error("[support][elevenlabs][conversation-start] unexpected error", error);
-      return res.status(500).json({ message: error.message });
+      return res.status(200).json(buildSafeConversationStartResponse());
     }
-    return res.status(500).json({ message: "Unexpected error" });
+    console.error("[support][elevenlabs][conversation-start] unexpected non-error rejection", error);
+    return res.status(200).json(buildSafeConversationStartResponse());
   }
 }

@@ -18,7 +18,7 @@ export const config = {
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
-    return res.status(405).json({ message: "Method not allowed" });
+    return res.status(200).json({ ok: true, ignored: true });
   }
 
   try {
@@ -26,7 +26,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const parsed = parseConversationEndPayload(payload);
 
     if (!parsed.internalConversationId) {
-      throw new ElevenLabsWebhookError(400, "Internal conversation_id dynamic variable is required");
+      console.warn("[support][elevenlabs][conversation-end] accepted without internal conversation id", {
+        externalConversationId: parsed.externalConversationId,
+      });
+      return res.status(200).json({
+        ok: true,
+        accepted: true,
+        skipped: true,
+        reason: "missing_internal_conversation_id",
+        externalConversationId: parsed.externalConversationId,
+        outcome: parsed.outcome,
+      });
     }
 
     const status =
@@ -70,6 +80,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     return res.status(200).json({
       ok: true,
+      accepted: true,
       conversationId: parsed.internalConversationId,
       externalConversationId: parsed.externalConversationId,
       outcome: parsed.outcome,
@@ -77,15 +88,41 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     });
   } catch (error) {
     if (error instanceof ElevenLabsWebhookError) {
-      return res.status(error.statusCode).json({ message: error.message });
+      console.warn("[support][elevenlabs][conversation-end] accepted after webhook error", {
+        statusCode: error.statusCode,
+        message: error.message,
+      });
+      return res.status(200).json({
+        ok: true,
+        accepted: true,
+        skipped: true,
+        reason: "webhook_error",
+      });
     }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") {
-      return res.status(404).json({ message: "Conversation not found" });
+      console.warn("[support][elevenlabs][conversation-end] accepted after missing conversation", error);
+      return res.status(200).json({
+        ok: true,
+        accepted: true,
+        skipped: true,
+        reason: "conversation_not_found",
+      });
     }
     if (error instanceof Error) {
       console.error("[support][elevenlabs][conversation-end] unexpected error", error);
-      return res.status(500).json({ message: error.message });
+      return res.status(200).json({
+        ok: true,
+        accepted: true,
+        skipped: true,
+        reason: "unexpected_error",
+      });
     }
-    return res.status(500).json({ message: "Unexpected error" });
+    console.error("[support][elevenlabs][conversation-end] unexpected non-error rejection", error);
+    return res.status(200).json({
+      ok: true,
+      accepted: true,
+      skipped: true,
+      reason: "unexpected_error",
+    });
   }
 }
