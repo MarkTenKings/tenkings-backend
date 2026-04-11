@@ -14771,3 +14771,37 @@
 
 ### Notes
 - The commit/push is intended to be a single `main` commit for both webhook fixes.
+
+## 2026-04-11 - `/locations` mobile events, event pagination, and admin edit page
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings-task27-main`.
+- Pulled `origin/main` before editing; the first sandboxed attempt failed DNS/network resolution, and the approved network retry reported `Already up to date.`
+- Fixed the mobile location bottom sheet so all visible sections live inside one scrollable panel body.
+- Added paginated upcoming events with a `Show More Events` button.
+- Added a dedicated slug-based admin location edit page and corresponding single-location GET/PUT API support.
+- No deploy, restart, migration, runtime mutation, DB read/write, or destructive operation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+- `frontend/nextjs-app/pages/api/locations/[locationId]/events.ts`
+- `frontend/nextjs-app/pages/api/locations/[locationId].ts`
+- `frontend/nextjs-app/pages/admin/locations/[slug]/edit.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### What Changed
+- `LocationDetailPanel` now uses a fixed-height shell plus a single `overflow-y-auto` inner container for hero, details, actions, events, live rips, and admin controls.
+- `UpcomingEvents` now owns event loading state, fetches page 0 on slug changes, appends later pages, and exposes `Show More Events`.
+- `GET /api/locations/[locationId]/events` now accepts `page`, passes `size=5` and `page=<n>` to Ticketmaster, and keeps empty graceful fallbacks.
+- The panel `Edit Location` link now targets `/admin/locations/${slug}/edit`.
+- The new edit page follows existing admin session/header patterns and edits core location details, status/type, coordinates, geofence, maps/photo URLs, landmarks, and indoor-map metadata.
+- The existing `/api/locations/[locationId]` route now supports public slug-or-id `GET` and admin-only slug-or-id `PUT`; no duplicate `[locationId]/index.ts` file was added.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec eslint components/locations/LocationDetailPanel.tsx 'pages/api/locations/[locationId]/events.ts' 'pages/api/locations/[locationId].ts' 'pages/admin/locations/[slug]/edit.tsx'` -> pass with only the local Node `v25.6.1` engine warning
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node `v25.6.1` engine warning
+- `git diff --check` -> pass
+
+### Notes
+- Commit and push requested by the user are pending after this handoff update.

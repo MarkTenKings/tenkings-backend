@@ -7,6 +7,8 @@ const VENUE_MAP: Record<string, { venueId: string; name: string }> = {
   "dallas-stars-coamerica-center": { venueId: "KovZpZA6AEAA", name: "Comerica Center" },
 };
 
+const PAGE_SIZE = 5;
+
 type TicketmasterEventsResponse = {
   _embedded?: {
     events?: Array<{
@@ -42,6 +44,9 @@ export default async function handler(
     return res.status(400).json({ error: "locationId is required" });
   }
 
+  const requestedPage = typeof req.query.page === "string" ? Number.parseInt(req.query.page, 10) : 0;
+  const page = Number.isFinite(requestedPage) && requestedPage > 0 ? requestedPage : 0;
+
   const venue = VENUE_MAP[locationId];
   if (!venue) {
     return res.status(200).json({ events: [] });
@@ -56,7 +61,8 @@ export default async function handler(
     const params = new URLSearchParams({
       apikey: apiKey,
       venueId: venue.venueId,
-      size: "5",
+      size: String(PAGE_SIZE),
+      page: String(page),
       sort: "date,asc",
       startDateTime: new Date().toISOString().split(".")[0] + "Z",
       countryCode: "US",

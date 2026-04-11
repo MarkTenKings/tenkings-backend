@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatLocationHours, getLocationTypeLabel } from "../../lib/kingsHunt";
 import {
   type LocationEventsResponse,
@@ -87,6 +87,8 @@ function formatEventTime(time: string | null) {
     hour12: true,
   });
 }
+
+const EVENT_PAGE_SIZE = 5;
 
 function LiveRipCard({ rip }: { rip: LocationLiveRip }) {
   return (
@@ -206,8 +208,80 @@ function LocationHeroImage({ location }: { location: LocationPanelLocation }) {
   );
 }
 
-function UpcomingEventsList({ events }: { events: LocationEventSummary[] }) {
-  if (events.length === 0) {
+function UpcomingEvents({
+  slug,
+  onEventsChange,
+}: {
+  slug: string;
+  onEventsChange?: (events: LocationEventSummary[]) => void;
+}) {
+  const [events, setEvents] = useState<LocationEventSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+
+  const fetchEvents = useCallback(
+    async (pageNum: number, signal?: AbortSignal) => {
+      if (pageNum === 0) {
+        setLoading(true);
+      } else {
+        setLoadingMore(true);
+      }
+
+      try {
+        const params = new URLSearchParams({ page: String(pageNum) });
+        const response = await fetch(`/api/locations/${encodeURIComponent(slug)}/events?${params.toString()}`, {
+          signal,
+        });
+        if (!response.ok) {
+          throw new Error("Failed to load upcoming events");
+        }
+
+        const payload = (await response.json()) as LocationEventsResponse;
+        const nextPageEvents = Array.isArray(payload.events) ? payload.events : [];
+        setEvents((currentEvents) => {
+          const nextEvents = pageNum === 0 ? nextPageEvents : [...currentEvents, ...nextPageEvents];
+          onEventsChange?.(nextEvents);
+          return nextEvents;
+        });
+        setHasMore(nextPageEvents.length >= EVENT_PAGE_SIZE);
+      } catch (error: unknown) {
+        if ((error as Error)?.name === "AbortError") {
+          return;
+        }
+
+        if (pageNum === 0) {
+          setEvents([]);
+          onEventsChange?.([]);
+        }
+        setHasMore(false);
+      } finally {
+        if (signal?.aborted) {
+          return;
+        }
+        if (pageNum === 0) {
+          setLoading(false);
+        } else {
+          setLoadingMore(false);
+        }
+      }
+    },
+    [onEventsChange, slug],
+  );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setEvents([]);
+    onEventsChange?.([]);
+    setPage(0);
+    setHasMore(true);
+    void fetchEvents(0, controller.signal);
+
+    return () => controller.abort();
+  }, [fetchEvents, onEventsChange]);
+
+  if (loading || events.length === 0) {
     return null;
   }
 
@@ -309,6 +383,36 @@ function UpcomingEventsList({ events }: { events: LocationEventSummary[] }) {
           </svg>
         </a>
       ))}
+
+      {hasMore ? (
+        <button
+          type="button"
+          disabled={loadingMore}
+          onClick={() => {
+            const nextPage = page + 1;
+            setPage(nextPage);
+            void fetchEvents(nextPage);
+          }}
+          style={{
+            width: "100%",
+            padding: "12px",
+            marginTop: "8px",
+            background: "transparent",
+            border: "1px solid #222",
+            borderRadius: "8px",
+            color: "#d4a843",
+            fontFamily: "Satoshi, sans-serif",
+            fontWeight: 700,
+            fontSize: "12px",
+            letterSpacing: "0.05em",
+            cursor: loadingMore ? "wait" : "pointer",
+            textTransform: "uppercase",
+            opacity: loadingMore ? 0.65 : 1,
+          }}
+        >
+          {loadingMore ? "Loading Events..." : "Show More Events"}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -355,38 +459,7 @@ export default function LocationDetailPanel({
   }, [location?.slug]);
 
   useEffect(() => {
-    if (!location?.slug) {
-      return;
-    }
-
-    if (!isEventOnlyLocationType(location.locationType)) {
-      setEvents([]);
-      return;
-    }
-
-    const controller = new AbortController();
     setEvents([]);
-
-    fetch(`/api/locations/${encodeURIComponent(location.slug)}/events`, {
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error("Failed to load upcoming events");
-        }
-        return (await response.json()) as LocationEventsResponse;
-      })
-      .then((payload) => {
-        setEvents(Array.isArray(payload.events) ? payload.events : []);
-      })
-      .catch((error: unknown) => {
-        if ((error as Error)?.name === "AbortError") {
-          return;
-        }
-        setEvents([]);
-      });
-
-    return () => controller.abort();
   }, [location?.locationType, location?.slug]);
 
   useEffect(() => {
@@ -417,7 +490,7 @@ export default function LocationDetailPanel({
         hasEventToday,
       }
     : null;
-  const editHref = `/admin/assigned-locations/${location.id}`;
+  const editHref = `/admin/locations/${location.slug}/edit`;
 
   const handleLocationStatusUpdate = async (status: LocationStatusValue) => {
     if (!onLocationStatusChange || updatingStatus || status === location.locationStatus) {
@@ -438,7 +511,7 @@ export default function LocationDetailPanel({
 
   return (
     <div className="pointer-events-none absolute inset-0 z-20">
-      <aside className="tk-location-panel pointer-events-auto absolute inset-x-0 bottom-0 h-[70vh] overflow-y-auto rounded-t-[20px] bg-[#0a0a0a] shadow-[0_-12px_40px_rgba(0,0,0,0.55)] md:inset-y-0 md:left-0 md:right-auto md:h-auto md:w-[400px] md:rounded-none md:shadow-[4px_0_24px_rgba(0,0,0,0.6)]">
+      <aside className="tk-location-panel pointer-events-auto absolute inset-x-0 bottom-0 flex h-[70vh] flex-col overflow-hidden rounded-t-[20px] bg-[#0a0a0a] shadow-[0_-12px_40px_rgba(0,0,0,0.55)] md:inset-y-0 md:left-0 md:right-auto md:h-auto md:w-[400px] md:rounded-none md:shadow-[4px_0_24px_rgba(0,0,0,0.6)]">
         <button
           type="button"
           onClick={onClose}
@@ -448,200 +521,204 @@ export default function LocationDetailPanel({
           ×
         </button>
 
-        <div className="mx-auto mt-3 h-1.5 w-14 rounded-full bg-white/12 md:hidden" />
-        <LocationHeroImage location={location} />
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div className="mx-auto mt-3 h-1.5 w-14 rounded-full bg-white/12 md:hidden" />
+          <LocationHeroImage location={location} />
 
-        <div className="space-y-5 px-5 pb-7 pt-5">
-          <div>
-            <p className="font-kingshunt-body mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#d4a843]">{typeLabel}</p>
-            <h2 className="font-kingshunt-display text-[24px] font-bold leading-[1.15] text-white">{location.name}</h2>
-          </div>
-
-          <OpenStatusBadge
-            hours={location.hours}
-            locationType={location.locationType}
-            locationStatus={location.locationStatus}
-            liveStatus={decoratedLiveStatus}
-          />
-
-          {location.address ? <p className="font-kingshunt-body text-[14px] leading-6 text-[#888888]">{location.address}</p> : null}
-          {showFallbackHours ? (
-            <p className="font-kingshunt-body text-[13px] leading-6 text-[#666666]">{hoursLabel}</p>
-          ) : null}
-
-          {showLiveHours ? (
-            <details style={{ marginBottom: "16px" }}>
-              <summary
-                style={{
-                  color: "#666",
-                  fontSize: "13px",
-                  fontFamily: "Satoshi, sans-serif",
-                  cursor: "pointer",
-                  listStyle: "none",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "6px",
-                }}
-              >
-                <span>Hours</span>
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                  <path d="M2 4l4 4 4-4" stroke="#444" strokeWidth="1.5" fill="none" strokeLinecap="round" />
-                </svg>
-              </summary>
-              <div style={{ marginTop: "8px", paddingLeft: "4px" }}>
-                {liveStatus?.hours?.map((day) => (
-                  <p
-                    key={day}
-                    style={{
-                      color: "#888",
-                      fontSize: "12px",
-                      fontFamily: "Satoshi, sans-serif",
-                      margin: "4px 0",
-                      lineHeight: 1.4,
-                    }}
-                  >
-                    {day}
-                  </p>
-                ))}
-              </div>
-            </details>
-          ) : null}
-
-          <p className="font-kingshunt-body text-[14px] leading-7 text-[#c7c7c7]">{description}</p>
-
-          <div className="flex gap-2.5">
-            {isComingSoon ? (
-              <button
-                type="button"
-                disabled
-                className="font-kingshunt-body inline-flex flex-1 items-center justify-center rounded-lg border border-[#222222] bg-[#222222] px-4 py-3 text-center text-[13px] font-bold uppercase tracking-[0.05em] text-[#555555]"
-              >
-                Notify Me
-              </button>
-            ) : (
-              <Link
-                href={`/kingshunt/${location.slug}`}
-                className="font-kingshunt-body inline-flex flex-1 items-center justify-center rounded-lg bg-[#d4a843] px-4 py-3 text-center text-[13px] font-bold uppercase tracking-[0.05em] text-[#0a0a0a] transition hover:bg-[#e3bb5d]"
-              >
-                Start Hunt
-              </Link>
-            )}
-
-            {location.mapsUrl ? (
-              <a
-                href={location.mapsUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-kingshunt-body inline-flex flex-1 items-center justify-center rounded-lg border border-[#d4a843] bg-transparent px-4 py-3 text-center text-[13px] font-bold uppercase tracking-[0.05em] text-[#d4a843] transition hover:bg-[rgba(212,168,67,0.08)]"
-              >
-                Directions
-              </a>
-            ) : null}
-          </div>
-        </div>
-
-        {isEventOnlyLocationType(location.locationType) ? <UpcomingEventsList events={events} /> : null}
-
-        {location.liveRips.length > 0 ? (
-          <div className="px-5 pb-7">
-            <p className="font-kingshunt-body mb-3 text-[11px] font-bold uppercase tracking-[0.12em] text-[#d4a843]">Live Rips</p>
-            <div className="tk-hide-scrollbar flex gap-3 overflow-x-auto pb-2">
-              {location.liveRips.map((rip) => (
-                <LiveRipCard key={rip.id} rip={rip} />
-              ))}
+          <div className="space-y-5 px-5 pb-7 pt-5">
+            <div>
+              <p className="font-kingshunt-body mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-[#d4a843]">{typeLabel}</p>
+              <h2 className="font-kingshunt-display text-[24px] font-bold leading-[1.15] text-white">{location.name}</h2>
             </div>
-          </div>
-        ) : null}
 
-        {isAdmin ? (
-          <div style={{ padding: "20px", paddingTop: 0, borderTop: "1px solid #1a1a1a", marginTop: "16px" }}>
-            <a
-              href={editHref}
-              style={{
-                display: "block",
-                width: "100%",
-                padding: "12px",
-                textAlign: "center",
-                borderRadius: "8px",
-                border: "1px solid #333",
-                color: "#888",
-                fontFamily: "Satoshi, sans-serif",
-                fontWeight: 700,
-                fontSize: "12px",
-                letterSpacing: "0.1em",
-                textTransform: "uppercase",
-                textDecoration: "none",
-                background: "transparent",
-              }}
-            >
-              Edit Location
-            </a>
+            <OpenStatusBadge
+              hours={location.hours}
+              locationType={location.locationType}
+              locationStatus={location.locationStatus}
+              liveStatus={decoratedLiveStatus}
+            />
 
-            <div style={{ paddingTop: "12px" }}>
-              <p
-                style={{
-                  color: "#666",
-                  fontSize: "11px",
-                  letterSpacing: "0.1em",
-                  fontFamily: "Satoshi, sans-serif",
-                  marginBottom: "8px",
-                }}
-              >
-                LOCATION STATUS
-              </p>
+            {location.address ? <p className="font-kingshunt-body text-[14px] leading-6 text-[#888888]">{location.address}</p> : null}
+            {showFallbackHours ? (
+              <p className="font-kingshunt-body text-[13px] leading-6 text-[#666666]">{hoursLabel}</p>
+            ) : null}
 
-              <div style={{ display: "flex", gap: "8px" }}>
-                <button
-                  type="button"
-                  disabled={!onLocationStatusChange || updatingStatus !== null}
-                  onClick={() => void handleLocationStatusUpdate("active")}
+            {showLiveHours ? (
+              <details style={{ marginBottom: "16px" }}>
+                <summary
                   style={{
-                    flex: 1,
-                    padding: "10px",
-                    borderRadius: "6px",
-                    background: location.locationStatus === "active" ? "#d4a843" : "#111",
-                    color: location.locationStatus === "active" ? "#0a0a0a" : "#666",
+                    color: "#666",
+                    fontSize: "13px",
                     fontFamily: "Satoshi, sans-serif",
-                    fontWeight: 700,
-                    fontSize: "12px",
-                    letterSpacing: "0.05em",
-                    cursor: !onLocationStatusChange || updatingStatus !== null ? "not-allowed" : "pointer",
-                    border: location.locationStatus === "active" ? "none" : "1px solid #222",
-                    opacity: !onLocationStatusChange || updatingStatus !== null ? 0.7 : 1,
+                    cursor: "pointer",
+                    listStyle: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "6px",
                   }}
                 >
-                  LIVE
-                </button>
+                  <span>Hours</span>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                    <path d="M2 4l4 4 4-4" stroke="#444" strokeWidth="1.5" fill="none" strokeLinecap="round" />
+                  </svg>
+                </summary>
+                <div style={{ marginTop: "8px", paddingLeft: "4px" }}>
+                  {liveStatus?.hours?.map((day) => (
+                    <p
+                      key={day}
+                      style={{
+                        color: "#888",
+                        fontSize: "12px",
+                        fontFamily: "Satoshi, sans-serif",
+                        margin: "4px 0",
+                        lineHeight: 1.4,
+                      }}
+                    >
+                      {day}
+                    </p>
+                  ))}
+                </div>
+              </details>
+            ) : null}
 
+            <p className="font-kingshunt-body text-[14px] leading-7 text-[#c7c7c7]">{description}</p>
+
+            <div className="flex gap-2.5">
+              {isComingSoon ? (
                 <button
                   type="button"
-                  disabled={!onLocationStatusChange || updatingStatus !== null}
-                  onClick={() => void handleLocationStatusUpdate("coming_soon")}
-                  style={{
-                    flex: 1,
-                    padding: "10px",
-                    borderRadius: "6px",
-                    background: location.locationStatus === "coming_soon" ? "#555" : "#111",
-                    color: location.locationStatus === "coming_soon" ? "#fff" : "#666",
-                    fontFamily: "Satoshi, sans-serif",
-                    fontWeight: 700,
-                    fontSize: "12px",
-                    letterSpacing: "0.05em",
-                    cursor: !onLocationStatusChange || updatingStatus !== null ? "not-allowed" : "pointer",
-                    border: location.locationStatus === "coming_soon" ? "none" : "1px solid #222",
-                    opacity: !onLocationStatusChange || updatingStatus !== null ? 0.7 : 1,
-                  }}
+                  disabled
+                  className="font-kingshunt-body inline-flex flex-1 items-center justify-center rounded-lg border border-[#222222] bg-[#222222] px-4 py-3 text-center text-[13px] font-bold uppercase tracking-[0.05em] text-[#555555]"
                 >
-                  COMING SOON
+                  Notify Me
                 </button>
-              </div>
+              ) : (
+                <Link
+                  href={`/kingshunt/${location.slug}`}
+                  className="font-kingshunt-body inline-flex flex-1 items-center justify-center rounded-lg bg-[#d4a843] px-4 py-3 text-center text-[13px] font-bold uppercase tracking-[0.05em] text-[#0a0a0a] transition hover:bg-[#e3bb5d]"
+                >
+                  Start Hunt
+                </Link>
+              )}
 
-              {statusError ? (
-                <p className="font-kingshunt-body mt-3 text-[12px] text-rose-300">{statusError}</p>
+              {location.mapsUrl ? (
+                <a
+                  href={location.mapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-kingshunt-body inline-flex flex-1 items-center justify-center rounded-lg border border-[#d4a843] bg-transparent px-4 py-3 text-center text-[13px] font-bold uppercase tracking-[0.05em] text-[#d4a843] transition hover:bg-[rgba(212,168,67,0.08)]"
+                >
+                  Directions
+                </a>
               ) : null}
             </div>
           </div>
-        ) : null}
+
+          {isEventOnlyLocationType(location.locationType) ? (
+            <UpcomingEvents slug={location.slug} onEventsChange={setEvents} />
+          ) : null}
+
+          {location.liveRips.length > 0 ? (
+            <div className="px-5 pb-7">
+              <p className="font-kingshunt-body mb-3 text-[11px] font-bold uppercase tracking-[0.12em] text-[#d4a843]">Live Rips</p>
+              <div className="tk-hide-scrollbar flex gap-3 overflow-x-auto pb-2">
+                {location.liveRips.map((rip) => (
+                  <LiveRipCard key={rip.id} rip={rip} />
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {isAdmin ? (
+            <div style={{ padding: "20px", paddingTop: 0, borderTop: "1px solid #1a1a1a", marginTop: "16px" }}>
+              <a
+                href={editHref}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  padding: "12px",
+                  textAlign: "center",
+                  borderRadius: "8px",
+                  border: "1px solid #333",
+                  color: "#888",
+                  fontFamily: "Satoshi, sans-serif",
+                  fontWeight: 700,
+                  fontSize: "12px",
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  textDecoration: "none",
+                  background: "transparent",
+                }}
+              >
+                Edit Location
+              </a>
+
+              <div style={{ paddingTop: "12px" }}>
+                <p
+                  style={{
+                    color: "#666",
+                    fontSize: "11px",
+                    letterSpacing: "0.1em",
+                    fontFamily: "Satoshi, sans-serif",
+                    marginBottom: "8px",
+                  }}
+                >
+                  LOCATION STATUS
+                </p>
+
+                <div style={{ display: "flex", gap: "8px" }}>
+                  <button
+                    type="button"
+                    disabled={!onLocationStatusChange || updatingStatus !== null}
+                    onClick={() => void handleLocationStatusUpdate("active")}
+                    style={{
+                      flex: 1,
+                      padding: "10px",
+                      borderRadius: "6px",
+                      background: location.locationStatus === "active" ? "#d4a843" : "#111",
+                      color: location.locationStatus === "active" ? "#0a0a0a" : "#666",
+                      fontFamily: "Satoshi, sans-serif",
+                      fontWeight: 700,
+                      fontSize: "12px",
+                      letterSpacing: "0.05em",
+                      cursor: !onLocationStatusChange || updatingStatus !== null ? "not-allowed" : "pointer",
+                      border: location.locationStatus === "active" ? "none" : "1px solid #222",
+                      opacity: !onLocationStatusChange || updatingStatus !== null ? 0.7 : 1,
+                    }}
+                  >
+                    LIVE
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={!onLocationStatusChange || updatingStatus !== null}
+                    onClick={() => void handleLocationStatusUpdate("coming_soon")}
+                    style={{
+                      flex: 1,
+                      padding: "10px",
+                      borderRadius: "6px",
+                      background: location.locationStatus === "coming_soon" ? "#555" : "#111",
+                      color: location.locationStatus === "coming_soon" ? "#fff" : "#666",
+                      fontFamily: "Satoshi, sans-serif",
+                      fontWeight: 700,
+                      fontSize: "12px",
+                      letterSpacing: "0.05em",
+                      cursor: !onLocationStatusChange || updatingStatus !== null ? "not-allowed" : "pointer",
+                      border: location.locationStatus === "coming_soon" ? "none" : "1px solid #222",
+                      opacity: !onLocationStatusChange || updatingStatus !== null ? 0.7 : 1,
+                    }}
+                  >
+                    COMING SOON
+                  </button>
+                </div>
+
+                {statusError ? (
+                  <p className="font-kingshunt-body mt-3 text-[12px] text-rose-300">{statusError}</p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </div>
       </aside>
     </div>
   );

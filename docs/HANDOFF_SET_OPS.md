@@ -1,28 +1,44 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-11` (urgent ElevenLabs webhook fail-open fix on `main`; code/docs changed locally before commit; no restart/migration/DB mutation was executed)
+- Last reviewed: `2026-04-11 12:24 PDT` (`/locations` mobile events, event pagination, and slug-based admin edit page fix on `main`; no deploy/restart/migration/DB mutation was executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## main...origin/main`
-    - ` M docs/HANDOFF_SET_OPS.md`
-    - ` M docs/handoffs/SESSION_LOG.md`
-    - ` M frontend/nextjs-app/lib/server/elevenlabs.ts`
-    - ` M frontend/nextjs-app/pages/api/support/webhooks/conversation-end.ts`
-    - ` M frontend/nextjs-app/pages/api/support/webhooks/conversation-start.ts`
+    - ` M frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+    - ` M frontend/nextjs-app/pages/api/locations/[locationId].ts`
+    - ` M frontend/nextjs-app/pages/api/locations/[locationId]/events.ts`
+    - `?? frontend/nextjs-app/pages/admin/locations/`
   - modified tracked paths:
-    - `docs/HANDOFF_SET_OPS.md`
-    - `docs/handoffs/SESSION_LOG.md`
-    - `frontend/nextjs-app/lib/server/elevenlabs.ts`
-    - `frontend/nextjs-app/pages/api/support/webhooks/conversation-end.ts`
-    - `frontend/nextjs-app/pages/api/support/webhooks/conversation-start.ts`
+    - `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+    - `frontend/nextjs-app/pages/api/locations/[locationId].ts`
+    - `frontend/nextjs-app/pages/api/locations/[locationId]/events.ts`
   - deleted tracked paths: none
-  - untracked paths: none
+  - untracked paths:
+    - `frontend/nextjs-app/pages/admin/locations/[slug]/edit.tsx`
 - Latest committed baseline before this handoff refresh:
-  - `210d42c` feat(locations): admin edit btn, coming soon toggle, live hours, upcoming events
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` parity was checked before commit; no restart, migration, runtime mutation, or DB mutation was executed
+  - `9662a5d` fix(support): harden elevenlabs webhooks
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was pulled before editing; no deploy, restart, migration, runtime mutation, or DB mutation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-11, `/locations` mobile events + admin edit page on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing:
+  - first `git pull --ff-only --autostash origin main` failed under sandbox DNS/network restrictions
+  - approved network retry -> `Already up to date.`
+- Implemented requested location fixes:
+  - made the location detail panel a fixed-height shell with one inner `overflow-y-auto` scroll container containing hero, name, status, address, hours, action buttons, upcoming events, live rips, and admin controls
+  - replaced the one-shot events fetch with an `UpcomingEvents` component that loads page 0 and appends more results through a `Show More Events` button
+  - added `page` support to `GET /api/locations/[locationId]/events` while preserving page size `5`
+  - changed the public panel admin edit action from `/admin/assigned-locations/${location.id}` to `/admin/locations/${location.slug}/edit`
+  - added `/admin/locations/[slug]/edit` as a slug-based admin page for editing core location fields, coordinates, geofence, maps/photo URLs, landmarks, status, and indoor-map metadata
+  - extended the existing `/api/locations/[locationId]` route with slug-or-id `GET` and admin-only slug-or-id `PUT`, avoiding a duplicate `[locationId]/index.ts` route collision
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec eslint components/locations/LocationDetailPanel.tsx 'pages/api/locations/[locationId]/events.ts' 'pages/api/locations/[locationId].ts' 'pages/admin/locations/[slug]/edit.tsx'` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node engine warning
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, DB read/write, or destructive operation was executed in this session.
 
 ## Session Update (2026-04-11, urgent ElevenLabs webhook fail-open fix on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
