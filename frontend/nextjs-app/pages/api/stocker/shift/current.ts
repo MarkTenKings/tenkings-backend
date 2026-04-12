@@ -6,6 +6,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     const stocker = await requireStockerSession(req);
+    if (!stocker.hasStockerProfile) {
+      return res.status(200).json({ success: true, data: { shift: null } });
+    }
     const shift = await loadCurrentShift(stocker.stockerId, parseDateOnly(req.query.date));
     return res.status(200).json({ success: true, data: { shift } });
   } catch (error) {

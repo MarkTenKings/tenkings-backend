@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
-import { methodNotAllowed, normalizePhoneInput, serializeProfile } from "../../../../../lib/server/stocker";
+import { isStockerAdminUser, methodNotAllowed, normalizePhoneInput, serializeProfile } from "../../../../../lib/server/stocker";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "PUT" && req.method !== "DELETE") return methodNotAllowed(res, ["PUT", "DELETE"]);
@@ -24,7 +24,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const profile = await prisma.stockerProfile.update({ where: { id: stockerId }, data });
     if (data.phone) {
-      await prisma.user.update({ where: { id: profile.userId }, data: { phone: data.phone, role: "stocker" } });
+      const user = await prisma.user.findUnique({ where: { id: profile.userId }, select: { id: true, phone: true, role: true } });
+      await prisma.user.update({
+        where: { id: profile.userId },
+        data: { phone: data.phone, ...(user && isStockerAdminUser(user) ? {} : { role: "stocker" }) },
+      });
     }
     return res.status(200).json({ success: true, data: serializeProfile(profile) });
   } catch (error) {

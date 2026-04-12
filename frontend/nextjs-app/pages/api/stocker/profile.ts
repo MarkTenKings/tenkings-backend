@@ -8,6 +8,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const stocker = await requireStockerSession(req);
     if (req.method === "PUT") {
+      if (!stocker.hasStockerProfile) {
+        throw new StockerApiError(403, "PROFILE_REQUIRED", "Stocker profile required");
+      }
       const language = req.body?.language;
       if (language !== undefined && language !== "en" && language !== "es") {
         throw new StockerApiError(400, "VALIDATION_ERROR", "language must be en or es");
@@ -19,6 +22,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(200).json({ success: true, data: serializeProfile(profile) });
     }
 
+    if (!stocker.hasStockerProfile) {
+      return res.status(200).json({ success: true, data: null });
+    }
     const profile = await prisma.stockerProfile.findUniqueOrThrow({ where: { id: stocker.stockerId } });
     return res.status(200).json({ success: true, data: serializeProfile(profile) });
   } catch (error) {

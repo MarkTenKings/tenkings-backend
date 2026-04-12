@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import { requireAdminSession, toErrorResponse } from "../../../../../lib/server/admin";
-import { methodNotAllowed, newId, normalizePhoneInput, serializeProfile } from "../../../../../lib/server/stocker";
+import { isStockerAdminUser, methodNotAllowed, newId, normalizePhoneInput, serializeProfile } from "../../../../../lib/server/stocker";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
@@ -16,7 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const profile = await prisma.$transaction(async (tx) => {
       let user = await tx.user.findUnique({ where: { phone } });
       if (user) {
-        if (user.role !== "stocker") {
+        if (user.role !== "stocker" && !isStockerAdminUser(user)) {
           user = await tx.user.update({ where: { id: user.id }, data: { role: "stocker" } });
         }
       } else {

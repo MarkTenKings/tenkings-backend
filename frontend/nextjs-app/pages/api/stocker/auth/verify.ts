@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
 import {
+  hasStockerPortalAccess,
   methodNotAllowed,
   normalizePhoneInput,
   proxyAuthService,
@@ -30,7 +31,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ? await prisma.user.findUnique({ where: { id: userId }, include: { stockerProfile: true } })
       : await prisma.user.findUnique({ where: { phone }, include: { stockerProfile: true } });
 
-    if (!user || user.role !== "stocker" || !user.stockerProfile?.isActive) {
+    if (!user || !hasStockerPortalAccess(user)) {
       throw new StockerApiError(403, "NOT_A_STOCKER", "Access denied. Contact your manager.");
     }
 
@@ -41,7 +42,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         expiresAt: authPayload.expiresAt,
         user: authPayload.user,
         wallet: authPayload.wallet,
-        profile: serializeProfile(user.stockerProfile),
+        profile: user.stockerProfile ? serializeProfile(user.stockerProfile) : null,
       },
     });
   } catch (error) {

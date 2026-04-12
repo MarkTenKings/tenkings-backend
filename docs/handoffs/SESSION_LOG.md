@@ -15044,3 +15044,46 @@
 - Commit on `main` with `feat(stocker-ops): phase A — core route, tracking, admin dashboard`.
 - Fetch remote before push.
 - Push `main` to `origin/main`.
+
+## 2026-04-12 - Stocker Operations Phase A droplet migration
+
+### Planned Production Action
+- SSH to `root@104.131.27.245`.
+- Pull latest `main` in `/root/tenkings-backend`.
+- Export `DATABASE_URL` from `infra` / `bytebot-lite-service`.
+- Run `pnpm --filter @tenkings/database exec prisma migrate deploy`.
+
+### Production Migration Evidence
+- SSH command executed on `root@104.131.27.245`.
+- Droplet `git pull --ff-only origin main`:
+  - remote updated `3fbb4d4..5b7b3b6`
+  - local droplet checkout fast-forwarded to `5b7b3b6`
+- `DATABASE_URL` was exported from `infra` / `bytebot-lite-service` without printing the secret.
+- `pnpm --filter @tenkings/database exec prisma migrate deploy`:
+  - Prisma loaded `prisma/schema.prisma`
+  - datasource resolved to PostgreSQL database `defaultdb`, schema `public`, on DigitalOcean
+  - 60 migrations found
+  - applied migration `20260412143000_add_stocker_ops`
+  - Prisma reported `All migrations have been successfully applied.`
+- No deploy, restart, or destructive data operation was executed.
+
+## 2026-04-12 - Stocker admin portal access fix
+
+### Summary
+- Pulled latest `main` first:
+  - sandboxed `git pull --ff-only --autostash origin main` failed DNS
+  - approved network retry -> `Already up to date.`
+- Fixed the stocker auth path that blocked Mark's admin account after code verification:
+  - added shared `isStockerAdminUser` and `hasStockerPortalAccess` helpers
+  - changed `/api/stocker/auth/send-code` and `/api/stocker/auth/verify` from `role === "stocker"` to profile-or-admin access
+  - changed `requireStockerSession` to allow linked stocker profiles regardless of role, and admins regardless of profile
+  - changed `/api/stocker/profile` and `/api/stocker/shift/current` so admin-without-profile sessions can reach the portal/dashboard and receive a no-profile/no-shift response instead of a hard 403
+  - changed admin stocker create/edit endpoints to avoid demoting admin users to `role: "stocker"`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/stocker.ts --file pages/api/stocker/auth/send-code.ts --file pages/api/stocker/auth/verify.ts --file pages/api/stocker/profile.ts --file pages/api/stocker/shift/current.ts --file pages/api/admin/stocker/create/index.ts --file 'pages/api/admin/stocker/[stockerId]/index.ts'` -> pass.
+
+### Planned Production Push
+- Commit with `fix(stocker): allow admin users to access stocker portal`.
+- Push `main` to `origin/main`.

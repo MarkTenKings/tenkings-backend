@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { prisma } from "@tenkings/database";
-import { methodNotAllowed, normalizePhoneInput, proxyAuthService, sendError, StockerApiError } from "../../../../lib/server/stocker";
+import { hasStockerPortalAccess, methodNotAllowed, normalizePhoneInput, proxyAuthService, sendError, StockerApiError } from "../../../../lib/server/stocker";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
@@ -13,7 +13,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       where: { phone },
       include: { stockerProfile: true },
     });
-    if (!user || user.role !== "stocker" || !user.stockerProfile?.isActive) {
+    if (!user || !hasStockerPortalAccess(user)) {
       throw new StockerApiError(404, "USER_NOT_FOUND", "No active stocker exists for that phone number");
     }
 

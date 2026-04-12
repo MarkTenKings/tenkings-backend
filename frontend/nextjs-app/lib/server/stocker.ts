@@ -27,6 +27,8 @@ export type StockerSession = {
   name: string;
   phone: string;
   token: string | null;
+  isAdmin: boolean;
+  hasStockerProfile: boolean;
 };
 
 const ROUTES_API_URL = "https://routes.googleapis.com/directions/v2:computeRoutes";
@@ -63,33 +65,45 @@ export function extractBearerToken(req: NextApiRequest): string | null {
   return null;
 }
 
+export function isStockerAdminUser(user: { id: string; phone: string | null; role?: string | null }) {
+  return user.role === "admin" || hasAdminAccess(user.id) || hasAdminPhoneAccess(user.phone);
+}
+
+export function hasStockerPortalAccess(user: {
+  id: string;
+  phone: string | null;
+  role?: string | null;
+  stockerProfile?: { id: string; isActive: boolean } | null;
+}) {
+  return Boolean(user.stockerProfile) || isStockerAdminUser(user);
+}
+
 export async function requireStockerSession(req: NextApiRequest): Promise<StockerSession> {
   const session = await requireUserSession(req);
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    select: { id: true, phone: true, role: true },
+    select: { id: true, phone: true, role: true, displayName: true, stockerProfile: true },
   });
 
   if (!user) {
     throw new StockerApiError(401, "UNAUTHORIZED", "Session user not found");
   }
 
-  const isAdmin = hasAdminAccess(user.id) || hasAdminPhoneAccess(user.phone);
-  if (user.role !== "stocker" && !isAdmin) {
+  const isAdmin = isStockerAdminUser(user);
+  if (!hasStockerPortalAccess(user)) {
     throw new StockerApiError(403, "NOT_A_STOCKER", "Stocker access required");
   }
 
-  const profile = await prisma.stockerProfile.findUnique({ where: { userId: user.id } });
-  if (!profile || !profile.isActive) {
-    throw new StockerApiError(403, "STOCKER_INACTIVE", "Stocker profile not found or inactive");
-  }
+  const profile = user.stockerProfile;
 
   return {
     userId: user.id,
-    stockerId: profile.id,
-    name: profile.name,
-    phone: profile.phone,
+    stockerId: profile?.id ?? "",
+    name: profile?.name ?? user.displayName ?? "Admin",
+    phone: profile?.phone ?? user.phone ?? "",
     token: extractBearerToken(req),
+    isAdmin,
+    hasStockerProfile: Boolean(profile),
   };
 }
 

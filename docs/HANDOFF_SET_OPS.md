@@ -8088,3 +8088,33 @@ Build Set Ops UI flow with:
   - requested `pnpm --filter @tenkings/database exec prisma migrate dev --name add_stocker_ops` was attempted and blocked locally by missing `DATABASE_URL` (`P1012 Environment variable not found: DATABASE_URL`)
   - migration file `packages/database/prisma/migrations/20260412143000_add_stocker_ops/migration.sql` is present for deployment
 - No deploy, restart, droplet migration, production DB read/write, or destructive operation was executed.
+
+## Session Update (2026-04-12, Stocker Operations Phase A droplet migration)
+- User explicitly requested the production droplet migration after the Phase A code push.
+- SSH command executed on `root@104.131.27.245`:
+  - `cd /root/tenkings-backend`
+  - `git pull --ff-only origin main`
+  - export `DATABASE_URL` from `infra` / `bytebot-lite-service`
+  - `pnpm --filter @tenkings/database exec prisma migrate deploy`
+- Observed result:
+  - droplet repo fast-forwarded from `3fbb4d4` to `5b7b3b6`
+  - Prisma datasource resolved to PostgreSQL `defaultdb` on DigitalOcean
+  - 60 migrations found
+  - migration `20260412143000_add_stocker_ops` applied successfully
+  - Prisma reported `All migrations have been successfully applied.`
+- No restart or destructive data operation was executed.
+
+## Session Update (2026-04-12, Stocker admin portal access fix)
+- Pulled latest `main` before editing:
+  - initial sandboxed pull hit DNS/network restrictions
+  - approved retry -> `Already up to date.`
+- Fixed stocker portal auth so access is allowed when either condition is true:
+  - the user has a linked `StockerProfile`
+  - the user is an admin via `User.role === "admin"` or existing configured admin ID/phone checks
+- Updated the shared stocker guard so admins without a stocker profile can reach `/stocker` and see the dashboard/no-route state instead of being blocked by `/api/stocker/profile` or `/api/stocker/shift/current`.
+- Updated stocker `send-code` and `verify` endpoints to use the same profile-or-admin access helper instead of hard-checking `role === "stocker"`.
+- Updated admin stocker create/edit APIs so creating/editing a stocker profile does not demote admin users to `role: "stocker"`.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/stocker.ts --file pages/api/stocker/auth/send-code.ts --file pages/api/stocker/auth/verify.ts --file pages/api/stocker/profile.ts --file pages/api/stocker/shift/current.ts --file pages/api/admin/stocker/create/index.ts --file 'pages/api/admin/stocker/[stockerId]/index.ts'` -> pass
+- No deploy, restart, migration, or DB mutation was executed.
