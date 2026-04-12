@@ -14895,5 +14895,15 @@
 - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node `v25.6.1` engine warning
 - `git diff --check` -> pass
 
+### Production Push Evidence
+- `git status -sb` before push -> `## main...origin/main [ahead 1]`
+- `git branch --show-current` before push -> `main`
+- `git rev-parse --short HEAD` before push -> `96a3d6d`
+- `git rev-parse --short origin/main` before push -> `dd154bd`
+- first `git push origin main` failed under sandbox DNS/network restrictions
+- approved network retry -> `dd154bd..96a3d6d  main -> main`
+- post-push `git status -sb` -> `## main...origin/main`
+- production/Vercel deployment completion was not verified from this shell session
+
 ### Notes
 - Current installed SDK evidence: `@elevenlabs/react@1.0.3` and `@elevenlabs/client@1.1.2`.

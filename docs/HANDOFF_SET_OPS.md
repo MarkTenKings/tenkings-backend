@@ -1,23 +1,17 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-12 12:40 PDT` (Queen voice WebRTC fix on `main`; planned push to `origin/main` for production/Vercel rollout; no restart/migration/DB mutation was executed)
+- Last reviewed: `2026-04-12 12:47 PDT` (Queen voice WebRTC fix pushed to `origin/main` as `96a3d6d`; production/Vercel completion was not verified from this shell; no restart/migration/DB mutation was executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## main...origin/main`
-    - ` M docs/HANDOFF_SET_OPS.md`
-    - ` M docs/handoffs/SESSION_LOG.md`
-    - ` M frontend/nextjs-app/components/QueenWidget.tsx`
-  - modified tracked paths:
-    - `docs/HANDOFF_SET_OPS.md`
-    - `docs/handoffs/SESSION_LOG.md`
-    - `frontend/nextjs-app/components/QueenWidget.tsx`
+  - modified tracked paths: none
   - deleted tracked paths: none
   - untracked paths: none
 - Latest committed baseline before this handoff refresh:
-  - `dd154bd` fix(locations): list view status, edit page load, fetch hours from google
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was synced before editing; no restart, migration, DB read/write, or destructive operation was executed
+  - `96a3d6d` fix(queen): start voice sessions with webrtc
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was synced before editing; `main` was pushed to `origin/main`; no restart, migration, DB read/write, or destructive operation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
 ## Session Update (2026-04-12, Queen Voice mode WebRTC fix on `main`)
@@ -43,6 +37,12 @@
 - Planned production action:
   - commit the Queen Voice fix and handoff updates on `main`
   - push `main` to `origin/main` to trigger the production/Vercel rollout
+- Push result:
+  - `git commit -m "fix(queen): start voice sessions with webrtc"` -> `96a3d6d`
+  - first `git push origin main` failed under sandbox DNS/network restrictions
+  - approved network retry -> `dd154bd..96a3d6d  main -> main`
+  - post-push `git status -sb` -> `## main...origin/main`
+  - production/Vercel deployment completion was not verified from this shell session
 - No restart, migration, DB read/write, or destructive operation was executed in this session.
 
 ## Session Update (2026-04-12, docs-only startup context + git-state report on `main`)
