@@ -14907,3 +14907,38 @@
 
 ### Notes
 - Current installed SDK evidence: `@elevenlabs/react@1.0.3` and `@elevenlabs/client@1.1.2`.
+
+## 2026-04-12 - Queen widget React SDK provider/hooks refactor
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings-task27-main`.
+- Fetched `origin/main` before editing after sandbox DNS blocked the first fetch attempt; approved retry succeeded and local `main` matched `origin/main` at `2e4ec55`.
+- Reviewed the current official ElevenLabs React SDK docs and local SDK surface.
+- Refactored `frontend/nextjs-app/components/QueenWidget.tsx` to follow the current React SDK pattern:
+  - `ConversationProvider` still wraps the widget subtree.
+  - conversation control calls now come from `useConversationControls()`.
+  - connection status now comes from `useConversationStatus()`.
+  - speaking/listening state now comes from `useConversationMode()`.
+  - Chat starts with `startSession({ agentId, userId, dynamicVariables, overrides: { conversation: { textOnly: true } } })`.
+  - Voice starts with `startSession({ agentId, userId, dynamicVariables })`.
+  - removed manual `navigator.mediaDevices.getUserMedia()` permission probing.
+  - removed manual `connectionType` selection.
+- Preserved the existing Chat, Voice, Call modes, page context dynamic variables, proactive pulse, and black/gold design.
+
+### Files Updated
+- `frontend/nextjs-app/components/QueenWidget.tsx`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/QueenWidget.tsx` -> pass with only the local Node `v25.6.1` engine warning.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node `v25.6.1` engine warning.
+- `git diff --check` -> pass.
+- `rg -n "useConversation\\(|navigator\\.mediaDevices|getUserMedia|connectionType|textOnly" frontend/nextjs-app/components/QueenWidget.tsx` -> only the documented Chat `textOnly: true` override remains.
+
+### Planned Production Action
+- Commit the Queen widget SDK refactor on `main`.
+- Push `main` to `origin/main` to trigger the production/Vercel rollout.
+- Append observed push/deploy evidence after execution.
+
+### Notes
+- No restart, migration, DB read/write, or destructive operation was executed.

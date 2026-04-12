@@ -1,6 +1,11 @@
 "use client";
 
-import { ConversationProvider, useConversation } from "@elevenlabs/react";
+import {
+  ConversationProvider,
+  useConversationControls,
+  useConversationMode,
+  useConversationStatus,
+} from "@elevenlabs/react";
 import { useRouter } from "next/router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "../hooks/useSession";
@@ -9,7 +14,6 @@ import { TEN_KINGS_COLLECTIBLES_CROWN_PATH, TEN_KINGS_COLLECTIBLES_CROWN_VIEWBOX
 type WidgetMode = "chat" | "voice" | "call";
 type WidgetMessageRole = "assistant" | "user";
 type LaunchMode = "chat" | "voice" | null;
-type QueenConnectionType = "websocket" | "webrtc";
 
 type WidgetMessage = {
   id: string;
@@ -51,12 +55,6 @@ function summarizeConversationError(error: unknown) {
   return "Queen hit a connection issue. Try again in a moment.";
 }
 
-function stopMediaStream(stream: MediaStream | null) {
-  stream?.getTracks().forEach((track) => {
-    track.stop();
-  });
-}
-
 function QueenWidgetSurface({
   messages,
   appendMessage,
@@ -70,17 +68,9 @@ function QueenWidgetSurface({
 }) {
   const router = useRouter();
   const { session } = useSession();
-  const {
-    startSession,
-    endSession,
-    sendContextualUpdate,
-    sendUserActivity,
-    sendUserMessage,
-    status,
-    mode,
-    isListening,
-    isSpeaking,
-  } = useConversation();
+  const { startSession, endSession, sendContextualUpdate, sendUserActivity, sendUserMessage } = useConversationControls();
+  const { status, message: statusMessage } = useConversationStatus();
+  const { mode, isListening, isSpeaking } = useConversationMode();
 
   const [isOpen, setIsOpen] = useState(false);
   const [widgetMode, setWidgetMode] = useState<WidgetMode>("chat");
@@ -95,7 +85,7 @@ function QueenWidgetSurface({
   const activeSessionKindRef = useRef<Exclude<WidgetMode, "call"> | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
-  const errorMessage = localError ?? externalError;
+  const errorMessage = localError ?? externalError ?? (status === "error" ? statusMessage ?? null : null);
 
   const currentPath = typeof window !== "undefined" ? window.location.pathname : router.pathname ?? "/";
   const currentTitle = typeof document !== "undefined" && document.title.trim() ? document.title.trim() : "Ten Kings";
@@ -123,10 +113,8 @@ function QueenWidgetSurface({
   );
 
   const buildSessionOptions = useCallback(
-    (connectionType: QueenConnectionType, textOnly: boolean) => ({
+    () => ({
       agentId: AGENT_ID,
-      connectionType,
-      textOnly,
       userId: session?.user.id || undefined,
       dynamicVariables,
     }),
@@ -143,37 +131,27 @@ function QueenWidgetSurface({
     setExternalError(null);
     lastContextRef.current = "";
     activeSessionKindRef.current = "chat";
-    startSession(buildSessionOptions("websocket", true));
+    startSession({
+      ...buildSessionOptions(),
+      overrides: {
+        conversation: {
+          textOnly: true,
+        },
+      },
+    });
   }, [buildSessionOptions, setExternalError, startSession]);
 
-  const startVoiceSession = useCallback(async () => {
+  const startVoiceSession = useCallback(() => {
     if (!AGENT_ID) {
       setLocalError("Queen voice is not configured. Add the ElevenLabs agent ID to the frontend env.");
       return;
     }
 
-    let permissionStream: MediaStream | null = null;
-
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        setLocalError("Voice mode is not supported by this browser.");
-        return;
-      }
-
-      permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stopMediaStream(permissionStream);
-      permissionStream = null;
-
-      setLocalError(null);
-      setExternalError(null);
-      lastContextRef.current = "";
-      activeSessionKindRef.current = "voice";
-      startSession(buildSessionOptions("webrtc", false));
-    } catch (error) {
-      setLocalError("Microphone access is required for Voice mode.");
-    } finally {
-      stopMediaStream(permissionStream);
-    }
+    setLocalError(null);
+    setExternalError(null);
+    lastContextRef.current = "";
+    activeSessionKindRef.current = "voice";
+    startSession(buildSessionOptions());
   }, [buildSessionOptions, setExternalError, startSession]);
 
   const closeWidget = useCallback(() => {
@@ -305,7 +283,7 @@ function QueenWidgetSurface({
     }
 
     setPendingLaunchMode(null);
-    void startVoiceSession();
+    startVoiceSession();
   }, [pendingLaunchMode, startChatSession, startVoiceSession, status]);
 
   useEffect(() => {
