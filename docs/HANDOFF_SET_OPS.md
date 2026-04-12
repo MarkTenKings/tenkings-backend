@@ -1,7 +1,7 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-12 12:47 PDT` (Queen voice WebRTC fix pushed to `origin/main` as `96a3d6d`; production/Vercel completion was not verified from this shell; no restart/migration/DB mutation was executed)
+- Last reviewed: `2026-04-12 13:16 PDT` (Queen widget React SDK provider/hooks refactor pushed to `origin/main` as `372fac1`; production site reachability returned HTTP/2 200 from Vercel; no restart/migration/DB mutation was executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
@@ -10,9 +10,43 @@
   - deleted tracked paths: none
   - untracked paths: none
 - Latest committed baseline before this handoff refresh:
-  - `96a3d6d` fix(queen): start voice sessions with webrtc
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was synced before editing; `main` was pushed to `origin/main`; no restart, migration, DB read/write, or destructive operation was executed
+  - `372fac1` fix(queen): align widget with elevenlabs react sdk
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was synced before editing; `main` was pushed to `origin/main`; production site reachability was checked with `curl -I https://collect.tenkings.co`; no restart, migration, DB read/write, or destructive operation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-12, Queen widget React SDK provider/hooks refactor on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing:
+  - first `git fetch origin main` failed under sandbox DNS/network restrictions
+  - approved network retry -> success; local `main` matched `origin/main` at `2e4ec55`
+- Reviewed current official ElevenLabs React SDK guidance and the locally installed SDK:
+  - official React SDK docs show `ConversationProvider`, `useConversationControls`, `useConversationStatus`, and `startSession({ agentId })`
+  - docs state connection type is inferred from conversation mode; voice uses WebRTC and text-only uses WebSocket by default
+  - docs show text-only via `overrides: { conversation: { textOnly: true } }`
+  - installed package observed: `@elevenlabs/react@1.0.3`, backed by `@elevenlabs/client@1.1.2`
+- Implemented fix in `frontend/nextjs-app/components/QueenWidget.tsx`:
+  - replaced `useConversation()` with `useConversationControls()`, `useConversationStatus()`, and `useConversationMode()`
+  - kept `ConversationProvider` wrapping the widget subtree
+  - Chat starts with `startSession({ agentId, userId, dynamicVariables, overrides: { conversation: { textOnly: true } } })`
+  - Voice starts with `startSession({ agentId, userId, dynamicVariables })`
+  - removed manual `navigator.mediaDevices.getUserMedia()` probing
+  - removed manual `connectionType` selection
+  - preserved Chat, Voice, Call, page context, proactive pulse, and black/gold design
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/QueenWidget.tsx` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node engine warning
+  - `git diff --check` -> pass
+  - `rg -n "useConversation\\(|navigator\\.mediaDevices|getUserMedia|connectionType|textOnly" frontend/nextjs-app/components/QueenWidget.tsx` -> only the documented Chat `textOnly: true` override remains
+- Planned production action was appended to `docs/handoffs/SESSION_LOG.md` before pushing.
+- Push result:
+  - code commit -> `372fac1 fix(queen): align widget with elevenlabs react sdk`
+  - pre-push state -> `git status -sb` = `## main...origin/main [ahead 1]`, branch `main`, HEAD `372fac1`, `origin/main` `2e4ec55`
+  - first `git push origin main` failed under sandbox DNS/network restrictions
+  - approved network retry -> `2e4ec55..372fac1  main -> main`
+  - post-push `git status -sb` -> `## main...origin/main`
+  - post-push `git rev-parse --short origin/main` -> `372fac1`
+  - production reachability check `curl -I https://collect.tenkings.co` -> HTTP/2 200, `server: Vercel`
+- No restart, migration, DB read/write, or destructive operation was executed in this session.
 
 ## Session Update (2026-04-12, Queen Voice mode WebRTC fix on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

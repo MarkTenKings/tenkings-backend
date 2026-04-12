@@ -14927,6 +14927,7 @@
 
 ### Files Updated
 - `frontend/nextjs-app/components/QueenWidget.tsx`
+- `docs/HANDOFF_SET_OPS.md`
 - `docs/handoffs/SESSION_LOG.md`
 
 ### Validation Evidence
@@ -14939,6 +14940,19 @@
 - Commit the Queen widget SDK refactor on `main`.
 - Push `main` to `origin/main` to trigger the production/Vercel rollout.
 - Append observed push/deploy evidence after execution.
+
+### Production Push Evidence
+- Code commit -> `372fac1 fix(queen): align widget with elevenlabs react sdk`.
+- Pre-push `git status -sb` -> `## main...origin/main [ahead 1]`.
+- Pre-push `git branch --show-current` -> `main`.
+- Pre-push `git rev-parse --short HEAD` -> `372fac1`.
+- Pre-push `git rev-parse --short origin/main` -> `2e4ec55`.
+- `git fetch --all --prune` succeeded after approved network retry.
+- First `git push origin main` failed under sandbox DNS/network restrictions.
+- Approved network retry -> `2e4ec55..372fac1  main -> main`.
+- Post-push `git status -sb` -> `## main...origin/main`.
+- Post-push `git rev-parse --short origin/main` -> `372fac1`.
+- Production reachability check `curl -I https://collect.tenkings.co` -> HTTP/2 200, `server: Vercel`, `x-vercel-cache: MISS`.
 
 ### Notes
 - No restart, migration, DB read/write, or destructive operation was executed.
