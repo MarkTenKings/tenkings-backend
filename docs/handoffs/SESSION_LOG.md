@@ -14804,4 +14804,45 @@
 - `git diff --check` -> pass
 
 ### Notes
-- Commit and push requested by the user are pending after this handoff update.
+- No deployment or runtime restart was performed as part of this change.
+
+## 2026-04-12 - `/locations` list status, edit page load, and Google hours fetch
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings-task27-main`.
+- Pulled `origin/main` before editing; the first sandboxed attempt failed DNS/network resolution, and the approved network retry reported `Already up to date.`
+- Diagnosed list-view status behavior and confirmed list cards use local `hours` / `locationType`, while the detail panel uses the live Google-backed status endpoint.
+- Fixed slug-based single-location GET/PUT lookup so `/api/locations/sutter-health-park` no longer attempts an invalid UUID id lookup for slug requests.
+- Added an admin `Fetch Hours from Google` button below the Hours field on `/admin/locations/[slug]/edit`.
+- Expanded local hours parsing so Google weekday descriptions saved into `Location.hours` can drive list-view Open/Closed badges.
+- No deploy, restart, migration, runtime mutation, DB write, or destructive operation was executed.
+
+### Evidence
+- Local `DATABASE_URL` was unset: `printenv DATABASE_URL | wc -c` -> `0`.
+- Live route check before the fix: `curl -i https://collect.tenkings.co/api/locations/sutter-health-park` -> HTTP `500`.
+- Read-only production DB SELECT:
+  - `north-premium-outlet-mall` -> `locationType=mall`, `has_hours=true`
+  - `sutter-health-park` -> `locationType=stadium`, `has_hours=true`
+  - `santa-rosa-plaza`, `stoneridge-shopping-center`, `westfield-topanga` -> no `locationType`, `has_hours=false`
+  - `raley-s-313` -> no `locationType`, `has_hours=false`; exact slug `raleys-313` was not present
+
+### Files Updated
+- `frontend/nextjs-app/lib/locationUtils.ts`
+- `frontend/nextjs-app/pages/admin/locations/[slug]/edit.tsx`
+- `frontend/nextjs-app/pages/api/locations/[locationId].ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### What Changed
+- `findLocationByIdentifier()` now checks `slug` first, then checks `id` only when the request identifier matches UUID shape.
+- The edit page now fetches live Google hours through `/api/locations/${slug}/live-status`, fills the Hours input with `weekdayDescriptions.join(" | ")`, and leaves persistence to the existing Save flow.
+- `parseOpenStatus()` now supports Google-style weekday strings such as `Monday: 10:00 AM – 9:00 PM`, closed-day rows, 24-hour rows, and common Unicode spacing/dash characters.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec eslint pages/locations.tsx lib/locationUtils.ts 'pages/api/locations/[locationId].ts' 'pages/admin/locations/[slug]/edit.tsx'` -> pass with only the local Node `v25.6.1` engine warning
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node `v25.6.1` engine warning
+- `pnpm --filter @tenkings/nextjs-app exec tsx -e "..."` parser smoke -> `closed`, `open`, `open`
+- `git diff --check` -> pass
+
+### Notes
+- No deployment or runtime restart was performed as part of this change.

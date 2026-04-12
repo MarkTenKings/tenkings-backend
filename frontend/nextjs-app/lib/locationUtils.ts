@@ -59,6 +59,21 @@ function parseHourValue(rawHour: string, ampm: string): number {
   return hour + minute / 60;
 }
 
+function isCurrentDayInRange(startDay: string, endDay: string | undefined, currentDay: number) {
+  const dayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  const startIdx = dayNames.indexOf(startDay.slice(0, 3));
+  const endIdx = endDay ? dayNames.indexOf(endDay.slice(0, 3)) : startIdx;
+
+  if (startIdx === -1) {
+    return false;
+  }
+
+  const effectiveEndIdx = endIdx === -1 ? startIdx : endIdx;
+  return effectiveEndIdx >= startIdx
+    ? currentDay >= startIdx && currentDay <= effectiveEndIdx
+    : currentDay >= startIdx || currentDay <= effectiveEndIdx;
+}
+
 export function parseOpenStatus(hours: string | null, locationType: string | null): OpenStatus {
   if (locationType === "arena" || locationType === "stadium") {
     return "event_only";
@@ -67,18 +82,21 @@ export function parseOpenStatus(hours: string | null, locationType: string | nul
     return "unknown";
   }
 
-  const lowerHours = hours.toLowerCase();
+  const lowerHours = hours
+    .toLowerCase()
+    .replace(/[\u00a0\u202f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   if (lowerHours.includes("event")) {
     return "event_only";
   }
-  if (lowerHours.includes("24/7")) {
+  if (lowerHours.includes("24/7") || lowerHours.includes("open 24 hours")) {
     return "open";
   }
 
   const now = new Date();
   const currentDay = now.getDay();
   const currentHour = now.getHours() + now.getMinutes() / 60;
-  const dayNames = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
   try {
     const normalized = lowerHours.replace(/\|/g, ",");
@@ -88,8 +106,21 @@ export function parseOpenStatus(hours: string | null, locationType: string | nul
       .filter(Boolean);
 
     for (const segment of segments) {
+      const dayOnlyMatch = segment.match(/^([a-z]+)(?:\s*-\s*([a-z]+))?:?\s+(.+)$/i);
+      if (dayOnlyMatch) {
+        const [, startDay, endDay, dayHours] = dayOnlyMatch;
+        if (isCurrentDayInRange(startDay, endDay, currentDay)) {
+          if (dayHours.includes("closed")) {
+            return "closed";
+          }
+          if (dayHours.includes("open 24 hours") || dayHours.includes("24 hours")) {
+            return "open";
+          }
+        }
+      }
+
       const match = segment.match(
-        /^([a-z]+)(?:\s*-\s*([a-z]+))?\s+(\d+(?::\d+)?)\s*(am|pm)\s*[-–]\s*(\d+(?::\d+)?)\s*(am|pm)$/i,
+        /^([a-z]+)(?:\s*-\s*([a-z]+))?:?\s+(\d+(?::\d+)?)\s*(am|pm)\s*[-–—]\s*(\d+(?::\d+)?)\s*(am|pm)$/i,
       );
 
       if (!match) {
@@ -97,20 +128,7 @@ export function parseOpenStatus(hours: string | null, locationType: string | nul
       }
 
       const [, startDay, endDay, openHour, openAmPm, closeHour, closeAmPm] = match;
-      const startIdx = dayNames.indexOf(startDay.slice(0, 3));
-      const endIdx = endDay ? dayNames.indexOf(endDay.slice(0, 3)) : startIdx;
-
-      if (startIdx === -1) {
-        continue;
-      }
-
-      const effectiveEndIdx = endIdx === -1 ? startIdx : endIdx;
-      const inRange =
-        effectiveEndIdx >= startIdx
-          ? currentDay >= startIdx && currentDay <= effectiveEndIdx
-          : currentDay >= startIdx || currentDay <= effectiveEndIdx;
-
-      if (!inRange) {
+      if (!isCurrentDayInRange(startDay, endDay, currentDay)) {
         continue;
       }
 
@@ -129,4 +147,3 @@ export function parseOpenStatus(hours: string | null, locationType: string | nul
     return "unknown";
   }
 }
-

@@ -1,26 +1,53 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-11 12:24 PDT` (`/locations` mobile events, event pagination, and slug-based admin edit page fix on `main`; no deploy/restart/migration/DB mutation was executed)
+- Last reviewed: `2026-04-12 12:10 PDT` (`/locations` list-status diagnosis, slug edit API fix, and admin Google-hours fetch button on `main`; no deploy/restart/migration/DB mutation was executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## main...origin/main`
-    - ` M frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
+    - ` M frontend/nextjs-app/lib/locationUtils.ts`
+    - ` M frontend/nextjs-app/pages/admin/locations/[slug]/edit.tsx`
     - ` M frontend/nextjs-app/pages/api/locations/[locationId].ts`
-    - ` M frontend/nextjs-app/pages/api/locations/[locationId]/events.ts`
-    - `?? frontend/nextjs-app/pages/admin/locations/`
   - modified tracked paths:
-    - `frontend/nextjs-app/components/locations/LocationDetailPanel.tsx`
-    - `frontend/nextjs-app/pages/api/locations/[locationId].ts`
-    - `frontend/nextjs-app/pages/api/locations/[locationId]/events.ts`
-  - deleted tracked paths: none
-  - untracked paths:
+    - `frontend/nextjs-app/lib/locationUtils.ts`
     - `frontend/nextjs-app/pages/admin/locations/[slug]/edit.tsx`
+    - `frontend/nextjs-app/pages/api/locations/[locationId].ts`
+  - deleted tracked paths: none
+  - untracked paths: none
 - Latest committed baseline before this handoff refresh:
-  - `9662a5d` fix(support): harden elevenlabs webhooks
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was pulled before editing; no deploy, restart, migration, runtime mutation, or DB mutation was executed
+  - `61ae5f3` fix(locations): mobile events, scrollable events, admin edit page
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was pulled before editing; live API was checked with read-only `curl`; production DB was checked with read-only `SELECT` via the documented droplet env path; no deploy, restart, migration, runtime mutation, or DB mutation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-12, `/locations` list status + edit load + Google hours fetch on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing:
+  - first `git pull --ff-only --autostash origin main` failed under sandbox DNS/network restrictions
+  - approved network retry -> `Already up to date.`
+- Runtime/DB evidence gathered:
+  - local `DATABASE_URL` was unset (`printenv DATABASE_URL | wc -c` -> `0`)
+  - live `curl -i https://collect.tenkings.co/api/locations/sutter-health-park` returned HTTP `500` before the fix
+  - read-only production DB SELECT showed:
+    - `north-premium-outlet-mall` -> `locationType=mall`, `has_hours=true`
+    - `sutter-health-park` -> `locationType=stadium`, `has_hours=true`
+    - `santa-rosa-plaza`, `stoneridge-shopping-center`, and `westfield-topanga` -> no `locationType`, `has_hours=false`
+    - `raley-s-313` -> no `locationType`, `has_hours=false`; the user-provided `raleys-313` slug did not exist, production uses `raley-s-313`
+- Root causes confirmed:
+  - list cards in `pages/locations.tsx` use `OpenStatusBadge` with local `location.hours` and `location.locationType`; they do not call `/api/locations/[locationId]/live-status`
+  - the detail panel calls `/api/locations/${slug}/live-status` and can show Google live/opening-hours data independently of local `hours`
+  - the single-location API did slug-or-id lookup with an `OR` containing the UUID-backed `id` field even for slug strings, matching the live HTTP 500 failure
+  - saved Google weekday descriptions would not reliably parse into list badges because `parseOpenStatus()` did not understand full-day `Monday: 10:00 AM – 9:00 PM` style strings
+- Implemented fixes:
+  - changed `GET/PUT /api/locations/[locationId]` lookup to find by slug first and only query `id` when the identifier matches UUID shape
+  - added a `Fetch Hours from Google` button below the edit page Hours input; it calls `/api/locations/${slug}/live-status`, joins returned weekday descriptions with ` | `, and fills the Hours field for admin review/save
+  - expanded `parseOpenStatus()` to support Google weekday-description formats, day colons, en/em dashes, no-break spaces, `Closed`, and `Open 24 hours`
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec eslint pages/locations.tsx lib/locationUtils.ts 'pages/api/locations/[locationId].ts' 'pages/admin/locations/[slug]/edit.tsx'` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsx -e "..."` parser smoke -> `closed`, `open`, `open`
+  - `git diff --check` -> pass
+- No deploy, restart, migration, runtime mutation, DB write, or destructive operation was executed in this session.
 
 ## Session Update (2026-04-11, `/locations` mobile events + admin edit page on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

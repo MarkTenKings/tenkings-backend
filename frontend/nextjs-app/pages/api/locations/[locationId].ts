@@ -35,6 +35,8 @@ const locationUpdateSchema = z.object({
 
 type LocationApiResponse = Record<string, unknown> | { message: string };
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 function normalizeOptionalText(value: string | null | undefined) {
   if (value === undefined) {
     return undefined;
@@ -62,10 +64,15 @@ function serializeLocation(location: NonNullable<Awaited<ReturnType<typeof findL
 }
 
 async function findLocationByIdentifier(identifier: string) {
-  return prisma.location.findFirst({
-    where: {
-      OR: [{ slug: identifier }, { id: identifier }],
-    },
+  const slugLocation = await prisma.location.findUnique({
+    where: { slug: identifier },
+  });
+  if (slugLocation || !UUID_PATTERN.test(identifier)) {
+    return slugLocation;
+  }
+
+  return prisma.location.findUnique({
+    where: { id: identifier },
   });
 }
 

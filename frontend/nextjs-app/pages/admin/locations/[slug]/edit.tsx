@@ -13,7 +13,7 @@ import {
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../../../constants/admin";
 import { useSession } from "../../../../hooks/useSession";
 import { buildAdminHeaders } from "../../../../lib/adminHeaders";
-import { LOCATION_STATUS_VALUES } from "../../../../lib/locationStatus";
+import { LOCATION_STATUS_VALUES, type LocationLiveStatusResponse } from "../../../../lib/locationStatus";
 
 type EditableLocation = {
   id: string;
@@ -126,6 +126,7 @@ export default function EditLocationPage() {
   const [location, setLocation] = useState<EditableLocation | null>(null);
   const [loadingLocation, setLoadingLocation] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [fetchingHours, setFetchingHours] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isAdmin = useMemo(
@@ -176,6 +177,37 @@ export default function EditLocationPage() {
 
   const updateLocationField = <Key extends keyof EditableLocation>(key: Key, value: EditableLocation[Key]) => {
     setLocation((current) => (current ? { ...current, [key]: value } : current));
+  };
+
+  const handleFetchHours = async () => {
+    if (!location?.slug) {
+      return;
+    }
+
+    setFetchingHours(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/locations/${encodeURIComponent(location.slug)}/live-status`);
+      const payload = (await response.json().catch(() => ({}))) as LocationLiveStatusResponse & {
+        error?: string;
+        message?: string;
+      };
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? payload.message ?? "Failed to fetch hours");
+      }
+
+      if (!Array.isArray(payload.hours) || payload.hours.length === 0) {
+        throw new Error("Google did not return hours for this location.");
+      }
+
+      updateLocationField("hours", payload.hours.join(" | "));
+    } catch (fetchError: unknown) {
+      setError(fetchError instanceof Error ? fetchError.message : "Failed to fetch hours");
+    } finally {
+      setFetchingHours(false);
+    }
   };
 
   const handleSave = async () => {
@@ -250,20 +282,56 @@ export default function EditLocationPage() {
 
         <section className={adminPanelClass("mx-auto w-full max-w-3xl p-5 md:p-6")}>
           <div className="grid gap-4 md:grid-cols-2">
-            {textFields.map((field) => (
-              <label key={field.key} className={field.key === "address" ? "space-y-2 md:col-span-2" : "space-y-2"}>
-                <span className="block text-[11px] uppercase tracking-[0.24em] text-slate-500">
-                  {field.label}
-                  {field.required ? " *" : ""}
-                </span>
+            {textFields.map((field) => {
+              const input = (
                 <input
                   type="text"
                   value={location[field.key] ?? ""}
                   onChange={(event) => updateLocationField(field.key, event.target.value as EditableLocation[typeof field.key])}
                   className={adminInputClass("w-full")}
                 />
-              </label>
-            ))}
+              );
+
+              if (field.key === "hours") {
+                return (
+                  <div key={field.key} className="space-y-2">
+                    <label className="space-y-2">
+                      <span className="block text-[11px] uppercase tracking-[0.24em] text-slate-500">{field.label}</span>
+                      {input}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void handleFetchHours()}
+                      disabled={fetchingHours}
+                      style={{
+                        marginTop: "4px",
+                        padding: "6px 12px",
+                        background: "transparent",
+                        border: "1px solid #333",
+                        borderRadius: "4px",
+                        color: "#d4a843",
+                        fontSize: "11px",
+                        fontFamily: "Satoshi, sans-serif",
+                        cursor: fetchingHours ? "wait" : "pointer",
+                        opacity: fetchingHours ? 0.65 : 1,
+                      }}
+                    >
+                      {fetchingHours ? "Fetching Hours..." : "Fetch Hours from Google"}
+                    </button>
+                  </div>
+                );
+              }
+
+              return (
+                <label key={field.key} className={field.key === "address" ? "space-y-2 md:col-span-2" : "space-y-2"}>
+                  <span className="block text-[11px] uppercase tracking-[0.24em] text-slate-500">
+                    {field.label}
+                    {field.required ? " *" : ""}
+                  </span>
+                  {input}
+                </label>
+              );
+            })}
 
             <label className="space-y-2">
               <span className="block text-[11px] uppercase tracking-[0.24em] text-slate-500">Location Type</span>
