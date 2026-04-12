@@ -118,6 +118,9 @@ export default function AppShell({
                 <Link className="transition hover:text-white" href="/locations" onClick={handleCloseMenu}>
                   Locations
                 </Link>
+                <Link className="transition hover:text-white" href="/stocker" onClick={handleCloseMenu}>
+                  Stocker Portal
+                </Link>
                 <Link className="transition hover:text-white" href="/live" onClick={handleCloseMenu}>
                   Live Rips
                 </Link>
@@ -193,6 +196,9 @@ export default function AppShell({
                   </Link>
                   <Link className="transition hover:text-white" href="/privacy">
                     Privacy
+                  </Link>
+                  <Link className="transition hover:text-white" href="/stocker">
+                    Stocker Portal
                   </Link>
                   <Link className="transition hover:text-white" href="/admin">
                     Admin Portal

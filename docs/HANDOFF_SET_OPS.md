@@ -1,17 +1,17 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-12 13:50 PDT` (Queen Voice LiveKit compatibility patch staged on `main`; `livekit-client` pinned to `2.16.1`; Voice `startSession` now passes `connectionType: "webrtc"`; planned production push recorded; no restart/migration/DB mutation executed)
+- Last reviewed: `2026-04-12 14:12 PDT` (Queen Voice LiveKit compatibility patch pushed to `origin/main` as `f6cee8b`; `livekit-client` pinned to `2.16.1`; Voice `startSession` now passes `connectionType: "webrtc"`; production site reachability returned HTTP/2 200 from Vercel; no restart/migration/DB mutation executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## main...origin/main`
-  - modified tracked paths: `frontend/nextjs-app/components/QueenWidget.tsx`, `frontend/nextjs-app/package.json`, `pnpm-lock.yaml`
+  - modified tracked paths: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
   - deleted tracked paths: none
   - untracked paths: none
 - Latest committed baseline before this handoff refresh:
-  - `260be36` docs: record queen sdk rollout
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was fetched before commit/push planning; no restart, migration, DB read/write, or destructive operation was executed
+  - `f6cee8b` fix(queen): pin livekit client for voice webrtc
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was fetched before commit/push; `main` was pushed to `origin/main`; production site reachability was checked with `curl -I https://collect.tenkings.co`; no restart, migration, DB read/write, or destructive operation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
 ## Session Update (2026-04-12, Queen Voice LiveKit 2.16.1 compatibility patch)
@@ -33,7 +33,19 @@
   - print branch and HEAD before production push
   - push `main` to `origin/main` to trigger the production/Vercel rollout
   - append observed push/deploy evidence after execution
-- No restart, migration, DB read/write, or destructive operation was executed before this handoff update.
+- Push/deploy evidence:
+  - commit -> `f6cee8b fix(queen): pin livekit client for voice webrtc`
+  - pre-push `git status -sb` -> `## main...origin/main [ahead 1]`
+  - pre-push `git branch --show-current` -> `main`
+  - pre-push `git rev-parse --short HEAD` -> `f6cee8b`
+  - pre-push `git rev-parse --short origin/main` -> `260be36`
+  - `git fetch --all --prune` passed with approved network access; remote remained at `260be36`
+  - first `git push origin main` failed under sandbox DNS/network restrictions
+  - approved network retry -> `260be36..f6cee8b  main -> main`
+  - post-push `git status -sb` -> `## main...origin/main`
+  - post-push `git rev-parse --short origin/main` -> `f6cee8b`
+  - production reachability check `curl -I https://collect.tenkings.co` -> HTTP/2 200, `server: Vercel`, `x-vercel-cache: MISS`
+- No restart, migration, DB read/write, or destructive operation was executed in this session.
 
 ## Session Update (2026-04-12, Queen widget React SDK provider/hooks refactor on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
@@ -8053,3 +8065,26 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-12, Stocker Operations Phase A core route and tracking)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`, then synced `main` before editing:
+  - initial sandboxed `git pull --ff-only --autostash origin main` hit DNS/network restrictions
+  - approved retry -> `Already up to date.`
+- Implemented Phase A stocker operations only:
+  - Prisma schema and migration for `StockerProfile`, `StockRoute`, `StockerShift`, `StockerStop`, `StockerPosition`, and `PositionLog`, plus `User.role` and relations to existing `User` and `Location`
+  - stocker phone-verification portal, dashboard, active route map, GPS reporting, geofence stop transition, and indoor guidance flow
+  - stocker/admin API routes for profile, current shift, clock-in/out, positions, stop arrive/depart/skip/guidance, live admin SSE feed, stocker management, route optimization, and shift assignment
+  - admin stocker operations live map, stocker management, route management, and shift management pages
+  - public Stocker Portal navigation/footer link and admin launch link
+- Validation:
+  - `pnpm --filter @tenkings/database generate` -> pass
+  - `DATABASE_URL=postgresql://user:pass@localhost:5432/tenkings pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+  - `pnpm --filter @tenkings/database build` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `pnpm --filter @tenkings/nextjs-app lint` -> pass with existing warnings outside the stocker ops changes
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing warnings
+  - `git diff --check` -> pass
+- Migration note:
+  - requested `pnpm --filter @tenkings/database exec prisma migrate dev --name add_stocker_ops` was attempted and blocked locally by missing `DATABASE_URL` (`P1012 Environment variable not found: DATABASE_URL`)
+  - migration file `packages/database/prisma/migrations/20260412143000_add_stocker_ops/migration.sql` is present for deployment
+- No deploy, restart, droplet migration, production DB read/write, or destructive operation was executed.

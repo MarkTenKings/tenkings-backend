@@ -101,6 +101,12 @@ const ADMIN_SECTIONS: AdminSection[] = [
         posterSrc: "/admin/launch/ai-ops-poster.jpg",
         videoSrc: "/admin/launch/ai-ops.mp4",
       },
+      {
+        label: "Stocker Operations",
+        href: "/admin/stocker-ops",
+        posterSrc: "/admin/launch/assigned-locations-poster.jpg",
+        videoSrc: "/admin/launch/assigned-locations.mp4",
+      },
     ],
   },
 ];

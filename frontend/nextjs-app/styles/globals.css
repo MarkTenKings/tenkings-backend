@@ -297,6 +297,99 @@ button {
   box-shadow: 0 0 16px rgba(78, 200, 154, 0.28);
 }
 
+.stocker-stop-marker {
+  display: inline-flex;
+  height: 1.55rem;
+  width: 1.55rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  background: rgba(113, 113, 122, 0.92);
+  color: #090909;
+  font-size: 0.76rem;
+  font-weight: 800;
+  box-shadow: 0 0 14px rgba(0, 0, 0, 0.28);
+}
+
+.stocker-stop-marker--completed {
+  background: rgba(212, 168, 67, 0.96);
+  box-shadow: 0 0 18px rgba(212, 168, 67, 0.36);
+}
+
+.stocker-stop-marker--next {
+  height: 2.25rem;
+  width: 2.25rem;
+  background: rgba(212, 168, 67, 0.98);
+  box-shadow: 0 0 0 0 rgba(212, 168, 67, 0.38);
+  animation: stocker-gold-marker-pulse 1.9s ease-out infinite;
+}
+
+.stocker-stop-marker--future {
+  height: 1.15rem;
+  width: 1.15rem;
+  border-color: rgba(255, 255, 255, 0.72);
+}
+
+.admin-stocker-marker {
+  display: flex;
+  min-width: 4.5rem;
+  transform: translateY(-0.2rem);
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  color: white;
+  font-family: Satoshi, ui-sans-serif, system-ui, sans-serif;
+  text-align: center;
+}
+
+.admin-stocker-marker span {
+  display: inline-flex;
+  height: 3rem;
+  width: 3rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.92);
+  color: #080808;
+  font-size: 1rem;
+  font-weight: 800;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.36);
+}
+
+.admin-stocker-marker small {
+  border-radius: 0.375rem;
+  background: rgba(0, 0, 0, 0.74);
+  padding: 0.16rem 0.38rem;
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.admin-stocker-marker--selected span {
+  outline: 3px solid rgba(212, 168, 67, 0.46);
+}
+
+.stocker-detail-panel {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 30;
+  width: min(24rem, 88vw);
+  overflow-y: auto;
+  border-right: 1px solid rgba(39, 39, 42, 0.95);
+  background: rgba(10, 10, 10, 0.94);
+  color: white;
+  box-shadow: 24px 0 80px rgba(0, 0, 0, 0.45);
+  transform: translateX(-105%);
+  transition: transform 220ms ease;
+}
+
+.stocker-detail-panel.open {
+  transform: translateX(0);
+}
+
 @keyframes tk-pulse {
   0% {
     filter: drop-shadow(0 0 0 rgba(212, 168, 67, 0.45));
@@ -306,6 +399,18 @@ button {
   }
   100% {
     filter: drop-shadow(0 0 0 rgba(212, 168, 67, 0));
+  }
+}
+
+@keyframes stocker-gold-marker-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(212, 168, 67, 0.42);
+  }
+  70% {
+    box-shadow: 0 0 0 18px rgba(212, 168, 67, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(212, 168, 67, 0);
   }
 }
 

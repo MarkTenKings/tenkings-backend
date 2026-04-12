@@ -1,0 +1,50 @@
+import type { NextApiRequest, NextApiResponse } from "next";
+import { prisma } from "@tenkings/database";
+import {
+  methodNotAllowed,
+  normalizePhoneInput,
+  proxyAuthService,
+  sendError,
+  serializeProfile,
+  StockerApiError,
+} from "../../../../lib/server/stocker";
+
+type AuthVerifyPayload = {
+  token?: string;
+  expiresAt?: string;
+  user?: { id?: string; phone?: string | null; displayName?: string | null; avatarUrl?: string | null };
+  wallet?: { id?: string; balance?: number };
+};
+
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
+
+  try {
+    const phone = normalizePhoneInput(req.body?.phone);
+    const code = typeof req.body?.code === "string" ? req.body.code.trim() : "";
+    if (!phone || !code) throw new StockerApiError(400, "VALIDATION_ERROR", "Phone and code are required");
+
+    const authPayload = (await proxyAuthService("verify", { phone, code })) as AuthVerifyPayload;
+    const userId = authPayload.user?.id;
+    const user = userId
+      ? await prisma.user.findUnique({ where: { id: userId }, include: { stockerProfile: true } })
+      : await prisma.user.findUnique({ where: { phone }, include: { stockerProfile: true } });
+
+    if (!user || user.role !== "stocker" || !user.stockerProfile?.isActive) {
+      throw new StockerApiError(403, "NOT_A_STOCKER", "Access denied. Contact your manager.");
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        token: authPayload.token,
+        expiresAt: authPayload.expiresAt,
+        user: authPayload.user,
+        wallet: authPayload.wallet,
+        profile: serializeProfile(user.stockerProfile),
+      },
+    });
+  } catch (error) {
+    return sendError(res, error);
+  }
+}

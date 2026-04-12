@@ -14995,3 +14995,52 @@
 - Print branch and HEAD before push.
 - Push `main` to `origin/main`.
 - Append observed push/deploy evidence after execution.
+
+### Production Push Evidence
+- Commit -> `f6cee8b fix(queen): pin livekit client for voice webrtc`.
+- Pre-push `git status -sb` -> `## main...origin/main [ahead 1]`.
+- Pre-push `git branch --show-current` -> `main`.
+- Pre-push `git rev-parse --short HEAD` -> `f6cee8b`.
+- Pre-push `git rev-parse --short origin/main` -> `260be36`.
+- `git fetch --all --prune` passed with approved network access before push; remote remained at `260be36`.
+- First `git push origin main` failed under sandbox DNS/network restrictions.
+- Approved network retry -> `260be36..f6cee8b  main -> main`.
+- Post-push `git status -sb` -> `## main...origin/main`.
+- Post-push `git rev-parse --short origin/main` -> `f6cee8b`.
+- Production reachability check `curl -I https://collect.tenkings.co` -> HTTP/2 200, `server: Vercel`, `x-vercel-cache: MISS`.
+
+### Notes
+- The post-push handoff evidence was appended after the production code commit/push, so the workstation has local docs-only modifications after `f6cee8b`.
+- No restart, migration, DB read/write, or destructive operation was executed.
+
+## 2026-04-12 - Stocker Operations Phase A core route and tracking
+
+### Summary
+- Re-read required startup docs from `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` first:
+  - initial sandboxed `git pull --ff-only --autostash origin main` hit DNS/network restrictions
+  - approved retry -> `Already up to date.`
+- Built the requested Phase A stocker operations surface:
+  - added Phase A Prisma models and migration for stocker profiles, route templates, shifts, stops, live positions, and GPS replay logs
+  - added `User.role` with `stocker` role support and stocker/admin server-side guards for stocker ops APIs
+  - added stocker portal login, dashboard, active route tracking map, position reporting, geofence stop transition, indoor guidance, and stop completion
+  - added stocker-facing API endpoints under `/api/stocker/*`
+  - added admin live dashboard with SSE polling stream, management pages, route optimization endpoints, shift assignment endpoints, and public/admin navigation links
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database generate` -> pass.
+- `DATABASE_URL=postgresql://user:pass@localhost:5432/tenkings pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
+- `pnpm --filter @tenkings/nextjs-app lint` -> pass with existing warnings outside the stocker ops changes.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing warnings.
+- `git diff --check` -> pass.
+
+### Migration / Runtime Notes
+- Requested `pnpm --filter @tenkings/database exec prisma migrate dev --name add_stocker_ops` was attempted and blocked locally by missing `DATABASE_URL` (`P1012 Environment variable not found: DATABASE_URL`).
+- No droplet migration, deploy, restart, production DB read/write, or destructive operation was executed.
+
+### Planned Production Push
+- Commit on `main` with `feat(stocker-ops): phase A — core route, tracking, admin dashboard`.
+- Fetch remote before push.
+- Push `main` to `origin/main`.

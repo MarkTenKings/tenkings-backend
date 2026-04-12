@@ -334,6 +334,7 @@ model User {
   phoneVerifiedAt         DateTime?
   displayName             String?
   avatarUrl               String?
+  role                    String                @default("user")
   createdAt               DateTime              @default(now())
   wallet                  Wallet?
   items                   Item[]
@@ -369,6 +370,7 @@ model User {
   ocrRegionTemplates      OcrRegionTemplate[]   @relation("OcrRegionTemplateCreatedBy")
   ocrRegionTeachEvents    OcrRegionTeachEvent[] @relation("OcrRegionTeachEventCreatedBy")
   supportCustomers        SupportCustomer[]
+  stockerProfile          StockerProfile?
 }
 
 model Location {
@@ -416,10 +418,134 @@ model Location {
   navigationSessions NavigationSession[]
   locationVisits   LocationVisit[]
   supportConversations Conversation[]
+  stockerStops      StockerStop[]
 
   @@index([state])
   @@index([locationType])
   @@index([locationStatus])
+}
+
+model StockerProfile {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String
+  phone     String
+  language  String   @default("en")
+  isActive  Boolean  @default(true)
+  avatarUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shifts    StockerShift[]
+  positions StockerPosition[]
+
+  @@index([isActive])
+  @@map("stocker_profiles")
+}
+
+model StockRoute {
+  id              String   @id @default(uuid())
+  name            String
+  description     String?
+  locationIds     String[]
+  totalDistanceM  Int?
+  totalDurationS  Int?
+  encodedPolyline String?  @db.Text
+  legsData        Json?
+  isTemplate      Boolean  @default(false)
+  createdBy       String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  shifts          StockerShift[]
+
+  @@index([isTemplate])
+  @@map("stock_routes")
+}
+
+model StockerShift {
+  id                 String         @id @default(uuid())
+  stockerId          String
+  stocker            StockerProfile @relation(fields: [stockerId], references: [id], onDelete: Cascade)
+  routeId            String
+  route              StockRoute     @relation(fields: [routeId], references: [id])
+  assignedDate       DateTime       @db.Date
+  status             String         @default("pending")
+  clockInAt          DateTime?
+  clockOutAt         DateTime?
+  totalDriveTimeMin  Int?
+  totalOnSiteTimeMin Int?
+  totalIdleTimeMin   Int?
+  totalDistanceM     Int?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  stops              StockerStop[]
+
+  @@index([stockerId, assignedDate])
+  @@index([status])
+  @@index([assignedDate])
+  @@map("stocker_shifts")
+}
+
+model StockerStop {
+  id                 String       @id @default(uuid())
+  shiftId            String
+  shift              StockerShift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  locationId         String       @db.Uuid
+  location           Location     @relation(fields: [locationId], references: [id])
+  stopOrder          Int
+  status             String       @default("pending")
+  departedPreviousAt DateTime?
+  arrivedAt          DateTime?
+  taskStartedAt      DateTime?
+  taskCompletedAt    DateTime?
+  departedAt         DateTime?
+  driveTimeMin       Int?
+  driveDistanceM     Int?
+  onSiteTimeMin      Int?
+  skipReason         String?
+  notes              String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  @@index([shiftId, stopOrder])
+  @@index([status])
+  @@map("stocker_stops")
+}
+
+model StockerPosition {
+  id                  String         @id @default(uuid())
+  stockerId           String         @unique
+  stocker             StockerProfile @relation(fields: [stockerId], references: [id], onDelete: Cascade)
+  latitude            Float
+  longitude           Float
+  speed               Float?
+  heading             Float?
+  accuracy            Float?
+  shiftId             String?
+  status              String         @default("idle")
+  currentLocationName String?
+  updatedAt           DateTime       @updatedAt
+
+  @@map("stocker_positions")
+}
+
+model PositionLog {
+  id        String   @id @default(uuid())
+  stockerId String
+  shiftId   String?
+  latitude  Float
+  longitude Float
+  speed     Float?
+  heading   Float?
+  accuracy  Float?
+  timestamp DateTime @default(now())
+
+  @@index([stockerId, timestamp])
+  @@index([shiftId, timestamp])
+  @@map("position_logs")
 }
 
 model LiveRip {
