@@ -9,6 +9,7 @@ import { TEN_KINGS_COLLECTIBLES_CROWN_PATH, TEN_KINGS_COLLECTIBLES_CROWN_VIEWBOX
 type WidgetMode = "chat" | "voice" | "call";
 type WidgetMessageRole = "assistant" | "user";
 type LaunchMode = "chat" | "voice" | null;
+type QueenConnectionType = "websocket" | "webrtc";
 
 type WidgetMessage = {
   id: string;
@@ -48,6 +49,12 @@ function summarizeConversationError(error: unknown) {
     return error.message.trim();
   }
   return "Queen hit a connection issue. Try again in a moment.";
+}
+
+function stopMediaStream(stream: MediaStream | null) {
+  stream?.getTracks().forEach((track) => {
+    track.stop();
+  });
 }
 
 function QueenWidgetSurface({
@@ -115,6 +122,17 @@ function QueenWidgetSurface({
     [dynamicVariables]
   );
 
+  const buildSessionOptions = useCallback(
+    (connectionType: QueenConnectionType, textOnly: boolean) => ({
+      agentId: AGENT_ID,
+      connectionType,
+      textOnly,
+      userId: session?.user.id || undefined,
+      dynamicVariables,
+    }),
+    [dynamicVariables, session?.user.id]
+  );
+
   const startChatSession = useCallback(() => {
     if (!AGENT_ID) {
       setLocalError("Queen chat is not configured. Add the ElevenLabs agent ID to the frontend env.");
@@ -125,13 +143,8 @@ function QueenWidgetSurface({
     setExternalError(null);
     lastContextRef.current = "";
     activeSessionKindRef.current = "chat";
-    startSession({
-      agentId: AGENT_ID,
-      textOnly: true,
-      userId: session?.user.id || undefined,
-      dynamicVariables,
-    });
-  }, [dynamicVariables, session?.user.id, setExternalError, startSession]);
+    startSession(buildSessionOptions("websocket", true));
+  }, [buildSessionOptions, setExternalError, startSession]);
 
   const startVoiceSession = useCallback(async () => {
     if (!AGENT_ID) {
@@ -139,22 +152,29 @@ function QueenWidgetSurface({
       return;
     }
 
+    let permissionStream: MediaStream | null = null;
+
     try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setLocalError("Voice mode is not supported by this browser.");
+        return;
+      }
+
+      permissionStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stopMediaStream(permissionStream);
+      permissionStream = null;
+
       setLocalError(null);
       setExternalError(null);
       lastContextRef.current = "";
       activeSessionKindRef.current = "voice";
-      startSession({
-        agentId: AGENT_ID,
-        textOnly: false,
-        userId: session?.user.id || undefined,
-        dynamicVariables,
-      });
+      startSession(buildSessionOptions("webrtc", false));
     } catch (error) {
       setLocalError("Microphone access is required for Voice mode.");
+    } finally {
+      stopMediaStream(permissionStream);
     }
-  }, [dynamicVariables, session?.user.id, setExternalError, startSession]);
+  }, [buildSessionOptions, setExternalError, startSession]);
 
   const closeWidget = useCallback(() => {
     setIsOpen(false);

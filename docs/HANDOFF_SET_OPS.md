@@ -1,24 +1,66 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-12 12:10 PDT` (`/locations` list-status diagnosis, slug edit API fix, and admin Google-hours fetch button on `main`; no deploy/restart/migration/DB mutation was executed)
+- Last reviewed: `2026-04-12 12:40 PDT` (Queen voice WebRTC fix on `main`; planned push to `origin/main` for production/Vercel rollout; no restart/migration/DB mutation was executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## main...origin/main`
-    - ` M frontend/nextjs-app/lib/locationUtils.ts`
-    - ` M frontend/nextjs-app/pages/admin/locations/[slug]/edit.tsx`
-    - ` M frontend/nextjs-app/pages/api/locations/[locationId].ts`
+    - ` M docs/HANDOFF_SET_OPS.md`
+    - ` M docs/handoffs/SESSION_LOG.md`
+    - ` M frontend/nextjs-app/components/QueenWidget.tsx`
   - modified tracked paths:
-    - `frontend/nextjs-app/lib/locationUtils.ts`
-    - `frontend/nextjs-app/pages/admin/locations/[slug]/edit.tsx`
-    - `frontend/nextjs-app/pages/api/locations/[locationId].ts`
+    - `docs/HANDOFF_SET_OPS.md`
+    - `docs/handoffs/SESSION_LOG.md`
+    - `frontend/nextjs-app/components/QueenWidget.tsx`
   - deleted tracked paths: none
   - untracked paths: none
 - Latest committed baseline before this handoff refresh:
-  - `61ae5f3` fix(locations): mobile events, scrollable events, admin edit page
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was pulled before editing; live API was checked with read-only `curl`; production DB was checked with read-only `SELECT` via the documented droplet env path; no deploy, restart, migration, runtime mutation, or DB mutation was executed
+  - `dd154bd` fix(locations): list view status, edit page load, fetch hours from google
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was synced before editing; no restart, migration, DB read/write, or destructive operation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-12, Queen Voice mode WebRTC fix on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Synced `main` before editing:
+  - first `git pull --ff-only --autostash origin main` failed under sandbox DNS/network restrictions
+  - approved network retry -> `Already up to date.`
+- Reviewed current ElevenLabs React SDK guidance and the locally installed SDK:
+  - official React SDK docs show `ConversationProvider`, `useConversation`, microphone access for voice conversations, and `startSession({ agentId })` for public agents
+  - docs state text-only conversations avoid microphone/audio context, while voice conversations use WebRTC by default and can explicitly set `connectionType`
+  - installed package observed: `@elevenlabs/react@1.0.3`, backed by `@elevenlabs/client@1.1.2`
+- Root cause found in `frontend/nextjs-app/components/QueenWidget.tsx`:
+  - Voice mode performed its own `navigator.mediaDevices.getUserMedia({ audio: true })` permission check and never stopped that stream before the SDK started its own LiveKit/WebRTC microphone track
+  - Voice mode relied on implicit connection inference instead of making the WebRTC path explicit
+- Implemented fix:
+  - added a shared Queen session-options builder so Chat and Voice use the same `agentId`, `userId`, and `dynamicVariables`
+  - Chat now starts explicitly as `connectionType: "websocket"` with `textOnly: true`
+  - Voice now checks browser microphone support, obtains permission, immediately stops the permission-check stream, then starts explicitly as `connectionType: "webrtc"` with `textOnly: false`
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/QueenWidget.tsx` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node engine warning
+  - `git diff --check` -> pass
+- Planned production action:
+  - commit the Queen Voice fix and handoff updates on `main`
+  - push `main` to `origin/main` to trigger the production/Vercel rollout
+- No restart, migration, DB read/write, or destructive operation was executed in this session.
+
+## Session Update (2026-04-12, docs-only startup context + git-state report on `main`)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Verified the current local checkout state without changing code or runtime:
+  - `git status -sb` -> `## main...origin/main`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `dd154bd`
+  - `git log -1 --oneline` -> `dd154bd fix(locations): list view status, edit page load, fetch hours from google`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, DB read/write, commit, push, or destructive operation was executed in this session.
 
 ## Session Update (2026-04-12, `/locations` list status + edit load + Google hours fetch on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

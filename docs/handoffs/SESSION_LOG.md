@@ -14846,3 +14846,54 @@
 
 ### Notes
 - No deployment or runtime restart was performed as part of this change.
+
+## 2026-04-12 - Docs-only startup context refresh and git-state report
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings-task27-main`.
+- Verified the current local checkout state and recorded the requested git report.
+- Updated the handoff docs only.
+- No code change, deploy, restart, migration, runtime mutation, DB read/write, commit, push, or destructive operation was executed in this session.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `git status -sb` -> `## main...origin/main`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `dd154bd`
+- `git log -1 --oneline` -> `dd154bd fix(locations): list view status, edit page load, fetch hours from google`
+
+### Notes
+- The requested git report was captured before this docs-only handoff refresh, so the checkout was clean at capture time.
+
+## 2026-04-12 - Queen Voice mode WebRTC fix
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings-task27-main`.
+- Pulled `origin/main` before editing; the first sandboxed attempt failed DNS/network resolution, and the approved network retry reported `Already up to date.`
+- Investigated the Queen widget Voice mode path against the current ElevenLabs React SDK guidance and the locally installed package.
+- Fixed Voice mode so it releases the browser permission-check microphone stream before the SDK starts its own WebRTC microphone track.
+- Made Chat and Voice share the same Queen session payload source for `agentId`, `userId`, and `dynamicVariables`.
+- Planned production action: commit and push `main` to `origin/main` to trigger the production/Vercel rollout.
+- No restart, migration, DB read/write, or destructive operation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/components/QueenWidget.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### What Changed
+- Added a shared session-options builder for Queen Chat and Voice.
+- Chat starts with `connectionType: "websocket"` and `textOnly: true`.
+- Voice checks microphone API support, requests permission, stops the permission stream immediately, then starts with `connectionType: "webrtc"` and `textOnly: false`.
+- Voice therefore uses the same agent ID and dynamic variables as Chat while following the SDK WebRTC path explicitly.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/QueenWidget.tsx` -> pass with only the local Node `v25.6.1` engine warning
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node `v25.6.1` engine warning
+- `git diff --check` -> pass
+
+### Notes
+- Current installed SDK evidence: `@elevenlabs/react@1.0.3` and `@elevenlabs/client@1.1.2`.
