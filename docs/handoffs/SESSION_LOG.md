@@ -14956,3 +14956,42 @@
 
 ### Notes
 - No restart, migration, DB read/write, or destructive operation was executed.
+
+## 2026-04-12 - Queen Voice LiveKit 2.16.1 compatibility patch
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings-task27-main`.
+- Confirmed the Queen widget and `@elevenlabs/react` dependency exist on `main`; the older `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` `feature/kingshunt` worktree does not contain the Queen widget.
+- Reviewed the official ElevenLabs WebRTC blog post; its integration sample starts a WebRTC conversation with `connectionType: 'webrtc'`.
+- Added `livekit-client` as a direct app dependency pinned exactly to `2.16.1`.
+- Ran `pnpm install` to update `pnpm-lock.yaml`.
+- Updated Queen Voice start so the SDK receives `connectionType: "webrtc"` explicitly.
+- Planned production action: commit this patch on `main` and push `main` to `origin/main` to trigger the production/Vercel rollout.
+- No restart, migration, DB read/write, or destructive operation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/components/QueenWidget.tsx`
+- `frontend/nextjs-app/package.json`
+- `pnpm-lock.yaml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Dependency Evidence
+- `frontend/nextjs-app/package.json` now declares `livekit-client: "2.16.1"`.
+- `pnpm-lock.yaml` now has `livekit-client@2.16.1`.
+- `@elevenlabs/client@1.1.2` now resolves to `livekit-client: 2.16.1(@types/dom-mediacapture-record@1.0.22)`.
+- `rg -n "livekit-client@2.18.1|livekit-client: 2.18.1" pnpm-lock.yaml` returns no matches.
+
+### Validation Evidence
+- `pnpm install` completed and updated the lockfile; local warnings were the known Node `v25.6.1` engine mismatch and an `iohook` prebuild 404 under the local postinstall path.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/QueenWidget.tsx` -> pass with only the local Node engine warning.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node engine warning.
+- `git diff --check` -> pass.
+- `git fetch --all --prune` first failed under sandbox DNS/network restrictions, then passed with approved network access.
+- Pre-commit remote parity check: `HEAD` and `origin/main` both at `260be36`.
+
+### Planned Production Push
+- Commit the patch on `main`.
+- Print branch and HEAD before push.
+- Push `main` to `origin/main`.
+- Append observed push/deploy evidence after execution.

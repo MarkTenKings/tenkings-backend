@@ -1,18 +1,39 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-12 13:16 PDT` (Queen widget React SDK provider/hooks refactor pushed to `origin/main` as `372fac1`; production site reachability returned HTTP/2 200 from Vercel; no restart/migration/DB mutation was executed)
+- Last reviewed: `2026-04-12 13:50 PDT` (Queen Voice LiveKit compatibility patch staged on `main`; `livekit-client` pinned to `2.16.1`; Voice `startSession` now passes `connectionType: "webrtc"`; planned production push recorded; no restart/migration/DB mutation executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## main...origin/main`
-  - modified tracked paths: none
+  - modified tracked paths: `frontend/nextjs-app/components/QueenWidget.tsx`, `frontend/nextjs-app/package.json`, `pnpm-lock.yaml`
   - deleted tracked paths: none
   - untracked paths: none
 - Latest committed baseline before this handoff refresh:
-  - `372fac1` fix(queen): align widget with elevenlabs react sdk
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was synced before editing; `main` was pushed to `origin/main`; production site reachability was checked with `curl -I https://collect.tenkings.co`; no restart, migration, DB read/write, or destructive operation was executed
+  - `260be36` docs: record queen sdk rollout
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was fetched before commit/push planning; no restart, migration, DB read/write, or destructive operation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-12, Queen Voice LiveKit 2.16.1 compatibility patch)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Confirmed the requested Queen widget code exists on the `main` worktree, not the `feature/kingshunt` worktree.
+- Verified the official ElevenLabs WebRTC blog sample uses `startSession({ agentId, connectionType: 'webrtc' })`.
+- Implemented the requested Voice compatibility fix:
+  - added direct app dependency `livekit-client: "2.16.1"` in `frontend/nextjs-app/package.json`
+  - ran `pnpm install`, which updated `pnpm-lock.yaml`
+  - verified `@elevenlabs/client@1.1.2` now resolves to `livekit-client: 2.16.1(@types/dom-mediacapture-record@1.0.22)`
+  - updated Queen Voice `startSession` to include `connectionType: "webrtc"` explicitly
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file components/QueenWidget.tsx` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node engine warning
+  - `git diff --check` -> pass
+  - `git fetch --all --prune` first failed under sandbox DNS/network restrictions, then passed with approved network access
+- Planned production action:
+  - commit the Queen Voice LiveKit compatibility patch on `main`
+  - print branch and HEAD before production push
+  - push `main` to `origin/main` to trigger the production/Vercel rollout
+  - append observed push/deploy evidence after execution
+- No restart, migration, DB read/write, or destructive operation was executed before this handoff update.
 
 ## Session Update (2026-04-12, Queen widget React SDK provider/hooks refactor on `main`)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

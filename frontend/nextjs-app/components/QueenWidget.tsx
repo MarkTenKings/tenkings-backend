@@ -151,7 +151,10 @@ function QueenWidgetSurface({
     setExternalError(null);
     lastContextRef.current = "";
     activeSessionKindRef.current = "voice";
-    startSession(buildSessionOptions());
+    startSession({
+      ...buildSessionOptions(),
+      connectionType: "webrtc",
+    });
   }, [buildSessionOptions, setExternalError, startSession]);
 
   const closeWidget = useCallback(() => {
