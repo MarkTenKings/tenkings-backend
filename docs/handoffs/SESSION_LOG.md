@@ -15087,3 +15087,55 @@
 ### Planned Production Push
 - Commit with `fix(stocker): allow admin users to access stocker portal`.
 - Push `main` to `origin/main`.
+
+## 2026-04-12 - Stocker auth phone-first resolver fix
+
+### Summary
+- Pulled latest `main` first:
+  - sandboxed `git pull --ff-only --autostash origin main` failed DNS
+  - approved network retry -> `Already up to date.`
+- Diagnosed the remaining `/stocker` access denied path:
+  - no middleware exists for stocker routes
+  - `/stocker` client only surfaces the `/api/stocker/auth/verify` error message
+  - `/api/stocker/auth/verify` trusted `authPayload.user.id` first and did not try the submitted normalized phone when the auth payload contained an ID
+  - if the auth service returns an ID that does not line up with the local stocker profile row, the endpoint throws `NOT_A_STOCKER` even though `+17707139501` has an active `StockerProfile`
+- Read-only production DB evidence:
+  - `+17707139501` has one local `User`
+  - that user has `role = stocker`
+  - that user has an active linked `StockerProfile` named `Mark Thomas`
+- Implemented the fix:
+  - added `findStockerAccessUser`, which resolves by normalized phone first and auth/user ID second
+  - switched `/api/stocker/auth/send-code`, `/api/stocker/auth/verify`, and `requireStockerSession` to that resolver
+  - changed verify response session user to the resolved local user once access passes
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/stocker.ts --file pages/api/stocker/auth/send-code.ts --file pages/api/stocker/auth/verify.ts --file pages/stocker/index.tsx` -> pass.
+- `git diff --check` -> pass.
+
+### Planned Production Push
+- Commit with `fix(stocker): resolve portal access by phone before auth id`.
+- Push `main` to `origin/main`.
+
+## 2026-04-12 - Docs-only startup context refresh and git-state report after Stocker admin fix
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings-task27-main`.
+- Verified the current local checkout state and recorded the requested git report.
+- Updated the handoff docs only.
+- No code change, deploy, restart, migration, runtime mutation, DB read/write, commit, push, or destructive operation was executed in this session.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Verification Evidence
+- `git status -sb`:
+  - `## main...origin/main`
+  - ` M docs/HANDOFF_SET_OPS.md`
+- `git branch --show-current` -> `main`
+- `git rev-parse --short HEAD` -> `31ca64a`
+- `git log -1 --oneline` -> `31ca64a fix(stocker): allow admin users to access stocker portal`
+
+### Notes
+- The requested git report was captured before this docs-only handoff refresh. This session changed only the handoff docs; at final status, additional stocker auth files also appeared as locally modified and were left untouched.

@@ -1,18 +1,39 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-12 14:12 PDT` (Queen Voice LiveKit compatibility patch pushed to `origin/main` as `f6cee8b`; `livekit-client` pinned to `2.16.1`; Voice `startSession` now passes `connectionType: "webrtc"`; production site reachability returned HTTP/2 200 from Vercel; no restart/migration/DB mutation executed)
+- Last reviewed: `2026-04-12 17:00 PDT` (docs-only startup context + git-state report after Stocker admin portal access fix; HEAD `31ca64a`; local status already had `docs/HANDOFF_SET_OPS.md` modified before this handoff refresh; no deploy/restart/migration/runtime mutation/DB read-write/destructive operation executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## main...origin/main`
-  - modified tracked paths: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+    - ` M docs/HANDOFF_SET_OPS.md`
+  - modified tracked paths: `docs/HANDOFF_SET_OPS.md`
   - deleted tracked paths: none
   - untracked paths: none
 - Latest committed baseline before this handoff refresh:
-  - `f6cee8b` fix(queen): pin livekit client for voice webrtc
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` was fetched before commit/push; `main` was pushed to `origin/main`; production site reachability was checked with `curl -I https://collect.tenkings.co`; no restart, migration, DB read/write, or destructive operation was executed
+  - `31ca64a` fix(stocker): allow admin users to access stocker portal
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; startup docs were read and local git state was checked only; no fetch, pull, push, deploy, restart, migration, runtime mutation, DB read/write, or destructive operation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-12, docs-only startup context + git-state report after Stocker admin fix)
+- Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Verified the current local checkout state without changing code or runtime:
+  - `git status -sb`:
+    - `## main...origin/main`
+    - ` M docs/HANDOFF_SET_OPS.md`
+  - `git branch --show-current` -> `main`
+  - `git rev-parse --short HEAD` -> `31ca64a`
+  - `git log -1 --oneline` -> `31ca64a fix(stocker): allow admin users to access stocker portal`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Final post-refresh status also showed local modifications in `frontend/nextjs-app/lib/server/stocker.ts`, `frontend/nextjs-app/pages/api/stocker/auth/send-code.ts`, and `frontend/nextjs-app/pages/api/stocker/auth/verify.ts`; this session did not edit those code files.
+- No deploy, restart, migration, runtime mutation, DB read/write, commit, push, or destructive operation was executed in this session.
 
 ## Session Update (2026-04-12, Queen Voice LiveKit 2.16.1 compatibility patch)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
@@ -8118,3 +8139,27 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/stocker.ts --file pages/api/stocker/auth/send-code.ts --file pages/api/stocker/auth/verify.ts --file pages/api/stocker/profile.ts --file pages/api/stocker/shift/current.ts --file pages/api/admin/stocker/create/index.ts --file 'pages/api/admin/stocker/[stockerId]/index.ts'` -> pass
 - No deploy, restart, migration, or DB mutation was executed.
+
+## Session Update (2026-04-12, Stocker auth phone-first resolver fix)
+- Pulled latest `main` before editing:
+  - initial sandboxed pull hit DNS/network restrictions
+  - approved retry -> `Already up to date.`
+- Diagnosis:
+  - no Next middleware exists for `/stocker`
+  - `/stocker` only displays the error message returned by `/api/stocker/auth/verify`
+  - `/api/stocker/auth/verify` accepted the Twilio/auth-service payload, then preferred `authPayload.user.id` for the local Prisma lookup and did not check the normalized phone row when that ID was present
+  - that means any auth-service/local-user ID mismatch resolves no local stocker/admin record and throws `NOT_A_STOCKER` with `Access denied. Contact your manager.`
+- Read-only production DB evidence for `+17707139501`:
+  - one local `User` row was found
+  - user phone is `+17707139501`
+  - user role is `stocker`
+  - linked `StockerProfile` is active and named `Mark Thomas`
+- Fix:
+  - added a shared `findStockerAccessUser` helper that resolves by normalized phone first, then falls back to auth/user ID
+  - updated stocker `send-code`, stocker `verify`, and bearer-token `requireStockerSession` to use the same resolver
+  - updated `verify` to store the resolved local user in the client session payload after access is granted
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/stocker.ts --file pages/api/stocker/auth/send-code.ts --file pages/api/stocker/auth/verify.ts --file pages/stocker/index.tsx` -> pass
+  - `git diff --check` -> pass
+- No deploy, restart, migration, or destructive data operation was executed.

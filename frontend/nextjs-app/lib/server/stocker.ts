@@ -78,11 +78,39 @@ export function hasStockerPortalAccess(user: {
   return Boolean(user.stockerProfile) || isStockerAdminUser(user);
 }
 
+const STOCKER_ACCESS_USER_SELECT = {
+  id: true,
+  phone: true,
+  role: true,
+  displayName: true,
+  stockerProfile: true,
+} satisfies Prisma.UserSelect;
+
+export async function findStockerAccessUser(params: { id?: string | null; phone?: string | null }) {
+  const normalizedPhone = normalizePhoneInput(params.phone ?? "");
+  if (normalizedPhone) {
+    const byPhone = await prisma.user.findUnique({
+      where: { phone: normalizedPhone },
+      select: STOCKER_ACCESS_USER_SELECT,
+    });
+    if (byPhone) return byPhone;
+  }
+
+  if (params.id) {
+    return prisma.user.findUnique({
+      where: { id: params.id },
+      select: STOCKER_ACCESS_USER_SELECT,
+    });
+  }
+
+  return null;
+}
+
 export async function requireStockerSession(req: NextApiRequest): Promise<StockerSession> {
   const session = await requireUserSession(req);
-  const user = await prisma.user.findUnique({
-    where: { id: session.user.id },
-    select: { id: true, phone: true, role: true, displayName: true, stockerProfile: true },
+  const user = await findStockerAccessUser({
+    id: session.user.id,
+    phone: session.user.phone,
   });
 
   if (!user) {

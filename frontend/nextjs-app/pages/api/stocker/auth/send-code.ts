@@ -1,6 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma } from "@tenkings/database";
-import { hasStockerPortalAccess, methodNotAllowed, normalizePhoneInput, proxyAuthService, sendError, StockerApiError } from "../../../../lib/server/stocker";
+import {
+  findStockerAccessUser,
+  hasStockerPortalAccess,
+  methodNotAllowed,
+  normalizePhoneInput,
+  proxyAuthService,
+  sendError,
+  StockerApiError,
+} from "../../../../lib/server/stocker";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") return methodNotAllowed(res, ["POST"]);
@@ -9,10 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const phone = normalizePhoneInput(req.body?.phone);
     if (!phone) throw new StockerApiError(400, "VALIDATION_ERROR", "Phone number is required");
 
-    const user = await prisma.user.findUnique({
-      where: { phone },
-      include: { stockerProfile: true },
-    });
+    const user = await findStockerAccessUser({ phone });
     if (!user || !hasStockerPortalAccess(user)) {
       throw new StockerApiError(404, "USER_NOT_FOUND", "No active stocker exists for that phone number");
     }
