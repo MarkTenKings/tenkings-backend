@@ -22,6 +22,7 @@ export default function StockerShiftsPage() {
   const [routeId, setRouteId] = useState("");
   const [assignedDate, setAssignedDate] = useState(today());
   const [error, setError] = useState<string | null>(null);
+  const [updatingShiftId, setUpdatingShiftId] = useState<string | null>(null);
 
   const hasSession = Boolean(session);
   const load = useCallback(async () => {
@@ -61,6 +62,30 @@ export default function StockerShiftsPage() {
     await load();
   };
 
+  const patchShift = async (shiftId: string, body: Record<string, unknown>) => {
+    setUpdatingShiftId(shiftId);
+    setError(null);
+    try {
+      const response = await fetch(`/api/admin/stocker/shifts/${shiftId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.token}` },
+        body: JSON.stringify(body),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.message ?? "Unable to update shift");
+      await load();
+    } catch (patchError) {
+      setError(patchError instanceof Error ? patchError.message : "Unable to update shift");
+    } finally {
+      setUpdatingShiftId(null);
+    }
+  };
+
+  const cancelShift = async (shiftId: string) => {
+    if (!window.confirm("Cancel this pending shift?")) return;
+    await patchShift(shiftId, { status: "cancelled" });
+  };
+
   return (
     <AppShell background="black" brandVariant="collectibles">
       <Head>
@@ -87,7 +112,7 @@ export default function StockerShiftsPage() {
 
         <section className="mt-8 space-y-3">
           {shifts.map((shift) => (
-            <article key={shift.id} className="grid gap-3 rounded-md border border-zinc-800 bg-[#111] p-5 md:grid-cols-[1.2fr_1fr_1fr_1fr]">
+            <article key={shift.id} className="grid gap-3 rounded-md border border-zinc-800 bg-[#111] p-5 md:grid-cols-[1.2fr_1fr_1fr_1fr_1.2fr]">
               <div>
                 <p className="font-heading text-lg">{shift.stocker?.name ?? shift.stockerId}</p>
                 <p className="text-sm text-zinc-500">{shift.stocker?.phone}</p>
@@ -103,6 +128,32 @@ export default function StockerShiftsPage() {
               <div className="text-sm text-zinc-500">
                 <p>In: {shift.clockInAt ? new Date(shift.clockInAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "pending"}</p>
                 <p>Out: {shift.clockOutAt ? new Date(shift.clockOutAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "pending"}</p>
+              </div>
+              <div className="flex flex-col gap-2">
+                {shift.status === "pending" ? (
+                  <>
+                    <select
+                      value={shift.stockerId}
+                      disabled={updatingShiftId === shift.id}
+                      onChange={(event) => patchShift(shift.id, { stockerId: event.target.value })}
+                      className="rounded-md border border-zinc-800 bg-black px-3 py-2 text-sm text-white disabled:opacity-50"
+                    >
+                      {stockers.map((stocker) => (
+                        <option key={stocker.id} value={stocker.id}>{stocker.name}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={updatingShiftId === shift.id}
+                      onClick={() => cancelShift(shift.id)}
+                      className="rounded-md border border-red-500/60 px-3 py-2 text-xs uppercase tracking-[0.14em] text-red-400 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <p className="text-xs uppercase tracking-[0.14em] text-zinc-600">Locked</p>
+                )}
               </div>
             </article>
           ))}

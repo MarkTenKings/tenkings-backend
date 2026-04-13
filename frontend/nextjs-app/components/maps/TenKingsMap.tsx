@@ -20,7 +20,14 @@ export interface TenKingsMapProps {
   className?: string;
   interactive?: boolean;
   followUser?: boolean;
+  followCenter?: boolean;
   heightClassName?: string;
+  initialZoom?: number;
+  minimumInitialZoom?: number;
+  recenterZoom?: number;
+  mapTypeId?: "roadmap" | "satellite" | "hybrid" | "terrain";
+  disableDefaultUI?: boolean;
+  initialFrameKey?: string;
 }
 
 function buildUserMarkerNode(): HTMLDivElement {
@@ -71,7 +78,14 @@ export default function TenKingsMap({
   className,
   interactive = true,
   followUser = false,
+  followCenter = false,
   heightClassName,
+  initialZoom = 17,
+  minimumInitialZoom = 0,
+  recenterZoom = 17,
+  mapTypeId = "roadmap",
+  disableDefaultUI = true,
+  initialFrameKey = "default",
 }: TenKingsMapProps) {
   const { isLoaded, loadError, libraries } = useGoogleMaps();
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -86,6 +100,7 @@ export default function TenKingsMap({
   const lastAutoPanAtRef = useRef(0);
   const lastRenderedUserPositionKeyRef = useRef<string | null>(null);
   const lastRenderedAccuracyRef = useRef<number | null>(null);
+  const initialFrameKeyRef = useRef(initialFrameKey);
   const centerRef = useRef(center);
   const interactiveRef = useRef(interactive);
   const userPositionPropRef = useRef<LatLng | null>(userPosition);
@@ -98,8 +113,27 @@ export default function TenKingsMap({
   }, [center]);
 
   useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !followCenter) {
+      return;
+    }
+
+    map.panTo(center);
+    if ((map.getZoom() ?? 0) < recenterZoom) {
+      map.setZoom(recenterZoom);
+    }
+  }, [center, followCenter, recenterZoom]);
+
+  useEffect(() => {
     interactiveRef.current = interactive;
   }, [interactive]);
+
+  useEffect(() => {
+    if (initialFrameKeyRef.current !== initialFrameKey) {
+      initialFrameKeyRef.current = initialFrameKey;
+      hasFramedInitialViewRef.current = false;
+    }
+  }, [initialFrameKey]);
 
   useEffect(() => {
     userPositionPropRef.current = userPosition;
@@ -117,12 +151,13 @@ export default function TenKingsMap({
 
       mapRef.current = new Map(containerRef.current, {
         center: centerRef.current,
-        zoom: 17,
+        zoom: initialZoom,
         mapId,
+        mapTypeId,
         colorScheme: "DARK" as google.maps.ColorScheme,
         backgroundColor: "#050505",
         renderingType: google.maps.RenderingType.VECTOR,
-        disableDefaultUI: true,
+        disableDefaultUI,
         zoomControl: true,
         streetViewControl: false,
         fullscreenControl: false,
@@ -134,7 +169,7 @@ export default function TenKingsMap({
       console.error("Kings Hunt map initialization failed", error);
       setMapError(error instanceof Error ? error : new Error("Unable to initialize the hunt map"));
     }
-  }, [isLoaded, libraries, mapError]);
+  }, [disableDefaultUI, initialZoom, isLoaded, libraries, mapError, mapTypeId]);
 
   useEffect(() => {
     return () => {
@@ -446,13 +481,21 @@ export default function TenKingsMap({
 
     if (pointCount === 1) {
       map.setCenter(destination ?? userPosition ?? center);
-      map.setZoom(17);
+      map.setZoom(initialZoom);
     } else {
       map.fitBounds(bounds, 88);
+      if (minimumInitialZoom > 0) {
+        window.setTimeout(() => {
+          const zoom = map.getZoom();
+          if (zoom == null || zoom < minimumInitialZoom) {
+            map.setZoom(minimumInitialZoom);
+          }
+        }, 0);
+      }
     }
 
     hasFramedInitialViewRef.current = true;
-  }, [center, checkpoints, destination, libraries, routePath, routePolyline, userPosition]);
+  }, [center, checkpoints, destination, initialZoom, libraries, minimumInitialZoom, routePath, routePolyline, userPosition]);
 
   if (loadError || mapError) {
     return (
@@ -484,8 +527,8 @@ export default function TenKingsMap({
             const target = userPosition ?? destination ?? center;
             map.panTo(target);
 
-            if ((map.getZoom() ?? 0) < 17) {
-              map.setZoom(17);
+            if ((map.getZoom() ?? 0) < recenterZoom) {
+              map.setZoom(recenterZoom);
             }
           }}
           className="font-kingshunt-body absolute right-4 top-4 z-[1] rounded-full border border-white/10 bg-[rgba(10,10,10,0.76)] px-4 py-2 text-[0.64rem] uppercase tracking-[0.24em] text-white/88 backdrop-blur"

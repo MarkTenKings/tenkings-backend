@@ -15,6 +15,7 @@ export default function StockerRoutesPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [editingRoute, setEditingRoute] = useState<RouteRow | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const selectedLocations = useMemo(() => selectedIds.map((id) => locations.find((loc) => loc.id === id)).filter(Boolean) as LocationSummary[], [locations, selectedIds]);
@@ -48,6 +49,8 @@ export default function StockerRoutesPage() {
         machineGeofenceM: location.machineGeofenceM ?? 20,
         description: location.description ?? null,
         landmarks: Array.isArray(location.landmarks) ? location.landmarks : [],
+        hasIndoorMap: Boolean(location.hasIndoorMap),
+        walkingTimeMin: typeof location.walkingTimeMin === "number" ? location.walkingTimeMin : null,
       })),
     );
   }, [isAdmin, session?.token]);
@@ -72,34 +75,72 @@ export default function StockerRoutesPage() {
     });
   };
 
-  const createRoute = async (event: FormEvent) => {
+  const resetForm = () => {
+    setName("");
+    setDescription("");
+    setSelectedIds([]);
+    setEditingRoute(null);
+    setError(null);
+  };
+
+  const startEdit = (route: RouteRow) => {
+    setEditingRoute(route);
+    setName(route.name);
+    setDescription(route.description ?? "");
+    setSelectedIds(route.locationIds);
+    setError(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const saveRoute = async (event: FormEvent) => {
     event.preventDefault();
     setSaving(true);
     setError(null);
     try {
-      const response = await fetch("/api/admin/stocker/routes", {
-        method: "POST",
+      const endpoint = editingRoute ? `/api/admin/stocker/routes/${editingRoute.id}` : "/api/admin/stocker/routes";
+      const response = await fetch(endpoint, {
+        method: editingRoute ? "PUT" : "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.token}` },
         body: JSON.stringify({ name, description, locationIds: selectedIds, optimize: true }),
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.message ?? "Unable to create route");
-      setName("");
-      setDescription("");
-      setSelectedIds([]);
+      if (!response.ok) throw new Error(payload?.message ?? (editingRoute ? "Unable to update route" : "Unable to create route"));
+      resetForm();
       await load();
-    } catch (createError) {
-      setError(createError instanceof Error ? createError.message : "Unable to create route");
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save route");
     } finally {
       setSaving(false);
     }
   };
 
   const optimizeExisting = async (routeId: string) => {
-    await fetch(`/api/admin/stocker/routes/${routeId}/optimize`, {
+    setError(null);
+    const response = await fetch(`/api/admin/stocker/routes/${routeId}/optimize`, {
       method: "POST",
       headers: { Authorization: `Bearer ${session?.token}` },
     });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      setError(payload?.message ?? "Unable to re-optimize route");
+      return;
+    }
+    await load();
+  };
+
+  const deleteRoute = async (routeId: string) => {
+    if (!window.confirm("Delete this route? This cannot be undone.")) return;
+    setError(null);
+    const response = await fetch(`/api/admin/stocker/routes/${routeId}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${session?.token}` },
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      setError(payload?.message ?? "Unable to delete route");
+      return;
+    }
+    if (editingRoute?.id === routeId) resetForm();
     await load();
   };
 
@@ -111,8 +152,16 @@ export default function StockerRoutesPage() {
       <main className="mx-auto w-full max-w-6xl px-6 py-10 text-white">
         <h1 className="font-heading text-3xl text-[#d4a843]">Route Management</h1>
         {!isAdmin && !loading ? <p className="mt-6 text-red-300">Admin access required.</p> : null}
-        <form onSubmit={createRoute} className="mt-8 grid gap-5 rounded-md border border-zinc-800 bg-[#111] p-5 lg:grid-cols-[1fr_1fr]">
+        <form onSubmit={saveRoute} className="mt-8 grid gap-5 rounded-md border border-zinc-800 bg-[#111] p-5 lg:grid-cols-[1fr_1fr]">
           <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs uppercase tracking-[0.18em] text-[#d4a843]">{editingRoute ? "Edit Saved Route" : "New Route"}</p>
+              {editingRoute ? (
+                <button type="button" onClick={resetForm} className="rounded-md border border-zinc-700 px-3 py-2 text-xs uppercase tracking-[0.14em] text-zinc-300">
+                  Cancel Edit
+                </button>
+              ) : null}
+            </div>
             <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Route name" className="w-full rounded-md border border-zinc-800 bg-black px-3 py-3 outline-none focus:border-[#d4a843]" />
             <textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Route notes" className="min-h-24 w-full rounded-md border border-zinc-800 bg-black px-3 py-3 outline-none focus:border-[#d4a843]" />
             <div className="max-h-80 space-y-2 overflow-y-auto rounded-md border border-zinc-900 p-3">
@@ -141,7 +190,7 @@ export default function StockerRoutesPage() {
             ))}
             {error ? <p className="text-sm text-red-300">{error}</p> : null}
             <button disabled={saving || !name || selectedIds.length === 0} className="h-12 w-full rounded-md bg-[#d4a843] font-semibold uppercase tracking-[0.14em] text-black disabled:opacity-50">
-              {saving ? "Optimizing" : "Optimize Order & Save Route"}
+              {saving ? "Optimizing" : editingRoute ? "Re-optimize & Save" : "Optimize Order & Save Route"}
             </button>
           </div>
         </form>
@@ -154,10 +203,19 @@ export default function StockerRoutesPage() {
                   <h2 className="font-heading text-xl">{route.name}</h2>
                   <p className="mt-1 text-sm text-zinc-500">{route.locationIds.length} stops · {route.totalDistanceM ? `${Math.round(route.totalDistanceM / 1609)} mi` : "distance pending"}</p>
                 </div>
-                <button type="button" onClick={() => optimizeExisting(route.id)} className="rounded-md border border-[#d4a843]/50 px-3 py-2 text-xs uppercase tracking-[0.14em] text-[#d4a843]">
-                  Re-optimize
-                </button>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button type="button" onClick={() => startEdit(route)} className="rounded-md border border-zinc-700 px-3 py-2 text-xs uppercase tracking-[0.14em] text-zinc-200">
+                    Edit
+                  </button>
+                  <button type="button" onClick={() => optimizeExisting(route.id)} className="rounded-md border border-[#d4a843]/50 px-3 py-2 text-xs uppercase tracking-[0.14em] text-[#d4a843]">
+                    Re-optimize
+                  </button>
+                  <button type="button" onClick={() => deleteRoute(route.id)} className="rounded-md border border-red-500/60 px-3 py-2 text-xs uppercase tracking-[0.14em] text-red-400">
+                    Delete
+                  </button>
+                </div>
               </div>
+              {route.description ? <p className="mt-3 text-sm text-zinc-500">{route.description}</p> : null}
               <ol className="mt-4 space-y-1 text-sm text-zinc-400">
                 {(route.locations ?? []).map((location, index) => (
                   <li key={location.id}>{index + 1}. {location.name}</li>

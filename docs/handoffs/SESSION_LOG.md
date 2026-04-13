@@ -15287,3 +15287,52 @@
 - Commit with `fix(stocker): allow multiple same-day shifts`.
 - Push `main` to `origin/main`.
 - No deploy, restart, migration, DB write, or destructive operation was executed.
+
+## 2026-04-13 - Indoor guidance tracking, indoor maps, and route/shift management
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings-task27-main`.
+- Pulled latest `main` before editing:
+  - initial sandboxed `git pull --ff-only origin main` failed DNS
+  - approved network retry -> `Already up to date.`
+- Fixed `/stocker/stop/[stopId]` indoor guidance:
+  - high-accuracy `watchPosition()` starts immediately
+  - blue-dot map updates use live refs
+  - walking route guidance refreshes every 30 seconds or when the stocker moves more than 30m
+  - live distance/ETA recalculate on every GPS tick with haversine distance and 1.4 m/s walking speed
+  - `MARK AS COMPLETE` is gated by `machineGeofenceM` with a 20m fallback
+  - map centers between the stocker and machine at zoom 19 on roadmap tiles for Google indoor floor-plan discovery
+  - landmarks, special instructions, walking-time estimate, floor-plan badge data, and indoor-map tip are surfaced on the page
+- Added route management support:
+  - edit route name/notes/stops and re-optimize/save through `PUT /api/admin/stocker/routes/[routeId]`
+  - delete route from `/admin/stocker-ops/routes`
+  - hard-delete routes with no shifts, block pending/active shifts, and soft-hide routes with historical completed/cancelled shifts using a no-migration description marker
+- Added shift management support:
+  - new `PATCH /api/admin/stocker/shifts/[shiftId]`
+  - pending shifts can be cancelled with `pending -> cancelled` only
+  - pending shifts can be reassigned to another active stocker from `/admin/stocker-ops/shifts`
+
+### Files Updated
+- `frontend/nextjs-app/components/maps/TenKingsMap.tsx`
+- `frontend/nextjs-app/lib/server/stocker.ts`
+- `frontend/nextjs-app/pages/stocker/stop/[stopId]/index.tsx`
+- `frontend/nextjs-app/pages/admin/stocker-ops/routes.tsx`
+- `frontend/nextjs-app/pages/admin/stocker-ops/shifts.tsx`
+- `frontend/nextjs-app/pages/api/admin/stocker/routes/index.ts`
+- `frontend/nextjs-app/pages/api/admin/stocker/routes/[routeId]/index.ts`
+- `frontend/nextjs-app/pages/api/admin/stocker/shifts/[shiftId].ts`
+- `frontend/nextjs-app/types/stocker.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node `v25.6.1` engine warning.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/maps/TenKingsMap.tsx --file 'pages/stocker/stop/[stopId]/index.tsx' --file pages/admin/stocker-ops/routes.tsx --file pages/admin/stocker-ops/shifts.tsx --file pages/api/admin/stocker/routes/index.ts --file 'pages/api/admin/stocker/routes/[routeId]/index.ts' --file 'pages/api/admin/stocker/shifts/[shiftId].ts' --file lib/server/stocker.ts --file types/stocker.ts` -> pass with only the local Node engine warning.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings.
+- `git diff --check` -> pass.
+
+### Planned Production Push
+- Commit with `fix(stocker): indoor guidance tracking, indoor maps, route/shift management`.
+- Print branch and HEAD before push.
+- Push `main` to `origin/main`.
+- No restart, migration, DB operation, or destructive operation is planned.

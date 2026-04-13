@@ -10,6 +10,8 @@ import {
   StockerApiError,
 } from "../../../../../lib/server/stocker";
 
+const DELETED_ROUTE_MARKER = "[stocker-route-deleted]";
+
 function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
 }
@@ -64,6 +66,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
     const where: Prisma.StockRouteWhereInput = {
+      OR: [{ description: null }, { description: { not: { contains: DELETED_ROUTE_MARKER } } }],
       ...(req.query.isTemplate === "true" ? { isTemplate: true } : req.query.isTemplate === "false" ? { isTemplate: false } : {}),
       ...(search ? { name: { contains: search, mode: "insensitive" } } : {}),
     };

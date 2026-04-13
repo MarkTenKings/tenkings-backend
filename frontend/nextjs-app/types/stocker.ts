@@ -20,6 +20,8 @@ export type LocationSummary = {
   machineGeofenceM: number;
   description: string | null;
   landmarks: string[];
+  hasIndoorMap: boolean;
+  walkingTimeMin: number | null;
 };
 
 export type StockerProfileData = {
@@ -140,6 +142,9 @@ export type WalkingGuidanceData = {
   locationName: string;
   locationDescription: string | null;
   landmarks: string[];
+  hasIndoorMap: boolean;
+  walkingTimeMin: number | null;
+  machineGeofenceM: number;
   machineLocation: {
     lat: number;
     lng: number;

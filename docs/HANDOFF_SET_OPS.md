@@ -1,18 +1,62 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-12 18:34 PDT` (machine coordinates, pin drop maps, stocker Google Maps navigation pushed to `origin/main` as `0cb9a89`; production Prisma migration `20260412171500_add_machine_coordinates` applied successfully; no restart or destructive operation executed)
+- Last reviewed: `2026-04-13 13:10 PDT` (stocker indoor guidance live tracking/walking route + Google indoor map zoom/tip + admin route edit/delete + shift cancel/reassign implemented; validation passed; preparing commit/push to `main`; no migration, restart, DB write, or destructive operation executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## main...origin/main`
-  - modified tracked paths: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md` after post-migration evidence refresh
+  - modified tracked paths:
+    - `frontend/nextjs-app/components/maps/TenKingsMap.tsx`
+    - `frontend/nextjs-app/lib/server/stocker.ts`
+    - `frontend/nextjs-app/pages/admin/stocker-ops/routes.tsx`
+    - `frontend/nextjs-app/pages/admin/stocker-ops/shifts.tsx`
+    - `frontend/nextjs-app/pages/api/admin/stocker/routes/[routeId]/index.ts`
+    - `frontend/nextjs-app/pages/api/admin/stocker/routes/index.ts`
+    - `frontend/nextjs-app/pages/stocker/stop/[stopId]/index.tsx`
+    - `frontend/nextjs-app/types/stocker.ts`
   - deleted tracked paths: none
-  - untracked paths: none
+  - untracked paths:
+    - `frontend/nextjs-app/pages/api/admin/stocker/shifts/[shiftId].ts`
 - Latest committed baseline before this handoff refresh:
-  - `0cb9a89` feat(locations): machine coordinates, pin drop maps, google maps navigation
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` pushed; production droplet `/root/tenkings-backend` pulled and fast-forwarded to `0cb9a89`; production Prisma migrate deploy applied `20260412171500_add_machine_coordinates`; no restart or destructive operation was executed
+  - `1dc5149` docs: record machine coordinate migration
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `git pull --ff-only origin main` was retried with approved network access and reported `Already up to date`; no deploy, restart, migration, DB read/write, or destructive operation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-13, indoor guidance + indoor maps + route/shift management)
+- Re-read required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Pulled latest `main` before editing:
+  - initial sandboxed `git pull --ff-only origin main` failed DNS
+  - approved network retry -> `Already up to date.`
+- Implemented indoor guidance fixes:
+  - `/stocker/stop/[stopId]` starts high-accuracy `watchPosition()` immediately
+  - blue-dot position is fed to the map through refs for smooth marker updates
+  - walking guidance refreshes from `/api/stocker/stop/[stopId]/guidance` every 30 seconds or after 30m of movement
+  - live distance and ETA recalculate from each GPS tick using haversine distance and 1.4 m/s walking speed
+  - completion is gated by `machineGeofenceM` with 20m fallback
+  - machine destination uses the server-provided machine coordinates, which already fall back to venue coordinates
+  - map runs at zoom 19 on roadmap tiles, follows the midpoint between stocker and machine, and includes the Google indoor floor-plan tip
+  - surfaced landmarks, special instructions, walking-time estimate, and floor-plan badge data on the page
+- Implemented route management:
+  - admin route page can edit route name/notes/stops and save through `PUT /api/admin/stocker/routes/[routeId]`
+  - route update re-runs route optimization and stores optimized stop order/polyline/legs
+  - admin route page can delete routes
+  - delete hard-removes routes with no shifts, blocks pending/active shifts, and soft-hides routes with historical completed/cancelled shifts using a no-migration description marker
+- Implemented shift management:
+  - added `PATCH /api/admin/stocker/shifts/[shiftId]`
+  - pending shifts can be cancelled with `pending -> cancelled` only
+  - pending shifts can be reassigned to another active stocker
+  - admin shift page exposes cancel and stocker reassignment controls for pending shifts
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node engine warning
+  - targeted `next lint` for changed stocker/map/API files -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings
+  - `git diff --check` -> pass
+- Planned production action:
+  - commit with `fix(stocker): indoor guidance tracking, indoor maps, route/shift management`
+  - print branch and HEAD before push
+  - push `main` to `origin/main`
+  - no restart, migration, DB operation, or destructive operation is planned
 
 ## Session Update (2026-04-12, machine coordinates + pin drop maps + stocker navigation)
 - Re-read required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.

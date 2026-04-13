@@ -224,6 +224,8 @@ export function serializeLocation(location: {
   machineGeofenceM: number | null;
   description: string | null;
   landmarks: string[];
+  hasIndoorMap?: boolean | null;
+  walkingTimeMin?: number | null;
 }): LocationSummary {
   return {
     id: location.id,
@@ -242,6 +244,8 @@ export function serializeLocation(location: {
     machineGeofenceM: location.machineGeofenceM ?? 20,
     description: location.description,
     landmarks: Array.isArray(location.landmarks) ? location.landmarks : [],
+    hasIndoorMap: Boolean(location.hasIndoorMap),
+    walkingTimeMin: location.walkingTimeMin ?? null,
   };
 }
 
@@ -388,6 +392,8 @@ export async function getRouteLocations(locationIds: string[]): Promise<Location
       machineGeofenceM: true,
       description: true,
       landmarks: true,
+      hasIndoorMap: true,
+      walkingTimeMin: true,
     },
   });
   const lookup = new Map(locations.map((location) => [location.id, serializeLocation(location)]));
@@ -693,6 +699,9 @@ export async function getWalkingGuidance(
     locationName: location.name,
     locationDescription: location.description,
     landmarks: location.landmarks,
+    hasIndoorMap: location.hasIndoorMap,
+    walkingTimeMin: location.walkingTimeMin,
+    machineGeofenceM: location.machineGeofenceM,
     machineLocation: { lat: machineLat, lng: machineLng },
   };
 }
@@ -720,6 +729,8 @@ const CURRENT_SHIFT_INCLUDE = {
           machineGeofenceM: true,
           description: true,
           landmarks: true,
+          hasIndoorMap: true,
+          walkingTimeMin: true,
         },
       },
     },
@@ -795,6 +806,8 @@ export async function assertStopForStocker(stockerId: string, stopId: string) {
           machineGeofenceM: true,
           description: true,
           landmarks: true,
+          hasIndoorMap: true,
+          walkingTimeMin: true,
         },
       },
     },
@@ -828,6 +841,8 @@ export async function advanceToNextStop(shiftId: string, completedOrder: number,
           machineGeofenceM: true,
           description: true,
           landmarks: true,
+          hasIndoorMap: true,
+          walkingTimeMin: true,
         },
       },
     },
@@ -992,6 +1007,8 @@ export async function buildLiveStockerPositions(): Promise<LiveStockerPosition[]
               machineGeofenceM: true,
               description: true,
               landmarks: true,
+              hasIndoorMap: true,
+              walkingTimeMin: true,
             },
           },
         },
