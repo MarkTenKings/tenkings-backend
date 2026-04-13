@@ -61,7 +61,8 @@ function insideLocationGeofence(position: LatLng, location: LocationSummary) {
 export default function StockerRoutePage() {
   const router = useRouter();
   const { session, loading, ensureSession } = useSession();
-  const { shift, loading: shiftLoading, refresh } = useStockerShift(session?.token);
+  const selectedShiftId = router.isReady && typeof router.query.shiftId === "string" ? router.query.shiftId : null;
+  const { shift, loading: shiftLoading, refresh } = useStockerShift(router.isReady ? session?.token : undefined, selectedShiftId);
   const [position, setPosition] = useState<LatLng | null>(null);
   const [accuracy, setAccuracy] = useState<number | null>(null);
   const [gpsStatus, setGpsStatus] = useState<GpsStatus>("starting");
@@ -91,8 +92,9 @@ export default function StockerRoutePage() {
   }, [ensureSession, loading, router, session]);
 
   useEffect(() => {
-    if (!shiftLoading && shift && shift.status !== "active") void router.replace("/stocker/dashboard");
-  }, [router, shift, shiftLoading]);
+    if (!router.isReady || loading || shiftLoading || !session) return;
+    if (!shift || shift.status !== "active") void router.replace("/stocker/dashboard");
+  }, [loading, router, session, shift, shiftLoading]);
 
   useEffect(() => {
     const timer = setInterval(() => setElapsed(formatElapsed(shiftRef.current?.clockInAt)), 1000);
@@ -148,7 +150,9 @@ export default function StockerRoutePage() {
         .then((payload) => {
           const events = (payload?.data?.geofence ?? []) as GeofenceEvent[];
           const locationEvent = events.find((event) => event.type === "location_entered" || event.type === "machine_reached");
-          if (locationEvent?.stopId) void router.push(`/stocker/stop/${locationEvent.stopId}`);
+          if (locationEvent?.stopId) {
+            void router.push({ pathname: `/stocker/stop/${locationEvent.stopId}`, query: { shiftId: activeShift.id } });
+          }
         })
         .catch(() => undefined);
     },
@@ -297,7 +301,11 @@ export default function StockerRoutePage() {
                 <button type="button" onClick={skipStop} className="rounded-md border border-[#d4a843]/50 px-4 py-2 text-xs uppercase tracking-[0.16em] text-[#d4a843]">
                   Skip Stop
                 </button>
-                <button type="button" onClick={() => router.push(`/stocker/stop/${nextStop.id}`)} className="rounded-md bg-[#d4a843] px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-black">
+                <button
+                  type="button"
+                  onClick={() => router.push({ pathname: `/stocker/stop/${nextStop.id}`, query: shift?.id ? { shiftId: shift.id } : {} })}
+                  className="rounded-md bg-[#d4a843] px-4 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-black"
+                >
                   Open Stop
                 </button>
               </div>

@@ -15169,3 +15169,31 @@
 
 ### Notes
 - The requested git report was captured before this docs-only handoff refresh. This session changed only the handoff docs; at final status, additional stocker auth files also appeared as locally modified and were left untouched.
+
+## 2026-04-13 - Stocker same-day multi-shift assignment and dashboard selection
+
+### Summary
+- Pulled latest `main` before editing:
+  - initial sandboxed pull hit DNS/network restrictions
+  - approved retry -> `Already up to date.`
+- Removed the admin shift-assignment duplicate guard that returned `DUPLICATE_SHIFT` when a stocker already had a non-cancelled shift on the same assigned date.
+- Updated the stocker current-shift API to return both:
+  - `data.shifts` for all pending/active/completed shifts assigned today
+  - `data.shift` as the selected/preferred shift for existing callers, with optional `shiftId` selection
+- Updated stocker dashboard behavior:
+  - no automatic redirect when any active shift exists
+  - lists all pending and active shifts for today
+  - lets the stocker start a specific pending shift or resume a specific active shift
+  - still shows completed shift summaries
+- Updated route/stop navigation to carry the selected `shiftId` through `/stocker/route` and `/stocker/stop/[stopId]`, so returning from guidance stays on the intended shift.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/stocker/shifts/index.ts --file pages/api/stocker/shift/current.ts --file pages/api/stocker/shift/clock-in.ts --file hooks/useStockerShift.ts --file pages/stocker/dashboard.tsx --file pages/stocker/route.tsx --file 'pages/stocker/stop/[stopId]/index.tsx' --file lib/server/stocker.ts` -> pass.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings.
+- `git diff --check` -> pass.
+
+### Planned Production Push
+- Commit with `fix(stocker): allow multiple same-day shifts`.
+- Push `main` to `origin/main`.
+- No deploy, restart, migration, DB write, or destructive operation was executed.

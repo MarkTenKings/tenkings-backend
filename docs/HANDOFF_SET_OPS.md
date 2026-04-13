@@ -8187,3 +8187,21 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings
   - `git diff --check` -> pass
 - No deploy, restart, migration, DB write, or destructive operation was executed.
+
+## Session Update (2026-04-13, Stocker same-day multi-shift assignment and dashboard selection)
+- Pulled latest `main` before editing:
+  - initial sandboxed pull hit DNS/network restrictions
+  - approved retry -> `Already up to date.`
+- Fix:
+  - removed the admin shift-assignment same-day duplicate guard, so a stocker can receive multiple shifts on the same assigned date
+  - the same route can now be assigned to the same stocker more than once on the same date
+  - added multi-shift loading for the stocker current-shift API while preserving the legacy `data.shift` field
+  - `/stocker/dashboard` now lists all pending and active shifts for today and lets the stocker start/resume a specific route
+  - completed same-day shifts still render as summaries
+  - `/stocker/route` and `/stocker/stop/[stopId]` preserve the selected `shiftId` in navigation so route/stop flows do not switch to a different active shift
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/stocker/shifts/index.ts --file pages/api/stocker/shift/current.ts --file pages/api/stocker/shift/clock-in.ts --file hooks/useStockerShift.ts --file pages/stocker/dashboard.tsx --file pages/stocker/route.tsx --file 'pages/stocker/stop/[stopId]/index.tsx' --file lib/server/stocker.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings
+  - `git diff --check` -> pass
+- No deploy, restart, migration, DB write, or destructive operation was executed.

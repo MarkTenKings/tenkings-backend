@@ -49,7 +49,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }),
     ]);
 
-    const current = await loadCurrentShift(stocker.stockerId, shift.assignedDate);
+    const current = await loadCurrentShift(stocker.stockerId, shift.assignedDate, shift.id);
     return res.status(200).json({ success: true, data: { shift: current, stops: current?.stops ?? [] } });
   } catch (error) {
     return sendError(res, error);

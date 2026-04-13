@@ -686,46 +686,70 @@ export async function getWalkingGuidance(
   };
 }
 
-export async function loadCurrentShift(stockerId: string, assignedDate: Date) {
-  const shift = await prisma.stockerShift.findFirst({
+const CURRENT_SHIFT_INCLUDE = {
+  stocker: true,
+  route: true,
+  stops: {
+    include: {
+      location: {
+        select: {
+          id: true,
+          slug: true,
+          name: true,
+          address: true,
+          city: true,
+          state: true,
+          latitude: true,
+          longitude: true,
+          venueCenterLat: true,
+          venueCenterLng: true,
+          geofenceRadiusM: true,
+          description: true,
+          landmarks: true,
+        },
+      },
+    },
+    orderBy: { stopOrder: "asc" },
+  },
+} satisfies Prisma.StockerShiftInclude;
+
+type CurrentShiftRecord = Prisma.StockerShiftGetPayload<{ include: typeof CURRENT_SHIFT_INCLUDE }>;
+
+async function serializeCurrentShift(shift: CurrentShiftRecord): Promise<StockerShiftData> {
+  const routeLocations = await getRouteLocations(shift.route.locationIds);
+  return {
+    ...serializeShift(shift),
+    route: { ...serializeRoute(shift.route), locations: routeLocations },
+    stops: shift.stops.map(serializeStop),
+  };
+}
+
+export function selectCurrentShift(shifts: StockerShiftData[], shiftId?: string | null) {
+  if (shiftId) return shifts.find((shift) => shift.id === shiftId) ?? null;
+  return (
+    shifts.find((shift) => shift.status === "active") ??
+    shifts.find((shift) => shift.status === "pending") ??
+    shifts.find((shift) => shift.status === "completed") ??
+    null
+  );
+}
+
+export async function loadCurrentShifts(stockerId: string, assignedDate: Date) {
+  const shifts = await prisma.stockerShift.findMany({
     where: {
       stockerId,
       assignedDate,
       status: { in: ["pending", "active", "completed"] },
     },
-    include: {
-      route: true,
-      stops: {
-        include: {
-          location: {
-            select: {
-              id: true,
-              slug: true,
-              name: true,
-              address: true,
-              city: true,
-              state: true,
-              latitude: true,
-              longitude: true,
-              venueCenterLat: true,
-              venueCenterLng: true,
-              geofenceRadiusM: true,
-              description: true,
-              landmarks: true,
-            },
-          },
-        },
-        orderBy: { stopOrder: "asc" },
-      },
-    },
-    orderBy: { createdAt: "desc" },
+    include: CURRENT_SHIFT_INCLUDE,
+    orderBy: { createdAt: "asc" },
   });
-  if (!shift) return null;
-  const serialized = serializeShift(shift);
-  const routeLocations = await getRouteLocations(shift.route.locationIds);
-  serialized.route = { ...serializeRoute(shift.route), locations: routeLocations };
-  serialized.stops = shift.stops.map(serializeStop);
-  return serialized;
+  return Promise.all(shifts.map(serializeCurrentShift));
+}
+
+export async function loadCurrentShift(stockerId: string, assignedDate: Date, shiftId?: string | null) {
+  const shifts = await loadCurrentShifts(stockerId, assignedDate);
+  return selectCurrentShift(shifts, shiftId);
 }
 
 export async function assertStopForStocker(stockerId: string, stopId: string) {

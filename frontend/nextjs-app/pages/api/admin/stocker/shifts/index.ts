@@ -15,14 +15,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       const assignedDate = parseDateOnly(typeof req.body?.assignedDate === "string" ? req.body.assignedDate : undefined);
       if (!stockerId || !routeId) throw new StockerApiError(400, "VALIDATION_ERROR", "stockerId and routeId are required");
 
-      const [stocker, route, existing] = await Promise.all([
+      const [stocker, route] = await Promise.all([
         prisma.stockerProfile.findUnique({ where: { id: stockerId } }),
         prisma.stockRoute.findUnique({ where: { id: routeId } }),
-        prisma.stockerShift.findFirst({ where: { stockerId, assignedDate, status: { not: "cancelled" } } }),
       ]);
       if (!stocker?.isActive) throw new StockerApiError(404, "STOCKER_NOT_FOUND", "Active stocker not found");
       if (!route) throw new StockerApiError(404, "ROUTE_NOT_FOUND", "Route not found");
-      if (existing) throw new StockerApiError(409, "DUPLICATE_SHIFT", "Stocker already has a shift on that date");
 
       const shift = await prisma.$transaction(async (tx) => {
         const created = await tx.stockerShift.create({

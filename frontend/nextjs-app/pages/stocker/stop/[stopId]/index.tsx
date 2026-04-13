@@ -22,6 +22,7 @@ function haversine(a: LatLng, b: LatLng) {
 export default function StockerStopPage() {
   const router = useRouter();
   const stopId = typeof router.query.stopId === "string" ? router.query.stopId : "";
+  const shiftId = typeof router.query.shiftId === "string" ? router.query.shiftId : "";
   const { session, loading, ensureSession } = useSession();
   const [position, setPosition] = useState<LatLng | null>(null);
   const [accuracy, setAccuracy] = useState<number | null>(null);
@@ -84,7 +85,7 @@ export default function StockerStopPage() {
         const payload = await depart.json().catch(() => null);
         throw new Error(payload?.message ?? "Unable to complete stop");
       }
-      await router.replace("/stocker/route");
+      await router.replace({ pathname: "/stocker/route", query: shiftId ? { shiftId } : {} });
     } catch (completeError) {
       setError(completeError instanceof Error ? completeError.message : "Unable to complete stop");
       setCompleting(false);
@@ -112,7 +113,7 @@ export default function StockerStopPage() {
           />
           <button
             type="button"
-            onClick={() => router.push("/stocker/route")}
+            onClick={() => router.push({ pathname: "/stocker/route", query: shiftId ? { shiftId } : {} })}
             className="absolute left-4 top-4 rounded-md border border-zinc-800 bg-black/70 px-3 py-2 text-xs uppercase tracking-[0.16em] text-zinc-300 backdrop-blur"
           >
             Back to Route
