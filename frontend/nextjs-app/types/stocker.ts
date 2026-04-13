@@ -15,6 +15,9 @@ export type LocationSummary = {
   venueCenterLat: number | null;
   venueCenterLng: number | null;
   geofenceRadiusM: number;
+  machineLat: number | null;
+  machineLng: number | null;
+  machineGeofenceM: number;
   description: string | null;
   landmarks: string[];
 };

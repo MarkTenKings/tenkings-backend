@@ -22,6 +22,14 @@ const locationPayloadSchema = z.object({
   mapsUrl: z.string().url().optional().or(z.literal("")),
   mediaUrl: z.string().url().optional().or(z.literal("")),
   recentRips: ripSchema,
+  latitude: z.number().finite().nullable().optional(),
+  longitude: z.number().finite().nullable().optional(),
+  venueCenterLat: z.number().finite().nullable().optional(),
+  venueCenterLng: z.number().finite().nullable().optional(),
+  geofenceRadiusM: z.number().int().nullable().optional(),
+  machineLat: z.number().finite().nullable().optional(),
+  machineLng: z.number().finite().nullable().optional(),
+  machineGeofenceM: z.number().int().nullable().optional(),
 });
 
 const normalizedRips = (value: z.infer<typeof ripSchema>) => {
@@ -164,6 +172,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           address: payload.address,
           mapsUrl: payload.mapsUrl || null,
           mediaUrl: payload.mediaUrl || null,
+          latitude: payload.latitude ?? null,
+          longitude: payload.longitude ?? null,
+          venueCenterLat: payload.venueCenterLat ?? payload.latitude ?? null,
+          venueCenterLng: payload.venueCenterLng ?? payload.longitude ?? null,
+          geofenceRadiusM: payload.geofenceRadiusM ?? 500,
+          machineLat: payload.machineLat ?? null,
+          machineLng: payload.machineLng ?? null,
+          machineGeofenceM: payload.machineGeofenceM ?? 20,
           recentRips: normalizedRips(payload.recentRips),
         },
       });

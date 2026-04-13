@@ -1,19 +1,49 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-12 17:00 PDT` (docs-only startup context + git-state report after Stocker admin portal access fix; HEAD `31ca64a`; local status already had `docs/HANDOFF_SET_OPS.md` modified before this handoff refresh; no deploy/restart/migration/runtime mutation/DB read-write/destructive operation executed)
+- Last reviewed: `2026-04-12 18:28 PDT` (machine coordinates, pin drop maps, stocker Google Maps navigation implemented locally; validation passed; production push and Prisma deploy migration planned; no restart or destructive operation planned)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## main...origin/main`
-    - ` M docs/HANDOFF_SET_OPS.md`
-  - modified tracked paths: `docs/HANDOFF_SET_OPS.md`
+  - modified tracked paths: feature code, Prisma schema, and handoff docs for machine coordinates / pin-drop maps / stocker navigation
   - deleted tracked paths: none
-  - untracked paths: none
+  - untracked paths:
+    - `frontend/nextjs-app/components/admin/PinDropMap.tsx`
+    - `packages/database/prisma/migrations/20260412171500_add_machine_coordinates/migration.sql`
 - Latest committed baseline before this handoff refresh:
-  - `31ca64a` fix(stocker): allow admin users to access stocker portal
-- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; startup docs were read and local git state was checked only; no fetch, pull, push, deploy, restart, migration, runtime mutation, DB read/write, or destructive operation was executed
+  - `78d5b9e` fix(stocker): allow multiple same-day shifts
+- Environments touched so far: workstation checkout `/Users/markthomas/tenkings-task27-main`; pulled latest `main`; local Prisma `migrate dev` was attempted and blocked by missing workstation `DATABASE_URL`; Prisma generate/validate/build and Next lint/tsc/build passed; no push, droplet migration, restart, runtime mutation, production DB write, or destructive operation has been executed yet
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-12, machine coordinates + pin drop maps + stocker navigation)
+- Re-read required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Pulled latest `main` before editing; sandbox DNS blocked the first attempt, and the approved network retry reported `Already up to date.`
+- Implemented:
+  - new Location fields `machineLat`, `machineLng`, and `machineGeofenceM @default(20)`
+  - checked-in migration SQL at `packages/database/prisma/migrations/20260412171500_add_machine_coordinates/migration.sql`
+  - reusable `frontend/nextjs-app/components/admin/PinDropMap.tsx` with dark Google Maps, draggable pins, click-to-place, and geofence circles
+  - venue and machine pin-drop map sections in the edit location page
+  - expanded Add Location modal with address geocoding, venue coordinates/geofence, and machine coordinates/geofence
+  - create/update API support for machine coordinate fields
+  - stocker machine geofence and walking guidance based on machine coordinates with venue-coordinate fallback
+  - `/stocker/route` Google Maps `Start Navigation` URL for remaining stops and an arrived banner leading to indoor guidance
+  - Kings Hunt machine destination helpers using machine coordinates when present
+- Validation:
+  - local `prisma migrate dev --name add_machine_coordinates` blocked by missing workstation `DATABASE_URL` (`P1012`)
+  - `pnpm --filter @tenkings/database generate` -> pass
+  - Prisma schema validate with dummy `DATABASE_URL` -> pass
+  - `pnpm --filter @tenkings/database build` -> pass
+  - targeted Next lint -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing warnings outside this change
+  - `git diff --check` -> pass
+- Planned production action:
+  - commit with `feat(locations): machine coordinates, pin drop maps, google maps navigation`
+  - fetch remote and print branch/HEAD before push
+  - push `main` to `origin/main`
+  - SSH to the droplet, pull latest `main`, export `DATABASE_URL`, and run `pnpm --filter @tenkings/database exec prisma migrate deploy`
+  - no restart or destructive data operation is planned
 
 ## Session Update (2026-04-12, docs-only startup context + git-state report after Stocker admin fix)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`:

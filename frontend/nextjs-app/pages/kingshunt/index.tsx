@@ -5,7 +5,14 @@ import type { GetServerSideProps, InferGetServerSidePropsType } from "next";
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
 import { haversineDistance } from "../../lib/geo";
-import { formatDistance, formatLocationHours, getLocationTypeLabel, type DetectVenue, type KingsHuntLocation } from "../../lib/kingsHunt";
+import {
+  formatDistance,
+  formatLocationHours,
+  getLocationTypeLabel,
+  getMachinePosition,
+  type DetectVenue,
+  type KingsHuntLocation,
+} from "../../lib/kingsHunt";
 import { listActiveKingsHuntLocations } from "../../lib/server/kingsHunt";
 
 interface KingsHuntIndexPageProps {
@@ -54,12 +61,13 @@ export default function KingsHuntIndexPage({
         }
 
         const currentDistances = locations.reduce<DistanceLookup>((accumulator, location) => {
-          if (typeof location.latitude === "number" && typeof location.longitude === "number") {
+          const machinePosition = getMachinePosition(location);
+          if (machinePosition) {
             accumulator[location.slug] = haversineDistance(
               position.coords.latitude,
               position.coords.longitude,
-              location.latitude,
-              location.longitude,
+              machinePosition.lat,
+              machinePosition.lng,
             );
           }
 

@@ -28,6 +28,9 @@ const locationUpdateSchema = z.object({
   venueCenterLat: nullableNumber,
   venueCenterLng: nullableNumber,
   geofenceRadiusM: nullableInteger,
+  machineLat: nullableNumber,
+  machineLng: nullableNumber,
+  machineGeofenceM: nullableInteger,
   walkingTimeMin: nullableInteger,
   landmarks: z.array(z.string()).optional(),
   hasIndoorMap: z.boolean().optional(),
@@ -155,6 +158,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       "venueCenterLat",
       "venueCenterLng",
       "geofenceRadiusM",
+      "machineLat",
+      "machineLng",
+      "machineGeofenceM",
       "walkingTimeMin",
     ] as const;
 
@@ -177,6 +183,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
     }
     if (data.longitude !== undefined && data.venueCenterLng === undefined) {
       updateData.venueCenterLng = data.longitude;
+    }
+    if ((data.machineLat !== undefined || data.machineLng !== undefined) && data.machineGeofenceM === undefined) {
+      updateData.machineGeofenceM = currentLocation.machineGeofenceM ?? 20;
     }
 
     const updated = await prisma.location.update({

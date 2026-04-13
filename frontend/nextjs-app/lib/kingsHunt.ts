@@ -52,6 +52,9 @@ export interface KingsHuntLocation {
   venueCenterLat: number | null;
   venueCenterLng: number | null;
   geofenceRadiusM: number | null;
+  machineLat: number | null;
+  machineLng: number | null;
+  machineGeofenceM: number | null;
   city: string | null;
   state: string | null;
   zip: string | null;
@@ -256,12 +259,16 @@ export function isLocationActive(status: string | null | undefined): boolean {
   return !status || status === "active";
 }
 
-export function getMachinePosition(location: Pick<KingsHuntLocation, "latitude" | "longitude">): LatLng | null {
-  if (typeof location.latitude !== "number" || typeof location.longitude !== "number") {
+export function getMachinePosition(
+  location: Pick<KingsHuntLocation, "latitude" | "longitude" | "machineLat" | "machineLng">,
+): LatLng | null {
+  const lat = typeof location.machineLat === "number" ? location.machineLat : location.latitude;
+  const lng = typeof location.machineLng === "number" ? location.machineLng : location.longitude;
+  if (typeof lat !== "number" || typeof lng !== "number") {
     return null;
   }
 
-  return { lat: location.latitude, lng: location.longitude };
+  return { lat, lng };
 }
 
 export function getVenueCenterPosition(
@@ -271,16 +278,21 @@ export function getVenueCenterPosition(
     return { lat: location.venueCenterLat, lng: location.venueCenterLng };
   }
 
-  return getMachinePosition(location);
+  if (typeof location.latitude !== "number" || typeof location.longitude !== "number") {
+    return null;
+  }
+
+  return { lat: location.latitude, lng: location.longitude };
 }
 
 export function buildDirectionsHref(
-  location: Pick<KingsHuntLocation, "latitude" | "longitude" | "address" | "mapsUrl">,
+  location: Pick<KingsHuntLocation, "latitude" | "longitude" | "machineLat" | "machineLng" | "address" | "mapsUrl">,
   origin?: LatLng | null,
 ): string {
-  if (origin && typeof location.latitude === "number" && typeof location.longitude === "number") {
+  const destination = getMachinePosition(location);
+  if (origin && destination) {
     const originValue = `${origin.lat},${origin.lng}`;
-    const destinationValue = `${location.latitude},${location.longitude}`;
+    const destinationValue = `${destination.lat},${destination.lng}`;
     return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(originValue)}&destination=${encodeURIComponent(destinationValue)}&travelmode=walking`;
   }
 
@@ -288,8 +300,8 @@ export function buildDirectionsHref(
     return location.mapsUrl;
   }
 
-  if (typeof location.latitude === "number" && typeof location.longitude === "number") {
-    return `https://www.google.com/maps/search/?api=1&query=${location.latitude},${location.longitude}`;
+  if (destination) {
+    return `https://www.google.com/maps/search/?api=1&query=${destination.lat},${destination.lng}`;
   }
 
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(location.address)}`;

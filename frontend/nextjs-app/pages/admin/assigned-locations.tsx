@@ -2,7 +2,7 @@ import Head from "next/head";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import AppShell from "../../components/AppShell";
-import { AddLocationModal } from "../../components/admin/AddLocationModal";
+import { AddLocationModal, type CreateLocationInput } from "../../components/admin/AddLocationModal";
 import {
   ADMIN_PAGE_FRAME_CLASS,
   AdminPageHeader,
@@ -102,7 +102,7 @@ export default function AssignedLocationsPage() {
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
-  const handleCreateLocation = async (value: { name: string; address: string; slug: string }) => {
+  const handleCreateLocation = async (value: CreateLocationInput) => {
     setLocationCreateBusy(true);
     setLocationCreateError(null);
 

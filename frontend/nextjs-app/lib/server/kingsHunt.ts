@@ -24,6 +24,9 @@ export const kingsHuntLocationSelect = {
   venueCenterLat: true,
   venueCenterLng: true,
   geofenceRadiusM: true,
+  machineLat: true,
+  machineLng: true,
+  machineGeofenceM: true,
   city: true,
   state: true,
   zip: true,
@@ -57,6 +60,9 @@ export function mapLocationRecordToDTO(location: KingsHuntLocationRecord): Kings
     venueCenterLat: location.venueCenterLat ?? null,
     venueCenterLng: location.venueCenterLng ?? null,
     geofenceRadiusM: location.geofenceRadiusM ?? null,
+    machineLat: location.machineLat ?? null,
+    machineLng: location.machineLng ?? null,
+    machineGeofenceM: location.machineGeofenceM ?? null,
     city: location.city ?? null,
     state: location.state ?? null,
     zip: location.zip ?? null,
@@ -144,7 +150,11 @@ export async function detectKingsHuntLocations(lat: number, lng: number): Promis
   };
 }
 
-export function computeDistanceToMachine(location: Pick<KingsHuntLocation, "latitude" | "longitude">, lat: number, lng: number): number | null {
+export function computeDistanceToMachine(
+  location: Pick<KingsHuntLocation, "latitude" | "longitude" | "machineLat" | "machineLng">,
+  lat: number,
+  lng: number,
+): number | null {
   const destination = getMachinePosition(location);
   if (!destination) {
     return null;

@@ -15088,6 +15088,67 @@
 - Commit with `fix(stocker): allow admin users to access stocker portal`.
 - Push `main` to `origin/main`.
 
+## 2026-04-12 - Machine coordinates, pin drop maps, and stocker Google Maps navigation
+
+### Summary
+- Re-read required startup docs from `/Users/markthomas/tenkings-task27-main` per `AGENTS.md` in the active session.
+- Pulled latest `main` before editing:
+  - initial sandboxed `git pull --ff-only --autostash origin main` failed DNS
+  - approved network retry -> `Already up to date.`
+- Added machine-specific Location fields and migration SQL:
+  - `machineLat`
+  - `machineLng`
+  - `machineGeofenceM` default `20`
+- Added reusable admin `PinDropMap` using the existing Google Maps loader, dark map style, draggable Advanced Marker pins, click-to-place, and optional geofence circles.
+- Added venue and machine pin-drop maps to the admin location edit page and expanded the Add Location modal with geocoding, venue coordinates/geofence, and machine coordinates/geofence.
+- Updated location create/update APIs to accept and persist machine coordinates.
+- Updated stocker operations so:
+  - machine proximity uses `machineLat` / `machineLng` with fallback to venue coordinates
+  - walking guidance targets machine coordinates
+  - `/stocker/route` shows a `Start Navigation` Google Maps URL for remaining stops
+  - route page shows an arrived banner with `Start Indoor Guidance` instead of auto-navigating away on geofence events
+- Updated Kings Hunt machine destination helpers to prefer `machineLat` / `machineLng` with fallback to venue coordinates.
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260412171500_add_machine_coordinates/migration.sql`
+- `frontend/nextjs-app/components/admin/PinDropMap.tsx`
+- `frontend/nextjs-app/components/admin/AddLocationModal.tsx`
+- `frontend/nextjs-app/pages/admin/locations/[slug]/edit.tsx`
+- `frontend/nextjs-app/pages/admin/assigned-locations.tsx`
+- `frontend/nextjs-app/pages/api/admin/locations/index.ts`
+- `frontend/nextjs-app/pages/api/locations/[locationId].ts`
+- `frontend/nextjs-app/pages/api/locations/index.ts`
+- `frontend/nextjs-app/lib/server/stocker.ts`
+- `frontend/nextjs-app/types/stocker.ts`
+- `frontend/nextjs-app/pages/stocker/route.tsx`
+- `frontend/nextjs-app/lib/kingsHunt.ts`
+- `frontend/nextjs-app/lib/server/kingsHunt.ts`
+- `frontend/nextjs-app/pages/kingshunt/index.tsx`
+- `frontend/nextjs-app/pages/admin/stocker-ops/routes.tsx`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database exec prisma migrate dev --name add_machine_coordinates` -> blocked locally by missing workstation `DATABASE_URL` (`P1012`); checked-in migration SQL is present.
+- `pnpm --filter @tenkings/database generate` -> pass.
+- `DATABASE_URL=postgresql://user:pass@localhost:5432/tenkings pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file components/admin/PinDropMap.tsx --file components/admin/AddLocationModal.tsx --file 'pages/admin/locations/[slug]/edit.tsx' --file pages/admin/assigned-locations.tsx --file pages/stocker/route.tsx --file lib/server/stocker.ts --file lib/kingsHunt.ts --file lib/server/kingsHunt.ts --file pages/api/admin/locations/index.ts --file 'pages/api/locations/[locationId].ts' --file pages/api/locations/index.ts --file pages/kingshunt/index.tsx --file pages/admin/stocker-ops/routes.tsx` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing warnings outside this change.
+- `git diff --check` -> pass.
+
+### Planned Production Push
+- Commit with `feat(locations): machine coordinates, pin drop maps, google maps navigation`.
+- Fetch remote before push and print branch / HEAD.
+- Push `main` to `origin/main`.
+
+### Planned Production Migration
+- After push, SSH to `root@104.131.27.245`.
+- Pull latest `main` in `/root/tenkings-backend`.
+- Export `DATABASE_URL` from `infra` / `bytebot-lite-service`.
+- Run `pnpm --filter @tenkings/database exec prisma migrate deploy`.
+- No restart or destructive data operation is planned.
+
 ## 2026-04-12 - Stocker auth phone-first resolver fix
 
 ### Summary

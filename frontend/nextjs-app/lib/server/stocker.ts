@@ -219,6 +219,9 @@ export function serializeLocation(location: {
   venueCenterLat: number | null;
   venueCenterLng: number | null;
   geofenceRadiusM: number | null;
+  machineLat: number | null;
+  machineLng: number | null;
+  machineGeofenceM: number | null;
   description: string | null;
   landmarks: string[];
 }): LocationSummary {
@@ -234,6 +237,9 @@ export function serializeLocation(location: {
     venueCenterLat: location.venueCenterLat,
     venueCenterLng: location.venueCenterLng,
     geofenceRadiusM: location.geofenceRadiusM ?? 500,
+    machineLat: location.machineLat,
+    machineLng: location.machineLng,
+    machineGeofenceM: location.machineGeofenceM ?? 20,
     description: location.description,
     landmarks: Array.isArray(location.landmarks) ? location.landmarks : [],
   };
@@ -377,6 +383,9 @@ export async function getRouteLocations(locationIds: string[]): Promise<Location
       venueCenterLat: true,
       venueCenterLng: true,
       geofenceRadiusM: true,
+      machineLat: true,
+      machineLng: true,
+      machineGeofenceM: true,
       description: true,
       landmarks: true,
     },
@@ -633,11 +642,13 @@ export async function getWalkingGuidance(
   from: { lat: number; lng: number },
   location: LocationSummary,
 ): Promise<WalkingGuidanceData> {
-  if (location.latitude == null || location.longitude == null) {
+  const machineLat = location.machineLat ?? location.latitude;
+  const machineLng = location.machineLng ?? location.longitude;
+  if (machineLat == null || machineLng == null) {
     throw new StockerApiError(400, "LOCATION_MISSING_COORDINATES", "Location is missing machine coordinates");
   }
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
-  let walkingDistanceM = Math.round(haversineDistanceM(from, { lat: location.latitude, lng: location.longitude }));
+  let walkingDistanceM = Math.round(haversineDistanceM(from, { lat: machineLat, lng: machineLng }));
   let walkingDurationS = 0;
   let encodedPolyline: string | null = null;
 
@@ -651,7 +662,7 @@ export async function getWalkingGuidance(
       },
       body: JSON.stringify({
         origin: { location: { latLng: { latitude: from.lat, longitude: from.lng } } },
-        destination: { location: { latLng: { latitude: location.latitude, longitude: location.longitude } } },
+        destination: { location: { latLng: { latitude: machineLat, longitude: machineLng } } },
         travelMode: "WALK",
         polylineQuality: "HIGH_QUALITY",
         polylineEncoding: "ENCODED_POLYLINE",
@@ -682,7 +693,7 @@ export async function getWalkingGuidance(
     locationName: location.name,
     locationDescription: location.description,
     landmarks: location.landmarks,
-    machineLocation: { lat: location.latitude, lng: location.longitude },
+    machineLocation: { lat: machineLat, lng: machineLng },
   };
 }
 
@@ -704,6 +715,9 @@ const CURRENT_SHIFT_INCLUDE = {
           venueCenterLat: true,
           venueCenterLng: true,
           geofenceRadiusM: true,
+          machineLat: true,
+          machineLng: true,
+          machineGeofenceM: true,
           description: true,
           landmarks: true,
         },
@@ -776,6 +790,9 @@ export async function assertStopForStocker(stockerId: string, stopId: string) {
           venueCenterLat: true,
           venueCenterLng: true,
           geofenceRadiusM: true,
+          machineLat: true,
+          machineLng: true,
+          machineGeofenceM: true,
           description: true,
           landmarks: true,
         },
@@ -806,6 +823,9 @@ export async function advanceToNextStop(shiftId: string, completedOrder: number,
           venueCenterLat: true,
           venueCenterLng: true,
           geofenceRadiusM: true,
+          machineLat: true,
+          machineLng: true,
+          machineGeofenceM: true,
           description: true,
           landmarks: true,
         },
@@ -852,11 +872,14 @@ export async function runPositionGeofenceChecks(params: {
 
   for (const stop of stops) {
     if (stop.location.latitude == null || stop.location.longitude == null) continue;
-    const distance = haversineDistanceM(position, { lat: stop.location.latitude, lng: stop.location.longitude });
     const venueLat = stop.location.venueCenterLat ?? stop.location.latitude;
     const venueLng = stop.location.venueCenterLng ?? stop.location.longitude;
+    const machineLat = stop.location.machineLat ?? stop.location.latitude;
+    const machineLng = stop.location.machineLng ?? stop.location.longitude;
     const venueDistance = haversineDistanceM(position, { lat: venueLat, lng: venueLng });
     const locationRadius = stop.location.geofenceRadiusM ?? 500;
+    const machineDistance = haversineDistanceM(position, { lat: machineLat, lng: machineLng });
+    const machineRadius = stop.location.machineGeofenceM ?? 20;
 
     if (stop.status === "in_transit" && venueDistance <= locationRadius) {
       await prisma.stockerStop.update({
@@ -873,7 +896,7 @@ export async function runPositionGeofenceChecks(params: {
       });
     }
 
-    if ((stop.status === "arrived" || events.some((event) => event.stopId === stop.id)) && distance <= 15) {
+    if ((stop.status === "arrived" || events.some((event) => event.stopId === stop.id)) && machineDistance <= machineRadius) {
       await prisma.stockerStop.update({
         where: { id: stop.id },
         data: { status: "restocking", taskStartedAt: stop.taskStartedAt ?? new Date() },
@@ -964,6 +987,9 @@ export async function buildLiveStockerPositions(): Promise<LiveStockerPosition[]
               venueCenterLat: true,
               venueCenterLng: true,
               geofenceRadiusM: true,
+              machineLat: true,
+              machineLng: true,
+              machineGeofenceM: true,
               description: true,
               landmarks: true,
             },

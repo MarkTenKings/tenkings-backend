@@ -1,4 +1,5 @@
 import Head from "next/head";
+import dynamic from "next/dynamic";
 import { useRouter } from "next/router";
 import { useEffect, useMemo, useState } from "react";
 import AppShell from "../../../../components/AppShell";
@@ -14,6 +15,16 @@ import { hasAdminAccess, hasAdminPhoneAccess } from "../../../../constants/admin
 import { useSession } from "../../../../hooks/useSession";
 import { buildAdminHeaders } from "../../../../lib/adminHeaders";
 import { LOCATION_STATUS_VALUES, type LocationLiveStatusResponse } from "../../../../lib/locationStatus";
+import type { PinDropMapProps } from "../../../../components/admin/PinDropMap";
+
+const PinDropMap = dynamic<PinDropMapProps>(() => import("../../../../components/admin/PinDropMap").then((mod) => mod.PinDropMap), {
+  ssr: false,
+  loading: () => (
+    <div className="flex h-[280px] items-center justify-center rounded-lg border border-white/10 bg-black/40 text-[11px] uppercase tracking-[0.24em] text-gold-300">
+      Loading map
+    </div>
+  ),
+});
 
 type EditableLocation = {
   id: string;
@@ -32,6 +43,9 @@ type EditableLocation = {
   venueCenterLat: number | null;
   venueCenterLng: number | null;
   geofenceRadiusM: number | null;
+  machineLat: number | null;
+  machineLng: number | null;
+  machineGeofenceM: number | null;
   mapsUrl: string | null;
   mediaUrl: string | null;
   machinePhotoUrl: string | null;
@@ -100,6 +114,9 @@ function normalizeLoadedLocation(payload: Partial<EditableLocation>): EditableLo
     venueCenterLat: typeof payload.venueCenterLat === "number" ? payload.venueCenterLat : null,
     venueCenterLng: typeof payload.venueCenterLng === "number" ? payload.venueCenterLng : null,
     geofenceRadiusM: typeof payload.geofenceRadiusM === "number" ? payload.geofenceRadiusM : null,
+    machineLat: typeof payload.machineLat === "number" ? payload.machineLat : null,
+    machineLng: typeof payload.machineLng === "number" ? payload.machineLng : null,
+    machineGeofenceM: typeof payload.machineGeofenceM === "number" ? payload.machineGeofenceM : null,
     mapsUrl: payload.mapsUrl ?? null,
     mediaUrl: payload.mediaUrl ?? null,
     machinePhotoUrl: payload.machinePhotoUrl ?? null,
@@ -127,6 +144,7 @@ export default function EditLocationPage() {
   const [loadingLocation, setLoadingLocation] = useState(false);
   const [saving, setSaving] = useState(false);
   const [fetchingHours, setFetchingHours] = useState(false);
+  const [geocodingAddress, setGeocodingAddress] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const isAdmin = useMemo(
@@ -177,6 +195,52 @@ export default function EditLocationPage() {
 
   const updateLocationField = <Key extends keyof EditableLocation>(key: Key, value: EditableLocation[Key]) => {
     setLocation((current) => (current ? { ...current, [key]: value } : current));
+  };
+
+  const handleGeocodeAddress = async () => {
+    if (!location?.address.trim()) {
+      return;
+    }
+
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+    if (!apiKey) {
+      setError("Missing Google Maps browser API key.");
+      return;
+    }
+
+    setGeocodingAddress(true);
+    setError(null);
+
+    try {
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(location.address)}&key=${encodeURIComponent(apiKey)}`,
+      );
+      const payload = (await response.json().catch(() => ({}))) as {
+        results?: Array<{ geometry?: { location?: { lat?: number; lng?: number } } }>;
+        error_message?: string;
+        status?: string;
+      };
+      const nextPosition = payload.results?.[0]?.geometry?.location;
+      if (typeof nextPosition?.lat !== "number" || typeof nextPosition.lng !== "number") {
+        throw new Error(payload.error_message ?? "Google did not return coordinates for this address.");
+      }
+
+      setLocation((current) =>
+        current
+          ? {
+              ...current,
+              latitude: nextPosition.lat as number,
+              longitude: nextPosition.lng as number,
+              venueCenterLat: nextPosition.lat as number,
+              venueCenterLng: nextPosition.lng as number,
+            }
+          : current,
+      );
+    } catch (geocodeError: unknown) {
+      setError(geocodeError instanceof Error ? geocodeError.message : "Failed to geocode address");
+    } finally {
+      setGeocodingAddress(false);
+    }
   };
 
   const handleFetchHours = async () => {
@@ -322,8 +386,41 @@ export default function EditLocationPage() {
                 );
               }
 
+              if (field.key === "address") {
+                return (
+                  <div key={field.key} className="space-y-2 md:col-span-2">
+                    <label className="space-y-2">
+                      <span className="block text-[11px] uppercase tracking-[0.24em] text-slate-500">
+                        {field.label}
+                        {field.required ? " *" : ""}
+                      </span>
+                      {input}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => void handleGeocodeAddress()}
+                      disabled={geocodingAddress}
+                      style={{
+                        marginTop: "4px",
+                        padding: "6px 12px",
+                        background: "transparent",
+                        border: "1px solid #333",
+                        borderRadius: "4px",
+                        color: "#d4a843",
+                        fontSize: "11px",
+                        fontFamily: "Satoshi, sans-serif",
+                        cursor: geocodingAddress ? "wait" : "pointer",
+                        opacity: geocodingAddress ? 0.65 : 1,
+                      }}
+                    >
+                      {geocodingAddress ? "Geocoding..." : "Geocode Address"}
+                    </button>
+                  </div>
+                );
+              }
+
               return (
-                <label key={field.key} className={field.key === "address" ? "space-y-2 md:col-span-2" : "space-y-2"}>
+                <label key={field.key} className="space-y-2">
                   <span className="block text-[11px] uppercase tracking-[0.24em] text-slate-500">
                     {field.label}
                     {field.required ? " *" : ""}
@@ -375,13 +472,126 @@ export default function EditLocationPage() {
               />
             </label>
 
+            <div className="space-y-3 md:col-span-2">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Venue Location</p>
+                <p className="mt-1 text-xs text-slate-500">Drop the gold pin on the venue or building location.</p>
+              </div>
+              <PinDropMap
+                lat={location.latitude}
+                lng={location.longitude}
+                onPositionChange={(nextLat, nextLng) => {
+                  setLocation((current) =>
+                    current
+                      ? {
+                          ...current,
+                          latitude: nextLat,
+                          longitude: nextLng,
+                          venueCenterLat: current.venueCenterLat ?? nextLat,
+                          venueCenterLng: current.venueCenterLng ?? nextLng,
+                        }
+                      : current,
+                  );
+                }}
+                geofenceRadiusM={location.geofenceRadiusM ?? 500}
+                pinColor="#d4a843"
+                pinLabel="V"
+                height="280px"
+                zoom={15}
+              />
+            </div>
+
+            <div className="space-y-3 md:col-span-2">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Machine Location</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Drop the blue pin on the exact Ten Kings machine position. The machine geofence defaults to 20 meters.
+                </p>
+              </div>
+              <PinDropMap
+                lat={location.machineLat}
+                lng={location.machineLng}
+                onPositionChange={(nextLat, nextLng) => {
+                  setLocation((current) =>
+                    current
+                      ? {
+                          ...current,
+                          machineLat: nextLat,
+                          machineLng: nextLng,
+                          machineGeofenceM: current.machineGeofenceM ?? 20,
+                        }
+                      : current,
+                  );
+                }}
+                geofenceRadiusM={location.machineGeofenceM ?? 20}
+                pinColor="#3b82f6"
+                pinLabel="M"
+                height="280px"
+                zoom={18}
+                defaultCenter={
+                  typeof location.latitude === "number" && typeof location.longitude === "number"
+                    ? { lat: location.latitude, lng: location.longitude }
+                    : null
+                }
+              />
+            </div>
+
+            <label className="space-y-2">
+              <span className="block text-[11px] uppercase tracking-[0.24em] text-slate-500">Machine Latitude</span>
+              <input
+                type="number"
+                step="any"
+                value={location.machineLat ?? ""}
+                onChange={(event) => updateLocationField("machineLat", parseNumberInput(event.target.value))}
+                className={adminInputClass("w-full")}
+              />
+            </label>
+
+            <label className="space-y-2">
+              <span className="block text-[11px] uppercase tracking-[0.24em] text-slate-500">Machine Longitude</span>
+              <input
+                type="number"
+                step="any"
+                value={location.machineLng ?? ""}
+                onChange={(event) => updateLocationField("machineLng", parseNumberInput(event.target.value))}
+                className={adminInputClass("w-full")}
+              />
+            </label>
+
+            <label className="space-y-2 md:col-span-2">
+              <span className="block text-[11px] uppercase tracking-[0.24em] text-slate-500">Machine Geofence (meters)</span>
+              <input
+                type="number"
+                value={location.machineGeofenceM ?? 20}
+                onChange={(event) => updateLocationField("machineGeofenceM", parseNumberInput(event.target.value, true) ?? 20)}
+                className={adminInputClass("w-full")}
+              />
+              <p className="text-xs text-slate-500">Default: 20 meters. Triggers stocker task workflow when within this distance.</p>
+            </label>
+
             {numberFields.map((field) => (
               <label key={field.key} className="space-y-2">
                 <span className="block text-[11px] uppercase tracking-[0.24em] text-slate-500">{field.label}</span>
                 <input
                   type="number"
+                  step={field.integer ? undefined : "any"}
                   value={location[field.key] ?? ""}
-                  onChange={(event) => updateLocationField(field.key, parseNumberInput(event.target.value, field.integer))}
+                  onChange={(event) => {
+                    const parsed = parseNumberInput(event.target.value, field.integer);
+                    if (field.key === "latitude") {
+                      setLocation((current) =>
+                        current ? { ...current, latitude: parsed, venueCenterLat: current.venueCenterLat ?? parsed } : current,
+                      );
+                      return;
+                    }
+                    if (field.key === "longitude") {
+                      setLocation((current) =>
+                        current ? { ...current, longitude: parsed, venueCenterLng: current.venueCenterLng ?? parsed } : current,
+                      );
+                      return;
+                    }
+                    updateLocationField(field.key, parsed);
+                  }}
                   className={adminInputClass("w-full")}
                 />
               </label>

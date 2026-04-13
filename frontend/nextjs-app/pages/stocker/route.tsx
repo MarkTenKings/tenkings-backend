@@ -58,6 +58,38 @@ function insideLocationGeofence(position: LatLng, location: LocationSummary) {
   return haversine(position, { lat, lng }) <= location.geofenceRadiusM;
 }
 
+function drivingPositionForLocation(location: LocationSummary): LatLng | null {
+  const lat = location.venueCenterLat ?? location.latitude;
+  const lng = location.venueCenterLng ?? location.longitude;
+  return typeof lat === "number" && typeof lng === "number" ? { lat, lng } : null;
+}
+
+function buildGoogleMapsUrl(
+  currentLat: number,
+  currentLng: number,
+  remainingStops: Array<{ latitude: number; longitude: number }>,
+) {
+  if (remainingStops.length === 0) return null;
+
+  const destination = remainingStops[remainingStops.length - 1];
+  const params = new URLSearchParams({
+    api: "1",
+    origin: `${currentLat},${currentLng}`,
+    destination: `${destination.latitude},${destination.longitude}`,
+    travelmode: "driving",
+  });
+
+  const waypoints = remainingStops
+    .slice(0, -1)
+    .map((stop) => `${stop.latitude},${stop.longitude}`)
+    .join("|");
+  if (waypoints) {
+    params.set("waypoints", waypoints);
+  }
+
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
+}
+
 export default function StockerRoutePage() {
   const router = useRouter();
   const { session, loading, ensureSession } = useSession();
@@ -72,6 +104,7 @@ export default function StockerRoutePage() {
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState("00:00");
   const [ending, setEnding] = useState(false);
+  const [arrivedStopId, setArrivedStopId] = useState<string | null>(null);
   const lastReportAtRef = useRef(0);
   const shiftRef = useRef(shift);
   const sessionRef = useRef(session);
@@ -115,9 +148,25 @@ export default function StockerRoutePage() {
   );
   const remainingStopKey = useMemo(() => remainingStops.map((stop) => `${stop.id}:${stop.status}`).join("|"), [remainingStops]);
   const nextDistance = useMemo(() => {
-    if (!position || !nextStop?.location.latitude || !nextStop.location.longitude) return null;
-    return haversine(position, { lat: nextStop.location.latitude, lng: nextStop.location.longitude });
+    const nextPosition = nextStop ? drivingPositionForLocation(nextStop.location) : null;
+    if (!position || !nextPosition) return null;
+    return haversine(position, nextPosition);
   }, [nextStop, position]);
+  const arrivedAtStop = useMemo(
+    () =>
+      stops.find((stop) => stop.id === arrivedStopId && (stop.status === "arrived" || stop.status === "restocking")) ??
+      stops.find((stop) => stop.status === "arrived" || stop.status === "restocking") ??
+      null,
+    [arrivedStopId, stops],
+  );
+  const googleMapsNavigationUrl = useMemo(() => {
+    if (!position || remainingStops.length === 0) return null;
+    const navigationStops = remainingStops
+      .map((stop) => drivingPositionForLocation(stop.location))
+      .filter((stop): stop is LatLng => Boolean(stop))
+      .map((stop) => ({ latitude: stop.lat, longitude: stop.lng }));
+    return buildGoogleMapsUrl(position.lat, position.lng, navigationStops);
+  }, [position, remainingStops]);
 
   useEffect(() => {
     nextStopRef.current = nextStop;
@@ -151,12 +200,13 @@ export default function StockerRoutePage() {
           const events = (payload?.data?.geofence ?? []) as GeofenceEvent[];
           const locationEvent = events.find((event) => event.type === "location_entered" || event.type === "machine_reached");
           if (locationEvent?.stopId) {
-            void router.push({ pathname: `/stocker/stop/${locationEvent.stopId}`, query: { shiftId: activeShift.id } });
+            setArrivedStopId(locationEvent.stopId);
+            void refresh();
           }
         })
         .catch(() => undefined);
     },
-    [router],
+    [refresh],
   );
 
   useEffect(() => {
@@ -280,6 +330,18 @@ export default function StockerRoutePage() {
         <div className="absolute right-4 top-4 rounded-md border border-zinc-800 bg-black/75 px-3 py-2 font-mono text-sm text-[#d4a843] backdrop-blur">
           {elapsed}
         </div>
+        {arrivedAtStop ? (
+          <div className="absolute inset-x-0 top-0 z-30 bg-[#22c55e] px-4 py-4 text-center text-black shadow-2xl">
+            <p className="text-sm font-bold uppercase tracking-[0.14em]">Arrived at {arrivedAtStop.location.name}</p>
+            <button
+              type="button"
+              onClick={() => router.push({ pathname: `/stocker/stop/${arrivedAtStop.id}`, query: shift?.id ? { shiftId: shift.id } : {} })}
+              className="mt-3 w-full rounded-md bg-black px-4 py-3 text-sm font-bold uppercase tracking-[0.14em] text-[#22c55e]"
+            >
+              Start Indoor Guidance
+            </button>
+          </div>
+        ) : null}
         <section className="absolute inset-x-3 bottom-3 rounded-md border border-zinc-800 bg-[#111]/90 p-4 shadow-2xl backdrop-blur">
           {shiftLoading ? <p className="text-sm text-zinc-400">Loading route...</p> : null}
           {nextStop ? (
@@ -297,6 +359,16 @@ export default function StockerRoutePage() {
                   {navigationError ?? "Updating driving route..."}
                 </p>
               ) : null}
+              {googleMapsNavigationUrl ? (
+                <a
+                  href={googleMapsNavigationUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-4 block w-full rounded-md bg-[#d4a843] px-4 py-3 text-center text-sm font-bold uppercase tracking-[0.14em] text-black no-underline"
+                >
+                  Start Navigation
+                </a>
+              ) : null}
               <div className="mt-4 flex items-center justify-between gap-3">
                 <button type="button" onClick={skipStop} className="rounded-md border border-[#d4a843]/50 px-4 py-2 text-xs uppercase tracking-[0.16em] text-[#d4a843]">
                   Skip Stop
@@ -312,7 +384,7 @@ export default function StockerRoutePage() {
             </>
           ) : (
             <>
-              <h1 className="font-heading text-xl font-semibold">All stops handled</h1>
+              <h1 className="font-heading text-xl font-semibold uppercase tracking-[0.12em] text-[#d4a843]">Route Complete</h1>
               <p className="mt-1 text-sm text-zinc-400">End the route to complete your shift summary.</p>
               <button disabled={ending} type="button" onClick={endRoute} className="mt-4 h-12 w-full rounded-md bg-[#d4a843] text-sm font-semibold uppercase tracking-[0.16em] text-black disabled:opacity-60">
                 {ending ? "Ending" : "End Route"}

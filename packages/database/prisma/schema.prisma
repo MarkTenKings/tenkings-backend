@@ -404,6 +404,9 @@ model Location {
   venueCenterLat   Float?
   venueCenterLng   Float?
   geofenceRadiusM  Int?              @default(500)
+  machineLat       Float?
+  machineLng       Float?
+  machineGeofenceM Int?              @default(20)
   city             String?
   state            String?
   zip              String?
