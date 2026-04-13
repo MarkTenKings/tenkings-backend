@@ -5,6 +5,7 @@ import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { requireUserSession } from "./session";
 import type {
   GeofenceEvent,
+  DrivingNavigationData,
   LiveStockerPosition,
   LocationSummary,
   RouteLegData,
@@ -417,6 +418,7 @@ function toWaypoint(location: { latitude: number; longitude: number }) {
 }
 
 type RouteApiLocation = LocationSummary & { latitude: number; longitude: number };
+type RouteApiPoint = { latitude: number; longitude: number };
 
 function assertRouteLocations(locations: LocationSummary[]): RouteApiLocation[] {
   const missing = locations.find((location) => location.latitude == null || location.longitude == null);
@@ -424,6 +426,112 @@ function assertRouteLocations(locations: LocationSummary[]): RouteApiLocation[] 
     throw new StockerApiError(400, "LOCATION_MISSING_COORDINATES", `${missing.name} is missing coordinates`);
   }
   return locations as RouteApiLocation[];
+}
+
+function drivingPointForLocation(location: LocationSummary): RouteApiPoint | null {
+  const latitude = location.venueCenterLat ?? location.latitude;
+  const longitude = location.venueCenterLng ?? location.longitude;
+  if (latitude == null || longitude == null) return null;
+  return { latitude, longitude };
+}
+
+function estimateDriveDurationS(distanceM: number) {
+  return Math.round(distanceM / 13.4);
+}
+
+export async function getDrivingNavigation(
+  from: { lat: number; lng: number },
+  stops: LocationSummary[],
+): Promise<DrivingNavigationData> {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  const routeStops = stops.map((stop) => ({ stop, point: drivingPointForLocation(stop) }));
+  const missing = routeStops.find((entry) => !entry.point);
+  if (missing) {
+    throw new StockerApiError(400, "LOCATION_MISSING_COORDINATES", `${missing.stop.name} is missing driving coordinates`);
+  }
+  const points = routeStops.map((entry) => entry.point as RouteApiPoint);
+  if (points.length === 0) {
+    return {
+      encodedPolyline: null,
+      totalDistanceM: 0,
+      totalDurationS: 0,
+      nextDistanceM: 0,
+      nextDurationS: 0,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+  if (points.length > 26) {
+    throw new StockerApiError(400, "ROUTE_TOO_MANY_STOPS", "Google live navigation supports up to 26 remaining stops");
+  }
+
+  if (!apiKey) {
+    const segmentDistances = points.map((point, index) => {
+      const origin = index === 0 ? from : { lat: points[index - 1].latitude, lng: points[index - 1].longitude };
+      return Math.round(haversineDistanceM(origin, { lat: point.latitude, lng: point.longitude }));
+    });
+    const totalDistanceM = segmentDistances.reduce((sum, distance) => sum + distance, 0);
+    const totalDurationS = estimateDriveDurationS(totalDistanceM);
+    return {
+      encodedPolyline: null,
+      totalDistanceM,
+      totalDurationS,
+      nextDistanceM: segmentDistances[0] ?? 0,
+      nextDurationS: estimateDriveDurationS(segmentDistances[0] ?? 0),
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  const destination = points[points.length - 1];
+  const intermediates = points.slice(0, -1);
+  const response = await fetch(ROUTES_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": apiKey,
+      "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs.duration,routes.legs.distanceMeters",
+      "X-Server-Timeout": "10",
+    },
+    body: JSON.stringify({
+      origin: toWaypoint({ latitude: from.lat, longitude: from.lng }),
+      destination: toWaypoint(destination),
+      intermediates: intermediates.map(toWaypoint),
+      travelMode: "DRIVE",
+      routingPreference: "TRAFFIC_AWARE",
+      polylineQuality: "HIGH_QUALITY",
+      polylineEncoding: "ENCODED_POLYLINE",
+      units: "IMPERIAL",
+    }),
+  });
+
+  const data = (await response.json().catch(() => null)) as
+    | {
+        routes?: Array<{
+          duration?: string;
+          distanceMeters?: number;
+          polyline?: { encodedPolyline?: string };
+          legs?: Array<{ duration?: string; distanceMeters?: number }>;
+        }>;
+        error?: { message?: string };
+      }
+    | null;
+
+  if (!response.ok) {
+    throw new StockerApiError(502, "DRIVING_NAVIGATION_FAILED", data?.error?.message ?? "Google Routes API failed");
+  }
+
+  const route = data?.routes?.[0];
+  if (!route) {
+    throw new StockerApiError(502, "DRIVING_NAVIGATION_FAILED", "Google Routes API returned no route");
+  }
+  const firstLeg = route.legs?.[0];
+  return {
+    encodedPolyline: route.polyline?.encodedPolyline ?? null,
+    totalDistanceM: route.distanceMeters ?? null,
+    totalDurationS: parseDurationS(route.duration),
+    nextDistanceM: firstLeg?.distanceMeters ?? null,
+    nextDurationS: parseDurationS(firstLeg?.duration),
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 export async function optimizeRouteLocations(locations: LocationSummary[], shouldOptimize = true) {

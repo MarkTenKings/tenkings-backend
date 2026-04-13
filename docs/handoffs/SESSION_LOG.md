@@ -15117,6 +15117,36 @@
 - Commit with `fix(stocker): resolve portal access by phone before auth id`.
 - Push `main` to `origin/main`.
 
+## 2026-04-13 - Stocker route live GPS and navigation fix
+
+### Summary
+- Pulled latest `main` first:
+  - sandboxed `git pull --ff-only --autostash origin main` failed DNS
+  - approved network retry -> `Already up to date.`
+- Diagnosed `/stocker/route`:
+  - `watchPosition()` was gated on session token plus active shift and did not reliably start on page load
+  - route drawing used the cached route polyline rather than live navigation from the stocker's current GPS point
+  - the bottom card used straight-line distance and no Google route ETA
+  - map framing could lock onto stop markers before GPS arrived, leaving the blue dot off-screen
+  - geofence redirect only happened after the throttled server position post
+- Implemented:
+  - immediate high-accuracy GPS watcher on page mount
+  - ref-based reporting so the watcher can start before shift/session finish loading and still report once active
+  - server `POST /api/stocker/route/navigation` for Google Routes live driving route through remaining stops
+  - live route refresh as GPS moves, with gold polyline, next-stop distance, ETA, and route-update status in the bottom card
+  - map pan/fit behavior that keeps the blue stocker dot visible
+  - forced position/geofence report when live GPS enters the next stop geofence
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/stocker/route.tsx --file components/stocker/ActiveRouteMap.tsx --file pages/api/stocker/route/navigation.ts --file lib/server/stocker.ts --file types/stocker.ts` -> pass.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings.
+- `git diff --check` -> pass.
+
+### Planned Production Push
+- Commit with `fix(stocker): enable live GPS route navigation`.
+- Push `main` to `origin/main`.
+
 ## 2026-04-12 - Docs-only startup context refresh and git-state report after Stocker admin fix
 
 ### Summary

@@ -35,6 +35,8 @@ export default function ActiveRouteMap({ stops, encodedPolyline, userPosition, n
   const userMarkerRef = useRef<google.maps.marker.AdvancedMarkerElement | null>(null);
   const routeRef = useRef<google.maps.Polyline | null>(null);
   const framedRef = useRef(false);
+  const framedUserRef = useRef(false);
+  const lastUserPanAtRef = useRef(0);
 
   const stopPositions = useMemo(
     () =>
@@ -95,6 +97,7 @@ export default function ActiveRouteMap({ stops, encodedPolyline, userPosition, n
           position,
           title: stop.location.name,
           content: markerNode(kind),
+          zIndex: kind === "next" ? 30 : kind === "completed" ? 20 : 10,
         }),
       );
     }
@@ -110,10 +113,16 @@ export default function ActiveRouteMap({ stops, encodedPolyline, userPosition, n
       return;
     }
     if (!userMarkerRef.current) {
-      userMarkerRef.current = new AdvancedMarkerElement({ map, position: userPosition, title: "Your location", content: userNode() });
+      userMarkerRef.current = new AdvancedMarkerElement({ map, position: userPosition, title: "Your location", content: userNode(), zIndex: 100 });
     } else {
       userMarkerRef.current.position = userPosition;
       userMarkerRef.current.map = map;
+    }
+
+    const now = Date.now();
+    if (framedUserRef.current && now - lastUserPanAtRef.current > 5000) {
+      map.panTo(userPosition);
+      lastUserPanAtRef.current = now;
     }
   }, [libraries, userPosition]);
 
@@ -151,6 +160,19 @@ export default function ActiveRouteMap({ stops, encodedPolyline, userPosition, n
       map.fitBounds(bounds, 64);
       framedRef.current = true;
     }
+  }, [stopPositions, userPosition]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !userPosition || framedUserRef.current) return;
+    const bounds = new google.maps.LatLngBounds();
+    bounds.extend(userPosition);
+    for (const { position } of stopPositions) {
+      bounds.extend(position);
+    }
+    map.fitBounds(bounds, 72);
+    framedUserRef.current = true;
+    lastUserPanAtRef.current = Date.now();
   }, [stopPositions, userPosition]);
 
   if (loadError) return <MapFallback title="Map unavailable" body={loadError.message} className="h-full min-h-[100dvh] rounded-none" />;

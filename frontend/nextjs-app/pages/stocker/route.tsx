@@ -1,14 +1,23 @@
 import dynamic from "next/dynamic";
 import Head from "next/head";
 import { useRouter } from "next/router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSession } from "../../hooks/useSession";
 import { useStockerShift } from "../../hooks/useStockerShift";
-import type { GeofenceEvent, LocationSummary, StockerStopData } from "../../types/stocker";
+import type { DrivingNavigationData, GeofenceEvent, LocationSummary, StockerStopData } from "../../types/stocker";
 
 const ActiveRouteMap = dynamic(() => import("../../components/stocker/ActiveRouteMap"), { ssr: false });
 
 type LatLng = { lat: number; lng: number };
+type GpsStatus = "starting" | "tracking" | "unavailable" | "denied";
+type GeoSnapshot = {
+  latitude: number;
+  longitude: number;
+  accuracy: number | null;
+  speed: number | null;
+  heading: number | null;
+  timestamp: number;
+};
 
 function formatElapsed(clockInAt: string | null | undefined) {
   if (!clockInAt) return "00:00";
@@ -25,6 +34,13 @@ function distanceText(meters: number | null) {
   return `${(meters / 1609).toFixed(1)} mi`;
 }
 
+function etaText(seconds: number | null | undefined) {
+  if (!seconds) return "ETA pending";
+  const minutes = Math.max(1, Math.round(seconds / 60));
+  if (minutes < 60) return `${minutes} min ETA`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m ETA`;
+}
+
 function haversine(a: LatLng, b: LatLng) {
   const toRad = (value: number) => (value * Math.PI) / 180;
   const dLat = toRad(b.lat - a.lat);
@@ -35,20 +51,40 @@ function haversine(a: LatLng, b: LatLng) {
   return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+function insideLocationGeofence(position: LatLng, location: LocationSummary) {
+  const lat = location.venueCenterLat ?? location.latitude;
+  const lng = location.venueCenterLng ?? location.longitude;
+  if (lat == null || lng == null) return false;
+  return haversine(position, { lat, lng }) <= location.geofenceRadiusM;
+}
+
 export default function StockerRoutePage() {
   const router = useRouter();
   const { session, loading, ensureSession } = useSession();
   const { shift, loading: shiftLoading, refresh } = useStockerShift(session?.token);
   const [position, setPosition] = useState<LatLng | null>(null);
   const [accuracy, setAccuracy] = useState<number | null>(null);
+  const [gpsStatus, setGpsStatus] = useState<GpsStatus>("starting");
+  const [gpsError, setGpsError] = useState<string | null>(null);
+  const [navigation, setNavigation] = useState<DrivingNavigationData | null>(null);
+  const [navigationLoading, setNavigationLoading] = useState(false);
+  const [navigationError, setNavigationError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState("00:00");
   const [ending, setEnding] = useState(false);
   const lastReportAtRef = useRef(0);
   const shiftRef = useRef(shift);
+  const sessionRef = useRef(session);
+  const latestGeoRef = useRef<GeoSnapshot | null>(null);
+  const nextStopRef = useRef<(StockerStopData & { location: LocationSummary }) | null>(null);
+  const lastNavigationRef = useRef<{ position: LatLng | null; stopKey: string; at: number }>({ position: null, stopKey: "", at: 0 });
 
   useEffect(() => {
     shiftRef.current = shift;
   }, [shift]);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
 
   useEffect(() => {
     if (!loading && !session) ensureSession().catch(() => router.replace("/stocker"));
@@ -71,47 +107,138 @@ export default function StockerRoutePage() {
     () => stops.find((stop) => stop.status === "in_transit" || stop.status === "arrived" || stop.status === "restocking") ?? stops.find((stop) => stop.status === "pending") ?? null,
     [stops],
   );
+  const remainingStops = useMemo(
+    () => stops.filter((stop) => stop.status !== "completed" && stop.status !== "skipped").sort((a, b) => a.stopOrder - b.stopOrder),
+    [stops],
+  );
+  const remainingStopKey = useMemo(() => remainingStops.map((stop) => `${stop.id}:${stop.status}`).join("|"), [remainingStops]);
   const nextDistance = useMemo(() => {
     if (!position || !nextStop?.location.latitude || !nextStop.location.longitude) return null;
     return haversine(position, { lat: nextStop.location.latitude, lng: nextStop.location.longitude });
   }, [nextStop, position]);
 
   useEffect(() => {
-    if (!session?.token || !shift?.id || typeof navigator === "undefined" || !navigator.geolocation) return;
+    nextStopRef.current = nextStop;
+  }, [nextStop]);
+
+  const reportPosition = useCallback(
+    (snapshot: GeoSnapshot, force = false) => {
+      const activeSession = sessionRef.current;
+      const activeShift = shiftRef.current;
+      if (!activeSession?.token || !activeShift?.id || activeShift.status !== "active") return;
+
+      const now = Date.now();
+      if (!force && now - lastReportAtRef.current < 10000) return;
+      lastReportAtRef.current = now;
+
+      fetch("/api/stocker/position", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${activeSession.token}` },
+        body: JSON.stringify({
+          shiftId: activeShift.id,
+          latitude: snapshot.latitude,
+          longitude: snapshot.longitude,
+          speed: snapshot.speed,
+          heading: snapshot.heading,
+          accuracy: snapshot.accuracy,
+          timestamp: snapshot.timestamp,
+        }),
+      })
+        .then((response) => response.json().catch(() => null))
+        .then((payload) => {
+          const events = (payload?.data?.geofence ?? []) as GeofenceEvent[];
+          const locationEvent = events.find((event) => event.type === "location_entered" || event.type === "machine_reached");
+          if (locationEvent?.stopId) void router.push(`/stocker/stop/${locationEvent.stopId}`);
+        })
+        .catch(() => undefined);
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setGpsStatus("unavailable");
+      setGpsError("GPS is not available on this device.");
+      return;
+    }
+
+    setGpsStatus("starting");
+    setGpsError(null);
     const watchId = navigator.geolocation.watchPosition(
       (geo) => {
         const next = { lat: geo.coords.latitude, lng: geo.coords.longitude };
+        const snapshot: GeoSnapshot = {
+          latitude: geo.coords.latitude,
+          longitude: geo.coords.longitude,
+          accuracy: Number.isFinite(geo.coords.accuracy) ? geo.coords.accuracy : null,
+          speed: Number.isFinite(geo.coords.speed ?? NaN) ? geo.coords.speed : null,
+          heading: Number.isFinite(geo.coords.heading ?? NaN) ? geo.coords.heading : null,
+          timestamp: geo.timestamp,
+        };
+        latestGeoRef.current = snapshot;
         setPosition(next);
-        setAccuracy(geo.coords.accuracy);
-        const now = Date.now();
-        if (now - lastReportAtRef.current < 10000) return;
-        lastReportAtRef.current = now;
-        fetch("/api/stocker/position", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.token}` },
-          body: JSON.stringify({
-            shiftId: shift.id,
-            latitude: geo.coords.latitude,
-            longitude: geo.coords.longitude,
-            speed: geo.coords.speed,
-            heading: geo.coords.heading,
-            accuracy: geo.coords.accuracy,
-            timestamp: geo.timestamp,
-          }),
-        })
-          .then((response) => response.json().catch(() => null))
-          .then((payload) => {
-            const events = (payload?.data?.geofence ?? []) as GeofenceEvent[];
-            const locationEvent = events.find((event) => event.type === "location_entered" || event.type === "machine_reached");
-            if (locationEvent?.stopId) void router.push(`/stocker/stop/${locationEvent.stopId}`);
-          })
-          .catch(() => undefined);
+        setAccuracy(snapshot.accuracy);
+        setGpsStatus("tracking");
+        setGpsError(null);
+
+        const activeNextStop = nextStopRef.current;
+        const forceGeofenceCheck = activeNextStop ? insideLocationGeofence(next, activeNextStop.location) : false;
+        reportPosition(snapshot, forceGeofenceCheck);
       },
-      () => undefined,
+      (geoError) => {
+        setGpsStatus(geoError.code === geoError.PERMISSION_DENIED ? "denied" : "unavailable");
+        setGpsError(geoError.message || "Unable to read live GPS.");
+      },
       { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
     );
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [router, session?.token, shift?.id]);
+  }, [reportPosition]);
+
+  useEffect(() => {
+    if (shift?.status === "active" && latestGeoRef.current) {
+      reportPosition(latestGeoRef.current, true);
+    }
+  }, [reportPosition, session?.token, shift?.id, shift?.status]);
+
+  useEffect(() => {
+    if (!session?.token || !shift?.id || shift.status !== "active" || !position || remainingStops.length === 0) {
+      if (remainingStops.length === 0) setNavigation(null);
+      return;
+    }
+
+    const now = Date.now();
+    const previous = lastNavigationRef.current;
+    const movedM = previous.position ? haversine(previous.position, position) : Number.POSITIVE_INFINITY;
+    const stopsChanged = previous.stopKey !== remainingStopKey;
+    if (!stopsChanged && movedM < 25 && now - previous.at < 15000) return;
+    if (!stopsChanged && now - previous.at < 8000) return;
+
+    lastNavigationRef.current = { position, stopKey: remainingStopKey, at: now };
+    const controller = new AbortController();
+    setNavigationLoading(true);
+    setNavigationError(null);
+
+    fetch("/api/stocker/route/navigation", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.token}` },
+      body: JSON.stringify({ shiftId: shift.id, latitude: position.lat, longitude: position.lng }),
+    })
+      .then((response) => response.json().then((payload) => ({ response, payload })))
+      .then(({ response, payload }) => {
+        if (!response.ok) throw new Error(payload?.message ?? payload?.error?.message ?? "Unable to update route");
+        setNavigation(payload?.data?.navigation ?? null);
+      })
+      .catch((routeError) => {
+        if (routeError instanceof DOMException && routeError.name === "AbortError") return;
+        setNavigationError(routeError instanceof Error ? routeError.message : "Unable to update route");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setNavigationLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [position, remainingStopKey, remainingStops.length, session?.token, shift?.id, shift?.status]);
 
   const skipStop = async () => {
     if (!nextStop || !session?.token) return;
@@ -142,7 +269,10 @@ export default function StockerRoutePage() {
         <title>Active Route | Ten Kings</title>
       </Head>
       <main className="relative h-[100dvh] overflow-hidden bg-[#050505] text-white">
-        <ActiveRouteMap stops={stops} encodedPolyline={shift?.route?.encodedPolyline ?? null} userPosition={position} nextStopId={nextStop?.id ?? null} />
+        <ActiveRouteMap stops={stops} encodedPolyline={navigation?.encodedPolyline ?? null} userPosition={position} nextStopId={nextStop?.id ?? null} />
+        <div className="absolute left-4 top-4 rounded-md border border-zinc-800 bg-black/75 px-3 py-2 text-xs uppercase tracking-[0.14em] text-zinc-300 backdrop-blur">
+          {gpsError ? gpsStatus : gpsStatus === "tracking" ? "GPS tracking" : "Starting GPS"}
+        </div>
         <div className="absolute right-4 top-4 rounded-md border border-zinc-800 bg-black/75 px-3 py-2 font-mono text-sm text-[#d4a843] backdrop-blur">
           {elapsed}
         </div>
@@ -155,8 +285,14 @@ export default function StockerRoutePage() {
               </p>
               <h1 className="mt-1 font-heading text-xl font-semibold">{nextStop.location.name}</h1>
               <p className="mt-1 text-sm text-zinc-400">
-                {distanceText(nextDistance)} · {accuracy ? `GPS +/- ${Math.round(accuracy)}m` : "ETA pending"}
+                {distanceText(navigation?.nextDistanceM ?? nextDistance)} · {etaText(navigation?.nextDurationS)} ·{" "}
+                {accuracy ? `GPS +/- ${Math.round(accuracy)}m` : gpsError ?? "GPS pending"}
               </p>
+              {navigationLoading || navigationError ? (
+                <p className={navigationError ? "mt-2 text-xs text-red-300" : "mt-2 text-xs text-zinc-500"}>
+                  {navigationError ?? "Updating driving route..."}
+                </p>
+              ) : null}
               <div className="mt-4 flex items-center justify-between gap-3">
                 <button type="button" onClick={skipStop} className="rounded-md border border-[#d4a843]/50 px-4 py-2 text-xs uppercase tracking-[0.16em] text-[#d4a843]">
                   Skip Stop

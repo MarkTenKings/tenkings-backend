@@ -142,3 +142,12 @@ export type WalkingGuidanceData = {
     lng: number;
   };
 };
+
+export type DrivingNavigationData = {
+  encodedPolyline: string | null;
+  totalDistanceM: number | null;
+  totalDurationS: number | null;
+  nextDistanceM: number | null;
+  nextDurationS: number | null;
+  generatedAt: string;
+};

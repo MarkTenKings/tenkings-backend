@@ -8163,3 +8163,27 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/server/stocker.ts --file pages/api/stocker/auth/send-code.ts --file pages/api/stocker/auth/verify.ts --file pages/stocker/index.tsx` -> pass
   - `git diff --check` -> pass
 - No deploy, restart, migration, or destructive data operation was executed.
+
+## Session Update (2026-04-13, Stocker route live GPS and navigation fix)
+- Pulled latest `main` before editing:
+  - initial sandboxed pull hit DNS/network restrictions
+  - approved retry -> `Already up to date.`
+- Diagnosis:
+  - `/stocker/route` only started `watchPosition()` after both the session token and active shift were loaded, so GPS did not reliably prompt/start on page load
+  - the page drew the cached assigned-route polyline, not a live route from the stocker's current position
+  - the bottom card used straight-line haversine distance and did not show Google route ETA
+  - the map framed stop markers before GPS arrived, so the later blue-dot marker could be off-screen
+  - geofence transitions depended on the throttled position post, so arrival could lag unless a report happened near the geofence boundary
+- Fix:
+  - `watchPosition()` now starts immediately on route page mount with `enableHighAccuracy: true`
+  - position reporting uses refs so the active shift/session can be reported as soon as they are available, without restarting the watcher
+  - added `/api/stocker/route/navigation` to compute a Google Routes driving route from the live stocker position through remaining stops
+  - route page now fetches live navigation as the stocker moves and updates route polyline, next-stop distance, and ETA
+  - blue-dot marker is kept visible by fitting/panning after GPS arrives
+  - geofence checks force an immediate position report when the live GPS point enters the next stop geofence
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/stocker/route.tsx --file components/stocker/ActiveRouteMap.tsx --file pages/api/stocker/route/navigation.ts --file lib/server/stocker.ts --file types/stocker.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings
+  - `git diff --check` -> pass
+- No deploy, restart, migration, DB write, or destructive operation was executed.
