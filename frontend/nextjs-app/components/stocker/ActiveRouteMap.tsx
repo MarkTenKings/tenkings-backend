@@ -11,6 +11,8 @@ type ActiveRouteMapProps = {
   stops: Array<StockerStopData & { location: LocationSummary }>;
   encodedPolyline: string | null;
   userPosition: LatLng | null;
+  userHeading?: number | null;
+  mapHeading?: number | null;
   nextStopId: string | null;
 };
 
@@ -23,11 +25,20 @@ function markerNode(kind: "completed" | "next" | "future") {
 
 function userNode() {
   const node = document.createElement("div");
-  node.className = "tk-user-dot";
+  node.className = "tk-user-direction-marker";
+  node.innerHTML =
+    '<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 L20 20 L12 14 L4 20 Z" fill="#3b82f6" stroke="#fff" stroke-width="2"/></svg>';
   return node;
 }
 
-export default function ActiveRouteMap({ stops, encodedPolyline, userPosition, nextStopId }: ActiveRouteMapProps) {
+function setMarkerHeading(marker: google.maps.marker.AdvancedMarkerElement | null, heading: number | null | undefined) {
+  const content = marker?.content;
+  if (content instanceof HTMLElement && typeof heading === "number" && Number.isFinite(heading)) {
+    content.style.transform = `rotate(${heading}deg)`;
+  }
+}
+
+export default function ActiveRouteMap({ stops, encodedPolyline, userPosition, userHeading = null, mapHeading = null, nextStopId }: ActiveRouteMapProps) {
   const { isLoaded, loadError, libraries } = useGoogleMaps();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
@@ -67,6 +78,7 @@ export default function ActiveRouteMap({ stops, encodedPolyline, userPosition, n
       clickableIcons: false,
       gestureHandling: "greedy",
     });
+    mapRef.current.setTilt(45);
   }, [isLoaded, libraries, stopPositions, userPosition]);
 
   useEffect(() => {
@@ -118,13 +130,21 @@ export default function ActiveRouteMap({ stops, encodedPolyline, userPosition, n
       userMarkerRef.current.position = userPosition;
       userMarkerRef.current.map = map;
     }
+    setMarkerHeading(userMarkerRef.current, userHeading);
 
     const now = Date.now();
     if (framedUserRef.current && now - lastUserPanAtRef.current > 5000) {
       map.panTo(userPosition);
       lastUserPanAtRef.current = now;
     }
-  }, [libraries, userPosition]);
+  }, [libraries, userHeading, userPosition]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || typeof mapHeading !== "number" || !Number.isFinite(mapHeading)) return;
+    map.setHeading(mapHeading);
+    map.setTilt(45);
+  }, [mapHeading]);
 
   useEffect(() => {
     const map = mapRef.current;

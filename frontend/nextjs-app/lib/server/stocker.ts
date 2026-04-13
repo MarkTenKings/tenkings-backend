@@ -8,6 +8,7 @@ import type {
   DrivingNavigationData,
   LiveStockerPosition,
   LocationSummary,
+  NavigationStep,
   RouteLegData,
   StockRouteData,
   StockerProfileData,
@@ -42,7 +43,20 @@ const DRIVE_FIELD_MASK = [
   "routes.legs.polyline.encodedPolyline",
   "routes.optimizedIntermediateWaypointIndex",
 ].join(",");
-const WALK_FIELD_MASK = "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline";
+const NAVIGATION_FIELD_MASK = [
+  "routes.duration",
+  "routes.distanceMeters",
+  "routes.polyline.encodedPolyline",
+  "routes.legs.duration",
+  "routes.legs.distanceMeters",
+  "routes.legs.steps.navigationInstruction",
+  "routes.legs.steps.distanceMeters",
+  "routes.legs.steps.staticDuration",
+  "routes.legs.steps.polyline.encodedPolyline",
+  "routes.legs.steps.startLocation",
+  "routes.legs.steps.endLocation",
+  "routes.legs.steps.localizedValues",
+].join(",");
 
 export function normalizePhoneInput(input: unknown): string {
   if (typeof input !== "string") return "";
@@ -432,6 +446,75 @@ function toWaypoint(location: { latitude: number; longitude: number }) {
   };
 }
 
+type RoutesApiStep = {
+  navigationInstruction?: {
+    instructions?: string;
+    maneuver?: string;
+  };
+  distanceMeters?: number;
+  staticDuration?: string;
+  polyline?: { encodedPolyline?: string };
+  startLocation?: { latLng?: { latitude?: number; longitude?: number } };
+  endLocation?: { latLng?: { latitude?: number; longitude?: number } };
+};
+
+function stripInstructionHtml(value: string) {
+  return value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function fallbackInstruction(maneuver: string) {
+  return maneuver
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function serializeNavigationStep(step: RoutesApiStep): NavigationStep | null {
+  const start = step.startLocation?.latLng;
+  const end = step.endLocation?.latLng;
+  const startLat = start?.latitude;
+  const startLng = start?.longitude;
+  const endLat = end?.latitude;
+  const endLng = end?.longitude;
+  if (
+    typeof startLat !== "number" ||
+    typeof startLng !== "number" ||
+    typeof endLat !== "number" ||
+    typeof endLng !== "number"
+  ) {
+    return null;
+  }
+
+  const maneuver = step.navigationInstruction?.maneuver ?? "STRAIGHT";
+  const instruction = stripInstructionHtml(step.navigationInstruction?.instructions ?? "") || fallbackInstruction(maneuver);
+
+  return {
+    instruction,
+    maneuver,
+    distanceMeters: step.distanceMeters ?? Math.round(haversineDistanceM({ lat: startLat, lng: startLng }, { lat: endLat, lng: endLng })),
+    durationSeconds: parseDurationS(step.staticDuration),
+    startLat,
+    startLng,
+    endLat,
+    endLng,
+    polyline: step.polyline?.encodedPolyline ?? "",
+  };
+}
+
+function serializeNavigationSteps(legs: Array<{ steps?: RoutesApiStep[] }> | undefined): NavigationStep[] {
+  return legs?.flatMap((leg) => leg.steps?.map(serializeNavigationStep).filter((step): step is NavigationStep => Boolean(step)) ?? []) ?? [];
+}
+
 type RouteApiLocation = LocationSummary & { latitude: number; longitude: number };
 type RouteApiPoint = { latitude: number; longitude: number };
 
@@ -472,6 +555,7 @@ export async function getDrivingNavigation(
       totalDurationS: 0,
       nextDistanceM: 0,
       nextDurationS: 0,
+      steps: [],
       generatedAt: new Date().toISOString(),
     };
   }
@@ -492,6 +576,22 @@ export async function getDrivingNavigation(
       totalDurationS,
       nextDistanceM: segmentDistances[0] ?? 0,
       nextDurationS: estimateDriveDurationS(segmentDistances[0] ?? 0),
+      steps:
+        points.length > 0
+          ? [
+              {
+                instruction: "Drive to the next stop",
+                maneuver: "DEPART",
+                distanceMeters: segmentDistances[0] ?? totalDistanceM,
+                durationSeconds: estimateDriveDurationS(segmentDistances[0] ?? totalDistanceM),
+                startLat: from.lat,
+                startLng: from.lng,
+                endLat: points[0].latitude,
+                endLng: points[0].longitude,
+                polyline: "",
+              },
+            ]
+          : [],
       generatedAt: new Date().toISOString(),
     };
   }
@@ -503,7 +603,7 @@ export async function getDrivingNavigation(
     headers: {
       "Content-Type": "application/json",
       "X-Goog-Api-Key": apiKey,
-      "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.polyline.encodedPolyline,routes.legs.duration,routes.legs.distanceMeters",
+      "X-Goog-FieldMask": NAVIGATION_FIELD_MASK,
       "X-Server-Timeout": "10",
     },
     body: JSON.stringify({
@@ -515,6 +615,7 @@ export async function getDrivingNavigation(
       polylineQuality: "HIGH_QUALITY",
       polylineEncoding: "ENCODED_POLYLINE",
       units: "IMPERIAL",
+      extraComputations: ["HTML_FORMATTED_NAVIGATION_INSTRUCTIONS"],
     }),
   });
 
@@ -524,7 +625,7 @@ export async function getDrivingNavigation(
           duration?: string;
           distanceMeters?: number;
           polyline?: { encodedPolyline?: string };
-          legs?: Array<{ duration?: string; distanceMeters?: number }>;
+          legs?: Array<{ duration?: string; distanceMeters?: number; steps?: RoutesApiStep[] }>;
         }>;
         error?: { message?: string };
       }
@@ -545,6 +646,7 @@ export async function getDrivingNavigation(
     totalDurationS: parseDurationS(route.duration),
     nextDistanceM: firstLeg?.distanceMeters ?? null,
     nextDurationS: parseDurationS(firstLeg?.duration),
+    steps: serializeNavigationSteps(route.legs),
     generatedAt: new Date().toISOString(),
   };
 }
@@ -657,6 +759,19 @@ export async function getWalkingGuidance(
   let walkingDistanceM = Math.round(haversineDistanceM(from, { lat: machineLat, lng: machineLng }));
   let walkingDurationS = 0;
   let encodedPolyline: string | null = null;
+  let steps: NavigationStep[] = [
+    {
+      instruction: "Walk to the Ten Kings machine",
+      maneuver: "DEPART",
+      distanceMeters: walkingDistanceM,
+      durationSeconds: Math.round(walkingDistanceM / 1.4),
+      startLat: from.lat,
+      startLng: from.lng,
+      endLat: machineLat,
+      endLng: machineLng,
+      polyline: "",
+    },
+  ];
 
   if (apiKey) {
     const response = await fetch(ROUTES_API_URL, {
@@ -664,7 +779,7 @@ export async function getWalkingGuidance(
       headers: {
         "Content-Type": "application/json",
         "X-Goog-Api-Key": apiKey,
-        "X-Goog-FieldMask": WALK_FIELD_MASK,
+        "X-Goog-FieldMask": NAVIGATION_FIELD_MASK,
       },
       body: JSON.stringify({
         origin: { location: { latLng: { latitude: from.lat, longitude: from.lng } } },
@@ -673,6 +788,7 @@ export async function getWalkingGuidance(
         polylineQuality: "HIGH_QUALITY",
         polylineEncoding: "ENCODED_POLYLINE",
         units: "IMPERIAL",
+        extraComputations: ["HTML_FORMATTED_NAVIGATION_INSTRUCTIONS"],
       }),
     });
     const data = (await response.json().catch(() => null)) as
@@ -681,6 +797,7 @@ export async function getWalkingGuidance(
             duration?: string;
             distanceMeters?: number;
             polyline?: { encodedPolyline?: string };
+            legs?: Array<{ duration?: string; distanceMeters?: number; steps?: RoutesApiStep[] }>;
           }>;
         }
       | null;
@@ -689,6 +806,8 @@ export async function getWalkingGuidance(
       walkingDistanceM = route.distanceMeters ?? walkingDistanceM;
       walkingDurationS = parseDurationS(route.duration);
       encodedPolyline = route.polyline?.encodedPolyline ?? null;
+      const routeSteps = serializeNavigationSteps(route.legs);
+      if (routeSteps.length > 0) steps = routeSteps;
     }
   }
 
@@ -696,6 +815,7 @@ export async function getWalkingGuidance(
     walkingDistanceM,
     walkingDurationS,
     encodedPolyline,
+    steps,
     locationName: location.name,
     locationDescription: location.description,
     landmarks: location.landmarks,
@@ -1021,6 +1141,16 @@ export async function buildLiveStockerPositions(): Promise<LiveStockerPosition[]
   return positions.map((position) => {
     const shift = position.shiftId ? shiftLookup.get(position.shiftId) : null;
     const stops = shift?.stops.map((stop) => ({ ...serializeStop(stop), location: serializeLocation(stop.location) })) ?? [];
+    const completedStopCount = stops.filter((stop) => stop.status === "completed" || stop.status === "skipped").length;
+    const nextStop =
+      stops.find((stop) => stop.status === "in_transit" || stop.status === "arrived" || stop.status === "restocking") ??
+      stops.find((stop) => stop.status === "pending") ??
+      null;
+    const nextStopPoint = nextStop?.location ? drivingPointForLocation(nextStop.location) : null;
+    const nextStopDistanceM = nextStopPoint
+      ? haversineDistanceM({ lat: position.latitude, lng: position.longitude }, { lat: nextStopPoint.latitude, lng: nextStopPoint.longitude })
+      : null;
+    const nextStopEta = nextStopDistanceM == null ? null : `${Math.max(1, Math.round(estimateDriveDurationS(nextStopDistanceM) / 60))} min`;
     return {
       stockerId: position.stockerId,
       name: position.stocker.name,
@@ -1032,6 +1162,11 @@ export async function buildLiveStockerPositions(): Promise<LiveStockerPosition[]
       accuracy: position.accuracy,
       status: position.status as LiveStockerPosition["status"],
       shiftId: position.shiftId,
+      routePolyline: shift?.route.encodedPolyline ?? null,
+      completedStopCount,
+      totalStopCount: stops.length,
+      nextStopName: nextStop?.location.name ?? null,
+      nextStopEta,
       currentLocationName: position.currentLocationName,
       updatedAt: position.updatedAt.toISOString(),
       shift: shift
@@ -1040,7 +1175,7 @@ export async function buildLiveStockerPositions(): Promise<LiveStockerPosition[]
             routeName: shift.route.name,
             clockInAt: shift.clockInAt?.toISOString() ?? null,
             totalStops: shift.stops.length,
-            completedStops: shift.stops.filter((stop) => stop.status === "completed" || stop.status === "skipped").length,
+            completedStops: completedStopCount,
             routePolyline: shift.route.encodedPolyline,
             stops,
           }

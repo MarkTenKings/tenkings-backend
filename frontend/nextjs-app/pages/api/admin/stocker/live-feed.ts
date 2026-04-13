@@ -43,7 +43,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   };
 
   await sendPositions();
-  const interval = setInterval(sendPositions, 5000);
+  const interval = setInterval(sendPositions, 3000);
   const heartbeat = setInterval(() => {
     if (!closed) res.write(": heartbeat\n\n");
   }, 30000);

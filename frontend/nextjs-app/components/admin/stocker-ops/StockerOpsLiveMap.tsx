@@ -21,7 +21,44 @@ function markerNode(stocker: LiveStockerPosition, selected: boolean) {
   const node = document.createElement("div");
   node.className = `admin-stocker-marker${selected ? " admin-stocker-marker--selected" : ""}`;
   const initial = stocker.name.trim().charAt(0).toUpperCase() || "S";
-  node.innerHTML = `<span style="background:${statusColor(stocker.status)}">${initial}</span><small>${stocker.name}</small>`;
+
+  const dot = document.createElement("span");
+  dot.style.background = statusColor(stocker.status);
+  dot.textContent = initial;
+  node.appendChild(dot);
+
+  const name = document.createElement("small");
+  name.textContent = stocker.name;
+  node.appendChild(name);
+
+  if (stocker.nextStopEta && stocker.nextStopName) {
+    const label = document.createElement("em");
+    label.style.cssText =
+      "background: rgba(10,10,10,0.85); color: #d4a843; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-family: Satoshi, sans-serif; font-weight: 700; white-space: nowrap; text-align: center; margin-top: 4px; font-style: normal;";
+    label.textContent = `${stocker.nextStopEta} → ${stocker.nextStopName}`;
+    node.appendChild(label);
+  }
+
+  return node;
+}
+
+function stopMarkerNode(index: number, completed: boolean) {
+  const node = document.createElement("div");
+  node.style.cssText = [
+    "display:inline-flex",
+    "height:22px",
+    "width:22px",
+    "align-items:center",
+    "justify-content:center",
+    "border-radius:999px",
+    "border:2px solid rgba(255,255,255,0.9)",
+    `background:${completed ? "rgba(212,168,67,0.96)" : "rgba(10,10,10,0.82)"}`,
+    `color:${completed ? "#080808" : "#d4a843"}`,
+    "font-size:11px",
+    "font-weight:800",
+    "box-shadow:0 8px 24px rgba(0,0,0,0.32)",
+  ].join(";");
+  node.textContent = String(index + 1);
   return node;
 }
 
@@ -29,7 +66,7 @@ function animateMarker(
   marker: google.maps.marker.AdvancedMarkerElement,
   from: google.maps.LatLngLiteral,
   to: google.maps.LatLngLiteral,
-  durationMs = 1400,
+  durationMs = 2000,
 ) {
   const started = performance.now();
   const step = (now: number) => {
@@ -49,8 +86,12 @@ export default function StockerOpsLiveMap({ stockers, selectedStockerId, onSelec
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
   const markerLookupRef = useRef<Map<string, google.maps.marker.AdvancedMarkerElement>>(new Map());
-  const polylineLookupRef = useRef<Map<string, google.maps.Polyline>>(new Map());
+  const completedPolylineLookupRef = useRef<Map<string, google.maps.Polyline>>(new Map());
+  const remainingPolylineLookupRef = useRef<Map<string, google.maps.Polyline>>(new Map());
+  const stopMarkerLookupRef = useRef<Map<string, google.maps.marker.AdvancedMarkerElement[]>>(new Map());
   const positionLookupRef = useRef<Map<string, google.maps.LatLngLiteral>>(new Map());
+  const hasInitialFitRef = useRef(false);
+  const knownStockerIdsRef = useRef<Set<string>>(new Set());
   const selectRef = useRef(onSelectStocker);
 
   useEffect(() => {
@@ -79,25 +120,41 @@ export default function StockerOpsLiveMap({ stockers, selectedStockerId, onSelec
 
   useEffect(() => {
     const markers = markerLookupRef.current;
-    const polylines = polylineLookupRef.current;
+    const completedPolylines = completedPolylineLookupRef.current;
+    const remainingPolylines = remainingPolylineLookupRef.current;
+    const stopMarkers = stopMarkerLookupRef.current;
     return () => {
       markers.forEach((marker) => {
         marker.map = null;
       });
-      polylines.forEach((polyline) => polyline.setMap(null));
+      completedPolylines.forEach((polyline) => polyline.setMap(null));
+      remainingPolylines.forEach((polyline) => polyline.setMap(null));
+      stopMarkers.forEach((markerList) => markerList.forEach((marker) => {
+        marker.map = null;
+      }));
       markers.clear();
-      polylines.clear();
+      completedPolylines.clear();
+      remainingPolylines.clear();
+      stopMarkers.clear();
       mapRef.current = null;
     };
   }, []);
+
+  const fitToStockers = () => {
+    const map = mapRef.current;
+    if (!map || stockers.length === 0) return;
+    const bounds = new google.maps.LatLngBounds();
+    stockers.forEach((stocker) => bounds.extend({ lat: stocker.lat, lng: stocker.lng }));
+    map.fitBounds(bounds, 80);
+  };
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !libraries) return;
     const { AdvancedMarkerElement } = libraries.markerLibrary;
     const seen = new Set<string>();
-    const bounds = new google.maps.LatLngBounds();
-    let hasBounds = false;
+    const stockerIds = new Set(stockers.map((stocker) => stocker.stockerId));
+    const hasNewStocker = stockers.some((stocker) => !knownStockerIdsRef.current.has(stocker.stockerId));
 
     for (const stocker of stockers) {
       seen.add(stocker.stockerId);
@@ -121,22 +178,93 @@ export default function StockerOpsLiveMap({ stockers, selectedStockerId, onSelec
         marker.map = map;
       }
       positionLookupRef.current.set(stocker.stockerId, position);
-      bounds.extend(position);
-      hasBounds = true;
 
-      const existingPolyline = polylineLookupRef.current.get(stocker.stockerId);
-      existingPolyline?.setMap(null);
-      if (stocker.shift?.routePolyline) {
-        const path = libraries.geometryLibrary.encoding.decodePath(stocker.shift.routePolyline);
-        const polyline = new google.maps.Polyline({
-          map,
-          path,
-          geodesic: true,
-          strokeColor: "#d4a843",
-          strokeOpacity: 0.55,
-          strokeWeight: 4,
-        });
-        polylineLookupRef.current.set(stocker.stockerId, polyline);
+      completedPolylineLookupRef.current.get(stocker.stockerId)?.setMap(null);
+      remainingPolylineLookupRef.current.get(stocker.stockerId)?.setMap(null);
+      stopMarkerLookupRef.current.get(stocker.stockerId)?.forEach((stopMarker) => {
+        stopMarker.map = null;
+      });
+      stopMarkerLookupRef.current.delete(stocker.stockerId);
+
+      const stops = stocker.shift?.stops ?? [];
+      const completedCount = stocker.completedStopCount;
+      const stopPositions = stops
+        .map((stop, index) => {
+          const lat = stop.location.venueCenterLat ?? stop.location.latitude;
+          const lng = stop.location.venueCenterLng ?? stop.location.longitude;
+          return typeof lat === "number" && typeof lng === "number" ? { stop, index, position: { lat, lng } } : null;
+        })
+        .filter((entry): entry is { stop: (typeof stops)[number]; index: number; position: google.maps.LatLngLiteral } => Boolean(entry));
+
+      const stopMarkers = stopPositions.map(
+        (entry) =>
+          new AdvancedMarkerElement({
+            map,
+            position: entry.position,
+            title: entry.stop.location.name,
+            content: stopMarkerNode(entry.index, entry.index < completedCount),
+            zIndex: 5,
+          }),
+      );
+      stopMarkerLookupRef.current.set(stocker.stockerId, stopMarkers);
+
+      const completedPath = stopPositions.slice(0, Math.max(0, completedCount)).map((entry) => entry.position);
+      if (completedPath.length > 1) {
+        completedPolylineLookupRef.current.set(
+          stocker.stockerId,
+          new google.maps.Polyline({
+            map,
+            path: completedPath,
+            geodesic: true,
+            strokeColor: "#d4a843",
+            strokeOpacity: 0.92,
+            strokeWeight: 5,
+            zIndex: 3,
+          }),
+        );
+      }
+
+      const remainingPath = [{ lat: stocker.lat, lng: stocker.lng }, ...stopPositions.slice(Math.max(0, completedCount)).map((entry) => entry.position)];
+      if (remainingPath.length > 1) {
+        remainingPolylineLookupRef.current.set(
+          stocker.stockerId,
+          new google.maps.Polyline({
+            map,
+            path: remainingPath,
+            geodesic: true,
+            strokeColor: "#d4a843",
+            strokeOpacity: 0,
+            strokeWeight: 4,
+            zIndex: 2,
+            icons: [
+              {
+                icon: {
+                  path: "M 0,-1 0,1",
+                  strokeColor: "#d4a843",
+                  strokeOpacity: 0.9,
+                  strokeWeight: 3,
+                  scale: 4,
+                },
+                offset: "0",
+                repeat: "20px",
+              },
+            ],
+          }),
+        );
+      } else if (stocker.routePolyline && completedCount < stopPositions.length) {
+        const path = libraries.geometryLibrary.encoding.decodePath(stocker.routePolyline);
+        remainingPolylineLookupRef.current.set(
+          stocker.stockerId,
+          new google.maps.Polyline({
+            map,
+            path,
+            geodesic: true,
+            strokeColor: "#d4a843",
+            strokeOpacity: 0.35,
+            strokeWeight: 4,
+            zIndex: 1,
+          }),
+        );
       }
     }
 
@@ -147,15 +275,47 @@ export default function StockerOpsLiveMap({ stockers, selectedStockerId, onSelec
         positionLookupRef.current.delete(stockerId);
       }
     });
-    polylineLookupRef.current.forEach((polyline, stockerId) => {
+    completedPolylineLookupRef.current.forEach((polyline, stockerId) => {
       if (!seen.has(stockerId)) {
         polyline.setMap(null);
-        polylineLookupRef.current.delete(stockerId);
+        completedPolylineLookupRef.current.delete(stockerId);
       }
     });
-    if (hasBounds && stockers.length > 0) map.fitBounds(bounds, 80);
+    remainingPolylineLookupRef.current.forEach((polyline, stockerId) => {
+      if (!seen.has(stockerId)) {
+        polyline.setMap(null);
+        remainingPolylineLookupRef.current.delete(stockerId);
+      }
+    });
+    stopMarkerLookupRef.current.forEach((markerList, stockerId) => {
+      if (!seen.has(stockerId)) {
+        markerList.forEach((marker) => {
+          marker.map = null;
+        });
+        stopMarkerLookupRef.current.delete(stockerId);
+      }
+    });
+
+    if ((!hasInitialFitRef.current || hasNewStocker) && stockers.length > 0) {
+      const bounds = new google.maps.LatLngBounds();
+      stockers.forEach((stocker) => bounds.extend({ lat: stocker.lat, lng: stocker.lng }));
+      map.fitBounds(bounds, 80);
+      hasInitialFitRef.current = true;
+    }
+    knownStockerIdsRef.current = stockerIds;
   }, [libraries, selectedStockerId, stockers]);
 
   if (loadError) return <MapFallback title="Map unavailable" body={loadError.message} className="h-full min-h-[100dvh] rounded-none" />;
-  return <div ref={containerRef} className="h-full min-h-[100dvh] w-full bg-[#050505]" />;
+  return (
+    <div className="relative h-full min-h-[100dvh] w-full bg-[#050505]">
+      <div ref={containerRef} className="h-full min-h-[100dvh] w-full" />
+      <button
+        type="button"
+        onClick={fitToStockers}
+        className="absolute bottom-5 right-5 z-20 rounded-md border border-[#d4a843]/40 bg-black/80 px-4 py-3 text-xs font-bold uppercase tracking-[0.16em] text-[#d4a843] backdrop-blur"
+      >
+        Re-center
+      </button>
+    </div>
+  );
 }

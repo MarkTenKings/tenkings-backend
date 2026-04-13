@@ -26,13 +26,19 @@ export interface TenKingsMapProps {
   minimumInitialZoom?: number;
   recenterZoom?: number;
   mapTypeId?: "roadmap" | "satellite" | "hybrid" | "terrain";
+  colorScheme?: "DARK" | "LIGHT" | "FOLLOW_SYSTEM" | null;
+  mapHeading?: number | null;
+  mapTilt?: number;
+  userHeading?: number | null;
   disableDefaultUI?: boolean;
   initialFrameKey?: string;
 }
 
 function buildUserMarkerNode(): HTMLDivElement {
   const node = document.createElement("div");
-  node.className = "tk-user-dot";
+  node.className = "tk-user-direction-marker";
+  node.innerHTML =
+    '<svg width="24" height="24" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 L20 20 L12 14 L4 20 Z" fill="#3b82f6" stroke="#fff" stroke-width="2"/></svg>';
   return node;
 }
 
@@ -84,6 +90,10 @@ export default function TenKingsMap({
   minimumInitialZoom = 0,
   recenterZoom = 17,
   mapTypeId = "roadmap",
+  colorScheme = "DARK",
+  mapHeading = null,
+  mapTilt = 0,
+  userHeading = null,
   disableDefaultUI = true,
   initialFrameKey = "default",
 }: TenKingsMapProps) {
@@ -154,7 +164,7 @@ export default function TenKingsMap({
         zoom: initialZoom,
         mapId,
         mapTypeId,
-        colorScheme: "DARK" as google.maps.ColorScheme,
+        ...(colorScheme ? { colorScheme: colorScheme as google.maps.ColorScheme } : {}),
         backgroundColor: "#050505",
         renderingType: google.maps.RenderingType.VECTOR,
         disableDefaultUI,
@@ -165,11 +175,13 @@ export default function TenKingsMap({
         clickableIcons: false,
         gestureHandling: interactiveRef.current ? "greedy" : "none",
       });
+      if (mapTilt > 0) mapRef.current.setTilt(mapTilt);
+      if (typeof mapHeading === "number" && Number.isFinite(mapHeading)) mapRef.current.setHeading(mapHeading);
     } catch (error) {
       console.error("Kings Hunt map initialization failed", error);
       setMapError(error instanceof Error ? error : new Error("Unable to initialize the hunt map"));
     }
-  }, [disableDefaultUI, initialZoom, isLoaded, libraries, mapError, mapTypeId]);
+  }, [colorScheme, disableDefaultUI, initialZoom, isLoaded, libraries, mapError, mapHeading, mapTilt, mapTypeId]);
 
   useEffect(() => {
     return () => {
@@ -208,6 +220,13 @@ export default function TenKingsMap({
       gestureHandling: interactive ? "greedy" : "none",
     });
   }, [interactive]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (mapTilt > 0) map.setTilt(mapTilt);
+    if (typeof mapHeading === "number" && Number.isFinite(mapHeading)) map.setHeading(mapHeading);
+  }, [mapHeading, mapTilt]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -285,6 +304,11 @@ export default function TenKingsMap({
           userMarkerRef.current.map = map;
         }
 
+        const markerContent = userMarkerRef.current?.content;
+        if (markerContent instanceof HTMLElement && typeof userHeading === "number" && Number.isFinite(userHeading)) {
+          markerContent.style.transform = `rotate(${userHeading}deg)`;
+        }
+
         if (nextUserAccuracy != null && Number.isFinite(nextUserAccuracy)) {
           if (!accuracyCircleRef.current) {
             accuracyCircleRef.current = new Circle({
@@ -331,7 +355,7 @@ export default function TenKingsMap({
 
     const intervalId = window.setInterval(syncUserPosition, 250);
     return () => window.clearInterval(intervalId);
-  }, [followUser, libraries, liveUserAccuracyRef, liveUserPositionRef, mapError]);
+  }, [followUser, libraries, liveUserAccuracyRef, liveUserPositionRef, mapError, userHeading]);
 
   useEffect(() => {
     const map = mapRef.current;

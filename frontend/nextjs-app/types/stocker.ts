@@ -42,6 +42,18 @@ export type RouteLegData = {
   encodedPolyline: string | null;
 };
 
+export type NavigationStep = {
+  instruction: string;
+  maneuver: string;
+  distanceMeters: number;
+  durationSeconds: number;
+  startLat: number;
+  startLng: number;
+  endLat: number;
+  endLng: number;
+  polyline: string;
+};
+
 export type StockRouteData = {
   id: string;
   name: string;
@@ -109,6 +121,11 @@ export type LiveStockerPosition = {
   accuracy: number | null;
   status: StockerPositionStatus;
   shiftId: string | null;
+  routePolyline: string | null;
+  completedStopCount: number;
+  totalStopCount: number;
+  nextStopName: string | null;
+  nextStopEta: string | null;
   currentLocationName: string | null;
   updatedAt: string;
   shift: {
@@ -139,6 +156,7 @@ export type WalkingGuidanceData = {
   walkingDistanceM: number;
   walkingDurationS: number;
   encodedPolyline: string | null;
+  steps: NavigationStep[];
   locationName: string;
   locationDescription: string | null;
   landmarks: string[];
@@ -157,5 +175,6 @@ export type DrivingNavigationData = {
   totalDurationS: number | null;
   nextDistanceM: number | null;
   nextDurationS: number | null;
+  steps: NavigationStep[];
   generatedAt: string;
 };

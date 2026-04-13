@@ -230,6 +230,23 @@ button {
   animation: tk-blue-dot-pulse 2s ease-out infinite;
 }
 
+.tk-user-direction-marker {
+  display: inline-flex;
+  height: 1.75rem;
+  width: 1.75rem;
+  align-items: center;
+  justify-content: center;
+  transform-origin: center;
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.34));
+  transition: transform 0.2s ease;
+}
+
+.tk-user-direction-marker svg {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
 .tk-machine-marker {
   position: relative;
   display: inline-flex;

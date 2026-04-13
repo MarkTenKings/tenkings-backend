@@ -15336,3 +15336,61 @@
 - Print branch and HEAD before push.
 - Push `main` to `origin/main`.
 - No restart, migration, DB operation, or destructive operation is planned.
+
+## 2026-04-13 - Stocker turn-by-turn nav, indoor map fix, and admin live dashboard polish
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings-task27-main`.
+- Pulled latest `main` before editing:
+  - initial sandboxed `git pull --ff-only origin main` failed DNS
+  - approved network retry -> `Already up to date.`
+- Implemented Google Routes step-level navigation:
+  - field mask now includes step navigation instructions, distance, static duration, step polyline, start/end location, and localized values
+  - request body asks for `HTML_FORMATTED_NAVIGATION_INSTRUCTIONS`
+  - shared `NavigationStep` payloads are serialized for driving and walking guidance
+- Updated `/stocker/route`:
+  - green turn-by-turn banner at the top
+  - current-step tracking by 30m proximity to step end points
+  - GPS reporting throttle reduced from 10s to 5s
+  - directional blue chevron marker, map tilt, and map heading support
+  - collapsible bottom stop card plus floating distance/ETA pill when collapsed
+- Diagnosed and fixed `/stocker/stop/[stopId]` indoor map behavior:
+  - current code already used `roadmap` and interactive gestures
+  - blockers were likely `55dvh` height, zoom `19`, and hard-coded dark Google vector `colorScheme`
+  - page now uses full-height map layout, zoom `20`, light roadmap color scheme, visible zoom controls, and collapsible detail card
+  - walking turn-by-turn banner uses the same current-step system
+- Updated `/admin/stocker-ops` live dashboard:
+  - SSE position push interval reduced from 5s to 3s
+  - live payload includes route polyline/progress/next-stop ETA fields
+  - map no longer auto-fits on every update; it fits first load/new stockers only
+  - added `Re-center`
+  - markers animate between updates and show ETA/next-stop labels
+  - numbered stop markers plus gold solid completed route segments and gold dashed remaining route segments are rendered
+
+### Files Updated
+- `frontend/nextjs-app/components/admin/stocker-ops/StockerOpsLiveMap.tsx`
+- `frontend/nextjs-app/components/maps/TenKingsMap.tsx`
+- `frontend/nextjs-app/components/stocker/ActiveRouteMap.tsx`
+- `frontend/nextjs-app/lib/server/stocker.ts`
+- `frontend/nextjs-app/pages/api/admin/stocker/live-feed.ts`
+- `frontend/nextjs-app/pages/stocker/route.tsx`
+- `frontend/nextjs-app/pages/stocker/stop/[stopId]/index.tsx`
+- `frontend/nextjs-app/styles/globals.css`
+- `frontend/nextjs-app/types/stocker.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node `v25.6.1` engine warning.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/stocker/route.tsx --file 'pages/stocker/stop/[stopId]/index.tsx' --file components/stocker/ActiveRouteMap.tsx --file components/maps/TenKingsMap.tsx --file components/admin/stocker-ops/StockerOpsLiveMap.tsx --file pages/api/stocker/route/navigation.ts --file pages/api/stocker/position.ts --file pages/api/admin/stocker/live-feed.ts --file lib/server/stocker.ts --file types/stocker.ts` -> pass with only the local Node engine warning.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings:
+  - legacy `<img>` warnings in admin pages
+  - existing `pages/admin/packing.tsx` hook dependency warning
+  - existing Browserslist/Tailwind config warnings
+- `git diff --check` -> pass.
+
+### Planned Production Push
+- Commit with `feat(stocker): turn-by-turn nav, indoor map fix, admin dashboard polish`.
+- Print branch and HEAD before push.
+- Push `main` to `origin/main`.
+- No deploy, restart, migration, DB operation, or destructive operation is planned.

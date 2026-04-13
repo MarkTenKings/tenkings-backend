@@ -1,27 +1,64 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-13 13:10 PDT` (stocker indoor guidance live tracking/walking route + Google indoor map zoom/tip + admin route edit/delete + shift cancel/reassign implemented; validation passed; preparing commit/push to `main`; no migration, restart, DB write, or destructive operation executed)
+- Last reviewed: `2026-04-13` (stocker turn-by-turn navigation, indoor map/light roadmap fix, collapsible navigation UI, and admin live dashboard polish implemented on `main`; validation passed; preparing commit/push; no deploy/restart/migration/DB write/destructive operation executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## main...origin/main`
   - modified tracked paths:
+    - `frontend/nextjs-app/components/admin/stocker-ops/StockerOpsLiveMap.tsx`
     - `frontend/nextjs-app/components/maps/TenKingsMap.tsx`
+    - `frontend/nextjs-app/components/stocker/ActiveRouteMap.tsx`
     - `frontend/nextjs-app/lib/server/stocker.ts`
-    - `frontend/nextjs-app/pages/admin/stocker-ops/routes.tsx`
-    - `frontend/nextjs-app/pages/admin/stocker-ops/shifts.tsx`
-    - `frontend/nextjs-app/pages/api/admin/stocker/routes/[routeId]/index.ts`
-    - `frontend/nextjs-app/pages/api/admin/stocker/routes/index.ts`
+    - `frontend/nextjs-app/pages/api/admin/stocker/live-feed.ts`
+    - `frontend/nextjs-app/pages/stocker/route.tsx`
     - `frontend/nextjs-app/pages/stocker/stop/[stopId]/index.tsx`
+    - `frontend/nextjs-app/styles/globals.css`
     - `frontend/nextjs-app/types/stocker.ts`
   - deleted tracked paths: none
-  - untracked paths:
-    - `frontend/nextjs-app/pages/api/admin/stocker/shifts/[shiftId].ts`
 - Latest committed baseline before this handoff refresh:
-  - `1dc5149` docs: record machine coordinate migration
+  - `b7ff543` fix(stocker): indoor guidance tracking, indoor maps, route/shift management
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `git pull --ff-only origin main` was retried with approved network access and reported `Already up to date`; no deploy, restart, migration, DB read/write, or destructive operation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-13, stocker turn-by-turn nav + indoor map fix + admin live dashboard polish)
+- Re-read required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
+- Pulled latest `main` before editing:
+  - initial sandboxed `git pull --ff-only origin main` failed DNS
+  - approved network retry -> `Already up to date.`
+- Diagnosed indoor map display before fixing:
+  - `/stocker/stop/[stopId]` was using `mapTypeId="roadmap"` and interactive `gestureHandling="greedy"` through `TenKingsMap`
+  - the indoor page map container was only `55dvh`, initial zoom was `19`, and `TenKingsMap` hard-coded `colorScheme: DARK`
+  - likely indoor-floor-plan blockers were the dark vector color scheme plus insufficient full-screen space/zoom for venue floor detail
+- Implemented driving turn-by-turn navigation:
+  - Google Routes calls now request step-level navigation instructions, step polylines, start/end locations, distances, durations, and HTML-formatted instructions
+  - server serializes `NavigationStep[]` for both driving and walking guidance payloads
+  - `/stocker/route` displays a green Google-style instruction banner, tracks current step by 30m proximity to the step end, and reports stocker position every 5 seconds
+  - driving route map now supports tilted/heading view and a directional blue chevron marker
+  - bottom stop card is collapsible with collapsed distance/ETA summary and floating distance/ETA pill
+- Implemented indoor guidance UI/map fixes:
+  - `/stocker/stop/[stopId]` uses a full-height map layout with collapsible machine details
+  - indoor map runs at zoom `20`, `mapTypeId="roadmap"`, light Google color scheme, and interaction enabled with visible zoom controls
+  - walking guidance uses the same turn-by-turn banner and current-step advancement behavior
+  - indoor blue dot is directional and machine detail remains available in the expanded bottom card
+- Implemented admin live dashboard polish:
+  - `/api/admin/stocker/live-feed` SSE interval reduced from 5s to 3s
+  - live payload includes route polyline/progress/next-stop ETA fields at the stocker level
+  - `/admin/stocker-ops` live map no longer refits on every position update; it fits only on first load or when a new stocker appears
+  - added explicit `Re-center` map control
+  - admin stocker markers animate over 2s between updates and show ETA/next-stop labels
+  - admin map draws numbered stops plus gold solid completed route segments and gold dashed remaining route segments
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass with only the local Node engine warning
+  - targeted `next lint` for changed stocker/map/API files -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings (`<img>` warnings, one `admin/packing.tsx` hook warning, Browserslist/Tailwind config warnings)
+  - `git diff --check` -> pass
+- Planned production action:
+  - commit with `feat(stocker): turn-by-turn nav, indoor map fix, admin dashboard polish`
+  - print branch and HEAD before push
+  - push `main` to `origin/main`
+  - no deploy, restart, migration, DB operation, or destructive operation is planned
 
 ## Session Update (2026-04-13, indoor guidance + indoor maps + route/shift management)
 - Re-read required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
