@@ -1,19 +1,17 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-12 18:28 PDT` (machine coordinates, pin drop maps, stocker Google Maps navigation implemented locally; validation passed; production push and Prisma deploy migration planned; no restart or destructive operation planned)
+- Last reviewed: `2026-04-12 18:34 PDT` (machine coordinates, pin drop maps, stocker Google Maps navigation pushed to `origin/main` as `0cb9a89`; production Prisma migration `20260412171500_add_machine_coordinates` applied successfully; no restart or destructive operation executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## main...origin/main`
-  - modified tracked paths: feature code, Prisma schema, and handoff docs for machine coordinates / pin-drop maps / stocker navigation
+  - modified tracked paths: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md` after post-migration evidence refresh
   - deleted tracked paths: none
-  - untracked paths:
-    - `frontend/nextjs-app/components/admin/PinDropMap.tsx`
-    - `packages/database/prisma/migrations/20260412171500_add_machine_coordinates/migration.sql`
+  - untracked paths: none
 - Latest committed baseline before this handoff refresh:
-  - `78d5b9e` fix(stocker): allow multiple same-day shifts
-- Environments touched so far: workstation checkout `/Users/markthomas/tenkings-task27-main`; pulled latest `main`; local Prisma `migrate dev` was attempted and blocked by missing workstation `DATABASE_URL`; Prisma generate/validate/build and Next lint/tsc/build passed; no push, droplet migration, restart, runtime mutation, production DB write, or destructive operation has been executed yet
+  - `0cb9a89` feat(locations): machine coordinates, pin drop maps, google maps navigation
+- Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `origin/main` pushed; production droplet `/root/tenkings-backend` pulled and fast-forwarded to `0cb9a89`; production Prisma migrate deploy applied `20260412171500_add_machine_coordinates`; no restart or destructive operation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
 
 ## Session Update (2026-04-12, machine coordinates + pin drop maps + stocker navigation)
@@ -44,6 +42,17 @@
   - push `main` to `origin/main`
   - SSH to the droplet, pull latest `main`, export `DATABASE_URL`, and run `pnpm --filter @tenkings/database exec prisma migrate deploy`
   - no restart or destructive data operation is planned
+- Push/migration evidence:
+  - commit -> `0cb9a89 feat(locations): machine coordinates, pin drop maps, google maps navigation`
+  - pre-push state -> `git status -sb` = `## main...origin/main [ahead 1]`, branch `main`, HEAD `0cb9a89`, `origin/main` `78d5b9e`
+  - first `git push origin main` failed under sandbox DNS/network restrictions
+  - approved network retry -> `78d5b9e..0cb9a89 main -> main`
+  - post-push local status -> `## main...origin/main`; `origin/main` -> `0cb9a89`
+  - droplet pre-pull status -> `## main...origin/main` plus existing untracked runtime/data/log/script files
+  - droplet pull -> fast-forwarded from `5b7b3b6` to `0cb9a89`
+  - production `prisma migrate deploy` found `61` migrations and applied `20260412171500_add_machine_coordinates`
+  - Prisma reported `All migrations have been successfully applied.`
+- No restart or destructive data operation was executed.
 
 ## Session Update (2026-04-12, docs-only startup context + git-state report after Stocker admin fix)
 - Re-read the required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`:

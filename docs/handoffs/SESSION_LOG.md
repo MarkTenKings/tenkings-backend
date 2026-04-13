@@ -15149,6 +15149,35 @@
 - Run `pnpm --filter @tenkings/database exec prisma migrate deploy`.
 - No restart or destructive data operation is planned.
 
+### Production Push Evidence
+- Commit -> `0cb9a89 feat(locations): machine coordinates, pin drop maps, google maps navigation`.
+- Pre-push `git status -sb` -> `## main...origin/main [ahead 1]`.
+- Pre-push `git branch --show-current` -> `main`.
+- Pre-push `git rev-parse --short HEAD` -> `0cb9a89`.
+- Pre-push `git rev-parse --short origin/main` -> `78d5b9e`.
+- `git fetch --all --prune` first failed under sandbox DNS/network restrictions, then passed with approved network access; remote remained at `78d5b9e`.
+- First `git push origin main` failed under sandbox DNS/network restrictions.
+- Approved network retry -> `78d5b9e..0cb9a89 main -> main`.
+- Post-push local `git status -sb` -> `## main...origin/main`.
+- Post-push local `git rev-parse --short origin/main` -> `0cb9a89`.
+
+### Production Migration Evidence
+- SSH command executed on `root@104.131.27.245`.
+- Droplet pre-pull state:
+  - `git status -sb` -> `## main...origin/main` plus existing untracked runtime/data/log/script files on the droplet
+  - branch -> `main`
+- Droplet `git pull --ff-only origin main`:
+  - remote updated `5b7b3b6..0cb9a89`
+  - droplet checkout fast-forwarded to `0cb9a89`
+- `DATABASE_URL` was exported from `infra` / `bytebot-lite-service` without printing the secret.
+- `pnpm --filter @tenkings/database exec prisma migrate deploy`:
+  - Prisma loaded `prisma/schema.prisma`
+  - datasource resolved to PostgreSQL database `defaultdb`, schema `public`, on DigitalOcean
+  - 61 migrations found
+  - applied migration `20260412171500_add_machine_coordinates`
+  - Prisma reported `All migrations have been successfully applied.`
+- No restart or destructive data operation was executed.
+
 ## 2026-04-12 - Stocker auth phone-first resolver fix
 
 ### Summary
