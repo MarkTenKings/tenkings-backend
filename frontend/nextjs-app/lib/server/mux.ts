@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 const MUX_API_BASE = "https://api.mux.com/video/v1";
+const MUX_WHIP_BASE_URL = (process.env.MUX_WHIP_BASE_URL ?? "https://global-live.mux.com/api/v1/whip").trim();
 
 const muxTokenId = process.env.MUX_TOKEN_ID ?? "";
 const muxTokenSecret = process.env.MUX_TOKEN_SECRET ?? "";
@@ -177,6 +178,15 @@ export async function getMuxAsset(assetId: string) {
 
 export function buildMuxPlaybackUrl(playbackId: string, format: "m3u8" | "mp4" = "m3u8") {
   return `https://stream.mux.com/${playbackId}.${format}`;
+}
+
+export function getMuxWhipBaseUrl() {
+  return MUX_WHIP_BASE_URL.replace(/\/$/, "");
+}
+
+export function buildMuxWhipUploadUrl(streamKey: string) {
+  const baseUrl = getMuxWhipBaseUrl();
+  return `${baseUrl}/${encodeURIComponent(streamKey)}`;
 }
 
 export function verifyMuxWebhookSignature(rawBody: string, signatureHeader: string | null | undefined) {

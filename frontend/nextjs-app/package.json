@@ -16,6 +16,7 @@
     "@prisma/client": "^5.22.0",
     "@stripe/react-stripe-js": "^2.3.4",
     "@stripe/stripe-js": "^3.4.1",
+    "@tenkings/browser-rip-client": "workspace:*",
     "@tenkings/database": "workspace:*",
     "@tenkings/shared": "workspace:*",
     "@types/pdfkit": "^0.17.3",

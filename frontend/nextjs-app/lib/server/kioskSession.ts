@@ -39,6 +39,8 @@ export function serializeKioskSession(session: KioskSessionWithRelations) {
     id: session.id,
     code: session.code,
     status: session.status,
+    ingestMode: session.ingestMode,
+    userId: session.userId ?? null,
     countdownSeconds: session.countdownSeconds,
     liveSeconds: session.liveSeconds,
     revealSeconds: session.revealSeconds,
@@ -50,10 +52,14 @@ export function serializeKioskSession(session: KioskSessionWithRelations) {
     revealEndsAt: revealEnds ? revealEnds.toISOString() : null,
     videoUrl: session.videoUrl,
     thumbnailUrl: session.thumbnailUrl,
+    whipUploadUrl: session.whipUploadUrl ?? null,
+    reactionVideoUrl: session.reactionVideoUrl ?? null,
     muxPlaybackId: session.muxPlaybackId ?? null,
     qrLinkUrl: session.qrLinkUrl,
     buybackLinkUrl: session.buybackLinkUrl,
     claimStatus: session.claimStatus,
+    isGoldenTicket: session.isGoldenTicket,
+    goldenTicketId: session.goldenTicketId ?? null,
     claimedBy: session.claimedBy
       ? {
           id: session.claimedBy.id,

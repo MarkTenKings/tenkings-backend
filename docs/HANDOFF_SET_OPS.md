@@ -1,17 +1,208 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-03` (docs-only repo-state refresh; verified `feature/kingshunt` at `09d602f`; no deploy/restart/migration or DB writes were executed)
+- Last reviewed: `2026-04-21` (Golden Ticket Section 13 step 3 landed on `feature/kingshunt`; no deploy/restart/migration was executed)
 - Branch: `feature/kingshunt`
 - Current local git state at latest handoff refresh:
   - `git status -sb` -> `## feature/kingshunt`
-  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`, `frontend/nextjs-app/package.json`, `frontend/nextjs-app/pages/_app.tsx`, `frontend/nextjs-app/pages/api/locations/index.ts`, `frontend/nextjs-app/pages/locations.tsx`, `frontend/nextjs-app/styles/globals.css`, `packages/database/prisma/schema.prisma`, `pnpm-lock.yaml`
-  - new Kings Hunt paths: `frontend/nextjs-app/components/maps/*`, `frontend/nextjs-app/lib/{geo.ts,kingsHunt.ts,mapStyles.ts}`, `frontend/nextjs-app/lib/server/kingsHunt.ts`, `frontend/nextjs-app/pages/api/kingshunt/*`, `frontend/nextjs-app/pages/kingshunt/*`, `packages/database/prisma/migrations/20260402183000_kingshunt_location_wayfinding/migration.sql`, `scripts/backfill-location-data.ts`
-  - unrelated pre-existing workspace artifact left untouched: `docs/handoffs/TASK26_SET_SELECTION_TRACE.md`
 - Latest committed baseline at handoff refresh:
-  - `09d602f` docs(handoff): add task 26 set selection trace
+  - `feat(browser-rip): add browser session routes and dev test page`
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-21, Golden Ticket Section 13 step 3 browser-ingest session start + WHIP route + dev page)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Landed Section 13 step 3 only at the current `feature/kingshunt` HEAD:
+  - extended `POST /api/kiosk/start` with `ingestMode` and `goldenTicketCode`
+  - added `GET /api/kiosk/[sessionId]/whip-url`
+  - added admin-only dev page `pages/dev/browser-rip-test.tsx`
+- Browser-ingest scope:
+  - `ingestMode: "BROWSER"` now requires an authenticated user session and does not accept the kiosk secret path
+  - browser sessions resolve the shared Online location, reuse its Mux stream, and return `409 { error: "ONLINE_STREAM_BUSY", retryAfterSeconds }` when another active browser session already occupies it
+  - browser sessions persist `userId`, `ingestMode`, `whipUploadUrl`, and optional Golden Ticket scan metadata on `KioskSession`
+- OBS safeguard:
+  - the default OBS branch remains the legacy code path, still guarded by `x-kiosk-secret`, with pack validation and Mux provisioning behavior kept in place
+- Dev page notes:
+  - uses `@tenkings/browser-rip-client`
+  - requests permissions, starts WHIP publish, then drives `COUNTDOWN -> LIVE -> REVEAL -> COMPLETE` with the existing kiosk control-token stage route
+  - remains admin-only by copying the same `useSession` + admin-allowlist gate pattern used on existing `/admin/*` pages
+- Validation completed:
+  - `pnpm install --offline`
+  - `pnpm --filter @tenkings/browser-rip-client build`
+  - `pnpm --filter @tenkings/browser-rip-client test`
+  - `pnpm --filter @tenkings/nextjs-app exec node -e "console.log(require.resolve('@tenkings/browser-rip-client'))"`
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` (fails on pre-existing repo issues outside this step: missing `leaflet` types plus `CollectibleCategory` fallout from step 1)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/kiosk/start.ts --file 'pages/api/kiosk/[sessionId]/whip-url.ts' --file pages/dev/browser-rip-test.tsx --file lib/server/kioskSession.ts --file lib/server/mux.ts`
+  - `git diff --check`
+- Assumptions / notes for later steps:
+  - the checked-in app authenticates users via the existing bearer token from `useSession`, not a server-readable session cookie, so browser mode uses that current session transport while explicitly rejecting the kiosk-secret path
+  - the dev test page uses the existing stage route for `REVEAL` and `COMPLETE` rather than a real prize reveal payload because the full browser reveal choreography and claim flow land in later steps
+  - `/api/kiosk/[sessionId]/whip-url` keeps the Section 3.3 fields and adds `whipUploadUrl` as a convenience field so the client can consume the exact publish URL without rebuilding it
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-21, requested AGENTS/docs verification + git-state refresh)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `3ca0dc6`
+  - `git log --oneline -n 1` -> `3ca0dc6 feat(browser-rip): add client skeleton and whip tests`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-21, Golden Ticket Section 13 step 2 browser-rip package skeleton)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Landed Section 13 step 2 only at commit `3ca0dc6`:
+  - new workspace package `packages/browser-rip-client`
+- Package scope:
+  - added `BrowserRipClient` skeleton with the public API surface from the spec
+  - added a standalone `publishOfferToWhip(...)` helper and `WhipPublishError`
+  - added focused unit tests for the WHIP publisher handshake/error paths
+  - kept this step isolated from app/runtime integration; no Next.js route/page changes yet
+- Validation completed:
+  - `pnpm --filter @tenkings/browser-rip-client build`
+  - `pnpm --filter @tenkings/browser-rip-client test`
+  - `git diff --check -- packages/browser-rip-client`
+- Assumptions / notes for the next step:
+  - this package uses the existing root TypeScript binary path in scripts because the new workspace package has not had a dedicated local `node_modules` symlink bootstrapped yet
+  - `BrowserRipClient.start()` currently establishes permissions, starts local recording, performs the WHIP handshake, and sets the initial `countdown` stage; the full countdown/live/reveal orchestration remains for later steps
+- Current local repo state after commit and handoff updates:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `3ca0dc6`
+  - `git log --oneline -n 1` -> `3ca0dc6 feat(browser-rip): add client skeleton and whip tests`
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-21, Golden Ticket Section 13 step 1 schema + migration)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Read the Golden Ticket context docs before editing:
+  - architecture docs were only present in sibling checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/docs/...`
+  - `tk-golden-ticket-codex-spec-v1.md` was not checked in locally, so implementation followed the user-provided spec text
+- Landed Section 13 step 1 only at commit `f2afebd`:
+  - `packages/database/prisma/schema.prisma`
+  - `packages/database/prisma/migrations/20260422_golden_ticket_and_browser_ingest/migration.sql`
+- Schema/migration scope:
+  - added `KioskIngestMode`, `GoldenTicketStatus`, and `GoldenTicketConsentStatus`
+  - extended `QrCodeType` with `GOLDEN_TICKET` and `CollectibleCategory` with `GOLDEN_TICKET_PRIZE`
+  - added Golden Ticket tables plus browser-ingest/golden-ticket fields on `User`, `LiveRip`, `ShippingRequest`, `PackInstance`, `KioskSession`, `Location`, `Item`, and `QrCode`
+  - preserved existing kiosk default path by keeping `KioskSession.ingestMode @default(OBS)`
+- Validation completed:
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database generate`
+  - `git diff --check -- packages/database/prisma/schema.prisma packages/database/prisma/migrations/20260422_golden_ticket_and_browser_ingest/migration.sql`
+- Assumptions recorded for later PR description:
+  - used `LiveRip.createdAt` for the Golden Ticket composite index because `LiveRip` does not currently have a `publishedAt` column
+  - treated `ShippingRequest.goldenTicketId` as the canonical FK and left `GoldenTicket.shippingRequest` as the back relation only, to avoid a duplicate two-FK cycle in step 1
+- Current local repo state after commit and handoff updates:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `f2afebd`
+  - `git log --oneline -n 1` -> `f2afebd feat(golden-ticket): add browser ingest and ticket schema`
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-13, requested AGENTS/docs verification + git-state refresh)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-12, current AGENTS/docs verification + git-state refresh)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-12, requested AGENTS/docs verification + git-state refresh)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-04, requested AGENTS/docs verification + git-state refresh)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-04, docs-only repo state refresh)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-03, production Location coordinate update for Folsom Premium Outlets)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Logged the planned production DB write in `docs/handoffs/SESSION_LOG.md` before execution.
+- Opened an SSH session to droplet `104.131.27.245`, changed to `/root/tenkings-backend`, and exported `DATABASE_URL` from the live `bytebot-lite-service` container.
+- Executed the user-requested `UPDATE "Location"` for `slug = 'folsom-premium-outlets'` with:
+  - `latitude = 38.6438568`
+  - `longitude = -121.1885226`
+  - `venueCenterLat = 38.6436`
+  - `venueCenterLng = -121.1874`
+  - `geofenceRadiusM = 600`
+  - requested landmarks/checkpoints payload
+  - `walkingTimeMin = 3`
+  - `walkingDirections = NULL`
+  - `updatedAt = NOW()`
+- Verification observed on the droplet:
+  - `DATABASE_URL length: 145`
+  - `UPDATE 1`
+  - `SELECT slug, latitude, longitude FROM "Location" WHERE slug = 'folsom-premium-outlets';`
+  - returned row: `folsom-premium-outlets | 38.6438568 | -121.1885226`
+- Final local repo-state check after the remote write:
+  - `git status -sb` -> `## feature/kingshunt`
+  - only modified tracked files present locally: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, or migration was executed in this session.
+
+## Session Update (2026-04-03, final local repo state refresh after handoff update)
+- Rechecked the workstation repo state at the end of the session after writing the handoff entries.
+- Current local repo state:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- This final repo-state snapshot supersedes earlier same-day local HEAD references that still showed `09d602f`.
 
 ## Session Update (2026-04-03, docs-only repo state refresh)
 - Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
