@@ -1,4 +1,10 @@
-export const COLLECTIBLE_CATEGORY_VALUES = ["SPORTS", "POKEMON", "ONE_PIECE", "COMICS"] as const;
+export const COLLECTIBLE_CATEGORY_VALUES = [
+  "SPORTS",
+  "POKEMON",
+  "ONE_PIECE",
+  "COMICS",
+  "GOLDEN_TICKET_PRIZE",
+] as const;
 export type CollectibleCategoryValue = (typeof COLLECTIBLE_CATEGORY_VALUES)[number];
 
 export const PACK_TIER_VALUES = ["TIER_25", "TIER_50", "TIER_100", "TIER_250", "TIER_500"] as const;
@@ -25,6 +31,7 @@ export const CATEGORY_LABELS: Record<CollectibleCategoryValue, string> = {
   POKEMON: "Pokemon",
   ONE_PIECE: "One Piece",
   COMICS: "Comics",
+  GOLDEN_TICKET_PRIZE: "Golden Ticket Prize",
 };
 
 export const PACK_TIER_PRICE_MINOR: Record<PackTierValue, number> = {

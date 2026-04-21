@@ -13767,3 +13767,55 @@
 ### Notes
 - Before the step-3 commit, this workspace still had the uncommitted handoff-doc updates from step 2; those docs were folded into the step-3 commit and updated again here.
 - No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-21 - CollectibleCategory frontend cleanup for GOLDEN_TICKET_PRIZE
+
+### Summary
+- Re-read `AGENTS.md` and the required startup docs listed there.
+- Implemented a narrow frontend cleanup commit after step 3 to handle the new `GOLDEN_TICKET_PRIZE` enum member in shared category helpers and UI styling.
+- Goal was limited to the step-1 schema fallout in `frontend/nextjs-app`; the existing `leaflet` typing issue was intentionally left untouched.
+- No deploy, restart, migration execution, or DB mutation was performed.
+
+### Files Reviewed
+- `AGENTS.md`
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `frontend/nextjs-app/lib/adminInventory.ts`
+- `frontend/nextjs-app/components/admin/CardTile.tsx`
+- `frontend/nextjs-app/lib/server/packTypes.ts`
+- `frontend/nextjs-app/pages/api/admin/inventory/assign.ts`
+- `frontend/nextjs-app/pages/api/admin/inventory/cards/[cardId].ts`
+- `frontend/nextjs-app/lib/adminPackTypes.ts`
+
+### Files Updated
+- `frontend/nextjs-app/lib/adminInventory.ts`
+- `frontend/nextjs-app/components/admin/CardTile.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added `GOLDEN_TICKET_PRIZE` to `COLLECTIBLE_CATEGORY_VALUES` so the shared `CollectibleCategoryValue` union now matches the widened Prisma enum.
+- Added a label entry for `GOLDEN_TICKET_PRIZE` in `CATEGORY_LABELS`.
+- Added a dedicated badge style for `GOLDEN_TICKET_PRIZE` in the admin inventory card tile instead of falling through to the generic styling.
+
+### Assumptions
+- Letting the shared category helpers know about `GOLDEN_TICKET_PRIZE` is the correct fix because the schema widening was intentional and the frontend types should match the Prisma enum rather than re-narrow it.
+- This cleanup intentionally does not address the unrelated `leaflet` declaration gap in `components/maps/IndoorMap.tsx`.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> only remaining error is the pre-existing `leaflet` declaration error in `components/maps/IndoorMap.tsx`; the previous `CollectibleCategory` errors are gone
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/adminInventory.ts --file components/admin/CardTile.tsx --file lib/server/packTypes.ts --file pages/api/admin/inventory/assign.ts --file 'pages/api/admin/inventory/cards/[cardId].ts'` -> pass
+- `git diff --check` -> pass
+
+### Repo State
+- `git branch --show-current` -> `feature/kingshunt`
+- local modified files before commit:
+  - `frontend/nextjs-app/lib/adminInventory.ts`
+  - `frontend/nextjs-app/components/admin/CardTile.tsx`
+
+### Notes
+- This is a cleanup commit between Section 13 steps 3 and 4; no step-4 work started here.
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.

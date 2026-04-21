@@ -1,7 +1,7 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-21` (Golden Ticket Section 13 step 3 landed on `feature/kingshunt`; no deploy/restart/migration was executed)
+- Last reviewed: `2026-04-21` (CollectibleCategory frontend cleanup after Golden Ticket schema widening; no deploy/restart/migration was executed)
 - Branch: `feature/kingshunt`
 - Current local git state at latest handoff refresh:
   - `git status -sb` -> `## feature/kingshunt`
@@ -9,6 +9,20 @@
   - `feat(browser-rip): add browser session routes and dev test page`
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-21, CollectibleCategory frontend cleanup for GOLDEN_TICKET_PRIZE)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Landed a narrow frontend cleanup commit after step 3:
+  - widened the shared `CollectibleCategoryValue` constants/labels to include `GOLDEN_TICKET_PRIZE`
+  - added a dedicated admin card badge style for `GOLDEN_TICKET_PRIZE`
+- Result:
+  - the step-1 `CollectibleCategory` type fallout in `frontend/nextjs-app` is resolved
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` now only fails on the pre-existing `leaflet` declaration error in `components/maps/IndoorMap.tsx`
+- Validation completed:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/adminInventory.ts --file components/admin/CardTile.tsx --file lib/server/packTypes.ts --file pages/api/admin/inventory/assign.ts --file 'pages/api/admin/inventory/cards/[cardId].ts'`
+  - `git diff --check`
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-21, Golden Ticket Section 13 step 3 browser-ingest session start + WHIP route + dev page)
 - Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
