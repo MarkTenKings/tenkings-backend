@@ -14274,3 +14274,51 @@
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/golden/[ticketNumber].tsx' --file 'pages/api/golden/winners/[ticketNumber].ts' --file lib/server/goldenClaim.ts` -> pass.
 - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration.
 - `git diff --check` -> pass.
+
+## 2026-04-22 - Golden Ticket Section 13 Step 10 real OG share card endpoint
+
+### Summary
+- Replaced the old fallback redirect contract at `GET /api/golden/[ticketNumber]/share-card` with a real `@vercel/og` image generator on the same public URL.
+- The endpoint now renders a 1200x630 OG card with two tiers:
+  - reaction-frame card when a Mux thumbnail is available
+  - text-only fallback card when the reveal thumbnail is unavailable, still processing, or fails the 2-second probe
+- The visibility gate matches the trophy page because the edge route reads winner data through the existing per-ticket winner API, which already uses the shared `getPublicGoldenTicketWinnerByTicketNumber(...)` helper.
+- No deploy, restart, migration execution, runtime mutation, or DB mutation were performed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/lib/goldenTicketLabel.ts`
+- `frontend/nextjs-app/lib/server/goldenTicket.ts`
+- `frontend/nextjs-app/pages/api/golden/[ticketNumber]/share-card.tsx`
+- `frontend/nextjs-app/package.json`
+- `pnpm-lock.yaml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `GET /api/golden/[ticketNumber]/share-card` now runs on the edge runtime via `export const config = { runtime: "edge" }`.
+- Mux thumbnail behavior:
+  - builds `https://image.mux.com/{muxPlaybackId}/thumbnail.jpg?time=3&width=1200&height=630&fit_mode=smartcrop`
+  - probes availability with `fetch()` (not `HEAD`)
+  - hard timeout at `2000ms`
+  - no retries
+  - any timeout/non-2xx/missing playback id falls back to the text-only card
+- Cache behavior:
+  - reaction-frame cards: `public, max-age=31536000, s-maxage=31536000, immutable`
+  - text-only fallback cards: `public, max-age=60, s-maxage=60`
+  - invalid/private/not-public tickets: `404` with `public, max-age=300, s-maxage=300`
+- Font behavior:
+  - fetches Bebas Neue from Google Fonts at runtime
+  - uses a module-scope cache per edge instance for the fetched font `ArrayBuffer`
+  - falls back to system sans if font fetch fails
+- The ticket badge formatter was extracted into an edge-safe shared helper so the edge route could reuse the same `#0042` formatting without importing the PDF/Prisma-heavy server module.
+
+### Assumptions
+- The requested logo asset path `frontend/nextjs-app/public/brand/tenkings-logo.png` was not present in this checkout at implementation time, so the edge route attempts to fetch `/brand/tenkings-logo.png` and omits the logo cleanly if it is unavailable. If that asset appears later at the same path, the existing code will start rendering it automatically.
+- Because the share-card route runs on the edge runtime, it does not import Prisma-backed helpers directly. Instead, it reuses the Step-15 public gate indirectly through `GET /api/golden/winners/[ticketNumber]`, which already calls `getPublicGoldenTicketWinnerByTicketNumber(...)`.
+- Positive media fetches are cached in module scope per edge instance, but missing Mux thumbnails are not cached there so fallback cards can promote to reaction cards once Mux assets become available.
+- Prize art is secondary and optional: the reaction card attempts to fetch the prize image quickly, but omits it rather than risking a broken share card.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/api/golden/[ticketNumber]/share-card.tsx' --file lib/goldenTicketLabel.ts --file lib/server/goldenTicket.ts` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration.
+- `git diff --check` -> pass.

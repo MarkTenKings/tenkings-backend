@@ -3,6 +3,7 @@ import QRCode from "qrcode";
 import { customAlphabet } from "nanoid";
 import { prisma } from "@tenkings/database";
 import { CollectibleCategory, GoldenTicketStatus, PackFulfillmentStatus, Prisma, QrCodeType } from "@prisma/client";
+import { formatGoldenTicketLabel } from "../goldenTicketLabel";
 import { buildSiteUrl } from "./urls";
 
 const GOLDEN_TICKET_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -175,9 +176,7 @@ export function buildGoldenTicketShareCardUrl(ticketNumber: number) {
   return buildSiteUrl(buildGoldenTicketShareCardPath(ticketNumber));
 }
 
-export function formatGoldenTicketLabel(ticketNumber: number) {
-  return `#${String(ticketNumber).padStart(4, "0")}`;
-}
+export { formatGoldenTicketLabel };
 
 export function buildGoldenTicketPdfFileName(ticketNumber: number) {
   return `tenkings-golden-ticket-${String(ticketNumber).padStart(4, "0")}.pdf`;

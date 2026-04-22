@@ -21,6 +21,7 @@
     "@tenkings/database": "workspace:*",
     "@tenkings/shared": "workspace:*",
     "@types/pdfkit": "^0.17.3",
+    "@vercel/og": "^0.11.1",
     "adm-zip": "^0.5.12",
     "busboy": "^1.6.0",
     "canvas-confetti": "^1.9.4",

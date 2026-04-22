@@ -1,12 +1,12 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-21`
+- Last reviewed: `2026-04-22`
 - Branch: `feature/kingshunt`
-- Latest product baseline summarized here: `feat(golden-ticket): public winner trophy page`
-- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 15 (`/golden/[ticketNumber]` public winner page), plus the earlier schema cleanup and handoff-summary commits, on top of the earlier branch-base `kingshunt` locator/QR-hunt commit.
-- Fresh-agent pickup target: user-directed order is now step 10 (real generated share cards), then step 16 (`/live` redesign). Admin steps 12-13 remain intentionally deferred to a later rotation.
-- Deploy/restart/migration status: none of the Golden Ticket sessions through step 15 performed deploys, restarts, or migrations against a live environment.
+- Latest product baseline summarized here: `feat(golden-ticket): reaction share cards`
+- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 15 plus step 10 (`/api/golden/[ticketNumber]/share-card` real OG cards), on top of the earlier schema cleanup and handoff-summary commits and the branch-base `kingshunt` locator/QR-hunt commit.
+- Fresh-agent pickup target: user-directed order is now step 16 (`/live` redesign). Admin steps 12-13 remain intentionally deferred to a later rotation.
+- Deploy/restart/migration status: none of the Golden Ticket sessions through step 10/15 performed deploys, restarts, or migrations against a live environment.
 
 ## Session Update (2026-04-21, feature/kingshunt takeover read-only sync before remaining public/admin surfaces)
 - Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
@@ -91,6 +91,33 @@
   - there is no obvious shared toast helper already used on this path, so the share CTA stays on the inline clipboard-confirmation pattern
 - No deploy, restart, migration, or DB mutation was executed in this session.
 
+## Session Update (2026-04-22, Golden Ticket Section 13 step 10 real OG share card endpoint)
+- Re-read `AGENTS.md` and continued from the shipped step-15 branch state on `feature/kingshunt`.
+- Landed Section 13 step 10 after step 15, keeping the public endpoint path unchanged:
+  - `GET /api/golden/[ticketNumber]/share-card` now returns a real `@vercel/og` image response instead of redirecting to a thumbnail or winner page
+  - endpoint runs on the edge runtime
+  - added `@vercel/og` to `frontend/nextjs-app/package.json` and updated `pnpm-lock.yaml`
+- Share-card behavior:
+  - visibility gate matches the trophy page because the edge route reads winner data through `GET /api/golden/winners/[ticketNumber]`, which already uses `getPublicGoldenTicketWinnerByTicketNumber(...)`
+  - primary card uses the Mux reaction thumbnail at `time=3` with a 2-second `fetch()` probe and no retries
+  - fallback card is text-only and renders whenever the Mux thumbnail is missing, still processing, times out, or returns non-2xx
+  - reaction cards cache for one year and fallback cards cache for 60 seconds
+  - invalid/non-public tickets return `404` with a 5-minute cache header
+- Shared formatter note:
+  - extracted the ticket badge formatter into `frontend/nextjs-app/lib/goldenTicketLabel.ts` so both the server PDF/admin helpers and the edge share-card route can reuse the same `#0042` formatting without pulling PDF/Prisma code into the edge bundle
+- Asset note:
+  - the requested logo path `frontend/nextjs-app/public/brand/tenkings-logo.png` was not present in this checkout during implementation
+  - the share-card route still tries to fetch `/brand/tenkings-logo.png` and will render it automatically if the asset appears at that path, but currently omits it cleanly when unavailable so crawlers do not get a broken image
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/api/golden/[ticketNumber]/share-card.tsx' --file lib/goldenTicketLabel.ts --file lib/server/goldenTicket.ts` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- Assumptions captured for the next pickup:
+  - edge runtime cannot safely import the Prisma-heavy server helper stack directly in this repo shape, so the share-card route reuses the existing public winner API as its edge-safe gate/data source
+  - Bebas Neue is fetched from Google Fonts at runtime and cached per edge instance rather than committed as a local asset or added as a new package
+  - missing Mux thumbnails are not cached negatively in module scope, so a later request can promote from fallback card to reaction card as soon as Mux starts returning the thumbnail
+- No deploy, restart, migration, or DB mutation was executed in this session.
+
 ## Fresh-Agent Pickup Summary (through `6f87bd9`)
 
 ### Shipped Commits On `feature/kingshunt` So Far
@@ -135,7 +162,6 @@
   - Section 11 outbound SMS behavior exists behind `OUTBOUND_SMS_ENABLED`, but the dedicated wrapper/cleanup step is still open if you want strict spec-sequence parity.
 - Still pending:
   - Section 4.3 public live banner/kill-switch UX polish not covered by step 7.
-  - Section 4.4 / Section 13 step 10 actual share-card generation via `@vercel/og`.
   - Section 5.1 main `/admin/golden` dashboard shell.
   - Section 5.4 / Section 13 step 12 admin live queue + kill switch.
   - Section 5.5 / Section 13 step 13 admin winners moderation.
@@ -154,6 +180,7 @@
 - Golden Ticket placement is only valid while a pack is still `READY_FOR_PACKING`; `PACKED` and `LOADED` are treated as already sealed/shipped.
 - `lib/server/goldenClaim.ts` + `lib/server/kioskCompletion.ts` are now the main claim finalization path. Future work should extend those helpers rather than re-implementing claim completion inside routes/pages.
 - `GET /api/golden/[ticketNumber]/share-card` exists today as a fallback redirect contract, not the final generated share-card implementation.
+- `GET /api/golden/[ticketNumber]/share-card` is now the real `@vercel/og` endpoint. It uses the same public winner gate as the trophy page, probes the Mux thumbnail with a 2-second GET, and falls back to a text-only card when reaction media is unavailable.
 - The minimal `/golden/[ticketNumber]` page exists only because step 7 needed a claimed-ticket redirect target and a confirmation destination. Do not mark step 15 complete off that page alone.
 - `/golden/[ticketNumber]` is now the full public trophy page and uses a server-side public gate shared with `GET /api/golden/winners/[ticketNumber]`: ticket status must be `CLAIMED` or `FULFILLED`, and a `GoldenTicketWinnerProfile` row must exist.
 - Public winner location display still comes from `GoldenTicket.sourceLocation.name`; shipping destination fields are intentionally not used on the public hall/detail surfaces.
