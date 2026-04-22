@@ -14232,3 +14232,45 @@
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/golden/index.tsx --file pages/api/golden/winners/index.ts --file pages/api/golden/stats.ts --file lib/server/goldenClaim.ts` -> pass.
 - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration.
 - `git diff --check` -> pass.
+
+## 2026-04-21 - Golden Ticket Section 13 Step 15 public winner trophy page
+
+### Summary
+- Replaced the earlier step-7 stub at `pages/golden/[ticketNumber].tsx` with the full server-rendered public winner page for claimed Golden Tickets.
+- The page now:
+  - gates server-side on public ticket visibility
+  - returns `notFound` for any missing ticket, missing winner profile, or non-public status
+  - renders the full hero, reveal media, prize details, Hall note, back link, share button, and OG/Twitter metadata
+- Tightened the winner-detail data path in `lib/server/goldenClaim.ts` so both the page and `GET /api/golden/winners/[ticketNumber]` use the same public helper and the same visibility rules.
+- No deploy, restart, migration execution, runtime mutation, or DB mutation were performed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/goldenClaim.ts`
+- `frontend/nextjs-app/pages/api/golden/winners/[ticketNumber].ts`
+- `frontend/nextjs-app/pages/golden/[ticketNumber].tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Public render gate is now:
+  - `GoldenTicket.status IN ("CLAIMED", "FULFILLED")`
+  - and `GoldenTicketWinnerProfile` exists
+- `pages/golden/[ticketNumber].tsx` moved from client fetch/loading states to `getServerSideProps`, so private or invalid ticket numbers now 404 without leaking whether the ticket exists in another state.
+- Reveal media priority on the page is:
+  - `LiveRip.muxPlaybackId` via `@mux/mux-player-react`
+  - approved `winnerPhotoUrl`
+  - prize image / thumbnail fallback
+- OG metadata now points `og:image` and `twitter:image` at the existing share-card route contract (`/api/golden/[ticketNumber]/share-card`) without changing that endpoint.
+- The public detail API route now calls the same public helper as the page, so direct API fetches and SSR use one visibility contract.
+
+### Assumptions
+- “Published” winner profile still means “profile row exists” because the schema does not yet have a published/unpublished flag; step 13 moderation can narrow that later.
+- There is no `User.firstName` field in the current schema, so the hero derives the winner first name from the first whitespace-delimited token in `displayName`.
+- The step-14 hall page already uses the sanitized `GoldenTicket.sourceLocation.name` field for public location display, not shipping destination fields, so step 15 mirrors that source and omits city/state entirely instead of exposing address-derived PII.
+- Claim date displays `GoldenTicket.claimedAt` when present and falls back to winner-profile `publishedAt` only if needed.
+- The app does not appear to have a shared toast utility already wired into this page path, so the share action uses `navigator.clipboard.writeText` plus local inline confirmation state.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/golden/[ticketNumber].tsx' --file 'pages/api/golden/winners/[ticketNumber].ts' --file lib/server/goldenClaim.ts` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration.
+- `git diff --check` -> pass.

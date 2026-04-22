@@ -3,10 +3,10 @@
 ## Current State
 - Last reviewed: `2026-04-21`
 - Branch: `feature/kingshunt`
-- Latest product baseline summarized here: `feat(golden-ticket): public hall page`
-- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 14 (`/golden` hall page), plus the earlier schema cleanup and handoff-summary commits, on top of the earlier branch-base `kingshunt` locator/QR-hunt commit.
-- Fresh-agent pickup target: user-directed order is step 15 (`/golden/[ticketNumber]` winner-profile polish), then step 10 (real generated share cards), then step 16 (`/live` redesign). Admin steps 12-13 are intentionally deferred to a later rotation.
-- Deploy/restart/migration status: none of the Golden Ticket sessions through step 14 performed deploys, restarts, or migrations against a live environment.
+- Latest product baseline summarized here: `feat(golden-ticket): public winner trophy page`
+- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 15 (`/golden/[ticketNumber]` public winner page), plus the earlier schema cleanup and handoff-summary commits, on top of the earlier branch-base `kingshunt` locator/QR-hunt commit.
+- Fresh-agent pickup target: user-directed order is now step 10 (real generated share cards), then step 16 (`/live` redesign). Admin steps 12-13 remain intentionally deferred to a later rotation.
+- Deploy/restart/migration status: none of the Golden Ticket sessions through step 15 performed deploys, restarts, or migrations against a live environment.
 
 ## Session Update (2026-04-21, feature/kingshunt takeover read-only sync before remaining public/admin surfaces)
 - Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
@@ -63,6 +63,34 @@
   - inline winner cards use `MuxPlayer` only when `muxPlaybackId` exists; otherwise they render an approved winner photo or prize image fallback so claimed winners are still visible before media processing completes
 - No deploy, restart, migration, or DB mutation was executed in this session.
 
+## Session Update (2026-04-21, Golden Ticket Section 13 step 15 public winner trophy page)
+- Re-read `AGENTS.md` and continued from the shipped step-14 branch state on `feature/kingshunt`.
+- Landed Section 13 step 15 only:
+  - replaced the earlier client-fetched stub at `frontend/nextjs-app/pages/golden/[ticketNumber].tsx` with a server-rendered trophy page
+  - added a shared public-helper gate in `frontend/nextjs-app/lib/server/goldenClaim.ts`
+  - updated `GET /api/golden/winners/[ticketNumber]` to use the same public helper
+- Winner-page scope:
+  - server-side 404 gate for any missing ticket, missing winner profile, or non-public status
+  - public statuses are `CLAIMED` and `FULFILLED`
+  - hero now shows the derived winner first name, claim date, ticket badge, and the same public location source the hall page uses
+  - reveal media priority is Mux playback first, then approved winner photo, then prize art
+  - prize details section includes description, image, and estimated value when present
+  - share action copies the canonical `/golden/[ticketNumber]` URL with inline confirmation state
+  - OG/Twitter metadata points at the existing share-card route contract without changing the share-card endpoint itself
+- Privacy note:
+  - verified that the step-14 hall page already uses `GoldenTicket.sourceLocation.name`, not shipping destination fields, for public location display
+  - step 15 mirrors that same sanitized source and intentionally omits city/state to avoid shipping-address PII leakage
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/golden/[ticketNumber].tsx' --file 'pages/api/golden/winners/[ticketNumber].ts' --file lib/server/goldenClaim.ts` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- Assumptions captured for the next pickup:
+  - “published” public winners still means `GoldenTicketWinnerProfile` row exists because moderation/unpublish fields are not built yet
+  - there is no `User.firstName` field in the checked-in schema, so the page derives the winner first name from the first token of `displayName`
+  - the page uses `claimedAt` as the public claim date and only falls back to `publishedAt` if `claimedAt` is absent
+  - there is no obvious shared toast helper already used on this path, so the share CTA stays on the inline clipboard-confirmation pattern
+- No deploy, restart, migration, or DB mutation was executed in this session.
+
 ## Fresh-Agent Pickup Summary (through `6f87bd9`)
 
 ### Shipped Commits On `feature/kingshunt` So Far
@@ -112,7 +140,6 @@
   - Section 5.4 / Section 13 step 12 admin live queue + kill switch.
   - Section 5.5 / Section 13 step 13 admin winners moderation.
   - Section 6.1 / Section 13 step 16 full `/live` redesign.
-  - Section 6.3 / Section 13 step 15 full winner-profile page polish.
   - Remaining public/admin list/stat routes in Section 7 that those pending pages depend on.
   - Section 9 / Section 13 step 17 full acceptance run-through.
 
@@ -128,6 +155,8 @@
 - `lib/server/goldenClaim.ts` + `lib/server/kioskCompletion.ts` are now the main claim finalization path. Future work should extend those helpers rather than re-implementing claim completion inside routes/pages.
 - `GET /api/golden/[ticketNumber]/share-card` exists today as a fallback redirect contract, not the final generated share-card implementation.
 - The minimal `/golden/[ticketNumber]` page exists only because step 7 needed a claimed-ticket redirect target and a confirmation destination. Do not mark step 15 complete off that page alone.
+- `/golden/[ticketNumber]` is now the full public trophy page and uses a server-side public gate shared with `GET /api/golden/winners/[ticketNumber]`: ticket status must be `CLAIMED` or `FULFILLED`, and a `GoldenTicketWinnerProfile` row must exist.
+- Public winner location display still comes from `GoldenTicket.sourceLocation.name`; shipping destination fields are intentionally not used on the public hall/detail surfaces.
 - Repo-wide validation still has one known pre-existing failure outside Golden Ticket scope: `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` fails on `components/maps/IndoorMap.tsx` because the repo is missing `leaflet` declarations there.
 - `/golden` now exists as the public hall page. It uses `/packs` as the Shop Mystery Packs CTA because that is the current public browse/buy route in `AppShell` and the existing Golden Ticket invalid page already uses the same path.
 - The hall API interprets “published” winner rows as all current `GoldenTicketWinnerProfile` rows because the schema does not yet have an unpublish flag; step 13 moderation can narrow that later.

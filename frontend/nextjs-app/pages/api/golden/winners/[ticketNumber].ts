@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { getGoldenTicketWinnerByTicketNumber, toGoldenTicketError } from "../../../../lib/server/goldenClaim";
+import { getPublicGoldenTicketWinnerByTicketNumber, toGoldenTicketError } from "../../../../lib/server/goldenClaim";
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "GET") {
@@ -14,7 +14,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const winner = await getGoldenTicketWinnerByTicketNumber(ticketNumber);
+    const winner = await getPublicGoldenTicketWinnerByTicketNumber(ticketNumber);
     if (!winner) {
       return res.status(404).json({ message: "Winner profile not found" });
     }

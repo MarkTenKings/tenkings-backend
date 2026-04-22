@@ -119,9 +119,12 @@ export interface GoldenTicketWinnerDetail {
   displayHandle: string | null;
   caption: string | null;
   publishedAt: string;
+  claimedAt: string | null;
+  winnerPhotoUrl: string | null;
   prize: {
     name: string;
     imageUrl: string | null;
+    thumbnailUrl: string | null;
     estimatedValue: number | null;
     description: string | null;
   };
@@ -186,6 +189,8 @@ export interface GoldenTicketHallStats {
   placedCount: number;
   featuredTicketIds: string[];
 }
+
+const PUBLIC_GOLDEN_TICKET_STATUSES = new Set<GoldenTicketStatus>(["CLAIMED", "FULFILLED"]);
 
 function resolveFirstHeaderValue(value: string | string[] | undefined) {
   if (Array.isArray(value)) {
@@ -461,12 +466,28 @@ export async function recordGoldenTicketConsent(
 
 function buildWinnerProfilePayload(
   ticketNumber: number,
-  winnerProfile: { displayName: string; displayHandle: string | null; caption: string | null; publishedAt: Date },
+  winnerProfile: {
+    displayName: string;
+    displayHandle: string | null;
+    caption: string | null;
+    publishedAt: Date;
+    winnerPhotoUrl: string | null;
+    winnerPhotoApproved: boolean;
+  },
   liveRip: { slug: string; title: string; videoUrl: string; thumbnailUrl: string | null; muxPlaybackId: string | null } | null,
-  prize: { name: string; imageUrl: string | null; estimatedValue: number | null; detailsJson: Prisma.JsonValue | null },
-  sourceLocation: { id: string; name: string; slug: string } | null
+  prize: {
+    name: string;
+    imageUrl: string | null;
+    thumbnailUrl?: string | null;
+    estimatedValue: number | null;
+    detailsJson: Prisma.JsonValue | null;
+  },
+  sourceLocation: { id: string; name: string; slug: string } | null,
+  claimedAt: Date | null
 ) {
   const prizeDetails = parseGoldenTicketPrizeDetails(prize.detailsJson);
+  const prizeImageUrl = prize.imageUrl ?? prizeDetails.photoGallery[0] ?? null;
+  const prizeThumbnailUrl = prize.thumbnailUrl ?? prizeImageUrl;
   return {
     ticketNumber,
     winnerProfileUrl: buildGoldenTicketWinnerPath(ticketNumber),
@@ -475,9 +496,12 @@ function buildWinnerProfilePayload(
     displayHandle: winnerProfile.displayHandle,
     caption: winnerProfile.caption,
     publishedAt: winnerProfile.publishedAt.toISOString(),
+    claimedAt: claimedAt ? claimedAt.toISOString() : null,
+    winnerPhotoUrl: winnerProfile.winnerPhotoApproved ? winnerProfile.winnerPhotoUrl ?? null : null,
     prize: {
       name: prize.name,
-      imageUrl: prize.imageUrl ?? null,
+      imageUrl: prizeImageUrl,
+      thumbnailUrl: prizeThumbnailUrl,
       estimatedValue: prize.estimatedValue ?? null,
       description: prizeDetails.description,
     },
@@ -547,6 +571,10 @@ function buildGoldenTicketWinnerListItem(
 }
 
 export async function getGoldenTicketWinnerByTicketNumber(ticketNumber: number) {
+  return getPublicGoldenTicketWinnerByTicketNumber(ticketNumber);
+}
+
+export async function getPublicGoldenTicketWinnerByTicketNumber(ticketNumber: number) {
   const ticket = await prisma.goldenTicket.findUnique({
     where: { ticketNumber },
     include: {
@@ -555,6 +583,7 @@ export async function getGoldenTicketWinnerByTicketNumber(ticketNumber: number) 
         select: {
           name: true,
           imageUrl: true,
+          thumbnailUrl: true,
           estimatedValue: true,
           detailsJson: true,
         },
@@ -578,7 +607,7 @@ export async function getGoldenTicketWinnerByTicketNumber(ticketNumber: number) 
     },
   });
 
-  if (!ticket || !ticket.winnerProfile) {
+  if (!ticket || !ticket.winnerProfile || !PUBLIC_GOLDEN_TICKET_STATUSES.has(ticket.status)) {
     return null;
   }
 
@@ -601,7 +630,8 @@ export async function getGoldenTicketWinnerByTicketNumber(ticketNumber: number) 
           name: ticket.sourceLocation.name,
           slug: ticket.sourceLocation.slug,
         }
-      : null
+      : null,
+    ticket.claimedAt
   );
 }
 
