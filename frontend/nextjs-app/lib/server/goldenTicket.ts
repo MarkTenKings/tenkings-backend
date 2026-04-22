@@ -159,6 +159,22 @@ export function buildGoldenTicketClaimUrl(code: string) {
   return buildSiteUrl(`/golden/claim/${code}`);
 }
 
+export function buildGoldenTicketWinnerPath(ticketNumber: number) {
+  return `/golden/${ticketNumber}`;
+}
+
+export function buildGoldenTicketWinnerUrl(ticketNumber: number) {
+  return buildSiteUrl(buildGoldenTicketWinnerPath(ticketNumber));
+}
+
+export function buildGoldenTicketShareCardPath(ticketNumber: number) {
+  return `/api/golden/${ticketNumber}/share-card`;
+}
+
+export function buildGoldenTicketShareCardUrl(ticketNumber: number) {
+  return buildSiteUrl(buildGoldenTicketShareCardPath(ticketNumber));
+}
+
 export function formatGoldenTicketLabel(ticketNumber: number) {
   return `#${String(ticketNumber).padStart(4, "0")}`;
 }

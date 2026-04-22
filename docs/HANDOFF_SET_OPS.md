@@ -7128,3 +7128,23 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> only remaining failure is the pre-existing `components/maps/IndoorMap.tsx` `leaflet` declaration error
   - `git diff --check` -> pass
 - No deploy, restart, migration execution, runtime mutation, or DB mutation was executed for this task.
+
+## Golden Ticket Section 13 Step 7 - Winner Claim Flow End-to-End (2026-04-21)
+- Landed the full winner claim flow on `feature/kingshunt`:
+  - `pages/golden/claim/[code].tsx` now runs the seven-screen reveal flow in-place
+  - public claim APIs now exist for ticket lookup, consent capture, reaction upload, and final claim submit
+  - pulled forward the minimal public winner-profile/share-card routes required for Screen 1 redirect + Screen 7 confirmation URLs
+- Added a shared `lib/server/kioskCompletion.ts` helper so Golden Ticket claim finalization can create/update `LiveRip` inside the same Prisma transaction as the ownership transfer, shipping request, ticket status flip, and winner-profile creation.
+- Browser-rip note:
+  - `@tenkings/browser-rip-client` now publishes the attached composite canvas stream plus mic audio
+  - the page owns the countdown/founder-video/PiP render loop and audio beeps
+- Assumptions:
+  - DOB is still persisted through `POST /api/golden/consent`; there is no separate DOB-save route yet
+  - `GET /api/golden/[ticketNumber]/share-card` currently redirects to the best available public asset until the dedicated generated share-card step lands
+  - outbound winner SMS is implemented behind `OUTBOUND_SMS_ENABLED` using direct Twilio REST with `TWILIO_MESSAGING_SERVICE_SID` or `TWILIO_SMS_FROM`
+- Validation:
+  - `pnpm --filter @tenkings/browser-rip-client build` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/golden/claim/[code].tsx' --file 'pages/golden/[ticketNumber].tsx' --file pages/golden/invalid.tsx --file 'pages/api/golden/ticket/[code].ts' --file pages/api/golden/consent.ts --file pages/api/golden/reaction/upload.ts --file 'pages/api/golden/claim/[code].ts' --file 'pages/api/golden/winners/[ticketNumber].ts' --file 'pages/api/golden/[ticketNumber]/share-card.ts' --file lib/server/goldenClaim.ts --file lib/server/kioskCompletion.ts --file 'pages/api/kiosk/[sessionId]/complete.ts' --file pages/api/mux/webhook.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> only remaining failure is the pre-existing `components/maps/IndoorMap.tsx` `leaflet` declaration error
+  - `git diff --check` -> pass
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed for this task.

@@ -13923,6 +13923,84 @@
 ### Notes
 - No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
 
+## Golden Ticket Section 13 Step 7 - Winner Claim Flow End-to-End (2026-04-21)
+
+### Summary
+- Landed the full Golden Ticket winner-claim flow on `feature/kingshunt`.
+- `pages/golden/claim/[code].tsx` now drives the seven-screen winner experience as one in-place phase state machine.
+- New public routes landed for lookup, consent, reaction upload, and claim finalization:
+  - `GET /api/golden/ticket/[code]`
+  - `POST /api/golden/consent`
+  - `POST /api/golden/reaction/upload`
+  - `POST /api/golden/claim/[code]`
+- Pulled forward the minimal public winner read path required by Screen 1 redirect + Screen 7 confirmation URLs:
+  - `GET /api/golden/winners/[ticketNumber]`
+  - `GET /api/golden/[ticketNumber]/share-card`
+  - `pages/golden/[ticketNumber].tsx`
+  - `pages/golden/invalid.tsx`
+
+### Files Updated
+- `packages/browser-rip-client/src/browserRipClient.ts`
+- `packages/browser-rip-client/dist/browserRipClient.d.ts`
+- `packages/browser-rip-client/dist/browserRipClient.js`
+- `frontend/nextjs-app/lib/server/goldenTicket.ts`
+- `frontend/nextjs-app/lib/server/goldenClaim.ts`
+- `frontend/nextjs-app/lib/server/kioskCompletion.ts`
+- `frontend/nextjs-app/pages/api/kiosk/[sessionId]/complete.ts`
+- `frontend/nextjs-app/pages/api/mux/webhook.ts`
+- `frontend/nextjs-app/pages/api/golden/ticket/[code].ts`
+- `frontend/nextjs-app/pages/api/golden/consent.ts`
+- `frontend/nextjs-app/pages/api/golden/reaction/upload.ts`
+- `frontend/nextjs-app/pages/api/golden/claim/[code].ts`
+- `frontend/nextjs-app/pages/api/golden/winners/[ticketNumber].ts`
+- `frontend/nextjs-app/pages/api/golden/[ticketNumber]/share-card.ts`
+- `frontend/nextjs-app/pages/golden/claim/[code].tsx`
+- `frontend/nextjs-app/pages/golden/[ticketNumber].tsx`
+- `frontend/nextjs-app/pages/golden/invalid.tsx`
+- `frontend/nextjs-app/canvas-confetti.d.ts`
+- `frontend/nextjs-app/package.json`
+- `pnpm-lock.yaml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added `lib/server/kioskCompletion.ts` and refactored `pages/api/kiosk/[sessionId]/complete.ts` to reuse it, so Golden Ticket claim finalization can create/update `LiveRip` inside the same Prisma transaction as:
+  - item ownership transfer
+  - `ShippingRequest` creation
+  - `GoldenTicket.status = CLAIMED`
+  - `GoldenTicketWinnerProfile` creation
+- Updated `pages/api/mux/webhook.ts` so webhook-created/updated `LiveRip` rows preserve `isGoldenTicket` and `goldenTicketId`.
+- `@tenkings/browser-rip-client` now publishes the attached composite canvas stream plus microphone audio instead of always publishing the raw camera stream.
+- The claim page owns the countdown / founder-video / PiP render loop and audio beeps, while the browser-rip client continues to own permission capture, WHIP publish, and `MediaRecorder`.
+- Added `canvas-confetti` for the Screen 7 confirmation celebration per spec.
+
+### Assumptions
+- There is still no standalone DOB persistence API, so Screen 2 validates DOB client-side and persists it when `POST /api/golden/consent` is submitted.
+- If a claimed ticket is reopened without an authenticated session, the claim page shows a claimed gate with:
+  - sign-in to resolve “is this your claim?”
+  - public winner-profile link
+  instead of guessing claimant identity server-side.
+- The claim API contract required a real `shareCardUrl` before Section 13 step 10 exists, so `GET /api/golden/[ticketNumber]/share-card` currently redirects to the best available public asset (`LiveRip.thumbnailUrl`, then prize image, then winner page); the dedicated generated share card remains a later step.
+- There was no existing outbound SMS service in the Next.js app, so the feature-flagged winner confirmation SMS uses direct Twilio REST with:
+  - `TWILIO_MESSAGING_SERVICE_SID`, or
+  - `TWILIO_SMS_FROM`
+  when `OUTBOUND_SMS_ENABLED=true`.
+- `POST /api/golden/reaction/upload` reuses the existing live-media storage pipeline by calling `storeLiveAsset(...)` directly with a raw `POST` video body; it does not proxy through the admin-only `/api/live-rips/upload` route.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app add canvas-confetti` -> pass
+- `pnpm --filter @tenkings/browser-rip-client build` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/golden/claim/[code].tsx' --file 'pages/golden/[ticketNumber].tsx' --file pages/golden/invalid.tsx --file 'pages/api/golden/ticket/[code].ts' --file pages/api/golden/consent.ts --file pages/api/golden/reaction/upload.ts --file 'pages/api/golden/claim/[code].ts' --file 'pages/api/golden/winners/[ticketNumber].ts' --file 'pages/api/golden/[ticketNumber]/share-card.ts' --file lib/server/goldenClaim.ts --file lib/server/kioskCompletion.ts --file 'pages/api/kiosk/[sessionId]/complete.ts' --file pages/api/mux/webhook.ts` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> only remaining failure is the pre-existing `components/maps/IndoorMap.tsx` `leaflet` declaration error
+- `git diff --check` -> pass
+
+### Repo State
+- `git branch --show-current` -> `feature/kingshunt`
+- step 7 is ready for the single atomic commit
+
+### Notes
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
 ## 2026-04-21 - Golden Ticket Section 13 Step 5 admin prize minting + PDF generation
 
 ### Summary

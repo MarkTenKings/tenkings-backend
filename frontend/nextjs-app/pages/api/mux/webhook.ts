@@ -186,6 +186,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               videoUrl: playbackUrl ?? session.liveRip.videoUrl,
               muxAssetId: assetId,
               muxPlaybackId: playbackId,
+              isGoldenTicket: session.isGoldenTicket,
+              goldenTicketId: session.goldenTicketId ?? session.liveRip.goldenTicketId ?? null,
             },
           });
         } else if (playbackUrl) {
@@ -209,6 +211,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               kioskSessionId: session.id,
               muxAssetId: assetId,
               muxPlaybackId: playbackId,
+              isGoldenTicket: session.isGoldenTicket,
+              goldenTicketId: session.goldenTicketId ?? null,
             },
           });
         }

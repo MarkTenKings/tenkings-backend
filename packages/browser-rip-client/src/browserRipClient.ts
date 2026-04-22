@@ -71,9 +71,10 @@ function mapBrowserError(error: unknown): RipError {
 }
 
 export class BrowserRipClient {
-  private readonly config: RipClientConfig;
+  private config: RipClientConfig;
   private stage: RipStage = "idle";
   private mediaStream: MediaStream | null = null;
+  private publishedStream: MediaStream | null = null;
   private previewElement: HTMLVideoElement | null = null;
   private compositeElement: HTMLCanvasElement | null = null;
   private peerConnection: RTCPeerConnection | null = null;
@@ -116,12 +117,13 @@ export class BrowserRipClient {
         throw new Error("RTCPeerConnection is not available in this browser.");
       }
 
+      const publishStream = this.buildPublishedStream();
       this.peerConnection = new RTCPeerConnection();
-      for (const track of this.mediaStream.getTracks()) {
-        this.peerConnection.addTrack(track, this.mediaStream);
+      for (const track of publishStream.getTracks()) {
+        this.peerConnection.addTrack(track, publishStream);
       }
 
-      this.startReactionRecorder(this.mediaStream);
+      this.startReactionRecorder(publishStream);
       await publishOfferToWhip({
         whipUrl: this.config.whipUrl,
         peerConnection: this.peerConnection as WhipPeerConnection,
@@ -171,6 +173,13 @@ export class BrowserRipClient {
       this.peerConnection = null;
     }
 
+    if (this.publishedStream) {
+      for (const track of this.publishedStream.getTracks()) {
+        track.stop();
+      }
+      this.publishedStream = null;
+    }
+
     if (this.mediaStream) {
       for (const track of this.mediaStream.getTracks()) {
         track.stop();
@@ -188,6 +197,48 @@ export class BrowserRipClient {
 
   attachComposite(element: HTMLCanvasElement): void {
     this.compositeElement = element;
+  }
+
+  configure(nextConfig: Partial<Pick<RipClientConfig, "sessionId" | "whipUrl" | "revealVideoUrl" | "countdownSeconds" | "liveSeconds" | "overlayTitle">>): void {
+    this.config = {
+      ...this.config,
+      ...nextConfig,
+    };
+  }
+
+  private buildPublishedStream(): MediaStream {
+    if (!this.mediaStream) {
+      throw new Error("Browser rip media stream was not initialized.");
+    }
+
+    if (!this.compositeElement?.captureStream) {
+      this.publishedStream = this.mediaStream;
+      return this.mediaStream;
+    }
+
+    const compositeStream = this.compositeElement.captureStream(30);
+    const publishedStream = new MediaStream();
+
+    const videoTrack = compositeStream.getVideoTracks()[0];
+    if (videoTrack) {
+      publishedStream.addTrack(videoTrack);
+    } else {
+      const fallbackVideoTrack = this.mediaStream.getVideoTracks()[0];
+      if (fallbackVideoTrack) {
+        publishedStream.addTrack(fallbackVideoTrack);
+      }
+    }
+
+    for (const audioTrack of this.mediaStream.getAudioTracks()) {
+      publishedStream.addTrack(audioTrack);
+    }
+
+    if (publishedStream.getTracks().length === 0) {
+      throw new Error("Unable to create a publishable browser rip stream.");
+    }
+
+    this.publishedStream = publishedStream;
+    return publishedStream;
   }
 
   private syncPreview(): void {

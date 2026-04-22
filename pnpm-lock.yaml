@@ -361,6 +361,9 @@ importers:
       busboy:
         specifier: ^1.6.0
         version: 1.6.0
+      canvas-confetti:
+        specifier: ^1.9.4
+        version: 1.9.4
       leaflet:
         specifier: ^1.9.4
         version: 1.9.4
@@ -2260,6 +2263,9 @@ packages:
 
   caniuse-lite@1.0.30001746:
     resolution: {integrity: sha512-eA7Ys/DGw+pnkWWSE/id29f2IcPHVoE8wxtvE5JdvD2V28VTDPy1yEeo11Guz0sJ4ZeGRcm3uaTcAqK1LXaphA==}
+
+  canvas-confetti@1.9.4:
+    resolution: {integrity: sha512-yxQbJkAVrFXWNbTUjPqjF7G+g6pDotOUHGbkZq2NELZUMDpiJ85rIEazVb8GTaAptNW2miJAXbs1BtioA251Pw==}
 
   caseless@0.12.0:
     resolution: {integrity: sha512-4tYFyifaFfGacoiObjJegolkwSU4xQNGbVgUiNYVUxbQ2x2lUsFvY4hVgVzGiIe6WLOPqycWXA40l+PWsxthUw==}
@@ -6751,6 +6757,8 @@ snapshots:
   camelcase@5.3.1: {}
 
   caniuse-lite@1.0.30001746: {}
+
+  canvas-confetti@1.9.4: {}
 
   caseless@0.12.0:
     optional: true
