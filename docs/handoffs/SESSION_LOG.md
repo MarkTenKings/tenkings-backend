@@ -14141,3 +14141,94 @@
 
 ### Notes
 - No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-21 - Golden Ticket takeover read-only sync before remaining public/admin surfaces
+
+### Summary
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified and synced the requested branch before any coding:
+  - `git switch feature/kingshunt` -> `Already on 'feature/kingshunt'`
+  - `git pull --ff-only origin feature/kingshunt` -> `Already up to date.`
+- Reviewed the handoff summary, session-log history, the attached Golden Ticket spec text, and the referenced architecture docs.
+- No source-code changes, deploy, restart, migration execution, runtime mutation, or DB mutation were performed in this session.
+
+### Repo State
+- `git status -sb` -> `## feature/kingshunt`
+- `git branch --show-current` -> `feature/kingshunt`
+- `git log --oneline main..feature/kingshunt` top branch-only commits:
+  - `c07ae4d docs(handoff): summarize Phase 1+2 progress through commit 6f87bd9`
+  - `6f87bd9 feat(golden-ticket): winner claim flow end-to-end`
+  - `1a56397 feat(golden-ticket): place tickets during packing`
+  - `535777f feat(golden-ticket): add admin prize minting and ticket pdfs`
+  - `f488663 fix(live): inline mux playback for live rips`
+  - `2fcd586 fix(schema): handle GOLDEN_TICKET_PRIZE in CollectibleCategory switches`
+  - `dbb532f feat(browser-rip): add browser session routes and dev test page`
+  - `3ca0dc6 feat(browser-rip): add client skeleton and whip tests`
+  - `f2afebd feat(golden-ticket): add browser ingest and ticket schema`
+
+### Files Reviewed
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- Golden Ticket spec text from the attached user prompt because `tk-golden-ticket-codex-spec-v1.md` is not present in this checkout
+- `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/docs/architecture/03-live-rip-video.md`
+- `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/docs/architecture/01-data-model.md`
+- `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/docs/TEN_KINGS_SYSTEM_ARCHITECTURE.md`
+
+### Notes
+- `tk-golden-ticket-codex-spec-v1.md` is not checked into this repo; the attached user-prompt spec remains the working blueprint.
+- The three referenced architecture docs are also absent from this checkout; matching copies were reviewed from the sibling checkout already documented in prior handoff entries.
+
+## 2026-04-21 - Golden Ticket Section 13 Step 14 public hall page
+
+### Summary
+- Implemented Section 13 step 14 on `feature/kingshunt`.
+- Added the new public `/golden` hall page with:
+  - dark/gold hero
+  - CSS-based Golden Ticket visual
+  - `CLAIMED` / `PLACED` counter
+  - `/packs` CTA
+  - four-step How It Works explainer
+  - Hall of Kings winner grid with featured winners floated first
+- Added the public hall data routes:
+  - `GET /api/golden/winners`
+  - `GET /api/golden/stats`
+- Added shared hall/stats query helpers in `lib/server/goldenClaim.ts`.
+- No deploy, restart, migration execution, runtime mutation, or DB mutation were performed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/goldenClaim.ts`
+- `frontend/nextjs-app/pages/api/golden/winners/index.ts`
+- `frontend/nextjs-app/pages/api/golden/stats.ts`
+- `frontend/nextjs-app/pages/golden/index.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `GET /api/golden/winners` is paginated, orders by `featured desc, publishedAt desc`, and returns:
+  - winner name / handle
+  - ticket number
+  - prize thumbnail + name
+  - source location
+  - `LiveRip.muxPlaybackId`
+  - approved winner photo only
+  - caption
+  - claim date
+- `GET /api/golden/stats` returns:
+  - `claimedCount`
+  - `placedCount`
+  - `featuredTicketIds`
+- `/golden` uses the existing site design tokens and the built-in Tailwind `shimmer` animation for gold-foil borders instead of adding new font/theme dependencies.
+- Winner cards use `@mux/mux-player-react` when a Mux playback id exists and fall back to approved winner imagery or prize art when the media asset is not ready yet.
+- The page renders first-page data server-side and can load additional paginated winners client-side via the new API route.
+
+### Assumptions
+- “Published” winner rows currently means all existing `GoldenTicketWinnerProfile` rows because the schema has no unpublish flag yet; step-13 moderation can narrow this later.
+- `featuredTicketIds` are the underlying `GoldenTicket.id` values so the stats payload can line up with hall-card item ids if hero callouts are added later.
+- The correct mystery-pack CTA remains `/packs` because that is the current browse/buy route in `AppShell` and the existing Golden Ticket invalid page already points there.
+- The app does not currently ship a regal serif display font token, so the hall page uses the existing `font-heading` display system plus shared `night` / `gold` Tailwind tokens instead of adding a new font dependency.
+- Cards still surface claimed winners before video processing finishes by falling back from `muxPlaybackId` playback to approved winner photo or prize artwork.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/golden/index.tsx --file pages/api/golden/winners/index.ts --file pages/api/golden/stats.ts --file lib/server/goldenClaim.ts` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration.
+- `git diff --check` -> pass.

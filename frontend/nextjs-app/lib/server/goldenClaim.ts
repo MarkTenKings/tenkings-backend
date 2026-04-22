@@ -139,6 +139,54 @@ export interface GoldenTicketWinnerDetail {
   } | null;
 }
 
+export interface GoldenTicketWinnerListItem {
+  id: string;
+  ticketNumber: number;
+  winnerProfileUrl: string;
+  shareCardUrl: string;
+  displayName: string;
+  displayHandle: string | null;
+  caption: string | null;
+  featured: boolean;
+  publishedAt: string;
+  claimedAt: string | null;
+  winnerPhotoUrl: string | null;
+  prize: {
+    name: string;
+    imageUrl: string | null;
+    thumbnailUrl: string | null;
+  };
+  sourceLocation: {
+    id: string;
+    name: string;
+    slug: string;
+  } | null;
+  liveRip: {
+    slug: string;
+    title: string;
+    videoUrl: string;
+    thumbnailUrl: string | null;
+    muxPlaybackId: string | null;
+  } | null;
+}
+
+export interface GoldenTicketWinnerListResult {
+  winners: GoldenTicketWinnerListItem[];
+  pagination: {
+    page: number;
+    limit: number;
+    totalCount: number;
+    totalPages: number;
+    hasMore: boolean;
+  };
+}
+
+export interface GoldenTicketHallStats {
+  claimedCount: number;
+  placedCount: number;
+  featuredTicketIds: string[];
+}
+
 function resolveFirstHeaderValue(value: string | string[] | undefined) {
   if (Array.isArray(value)) {
     return value[0] ?? null;
@@ -438,6 +486,66 @@ function buildWinnerProfilePayload(
   } satisfies GoldenTicketWinnerDetail;
 }
 
+function buildGoldenTicketWinnerListItem(
+  ticket: {
+    id: string;
+    ticketNumber: number;
+    claimedAt: Date | null;
+    sourceLocation: {
+      id: string;
+      name: string;
+      slug: string;
+    } | null;
+    liveRip: {
+      slug: string;
+      title: string;
+      videoUrl: string;
+      thumbnailUrl: string | null;
+      muxPlaybackId: string | null;
+    } | null;
+    prizeItem: {
+      name: string;
+      imageUrl: string | null;
+      thumbnailUrl: string | null;
+      detailsJson: Prisma.JsonValue | null;
+    };
+  },
+  winnerProfile: {
+    displayName: string;
+    displayHandle: string | null;
+    caption: string | null;
+    featured: boolean;
+    publishedAt: Date;
+    winnerPhotoUrl: string | null;
+    winnerPhotoApproved: boolean;
+  }
+) {
+  const prizeDetails = parseGoldenTicketPrizeDetails(ticket.prizeItem.detailsJson);
+  const imageUrl = ticket.prizeItem.imageUrl ?? prizeDetails.photoGallery[0] ?? null;
+  const thumbnailUrl = ticket.prizeItem.thumbnailUrl ?? imageUrl;
+
+  return {
+    id: ticket.id,
+    ticketNumber: ticket.ticketNumber,
+    winnerProfileUrl: buildGoldenTicketWinnerPath(ticket.ticketNumber),
+    shareCardUrl: buildGoldenTicketShareCardPath(ticket.ticketNumber),
+    displayName: winnerProfile.displayName,
+    displayHandle: winnerProfile.displayHandle,
+    caption: winnerProfile.caption,
+    featured: winnerProfile.featured,
+    publishedAt: winnerProfile.publishedAt.toISOString(),
+    claimedAt: ticket.claimedAt ? ticket.claimedAt.toISOString() : null,
+    winnerPhotoUrl: winnerProfile.winnerPhotoApproved ? winnerProfile.winnerPhotoUrl ?? null : null,
+    prize: {
+      name: ticket.prizeItem.name,
+      imageUrl,
+      thumbnailUrl,
+    },
+    sourceLocation: ticket.sourceLocation,
+    liveRip: ticket.liveRip,
+  } satisfies GoldenTicketWinnerListItem;
+}
+
 export async function getGoldenTicketWinnerByTicketNumber(ticketNumber: number) {
   const ticket = await prisma.goldenTicket.findUnique({
     where: { ticketNumber },
@@ -495,6 +603,137 @@ export async function getGoldenTicketWinnerByTicketNumber(ticketNumber: number) 
         }
       : null
   );
+}
+
+export async function listGoldenTicketWinners({
+  page = 1,
+  limit = 12,
+}: {
+  page?: number;
+  limit?: number;
+} = {}): Promise<GoldenTicketWinnerListResult> {
+  const safePage = Number.isFinite(page) ? Math.max(1, Math.trunc(page)) : 1;
+  const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(1, Math.trunc(limit)), 24) : 12;
+  const skip = (safePage - 1) * safeLimit;
+
+  const [totalCount, rows] = await Promise.all([
+    prisma.goldenTicketWinnerProfile.count(),
+    prisma.goldenTicketWinnerProfile.findMany({
+      orderBy: [{ featured: "desc" }, { publishedAt: "desc" }],
+      skip,
+      take: safeLimit,
+      select: {
+        displayName: true,
+        displayHandle: true,
+        caption: true,
+        featured: true,
+        publishedAt: true,
+        winnerPhotoUrl: true,
+        winnerPhotoApproved: true,
+        goldenTicket: {
+          select: {
+            id: true,
+            ticketNumber: true,
+            claimedAt: true,
+            prizeItem: {
+              select: {
+                name: true,
+                imageUrl: true,
+                thumbnailUrl: true,
+                detailsJson: true,
+              },
+            },
+            sourceLocation: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+              },
+            },
+            liveRip: {
+              select: {
+                slug: true,
+                title: true,
+                videoUrl: true,
+                thumbnailUrl: true,
+                muxPlaybackId: true,
+              },
+            },
+          },
+        },
+      },
+    }),
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(totalCount / safeLimit));
+  return {
+    winners: rows.map((row) =>
+      buildGoldenTicketWinnerListItem(
+        {
+          id: row.goldenTicket.id,
+          ticketNumber: row.goldenTicket.ticketNumber,
+          claimedAt: row.goldenTicket.claimedAt,
+          prizeItem: row.goldenTicket.prizeItem,
+          sourceLocation: row.goldenTicket.sourceLocation
+            ? {
+                id: row.goldenTicket.sourceLocation.id,
+                name: row.goldenTicket.sourceLocation.name,
+                slug: row.goldenTicket.sourceLocation.slug,
+              }
+            : null,
+          liveRip: row.goldenTicket.liveRip
+            ? {
+                slug: row.goldenTicket.liveRip.slug,
+                title: row.goldenTicket.liveRip.title,
+                videoUrl: row.goldenTicket.liveRip.videoUrl,
+                thumbnailUrl: row.goldenTicket.liveRip.thumbnailUrl ?? null,
+                muxPlaybackId: row.goldenTicket.liveRip.muxPlaybackId ?? null,
+              }
+            : null,
+        },
+        row
+      )
+    ),
+    pagination: {
+      page: safePage,
+      limit: safeLimit,
+      totalCount,
+      totalPages,
+      hasMore: safePage < totalPages,
+    },
+  };
+}
+
+export async function getGoldenTicketHallStats(): Promise<GoldenTicketHallStats> {
+  const [claimedCount, placedCount, featuredProfiles] = await Promise.all([
+    prisma.goldenTicket.count({
+      where: {
+        status: "CLAIMED",
+      },
+    }),
+    prisma.goldenTicket.count({
+      where: {
+        status: "PLACED",
+      },
+    }),
+    prisma.goldenTicketWinnerProfile.findMany({
+      where: {
+        featured: true,
+      },
+      orderBy: {
+        publishedAt: "desc",
+      },
+      select: {
+        goldenTicketId: true,
+      },
+    }),
+  ]);
+
+  return {
+    claimedCount,
+    placedCount,
+    featuredTicketIds: featuredProfiles.map((profile) => profile.goldenTicketId),
+  };
 }
 
 function buildGoldenTicketNotes(size?: string, socialHandle?: string) {

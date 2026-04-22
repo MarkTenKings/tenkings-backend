@@ -3,10 +3,65 @@
 ## Current State
 - Last reviewed: `2026-04-21`
 - Branch: `feature/kingshunt`
-- Latest product baseline summarized here: `6f87bd9 feat(golden-ticket): winner claim flow end-to-end`
-- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 7, plus one schema cleanup commit, on top of the earlier branch-base `kingshunt` locator/QR-hunt commit.
-- Fresh-agent pickup target: the next clean spec pickups are step 10 (`share-card` generation), step 12 (admin live queue + kill switch), or step 14 (`/golden` hall page).
-- Deploy/restart/migration status: none of the Golden Ticket sessions through `6f87bd9` performed deploys, restarts, or migrations against a live environment.
+- Latest product baseline summarized here: `feat(golden-ticket): public hall page`
+- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 14 (`/golden` hall page), plus the earlier schema cleanup and handoff-summary commits, on top of the earlier branch-base `kingshunt` locator/QR-hunt commit.
+- Fresh-agent pickup target: user-directed order is step 15 (`/golden/[ticketNumber]` winner-profile polish), then step 10 (real generated share cards), then step 16 (`/live` redesign). Admin steps 12-13 are intentionally deferred to a later rotation.
+- Deploy/restart/migration status: none of the Golden Ticket sessions through step 14 performed deploys, restarts, or migrations against a live environment.
+
+## Session Update (2026-04-21, feature/kingshunt takeover read-only sync before remaining public/admin surfaces)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Synced and verified the requested branch state before any coding:
+  - `git switch feature/kingshunt` -> already on branch
+  - `git pull --ff-only origin feature/kingshunt` -> `Already up to date.`
+  - `git log --oneline main..feature/kingshunt` confirms the nine Golden Ticket branch commits atop `main`:
+    - `c07ae4d docs(handoff): summarize Phase 1+2 progress through commit 6f87bd9`
+    - `6f87bd9 feat(golden-ticket): winner claim flow end-to-end`
+    - `1a56397 feat(golden-ticket): place tickets during packing`
+    - `535777f feat(golden-ticket): add admin prize minting and ticket pdfs`
+    - `f488663 fix(live): inline mux playback for live rips`
+    - `2fcd586 fix(schema): handle GOLDEN_TICKET_PRIZE in CollectibleCategory switches`
+    - `dbb532f feat(browser-rip): add browser session routes and dev test page`
+    - `3ca0dc6 feat(browser-rip): add client skeleton and whip tests`
+    - `f2afebd feat(golden-ticket): add browser ingest and ticket schema`
+- Reviewed the required implementation context in order:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+  - Golden Ticket spec text from the attached user prompt because `tk-golden-ticket-codex-spec-v1.md` is not checked into this checkout
+  - architecture docs from sibling checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/` because this checkout does not contain:
+    - `docs/architecture/03-live-rip-video.md`
+    - `docs/architecture/01-data-model.md`
+    - `TEN_KINGS_SYSTEM_ARCHITECTURE.md`
+- Read-only pickup conclusions inherited from handoff/session log:
+  - branch work is complete through Section 13 step 7 plus the `GOLDEN_TICKET_PRIZE` cleanup commit and handoff summary commit
+  - the next remaining public/admin work still aligns to step 10, step 12, step 13, step 14, step 15, and step 16
+  - `/golden` hall page work should build on the existing claimed-ticket/winner-detail contracts rather than reopening the claim flow
+- No source-code changes, deploy, restart, migration, or DB mutation were executed in this session.
+
+## Session Update (2026-04-21, Golden Ticket Section 13 step 14 public hall page)
+- Re-read `AGENTS.md` and continued from the shipped Golden Ticket branch state on `feature/kingshunt`.
+- Landed Section 13 step 14 only:
+  - new public hall page at `frontend/nextjs-app/pages/golden/index.tsx`
+  - new public routes `GET /api/golden/winners` and `GET /api/golden/stats`
+  - shared hall/stats query helpers added in `frontend/nextjs-app/lib/server/goldenClaim.ts`
+- Hall page scope:
+  - dark/gold hero with CSS-built Golden Ticket visual
+  - hero counter shows `{CLAIMED} found · {PLACED} still in circulation`
+  - CTA uses `/packs`
+  - four-step How It Works explainer
+  - Hall of Kings winner grid with featured winners floated first
+  - winner cards use inline `@mux/mux-player-react` playback when `LiveRip.muxPlaybackId` exists, and fall back to approved winner photo / prize imagery while assets are still processing
+  - mobile-first layout: single-column stack on mobile, expanding to 2-3 columns on larger screens
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/golden/index.tsx --file pages/api/golden/winners/index.ts --file pages/api/golden/stats.ts --file lib/server/goldenClaim.ts` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- Assumptions captured for the next pickup:
+  - “Published” winner rows currently means all `GoldenTicketWinnerProfile` rows because step-13 moderation/unpublish controls do not exist yet
+  - `featuredTicketIds` are returned as `GoldenTicket.id` values to line up with the hall-card ids
+  - `/packs` is the correct mystery-pack browse CTA because it is the existing public nav route and is already used by the Golden Ticket invalid page
+  - the app does not currently ship a regal serif display font token, so the hall page uses the existing `font-heading`/Bebas display system plus shared `night`/`gold` palette tokens rather than adding a new font dependency
+  - inline winner cards use `MuxPlayer` only when `muxPlaybackId` exists; otherwise they render an approved winner photo or prize image fallback so claimed winners are still visible before media processing completes
+- No deploy, restart, migration, or DB mutation was executed in this session.
 
 ## Fresh-Agent Pickup Summary (through `6f87bd9`)
 
@@ -57,7 +112,6 @@
   - Section 5.4 / Section 13 step 12 admin live queue + kill switch.
   - Section 5.5 / Section 13 step 13 admin winners moderation.
   - Section 6.1 / Section 13 step 16 full `/live` redesign.
-  - Section 6.2 / Section 13 step 14 `/golden` hall page.
   - Section 6.3 / Section 13 step 15 full winner-profile page polish.
   - Remaining public/admin list/stat routes in Section 7 that those pending pages depend on.
   - Section 9 / Section 13 step 17 full acceptance run-through.
@@ -75,6 +129,10 @@
 - `GET /api/golden/[ticketNumber]/share-card` exists today as a fallback redirect contract, not the final generated share-card implementation.
 - The minimal `/golden/[ticketNumber]` page exists only because step 7 needed a claimed-ticket redirect target and a confirmation destination. Do not mark step 15 complete off that page alone.
 - Repo-wide validation still has one known pre-existing failure outside Golden Ticket scope: `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` fails on `components/maps/IndoorMap.tsx` because the repo is missing `leaflet` declarations there.
+- `/golden` now exists as the public hall page. It uses `/packs` as the Shop Mystery Packs CTA because that is the current public browse/buy route in `AppShell` and the existing Golden Ticket invalid page already uses the same path.
+- The hall API interprets “published” winner rows as all current `GoldenTicketWinnerProfile` rows because the schema does not yet have an unpublish flag; step 13 moderation can narrow that later.
+- `GET /api/golden/stats` returns `featuredTicketIds` as underlying `GoldenTicket.id` values so the stats payload lines up with the hall-card item ids.
+- The public hall page stays on the existing shared Tailwind/theme stack (`night`, `gold`, `font-heading`, built-in `shimmer`) and does not add a new font dependency.
 
 ### Recommended Next Pickups
 - Step 10:
