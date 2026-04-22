@@ -3,10 +3,84 @@
 ## Current State
 - Last reviewed: `2026-04-22`
 - Branch: `feature/kingshunt`
-- Latest product baseline summarized here: `feat(golden-ticket): admin live queue + kill switch`
-- Product status: Golden Ticket/browser-rip work is now shipped locally through Section 13 step 16 plus step 12. `/admin/golden/queue` now shows active Golden Ticket sessions with 3-second polling, inline Mux previews, an idempotent migration-free kill switch, and a simple full-player watch route. Cancelled sessions are blocked from the public `/live` publication paths by guarding webhook publish, kiosk completion publish, `/api/live-rips`, and the `/live` idle-reveal query. Step 13 winner moderation remains open.
-- Fresh-agent pickup target: if Golden Ticket branch work continues, the next unshipped admin step is Section 13 step 13 (`/admin/golden/winners` moderation).
+- Latest product baseline summarized here: `feat(golden-ticket): admin winners moderation`
+- Product status: Golden Ticket/browser-rip work is now shipped locally through Section 13 step 16 plus step 13. `/admin/golden/winners` now exists with caption editing, featured moderation, winner-photo approval/rejection, and publish/unpublish controls. Option A landed locally: `GoldenTicketWinnerProfile.publishedAt` is now nullable with a checked-in Prisma migration, and public `/golden`, public winner-detail, and `/live` idle-reveal winner queries now filter on `publishedAt IS NOT NULL`. Existing queue kill-switch protections from step 12 remain in place.
+- Fresh-agent pickup target: Golden Ticket admin winners moderation is now landed locally; the next follow-up should be acceptance/pass validation work (spec Section 9 / step 17) or later Phase 4 winner-photo population, not another unstarted admin moderation surface.
 - Deploy/restart/migration status: none of the Golden Ticket sessions through step 16/12 performed deploys, restarts, or migrations against a live environment.
+
+## Session Update (2026-04-22, Golden Ticket Section 13 step 13 admin winners moderation)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified requested local branch state before implementation:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `dad7a45`
+- User confirmed Option A for unpublish semantics:
+  - `GoldenTicketWinnerProfile.publishedAt` changed from non-nullable to nullable with default `now()`
+  - checked in Prisma migration: `packages/database/prisma/migrations/20260422193000_make_golden_ticket_winner_published_at_nullable/migration.sql`
+  - unpublish semantics: `publishedAt = null`
+  - republish semantics: if currently unpublished, `publishedAt = now()`; if already published, PATCH preserves the existing timestamp for idempotence
+- Landed admin winners moderation:
+  - new admin page `frontend/nextjs-app/pages/admin/golden/winners.tsx`
+  - new admin APIs:
+    - `GET /api/admin/golden/winners`
+    - `PATCH /api/admin/golden/winners/[id]`
+  - new server helper `frontend/nextjs-app/lib/server/goldenAdminWinners.ts`
+- Admin winners page behavior:
+  - lists all `GoldenTicketWinnerProfile` rows with pagination and default most-recent claim ordering
+  - shows ticket label, prize, display name, photo status, featured state, and published state
+  - supports inline caption editing
+  - supports featured toggle
+  - supports winner-photo approve/reject, showing the submitted `winnerPhotoUrl` preview when present
+  - shows strict `"No photo submitted"` state when no winner photo exists yet
+  - supports unpublish / republish controls
+- Public filtering changes:
+  - `frontend/nextjs-app/lib/server/goldenClaim.ts` now filters public Hall of Kings list queries and public winner-detail lookups on `publishedAt IS NOT NULL`
+  - removed the previous step-13 TODO comment in `goldenClaim.ts`
+  - `frontend/nextjs-app/lib/server/goldenLive.ts` now filters the `/live` idle reveal query to require a published winner profile
+  - already-claimed scan flow in `frontend/nextjs-app/pages/golden/claim/[code].tsx` no longer redirects a different user to a now-unpublished public winner page
+- Discoverability added from existing admin Golden surfaces already present in this branch:
+  - `frontend/nextjs-app/components/AppShell.tsx`
+  - `frontend/nextjs-app/pages/admin/index.tsx`
+  - `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+  - `frontend/nextjs-app/pages/admin/golden/queue.tsx`
+- Validation:
+  - `pnpm --filter @tenkings/database generate` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/golden/winners.tsx --file pages/api/admin/golden/winners/index.ts --file 'pages/api/admin/golden/winners/[id].ts' --file lib/server/goldenAdminWinners.ts --file lib/server/goldenClaim.ts --file lib/server/goldenLive.ts --file pages/admin/golden/prizes.tsx --file pages/admin/golden/queue.tsx --file components/AppShell.tsx --file pages/admin/index.tsx --file 'pages/golden/claim/[code].tsx'` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- Assumptions:
+  - this branch still does not contain `pages/admin/golden/index.tsx`, so “admin golden landing surface” was interpreted as the existing Golden Ticket entry points already present in `/admin`, AppShell, prize minting, and live queue
+  - public winner visibility is now driven solely by nullable `publishedAt`; no separate `unpublished` column was introduced
+  - existing uncommitted handoff-doc changes present in the worktree at session start were preserved and folded into the same atomic commit instead of being discarded as stale
+- No deploy, restart, migration execution, DB mutation, or destructive operation was executed in this session.
+
+## Session Update (2026-04-22, Golden Ticket Section 13 step 13 planning + migration recommendation)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified requested local branch state before any implementation:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `dad7a45`
+- Reviewed Golden Ticket step-13 context in code and spec:
+  - local spec file used for this planning pass: `/Users/markthomas/Downloads/tk-golden-ticket-codex-spec-v1.md`
+  - spec Section `5.5` confirms `/admin/golden/winners` row actions: caption edit, featured toggle, photo approve/reject, unpublish
+  - current branch reality still uses non-nullable `GoldenTicketWinnerProfile.publishedAt @default(now())`
+  - current public filters do not yet honor an unpublished state:
+    - `frontend/nextjs-app/lib/server/goldenClaim.ts`
+    - `frontend/nextjs-app/lib/server/goldenLive.ts`
+  - current admin Golden discovery surfaces are:
+    - `frontend/nextjs-app/components/AppShell.tsx`
+    - `frontend/nextjs-app/pages/admin/index.tsx`
+    - `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+    - `frontend/nextjs-app/pages/admin/golden/queue.tsx`
+- Migration recommendation:
+  - recommend **Option A**: make `GoldenTicketWinnerProfile.publishedAt` nullable
+  - rationale:
+    - unpublish semantics become direct and queryable (`publishedAt: null`)
+    - republish stays simple (`publishedAt = now()`)
+    - public `/golden`, public winner detail gating, and `/live` idle reveal filtering can all share one source of truth
+    - it aligns with the existing step-13 TODO in `goldenClaim.ts` more cleanly than adding a second boolean flag
+  - do **not** use a sentinel future date hack
+- No implementation, migration, deploy, restart, commit, or DB mutation was executed in this planning session; work is waiting on the user’s Option A/B confirmation.
 
 ## Session Update (2026-04-22, Golden Ticket Section 13 step 12 admin live queue + kill switch)
 - Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.

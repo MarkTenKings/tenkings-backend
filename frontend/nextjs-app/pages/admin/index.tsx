@@ -344,6 +344,15 @@ export default function AdminHome() {
                 Monitor active Golden Ticket sessions, watch the shared Mux feed, and trigger the kill switch before a cancelled session can publish.
               </p>
             </Link>
+            <Link
+              href="/admin/golden/winners"
+              className="rounded-[28px] border border-sky-400/25 bg-sky-500/5 p-5 transition hover:border-sky-300/50 hover:bg-sky-500/10"
+            >
+              <p className="font-heading text-2xl uppercase tracking-[0.12em] text-white">Winners Moderation</p>
+              <p className="mt-3 max-w-lg text-sm text-slate-300">
+                Edit captions, toggle featured status, approve winner photos, and publish or unpublish Golden Ticket winner profiles.
+              </p>
+            </Link>
           </div>
         </section>
 

@@ -385,7 +385,12 @@ export default function GoldenClaimPage() {
       }
 
       if (viewer?.id && ticket.scannedByUserId !== viewer.id) {
-        void router.replace(ticket.winnerProfileUrl);
+        if (ticket.winnerProfile) {
+          void router.replace(ticket.winnerProfileUrl);
+          return;
+        }
+
+        setPhase("claimed");
         return;
       }
 
@@ -1114,7 +1119,11 @@ export default function GoldenClaimPage() {
       return (
         <ScreenShell eyebrow="Golden Ticket" title="This ticket has already been claimed.">
           <div className="space-y-4 text-sm text-slate-300">
-            <p>Sign in if this is your claim, or jump to the public winner page.</p>
+            <p>
+              {ticket?.winnerProfile
+                ? "Sign in if this is your claim, or jump to the public winner page."
+                : "Sign in if this is your claim. This winner profile is not currently public."}
+            </p>
             <div className="flex flex-wrap gap-3">
               <button
                 type="button"
@@ -1123,12 +1132,14 @@ export default function GoldenClaimPage() {
               >
                 Sign In
               </button>
-              <Link
-                href={ticket?.winnerProfileUrl ?? "/golden"}
-                className="rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.3em] text-slate-200"
-              >
-                View Winner Page
-              </Link>
+              {ticket?.winnerProfile ? (
+                <Link
+                  href={ticket.winnerProfileUrl}
+                  className="rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.3em] text-slate-200"
+                >
+                  View Winner Page
+                </Link>
+              ) : null}
             </div>
           </div>
         </ScreenShell>

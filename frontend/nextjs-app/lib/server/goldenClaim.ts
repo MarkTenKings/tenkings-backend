@@ -191,7 +191,7 @@ export interface GoldenTicketHallStats {
   featuredTicketIds: string[];
 }
 
-const PUBLIC_GOLDEN_TICKET_STATUSES = new Set<GoldenTicketStatus>(["CLAIMED", "FULFILLED"]);
+const PUBLIC_GOLDEN_TICKET_STATUSES: GoldenTicketStatus[] = ["CLAIMED", "FULFILLED"];
 
 function resolveFirstHeaderValue(value: string | string[] | undefined) {
   if (Array.isArray(value)) {
@@ -239,10 +239,10 @@ function buildWinnerProfileSummary(
     displayName: string;
     displayHandle: string | null;
     caption: string | null;
-    publishedAt: Date;
+    publishedAt: Date | null;
   } | null
 ) {
-  if (!winnerProfile) {
+  if (!winnerProfile?.publishedAt) {
     return null;
   }
 
@@ -576,8 +576,20 @@ export async function getGoldenTicketWinnerByTicketNumber(ticketNumber: number) 
 }
 
 export async function getPublicGoldenTicketWinnerByTicketNumber(ticketNumber: number) {
-  const ticket = await prisma.goldenTicket.findUnique({
-    where: { ticketNumber },
+  const ticket = await prisma.goldenTicket.findFirst({
+    where: {
+      ticketNumber,
+      status: {
+        in: PUBLIC_GOLDEN_TICKET_STATUSES,
+      },
+      winnerProfile: {
+        is: {
+          publishedAt: {
+            not: null,
+          },
+        },
+      },
+    },
     include: {
       winnerProfile: true,
       prizeItem: {
@@ -608,13 +620,16 @@ export async function getPublicGoldenTicketWinnerByTicketNumber(ticketNumber: nu
     },
   });
 
-  if (!ticket || !ticket.winnerProfile || !PUBLIC_GOLDEN_TICKET_STATUSES.has(ticket.status)) {
+  if (!ticket || !ticket.winnerProfile?.publishedAt) {
     return null;
   }
 
   return buildWinnerProfilePayload(
     ticket.ticketNumber,
-    ticket.winnerProfile,
+    {
+      ...ticket.winnerProfile,
+      publishedAt: ticket.winnerProfile.publishedAt,
+    },
     ticket.liveRip
       ? {
           slug: ticket.liveRip.slug,
@@ -653,10 +668,20 @@ export async function listGoldenTicketWinners({
       ? [{ publishedAt: "desc" as const }]
       : [{ featured: "desc" as const }, { publishedAt: "desc" as const }];
 
-  // TODO(step-13): add an explicit publishedAt moderation filter here once winner publishing becomes operator-controlled.
   const [totalCount, rows] = await Promise.all([
-    prisma.goldenTicketWinnerProfile.count(),
+    prisma.goldenTicketWinnerProfile.count({
+      where: {
+        publishedAt: {
+          not: null,
+        },
+      },
+    }),
     prisma.goldenTicketWinnerProfile.findMany({
+      where: {
+        publishedAt: {
+          not: null,
+        },
+      },
       orderBy,
       skip,
       take: safeLimit,
@@ -705,32 +730,39 @@ export async function listGoldenTicketWinners({
 
   const totalPages = Math.max(1, Math.ceil(totalCount / safeLimit));
   return {
-    winners: rows.map((row) =>
-      buildGoldenTicketWinnerListItem(
-        {
-          id: row.goldenTicket.id,
-          ticketNumber: row.goldenTicket.ticketNumber,
-          claimedAt: row.goldenTicket.claimedAt,
-          prizeItem: row.goldenTicket.prizeItem,
-          sourceLocation: row.goldenTicket.sourceLocation
-            ? {
-                id: row.goldenTicket.sourceLocation.id,
-                name: row.goldenTicket.sourceLocation.name,
-                slug: row.goldenTicket.sourceLocation.slug,
+    winners: rows.flatMap((row) =>
+      row.publishedAt
+        ? [
+            buildGoldenTicketWinnerListItem(
+              {
+                id: row.goldenTicket.id,
+                ticketNumber: row.goldenTicket.ticketNumber,
+                claimedAt: row.goldenTicket.claimedAt,
+                prizeItem: row.goldenTicket.prizeItem,
+                sourceLocation: row.goldenTicket.sourceLocation
+                  ? {
+                      id: row.goldenTicket.sourceLocation.id,
+                      name: row.goldenTicket.sourceLocation.name,
+                      slug: row.goldenTicket.sourceLocation.slug,
+                    }
+                  : null,
+                liveRip: row.goldenTicket.liveRip
+                  ? {
+                      slug: row.goldenTicket.liveRip.slug,
+                      title: row.goldenTicket.liveRip.title,
+                      videoUrl: row.goldenTicket.liveRip.videoUrl,
+                      thumbnailUrl: row.goldenTicket.liveRip.thumbnailUrl ?? null,
+                      muxPlaybackId: row.goldenTicket.liveRip.muxPlaybackId ?? null,
+                    }
+                  : null,
+              },
+              {
+                ...row,
+                publishedAt: row.publishedAt,
               }
-            : null,
-          liveRip: row.goldenTicket.liveRip
-            ? {
-                slug: row.goldenTicket.liveRip.slug,
-                title: row.goldenTicket.liveRip.title,
-                videoUrl: row.goldenTicket.liveRip.videoUrl,
-                thumbnailUrl: row.goldenTicket.liveRip.thumbnailUrl ?? null,
-                muxPlaybackId: row.goldenTicket.liveRip.muxPlaybackId ?? null,
-              }
-            : null,
-        },
-        row
-      )
+            ),
+          ]
+        : []
     ),
     pagination: {
       page: safePage,
@@ -758,6 +790,9 @@ export async function getGoldenTicketHallStats(): Promise<GoldenTicketHallStats>
     prisma.goldenTicketWinnerProfile.findMany({
       where: {
         featured: true,
+        publishedAt: {
+          not: null,
+        },
       },
       orderBy: {
         publishedAt: "desc",

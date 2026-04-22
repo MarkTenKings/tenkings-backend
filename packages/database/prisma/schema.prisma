@@ -1829,7 +1829,7 @@ model GoldenTicketWinnerProfile {
   winnerPhotoApproved Boolean  @default(false)
   caption             String?
   featured            Boolean  @default(false)
-  publishedAt         DateTime @default(now())
+  publishedAt         DateTime? @default(now())
 
   goldenTicket GoldenTicket @relation(fields: [goldenTicketId], references: [id])
 

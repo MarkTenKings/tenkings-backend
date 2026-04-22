@@ -14536,3 +14536,120 @@
 
 ### Planned Local Commit
 - `feat(golden-ticket): admin live queue + kill switch`
+
+## 2026-04-22 - Golden Ticket Section 13 step 13 planning and migration recommendation
+
+### Summary
+- Re-read the required startup docs listed in `AGENTS.md` from `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified the requested branch baseline before any code changes:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `dad7a45`
+- Reviewed the Step 13 winners-moderation spec and the current Golden Ticket codepaths that need to change.
+- Stopped before implementation because the unpublish schema semantics require user confirmation.
+
+### Files Reviewed
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `/Users/markthomas/Downloads/tk-golden-ticket-codex-spec-v1.md`
+- `frontend/nextjs-app/lib/server/admin.ts`
+- `frontend/nextjs-app/lib/server/goldenClaim.ts`
+- `frontend/nextjs-app/lib/server/goldenLive.ts`
+- `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+- `frontend/nextjs-app/pages/admin/golden/queue.tsx`
+- `frontend/nextjs-app/pages/api/admin/golden/queue.ts`
+- `frontend/nextjs-app/pages/api/golden/winners/index.ts`
+- `frontend/nextjs-app/pages/api/golden/winners/[ticketNumber].ts`
+- `frontend/nextjs-app/pages/live.tsx`
+- `packages/database/prisma/schema.prisma`
+
+### Planning Notes
+- Spec Section `5.5` requires `/admin/golden/winners` with caption edit, featured toggle, photo approve/reject, and unpublish controls.
+- Current branch reality does not yet have an unpublished representation because `GoldenTicketWinnerProfile.publishedAt` is non-nullable.
+- Public winner filtering is still missing in:
+  - `frontend/nextjs-app/lib/server/goldenClaim.ts`
+  - `frontend/nextjs-app/lib/server/goldenLive.ts`
+- Existing admin Golden discovery surfaces already in branch are:
+  - `frontend/nextjs-app/components/AppShell.tsx`
+  - `frontend/nextjs-app/pages/admin/index.tsx`
+  - `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+  - `frontend/nextjs-app/pages/admin/golden/queue.tsx`
+
+### Recommendation
+- Recommend **Option A**: make `GoldenTicketWinnerProfile.publishedAt` nullable.
+- Why:
+  - unpublish becomes `publishedAt = null`
+  - republish becomes `publishedAt = now()`
+  - public `/golden`, public winner detail gating, and `/live` idle reveal filtering can all share a single source of truth
+  - it aligns with the existing step-13 TODO/comment intent better than adding a second boolean field
+- Rejected option:
+  - Option C sentinel-future-date hack should not be used
+
+### Assumptions
+- The spec file is not checked into this branch; this planning pass used the local copy at `/Users/markthomas/Downloads/tk-golden-ticket-codex-spec-v1.md`.
+- Because this branch does not currently include `pages/admin/golden/index.tsx`, “admin golden landing surface” will likely need to mean the existing Golden admin discovery points already shipped in this checkout unless the implementation adds a new root page later.
+- The task’s validation note explicitly allows ignoring the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration failure during `tsc --noEmit`.
+
+### Notes
+- No implementation, migration, deploy, restart, commit, or DB mutation was executed in this planning session.
+- Work is waiting on the user to confirm Option A or Option B before Prisma schema changes begin.
+
+## 2026-04-22 - Golden Ticket Section 13 step 13 admin winners moderation
+
+### Summary
+- Implemented `/admin/golden/winners` for Golden Ticket winner moderation on `feature/kingshunt`.
+- User approved Option A, so `GoldenTicketWinnerProfile.publishedAt` is now nullable with a checked-in Prisma migration.
+- Added admin list/update APIs for winner moderation and updated public `/golden`, public winner-detail, and `/live` idle-reveal winner queries to exclude unpublished profiles.
+- Preserved and included the pre-existing uncommitted handoff-doc edits that were already present in the working tree at session start.
+- No deploy, restart, migration execution, runtime mutation, DB mutation, or destructive operation was executed.
+
+### Files Updated
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260422193000_make_golden_ticket_winner_published_at_nullable/migration.sql`
+- `frontend/nextjs-app/lib/server/goldenAdminWinners.ts`
+- `frontend/nextjs-app/lib/server/goldenClaim.ts`
+- `frontend/nextjs-app/lib/server/goldenLive.ts`
+- `frontend/nextjs-app/pages/api/admin/golden/winners/index.ts`
+- `frontend/nextjs-app/pages/api/admin/golden/winners/[id].ts`
+- `frontend/nextjs-app/pages/admin/golden/winners.tsx`
+- `frontend/nextjs-app/components/AppShell.tsx`
+- `frontend/nextjs-app/pages/admin/index.tsx`
+- `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+- `frontend/nextjs-app/pages/admin/golden/queue.tsx`
+- `frontend/nextjs-app/pages/golden/claim/[code].tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Option A schema change:
+  - `GoldenTicketWinnerProfile.publishedAt` changed from `DateTime` to `DateTime? @default(now())`
+  - checked in migration SQL drops the `NOT NULL` constraint only
+- Admin moderation surface:
+  - `pages/admin/golden/winners.tsx` lists all winner profiles with pagination and default most-recent claim ordering
+  - row actions include inline caption save/reset, featured toggle, winner-photo approve/reject, and unpublish/republish
+  - moderation shows the submitted winner photo when present and a strict `"No photo submitted"` state when absent
+- Admin APIs:
+  - `GET /api/admin/golden/winners` returns paginated rows plus moderation stats
+  - `PATCH /api/admin/golden/winners/[id]` accepts `caption`, `featured`, `winnerPhotoApproved`, and publish-state updates
+  - PATCH is idempotent for publish state: republishing an already published profile preserves its existing timestamp
+- Public filtering:
+  - `lib/server/goldenClaim.ts` now filters public winner list/detail queries on `publishedAt IS NOT NULL`
+  - removed the previous TODO(step-13) comment in `goldenClaim.ts`
+  - `lib/server/goldenLive.ts` now requires a published winner profile for the idle reveal card on `/live`
+  - `pages/golden/claim/[code].tsx` no longer redirects a different user to a now-unpublished winner page
+- Discoverability:
+  - added winners moderation links from `AppShell`, `/admin`, `/admin/golden/prizes`, and `/admin/golden/queue`
+
+### Assumptions
+- Because this branch still does not contain `pages/admin/golden/index.tsx`, “admin golden landing surface” was interpreted as the existing Golden Ticket discovery points already shipped in this checkout.
+- Public winner visibility now uses nullable `publishedAt` as the single source of truth; no separate boolean `unpublished` column was introduced.
+- The known `components/maps/IndoorMap.tsx` missing `leaflet` declaration error remains outside Golden Ticket scope and was explicitly accepted for this task.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database generate` -> pass with only the local Node `v25.6.1` engine warning.
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/golden/winners.tsx --file pages/api/admin/golden/winners/index.ts --file 'pages/api/admin/golden/winners/[id].ts' --file lib/server/goldenAdminWinners.ts --file lib/server/goldenClaim.ts --file lib/server/goldenLive.ts --file pages/admin/golden/prizes.tsx --file pages/admin/golden/queue.tsx --file components/AppShell.tsx --file pages/admin/index.tsx --file 'pages/golden/claim/[code].tsx'` -> pass with only the local Node engine warning.
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error.
+- `git diff --check` -> pass.

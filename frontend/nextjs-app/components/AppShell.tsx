@@ -149,6 +149,9 @@ export default function AppShell({
                     <Link className="transition hover:text-white" href="/admin/golden/queue" onClick={handleCloseMenu}>
                       Golden Ticket Queue
                     </Link>
+                    <Link className="transition hover:text-white" href="/admin/golden/winners" onClick={handleCloseMenu}>
+                      Golden Ticket Winners
+                    </Link>
                     <Link className="transition hover:text-white" href="/admin/pack-types" onClick={handleCloseMenu}>
                       Pack Types
                     </Link>
