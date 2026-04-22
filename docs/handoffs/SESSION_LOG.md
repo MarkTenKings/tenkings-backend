@@ -13922,3 +13922,84 @@
 
 ### Notes
 - No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-21 - Golden Ticket Section 13 Step 5 admin prize minting + PDF generation
+
+### Summary
+- Implemented Section 13 step 5 only on `feature/kingshunt`:
+  - new admin prize page at `pages/admin/golden/prizes.tsx`
+  - `GET/POST /api/admin/golden/prizes`
+  - `GET /api/admin/golden/tickets/[id]/pdf`
+  - shared server helper `lib/server/goldenTicket.ts`
+- Prize creation now mints house-owned Golden Ticket prize inventory, one QR code per ticket, and one printable ticket PDF per minted ticket.
+- Reused the existing admin auth pattern and the existing live-rip upload pipeline for reveal-video/media uploads.
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed.
+
+### Files Reviewed
+- `AGENTS.md`
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `frontend/nextjs-app/pages/admin/pack-types.tsx`
+- `frontend/nextjs-app/pages/api/admin/pack-types/index.ts`
+- `frontend/nextjs-app/pages/api/admin/pack-types/[id]/image.ts`
+- `frontend/nextjs-app/pages/api/admin/qr/pairs.ts`
+- `frontend/nextjs-app/pages/api/live-rips/upload.ts`
+- `frontend/nextjs-app/lib/server/labels.ts`
+- `frontend/nextjs-app/lib/server/storage.ts`
+- `frontend/nextjs-app/lib/server/liveStorage.ts`
+- `frontend/nextjs-app/lib/server/qrCodes.ts`
+- `frontend/nextjs-app/lib/server/admin.ts`
+- `frontend/nextjs-app/lib/adminInventory.ts`
+- `packages/database/prisma/schema.prisma`
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/goldenTicket.ts`
+- `frontend/nextjs-app/pages/api/admin/golden/prizes.ts`
+- `frontend/nextjs-app/pages/api/admin/golden/tickets/[id]/pdf.ts`
+- `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Reused the existing monorepo PDF stack (`pdfkit` + `qrcode`) instead of adding a new PDF dependency.
+- `lib/server/goldenTicket.ts` now owns:
+  - URL-safe Golden Ticket code generation honoring `GOLDEN_TICKET_CODE_LENGTH`
+  - prize metadata packing/parsing for `Item.detailsJson`
+  - grouped admin list serialization
+  - printable ticket PDF generation and deterministic PDF storage-key/file-name logic
+- `POST /api/admin/golden/prizes` now:
+  - validates admin session
+  - validates `TEN_KINGS_HOUSE_USER_ID`
+  - creates one house-owned `Item` per ticket
+  - creates a matching `QrCode` with `type = GOLDEN_TICKET`
+  - creates the `GoldenTicket` row with `status = MINTED`
+  - generates and uploads one printable PDF per ticket through the existing storage helper
+- `GET /api/admin/golden/tickets/[id]/pdf` streams the stored PDF as an attachment and falls back to regenerating the PDF on the fly if the stored object cannot be read.
+- `pages/admin/golden/prizes.tsx` reuses `/api/live-rips/upload` for:
+  - prize photos
+  - reveal video
+  - reveal poster
+  and downloads PDFs via authenticated `fetch` + blob because browser navigation does not have access to the bearer token stored in local session state.
+
+### Assumptions
+- `GoldenTicket.prizeItemId` is unique in schema, so minting multiple tickets for one logical prize requires creating one duplicated house-owned `Item` per ticket. Those items are grouped in the admin UI via `Item.detailsJson.goldenTicketPrizeGroupId`.
+- `Item` has no dedicated fields for prize description, category, size requirements, or photo gallery, so Golden Ticket prize metadata is stored in `Item.detailsJson`; `Item.set` is fixed to `"Golden Ticket Prize"` for these prize rows.
+- The existing `pdfkit` + `qrcode` stack used by pack/label PDFs is the correct PDF implementation here; no new PDF library was added.
+- The existing `/api/live-rips/upload` pipeline is reused for Golden Ticket reveal video, poster, and prize photo uploads. In local mode that route returns relative asset URLs, so the new admin create API accepts both absolute `http(s)` URLs and local `/uploads/...` URLs.
+- The admin page enforces reveal-video file type and a 100MB size limit client-side, but it does not inspect media duration; the existing upload pipeline has no duration-aware validation.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/golden/prizes.tsx --file pages/api/admin/golden/prizes.ts --file 'pages/api/admin/golden/tickets/[id]/pdf.ts' --file lib/server/goldenTicket.ts` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration
+- `git diff --check` -> pass
+
+### Repo State
+- `git branch --show-current` -> `feature/kingshunt`
+- this session intentionally stops after the single atomic step-5 commit
+
+### Notes
+- No new PDF dependency was required because `frontend/nextjs-app` already shipped with `pdfkit`, `@types/pdfkit`, `qrcode`, and `@types/qrcode`.
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.

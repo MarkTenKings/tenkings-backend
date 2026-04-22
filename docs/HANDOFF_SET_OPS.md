@@ -7084,3 +7084,26 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
   - `git diff --check` -> pass
 - No deploy, restart, migration, runtime mutation, or DB mutation was executed for this task.
+
+## Golden Ticket Section 13 Step 5 - Admin Prize Minting + Ticket PDFs (2026-04-21)
+- Landed the step-5 admin surface on `feature/kingshunt`:
+  - `pages/admin/golden/prizes.tsx`
+  - `GET/POST /api/admin/golden/prizes`
+  - `GET /api/admin/golden/tickets/[id]/pdf`
+  - `lib/server/goldenTicket.ts`
+- Reused the existing monorepo PDF stack (`pdfkit` + `qrcode`) instead of adding a new library.
+- Important schema-driven assumption:
+  - `GoldenTicket.prizeItemId` is unique, so minting multiple tickets for one logical prize creates one duplicated house-owned `Item` per ticket.
+  - Those duplicated prize items are grouped via `Item.detailsJson.goldenTicketPrizeGroupId`.
+- Additional metadata assumption:
+  - `Item` has no native prize description/category/size/photo-gallery fields, so Golden Ticket prize metadata is stored in `Item.detailsJson`.
+  - `Item.set` is fixed to `"Golden Ticket Prize"` for these rows.
+- Upload assumption:
+  - reused the existing `/api/live-rips/upload` pipeline for reveal video, reveal poster, and prize photo uploads
+  - local-mode relative `/uploads/...` URLs are accepted by the new create API
+- Ticket PDFs are generated once at mint time, stored through the existing storage helper, and the admin PDF route falls back to regeneration if the stored object cannot be read.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/golden/prizes.tsx --file pages/api/admin/golden/prizes.ts --file 'pages/api/admin/golden/tickets/[id]/pdf.ts' --file lib/server/goldenTicket.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> only remaining failure is the pre-existing `components/maps/IndoorMap.tsx` `leaflet` declaration error
+  - `git diff --check` -> pass
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed for this task.
