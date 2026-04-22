@@ -242,7 +242,7 @@ export default function GoldenPrizeAdminPage() {
       headers.set("Authorization", `Bearer ${activeSession.token}`);
       headers.set("Content-Type", file.type || "application/octet-stream");
 
-      const response = await fetch(`/api/live-rips/upload?${params.toString()}`, {
+      const response = await fetch(`/api/admin/live-rips/upload?${params.toString()}`, {
         method: "PUT",
         headers,
         body: file,

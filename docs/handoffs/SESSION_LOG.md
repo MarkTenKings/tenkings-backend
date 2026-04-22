@@ -14322,3 +14322,91 @@
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/api/golden/[ticketNumber]/share-card.tsx' --file lib/goldenTicketLabel.ts --file lib/server/goldenTicket.ts` -> pass.
 - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration.
 - `git diff --check` -> pass.
+
+## Session Update (2026-04-22, AGENTS startup sync + git report refresh)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Performed the requested status-only repo check:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `e342bd3`
+- Updated the handoff docs to record this verification session.
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-22 - Read-only handoff refresh and repo state capture
+
+### Summary
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Captured current repo state without pulling or changing application code.
+- No deploy, restart, migration execution, runtime mutation, or DB mutation were performed in this session.
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Repo State
+- `git status -sb` -> `## feature/kingshunt`
+- `git branch --show-current` -> `feature/kingshunt`
+- `git rev-parse --short HEAD` -> `e342bd3`
+
+### Notes
+- The active Golden Ticket baseline remains the already-shipped step-15 plus step-10 state.
+- Fresh pickup target remains step 16 (`/live` redesign); admin steps 12-13 remain intentionally deferred.
+
+## 2026-04-22 - Move live admin surface to /admin/live
+
+### Summary
+- Moved the live-rip management surface off the top-level `/live` route and onto `/admin/live`.
+- Kept `/live` alive as the interim public live-rip list so the app does not regress between this prep commit and the next step-16 public redesign commit.
+- Split the API surface so public reads stay on `/api/live-rips`, while admin-only create/update/upload operations now live under `/api/admin/live-rips`.
+- No deploy, restart, migration execution, runtime mutation, or DB mutation were performed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/components/live/LiveRipDirectoryPage.tsx`
+- `frontend/nextjs-app/components/AppShell.tsx`
+- `frontend/nextjs-app/next.config.js`
+- `frontend/nextjs-app/pages/live.tsx`
+- `frontend/nextjs-app/pages/admin/live.tsx`
+- `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+- `frontend/nextjs-app/pages/api/live-rips/index.ts`
+- `frontend/nextjs-app/pages/api/admin/live-rips/index.ts`
+- `frontend/nextjs-app/pages/api/admin/live-rips/[liveRipId].ts`
+- `frontend/nextjs-app/pages/api/admin/live-rips/upload.ts`
+- `frontend/nextjs-app/pages/api/live-rips/[liveRipId].ts` (removed)
+- `frontend/nextjs-app/pages/api/live-rips/upload.ts` (removed)
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Extracted the list/manage UI into `components/live/LiveRipDirectoryPage.tsx` so:
+  - `pages/live.tsx` can render the public list only
+  - `pages/admin/live.tsx` can preserve the existing create/edit/upload workflow without duplicating code
+- Public-facing `GET /api/live-rips` stayed in place because it is still consumed by:
+  - home page featured live rips
+  - locations page live-rip cards
+  - the interim public `/live` list
+- Admin-only operations were moved to:
+  - `POST /api/admin/live-rips`
+  - `PUT /api/admin/live-rips/[liveRipId]`
+  - `PUT /api/admin/live-rips/upload`
+- Updated the Golden Ticket prize admin uploader to use the new admin upload route.
+- Added `/admin/live` to the admin navigation inside `components/AppShell.tsx`.
+
+### Assumptions
+- Because `/live` needed to remain a working public list between commits, an unconditional global `/live -> /admin/live` redirect would have broken the interim state. This session uses a client-side admin-session redirect in `pages/live.tsx` instead.
+- `next.config.js` carries a `TODO(step-16)` note rather than an active global redirect entry because the next step will replace `/live` wholesale with the new public experience.
+- `pages/live/[slug].tsx` remains public and unchanged aside from continuing to point back to the top-level public `/live` list.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/live.tsx --file components/live/LiveRipDirectoryPage.tsx --file pages/admin/live.tsx --file pages/admin/golden/prizes.tsx --file components/AppShell.tsx --file pages/api/live-rips/index.ts --file pages/api/admin/live-rips/index.ts --file 'pages/api/admin/live-rips/[liveRipId].ts' --file pages/api/admin/live-rips/upload.ts` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration.
+- `git diff --check` -> pass.

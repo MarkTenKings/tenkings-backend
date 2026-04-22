@@ -3,10 +3,43 @@
 ## Current State
 - Last reviewed: `2026-04-22`
 - Branch: `feature/kingshunt`
-- Latest product baseline summarized here: `feat(golden-ticket): reaction share cards`
-- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 15 plus step 10 (`/api/golden/[ticketNumber]/share-card` real OG cards), on top of the earlier schema cleanup and handoff-summary commits and the branch-base `kingshunt` locator/QR-hunt commit.
+- Latest product baseline summarized here: `refactor(live): move admin surface to /admin/live`
+- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 15 plus step 10 (`/api/golden/[ticketNumber]/share-card` real OG cards), and step-16 prep now moves the old live-rip admin CRUD surface to `/admin/live`. `/live` currently serves an interim public rip list only while the full public redesign remains next.
 - Fresh-agent pickup target: user-directed order is now step 16 (`/live` redesign). Admin steps 12-13 remain intentionally deferred to a later rotation.
 - Deploy/restart/migration status: none of the Golden Ticket sessions through step 10/15 performed deploys, restarts, or migrations against a live environment.
+
+## Session Update (2026-04-22, live admin surface moved to /admin/live)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Landed the step-16 prep split only:
+  - new admin route at `frontend/nextjs-app/pages/admin/live.tsx`
+  - shared list/manager UI extracted to `frontend/nextjs-app/components/live/LiveRipDirectoryPage.tsx`
+  - `frontend/nextjs-app/pages/live.tsx` now serves the public list only; create/edit/upload controls were removed from the top-level `/live` route
+  - admin-only write/upload APIs moved under `frontend/nextjs-app/pages/api/admin/live-rips/`
+  - public/shared `GET /api/live-rips` stayed in place for home, locations, and public live-list consumers
+  - admin navigation now exposes `/admin/live` from `frontend/nextjs-app/components/AppShell.tsx`
+- Temporary redirect note:
+  - because `/live` had to remain a working interim public list between commits, this session used a client-side admin-session redirect inside `pages/live.tsx` instead of an unconditional global redirect that would have hidden the public page
+  - `frontend/nextjs-app/next.config.js` now carries a `TODO(step-16)` note so the next agent can remove that temporary handoff logic when the public `/live` redesign lands
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/live.tsx --file components/live/LiveRipDirectoryPage.tsx --file pages/admin/live.tsx --file pages/admin/golden/prizes.tsx --file components/AppShell.tsx --file pages/api/live-rips/index.ts --file pages/api/admin/live-rips/index.ts --file 'pages/api/admin/live-rips/[liveRipId].ts' --file pages/api/admin/live-rips/upload.ts` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- No deploy, restart, migration, or DB mutation was executed in this session.
+
+## Session Update (2026-04-22, read-only handoff refresh and repo state capture)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Confirmed current repo state without pulling, deploying, restarting, or migrating:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `e342bd3`
+- No new product/code work landed in this session; the active baseline remains the already-shipped Golden Ticket step-15 plus step-10 state summarized below.
+- Fresh pickup target remains step 16 (`/live` redesign). Admin steps 12-13 remain deferred.
+- No deploy, restart, migration, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-21, feature/kingshunt takeover read-only sync before remaining public/admin surfaces)
 - Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
@@ -7338,3 +7371,26 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> only remaining failure is the pre-existing `components/maps/IndoorMap.tsx` `leaflet` declaration error
   - `git diff --check` -> pass
 - No deploy, restart, migration execution, runtime mutation, or DB mutation was executed for this task.
+
+## 2026-04-22 - AGENTS startup sync and git report refresh
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Performed a status-only repo verification for the current checkout.
+- No code changes, deploy, restart, migration, runtime mutation, or DB mutation were executed in this session.
+
+### Files Reviewed
+- `AGENTS.md`
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Repo State
+- `git status -sb` -> `## feature/kingshunt`
+- `git branch --show-current` -> `feature/kingshunt`
+- `git rev-parse --short HEAD` -> `e342bd3`
+
+### Notes
+- This was a docs-and-git-state verification session only.
