@@ -7107,3 +7107,24 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> only remaining failure is the pre-existing `components/maps/IndoorMap.tsx` `leaflet` declaration error
   - `git diff --check` -> pass
 - No deploy, restart, migration execution, runtime mutation, or DB mutation was executed for this task.
+
+## Golden Ticket Section 13 Step 6 - Packing Placement Integration (2026-04-21)
+- Landed step 6 on `feature/kingshunt` by extending the existing packing flow rather than creating a parallel assembly path:
+  - new `POST /api/admin/golden/tickets/[id]/place`
+  - shared placement helper in `lib/server/goldenTicket.ts`
+  - existing `pages/api/admin/packing/scan-card.ts` now accepts Golden Ticket QRs during active-pack assembly
+  - `pages/api/admin/packing/location.ts` + `pages/admin/packing.tsx` now surface a Golden Ticket badge for packs that already contain one
+- Validation and placement rules now enforce:
+  - ticket must still be `MINTED`
+  - pack must still be `READY_FOR_PACKING`
+  - `PACKED` / `LOADED` packs are treated as already sealed/shipped and rejected
+  - pack may not already contain another Golden Ticket
+- Resolution assumption:
+  - when placement is driven by pack QR code, the target pack resolves from either the bound `PackInstance.packQrCodeId` or the reserved `PackLabel.packInstanceId`, so placement works before sealing as part of the normal packing queue
+- Metadata assumption:
+  - placement updates Golden Ticket QR metadata with `placedInPackId` + `placedAt`, but does not currently stamp `sourceLocationId` during placement
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/packing/scan-card.ts --file pages/api/admin/packing/location.ts --file pages/admin/packing.tsx --file lib/server/goldenTicket.ts --file 'pages/api/admin/golden/tickets/[id]/place.ts'` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> only remaining failure is the pre-existing `components/maps/IndoorMap.tsx` `leaflet` declaration error
+  - `git diff --check` -> pass
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed for this task.

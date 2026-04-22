@@ -14003,3 +14003,63 @@
 ### Notes
 - No new PDF dependency was required because `frontend/nextjs-app` already shipped with `pdfkit`, `@types/pdfkit`, `qrcode`, and `@types/qrcode`.
 - No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-21 - Golden Ticket Section 13 Step 6 packing placement integration
+
+### Summary
+- Implemented Section 13 step 6 on `feature/kingshunt`:
+  - new admin placement route `POST /api/admin/golden/tickets/[id]/place`
+  - Golden Ticket pack-placement helper in `lib/server/goldenTicket.ts`
+  - existing packing pre-seal scanner now accepts Golden Ticket QRs during pack assembly
+  - packing location payload + console UI now show a Golden Ticket badge when a pack has one placed
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed.
+
+### Files Reviewed
+- `frontend/nextjs-app/pages/api/admin/packing/scan-card.ts`
+- `frontend/nextjs-app/pages/api/admin/packing/scan-pack.ts`
+- `frontend/nextjs-app/pages/api/admin/packing/location.ts`
+- `frontend/nextjs-app/pages/admin/packing.tsx`
+- `frontend/nextjs-app/lib/server/qrCodes.ts`
+- `frontend/nextjs-app/lib/server/goldenTicket.ts`
+- `packages/database/prisma/schema.prisma`
+
+### Files Updated
+- `frontend/nextjs-app/lib/server/goldenTicket.ts`
+- `frontend/nextjs-app/pages/api/admin/golden/tickets/[id]/place.ts`
+- `frontend/nextjs-app/pages/api/admin/packing/scan-card.ts`
+- `frontend/nextjs-app/pages/api/admin/packing/location.ts`
+- `frontend/nextjs-app/pages/admin/packing.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added `placeGoldenTicketInPack(...)` to `lib/server/goldenTicket.ts` so both the dedicated admin placement route and the packing scanner use the same validation and write path.
+- `POST /api/admin/golden/tickets/[id]/place` accepts either:
+  - `packInstanceId`
+  - `packCode`
+  and resolves the target pack before applying placement.
+- Extended the existing `POST /api/admin/packing/scan-card` flow so that when the scanned QR code is `QrCodeType.GOLDEN_TICKET`, the route places that ticket into the active pack instead of trying to bind it as a card QR.
+- Extended `GET /api/admin/packing/location` so each pack row includes its placed Golden Ticket summary, which the packing console now renders as a gold badge in both:
+  - the active-pack panel
+  - the pack list rows
+
+### Assumptions
+- Golden Ticket placement is only valid while a pack is still in `PackFulfillmentStatus.READY_FOR_PACKING`; `PACKED` and `LOADED` are treated as already sealed/shipped and are rejected.
+- For pack-code placement, the pack can be resolved from either:
+  - `PackInstance.packQrCodeId` when already bound
+  - `PackLabel.packInstanceId` via the reserved pack label before sealing
+  so operators can place tickets during the normal pre-seal packing flow.
+- The existing pre-seal scanner route to extend was `scan-card`, not `scan-pack`, because Golden Ticket insertion happens before sealing and that is the scan step already tied to the active pack assembly context.
+- Placement updates `GoldenTicket.status`, `placedInPackId`, and `placedAt`, and annotates the Golden Ticket QR metadata with the placed pack id/timestamp; it does not currently set `sourceLocationId` at placement time.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/packing/scan-card.ts --file pages/api/admin/packing/location.ts --file pages/admin/packing.tsx --file lib/server/goldenTicket.ts --file 'pages/api/admin/golden/tickets/[id]/place.ts'` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration
+- `git diff --check` -> pass
+
+### Repo State
+- `git branch --show-current` -> `feature/kingshunt`
+- this session intentionally stops after the single atomic step-6 commit
+
+### Notes
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.

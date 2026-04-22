@@ -1,7 +1,8 @@
 import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 import { customAlphabet } from "nanoid";
-import { CollectibleCategory, GoldenTicketStatus, Prisma } from "@prisma/client";
+import { prisma } from "@tenkings/database";
+import { CollectibleCategory, GoldenTicketStatus, PackFulfillmentStatus, Prisma, QrCodeType } from "@prisma/client";
 import { buildSiteUrl } from "./urls";
 
 const GOLDEN_TICKET_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -95,8 +96,32 @@ export interface AdminGoldenTicketPrizeSummary {
   }>;
 }
 
+export interface GoldenTicketPlacementSummary {
+  goldenTicket: {
+    id: string;
+    ticketNumber: number;
+    code: string;
+    status: GoldenTicketStatus;
+    placedAt: string | null;
+    prizeName: string;
+  };
+  pack: {
+    id: string;
+    fulfillmentStatus: PackFulfillmentStatus;
+    definitionName: string;
+    definitionPrice: number | null;
+    locationId: string | null;
+    goldenTicketCount: number;
+  };
+}
+
 const isJsonObject = (value: Prisma.JsonValue | null): value is Prisma.JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+const mergeMetadata = (current: Prisma.JsonValue | null, updates: Record<string, unknown>): Prisma.InputJsonValue => {
+  const base = isJsonObject(current) ? { ...current } : {};
+  return { ...base, ...updates } as Prisma.InputJsonValue;
+};
 
 const readString = (value: Prisma.JsonValue | undefined) => (typeof value === "string" && value.trim() ? value.trim() : null);
 
@@ -239,6 +264,185 @@ export function groupGoldenTicketPrizes(rows: GoldenTicketPrizeListRow[]): Admin
       tickets: summary.tickets.sort((left, right) => left.ticketNumber - right.ticketNumber),
     }))
     .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+export async function placeGoldenTicketInPack({
+  ticketId,
+  ticketCode,
+  packInstanceId,
+  packCode,
+  userId,
+}: {
+  ticketId?: string;
+  ticketCode?: string;
+  packInstanceId?: string;
+  packCode?: string;
+  userId: string;
+}): Promise<GoldenTicketPlacementSummary> {
+  if (!ticketId && !ticketCode) {
+    throw new Error("Golden Ticket id or code is required");
+  }
+
+  if (!packInstanceId && !packCode) {
+    throw new Error("Pack instance id or pack QR code is required");
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const ticket = await tx.goldenTicket.findFirst({
+      where: ticketId ? { id: ticketId } : { code: ticketCode },
+      select: {
+        id: true,
+        ticketNumber: true,
+        code: true,
+        status: true,
+        placedInPackId: true,
+        placedAt: true,
+        prizeItem: {
+          select: {
+            name: true,
+          },
+        },
+        qrCode: {
+          select: {
+            id: true,
+            metadata: true,
+          },
+        },
+      },
+    });
+
+    if (!ticket) {
+      throw new Error("Golden Ticket not found");
+    }
+
+    if (ticket.status !== GoldenTicketStatus.MINTED) {
+      throw new Error("Golden Ticket must be in MINTED status before placement");
+    }
+
+    let resolvedPackInstanceId = packInstanceId ?? null;
+
+    if (!resolvedPackInstanceId && packCode) {
+      const packQr = await tx.qrCode.findUnique({
+        where: { code: packCode },
+        select: {
+          type: true,
+          packInstance: {
+            select: { id: true },
+          },
+          packLabelPack: {
+            select: { packInstanceId: true },
+          },
+        },
+      });
+
+      if (!packQr) {
+        throw new Error("Pack QR code not found");
+      }
+
+      if (packQr.type !== QrCodeType.PACK) {
+        throw new Error("QR code is not a pack label");
+      }
+
+      resolvedPackInstanceId = packQr.packInstance?.id ?? packQr.packLabelPack?.packInstanceId ?? null;
+
+      if (!resolvedPackInstanceId) {
+        throw new Error("Pack QR code is not reserved for a pack yet");
+      }
+    }
+
+    if (!resolvedPackInstanceId) {
+      throw new Error("Pack instance could not be resolved");
+    }
+
+    const pack = await tx.packInstance.findUnique({
+      where: { id: resolvedPackInstanceId },
+      select: {
+        id: true,
+        fulfillmentStatus: true,
+        locationId: true,
+        packDefinition: {
+          select: {
+            name: true,
+            price: true,
+          },
+        },
+        goldenTickets: {
+          select: {
+            id: true,
+          },
+        },
+      },
+    });
+
+    if (!pack) {
+      throw new Error("Pack not found");
+    }
+
+    if (pack.fulfillmentStatus === PackFulfillmentStatus.PACKED || pack.fulfillmentStatus === PackFulfillmentStatus.LOADED) {
+      throw new Error("Pack is already sealed or shipped");
+    }
+
+    if (pack.fulfillmentStatus !== PackFulfillmentStatus.READY_FOR_PACKING) {
+      throw new Error("Pack is not ready for Golden Ticket placement");
+    }
+
+    if (pack.goldenTickets.some((placedTicket) => placedTicket.id !== ticket.id)) {
+      throw new Error("Pack already contains a Golden Ticket");
+    }
+
+    const now = new Date();
+
+    const updatedTicket = await tx.goldenTicket.update({
+      where: { id: ticket.id },
+      data: {
+        status: GoldenTicketStatus.PLACED,
+        placedInPackId: pack.id,
+        placedAt: now,
+      },
+      select: {
+        id: true,
+        ticketNumber: true,
+        code: true,
+        status: true,
+        placedAt: true,
+        prizeItem: {
+          select: {
+            name: true,
+          },
+        },
+      },
+    });
+
+    await tx.qrCode.update({
+      where: { id: ticket.qrCode.id },
+      data: {
+        metadata: mergeMetadata(ticket.qrCode.metadata, {
+          placedInPackId: pack.id,
+          placedAt: now.toISOString(),
+          status: GoldenTicketStatus.PLACED,
+        }),
+      },
+    });
+
+    return {
+      goldenTicket: {
+        id: updatedTicket.id,
+        ticketNumber: updatedTicket.ticketNumber,
+        code: updatedTicket.code,
+        status: updatedTicket.status,
+        placedAt: updatedTicket.placedAt ? updatedTicket.placedAt.toISOString() : null,
+        prizeName: updatedTicket.prizeItem.name,
+      },
+      pack: {
+        id: pack.id,
+        fulfillmentStatus: pack.fulfillmentStatus,
+        definitionName: pack.packDefinition.name,
+        definitionPrice: pack.packDefinition.price,
+        locationId: pack.locationId,
+        goldenTicketCount: pack.goldenTickets.length + 1,
+      },
+    };
+  });
 }
 
 export async function generateGoldenTicketPdf({
