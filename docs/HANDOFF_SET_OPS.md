@@ -1,14 +1,46 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-21` (CollectibleCategory frontend cleanup after Golden Ticket schema widening; no deploy/restart/migration was executed)
+- Last reviewed: `2026-04-21` (Golden Ticket Section 13 step 4 landed locally: inline Mux playback now uses `@mux/mux-player-react` on the live detail page and shared preview path; no deploy/restart/migration executed)
 - Branch: `feature/kingshunt`
 - Current local git state at latest handoff refresh:
   - `git status -sb` -> `## feature/kingshunt`
 - Latest committed baseline at handoff refresh:
-  - `feat(browser-rip): add browser session routes and dev test page`
+  - `fix(schema): handle GOLDEN_TICKET_PRIZE in CollectibleCategory switches`
 - Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
 - 2020 run status: full pass completed with `queueCount: 0`
+
+## Session Update (2026-04-21, Golden Ticket Section 13 step 4 inline Mux playback fix)
+- Re-read `AGENTS.md` and continued from the already-complete steps 1-3 plus schema cleanup on `feature/kingshunt`.
+- Landed Section 13 step 4 only:
+  - `frontend/nextjs-app/pages/live/[slug].tsx` now renders inline Mux playback via `@mux/mux-player-react` whenever `liveRip.muxPlaybackId` is present
+  - `frontend/nextjs-app/components/LiveRipPreview.tsx` now prefers `MuxPlayer` for Mux-backed rows while preserving the existing YouTube, MP4, generic HLS, and external-link behavior for non-Mux entries
+  - live-rip list callers now pass `muxPlaybackId` through from existing data sources (`pages/live.tsx`, `pages/index.tsx`, `pages/locations.tsx`, `pages/api/locations/index.ts`)
+  - added the new frontend dependency in `frontend/nextjs-app/package.json` / `pnpm-lock.yaml`
+- Validation completed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/live/[slug].tsx' --file components/LiveRipPreview.tsx --file pages/live.tsx --file pages/index.tsx --file pages/locations.tsx --file pages/api/locations/index.ts`
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` types issue
+  - `git diff --check`
+- Assumptions / notes:
+  - no checked-in seed or fixture data for a Mux-backed `LiveRip` row was found in this checkout, so the code path was verified against the existing schema/API/runtime code instead of inventing test data
+  - verification path used the existing `LiveRip.muxPlaybackId` schema field plus the current Mux webhook / live-rips query surfaces that already persist and return Mux playback IDs
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-21, Golden Ticket takeover context verification)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified branch state and sync status before takeover:
+  - `git switch feature/kingshunt` -> already on branch
+  - `git pull --ff-only origin feature/kingshunt` -> `Already up to date.`
+  - `git log --oneline --decorate -n 8 feature/kingshunt` confirms the four Golden Ticket branch commits currently atop local `feature/kingshunt`
+- Context sources reviewed for this takeover:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+  - the Golden Ticket spec text provided directly in the user prompt because `tk-golden-ticket-codex-spec-v1.md` is not checked into this worktree
+  - sibling architecture docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/docs/...` because `TEN_KINGS_SYSTEM_ARCHITECTURE.md` and `docs/architecture/{01-data-model,03-live-rip-video}.md` are not present in this checkout
+- Takeover conclusions inherited from prior handoff, not re-litigated:
+  - steps 1-3 plus the post-step-3 schema cleanup commit are already complete on local `feature/kingshunt`
+  - next planned implementation target remains Section 13 step 4: Mux inline playback fix on `pages/live/[slug].tsx` and any needed alignment in `components/LiveRipPreview.tsx`
+- No source-code changes, deploy, restart, migration execution, runtime mutation, or DB mutation were performed in this session.
 
 ## Session Update (2026-04-21, CollectibleCategory frontend cleanup for GOLDEN_TICKET_PRIZE)
 - Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.

@@ -24,6 +24,7 @@ interface LiveRipClip {
   slug: string;
   title: string;
   videoUrl: string;
+  muxPlaybackId: string | null;
   thumbnailUrl: string | null;
   viewCount: number | null;
   createdAt: string;
@@ -150,6 +151,7 @@ function LocationsPage() {
             liveRips: Array.isArray((location as any).liveRips)
               ? ((location as any).liveRips as LiveRipClip[]).map((rip) => ({
                   ...rip,
+                  muxPlaybackId: typeof rip.muxPlaybackId === "string" ? rip.muxPlaybackId : null,
                   thumbnailUrl: rip.thumbnailUrl ?? null,
                   viewCount: typeof rip.viewCount === "number" ? rip.viewCount : null,
                   createdAt: rip.createdAt ?? new Date().toISOString(),
@@ -491,6 +493,7 @@ function LocationsPage() {
                                 id={rip.id}
                                 title={rip.title}
                                 videoUrl={rip.videoUrl}
+                                muxPlaybackId={rip.muxPlaybackId}
                                 thumbnailUrl={rip.thumbnailUrl}
                                 muted={activePreviewId !== rip.id}
                                 onToggleMute={() => setActivePreviewId((prev) => (prev === rip.id ? null : rip.id))}

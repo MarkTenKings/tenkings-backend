@@ -1,6 +1,7 @@
 import Head from "next/head";
 import Link from "next/link";
 import { GetServerSideProps } from "next";
+import MuxPlayer from "@mux/mux-player-react";
 import AppShell from "../../components/AppShell";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@tenkings/database";
@@ -30,6 +31,8 @@ interface LiveRipPageProps {
     title: string;
     description: string | null;
     videoUrl: string;
+    thumbnailUrl: string | null;
+    muxPlaybackId: string | null;
     location: {
       id: string;
       name: string;
@@ -44,6 +47,21 @@ export default function LiveRipPage({ liveRip, more }: LiveRipPageProps) {
   const media = embedForMedia(liveRip.videoUrl);
 
   const renderMedia = () => {
+    if (liveRip.muxPlaybackId) {
+      return (
+        <div className="overflow-hidden rounded-[2.5rem] border border-white/10 bg-night-900/70 shadow-card">
+          <MuxPlayer
+            playbackId={liveRip.muxPlaybackId}
+            streamType="on-demand"
+            metadataVideoTitle={liveRip.title}
+            title={liveRip.title}
+            poster={liveRip.thumbnailUrl ?? undefined}
+            className="h-full w-full"
+          />
+        </div>
+      );
+    }
+
     switch (media.type) {
       case "youtube":
         return (
@@ -235,6 +253,8 @@ export const getServerSideProps: GetServerSideProps<LiveRipPageProps> = async (c
         title: liveRip.title,
         description: liveRip.description,
         videoUrl: liveRip.videoUrl,
+        thumbnailUrl: liveRip.thumbnailUrl,
+        muxPlaybackId: liveRip.muxPlaybackId ?? null,
         location: liveRip.location,
         createdAt: liveRip.createdAt.toISOString(),
       },

@@ -45,6 +45,7 @@ type LiveRipTile = {
   id: string;
   title: string;
   videoUrl: string;
+  muxPlaybackId: string | null;
   locationLabel: string | null;
   thumbnailUrl: string | null;
   slug: string | null;
@@ -180,6 +181,7 @@ const mapLiveRipTilesFromApi = (rawLiveRips: any[], limit = 6): LiveRipTile[] =>
       id: entry.id ?? entry.slug ?? entry.title ?? `live-${Math.random().toString(36).slice(2)}`,
       title: entry.title ?? "Live Rip",
       videoUrl: entry.videoUrl,
+      muxPlaybackId: typeof entry?.muxPlaybackId === "string" && entry.muxPlaybackId.trim() ? entry.muxPlaybackId : null,
       locationLabel: entry.location?.name ?? null,
       thumbnailUrl: entry.thumbnailUrl ?? null,
       slug: entry.slug ?? null,
@@ -819,6 +821,7 @@ export default function Home({
                         id={item.id}
                         title={item.title}
                         videoUrl={item.videoUrl}
+                        muxPlaybackId={item.muxPlaybackId}
                         thumbnailUrl={item.thumbnailUrl}
                         muted
                         onToggleMute={() => undefined}

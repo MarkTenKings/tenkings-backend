@@ -18,6 +18,7 @@ interface LiveRipRecord {
   title: string;
   description: string | null;
   videoUrl: string;
+  muxPlaybackId: string | null;
   thumbnailUrl: string | null;
   featured: boolean;
   location: LocationRecord | null;
@@ -512,6 +513,7 @@ export default function LivePage() {
                   id={liveRip.id}
                   title={liveRip.title}
                   videoUrl={liveRip.videoUrl}
+                  muxPlaybackId={liveRip.muxPlaybackId}
                   thumbnailUrl={liveRip.thumbnailUrl}
                   muted={activePreviewId !== liveRip.id}
                   onToggleMute={() =>

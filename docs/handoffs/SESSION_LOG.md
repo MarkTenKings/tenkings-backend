@@ -13819,3 +13819,106 @@
 ### Notes
 - This is a cleanup commit between Section 13 steps 3 and 4; no step-4 work started here.
 - No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## 2026-04-21 - Golden Ticket takeover context verification
+
+### Summary
+- Re-read `AGENTS.md` and the required startup docs listed there.
+- Synced and verified local `feature/kingshunt`, then reviewed the Golden Ticket spec, supporting architecture context, and the latest handoff docs before any coding.
+- Confirmed that Section 13 steps 1-3 plus the post-step-3 `CollectibleCategory` cleanup commit are already present on local `feature/kingshunt`.
+- No code changes, deploy, restart, migration, or DB mutation were executed.
+
+### Repo State
+- `git switch feature/kingshunt` -> `Already on 'feature/kingshunt'`
+- `git pull --ff-only origin feature/kingshunt` -> `Already up to date.`
+- `git status -sb` -> `## feature/kingshunt`
+- `git log --oneline --decorate -n 8 feature/kingshunt` top branch commits:
+  - `2fcd586 (HEAD -> feature/kingshunt) fix(schema): handle GOLDEN_TICKET_PRIZE in CollectibleCategory switches`
+  - `dbb532f feat(browser-rip): add browser session routes and dev test page`
+  - `3ca0dc6 feat(browser-rip): add client skeleton and whip tests`
+  - `f2afebd feat(golden-ticket): add browser ingest and ticket schema`
+
+### Files Reviewed
+- `AGENTS.md`
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- Golden Ticket spec text from the user prompt because `tk-golden-ticket-codex-spec-v1.md` is not present in this checkout
+- `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/docs/TEN_KINGS_SYSTEM_ARCHITECTURE.md`
+- `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/docs/architecture/03-live-rip-video.md`
+- `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/docs/architecture/01-data-model.md`
+
+### Files Updated
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Notes
+- `tk-golden-ticket-codex-spec-v1.md` is not checked into this repo; the implementation blueprint used for this takeover is the full spec text included directly in the user message.
+- `TEN_KINGS_SYSTEM_ARCHITECTURE.md` and `docs/architecture/{01-data-model,03-live-rip-video}.md` are also absent from this checkout; matching copies were reviewed from the sibling checkout already referenced by the prior handoff entry.
+- No source-code changes, deploy, restart, migration execution, runtime mutation, or DB mutation were performed in this session.
+
+## 2026-04-21 - Golden Ticket Section 13 Step 4 inline Mux playback fix
+
+### Summary
+- Re-read `AGENTS.md` and continued from the existing `feature/kingshunt` Golden Ticket branch state where Section 13 steps 1-3 and the schema cleanup commit were already complete.
+- Implemented Section 13 step 4 only: Mux-backed `LiveRip` detail pages now embed inline playback via `@mux/mux-player-react`, and the shared `LiveRipPreview` path now does the same when `muxPlaybackId` is available.
+- Preserved the existing YouTube embed and MP4 fallback behavior for non-Mux entries, and kept generic HLS / external-link behavior intact in the shared preview component.
+- No deploy, restart, migration, or DB mutation was executed.
+
+### Files Reviewed
+- `AGENTS.md`
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `frontend/nextjs-app/pages/live/[slug].tsx`
+- `frontend/nextjs-app/components/LiveRipPreview.tsx`
+- `frontend/nextjs-app/pages/live.tsx`
+- `frontend/nextjs-app/pages/index.tsx`
+- `frontend/nextjs-app/pages/locations.tsx`
+- `frontend/nextjs-app/pages/api/locations/index.ts`
+- `frontend/nextjs-app/pages/api/live-rips/index.ts`
+- `frontend/nextjs-app/pages/api/mux/webhook.ts`
+- `packages/database/prisma/schema.prisma`
+- `frontend/nextjs-app/package.json`
+
+### Files Updated
+- `frontend/nextjs-app/components/LiveRipPreview.tsx`
+- `frontend/nextjs-app/pages/live/[slug].tsx`
+- `frontend/nextjs-app/pages/live.tsx`
+- `frontend/nextjs-app/pages/index.tsx`
+- `frontend/nextjs-app/pages/locations.tsx`
+- `frontend/nextjs-app/pages/api/locations/index.ts`
+- `frontend/nextjs-app/package.json`
+- `pnpm-lock.yaml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Added `@mux/mux-player-react` to `frontend/nextjs-app`.
+- `pages/live/[slug].tsx` now checks `liveRip.muxPlaybackId` first and renders `<MuxPlayer streamType="on-demand" />` inline for Mux-backed rows.
+- `components/LiveRipPreview.tsx` now accepts optional `muxPlaybackId` and uses `MuxPlayer` for Mux-backed previews while leaving existing YouTube, MP4, generic HLS, and external-link paths intact for non-Mux media.
+- Wired `muxPlaybackId` through existing live-rip data consumers so shared previews can actually take the Mux path:
+  - `/live`
+  - homepage featured live-rip tiles
+  - location live-rip highlight cards
+  - `/api/locations` live-rip payload
+
+### Assumptions
+- No checked-in seed or fixture data for a Mux-backed `LiveRip` row was found in this checkout, so verification relied on the existing code path instead of inventing local test data.
+- The current code path already establishes Mux-backed `LiveRip` records through `LiveRip.muxPlaybackId` plus the existing Mux webhook and live-rips query surfaces; this step only changes rendering/prop plumbing.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/live/[slug].tsx' --file components/LiveRipPreview.tsx --file pages/live.tsx --file pages/index.tsx --file pages/locations.tsx --file pages/api/locations/index.ts` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+- `git diff --check` -> pass
+
+### Repo State
+- `git branch --show-current` -> `feature/kingshunt`
+- this session intentionally stops after the single atomic step-4 commit
+
+### Notes
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
