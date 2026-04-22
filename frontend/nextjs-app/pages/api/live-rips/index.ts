@@ -30,6 +30,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         locationId: locationId ? locationId : undefined,
         featured: featured ? featured === "true" : undefined,
         slug: slug ? slug : undefined,
+        OR: [
+          {
+            kioskSession: {
+              is: null,
+            },
+          },
+          {
+            kioskSession: {
+              is: {
+                status: {
+                  not: "CANCELLED",
+                },
+              },
+            },
+          },
+        ],
       },
       include: {
         location: true,

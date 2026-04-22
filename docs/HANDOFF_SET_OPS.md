@@ -3,10 +3,43 @@
 ## Current State
 - Last reviewed: `2026-04-22`
 - Branch: `feature/kingshunt`
-- Latest product baseline summarized here: `refactor(live): move admin surface to /admin/live`
-- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 15 plus step 10 (`/api/golden/[ticketNumber]/share-card` real OG cards), and step-16 prep now moves the old live-rip admin CRUD surface to `/admin/live`. `/live` currently serves an interim public rip list only while the full public redesign remains next.
-- Fresh-agent pickup target: user-directed order is now step 16 (`/live` redesign). Admin steps 12-13 remain intentionally deferred to a later rotation.
-- Deploy/restart/migration status: none of the Golden Ticket sessions through step 10/15 performed deploys, restarts, or migrations against a live environment.
+- Latest product baseline summarized here: `feat(golden-ticket): admin live queue + kill switch`
+- Product status: Golden Ticket/browser-rip work is now shipped locally through Section 13 step 16 plus step 12. `/admin/golden/queue` now shows active Golden Ticket sessions with 3-second polling, inline Mux previews, an idempotent migration-free kill switch, and a simple full-player watch route. Cancelled sessions are blocked from the public `/live` publication paths by guarding webhook publish, kiosk completion publish, `/api/live-rips`, and the `/live` idle-reveal query. Step 13 winner moderation remains open.
+- Fresh-agent pickup target: if Golden Ticket branch work continues, the next unshipped admin step is Section 13 step 13 (`/admin/golden/winners` moderation).
+- Deploy/restart/migration status: none of the Golden Ticket sessions through step 16/12 performed deploys, restarts, or migrations against a live environment.
+
+## Session Update (2026-04-22, Golden Ticket Section 13 step 12 admin live queue + kill switch)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Landed Section 13 step 12 only:
+  - new admin queue page at `frontend/nextjs-app/pages/admin/golden/queue.tsx`
+  - new active-session watch page at `frontend/nextjs-app/pages/admin/golden/sessions/[sessionId].tsx`
+  - new admin routes:
+    - `GET /api/admin/golden/queue`
+    - `POST /api/admin/golden/queue/[sessionId]/kill`
+  - new shared queue helper/types/player files:
+    - `frontend/nextjs-app/lib/goldenQueue.ts`
+    - `frontend/nextjs-app/lib/server/goldenQueue.ts`
+    - `frontend/nextjs-app/components/golden/AdminGoldenQueuePlayer.tsx`
+  - existing admin discovery surfaces now expose the queue from:
+    - `frontend/nextjs-app/components/AppShell.tsx`
+    - `frontend/nextjs-app/pages/admin/index.tsx`
+    - `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+- Cancelled-session publication hardening landed in the same step:
+  - `frontend/nextjs-app/pages/api/mux/webhook.ts` now skips `LiveRip` create/update when the source `KioskSession` is already `CANCELLED`
+  - `frontend/nextjs-app/lib/server/kioskCompletion.ts` no longer auto-publishes a cancelled session or flips it back to `COMPLETE`
+  - `frontend/nextjs-app/pages/api/live-rips/index.ts` filters out rows whose source `kioskSession.status = CANCELLED`
+  - `frontend/nextjs-app/lib/server/goldenLive.ts` filters cancelled-source `LiveRip` rows out of the idle reveal query used by `/live`
+- Assumptions:
+  - the user explicitly chose to skip adding `cancelledBy` / `cancelledAt` schema fields for this step; the kill switch remains migration-free and does not persist operator audit metadata yet
+  - active-row “winner name” resolves from `GoldenTicketWinnerProfile.displayName` first, then `claimedBy.displayName`, then `session.user.displayName`, then phone fallback, then `"Awaiting claim"`
+  - because no existing admin Golden Ticket session detail page exists in this branch, `Watch Full` uses the minimal active-session page at `pages/admin/golden/sessions/[sessionId].tsx` instead of introducing a larger admin session-management surface
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/golden/queue.tsx --file 'pages/admin/golden/sessions/[sessionId].tsx' --file components/golden/AdminGoldenQueuePlayer.tsx --file components/AppShell.tsx --file pages/admin/index.tsx --file pages/admin/golden/prizes.tsx --file pages/api/admin/golden/queue.ts --file 'pages/api/admin/golden/queue/[sessionId]/kill.ts' --file pages/api/live-rips/index.ts --file pages/api/mux/webhook.ts --file lib/goldenQueue.ts --file lib/server/goldenQueue.ts --file lib/server/goldenLive.ts --file lib/server/kioskCompletion.ts` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- Planned local commit:
+  - `feat(golden-ticket): admin live queue + kill switch`
+- No deploy, restart, migration, or DB mutation was executed in this session.
 
 ## Session Update (2026-04-22, live admin surface moved to /admin/live)
 - Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.

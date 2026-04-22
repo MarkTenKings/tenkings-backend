@@ -538,16 +538,24 @@ export default function GoldenPrizeAdminPage() {
           title="Prize Minting"
           description="Create house-owned Golden Ticket prize items, mint ticket QR codes, and download printable PDFs for packing."
           actions={
-            <button
-              type="button"
-              onClick={() => {
-                resetModal();
-                setModalOpen(true);
-              }}
-              className="rounded-full border border-gold-400/60 bg-gold-500 px-5 py-3 text-[11px] uppercase tracking-[0.22em] text-night-950 transition hover:bg-gold-400"
-            >
-              + New Prize
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <Link
+                href="/admin/golden/queue"
+                className="rounded-full border border-white/15 px-5 py-3 text-[11px] uppercase tracking-[0.22em] text-slate-200 transition hover:border-white/35 hover:text-white"
+              >
+                Live Queue
+              </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  resetModal();
+                  setModalOpen(true);
+                }}
+                className="rounded-full border border-gold-400/60 bg-gold-500 px-5 py-3 text-[11px] uppercase tracking-[0.22em] text-night-950 transition hover:bg-gold-400"
+              >
+                + New Prize
+              </button>
+            </div>
           }
         />
 

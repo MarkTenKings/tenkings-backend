@@ -323,6 +323,30 @@ export default function AdminHome() {
 
     return (
       <div className="mx-auto flex w-full max-w-[1700px] flex-1 flex-col gap-10 px-4 py-8 lg:px-6">
+        <section className="space-y-4">
+          <p className="text-xs uppercase tracking-[0.34em] text-slate-400">Golden Ticket</p>
+          <div className="grid gap-4 md:grid-cols-2">
+            <Link
+              href="/admin/golden/prizes"
+              className="rounded-[28px] border border-white/12 bg-black/88 p-5 transition hover:border-white/25 hover:bg-black"
+            >
+              <p className="font-heading text-2xl uppercase tracking-[0.12em] text-white">Prize Minting</p>
+              <p className="mt-3 max-w-lg text-sm text-slate-400">
+                Mint house-owned Golden Ticket prizes, generate ticket PDFs, and manage the ticket batches used during packing.
+              </p>
+            </Link>
+            <Link
+              href="/admin/golden/queue"
+              className="rounded-[28px] border border-gold-400/30 bg-gold-500/5 p-5 transition hover:border-gold-300/60 hover:bg-gold-500/10"
+            >
+              <p className="font-heading text-2xl uppercase tracking-[0.12em] text-white">Live Queue</p>
+              <p className="mt-3 max-w-lg text-sm text-slate-300">
+                Monitor active Golden Ticket sessions, watch the shared Mux feed, and trigger the kill switch before a cancelled session can publish.
+              </p>
+            </Link>
+          </div>
+        </section>
+
         {ADMIN_SECTIONS.map((section) => (
           <section key={section.title} className="space-y-4">
             <p className="text-xs uppercase tracking-[0.34em] text-slate-400">{section.title}</p>

@@ -14479,3 +14479,60 @@
   - rotate/recreate the Mux live stream used by that location
   - persist the replacement Mux ids/keys/playback ids, or clear the old location Mux fields so the next kiosk start recreates the stream through the new code path
   - do not expect older pre-Step-16 streams to show the burned-in logo until that reprovision step is completed
+
+## 2026-04-22 - Golden Ticket Step 12 admin live queue + kill switch
+
+### Summary
+- Implemented Section 13 step 12 on `feature/kingshunt` with a real-time admin queue for active Golden Ticket sessions.
+- Added an idempotent admin kill switch and a simple full-player watch route for active sessions.
+- Hardened cancelled-session publication paths so killed sessions do not publish through the shared public `/live` surfaces.
+- Kept the step migration-free per user direction: no `cancelledBy` / `cancelledAt` schema change was added.
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was performed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/lib/goldenQueue.ts`
+- `frontend/nextjs-app/lib/server/goldenQueue.ts`
+- `frontend/nextjs-app/components/golden/AdminGoldenQueuePlayer.tsx`
+- `frontend/nextjs-app/pages/api/admin/golden/queue.ts`
+- `frontend/nextjs-app/pages/api/admin/golden/queue/[sessionId]/kill.ts`
+- `frontend/nextjs-app/pages/admin/golden/queue.tsx`
+- `frontend/nextjs-app/pages/admin/golden/sessions/[sessionId].tsx`
+- `frontend/nextjs-app/lib/server/kioskCompletion.ts`
+- `frontend/nextjs-app/lib/server/goldenLive.ts`
+- `frontend/nextjs-app/pages/api/live-rips/index.ts`
+- `frontend/nextjs-app/pages/api/mux/webhook.ts`
+- `frontend/nextjs-app/components/AppShell.tsx`
+- `frontend/nextjs-app/pages/admin/index.tsx`
+- `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- Queue scope:
+  - `GET /api/admin/golden/queue` returns active Golden Ticket sessions only (`COUNTDOWN`, `LIVE`, `REVEAL`).
+  - queue polling runs every 3 seconds from `pages/admin/golden/queue.tsx`.
+  - each row shows winner name, ticket label, prize, current stage, elapsed stage duration, and an inline muted Mux preview.
+- Action scope:
+  - `POST /api/admin/golden/queue/[sessionId]/kill` is idempotent for already-cancelled sessions.
+  - kill sets `KioskSession.status = CANCELLED` without adding schema fields for operator audit metadata.
+  - `Watch Full` uses `pages/admin/golden/sessions/[sessionId].tsx` because this branch did not already contain a reusable admin Golden Ticket session detail route.
+- Publication hardening:
+  - `pages/api/mux/webhook.ts` now skips `LiveRip` create/update when the source session is already `CANCELLED`.
+  - `lib/server/kioskCompletion.ts` no longer republishes a cancelled session or flips it back to `COMPLETE`.
+  - `pages/api/live-rips/index.ts` filters out rows whose source `kioskSession.status` is `CANCELLED`.
+  - `lib/server/goldenLive.ts` filters cancelled-source `LiveRip` rows out of the idle reveal query used by `/live`.
+- Discoverability:
+  - added queue links in `components/AppShell.tsx`, `pages/admin/index.tsx`, and `pages/admin/golden/prizes.tsx`.
+
+### Assumptions
+- The user explicitly requested a migration-free Step 12, so `cancelledBy` / `cancelledAt` persistence was deferred to a later operational audit pass.
+- Active-row “winner name” resolves in this order: `winnerProfile.displayName`, `claimedBy.displayName`, `session.user.displayName`, phone fallback, then `"Awaiting claim"`.
+- The step accepts a simple active-session watch route rather than a new generalized admin session management page because no suitable existing Golden Ticket detail surface existed in this branch.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/golden/queue.tsx --file 'pages/admin/golden/sessions/[sessionId].tsx' --file components/golden/AdminGoldenQueuePlayer.tsx --file components/AppShell.tsx --file pages/admin/index.tsx --file pages/admin/golden/prizes.tsx --file pages/api/admin/golden/queue.ts --file 'pages/api/admin/golden/queue/[sessionId]/kill.ts' --file pages/api/live-rips/index.ts --file pages/api/mux/webhook.ts --file lib/goldenQueue.ts --file lib/server/goldenQueue.ts --file lib/server/goldenLive.ts --file lib/server/kioskCompletion.ts` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration.
+- `git diff --check` -> pass.
+
+### Planned Local Commit
+- `feat(golden-ticket): admin live queue + kill switch`

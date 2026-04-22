@@ -77,8 +77,9 @@ export async function completeKioskSessionTransaction(
 
   const now = new Date();
   const resolved = buildCompletionFields(session, payload);
+  const shouldPublish = resolved.publish && session.status !== "CANCELLED";
 
-  if (resolved.publish && resolved.finalVideoUrl) {
+  if (shouldPublish && resolved.finalVideoUrl) {
     if (session.liveRip) {
       await tx.liveRip.update({
         where: { id: session.liveRip.id },
@@ -114,7 +115,7 @@ export async function completeKioskSessionTransaction(
   await tx.kioskSession.update({
     where: { id: session.id },
     data: {
-      status: resolved.publish ? "COMPLETE" : session.status,
+      status: shouldPublish ? "COMPLETE" : session.status,
       videoUrl: resolved.finalVideoUrl ?? session.videoUrl,
       thumbnailUrl: resolved.thumbnailUrl,
       completedAt: now,

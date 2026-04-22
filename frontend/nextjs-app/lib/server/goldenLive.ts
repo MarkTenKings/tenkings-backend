@@ -66,6 +66,22 @@ async function getLatestGoldenTicketReveal(): Promise<GoldenLiveIdleReveal | nul
   const liveRip = await prisma.liveRip.findFirst({
     where: {
       isGoldenTicket: true,
+      OR: [
+        {
+          kioskSession: {
+            is: null,
+          },
+        },
+        {
+          kioskSession: {
+            is: {
+              status: {
+                not: KioskSessionStatus.CANCELLED,
+              },
+            },
+          },
+        },
+      ],
     },
     orderBy: {
       createdAt: "desc",
