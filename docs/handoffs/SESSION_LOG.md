@@ -14410,3 +14410,72 @@
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/live.tsx --file components/live/LiveRipDirectoryPage.tsx --file pages/admin/live.tsx --file pages/admin/golden/prizes.tsx --file components/AppShell.tsx --file pages/api/live-rips/index.ts --file pages/api/admin/live-rips/index.ts --file 'pages/api/admin/live-rips/[liveRipId].ts' --file pages/api/admin/live-rips/upload.ts` -> pass.
 - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration.
 - `git diff --check` -> pass.
+
+## 2026-04-22 - Golden Ticket Step 16 /live public redesign + Mux watermark
+
+### Summary
+- Replaced the interim public `/live` list with the locked Step 16 Golden Ticket two-state experience:
+  - idle/default state with portrait player, gold stat row, and recent reveal grid
+  - live takeover state with near full-height portrait player, larger reveal banner, red pulsing `LIVE` badge, and compact bottom stat pill
+- Added public live snapshot polling via `GET /api/live/current` plus 5-second stats/recent-reveal refreshes.
+- Added watermark overlay configuration for newly created Mux live streams.
+- No deploy, restart, migration execution, runtime mutation, or DB mutation were performed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/pages/live.tsx`
+- `frontend/nextjs-app/pages/api/live/current.ts`
+- `frontend/nextjs-app/lib/server/goldenLive.ts`
+- `frontend/nextjs-app/lib/server/goldenClaim.ts`
+- `frontend/nextjs-app/pages/api/golden/winners/index.ts`
+- `frontend/nextjs-app/lib/server/mux.ts`
+- `frontend/nextjs-app/lib/server/kioskSessionLifecycle.ts`
+- `frontend/nextjs-app/pages/api/kiosk/display.ts`
+- `frontend/nextjs-app/pages/golden/claim/[code].tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `/live` now uses SSR bootstrap data plus polling:
+  - `GET /api/live/current` every 2 seconds for current Golden Ticket session state and latest idle reveal
+  - `GET /api/golden/stats` every 5 seconds
+  - `GET /api/golden/winners?limit=4&sort=recent` every 5 seconds
+- Added `lib/server/goldenLive.ts` to centralize:
+  - current active Golden Ticket session lookup
+  - latest Golden Ticket reveal lookup for idle playback
+  - serialization for the new public live snapshot endpoint
+- Added `lib/server/kioskSessionLifecycle.ts` and reused it from `pages/api/kiosk/display.ts` so live/countdown state refresh uses one shared auto-advance path.
+- Countdown sync change:
+  - `/live` uses `KioskSession.countdownEndsAt` from the polled session snapshot
+  - the winner claim page now also keys its countdown loop off `countdownEndsAt`, so both surfaces use the same session clock source instead of separate local timers
+- Winners API:
+  - added `sort=recent` to the existing winners endpoint for `/live`
+  - kept the default featured-first ordering so `/golden` remains unchanged
+- Stats API backing data now includes `totalMinted` in addition to `claimedCount` and `placedCount`
+- Mux watermarking:
+  - new live streams now include `new_asset_settings.inputs[].overlay_settings`
+  - overlay asset is `/brand/tenkings-logo.png`
+  - placement is bottom-right with `3%` horizontal/vertical margin, `8%` height, and `70%` opacity
+
+### Assumptions
+- `LEFT` in the live-state pill is calculated as `max(totalMinted - claimedCount, 0)`.
+- Viewer count remains intentionally omitted because this checkout does not already expose a production-ready Mux viewer-metrics path; the badge falls back to `LIVE`.
+- The full square `frontend/nextjs-app/public/brand/tenkings-logo.png` is the intended asset for:
+  - the centered `/live` header logo
+  - the web-player bottom-right watermark overlay
+  - the Mux burned-in watermark configuration
+- Added `// TODO(step-13): ...` at the public winner query site in `lib/server/goldenClaim.ts` so moderation can later introduce an explicit published filter without changing current output.
+- If `MUX_WATERMARK_IMAGE_URL` is not set, the code falls back to `buildSiteUrl("/brand/tenkings-logo.png")`; localhost URLs are intentionally skipped because Mux cannot fetch them.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/live.tsx --file pages/api/live/current.ts --file lib/server/goldenLive.ts --file lib/server/mux.ts --file pages/api/kiosk/display.ts --file pages/api/golden/winners/index.ts --file 'pages/golden/claim/[code].tsx' --file lib/server/goldenClaim.ts --file lib/server/kioskSessionLifecycle.ts` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration.
+- `git diff --check` -> pass.
+
+### Repo State
+- `git branch --show-current` -> `feature/kingshunt`
+
+### Runbook Note
+- Existing persisted location streams will not retroactively inherit the watermark. To pick up Step 16 watermarking on an existing location stream, schedule a separate maintenance session and reprovision the stream:
+  - rotate/recreate the Mux live stream used by that location
+  - persist the replacement Mux ids/keys/playback ids, or clear the old location Mux fields so the next kiosk start recreates the stream through the new code path
+  - do not expect older pre-Step-16 streams to show the burned-in logo until that reprovision step is completed

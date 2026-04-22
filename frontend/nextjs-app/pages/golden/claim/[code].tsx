@@ -121,6 +121,7 @@ type PendingBrowserStart = {
   whipUploadUrl: string;
   countdownSeconds: number;
   liveSeconds: number;
+  countdownEndsAt: string;
 };
 
 type ClaimFormState = {
@@ -755,13 +756,28 @@ export default function GoldenClaimPage() {
         setPhaseError(null);
         await client.start();
 
-        for (let value = GOLDEN_TICKET_COUNTDOWN_SECONDS; value >= 1; value -= 1) {
+        const countdownEndsAtMs = new Date(pendingStart.countdownEndsAt).getTime();
+
+        while (true) {
           if (cancelled) {
             return;
           }
-          setCountdownValue(value);
+
+          const remainingMs = countdownEndsAtMs - Date.now();
+          const nextValue = Math.min(
+            GOLDEN_TICKET_COUNTDOWN_SECONDS,
+            Math.max(0, Math.ceil(remainingMs / 1000))
+          );
+
+          if (nextValue <= 0) {
+            break;
+          }
+
+          setCountdownValue(nextValue);
           await playTone(440, 150);
-          await wait(1000);
+
+          const waitUntilNextSecondMs = remainingMs - (nextValue - 1) * 1000;
+          await wait(Math.max(40, waitUntilNextSecondMs));
         }
 
         if (cancelled) {
@@ -926,6 +942,7 @@ export default function GoldenClaimPage() {
         whipUploadUrl: buildWhipUploadUrl(whipPayload),
         countdownSeconds: startPayload.session.countdownSeconds,
         liveSeconds: startPayload.session.liveSeconds,
+        countdownEndsAt: startPayload.session.countdownEndsAt,
       });
       setPhase("countdown");
       setReactionUpload({

@@ -15,9 +15,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const page = parsePositiveInt(req.query.page, 1);
   const limit = parsePositiveInt(req.query.limit, 12);
+  const sort = req.query.sort === "recent" ? "recent" : "featured";
 
   try {
-    const result = await listGoldenTicketWinners({ page, limit });
+    const result = await listGoldenTicketWinners({ page, limit, order: sort });
     return res.status(200).json(result);
   } catch (error) {
     const result = toGoldenTicketError(error);

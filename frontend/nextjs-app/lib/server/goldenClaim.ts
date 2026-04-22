@@ -187,6 +187,7 @@ export interface GoldenTicketWinnerListResult {
 export interface GoldenTicketHallStats {
   claimedCount: number;
   placedCount: number;
+  totalMinted: number;
   featuredTicketIds: string[];
 }
 
@@ -638,18 +639,25 @@ export async function getPublicGoldenTicketWinnerByTicketNumber(ticketNumber: nu
 export async function listGoldenTicketWinners({
   page = 1,
   limit = 12,
+  order = "featured",
 }: {
   page?: number;
   limit?: number;
+  order?: "featured" | "recent";
 } = {}): Promise<GoldenTicketWinnerListResult> {
   const safePage = Number.isFinite(page) ? Math.max(1, Math.trunc(page)) : 1;
   const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(1, Math.trunc(limit)), 24) : 12;
   const skip = (safePage - 1) * safeLimit;
+  const orderBy =
+    order === "recent"
+      ? [{ publishedAt: "desc" as const }]
+      : [{ featured: "desc" as const }, { publishedAt: "desc" as const }];
 
+  // TODO(step-13): add an explicit publishedAt moderation filter here once winner publishing becomes operator-controlled.
   const [totalCount, rows] = await Promise.all([
     prisma.goldenTicketWinnerProfile.count(),
     prisma.goldenTicketWinnerProfile.findMany({
-      orderBy: [{ featured: "desc" }, { publishedAt: "desc" }],
+      orderBy,
       skip,
       take: safeLimit,
       select: {
@@ -735,7 +743,7 @@ export async function listGoldenTicketWinners({
 }
 
 export async function getGoldenTicketHallStats(): Promise<GoldenTicketHallStats> {
-  const [claimedCount, placedCount, featuredProfiles] = await Promise.all([
+  const [claimedCount, placedCount, totalMinted, featuredProfiles] = await Promise.all([
     prisma.goldenTicket.count({
       where: {
         status: "CLAIMED",
@@ -746,6 +754,7 @@ export async function getGoldenTicketHallStats(): Promise<GoldenTicketHallStats>
         status: "PLACED",
       },
     }),
+    prisma.goldenTicket.count(),
     prisma.goldenTicketWinnerProfile.findMany({
       where: {
         featured: true,
@@ -762,6 +771,7 @@ export async function getGoldenTicketHallStats(): Promise<GoldenTicketHallStats>
   return {
     claimedCount,
     placedCount,
+    totalMinted,
     featuredTicketIds: featuredProfiles.map((profile) => profile.goldenTicketId),
   };
 }
