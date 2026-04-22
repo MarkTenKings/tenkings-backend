@@ -1,14 +1,90 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-21` (Golden Ticket Section 13 step 4 landed locally: inline Mux playback now uses `@mux/mux-player-react` on the live detail page and shared preview path; no deploy/restart/migration executed)
+- Last reviewed: `2026-04-21`
 - Branch: `feature/kingshunt`
-- Current local git state at latest handoff refresh:
-  - `git status -sb` -> `## feature/kingshunt`
-- Latest committed baseline at handoff refresh:
-  - `fix(schema): handle GOLDEN_TICKET_PRIZE in CollectibleCategory switches`
-- Environments touched: workstation checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`; no deploy/restart/migration executed
-- 2020 run status: full pass completed with `queueCount: 0`
+- Latest product baseline summarized here: `6f87bd9 feat(golden-ticket): winner claim flow end-to-end`
+- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 7, plus one schema cleanup commit, on top of the earlier branch-base `kingshunt` locator/QR-hunt commit.
+- Fresh-agent pickup target: the next clean spec pickups are step 10 (`share-card` generation), step 12 (admin live queue + kill switch), or step 14 (`/golden` hall page).
+- Deploy/restart/migration status: none of the Golden Ticket sessions through `6f87bd9` performed deploys, restarts, or migrations against a live environment.
+
+## Fresh-Agent Pickup Summary (through `6f87bd9`)
+
+### Shipped Commits On `feature/kingshunt` So Far
+- `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+  - Pre-existing branch-base feature before Golden Ticket work started. Not part of Section 13, but all later work in this handoff stacks on this branch state.
+- `f2afebd feat(golden-ticket): add browser ingest and ticket schema`
+  - Section 13 step 1. Added the Golden Ticket/browser-ingest schema, migration, enums, and FK wiring across `GoldenTicket`, `GoldenTicketConsent`, `GoldenTicketWinnerProfile`, `KioskSession`, `LiveRip`, `ShippingRequest`, `Item`, `PackInstance`, `QrCode`, `Location`, and `User`.
+- `3ca0dc6 feat(browser-rip): add client skeleton and whip tests`
+  - Section 13 step 2. Created `packages/browser-rip-client` with the initial `BrowserRipClient`, WHIP publish helper, and focused unit tests.
+- `dbb532f feat(browser-rip): add browser session routes and dev test page`
+  - Section 13 step 3. Extended `POST /api/kiosk/start` for `ingestMode: "BROWSER"` + `goldenTicketCode`, added `GET /api/kiosk/[sessionId]/whip-url`, and added the admin-only `/dev/browser-rip-test` page.
+- `2fcd586 fix(schema): handle GOLDEN_TICKET_PRIZE in CollectibleCategory switches`
+  - Post-step-3 cleanup. Fixed frontend/admin enum narrowing fallout after adding `CollectibleCategory.GOLDEN_TICKET_PRIZE`.
+- `f488663 fix(live): inline mux playback for live rips`
+  - Section 13 step 4. Fixed the existing Mux playback gap by rendering inline `@mux/mux-player-react` playback on `pages/live/[slug].tsx` and aligning `components/LiveRipPreview.tsx`.
+- `535777f feat(golden-ticket): add admin prize minting and ticket pdfs`
+  - Section 13 step 5. Added `pages/admin/golden/prizes.tsx`, `GET/POST /api/admin/golden/prizes`, `GET /api/admin/golden/tickets/[id]/pdf`, and `lib/server/goldenTicket.ts` helpers for code generation, ticket numbering, grouping, and printable PDF generation.
+- `1a56397 feat(golden-ticket): place tickets during packing`
+  - Section 13 step 6. Added `POST /api/admin/golden/tickets/[id]/place`, extended the existing packing scan flow to accept Golden Ticket QRs during pack assembly, and surfaced Golden Ticket presence in packing UI/location payloads.
+- `6f87bd9 feat(golden-ticket): winner claim flow end-to-end`
+  - Section 13 step 7. Added the single-page `/golden/claim/[code]` winner flow, ticket lookup/consent/reaction upload/claim APIs, transaction-backed claim finalization, minimal `/golden/[ticketNumber]` winner page support, and browser-rip integration for countdown + reveal capture.
+
+### Spec Status
+- Completed:
+  - Section 2 data-model changes required for browser ingest and Golden Ticket flows.
+  - Section 3.1 browser-rip client foundation, with later step-7 extensions so the client now publishes the attached composite canvas plus mic audio instead of remaining a pure skeleton.
+  - Section 3.2 `POST /api/kiosk/start` browser-ingest extension.
+  - Section 3.3 `GET /api/kiosk/[sessionId]/whip-url`.
+  - Section 3.4 inline Mux playback fix on the live detail page and shared preview path.
+  - Section 3.5 `KioskSession.userId` / browser-session ownership plumbing.
+  - Section 4.1 seven-screen winner flow on `pages/golden/claim/[code].tsx`.
+  - Section 4.2 consent capture with verbatim text + version.
+  - Section 4.5 permissions-denied recovery flow.
+  - Section 5.2 admin prize creation + ticket minting + ticket PDF generation.
+  - Section 5.3 Golden Ticket placement inside the existing packing flow.
+  - Section 7.1 routes required for the current winner flow: ticket lookup, consent, reaction upload, claim finalization, winner detail lookup, and share-card redirect fallback.
+  - Section 13 steps 1, 2, 3, 4, 5, 6, and 7, plus the cleanup commit after step 3.
+- Partially complete or intentionally pulled forward:
+  - Section 4.4 / step 10 share-card support is only a redirect/fallback route today. The real generated share-card asset flow is still pending.
+  - Section 6.3 / step 15 has a minimal `/golden/[ticketNumber]` page because step 7 needed already-claimed redirects and a confirmation target, but the polished winner-profile experience is not finished.
+  - Section 7.2 admin routes exist only for prizes, ticket placement, and PDFs. Queue, kill-switch, and winner-moderation routes remain open.
+  - Section 11 outbound SMS behavior exists behind `OUTBOUND_SMS_ENABLED`, but the dedicated wrapper/cleanup step is still open if you want strict spec-sequence parity.
+- Still pending:
+  - Section 4.3 public live banner/kill-switch UX polish not covered by step 7.
+  - Section 4.4 / Section 13 step 10 actual share-card generation via `@vercel/og`.
+  - Section 5.1 main `/admin/golden` dashboard shell.
+  - Section 5.4 / Section 13 step 12 admin live queue + kill switch.
+  - Section 5.5 / Section 13 step 13 admin winners moderation.
+  - Section 6.1 / Section 13 step 16 full `/live` redesign.
+  - Section 6.2 / Section 13 step 14 `/golden` hall page.
+  - Section 6.3 / Section 13 step 15 full winner-profile page polish.
+  - Remaining public/admin list/stat routes in Section 7 that those pending pages depend on.
+  - Section 9 / Section 13 step 17 full acceptance run-through.
+
+### Cross-Cutting Assumptions And Branch Realities
+- The Golden Ticket spec file `tk-golden-ticket-codex-spec-v1.md` was provided in chat during implementation and is not checked into this checkout.
+- Earlier architecture references used during takeover were only present in a sibling checkout, so a fresh agent should treat the spec plus `docs/handoffs/SESSION_LOG.md` as the authoritative implementation trail for this branch.
+- Browser-ingest auth follows the existing checked-in bearer-token `useSession` pattern, not a server-readable cookie session. Browser mode explicitly does not reuse kiosk-secret auth.
+- Online/browser reveals are serialized through the shared Online location Mux stream. Busy-path behavior is already implemented as `409 { error: "ONLINE_STREAM_BUSY" }`.
+- `GoldenTicket.prizeItemId` is unique, so multi-ticket prize minting creates one house-owned `Item` per ticket and groups them in admin via `Item.detailsJson.goldenTicketPrizeGroupId`.
+- Golden Ticket-specific prize metadata currently lives in `Item.detailsJson`; `Item.set` is fixed to `"Golden Ticket Prize"` for these rows.
+- Reveal video, poster, and prize photo uploads reuse the existing `/api/live-rips/upload` pipeline. Reaction uploads reuse the live-media storage path directly instead of inventing a new uploader.
+- Golden Ticket placement is only valid while a pack is still `READY_FOR_PACKING`; `PACKED` and `LOADED` are treated as already sealed/shipped.
+- `lib/server/goldenClaim.ts` + `lib/server/kioskCompletion.ts` are now the main claim finalization path. Future work should extend those helpers rather than re-implementing claim completion inside routes/pages.
+- `GET /api/golden/[ticketNumber]/share-card` exists today as a fallback redirect contract, not the final generated share-card implementation.
+- The minimal `/golden/[ticketNumber]` page exists only because step 7 needed a claimed-ticket redirect target and a confirmation destination. Do not mark step 15 complete off that page alone.
+- Repo-wide validation still has one known pre-existing failure outside Golden Ticket scope: `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` fails on `components/maps/IndoorMap.tsx` because the repo is missing `leaflet` declarations there.
+
+### Recommended Next Pickups
+- Step 10:
+  - Build the actual share-card generator behind the already-created `GET /api/golden/[ticketNumber]/share-card` route and persist/use real generated assets instead of the current redirect fallback.
+- Step 12:
+  - Build the admin queue/kill-switch path on top of existing `KioskSession.isGoldenTicket`, `ingestMode = BROWSER`, and the completion/claim writes already produced by step 7.
+- Step 14:
+  - Build `/golden` against the existing claimed-ticket data and winner-detail route; do not rebuild the claim flow or winner lookup contracts from scratch.
+- If strict Section 13 sequencing matters before the above:
+  - treat step 8 and step 9 as behavior already landed inside step 7, and treat step 11 as a cleanup/wrapper pass around the already-flagged outbound SMS behavior.
 
 ## Session Update (2026-04-21, Golden Ticket Section 13 step 4 inline Mux playback fix)
 - Re-read `AGENTS.md` and continued from the already-complete steps 1-3 plus schema cleanup on `feature/kingshunt`.
