@@ -16941,3 +16941,25 @@ By tapping "Unlock My Reveal" below, I confirm that:
 - The local `.env.production` snapshot does not list `GOLDEN_TICKET_CONSENT_TEXT_VERSION`.
 - The local `.env.production` snapshot does not list `GOLDEN_TICKET_CONSENT_TEXT`.
 - The server code has fallbacks for both values, but Vercel production should be updated with the explicit values above before or immediately after merge so the legal copy is configured intentionally.
+
+### Observed Deploy Failure
+- `git push origin main` triggered Vercel production deploy `tenkings-backend-nextjs-bbfb2tthb-ten-kings.vercel.app` for merge commit `86849e9`.
+- Vercel reached `ERROR` during `pnpm -w run vercel:build`.
+- Confirmed `prisma migrate deploy` did run automatically before build.
+- Failure:
+  - migration `20260422_golden_ticket_and_browser_ingest`
+  - Postgres error `42804`
+  - `"GoldenTicket_qrCodeId_fkey" cannot be implemented`
+  - key columns `"qrCodeId"` and `"id"` were incompatible because the migration created `GoldenTicket.qrCodeId` as `TEXT` while production `QrCode.id` is `uuid`
+- Read-only production inspection showed:
+  - failed `_prisma_migrations` row exists for `20260422_golden_ticket_and_browser_ingest`
+  - no `GoldenTicket`, `GoldenTicketConsent`, or `GoldenTicketWinnerProfile` tables exist after the failed deploy, consistent with transaction rollback
+
+### Recovery Plan
+- Correct `packages/database/prisma/migrations/20260422_golden_ticket_and_browser_ingest/migration.sql` so Golden Ticket foreign-key columns that reference existing UUID primary keys are created as `UUID`:
+  - `GoldenTicket.qrCodeId`
+  - `GoldenTicket.claimedKioskSessionId`
+  - `GoldenTicket.sourceLocationId`
+- Run production migration recovery before re-pushing/redeploying:
+  - `prisma migrate resolve --rolled-back 20260422_golden_ticket_and_browser_ingest`
+- Then push the correction to `main` and let Vercel production auto-deploy run `prisma migrate deploy` again.
