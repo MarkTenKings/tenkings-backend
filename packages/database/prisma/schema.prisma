@@ -193,6 +193,13 @@ enum KioskIngestMode {
   BROWSER
 }
 
+enum LiveRipStatus {
+  PENDING
+  LIVE
+  COMPLETE
+  CANCELLED
+}
+
 enum GoldenTicketStatus {
   MINTED
   PLACED
@@ -381,6 +388,8 @@ model User {
   qrCodesBound            QrCode[]              @relation("QrCodeBoundBy")
   kioskSessions           KioskSession[]        @relation("KioskSessionUser")
   kioskClaims             KioskSession[]        @relation("KioskClaimedBy")
+  liveRips                LiveRip[]             @relation("LiveRipUser")
+  liveRipConsents         LiveRipConsent[]
   scannedGoldenTickets    GoldenTicket[]        @relation("GoldenTicketScanner")
   goldenTicketConsents    GoldenTicketConsent[]
   batchStageEvents        BatchStageEvent[]
@@ -585,20 +594,32 @@ model LiveRip {
   videoUrl       String
   thumbnailUrl   String?
   locationId     String?
+  userId         String?
+  status         LiveRipStatus @default(COMPLETE)
   featured       Boolean       @default(false)
   viewCount      Int?
+  muxStreamId    String?
+  muxStreamKey   String?
   muxAssetId     String?
   muxPlaybackId  String?
+  whipUploadUrl  String?
   isGoldenTicket Boolean       @default(false)
   goldenTicketId String?       @unique
+  startedAt      DateTime?
+  endedAt        DateTime?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   location       Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  user           User?         @relation("LiveRipUser", fields: [userId], references: [id], onDelete: SetNull)
   kioskSessionId String?       @unique
   kioskSession   KioskSession? @relation("KioskSessionLiveRip", fields: [kioskSessionId], references: [id], onDelete: SetNull)
   goldenTicket   GoldenTicket? @relation(fields: [goldenTicketId], references: [id], onDelete: SetNull)
+  consents       LiveRipConsent[]
 
   @@index([isGoldenTicket, createdAt])
+  @@index([status, isGoldenTicket, createdAt])
+  @@index([userId])
+  @@index([muxStreamId])
 }
 
 model Wallet {
@@ -2082,6 +2103,22 @@ model GoldenTicketConsent {
   user         User         @relation(fields: [userId], references: [id])
 
   @@index([userId])
+}
+
+model LiveRipConsent {
+  id                  String   @id @default(cuid())
+  userId              String
+  user                User     @relation(fields: [userId], references: [id])
+  liveRipId           String?
+  liveRip             LiveRip? @relation(fields: [liveRipId], references: [id])
+  dob                 DateTime
+  consentTextVersion  String
+  consentTextSnapshot String   @db.Text
+  consentedAt         DateTime @default(now())
+  createdAt           DateTime @default(now())
+
+  @@index([userId])
+  @@index([liveRipId])
 }
 
 model GoldenTicketWinnerProfile {

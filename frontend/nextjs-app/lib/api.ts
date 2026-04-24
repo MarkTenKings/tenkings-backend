@@ -126,7 +126,36 @@ export async function purchasePack(payload: {
   userId: string;
   paymentMethod?: "wallet" | "stripe";
   paymentIntentId?: string;
+  liveRip?: {
+    enabled: true;
+    dob: string;
+    consentTextVersion: string;
+    consentTextSnapshot: string;
+    consentedAt: string;
+  };
 }) {
+  if (payload.liveRip?.enabled) {
+    return handle<{
+      definition: any;
+      pack: any;
+      walletBalance: number | null;
+      liveRip: {
+        id: string;
+        slug: string;
+        status: string;
+        streamKey: string | null;
+        muxPlaybackId: string | null;
+        playbackUrl: string | null;
+        whipUploadUrl: string;
+        watchUrl: string;
+      };
+    }>("/api/live-rip/purchase", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
   return handle<{ definition: any; pack: any; walletBalance: number | null }>(service("pack/purchase"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },

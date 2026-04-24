@@ -21,6 +21,7 @@ export {
   QrCodeState,
   KioskClaimStatus,
   KioskSessionStatus,
+  LiveRipStatus,
   BatchStage,
   SetDatasetType,
   SetIngestionJobStatus,

@@ -1,6 +1,85 @@
 # Set Ops Handoff (Living)
 
 ## Current State
+- Last reviewed: `2026-04-24` (implemented `feature/rip-it-live` from latest `origin/main`: unified `/live` gallery with active Golden Ticket hero/live-rip rows/replay rails, buyer-side Rip It Live toggle and browser WHIP flow, live-rip consent infrastructure, checked-in migration, and CI pnpm/Prisma/GHCR setup alignment; validation passed; PR opened; no deploy, restart, migration execution, runtime DB mutation, merge, or destructive operation executed)
+- Branch: `feature/rip-it-live`
+- Current local git state before this handoff refresh:
+  - `git status -sb`:
+    - `## feature/rip-it-live...origin/feature/rip-it-live`
+    - clean after push
+  - modified/new tracked scope:
+    - `/live` page and `/live/[slug]` watch behavior
+    - live state and buyer live-rip API routes
+    - `pages/packs.tsx` Rip It Live opt-in/go-live flow
+    - `LiveRipStatus`, `LiveRipConsent`, migration, and database exports
+    - GitHub CI pnpm setup alignment
+    - frontend Docker image workspace package fix
+    - handoff docs
+  - deleted tracked paths: none
+- Latest committed baseline before this work:
+  - `cbb9180` fix(golden-ticket): split consent constants from server code
+- Environments touched this session: workstation feature worktree `/Users/markthomas/tenkings-rip-it-live`; GitHub fetch/push/PR creation; Vercel preview build; local dependency install/link; local validation/build only; no deploy, restart, migration execution, runtime DB mutation, merge, or destructive operation was executed
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/5`
+- Vercel preview: `https://tenkings-backend-nextjs-app-git-feature-rip-it-live-ten-kings.vercel.app`
+- New env vars for production before merge:
+  - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
+  - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
+
+## Session Update (2026-04-24, Rip It Live + unified /live implementation)
+- Re-read required startup docs in `/Users/markthomas/tenkings-task27-main`, then created clean feature worktree `/Users/markthomas/tenkings-rip-it-live` from latest fetched `origin/main`.
+- Pre-branch git report from existing checkout:
+  - `git status -sb` -> `## hotfix/sms-consent-copy...origin/hotfix/sms-consent-copy` plus existing handoff-doc modifications
+  - `git branch --show-current` -> `hotfix/sms-consent-copy`
+  - `git rev-parse --short HEAD` -> `3d61a58`
+- Feature branch state:
+  - `git status -sb` -> `## feature/rip-it-live...origin/feature/rip-it-live` clean after final push
+  - `git branch --show-current` -> `feature/rip-it-live`
+  - baseline HEAD before commit -> `cbb9180`
+- Implemented unified `/live`:
+  - new `/api/live/state` returns `goldenTicketActive`, `regularActive`, `goldenTicketReveals`, and `pastRips`
+  - `/live` polls `/api/live/state` every 5 seconds
+  - State 1 renders replay rows/grid only
+  - State 2 renders `Live Rips` autoplay-muted live row above replay content
+  - State 3 renders `GOLDEN TICKET LIVE REVEAL` hero with muted autoplay and tap-to-unmute, then optional regular live row, then replay content
+  - removed previous viewer countdown/full-page takeover/audio behavior from `/live`
+- Implemented buyer Rip It Live:
+  - checkout toggle default OFF above purchase button
+  - ON flow loads server-canonical consent copy, collects DOB, consent checkbox, and browser camera/mic permission
+  - underage/denied/dismissed paths revert toggle OFF and do not purchase
+  - successful opt-in submits DOB, consent version, consent snapshot, and timestamp with live purchase
+  - buyer purchase provisions Mux stream, creates `LiveRip` + `LiveRipConsent`, returns WHIP/watch info, and transitions to Go Live screen using `BrowserRipClient`
+  - buyer can start stream, open pack on stream, and end/save replay
+- Added data/API infrastructure:
+  - `LiveRipStatus` enum and status/user/Mux/WHIP timing fields on `LiveRip`
+  - `LiveRipConsent` model and migration `20260424170000_live_rip_consent`
+  - `/api/live-rip/consent`, `/api/live-rip/purchase`, `/api/live-rip/[liveRipId]/start`, `/api/live-rip/[liveRipId]/complete`
+  - Mux webhook now also updates buyer-created `LiveRip` rows by `liveRip:<id>` passthrough / stream id / asset id
+- CI:
+  - removed the hard-coded `pnpm/action-setup` version from `.github/workflows/ci.yml` so GitHub Actions uses the root `packageManager: pnpm@9.12.0`; the previous explicit `9.5.0` setting caused `pnpm/action-setup@v4` to fail before install
+  - added `pnpm --filter @tenkings/database generate` before the workspace build so CI has schema-derived Prisma client types before compiling `@tenkings/database`
+  - normalized the GHCR image repository to lowercase before Docker image builds because Docker rejects tags containing the mixed-case `MarkTenKings` owner name
+  - updated the frontend Dockerfile to preserve workspace `packages` and root `tsconfig.base.json` in the build stage used by `pnpm run build`, generate Prisma, and build workspace packages required by Next type resolution before that Docker build
+- Validation:
+  - `pnpm install --ignore-scripts` completed after initial install linked deps but skipped failing `iohook` postinstall for local Node 25
+  - `pnpm --filter @tenkings/database generate` -> pass
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+  - `pnpm --filter @tenkings/browser-rip-client run build` -> pass
+  - `pnpm --filter @tenkings/database build` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass
+  - targeted `next lint` for changed live/pack/API/helper files -> pass
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings (`<img>` warnings, stale Browserslist/baseline-browser-mapping data, Tailwind CSS glob warning)
+  - `pnpm --filter '@tenkings/*' run --if-present build` after Prisma generate -> pass with the same existing unrelated Next warnings and local Node 25 engine warning
+  - `git diff --check` -> pass
+- Notes:
+  - migration file was created but not run
+  - mockup image paths under `/home/user/workspace` were not present in this macOS workspace, so implementation followed the written layout spec
+  - current pack UI is single-pack purchase; the live-rip API creates one `LiveRip` per successful live purchase and can represent the sequential session model, but no multi-pack cart UI exists in this code path
+- PR status:
+  - commit message: `feat(live): unified /live gallery + buyer Rip It Live toggle`
+  - PR opened against `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/5`
+  - Vercel preview ready: `https://tenkings-backend-nextjs-app-git-feature-rip-it-live-ten-kings.vercel.app`
+  - do not merge or deploy until reviewed
+
 - Last reviewed: `2026-04-13` (stocker turn-by-turn navigation, indoor map/light roadmap fix, collapsible navigation UI, and admin live dashboard polish implemented on `main`; validation passed; preparing commit/push; no deploy/restart/migration/DB write/destructive operation executed)
 - Branch: `main`
 - Current local git state before this handoff refresh:

@@ -33,6 +33,7 @@ interface LiveRipPageProps {
     videoUrl: string;
     thumbnailUrl: string | null;
     muxPlaybackId: string | null;
+    status: string;
     location: {
       id: string;
       name: string;
@@ -52,9 +53,11 @@ export default function LiveRipPage({ liveRip, more }: LiveRipPageProps) {
         <div className="overflow-hidden rounded-[2.5rem] border border-white/10 bg-night-900/70 shadow-card">
           <MuxPlayer
             playbackId={liveRip.muxPlaybackId}
-            streamType="on-demand"
+            streamType={liveRip.status === "LIVE" ? "live" : "on-demand"}
             metadataVideoTitle={liveRip.title}
             title={liveRip.title}
+            autoPlay={liveRip.status === "LIVE"}
+            muted={false}
             poster={liveRip.thumbnailUrl ?? undefined}
             className="h-full w-full"
           />
@@ -122,7 +125,9 @@ export default function LiveRipPage({ liveRip, more }: LiveRipPageProps) {
           <h1 className="font-heading text-4xl uppercase tracking-[0.2em] text-white md:text-5xl">
             {liveRip.title}
           </h1>
-          <p className="text-xs text-slate-400">Recorded {new Date(liveRip.createdAt).toLocaleString()}</p>
+          <p className="text-xs text-slate-400">
+            {liveRip.status === "LIVE" ? "Live now" : `Recorded ${new Date(liveRip.createdAt).toLocaleString()}`}
+          </p>
         </header>
 
         {renderMedia()}
@@ -255,6 +260,7 @@ export const getServerSideProps: GetServerSideProps<LiveRipPageProps> = async (c
         videoUrl: liveRip.videoUrl,
         thumbnailUrl: liveRip.thumbnailUrl,
         muxPlaybackId: liveRip.muxPlaybackId ?? null,
+        status: liveRip.status,
         location: liveRip.location,
         createdAt: liveRip.createdAt.toISOString(),
       },

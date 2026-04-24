@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { prisma } from "@tenkings/database";
+import { LiveRipStatus, prisma } from "@tenkings/database";
 import {
   buildMuxPlaybackUrl,
   getMuxAsset,
@@ -34,7 +34,7 @@ function buildSlug(base: string) {
   return slug;
 }
 
-function parsePassthrough(raw: unknown): { sessionId?: string; locationId?: string } {
+function parsePassthrough(raw: unknown): { sessionId?: string; locationId?: string; liveRipId?: string } {
   if (typeof raw !== "string" || !raw.trim()) {
     return {};
   }
@@ -44,6 +44,9 @@ function parsePassthrough(raw: unknown): { sessionId?: string; locationId?: stri
   }
   if (value.startsWith("location:")) {
     return { locationId: value.slice("location:".length) };
+  }
+  if (value.startsWith("liveRip:")) {
+    return { liveRipId: value.slice("liveRip:".length) };
   }
   const uuidRegex = /^[0-9a-fA-F-]{32,}$/;
   if (uuidRegex.test(value)) {
@@ -62,6 +65,20 @@ function buildSessionFilters(options: { sessionId?: string; locationId?: string;
   }
   if (options.liveStreamId) {
     filters.push({ muxStreamId: options.liveStreamId });
+  }
+  return filters;
+}
+
+function buildLiveRipFilters(options: { liveRipId?: string; liveStreamId?: string; assetId?: string }) {
+  const filters: any[] = [];
+  if (options.liveRipId) {
+    filters.push({ id: options.liveRipId });
+  }
+  if (options.liveStreamId) {
+    filters.push({ muxStreamId: options.liveStreamId });
+  }
+  if (options.assetId) {
+    filters.push({ muxAssetId: options.assetId });
   }
   return filters;
 }
@@ -105,39 +122,67 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     switch (eventType) {
       case "video.live_stream.active": {
-        const { sessionId, locationId } = parsePassthrough(data?.passthrough);
+        const { sessionId, locationId, liveRipId } = parsePassthrough(data?.passthrough);
         const liveStreamId = data?.id as string | undefined;
         const filters = buildSessionFilters({ sessionId, locationId, liveStreamId });
-        if (!filters.length) {
-          break;
+        if (filters.length) {
+          await prisma.kioskSession.updateMany({
+            where: { OR: filters },
+            data: {
+              status: "LIVE",
+              liveStartedAt: new Date(),
+            },
+          });
         }
-        await prisma.kioskSession.updateMany({
-          where: { OR: filters },
-          data: {
-            status: "LIVE",
-            liveStartedAt: new Date(),
-          },
-        });
+        const liveRipFilters = buildLiveRipFilters({ liveRipId, liveStreamId });
+        if (liveRipFilters.length) {
+          await prisma.liveRip.updateMany({
+            where: {
+              OR: liveRipFilters,
+              isGoldenTicket: false,
+              status: {
+                in: [LiveRipStatus.PENDING, LiveRipStatus.LIVE],
+              },
+            },
+            data: {
+              status: LiveRipStatus.LIVE,
+              startedAt: new Date(),
+            },
+          });
+        }
         break;
       }
       case "video.live_stream.idle": {
-        const { sessionId, locationId } = parsePassthrough(data?.passthrough);
+        const { sessionId, locationId, liveRipId } = parsePassthrough(data?.passthrough);
         const liveStreamId = data?.id as string | undefined;
         const filters = buildSessionFilters({ sessionId, locationId, liveStreamId });
-        if (!filters.length) {
-          break;
+        if (filters.length) {
+          await prisma.kioskSession.updateMany({
+            where: { OR: filters },
+            data: {
+              status: "REVEAL",
+            },
+          });
         }
-        await prisma.kioskSession.updateMany({
-          where: { OR: filters },
-          data: {
-            status: "REVEAL",
-          },
-        });
+        const liveRipFilters = buildLiveRipFilters({ liveRipId, liveStreamId });
+        if (liveRipFilters.length) {
+          await prisma.liveRip.updateMany({
+            where: {
+              OR: liveRipFilters,
+              isGoldenTicket: false,
+              status: LiveRipStatus.LIVE,
+            },
+            data: {
+              status: LiveRipStatus.COMPLETE,
+              endedAt: new Date(),
+            },
+          });
+        }
         break;
       }
       case "video.asset.ready": {
         const assetId = data?.id as string | undefined;
-        const { sessionId, locationId } = parsePassthrough(data?.passthrough);
+        const { sessionId, locationId, liveRipId } = parsePassthrough(data?.passthrough);
         const liveStreamId = data?.live_stream_id as string | undefined;
         if (!assetId) {
           break;
@@ -164,6 +209,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
 
         if (!session) {
+          const playbackUrl = playbackId ? buildMuxPlaybackUrl(playbackId) : null;
+          const liveRipFilters = buildLiveRipFilters({ liveRipId, liveStreamId, assetId });
+          if (liveRipFilters.length) {
+            await prisma.liveRip.updateMany({
+              where: { OR: liveRipFilters },
+              data: {
+                muxAssetId: assetId,
+                muxPlaybackId: playbackId,
+                videoUrl: playbackUrl ?? undefined,
+                status: LiveRipStatus.COMPLETE,
+                endedAt: new Date(),
+              },
+            });
+          }
           break;
         }
 

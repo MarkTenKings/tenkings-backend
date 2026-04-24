@@ -13,14 +13,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9.5.0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: "pnpm"
       - run: corepack enable
       - run: pnpm install
+      - run: pnpm --filter @tenkings/database generate
       - run: pnpm --filter @tenkings/* run --if-present build
 
   docker-images:
@@ -57,6 +56,8 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Normalize image repository
+        run: echo "IMAGE_REPOSITORY=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
       - name: Build and push ${{ matrix.name }}
         uses: docker/build-push-action@v5
         with:
@@ -66,5 +67,5 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           provenance: false
           tags: |
-            ghcr.io/${{ github.repository }}/${{ matrix.name }}:latest
-            ghcr.io/${{ github.repository }}/${{ matrix.name }}:${{ github.sha }}
+            ghcr.io/${{ env.IMAGE_REPOSITORY }}/${{ matrix.name }}:latest
+            ghcr.io/${{ env.IMAGE_REPOSITORY }}/${{ matrix.name }}:${{ github.sha }}
