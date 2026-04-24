@@ -18,4 +18,5 @@ cp -R "$PRISMA_SRC" frontend/nextjs-app/node_modules/.prisma
 
 pnpm --filter @tenkings/database run build
 pnpm --filter @tenkings/shared run build
+pnpm --filter @tenkings/browser-rip-client run build
 pnpm --filter @tenkings/nextjs-app run build

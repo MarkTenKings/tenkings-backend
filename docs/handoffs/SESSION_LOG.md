@@ -16968,3 +16968,15 @@ By tapping "Unlock My Reveal" below, I confirm that:
   - to `packages/database/prisma/migrations/20260422230000_golden_ticket_and_browser_ingest`
 - Kept `packages/database/prisma/migrations/20260422_golden_ticket_and_browser_ingest` as a no-op marker because production `_prisma_migrations` contains that rolled-back migration name; removing it made Prisma report local/database history divergence.
 - The corrected base migration sorts before the no-op marker and before `20260423000000_make_golden_ticket_winner_published_at_nullable`, so production deploy should apply the corrected base migration first, retain the old rolled-back name for history consistency, then apply the nullable/backfill follow-up.
+
+### Second Deploy Observation
+- `git push origin main` for commit `bca9277` triggered Vercel production deploy `tenkings-backend-nextjs-j477l6xs8-ten-kings.vercel.app`.
+- `prisma migrate deploy` succeeded and applied:
+  - `20260422230000_golden_ticket_and_browser_ingest`
+  - `20260422_golden_ticket_and_browser_ingest` (no-op marker)
+  - `20260423000000_make_golden_ticket_winner_published_at_nullable`
+- Build then failed during `next build` typechecking:
+  - `pages/dev/browser-rip-test.tsx`
+  - `Cannot find module '@tenkings/browser-rip-client' or its corresponding type declarations`
+- Diagnosis: `@tenkings/browser-rip-client` publishes `dist/index.js` and `dist/index.d.ts`, but `scripts/vercel-build.sh` did not build that workspace package before `@tenkings/nextjs-app`.
+- Planned recovery: add `pnpm --filter @tenkings/browser-rip-client run build` before the Next app build, then push `main` again and verify Vercel Ready.
