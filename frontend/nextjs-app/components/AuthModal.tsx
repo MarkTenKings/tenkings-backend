@@ -104,22 +104,30 @@ export default function AuthModal({
           )}
         </div>
 
-        <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-full border border-white/10 px-6 py-3 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/20 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
-            disabled={loading}
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="rounded-full border border-gold-500/60 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold-500 disabled:cursor-not-allowed disabled:bg-gold-500/50 disabled:text-night-900/60"
-            disabled={loading}
-          >
-            {step === "phone" ? (loading ? "Sending" : "Send Code") : loading ? "Verifying" : "Verify"}
-          </button>
+        <div className="mt-8 space-y-3">
+          {step === "phone" && (
+            <p className="text-xs leading-relaxed text-slate-500">
+              By tapping &quot;Send code&quot; you agree to receive SMS from Ten Kings for account verification, order updates, live rip notifications, and
+              customer support. Message &amp; data rates may apply. Frequency varies. Reply STOP to opt out, HELP for help. See our Privacy Policy and Terms.
+            </p>
+          )}
+          <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-full border border-white/10 px-6 py-3 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/20 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-white"
+              disabled={loading}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="rounded-full border border-gold-500/60 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-gold-500 disabled:cursor-not-allowed disabled:bg-gold-500/50 disabled:text-night-900/60"
+              disabled={loading}
+            >
+              {step === "phone" ? (loading ? "Sending" : "Send Code") : loading ? "Verifying" : "Verify"}
+            </button>
+          </div>
         </div>
       </form>
     </div>

@@ -84,9 +84,19 @@ export default function Terms() {
             <section className="space-y-3">
               <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">9. SMS Communications</h2>
               <p>
-                Ten Kings may send SMS messages to phone numbers you provide, including support responses, order updates, and account notifications.
-                Message and data rates may apply. Message frequency varies. Reply HELP for help. Reply STOP at any time to opt out of SMS communications.
-                For support, email support@tenkings.co.
+                By providing your phone number and opting in through our signup flow, you consent to receive SMS text messages from Ten Kings at the number
+                provided. We use SMS for:
+              </p>
+              <ul className="list-disc space-y-2 pl-5 text-slate-300">
+                <li>Account verification (one-time passcodes for signup and signin)</li>
+                <li>Order updates (shipping confirmations, delivery notifications)</li>
+                <li>Live rip notifications (links to your live pack-rip videos)</li>
+                <li>Customer support (replies to questions you submit)</li>
+              </ul>
+              <p>
+                Message frequency varies by account activity, typically 1–5 messages per month. Message and data rates may apply. Reply STOP to unsubscribe,
+                HELP for assistance. All major US carriers supported; carriers are not liable for delayed or undelivered messages. Phone numbers are handled
+                per our Privacy Policy and not shared with third parties for marketing. Consent to receive SMS is not a condition of purchase.
               </p>
             </section>
           </article>
