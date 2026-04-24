@@ -13,7 +13,7 @@ import {
   GOLDEN_TICKET_COUNTDOWN_SECONDS,
   GOLDEN_TICKET_LIVE_SECONDS,
   GOLDEN_TICKET_MIN_AGE,
-} from "../../../lib/server/goldenClaim";
+} from "../../../lib/goldenConsent";
 import type { SerializedKioskSession } from "../../../lib/server/kioskSession";
 
 type ClaimPhase =

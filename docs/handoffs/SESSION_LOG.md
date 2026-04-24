@@ -16980,3 +16980,28 @@ By tapping "Unlock My Reveal" below, I confirm that:
   - `Cannot find module '@tenkings/browser-rip-client' or its corresponding type declarations`
 - Diagnosis: `@tenkings/browser-rip-client` publishes `dist/index.js` and `dist/index.d.ts`, but `scripts/vercel-build.sh` did not build that workspace package before `@tenkings/nextjs-app`.
 - Planned recovery: add `pnpm --filter @tenkings/browser-rip-client run build` before the Next app build, then push `main` again and verify Vercel Ready.
+
+### Third Deploy Observation
+- `git push origin main` for commit `6ec4029` triggered Vercel production deploy `tenkings-backend-nextjs-l344vvm2h-ten-kings.vercel.app`.
+- `prisma migrate deploy` ran and reported `No pending migrations to apply`.
+- `@tenkings/browser-rip-client` built successfully before `@tenkings/nextjs-app`, resolving the previous missing workspace package type error.
+- Build then failed during optimized production compilation because `pages/golden/claim/[code].tsx` imported consent constants from `lib/server/goldenClaim.ts`, causing the client bundle to pull in server-only dependencies:
+  - `pdfkit`
+  - `jpeg-exif`
+  - `png-js`
+  - `node:crypto`
+- Planned recovery: move Golden Ticket consent display constants into `frontend/nextjs-app/lib/goldenConsent.ts`, import that shared module from both the client page and server claim module, and keep server-side env overrides canonical in `lib/server/goldenClaim.ts`.
+
+### Fourth Recovery Change
+- Moved Golden Ticket consent display constants into `frontend/nextjs-app/lib/goldenConsent.ts`.
+- Updated:
+  - `frontend/nextjs-app/pages/golden/claim/[code].tsx`
+  - `frontend/nextjs-app/lib/server/goldenClaim.ts`
+- Result:
+  - the client page no longer imports `lib/server/goldenClaim.ts`
+  - server-only dependencies stay in server-only modules
+  - env-driven server canonical consent text/version behavior is preserved
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/golden/claim/[code].tsx' --file lib/server/goldenClaim.ts --file lib/goldenConsent.ts` -> pass
+  - `pnpm --filter @tenkings/browser-rip-client run build` -> pass
+  - `pnpm --filter @tenkings/nextjs-app run build` -> pass locally with only pre-existing non-fatal warnings (`<img>` lint warnings, outdated browserslist/tailwind glob warning)
