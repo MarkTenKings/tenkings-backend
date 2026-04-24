@@ -31,8 +31,9 @@ export default function Terms() {
             <section className="space-y-3">
               <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">2. Eligibility & Account</h2>
               <p>
-                You must be at least 18 years old (or the age of majority in your jurisdiction) and complete identity verification if prompted. You are
-                responsible for maintaining the security of your account, including devices used for SMS verification.
+                You may not use the Ten Kings Service unless you are at least the age of majority in the state from which you are accessing the Service
+                (generally 18 years old; 19 in Alabama and Nebraska). You must complete identity verification if prompted. You are responsible for
+                maintaining the security of your account, including devices used for SMS verification.
               </p>
             </section>
 
