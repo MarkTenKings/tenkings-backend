@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "${RUN_DB_MIGRATIONS:-false}" = "true" ]; then
+if [ "${VERCEL_ENV:-}" = "production" ] || [ "${RUN_DB_MIGRATIONS:-false}" = "true" ]; then
   pnpm --filter @tenkings/database run migrate:deploy
 fi
 pnpm --filter @tenkings/database run generate

@@ -14752,3 +14752,46 @@ JOIN "PackInstance" pi ON gt."placedInPackId" = pi."id"
 WHERE gt."sourceLocationId" IS NULL
   AND pi."locationId" IS NOT NULL;
 ```
+
+## 2026-04-24 - Production deploy feature/kingshunt
+
+### Planned Actions
+- User explicitly requested full production deploy of `feature/kingshunt` with no preview, no PR, and no waiting.
+- Planned git flow:
+  - switch to `main`
+  - `git pull origin main`
+  - `git merge --no-ff feature/kingshunt`
+  - `git push origin main`
+- Planned production deploy observation:
+  - watch the Vercel production auto-deploy for `collect.tenkings.co`
+  - confirm production status reaches Ready
+  - confirm `prisma migrate deploy` runs successfully in deploy logs
+  - smoke check `/live`, `/golden`, `/admin/live`, and `/admin/golden`
+- No manual deploy command, preview deploy, PR, restart, direct DB mutation, or local/prod manual migration is planned.
+
+### Deploy Pipeline Note
+- `scripts/vercel-build.sh` now runs `pnpm --filter @tenkings/database run migrate:deploy` automatically when `VERCEL_ENV=production`, while retaining the existing `RUN_DB_MIGRATIONS=true` override for non-production/manual cases.
+- Reason: the local `.env.production` snapshot contains `DATABASE_URL` but does not contain `RUN_DB_MIGRATIONS`, so production migrations should not depend on that optional flag being configured.
+
+### Required Env Vars For Production
+- `GOLDEN_TICKET_CONSENT_TEXT_VERSION`
+  - expected value: `v1.0-2026-04-21`
+- `GOLDEN_TICKET_CONSENT_TEXT`
+  - expected exact multiline value:
+```text
+Golden Ticket Reveal - Consent to Record & Publish
+
+By tapping "Unlock My Reveal" below, I confirm that:
+
+- I am 18 years of age or older.
+- I grant Ten Kings, LLC permission to access my device's camera and microphone for the duration of this reveal.
+- I understand my reveal - including my face, voice, and reaction - will be recorded and livestreamed in real time to the Ten Kings platform at tenkings.co/live.
+- I grant Ten Kings, LLC a perpetual, royalty-free license to use, edit, publish, and share the recorded reveal on Ten Kings websites, social media accounts, and marketing materials.
+- I understand that once the reveal begins, the recording cannot be stopped or deleted by me. If I want my reveal removed from public display after the fact, I can email support@tenkings.co.
+- I agree to the Ten Kings Terms of Service (https://tenkings.co/terms) and Privacy Policy (https://tenkings.co/privacy).
+```
+
+### Initial Env Check
+- The local `.env.production` snapshot does not list `GOLDEN_TICKET_CONSENT_TEXT_VERSION`.
+- The local `.env.production` snapshot does not list `GOLDEN_TICKET_CONSENT_TEXT`.
+- The server code has fallbacks for both values, but Vercel production should be updated with the explicit values above before or immediately after merge so the legal copy is configured intentionally.
