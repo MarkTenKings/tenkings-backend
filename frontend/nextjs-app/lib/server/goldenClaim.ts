@@ -18,7 +18,7 @@ export const GOLDEN_TICKET_CONSENT_TEXT_VERSION =
 export const GOLDEN_TICKET_MIN_AGE = Number(process.env.GOLDEN_TICKET_MIN_AGE ?? 18);
 export const GOLDEN_TICKET_COUNTDOWN_SECONDS = 5;
 export const GOLDEN_TICKET_LIVE_SECONDS = 60;
-export const GOLDEN_TICKET_CONSENT_TEXT = `Golden Ticket Reveal - Consent to Record & Publish
+const DEFAULT_GOLDEN_TICKET_CONSENT_TEXT = `Golden Ticket Reveal - Consent to Record & Publish
 
 By tapping "Unlock My Reveal" below, I confirm that:
 
@@ -28,6 +28,10 @@ By tapping "Unlock My Reveal" below, I confirm that:
 - I grant Ten Kings, LLC a perpetual, royalty-free license to use, edit, publish, and share the recorded reveal on Ten Kings websites, social media accounts, and marketing materials.
 - I understand that once the reveal begins, the recording cannot be stopped or deleted by me. If I want my reveal removed from public display after the fact, I can email support@tenkings.co.
 - I agree to the Ten Kings Terms of Service (https://tenkings.co/terms) and Privacy Policy (https://tenkings.co/privacy).`;
+export const GOLDEN_TICKET_CONSENT_TEXT =
+  process.env.GOLDEN_TICKET_CONSENT_TEXT && process.env.GOLDEN_TICKET_CONSENT_TEXT.length > 0
+    ? process.env.GOLDEN_TICKET_CONSENT_TEXT
+    : DEFAULT_GOLDEN_TICKET_CONSENT_TEXT;
 
 const dateInputSchema = z
   .string()
@@ -36,7 +40,9 @@ const dateInputSchema = z
 export const goldenTicketConsentSchema = z.object({
   goldenTicketCode: z.string().trim().min(4, "Golden ticket code is required"),
   consentTextVersion: z.string().trim().min(1, "Consent text version is required"),
-  consentText: z.string().trim().min(1, "Consent text is required").optional(),
+  consented: z.literal(true, {
+    message: "Consent is required",
+  }),
   dateOfBirth: dateInputSchema.optional(),
 });
 
@@ -52,7 +58,7 @@ export const goldenTicketClaimSchema = z.object({
   }),
   phone: z.string().trim().min(8, "Phone is required"),
   email: z.string().trim().email("Email must be valid").optional().or(z.literal("")),
-  sourceLocationId: z.string().uuid("Choose where you got the pack"),
+  sourceLocationId: z.string().uuid("Choose where you got the pack").optional().or(z.literal("")),
   size: z.string().trim().optional(),
   socialHandle: z.string().trim().max(120).optional(),
   sessionId: z.string().uuid("sessionId is required"),
@@ -422,9 +428,12 @@ export async function recordGoldenTicketConsent(
     throw Object.assign(new Error("Golden Ticket claims are for Kings 18 and over."), { statusCode: 403 });
   }
 
+  if (input.consentTextVersion !== GOLDEN_TICKET_CONSENT_TEXT_VERSION) {
+    throw Object.assign(new Error("Consent text version is out of date. Refresh and try again."), { statusCode: 409 });
+  }
+
   const ipAddress = extractClientIp(req);
   const userAgent = resolveFirstHeaderValue(req.headers["user-agent"]) ?? "";
-  const consentText = input.consentText?.trim() || GOLDEN_TICKET_CONSENT_TEXT;
 
   const consent = await prisma.$transaction(async (tx) => {
     if (!viewer.dateOfBirth) {
@@ -441,8 +450,8 @@ export async function recordGoldenTicketConsent(
       update: {
         userId: session.user.id,
         status: GoldenTicketConsentStatus.GRANTED,
-        consentText,
-        consentTextVersion: input.consentTextVersion,
+        consentText: GOLDEN_TICKET_CONSENT_TEXT,
+        consentTextVersion: GOLDEN_TICKET_CONSENT_TEXT_VERSION,
         userAgent,
         ipAddress,
       },
@@ -450,8 +459,8 @@ export async function recordGoldenTicketConsent(
         goldenTicketId: ticket.id,
         userId: session.user.id,
         status: GoldenTicketConsentStatus.GRANTED,
-        consentText,
-        consentTextVersion: input.consentTextVersion,
+        consentText: GOLDEN_TICKET_CONSENT_TEXT,
+        consentTextVersion: GOLDEN_TICKET_CONSENT_TEXT_VERSION,
         userAgent,
         ipAddress,
       },
@@ -934,8 +943,14 @@ export async function finalizeGoldenTicketClaim(req: NextApiRequest, code: strin
       throw Object.assign(new Error("Reveal session has not completed the prize reveal"), { statusCode: 409 });
     }
 
+    const submittedSourceLocationId = payload.sourceLocationId?.trim() || null;
+    const resolvedSourceLocationId = ticket.sourceLocationId ?? submittedSourceLocationId;
+    if (!resolvedSourceLocationId) {
+      throw Object.assign(new Error("Golden Ticket source location is missing"), { statusCode: 409 });
+    }
+
     const sourceLocation = await tx.location.findUnique({
-      where: { id: payload.sourceLocationId },
+      where: { id: resolvedSourceLocationId },
       select: {
         id: true,
         name: true,

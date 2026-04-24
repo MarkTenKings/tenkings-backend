@@ -1,6 +1,5 @@
 import Head from "next/head";
 import Link from "next/link";
-import { useRouter } from "next/router";
 import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { hasAdminAccess, hasAdminPhoneAccess } from "../../constants/admin";
 import { useSession } from "../../hooks/useSession";
@@ -60,7 +59,6 @@ interface LiveRipDirectoryPageProps {
 const ADMIN_API_BASE = "/api/admin/live-rips";
 
 export default function LiveRipDirectoryPage({ mode }: LiveRipDirectoryPageProps) {
-  const router = useRouter();
   const { session, loading: sessionLoading, ensureSession, logout } = useSession();
   const [liveRips, setLiveRips] = useState<LiveRipRecord[]>([]);
   const [locations, setLocations] = useState<LocationRecord[]>([]);
@@ -90,15 +88,6 @@ export default function LiveRipDirectoryPage({ mode }: LiveRipDirectoryPageProps
     const timeout = window.setTimeout(() => setFlash(null), 4000);
     return () => window.clearTimeout(timeout);
   }, [flash]);
-
-  useEffect(() => {
-    if (isManagementMode || sessionLoading || !isAdmin) {
-      return;
-    }
-
-    // TODO(step-16): remove once /live public redesign lands.
-    void router.replace("/admin/live");
-  }, [isAdmin, isManagementMode, router, sessionLoading]);
 
   useEffect(() => {
     let mounted = true;

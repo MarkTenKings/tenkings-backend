@@ -14653,3 +14653,102 @@
 - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/golden/winners.tsx --file pages/api/admin/golden/winners/index.ts --file 'pages/api/admin/golden/winners/[id].ts' --file lib/server/goldenAdminWinners.ts --file lib/server/goldenClaim.ts --file lib/server/goldenLive.ts --file pages/admin/golden/prizes.tsx --file pages/admin/golden/queue.tsx --file components/AppShell.tsx --file pages/admin/index.tsx --file 'pages/golden/claim/[code].tsx'` -> pass with only the local Node engine warning.
 - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error.
 - `git diff --check` -> pass.
+
+## 2026-04-24 - Golden Ticket Step 17 acceptance audit
+
+### Summary
+- Ran the requested read-only Step 17 full acceptance audit against the pasted Section 9 criteria on `feature/kingshunt` at `c335397`.
+- No product code changes, tests that write build artifacts, deploys, restarts, migrations, DB mutations, or commits were executed.
+- Read-only validation run: `pnpm --filter @tenkings/browser-rip-client exec tsc -p . --noEmit` -> pass with the local Node engine warning.
+- Updated handoff docs only, per `AGENTS.md`.
+
+### Repo State
+- `git status -sb` -> `## feature/kingshunt`
+- `git branch --show-current` -> `feature/kingshunt`
+- `git rev-parse --short HEAD` -> `c335397`
+- `git rev-list --count main..HEAD` -> `17` locally, not the expected `18`
+
+### Audit Findings To Carry Forward
+- Hard deploy blocker: `packages/database/prisma/migrations/20260422193000_make_golden_ticket_winner_published_at_nullable` sorts before `packages/database/prisma/migrations/20260422_golden_ticket_and_browser_ingest`, so a fresh `prisma migrate deploy` would alter `GoldenTicketWinnerProfile` before the base migration creates it.
+- Pre-merge blocker: `GoldenTicket.sourceLocationId` is not stamped during Golden Ticket placement and is only written during claim from a winner-selected form value.
+- Strict acceptance gap: `/api/live/current` / `lib/server/goldenLive.ts` publishes active sessions only for `COUNTDOWN` and `LIVE`, not `REVEAL`.
+- Cleanup gap: stale `TODO(step-16)` comments remain in `frontend/nextjs-app/next.config.js` and `frontend/nextjs-app/components/live/LiveRipDirectoryPage.tsx`.
+- Launch dependency: SMS login and outbound winner confirmation remain dependent on Twilio/10DLC readiness.
+
+### Runbook Confirmation
+- Confirmed the Step 16 Mux watermark reprovisioning runbook note remains present: existing persisted location streams must be rotated/recreated, or old location Mux fields cleared, before they pick up the burned-in watermark configuration.
+
+## 2026-04-24 - Golden Ticket Step 17 merge-blocker fixes
+
+### Summary
+- Implemented the five requested Step 17 merge-blocker fixes on `feature/kingshunt` at baseline `c335397`.
+- Scope stayed local: no deploy, restart, migration execution, production DB mutation, PR, or destructive operation was executed.
+- Planned atomic commit: `fix(golden-ticket): merge-blockers from acceptance pass`.
+
+### Repo State At Start
+- `git status -sb` -> `## feature/kingshunt` plus pre-existing Step 17 handoff doc edits
+- `git branch --show-current` -> `feature/kingshunt`
+- `git rev-parse --short HEAD` -> `c335397`
+
+### Implementation Notes
+- Migration ordering:
+  - chose folder rename over squash because there was no Prisma metadata in this checkout binding the bad migration name, and `migration_lock.toml` only declares `provider = "postgresql"`
+  - rejected the initially recommended `20260422200000_make_golden_ticket_winner_published_at_nullable` because it still sorts before `20260422_golden_ticket_and_browser_ingest`; ASCII underscore in the base folder sorts after digits
+  - final folder is `packages/database/prisma/migrations/20260423000000_make_golden_ticket_winner_published_at_nullable`, which sorts after the base Golden Ticket migration
+  - the renamed migration preserves the nullable `publishedAt` alteration and adds a data backfill from `GoldenTicket.placedInPackId -> PackInstance.locationId`
+- Golden Ticket source location:
+  - `placeGoldenTicketInPack(...)` now writes `GoldenTicket.sourceLocationId = pack.locationId` at placement time and mirrors it into QR metadata
+  - claim finalization resolves source location from the server-stamped ticket first, then falls back to the submitted form location only for older unstamped tickets
+  - claim UI shows a read-only pack source when the ticket already carries one
+- `/live` visibility:
+  - public active statuses now include `COUNTDOWN`, `LIVE`, and `REVEAL`
+  - `/live` treats `REVEAL` the same as `LIVE` for takeover layout, avoiding a fallback/dead idle state during reveal
+- Consent:
+  - client posts `consented: true` and `consentTextVersion`; it no longer posts consent text
+  - server rejects stale consent versions
+  - server writes canonical `GOLDEN_TICKET_CONSENT_TEXT` and `GOLDEN_TICKET_CONSENT_TEXT_VERSION` verbatim, preserving the existing IP and UA capture
+- Dead TODO sweep:
+  - removed the stale `TODO(step-16)` comment from `next.config.js`
+  - removed the obsolete client-side admin bookmark redirect from `components/live/LiveRipDirectoryPage.tsx`
+
+### Required env vars for this commit
+- `GOLDEN_TICKET_CONSENT_TEXT_VERSION`
+  - expected value: `v1.0-2026-04-21`
+- `GOLDEN_TICKET_CONSENT_TEXT`
+  - expected exact multiline value:
+```text
+Golden Ticket Reveal - Consent to Record & Publish
+
+By tapping "Unlock My Reveal" below, I confirm that:
+
+- I am 18 years of age or older.
+- I grant Ten Kings, LLC permission to access my device's camera and microphone for the duration of this reveal.
+- I understand my reveal - including my face, voice, and reaction - will be recorded and livestreamed in real time to the Ten Kings platform at tenkings.co/live.
+- I grant Ten Kings, LLC a perpetual, royalty-free license to use, edit, publish, and share the recorded reveal on Ten Kings websites, social media accounts, and marketing materials.
+- I understand that once the reveal begins, the recording cannot be stopped or deleted by me. If I want my reveal removed from public display after the fact, I can email support@tenkings.co.
+- I agree to the Ten Kings Terms of Service (https://tenkings.co/terms) and Privacy Policy (https://tenkings.co/privacy).
+```
+
+### Validation
+- `ls -1 packages/database/prisma/migrations | tail -n 12` -> confirms `20260422_golden_ticket_and_browser_ingest` sorts before `20260423000000_make_golden_ticket_winner_published_at_nullable`
+- `pnpm --filter @tenkings/database generate` -> pass with only the local Node engine warning
+- `DATABASE_URL='postgresql://tenkings:tenkings@127.0.0.1:5432/tenkings_validate?schema=public' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass with only the local Node engine warning
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/live.tsx --file lib/server/goldenLive.ts --file lib/server/goldenClaim.ts --file lib/server/goldenTicket.ts --file 'pages/golden/claim/[code].tsx' --file components/live/LiveRipDirectoryPage.tsx` -> pass with only the local Node engine warning
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration
+- `git diff --check` -> pass
+- `rg -n "TODO\(step-" frontend/nextjs-app packages` -> no matches
+- `rg -n "consentText" 'frontend/nextjs-app/pages/golden/claim/[code].tsx' frontend/nextjs-app/lib/server/goldenClaim.ts` -> confirms the client sends only `consentTextVersion`; server-side canonical write sites remain
+
+### Local DB Validation Limitation
+- A true clean local DB `prisma migrate status` could not be completed in this workstation session because:
+  - `DATABASE_URL` was not set
+  - `psql`, `pg_isready`, `initdb`, and `docker` were not available
+  - explicit local-only Prisma status attempt against `127.0.0.1:5432` failed with `P1001`
+- Backfill preview query to run against a non-prod/staging DB before production merge:
+```sql
+SELECT COUNT(*) AS backfillable_golden_tickets
+FROM "GoldenTicket" gt
+JOIN "PackInstance" pi ON gt."placedInPackId" = pi."id"
+WHERE gt."sourceLocationId" IS NULL
+  AND pi."locationId" IS NOT NULL;
+```

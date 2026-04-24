@@ -423,7 +423,7 @@ export default function LivePage({
       ? Math.min(COUNTDOWN_TOTAL_SECONDS, Math.max(0, Math.ceil((new Date(currentSession.countdownEndsAt).getTime() - now) / 1000)))
       : null;
   const showCountdownOverlay = currentSession?.status === "COUNTDOWN" && currentCountdownValue !== null && currentCountdownValue > 0;
-  const isLiveTakeover = currentSession?.status === "LIVE";
+  const isLiveTakeover = currentSession?.status === "LIVE" || currentSession?.status === "REVEAL";
   const leftCount = Math.max(stats.totalMinted - stats.claimedCount, 0);
 
   const activePlayerPlaybackId = currentSession?.muxPlaybackId ?? snapshot.idleReveal?.muxPlaybackId ?? null;

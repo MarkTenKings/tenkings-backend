@@ -1,12 +1,88 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-22`
+- Last reviewed: `2026-04-24`
 - Branch: `feature/kingshunt`
-- Latest product baseline summarized here: `feat(golden-ticket): admin winners moderation`
-- Product status: Golden Ticket/browser-rip work is now shipped locally through Section 13 step 16 plus step 13. `/admin/golden/winners` now exists with caption editing, featured moderation, winner-photo approval/rejection, and publish/unpublish controls. Option A landed locally: `GoldenTicketWinnerProfile.publishedAt` is now nullable with a checked-in Prisma migration, and public `/golden`, public winner-detail, and `/live` idle-reveal winner queries now filter on `publishedAt IS NOT NULL`. Existing queue kill-switch protections from step 12 remain in place.
-- Fresh-agent pickup target: Golden Ticket admin winners moderation is now landed locally; the next follow-up should be acceptance/pass validation work (spec Section 9 / step 17) or later Phase 4 winner-photo population, not another unstarted admin moderation surface.
+- Latest product baseline summarized here: Golden Ticket Step 17 merge-blocker cleanup on top of `feat(golden-ticket): admin winners moderation`.
+- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 16 plus step 13, and Step 17 merge blockers have been remediated locally: migration ordering fixed, Golden Ticket source location stamped/backfilled from pack placement, `/live` includes `REVEAL`, consent storage is server-canonical, and stale step-16 redirect TODOs are removed.
+- Fresh-agent pickup target: deploy-readiness validation, especially a real `prisma migrate status` / deploy dry run against a clean local or staging Postgres database before production merge.
 - Deploy/restart/migration status: none of the Golden Ticket sessions through step 16/12 performed deploys, restarts, or migrations against a live environment.
+
+## Session Update (2026-04-24, Golden Ticket Step 17 acceptance audit)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified requested local branch state before the audit:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `c335397`
+  - `git rev-list --count main..HEAD` -> `17` locally, not the expected `18`
+- Performed a read-only acceptance pass against the pasted Section 9 criteria. No product code, tests, deploy, restart, migration, DB mutation, or commit was executed.
+- Read-only validation run: `pnpm --filter @tenkings/browser-rip-client exec tsc -p . --noEmit` -> pass with the local Node engine warning.
+- Primary findings to remediate before merge:
+  - migration deploy ordering is unsafe because `20260422193000_make_golden_ticket_winner_published_at_nullable` sorts before `20260422_golden_ticket_and_browser_ingest` and alters `GoldenTicketWinnerProfile` before the base migration creates it
+  - `GoldenTicket.sourceLocationId` remains nullable through placement and is only supplied by the winner claim form, so it is not stamped from the pack/location source of truth
+  - `/live` public current-session filter includes `COUNTDOWN` and `LIVE` but excludes `REVEAL`
+  - stale `TODO(step-16)` comments remain in the live directory component and Next config
+- Confirmed the existing Mux watermark reprovision runbook note is present in this handoff and `docs/handoffs/SESSION_LOG.md`.
+
+## Session Update (2026-04-24, Golden Ticket Step 17 merge-blocker fixes)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified requested local branch state before implementation:
+  - `git status -sb` -> `## feature/kingshunt` plus the pre-existing Step 17 handoff doc edits
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `c335397`
+- Migration decision:
+  - used rename, not squash, because no Prisma metadata in this checkout tied runtime history to the bad folder name and `migration_lock.toml` only declares the PostgreSQL provider
+  - did not use the initially recommended `20260422200000_...` name because it still sorts before `20260422_golden_ticket_and_browser_ingest` due the underscore in the base folder
+  - final migration folder: `packages/database/prisma/migrations/20260423000000_make_golden_ticket_winner_published_at_nullable`
+  - renamed migration now both drops `GoldenTicketWinnerProfile.publishedAt NOT NULL` and backfills null `GoldenTicket.sourceLocationId` from `PackInstance.locationId`
+- Source location fix:
+  - Golden Ticket placement now stamps `sourceLocationId` from the target pack's `locationId`
+  - claim finalization prefers the stamped server value and only uses the claim-form location as fallback for older unstamped tickets
+- Consent fix:
+  - client now sends `consented: true` and the version it displayed, not the consent text
+  - server verifies the submitted version equals current `GOLDEN_TICKET_CONSENT_TEXT_VERSION`
+  - server stores canonical `GOLDEN_TICKET_CONSENT_TEXT` plus canonical version verbatim with IP and UA
+- `/live` fix:
+  - active public live statuses now include `COUNTDOWN`, `LIVE`, and `REVEAL`
+  - `/live` treats both `LIVE` and `REVEAL` as takeover states
+- Cleanup:
+  - removed stale `TODO(step-16)` comments and the obsolete client-side `/admin/live` redirect handoff code
+- Required env vars for this commit:
+  - `GOLDEN_TICKET_CONSENT_TEXT_VERSION` -> `v1.0-2026-04-21`
+  - `GOLDEN_TICKET_CONSENT_TEXT` -> exact multiline value:
+```text
+Golden Ticket Reveal - Consent to Record & Publish
+
+By tapping "Unlock My Reveal" below, I confirm that:
+
+- I am 18 years of age or older.
+- I grant Ten Kings, LLC permission to access my device's camera and microphone for the duration of this reveal.
+- I understand my reveal - including my face, voice, and reaction - will be recorded and livestreamed in real time to the Ten Kings platform at tenkings.co/live.
+- I grant Ten Kings, LLC a perpetual, royalty-free license to use, edit, publish, and share the recorded reveal on Ten Kings websites, social media accounts, and marketing materials.
+- I understand that once the reveal begins, the recording cannot be stopped or deleted by me. If I want my reveal removed from public display after the fact, I can email support@tenkings.co.
+- I agree to the Ten Kings Terms of Service (https://tenkings.co/terms) and Privacy Policy (https://tenkings.co/privacy).
+```
+- Validation:
+  - `ls -1 packages/database/prisma/migrations | tail -n 12` -> confirms `20260422_golden_ticket_and_browser_ingest` sorts before `20260423000000_make_golden_ticket_winner_published_at_nullable`
+  - `pnpm --filter @tenkings/database generate` -> pass with local Node engine warning
+  - `DATABASE_URL='postgresql://tenkings:tenkings@127.0.0.1:5432/tenkings_validate?schema=public' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/live.tsx --file lib/server/goldenLive.ts --file lib/server/goldenClaim.ts --file lib/server/goldenTicket.ts --file 'pages/golden/claim/[code].tsx' --file components/live/LiveRipDirectoryPage.tsx` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration
+  - `git diff --check` -> pass
+  - `rg -n "TODO\(step-" frontend/nextjs-app packages` -> no matches
+  - `rg -n "consentText" 'frontend/nextjs-app/pages/golden/claim/[code].tsx' frontend/nextjs-app/lib/server/goldenClaim.ts` -> client sends only `consentTextVersion`; consent text writes exist only server-side
+- Local DB limitations:
+  - true clean local DB `prisma migrate status` could not complete because `DATABASE_URL` was absent and no local Postgres tooling/server was available
+  - explicit local-only status attempt failed with `P1001` against `127.0.0.1:5432`
+  - `psql` was not installed, so the backfill preview query could not be executed locally; the query to run in non-prod is:
+```sql
+SELECT COUNT(*) AS backfillable_golden_tickets
+FROM "GoldenTicket" gt
+JOIN "PackInstance" pi ON gt."placedInPackId" = pi."id"
+WHERE gt."sourceLocationId" IS NULL
+  AND pi."locationId" IS NOT NULL;
+```
+- No deploy, restart, migration execution, production DB mutation, PR, or destructive operation was executed.
 
 ## Session Update (2026-04-22, Golden Ticket Section 13 step 13 admin winners moderation)
 - Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.

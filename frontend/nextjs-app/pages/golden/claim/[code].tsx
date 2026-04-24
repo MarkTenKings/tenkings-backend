@@ -429,6 +429,22 @@ export default function GoldenClaimPage() {
     }));
   }, [viewer]);
 
+  useEffect(() => {
+    const sourceLocationId = ticket?.sourceLocation?.id;
+    if (!sourceLocationId) {
+      return;
+    }
+
+    setClaimForm((current) =>
+      current.sourceLocationId === sourceLocationId
+        ? current
+        : {
+            ...current,
+            sourceLocationId,
+          }
+    );
+  }, [ticket?.sourceLocation?.id]);
+
   const getAudioContext = useCallback(async () => {
     if (typeof window === "undefined") {
       return null;
@@ -893,7 +909,7 @@ export default function GoldenClaimPage() {
         body: JSON.stringify({
           goldenTicketCode: ticket.code,
           consentTextVersion: GOLDEN_TICKET_CONSENT_TEXT_VERSION,
-          consentText: GOLDEN_TICKET_CONSENT_TEXT,
+          consented: true,
           dateOfBirth: existingDob ? undefined : dobInput,
         }),
       });
@@ -1390,21 +1406,30 @@ export default function GoldenClaimPage() {
                   className={inputClass}
                 />
               </Field>
-              <Field label="How did you get this pack?">
-                <select
-                  value={claimForm.sourceLocationId}
-                  onChange={(event) => setClaimForm((current) => ({ ...current, sourceLocationId: event.target.value }))}
-                  className={inputClass}
-                  required
-                >
-                  <option value="">{locationsLoading ? "Loading locations..." : "Select a location"}</option>
-                  {locations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+              {ticket.sourceLocation ? (
+                <Field label="Pack source">
+                  <div className="rounded-[1rem] border border-white/10 bg-black/35 px-4 py-3 text-sm text-slate-200">
+                    <p>{ticket.sourceLocation.name}</p>
+                    <p className="mt-1 text-xs text-slate-500">Recorded from Golden Ticket pack placement.</p>
+                  </div>
+                </Field>
+              ) : (
+                <Field label="How did you get this pack?">
+                  <select
+                    value={claimForm.sourceLocationId}
+                    onChange={(event) => setClaimForm((current) => ({ ...current, sourceLocationId: event.target.value }))}
+                    className={inputClass}
+                    required
+                  >
+                    <option value="">{locationsLoading ? "Loading locations..." : "Select a location"}</option>
+                    {locations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              )}
               {ticket.prize.requiresSize ? (
                 <Field label="Size">
                   <select

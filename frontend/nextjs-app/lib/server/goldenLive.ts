@@ -3,7 +3,11 @@ import { parseGoldenTicketPrizeDetails } from "./goldenTicket";
 import { kioskSessionInclude, serializeKioskSession, type SerializedKioskSession } from "./kioskSession";
 import { ensureFreshKioskSession } from "./kioskSessionLifecycle";
 
-const PUBLIC_LIVE_SESSION_STATUSES: KioskSessionStatus[] = [KioskSessionStatus.COUNTDOWN, KioskSessionStatus.LIVE];
+const PUBLIC_LIVE_SESSION_STATUSES: KioskSessionStatus[] = [
+  KioskSessionStatus.COUNTDOWN,
+  KioskSessionStatus.LIVE,
+  KioskSessionStatus.REVEAL,
+];
 
 export interface GoldenLiveIdleReveal {
   id: string;

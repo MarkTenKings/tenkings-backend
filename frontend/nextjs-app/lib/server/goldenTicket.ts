@@ -413,6 +413,7 @@ export async function placeGoldenTicketInPack({
         status: GoldenTicketStatus.PLACED,
         placedInPackId: pack.id,
         placedAt: now,
+        sourceLocationId: pack.locationId,
       },
       select: {
         id: true,
@@ -434,6 +435,7 @@ export async function placeGoldenTicketInPack({
         metadata: mergeMetadata(ticket.qrCode.metadata, {
           placedInPackId: pack.id,
           placedAt: now.toISOString(),
+          sourceLocationId: pack.locationId,
           status: GoldenTicketStatus.PLACED,
         }),
       },
