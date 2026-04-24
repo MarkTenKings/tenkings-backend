@@ -124,6 +124,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                   slug: liveRip.slug,
                   title: liveRip.title,
                   videoUrl: liveRip.videoUrl,
+                  muxPlaybackId: liveRip.muxPlaybackId ?? null,
                   thumbnailUrl: liveRip.thumbnailUrl,
                   viewCount: liveRip.viewCount,
                   createdAt: liveRip.createdAt.toISOString(),

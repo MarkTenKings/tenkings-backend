@@ -1,10 +1,13 @@
 import crypto from "node:crypto";
+import { buildSiteUrl } from "./urls";
 
 const MUX_API_BASE = "https://api.mux.com/video/v1";
+const MUX_WHIP_BASE_URL = (process.env.MUX_WHIP_BASE_URL ?? "https://global-live.mux.com/api/v1/whip").trim();
 
 const muxTokenId = process.env.MUX_TOKEN_ID ?? "";
 const muxTokenSecret = process.env.MUX_TOKEN_SECRET ?? "";
 const muxWebhookSecret = process.env.MUX_WEBHOOK_SECRET ?? "";
+const muxWatermarkImageUrl = process.env.MUX_WATERMARK_IMAGE_URL?.trim() ?? "";
 const muxSimulcastTargets = (() => {
   const raw = process.env.MUX_SIMULCAST_TARGETS;
   if (!raw) {
@@ -40,6 +43,19 @@ function authHeader() {
   ensureCredentials();
   const encoded = Buffer.from(`${muxTokenId}:${muxTokenSecret}`).toString("base64");
   return `Basic ${encoded}`;
+}
+
+function resolveMuxWatermarkImageUrl() {
+  if (muxWatermarkImageUrl) {
+    return muxWatermarkImageUrl;
+  }
+
+  const fallbackUrl = buildSiteUrl("/brand/tenkings-logo.png");
+  if (/^https?:\/\/(localhost|127\.0\.0\.1)(?::\d+)?/i.test(fallbackUrl)) {
+    return null;
+  }
+
+  return fallbackUrl;
 }
 
 interface MuxResponse<T> {
@@ -102,14 +118,35 @@ export async function createMuxLiveStream(params: {
     url: string;
   }>;
 }) {
+  const watermarkUrl = resolveMuxWatermarkImageUrl();
   const body: Record<string, unknown> = {
     passthrough: params.passthrough,
-    playback_policy: ["public"],
+    playback_policies: ["public"],
     new_asset_settings: {
-      playback_policy: ["public"],
+      playback_policies: ["public"],
     },
     reconnect_window: 120,
   };
+
+  if (watermarkUrl) {
+    body.new_asset_settings = {
+      playback_policies: ["public"],
+      inputs: [
+        {},
+        {
+          url: watermarkUrl,
+          overlay_settings: {
+            vertical_align: "bottom",
+            vertical_margin: "3%",
+            horizontal_align: "right",
+            horizontal_margin: "3%",
+            height: "8%",
+            opacity: "70%",
+          },
+        },
+      ],
+    };
+  }
 
   if (params.livestreamName) {
     body.name = params.livestreamName;
@@ -177,6 +214,15 @@ export async function getMuxAsset(assetId: string) {
 
 export function buildMuxPlaybackUrl(playbackId: string, format: "m3u8" | "mp4" = "m3u8") {
   return `https://stream.mux.com/${playbackId}.${format}`;
+}
+
+export function getMuxWhipBaseUrl() {
+  return MUX_WHIP_BASE_URL.replace(/\/$/, "");
+}
+
+export function buildMuxWhipUploadUrl(streamKey: string) {
+  const baseUrl = getMuxWhipBaseUrl();
+  return `${baseUrl}/${encodeURIComponent(streamKey)}`;
 }
 
 export function verifyMuxWebhookSignature(rawBody: string, signatureHeader: string | null | undefined) {

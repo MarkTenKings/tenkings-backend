@@ -7,6 +7,7 @@ const CATEGORY_BADGE_CLASSES: Record<string, string> = {
   POKEMON: "border-amber-300/40 bg-amber-400/15 text-amber-100",
   ONE_PIECE: "border-rose-400/40 bg-rose-500/15 text-rose-200",
   COMICS: "border-fuchsia-400/40 bg-fuchsia-500/15 text-fuchsia-200",
+  GOLDEN_TICKET_PRIZE: "border-gold-400/40 bg-gold-500/15 text-gold-100",
 };
 
 type CardTileProps = {

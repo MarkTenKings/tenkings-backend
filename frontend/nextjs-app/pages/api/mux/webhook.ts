@@ -169,7 +169,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         const playbackUrl = playbackId ? buildMuxPlaybackUrl(playbackId) : session.videoUrl;
 
-        await prisma.kioskSession.update({
+        const updatedSession = await prisma.kioskSession.update({
           where: { id: session.id },
           data: {
             muxAssetId: assetId,
@@ -177,7 +177,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             videoUrl: playbackUrl ?? session.videoUrl,
             completedAt: session.completedAt ?? new Date(),
           },
+          select: {
+            status: true,
+          },
         });
+
+        if (updatedSession.status === "CANCELLED") {
+          break;
+        }
 
         if (session.liveRip) {
           await prisma.liveRip.update({
@@ -186,6 +193,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               videoUrl: playbackUrl ?? session.liveRip.videoUrl,
               muxAssetId: assetId,
               muxPlaybackId: playbackId,
+              isGoldenTicket: session.isGoldenTicket,
+              goldenTicketId: session.goldenTicketId ?? session.liveRip.goldenTicketId ?? null,
             },
           });
         } else if (playbackUrl) {
@@ -209,6 +218,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               kioskSessionId: session.id,
               muxAssetId: assetId,
               muxPlaybackId: playbackId,
+              isGoldenTicket: session.isGoldenTicket,
+              goldenTicketId: session.goldenTicketId ?? null,
             },
           });
         }

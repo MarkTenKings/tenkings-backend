@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
-import { requireUserSession, toUserErrorResponse } from "../../../lib/server/session";
-import { LIVE_MAX_UPLOAD_BYTES, getLiveStorageMode, storeLiveAsset } from "../../../lib/server/liveStorage";
+import { hasAdminAccess, hasAdminPhoneAccess } from "../../../../constants/admin";
+import { requireUserSession, toUserErrorResponse } from "../../../../lib/server/session";
+import { LIVE_MAX_UPLOAD_BYTES, getLiveStorageMode, storeLiveAsset } from "../../../../lib/server/liveStorage";
 
 export const config = {
   api: {
@@ -63,10 +63,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
       const bufferChunk = Buffer.from(chunk as Buffer);
       receivedBytes += bufferChunk.length;
       if (receivedBytes > LIVE_MAX_UPLOAD_BYTES) {
-        res.status(413).json({
+        return res.status(413).json({
           message: `Upload exceeds ${(LIVE_MAX_UPLOAD_BYTES / (1024 * 1024)).toFixed(0)}MB limit`,
         });
-        return;
       }
       chunks.push(bufferChunk);
     }

@@ -2,8 +2,8 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@tenkings/database";
 import { z } from "zod";
-import { hasAdminAccess, hasAdminPhoneAccess } from "../../../constants/admin";
-import { requireUserSession, toUserErrorResponse } from "../../../lib/server/session";
+import { hasAdminAccess, hasAdminPhoneAccess } from "../../../../constants/admin";
+import { requireUserSession, toUserErrorResponse } from "../../../../lib/server/session";
 
 const updateSchema = z.object({
   title: z.string().min(1, "Title is required"),
@@ -36,6 +36,7 @@ const withLocation = (liveRip: any) => ({
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "PUT") {
+    res.setHeader("Allow", "PUT");
     return res.status(405).json({ message: "Method not allowed" });
   }
 
@@ -88,7 +89,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       },
     });
 
-    res.status(200).json({ liveRip: withLocation(liveRip) });
+    return res.status(200).json({ liveRip: withLocation(liveRip) });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021") {
       return res.status(404).json({ message: "Live rip not available" });
@@ -97,6 +98,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ message: error.issues[0]?.message ?? "Invalid payload" });
     }
     const result = toUserErrorResponse(error);
-    res.status(result.status).json({ message: result.message });
+    return res.status(result.status).json({ message: result.message });
   }
 }

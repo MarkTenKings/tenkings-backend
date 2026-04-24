@@ -51,6 +51,7 @@ enum PackFulfillmentStatus {
 enum QrCodeType {
   CARD
   PACK
+  GOLDEN_TICKET
 }
 
 enum QrCodeState {
@@ -139,6 +140,7 @@ enum CollectibleCategory {
   POKEMON
   ONE_PIECE
   COMICS
+  GOLDEN_TICKET_PRIZE
 }
 
 enum PackTier {
@@ -184,6 +186,25 @@ enum KioskSessionStatus {
   REVEAL
   COMPLETE
   CANCELLED
+}
+
+enum KioskIngestMode {
+  OBS
+  BROWSER
+}
+
+enum GoldenTicketStatus {
+  MINTED
+  PLACED
+  SCANNED
+  CLAIMED
+  FULFILLED
+  EXPIRED
+}
+
+enum GoldenTicketConsentStatus {
+  GRANTED
+  DENIED_PROCEEDED_FORM_ONLY
 }
 
 enum AutoFillSessionStatus {
@@ -332,6 +353,7 @@ model User {
   email                   String?               @unique
   phone                   String?               @unique
   phoneVerifiedAt         DateTime?
+  dateOfBirth             DateTime?
   displayName             String?
   avatarUrl               String?
   role                    String                @default("user")
@@ -357,7 +379,10 @@ model User {
   sessions                Session[]
   qrCodesCreated          QrCode[]              @relation("QrCodeCreatedBy")
   qrCodesBound            QrCode[]              @relation("QrCodeBoundBy")
+  kioskSessions           KioskSession[]        @relation("KioskSessionUser")
   kioskClaims             KioskSession[]        @relation("KioskClaimedBy")
+  scannedGoldenTickets    GoldenTicket[]        @relation("GoldenTicketScanner")
+  goldenTicketConsents    GoldenTicketConsent[]
   batchStageEvents        BatchStageEvent[]
   locationRestocks        LocationRestock[]
   setIngestionJobsCreated SetIngestionJob[]     @relation("SetIngestionJobCreatedBy")
@@ -374,54 +399,55 @@ model User {
 }
 
 model Location {
-  id               String            @id @default(uuid())
-  slug             String            @unique
-  name             String
-  description      String?
-  address          String
-  mapsUrl          String?
-  mediaUrl         String?
-  recentRips       Json              @db.JsonB
-  muxStreamId      String?
-  muxStreamKey     String?
-  muxPlaybackId    String?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  liveRips         LiveRip[]
-  kioskSessions    KioskSession[]
-  packInstances    PackInstance[]
-  items            Item[]
-  qrCodes          QrCode[]
-  packLabels       PackLabel[]
-  restocks         LocationRestock[]
-  inventoryBatches InventoryBatch[]
-  autoFillSessions AutoFillSession[]
-  packRecipes      PackRecipe[]
-  locationType     String?
-  locationStatus   String?           @default("active")
-  latitude         Float?
-  longitude        Float?
-  venueCenterLat   Float?
-  venueCenterLng   Float?
-  geofenceRadiusM  Int?              @default(500)
-  machineLat       Float?
-  machineLng       Float?
-  machineGeofenceM Int?              @default(20)
-  city             String?
-  state            String?
-  zip              String?
-  hours            String?
-  hasIndoorMap     Boolean           @default(false)
-  walkingDirections Json?            @db.JsonB
-  walkingTimeMin   Int?
-  landmarks        String[]          @default([])
-  machinePhotoUrl  String?
-  venueMapData     Json?             @db.JsonB
-  checkpoints      Json?             @db.JsonB
+  id                 String              @id @default(uuid())
+  slug               String              @unique
+  name               String
+  description        String?
+  address            String
+  mapsUrl            String?
+  mediaUrl           String?
+  recentRips         Json                @db.JsonB
+  muxStreamId        String?
+  muxStreamKey       String?
+  muxPlaybackId      String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  liveRips           LiveRip[]
+  kioskSessions      KioskSession[]
+  packInstances      PackInstance[]
+  items              Item[]
+  qrCodes            QrCode[]
+  packLabels         PackLabel[]
+  restocks           LocationRestock[]
+  inventoryBatches   InventoryBatch[]
+  autoFillSessions   AutoFillSession[]
+  packRecipes        PackRecipe[]
+  locationType       String?
+  locationStatus     String?             @default("active")
+  latitude           Float?
+  longitude          Float?
+  venueCenterLat     Float?
+  venueCenterLng     Float?
+  geofenceRadiusM    Int?                @default(500)
+  machineLat         Float?
+  machineLng         Float?
+  machineGeofenceM   Int?                @default(20)
+  city               String?
+  state              String?
+  zip                String?
+  hours              String?
+  hasIndoorMap       Boolean             @default(false)
+  walkingDirections  Json?               @db.JsonB
+  walkingTimeMin     Int?
+  landmarks          String[]            @default([])
+  machinePhotoUrl    String?
+  venueMapData       Json?               @db.JsonB
+  checkpoints        Json?               @db.JsonB
   navigationSessions NavigationSession[]
-  locationVisits   LocationVisit[]
+  locationVisits     LocationVisit[]
   supportConversations Conversation[]
-  stockerStops      StockerStop[]
+  stockerStops         StockerStop[]
+  goldenTicketSource GoldenTicket[]
 
   @@index([state])
   @@index([locationType])
@@ -563,11 +589,16 @@ model LiveRip {
   viewCount      Int?
   muxAssetId     String?
   muxPlaybackId  String?
+  isGoldenTicket Boolean       @default(false)
+  goldenTicketId String?       @unique
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   location       Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
   kioskSessionId String?       @unique
   kioskSession   KioskSession? @relation("KioskSessionLiveRip", fields: [kioskSessionId], references: [id], onDelete: SetNull)
+  goldenTicket   GoldenTicket? @relation(fields: [goldenTicketId], references: [id], onDelete: SetNull)
+
+  @@index([isGoldenTicket, createdAt])
 }
 
 model Wallet {
@@ -593,35 +624,36 @@ model WalletTransaction {
 }
 
 model Item {
-  id              String           @id @default(uuid())
-  name            String
-  set             String
-  number          String?
-  language        String?
-  foil            Boolean          @default(false)
-  estimatedValue  Int?
-  status          ItemStatus       @default(STORED)
-  vaultLocation   String?
-  imageUrl        String?
-  thumbnailUrl    String?
-  cdnHdUrl        String?
-  cdnThumbUrl     String?
-  detailsJson     Json?
-  ownerId         String
-  locationId      String?          @db.Uuid
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  owner           User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  location        Location?        @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  listings        Listing?
-  ownerships      ItemOwnership[]
-  packSlots       PackSlot[]
-  ingestionTask   IngestionTask?
-  shippingRequest ShippingRequest?
-  kioskReveals    KioskSession[]   @relation("KioskReveal")
-  cardQrCodeId    String?          @unique
-  cardQrCode      QrCode?          @relation("CardQrCode", fields: [cardQrCodeId], references: [id])
-  packLabels      PackLabel[]
+  id                String           @id @default(uuid())
+  name              String
+  set               String
+  number            String?
+  language          String?
+  foil              Boolean          @default(false)
+  estimatedValue    Int?
+  status            ItemStatus       @default(STORED)
+  vaultLocation     String?
+  imageUrl          String?
+  thumbnailUrl      String?
+  cdnHdUrl          String?
+  cdnThumbUrl       String?
+  detailsJson       Json?
+  ownerId           String
+  locationId        String?          @db.Uuid
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  owner             User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  location          Location?        @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  listings          Listing?
+  ownerships        ItemOwnership[]
+  packSlots         PackSlot[]
+  ingestionTask     IngestionTask?
+  shippingRequest   ShippingRequest?
+  kioskReveals      KioskSession[]   @relation("KioskReveal")
+  goldenTicketPrize GoldenTicket?
+  cardQrCodeId      String?          @unique
+  cardQrCode        QrCode?          @relation("CardQrCode", fields: [cardQrCodeId], references: [id])
+  packLabels        PackLabel[]
 
   @@index([locationId])
 }
@@ -780,13 +812,17 @@ model ShippingRequest {
   trackingNumber     String?
   carrier            String?
   fulfilledAt        DateTime?
+  isGoldenTicket     Boolean        @default(false)
+  goldenTicketId     String?        @unique
   createdAt          DateTime       @default(now())
   updatedAt          DateTime       @updatedAt
 
-  item Item @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item         Item          @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goldenTicket GoldenTicket? @relation(fields: [goldenTicketId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([isGoldenTicket, createdAt])
 }
 
 model PackDefinition {
@@ -829,6 +865,7 @@ model PackInstance {
   loadedBy          User?                 @relation("LoadedByUser", fields: [loadedById], references: [id])
   packQrCode        QrCode?               @relation("PackQrCode", fields: [packQrCodeId], references: [id])
   packLabels        PackLabel[]
+  goldenTickets     GoldenTicket[]
   sourceBatch       CardBatch?            @relation("PackInstanceSourceBatch", fields: [sourceBatchId], references: [id], onDelete: SetNull)
 }
 
@@ -836,6 +873,7 @@ model KioskSession {
   id                 String             @id @default(uuid())
   code               String             @unique
   controlTokenHash   String
+  userId             String?
   packInstanceId     String?
   locationId         String?
   packQrCodeId       String?
@@ -856,6 +894,11 @@ model KioskSession {
   qrLinkUrl          String?
   buybackLinkUrl     String?
   revealPayload      Json?
+  ingestMode         KioskIngestMode    @default(OBS)
+  whipUploadUrl      String?
+  reactionVideoUrl   String?
+  isGoldenTicket     Boolean            @default(false)
+  goldenTicketId     String?            @unique
   muxStreamId        String?
   muxStreamKey       String?
   muxPlaybackId      String?
@@ -865,12 +908,19 @@ model KioskSession {
   updatedAt          DateTime           @updatedAt
   completedAt        DateTime?
 
-  packInstance PackInstance? @relation(fields: [packInstanceId], references: [id], onDelete: SetNull)
-  location     Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
-  revealItem   Item?         @relation("KioskReveal", fields: [revealItemId], references: [id], onDelete: SetNull)
-  liveRip      LiveRip?      @relation("KioskSessionLiveRip")
-  packQrCode   QrCode?       @relation("SessionPackQr", fields: [packQrCodeId], references: [id])
-  claimedBy    User?         @relation("KioskClaimedBy", fields: [claimedById], references: [id])
+  user                User?         @relation("KioskSessionUser", fields: [userId], references: [id], onDelete: SetNull)
+  packInstance        PackInstance? @relation(fields: [packInstanceId], references: [id], onDelete: SetNull)
+  location            Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  revealItem          Item?         @relation("KioskReveal", fields: [revealItemId], references: [id], onDelete: SetNull)
+  liveRip             LiveRip?      @relation("KioskSessionLiveRip")
+  packQrCode          QrCode?       @relation("SessionPackQr", fields: [packQrCodeId], references: [id])
+  claimedBy           User?         @relation("KioskClaimedBy", fields: [claimedById], references: [id])
+  goldenTicket        GoldenTicket? @relation("GoldenTicketSession", fields: [goldenTicketId], references: [id], onDelete: SetNull)
+  claimedGoldenTicket GoldenTicket? @relation("GoldenTicketClaimedSession")
+
+  @@index([userId])
+  @@index([ingestMode, status, createdAt])
+  @@index([isGoldenTicket, status, createdAt])
 }
 
 model PackSlot {
@@ -1980,6 +2030,76 @@ model SportsDbPlayerSeason {
   @@index([season])
 }
 
+model GoldenTicket {
+  id                    String             @id @default(cuid())
+  ticketNumber          Int                @unique @default(autoincrement())
+  code                  String             @unique
+  qrCodeId              String             @unique
+  prizeItemId           String             @unique
+  revealVideoAssetUrl   String?
+  revealVideoPoster     String?
+  narrationOverride     String?
+  status                GoldenTicketStatus @default(MINTED)
+  placedInPackId        String?
+  placedAt              DateTime?
+  scannedAt             DateTime?
+  scannedByUserId       String?
+  claimedAt             DateTime?
+  claimedKioskSessionId String?            @unique
+  sourceLocationId      String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  qrCode              QrCode                     @relation(fields: [qrCodeId], references: [id])
+  prizeItem           Item                       @relation(fields: [prizeItemId], references: [id])
+  placedInPack        PackInstance?              @relation(fields: [placedInPackId], references: [id])
+  scannedByUser       User?                      @relation("GoldenTicketScanner", fields: [scannedByUserId], references: [id], onDelete: SetNull)
+  claimedKioskSession KioskSession?              @relation("GoldenTicketClaimedSession", fields: [claimedKioskSessionId], references: [id], onDelete: SetNull)
+  shippingRequest     ShippingRequest?
+  sourceLocation      Location?                  @relation(fields: [sourceLocationId], references: [id], onDelete: SetNull)
+  consent             GoldenTicketConsent?
+  winnerProfile       GoldenTicketWinnerProfile?
+  kioskSession        KioskSession?              @relation("GoldenTicketSession")
+  liveRip             LiveRip?
+
+  @@index([status])
+  @@index([scannedByUserId])
+  @@index([sourceLocationId])
+}
+
+model GoldenTicketConsent {
+  id                 String                    @id @default(cuid())
+  goldenTicketId     String                    @unique
+  userId             String
+  status             GoldenTicketConsentStatus
+  consentText        String
+  consentTextVersion String
+  userAgent          String
+  ipAddress          String
+  grantedAt          DateTime                  @default(now())
+
+  goldenTicket GoldenTicket @relation(fields: [goldenTicketId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model GoldenTicketWinnerProfile {
+  id                  String   @id @default(cuid())
+  goldenTicketId      String   @unique
+  displayName         String
+  displayHandle       String?
+  winnerPhotoUrl      String?
+  winnerPhotoApproved Boolean  @default(false)
+  caption             String?
+  featured            Boolean  @default(false)
+  publishedAt         DateTime? @default(now())
+
+  goldenTicket GoldenTicket @relation(fields: [goldenTicketId], references: [id])
+
+  @@index([featured])
+}
+
 model QrCode {
   id           String      @id @default(uuid())
   code         String      @unique
@@ -2005,6 +2125,7 @@ model QrCode {
   kioskSessions KioskSession[] @relation("SessionPackQr")
   packLabelCard PackLabel?     @relation("PackLabelCardQr")
   packLabelPack PackLabel?     @relation("PackLabelPackQr")
+  goldenTicket  GoldenTicket?
 }
 
 model PackLabel {

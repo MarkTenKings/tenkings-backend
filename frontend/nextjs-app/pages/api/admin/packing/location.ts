@@ -32,6 +32,13 @@ type PackRow = {
     imageUrl: string | null;
     cardQrCodeId: string | null;
   } | null;
+  goldenTicket: {
+    id: string;
+    ticketNumber: number;
+    code: string;
+    status: string;
+    placedAt: string | null;
+  } | null;
   label: {
     id: string;
     status: string;
@@ -218,6 +225,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           },
           sourceBatchId: true,
           packQrCodeId: true,
+          goldenTickets: {
+            orderBy: [{ placedAt: "desc" }, { createdAt: "desc" }],
+            take: 1,
+            select: {
+              id: true,
+              ticketNumber: true,
+              code: true,
+              status: true,
+              placedAt: true,
+            },
+          },
           packLabels: {
             include: {
               cardQrCode: {
@@ -380,6 +398,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
 
       const slotItem = pack.slots[0]?.item ?? null;
       const labelRecord = pack.packLabels[0] ?? null;
+      const placedGoldenTicket = pack.goldenTickets[0] ?? null;
 
       const row: PackRow = {
         id: pack.id,
@@ -397,8 +416,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse<
           ? {
               id: slotItem.id,
               name: slotItem.name,
-              imageUrl: slotItem.imageUrl,
-              cardQrCodeId: slotItem.cardQrCodeId,
+            imageUrl: slotItem.imageUrl,
+            cardQrCodeId: slotItem.cardQrCodeId,
+          }
+          : null,
+        goldenTicket: placedGoldenTicket
+          ? {
+              id: placedGoldenTicket.id,
+              ticketNumber: placedGoldenTicket.ticketNumber,
+              code: placedGoldenTicket.code,
+              status: placedGoldenTicket.status,
+              placedAt: placedGoldenTicket.placedAt ? placedGoldenTicket.placedAt.toISOString() : null,
             }
           : null,
         label: labelRecord

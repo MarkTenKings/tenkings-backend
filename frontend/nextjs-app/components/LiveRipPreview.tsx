@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
+import MuxPlayer from "@mux/mux-player-react";
 
 type ParsedMedia =
   | { type: "youtube"; id: string; embedUrl: string }
@@ -89,6 +90,7 @@ export interface LiveRipPreviewProps {
   id: string;
   title: string;
   videoUrl: string;
+  muxPlaybackId?: string | null;
   thumbnailUrl?: string | null;
   muted: boolean;
   onToggleMute: () => void;
@@ -102,6 +104,7 @@ export default function LiveRipPreview({
   id,
   title,
   videoUrl,
+  muxPlaybackId,
   thumbnailUrl,
   muted,
   onToggleMute,
@@ -110,6 +113,7 @@ export default function LiveRipPreview({
   aspectClassName = "pb-[56.25%]",
   showMuteToggle = true,
 }: LiveRipPreviewProps) {
+  const isMuxPlayback = Boolean(muxPlaybackId);
   const media = useMemo(() => parseMedia(videoUrl), [videoUrl]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -244,6 +248,24 @@ export default function LiveRipPreview({
   }, [media.type, id]);
 
   const renderMedia = () => {
+    if (muxPlaybackId) {
+      return (
+        <MuxPlayer
+          playbackId={muxPlaybackId}
+          streamType="on-demand"
+          metadataVideoTitle={title}
+          title={title}
+          poster={thumbnailUrl ?? undefined}
+          autoPlay={muted ? "muted" : true}
+          muted={muted}
+          loop
+          playsInline
+          className="absolute inset-0 h-full w-full"
+          style={{ "--media-object-fit": "cover" }}
+        />
+      );
+    }
+
     switch (media.type) {
       case "video":
       case "hls":
@@ -288,7 +310,8 @@ export default function LiveRipPreview({
     }
   };
 
-  const showMuteControl = showMuteToggle && (media.type === "video" || media.type === "youtube");
+  const showMuteControl =
+    showMuteToggle && (isMuxPlayback || media.type === "video" || media.type === "hls" || media.type === "youtube");
 
   return (
     <div className={`relative overflow-hidden rounded-3xl border border-white/10 bg-night-900/70 shadow-card ${className}`}>

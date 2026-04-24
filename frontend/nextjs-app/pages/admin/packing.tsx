@@ -76,6 +76,14 @@ type QrSummary = {
   state: QrCodeState;
 };
 
+type GoldenTicketPlacement = {
+  id: string;
+  ticketNumber: number;
+  code: string;
+  status: string;
+  placedAt: string | null;
+};
+
 type PackRow = {
   id: string;
   createdAt: string;
@@ -92,6 +100,7 @@ type PackRow = {
     imageUrl: string | null;
     cardQrCodeId: string | null;
   } | null;
+  goldenTicket: GoldenTicketPlacement | null;
   label: {
     id: string;
     status: string;
@@ -221,6 +230,8 @@ const formatRelative = (iso: string | null) => {
   if (diff < day) return `${Math.round(diff / hour)} hr ago`;
   return `${Math.round(diff / day)} day${diff / day >= 2 ? "s" : ""} ago`;
 };
+
+const formatGoldenTicketLabel = (ticketNumber: number) => `#${String(ticketNumber).padStart(4, "0")}`;
 
 const QrCanvas = ({ value }: { value: string }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -430,7 +441,7 @@ export default function AdminPackingConsole() {
     } finally {
       setLocationLoading(false);
     }
-    }, [buildAdminHeaders, isAdmin, selectedBatchId, selectedLocationId, session?.token]);
+    }, [isAdmin, selectedBatchId, selectedLocationId, session?.token]);
 
   useEffect(() => {
     if (!session?.token || !isAdmin) {
@@ -715,16 +726,32 @@ export default function AdminPackingConsole() {
         const res = await fetch("/api/admin/packing/scan-card", {
           method: "POST",
           headers: adminHeaders(),
-          body: JSON.stringify({ code: cardCode.trim(), itemId: activePack.item.id }),
+          body: JSON.stringify({ code: cardCode.trim(), itemId: activePack.item.id, packInstanceId: activePack.id }),
         });
         if (!res.ok) {
           const payload = await res.json().catch(() => ({}));
           throw new Error(payload?.message ?? "Failed to bind card QR");
         }
-        const payload = await res.json();
+        const payload = (await res.json()) as
+          | {
+              mode: "card";
+              qrCode: {
+                serial: string | null;
+                code: string;
+              };
+            }
+          | {
+              mode: "golden_ticket";
+              goldenTicket: {
+                ticketNumber: number;
+              };
+            };
         setCardStatus({
           type: "success",
-          message: `Card QR ${payload.qrCode.serial ?? payload.qrCode.code} bound successfully`,
+          message:
+            payload.mode === "golden_ticket"
+              ? `Golden Ticket ${formatGoldenTicketLabel(payload.goldenTicket.ticketNumber)} placed into this pack`
+              : `Card QR ${payload.qrCode.serial ?? payload.qrCode.code} bound successfully`,
         });
         setCardCode("");
         await fetchBatchDetail();
@@ -1117,7 +1144,14 @@ export default function AdminPackingConsole() {
                     <div className="rounded-2xl border border-white/10 bg-night-900/70 p-4">
                       <p className="text-[11px] uppercase tracking-[0.32em] text-slate-400">Active Pack</p>
                       <h3 className="mt-2 text-lg font-semibold text-white">{activePack.packDefinition?.name ?? "Unassigned"}</h3>
-                      <p className="text-xs text-slate-400">Pack ID {activePack.id.slice(0, 8)} • Status {activePack.fulfillmentStatus}</p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <p className="text-xs text-slate-400">Pack ID {activePack.id.slice(0, 8)} • Status {activePack.fulfillmentStatus}</p>
+                        {activePack.goldenTicket ? (
+                          <span className="rounded-full border border-gold-400/40 bg-gold-500/15 px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-gold-100">
+                            Golden Ticket {formatGoldenTicketLabel(activePack.goldenTicket.ticketNumber)}
+                          </span>
+                        ) : null}
+                      </div>
                       <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
                         <div className="flex items-start gap-4">
                           {activePack.item?.imageUrl ? (
@@ -1138,6 +1172,13 @@ export default function AdminPackingConsole() {
                                 ? `Card QR ${activePack.label?.card.serial ?? activePack.label?.card.code} auto-bound`
                                 : "Needs card QR"}
                             </p>
+                            {activePack.goldenTicket ? (
+                              <p className="mt-2 text-xs text-gold-200">
+                                Golden Ticket {formatGoldenTicketLabel(activePack.goldenTicket.ticketNumber)} placed {formatRelative(activePack.goldenTicket.placedAt)}
+                              </p>
+                            ) : (
+                              <p className="mt-2 text-xs text-slate-500">No Golden Ticket placed in this pack.</p>
+                            )}
                           </div>
                         </div>
                         <div className="rounded-xl border border-white/10 bg-night-900/60 p-3 text-xs text-slate-200">
@@ -1162,14 +1203,37 @@ export default function AdminPackingConsole() {
                       </div>
 
                       <div className="mt-4 grid gap-3 lg:grid-cols-2">
-                        {cardIsBound ? (
+                        {packIsBound ? (
                           <div className="flex flex-col gap-2 rounded-2xl border border-emerald-400/40 bg-emerald-500/10 p-4 text-xs text-emerald-100">
-                            <span className="text-[11px] uppercase tracking-[0.3em] text-emerald-200">Card QR bound</span>
-                            <p>Card QR {activePack.label?.card.serial ?? activePack.label?.card.code} was automatically bound.</p>
+                            <span className="text-[11px] uppercase tracking-[0.3em] text-emerald-200">Pre-seal scans complete</span>
+                            <p>
+                              {cardIsBound
+                                ? `Card QR ${activePack.label?.card.serial ?? activePack.label?.card.code} is bound.`
+                                : "Card QR is still pending."}
+                            </p>
+                            <p>
+                              {activePack.goldenTicket
+                                ? `Golden Ticket ${formatGoldenTicketLabel(activePack.goldenTicket.ticketNumber)} is already placed.`
+                                : "No Golden Ticket placed in this pack."}
+                            </p>
                           </div>
                         ) : (
                           <form onSubmit={handleCardSubmit} className="flex flex-col gap-2 rounded-2xl border border-white/10 bg-night-900/70 p-4">
-                            <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">1. Scan card QR</span>
+                            <span className="text-[11px] uppercase tracking-[0.3em] text-slate-400">1. Scan card or Golden Ticket QR</span>
+                            {cardIsBound ? (
+                              <p className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-emerald-200">
+                                Card QR already bound. This scanner still accepts a Golden Ticket QR before sealing.
+                              </p>
+                            ) : (
+                              <p className="rounded-xl border border-white/10 bg-night-800/80 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-slate-300">
+                                Scan the card label first, then optionally scan a Golden Ticket QR for this pack.
+                              </p>
+                            )}
+                            {activePack.goldenTicket ? (
+                              <p className="rounded-xl border border-gold-400/30 bg-gold-500/10 px-3 py-2 text-[11px] uppercase tracking-[0.28em] text-gold-100">
+                                Golden Ticket {formatGoldenTicketLabel(activePack.goldenTicket.ticketNumber)} already placed in this pack.
+                              </p>
+                            ) : null}
                             <input
                               type="text"
                               inputMode="text"
@@ -1177,14 +1241,14 @@ export default function AdminPackingConsole() {
                               value={cardCode}
                               onChange={(event) => setCardCode(event.currentTarget.value)}
                               className="rounded-2xl border border-white/10 bg-night-800 px-4 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60"
-                              placeholder="tkc_…"
+                              placeholder={cardIsBound ? "Golden Ticket QR or card QR" : "tkc_… or Golden Ticket QR"}
                               required
                             />
                             <button
                               type="submit"
                               className="inline-flex items-center justify-center rounded-full border border-emerald-400/40 bg-emerald-500/20 px-5 py-2 text-[11px] uppercase tracking-[0.32em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100"
                             >
-                              Bind Card
+                              Scan & Bind
                             </button>
                             {cardStatus && (
                               <p
@@ -1354,6 +1418,11 @@ export default function AdminPackingConsole() {
                                   </p>
                                   <p className="text-xs text-slate-500">Pack {pack.id.slice(0, 10)}</p>
                                   <p className="text-xs text-slate-300">Status {pack.fulfillmentStatus}</p>
+                                  {pack.goldenTicket ? (
+                                    <span className="mt-2 inline-flex rounded-full border border-gold-400/35 bg-gold-500/10 px-3 py-1 text-[10px] uppercase tracking-[0.24em] text-gold-100">
+                                      Golden Ticket {formatGoldenTicketLabel(pack.goldenTicket.ticketNumber)}
+                                    </span>
+                                  ) : null}
                                 </div>
                               </div>
                               <button
@@ -1395,6 +1464,11 @@ export default function AdminPackingConsole() {
                                       ? `Card QR ${pack.label?.card.serial ?? pack.label?.card.code} auto-bound`
                                       : "Needs card QR"}
                                   </p>
+                                  {pack.goldenTicket ? (
+                                    <p className="mt-2 text-[10px] text-gold-200">
+                                      Golden Ticket {formatGoldenTicketLabel(pack.goldenTicket.ticketNumber)} placed
+                                    </p>
+                                  ) : null}
                                 </div>
                               </div>
                               <div className="rounded-xl border border-white/10 bg-night-900/70 p-3 text-xs text-slate-200">

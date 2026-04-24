@@ -21,6 +21,660 @@
   - `b7ff543` fix(stocker): indoor guidance tracking, indoor maps, route/shift management
 - Environments touched: workstation checkout `/Users/markthomas/tenkings-task27-main`; `git pull --ff-only origin main` was retried with approved network access and reported `Already up to date`; no deploy, restart, migration, DB read/write, or destructive operation was executed
 - 2020 run status: full pass completed with `queueCount: 0`
+- Last reviewed: `2026-04-24`
+- Branch: `feature/kingshunt`
+- Latest product baseline summarized here: Golden Ticket Step 17 merge-blocker cleanup on top of `feat(golden-ticket): admin winners moderation`.
+- Product status: Golden Ticket/browser-rip work is shipped locally through Section 13 step 16 plus step 13, and Step 17 merge blockers have been remediated locally: migration ordering fixed, Golden Ticket source location stamped/backfilled from pack placement, `/live` includes `REVEAL`, consent storage is server-canonical, and stale step-16 redirect TODOs are removed.
+- Fresh-agent pickup target: deploy-readiness validation, especially a real `prisma migrate status` / deploy dry run against a clean local or staging Postgres database before production merge.
+- Deploy/restart/migration status: none of the Golden Ticket sessions through step 16/12 performed deploys, restarts, or migrations against a live environment.
+
+## Session Update (2026-04-24, Golden Ticket Step 17 acceptance audit)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified requested local branch state before the audit:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `c335397`
+  - `git rev-list --count main..HEAD` -> `17` locally, not the expected `18`
+- Performed a read-only acceptance pass against the pasted Section 9 criteria. No product code, tests, deploy, restart, migration, DB mutation, or commit was executed.
+- Read-only validation run: `pnpm --filter @tenkings/browser-rip-client exec tsc -p . --noEmit` -> pass with the local Node engine warning.
+- Primary findings to remediate before merge:
+  - migration deploy ordering is unsafe because `20260422193000_make_golden_ticket_winner_published_at_nullable` sorts before `20260422_golden_ticket_and_browser_ingest` and alters `GoldenTicketWinnerProfile` before the base migration creates it
+  - `GoldenTicket.sourceLocationId` remains nullable through placement and is only supplied by the winner claim form, so it is not stamped from the pack/location source of truth
+  - `/live` public current-session filter includes `COUNTDOWN` and `LIVE` but excludes `REVEAL`
+  - stale `TODO(step-16)` comments remain in the live directory component and Next config
+- Confirmed the existing Mux watermark reprovision runbook note is present in this handoff and `docs/handoffs/SESSION_LOG.md`.
+
+## Session Update (2026-04-24, Golden Ticket Step 17 merge-blocker fixes)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified requested local branch state before implementation:
+  - `git status -sb` -> `## feature/kingshunt` plus the pre-existing Step 17 handoff doc edits
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `c335397`
+- Migration decision:
+  - used rename, not squash, because no Prisma metadata in this checkout tied runtime history to the bad folder name and `migration_lock.toml` only declares the PostgreSQL provider
+  - did not use the initially recommended `20260422200000_...` name because it still sorts before `20260422_golden_ticket_and_browser_ingest` due the underscore in the base folder
+  - final migration folder: `packages/database/prisma/migrations/20260423000000_make_golden_ticket_winner_published_at_nullable`
+  - renamed migration now both drops `GoldenTicketWinnerProfile.publishedAt NOT NULL` and backfills null `GoldenTicket.sourceLocationId` from `PackInstance.locationId`
+- Source location fix:
+  - Golden Ticket placement now stamps `sourceLocationId` from the target pack's `locationId`
+  - claim finalization prefers the stamped server value and only uses the claim-form location as fallback for older unstamped tickets
+- Consent fix:
+  - client now sends `consented: true` and the version it displayed, not the consent text
+  - server verifies the submitted version equals current `GOLDEN_TICKET_CONSENT_TEXT_VERSION`
+  - server stores canonical `GOLDEN_TICKET_CONSENT_TEXT` plus canonical version verbatim with IP and UA
+- `/live` fix:
+  - active public live statuses now include `COUNTDOWN`, `LIVE`, and `REVEAL`
+  - `/live` treats both `LIVE` and `REVEAL` as takeover states
+- Cleanup:
+  - removed stale `TODO(step-16)` comments and the obsolete client-side `/admin/live` redirect handoff code
+- Required env vars for this commit:
+  - `GOLDEN_TICKET_CONSENT_TEXT_VERSION` -> `v1.0-2026-04-21`
+  - `GOLDEN_TICKET_CONSENT_TEXT` -> exact multiline value:
+```text
+Golden Ticket Reveal - Consent to Record & Publish
+
+By tapping "Unlock My Reveal" below, I confirm that:
+
+- I am 18 years of age or older.
+- I grant Ten Kings, LLC permission to access my device's camera and microphone for the duration of this reveal.
+- I understand my reveal - including my face, voice, and reaction - will be recorded and livestreamed in real time to the Ten Kings platform at tenkings.co/live.
+- I grant Ten Kings, LLC a perpetual, royalty-free license to use, edit, publish, and share the recorded reveal on Ten Kings websites, social media accounts, and marketing materials.
+- I understand that once the reveal begins, the recording cannot be stopped or deleted by me. If I want my reveal removed from public display after the fact, I can email support@tenkings.co.
+- I agree to the Ten Kings Terms of Service (https://tenkings.co/terms) and Privacy Policy (https://tenkings.co/privacy).
+```
+- Validation:
+  - `ls -1 packages/database/prisma/migrations | tail -n 12` -> confirms `20260422_golden_ticket_and_browser_ingest` sorts before `20260423000000_make_golden_ticket_winner_published_at_nullable`
+  - `pnpm --filter @tenkings/database generate` -> pass with local Node engine warning
+  - `DATABASE_URL='postgresql://tenkings:tenkings@127.0.0.1:5432/tenkings_validate?schema=public' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/live.tsx --file lib/server/goldenLive.ts --file lib/server/goldenClaim.ts --file lib/server/goldenTicket.ts --file 'pages/golden/claim/[code].tsx' --file components/live/LiveRipDirectoryPage.tsx` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration
+  - `git diff --check` -> pass
+  - `rg -n "TODO\(step-" frontend/nextjs-app packages` -> no matches
+  - `rg -n "consentText" 'frontend/nextjs-app/pages/golden/claim/[code].tsx' frontend/nextjs-app/lib/server/goldenClaim.ts` -> client sends only `consentTextVersion`; consent text writes exist only server-side
+- Local DB limitations:
+  - true clean local DB `prisma migrate status` could not complete because `DATABASE_URL` was absent and no local Postgres tooling/server was available
+  - explicit local-only status attempt failed with `P1001` against `127.0.0.1:5432`
+  - `psql` was not installed, so the backfill preview query could not be executed locally; the query to run in non-prod is:
+```sql
+SELECT COUNT(*) AS backfillable_golden_tickets
+FROM "GoldenTicket" gt
+JOIN "PackInstance" pi ON gt."placedInPackId" = pi."id"
+WHERE gt."sourceLocationId" IS NULL
+  AND pi."locationId" IS NOT NULL;
+```
+- No deploy, restart, migration execution, production DB mutation, PR, or destructive operation was executed.
+
+## Session Update (2026-04-22, Golden Ticket Section 13 step 13 admin winners moderation)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified requested local branch state before implementation:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `dad7a45`
+- User confirmed Option A for unpublish semantics:
+  - `GoldenTicketWinnerProfile.publishedAt` changed from non-nullable to nullable with default `now()`
+  - checked in Prisma migration: `packages/database/prisma/migrations/20260422193000_make_golden_ticket_winner_published_at_nullable/migration.sql`
+  - unpublish semantics: `publishedAt = null`
+  - republish semantics: if currently unpublished, `publishedAt = now()`; if already published, PATCH preserves the existing timestamp for idempotence
+- Landed admin winners moderation:
+  - new admin page `frontend/nextjs-app/pages/admin/golden/winners.tsx`
+  - new admin APIs:
+    - `GET /api/admin/golden/winners`
+    - `PATCH /api/admin/golden/winners/[id]`
+  - new server helper `frontend/nextjs-app/lib/server/goldenAdminWinners.ts`
+- Admin winners page behavior:
+  - lists all `GoldenTicketWinnerProfile` rows with pagination and default most-recent claim ordering
+  - shows ticket label, prize, display name, photo status, featured state, and published state
+  - supports inline caption editing
+  - supports featured toggle
+  - supports winner-photo approve/reject, showing the submitted `winnerPhotoUrl` preview when present
+  - shows strict `"No photo submitted"` state when no winner photo exists yet
+  - supports unpublish / republish controls
+- Public filtering changes:
+  - `frontend/nextjs-app/lib/server/goldenClaim.ts` now filters public Hall of Kings list queries and public winner-detail lookups on `publishedAt IS NOT NULL`
+  - removed the previous step-13 TODO comment in `goldenClaim.ts`
+  - `frontend/nextjs-app/lib/server/goldenLive.ts` now filters the `/live` idle reveal query to require a published winner profile
+  - already-claimed scan flow in `frontend/nextjs-app/pages/golden/claim/[code].tsx` no longer redirects a different user to a now-unpublished public winner page
+- Discoverability added from existing admin Golden surfaces already present in this branch:
+  - `frontend/nextjs-app/components/AppShell.tsx`
+  - `frontend/nextjs-app/pages/admin/index.tsx`
+  - `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+  - `frontend/nextjs-app/pages/admin/golden/queue.tsx`
+- Validation:
+  - `pnpm --filter @tenkings/database generate` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/golden/winners.tsx --file pages/api/admin/golden/winners/index.ts --file 'pages/api/admin/golden/winners/[id].ts' --file lib/server/goldenAdminWinners.ts --file lib/server/goldenClaim.ts --file lib/server/goldenLive.ts --file pages/admin/golden/prizes.tsx --file pages/admin/golden/queue.tsx --file components/AppShell.tsx --file pages/admin/index.tsx --file 'pages/golden/claim/[code].tsx'` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- Assumptions:
+  - this branch still does not contain `pages/admin/golden/index.tsx`, so “admin golden landing surface” was interpreted as the existing Golden Ticket entry points already present in `/admin`, AppShell, prize minting, and live queue
+  - public winner visibility is now driven solely by nullable `publishedAt`; no separate `unpublished` column was introduced
+  - existing uncommitted handoff-doc changes present in the worktree at session start were preserved and folded into the same atomic commit instead of being discarded as stale
+- No deploy, restart, migration execution, DB mutation, or destructive operation was executed in this session.
+
+## Session Update (2026-04-22, Golden Ticket Section 13 step 13 planning + migration recommendation)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified requested local branch state before any implementation:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `dad7a45`
+- Reviewed Golden Ticket step-13 context in code and spec:
+  - local spec file used for this planning pass: `/Users/markthomas/Downloads/tk-golden-ticket-codex-spec-v1.md`
+  - spec Section `5.5` confirms `/admin/golden/winners` row actions: caption edit, featured toggle, photo approve/reject, unpublish
+  - current branch reality still uses non-nullable `GoldenTicketWinnerProfile.publishedAt @default(now())`
+  - current public filters do not yet honor an unpublished state:
+    - `frontend/nextjs-app/lib/server/goldenClaim.ts`
+    - `frontend/nextjs-app/lib/server/goldenLive.ts`
+  - current admin Golden discovery surfaces are:
+    - `frontend/nextjs-app/components/AppShell.tsx`
+    - `frontend/nextjs-app/pages/admin/index.tsx`
+    - `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+    - `frontend/nextjs-app/pages/admin/golden/queue.tsx`
+- Migration recommendation:
+  - recommend **Option A**: make `GoldenTicketWinnerProfile.publishedAt` nullable
+  - rationale:
+    - unpublish semantics become direct and queryable (`publishedAt: null`)
+    - republish stays simple (`publishedAt = now()`)
+    - public `/golden`, public winner detail gating, and `/live` idle reveal filtering can all share one source of truth
+    - it aligns with the existing step-13 TODO in `goldenClaim.ts` more cleanly than adding a second boolean flag
+  - do **not** use a sentinel future date hack
+- No implementation, migration, deploy, restart, commit, or DB mutation was executed in this planning session; work is waiting on the user’s Option A/B confirmation.
+
+## Session Update (2026-04-22, Golden Ticket Section 13 step 12 admin live queue + kill switch)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Landed Section 13 step 12 only:
+  - new admin queue page at `frontend/nextjs-app/pages/admin/golden/queue.tsx`
+  - new active-session watch page at `frontend/nextjs-app/pages/admin/golden/sessions/[sessionId].tsx`
+  - new admin routes:
+    - `GET /api/admin/golden/queue`
+    - `POST /api/admin/golden/queue/[sessionId]/kill`
+  - new shared queue helper/types/player files:
+    - `frontend/nextjs-app/lib/goldenQueue.ts`
+    - `frontend/nextjs-app/lib/server/goldenQueue.ts`
+    - `frontend/nextjs-app/components/golden/AdminGoldenQueuePlayer.tsx`
+  - existing admin discovery surfaces now expose the queue from:
+    - `frontend/nextjs-app/components/AppShell.tsx`
+    - `frontend/nextjs-app/pages/admin/index.tsx`
+    - `frontend/nextjs-app/pages/admin/golden/prizes.tsx`
+- Cancelled-session publication hardening landed in the same step:
+  - `frontend/nextjs-app/pages/api/mux/webhook.ts` now skips `LiveRip` create/update when the source `KioskSession` is already `CANCELLED`
+  - `frontend/nextjs-app/lib/server/kioskCompletion.ts` no longer auto-publishes a cancelled session or flips it back to `COMPLETE`
+  - `frontend/nextjs-app/pages/api/live-rips/index.ts` filters out rows whose source `kioskSession.status = CANCELLED`
+  - `frontend/nextjs-app/lib/server/goldenLive.ts` filters cancelled-source `LiveRip` rows out of the idle reveal query used by `/live`
+- Assumptions:
+  - the user explicitly chose to skip adding `cancelledBy` / `cancelledAt` schema fields for this step; the kill switch remains migration-free and does not persist operator audit metadata yet
+  - active-row “winner name” resolves from `GoldenTicketWinnerProfile.displayName` first, then `claimedBy.displayName`, then `session.user.displayName`, then phone fallback, then `"Awaiting claim"`
+  - because no existing admin Golden Ticket session detail page exists in this branch, `Watch Full` uses the minimal active-session page at `pages/admin/golden/sessions/[sessionId].tsx` instead of introducing a larger admin session-management surface
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/golden/queue.tsx --file 'pages/admin/golden/sessions/[sessionId].tsx' --file components/golden/AdminGoldenQueuePlayer.tsx --file components/AppShell.tsx --file pages/admin/index.tsx --file pages/admin/golden/prizes.tsx --file pages/api/admin/golden/queue.ts --file 'pages/api/admin/golden/queue/[sessionId]/kill.ts' --file pages/api/live-rips/index.ts --file pages/api/mux/webhook.ts --file lib/goldenQueue.ts --file lib/server/goldenQueue.ts --file lib/server/goldenLive.ts --file lib/server/kioskCompletion.ts` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- Planned local commit:
+  - `feat(golden-ticket): admin live queue + kill switch`
+- No deploy, restart, migration, or DB mutation was executed in this session.
+
+## Session Update (2026-04-22, live admin surface moved to /admin/live)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Landed the step-16 prep split only:
+  - new admin route at `frontend/nextjs-app/pages/admin/live.tsx`
+  - shared list/manager UI extracted to `frontend/nextjs-app/components/live/LiveRipDirectoryPage.tsx`
+  - `frontend/nextjs-app/pages/live.tsx` now serves the public list only; create/edit/upload controls were removed from the top-level `/live` route
+  - admin-only write/upload APIs moved under `frontend/nextjs-app/pages/api/admin/live-rips/`
+  - public/shared `GET /api/live-rips` stayed in place for home, locations, and public live-list consumers
+  - admin navigation now exposes `/admin/live` from `frontend/nextjs-app/components/AppShell.tsx`
+- Temporary redirect note:
+  - because `/live` had to remain a working interim public list between commits, this session used a client-side admin-session redirect inside `pages/live.tsx` instead of an unconditional global redirect that would have hidden the public page
+  - `frontend/nextjs-app/next.config.js` now carries a `TODO(step-16)` note so the next agent can remove that temporary handoff logic when the public `/live` redesign lands
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/live.tsx --file components/live/LiveRipDirectoryPage.tsx --file pages/admin/live.tsx --file pages/admin/golden/prizes.tsx --file components/AppShell.tsx --file pages/api/live-rips/index.ts --file pages/api/admin/live-rips/index.ts --file 'pages/api/admin/live-rips/[liveRipId].ts' --file pages/api/admin/live-rips/upload.ts` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- No deploy, restart, migration, or DB mutation was executed in this session.
+
+## Session Update (2026-04-22, read-only handoff refresh and repo state capture)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`:
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Confirmed current repo state without pulling, deploying, restarting, or migrating:
+  - `git status -sb` -> `## feature/kingshunt`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `e342bd3`
+- No new product/code work landed in this session; the active baseline remains the already-shipped Golden Ticket step-15 plus step-10 state summarized below.
+- Fresh pickup target remains step 16 (`/live` redesign). Admin steps 12-13 remain deferred.
+- No deploy, restart, migration, or DB mutation was executed in this session.
+
+## Session Update (2026-04-21, feature/kingshunt takeover read-only sync before remaining public/admin surfaces)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Synced and verified the requested branch state before any coding:
+  - `git switch feature/kingshunt` -> already on branch
+  - `git pull --ff-only origin feature/kingshunt` -> `Already up to date.`
+  - `git log --oneline main..feature/kingshunt` confirms the nine Golden Ticket branch commits atop `main`:
+    - `c07ae4d docs(handoff): summarize Phase 1+2 progress through commit 6f87bd9`
+    - `6f87bd9 feat(golden-ticket): winner claim flow end-to-end`
+    - `1a56397 feat(golden-ticket): place tickets during packing`
+    - `535777f feat(golden-ticket): add admin prize minting and ticket pdfs`
+    - `f488663 fix(live): inline mux playback for live rips`
+    - `2fcd586 fix(schema): handle GOLDEN_TICKET_PRIZE in CollectibleCategory switches`
+    - `dbb532f feat(browser-rip): add browser session routes and dev test page`
+    - `3ca0dc6 feat(browser-rip): add client skeleton and whip tests`
+    - `f2afebd feat(golden-ticket): add browser ingest and ticket schema`
+- Reviewed the required implementation context in order:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+  - Golden Ticket spec text from the attached user prompt because `tk-golden-ticket-codex-spec-v1.md` is not checked into this checkout
+  - architecture docs from sibling checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/` because this checkout does not contain:
+    - `docs/architecture/03-live-rip-video.md`
+    - `docs/architecture/01-data-model.md`
+    - `TEN_KINGS_SYSTEM_ARCHITECTURE.md`
+- Read-only pickup conclusions inherited from handoff/session log:
+  - branch work is complete through Section 13 step 7 plus the `GOLDEN_TICKET_PRIZE` cleanup commit and handoff summary commit
+  - the next remaining public/admin work still aligns to step 10, step 12, step 13, step 14, step 15, and step 16
+  - `/golden` hall page work should build on the existing claimed-ticket/winner-detail contracts rather than reopening the claim flow
+- No source-code changes, deploy, restart, migration, or DB mutation were executed in this session.
+
+## Session Update (2026-04-21, Golden Ticket Section 13 step 14 public hall page)
+- Re-read `AGENTS.md` and continued from the shipped Golden Ticket branch state on `feature/kingshunt`.
+- Landed Section 13 step 14 only:
+  - new public hall page at `frontend/nextjs-app/pages/golden/index.tsx`
+  - new public routes `GET /api/golden/winners` and `GET /api/golden/stats`
+  - shared hall/stats query helpers added in `frontend/nextjs-app/lib/server/goldenClaim.ts`
+- Hall page scope:
+  - dark/gold hero with CSS-built Golden Ticket visual
+  - hero counter shows `{CLAIMED} found · {PLACED} still in circulation`
+  - CTA uses `/packs`
+  - four-step How It Works explainer
+  - Hall of Kings winner grid with featured winners floated first
+  - winner cards use inline `@mux/mux-player-react` playback when `LiveRip.muxPlaybackId` exists, and fall back to approved winner photo / prize imagery while assets are still processing
+  - mobile-first layout: single-column stack on mobile, expanding to 2-3 columns on larger screens
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/golden/index.tsx --file pages/api/golden/winners/index.ts --file pages/api/golden/stats.ts --file lib/server/goldenClaim.ts` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- Assumptions captured for the next pickup:
+  - “Published” winner rows currently means all `GoldenTicketWinnerProfile` rows because step-13 moderation/unpublish controls do not exist yet
+  - `featuredTicketIds` are returned as `GoldenTicket.id` values to line up with the hall-card ids
+  - `/packs` is the correct mystery-pack browse CTA because it is the existing public nav route and is already used by the Golden Ticket invalid page
+  - the app does not currently ship a regal serif display font token, so the hall page uses the existing `font-heading`/Bebas display system plus shared `night`/`gold` palette tokens rather than adding a new font dependency
+  - inline winner cards use `MuxPlayer` only when `muxPlaybackId` exists; otherwise they render an approved winner photo or prize image fallback so claimed winners are still visible before media processing completes
+- No deploy, restart, migration, or DB mutation was executed in this session.
+
+## Session Update (2026-04-21, Golden Ticket Section 13 step 15 public winner trophy page)
+- Re-read `AGENTS.md` and continued from the shipped step-14 branch state on `feature/kingshunt`.
+- Landed Section 13 step 15 only:
+  - replaced the earlier client-fetched stub at `frontend/nextjs-app/pages/golden/[ticketNumber].tsx` with a server-rendered trophy page
+  - added a shared public-helper gate in `frontend/nextjs-app/lib/server/goldenClaim.ts`
+  - updated `GET /api/golden/winners/[ticketNumber]` to use the same public helper
+- Winner-page scope:
+  - server-side 404 gate for any missing ticket, missing winner profile, or non-public status
+  - public statuses are `CLAIMED` and `FULFILLED`
+  - hero now shows the derived winner first name, claim date, ticket badge, and the same public location source the hall page uses
+  - reveal media priority is Mux playback first, then approved winner photo, then prize art
+  - prize details section includes description, image, and estimated value when present
+  - share action copies the canonical `/golden/[ticketNumber]` URL with inline confirmation state
+  - OG/Twitter metadata points at the existing share-card route contract without changing the share-card endpoint itself
+- Privacy note:
+  - verified that the step-14 hall page already uses `GoldenTicket.sourceLocation.name`, not shipping destination fields, for public location display
+  - step 15 mirrors that same sanitized source and intentionally omits city/state to avoid shipping-address PII leakage
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/golden/[ticketNumber].tsx' --file 'pages/api/golden/winners/[ticketNumber].ts' --file lib/server/goldenClaim.ts` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- Assumptions captured for the next pickup:
+  - “published” public winners still means `GoldenTicketWinnerProfile` row exists because moderation/unpublish fields are not built yet
+  - there is no `User.firstName` field in the checked-in schema, so the page derives the winner first name from the first token of `displayName`
+  - the page uses `claimedAt` as the public claim date and only falls back to `publishedAt` if `claimedAt` is absent
+  - there is no obvious shared toast helper already used on this path, so the share CTA stays on the inline clipboard-confirmation pattern
+- No deploy, restart, migration, or DB mutation was executed in this session.
+
+## Session Update (2026-04-22, Golden Ticket Section 13 step 10 real OG share card endpoint)
+- Re-read `AGENTS.md` and continued from the shipped step-15 branch state on `feature/kingshunt`.
+- Landed Section 13 step 10 after step 15, keeping the public endpoint path unchanged:
+  - `GET /api/golden/[ticketNumber]/share-card` now returns a real `@vercel/og` image response instead of redirecting to a thumbnail or winner page
+  - endpoint runs on the edge runtime
+  - added `@vercel/og` to `frontend/nextjs-app/package.json` and updated `pnpm-lock.yaml`
+- Share-card behavior:
+  - visibility gate matches the trophy page because the edge route reads winner data through `GET /api/golden/winners/[ticketNumber]`, which already uses `getPublicGoldenTicketWinnerByTicketNumber(...)`
+  - primary card uses the Mux reaction thumbnail at `time=3` with a 2-second `fetch()` probe and no retries
+  - fallback card is text-only and renders whenever the Mux thumbnail is missing, still processing, times out, or returns non-2xx
+  - reaction cards cache for one year and fallback cards cache for 60 seconds
+  - invalid/non-public tickets return `404` with a 5-minute cache header
+- Shared formatter note:
+  - extracted the ticket badge formatter into `frontend/nextjs-app/lib/goldenTicketLabel.ts` so both the server PDF/admin helpers and the edge share-card route can reuse the same `#0042` formatting without pulling PDF/Prisma code into the edge bundle
+- Asset note:
+  - the requested logo path `frontend/nextjs-app/public/brand/tenkings-logo.png` was not present in this checkout during implementation
+  - the share-card route still tries to fetch `/brand/tenkings-logo.png` and will render it automatically if the asset appears at that path, but currently omits it cleanly when unavailable so crawlers do not get a broken image
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/api/golden/[ticketNumber]/share-card.tsx' --file lib/goldenTicketLabel.ts --file lib/server/goldenTicket.ts` -> pass with only the local Node engine warning
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration error
+  - `git diff --check` -> pass
+- Assumptions captured for the next pickup:
+  - edge runtime cannot safely import the Prisma-heavy server helper stack directly in this repo shape, so the share-card route reuses the existing public winner API as its edge-safe gate/data source
+  - Bebas Neue is fetched from Google Fonts at runtime and cached per edge instance rather than committed as a local asset or added as a new package
+  - missing Mux thumbnails are not cached negatively in module scope, so a later request can promote from fallback card to reaction card as soon as Mux starts returning the thumbnail
+- No deploy, restart, migration, or DB mutation was executed in this session.
+
+## Fresh-Agent Pickup Summary (through `6f87bd9`)
+
+### Shipped Commits On `feature/kingshunt` So Far
+- `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+  - Pre-existing branch-base feature before Golden Ticket work started. Not part of Section 13, but all later work in this handoff stacks on this branch state.
+- `f2afebd feat(golden-ticket): add browser ingest and ticket schema`
+  - Section 13 step 1. Added the Golden Ticket/browser-ingest schema, migration, enums, and FK wiring across `GoldenTicket`, `GoldenTicketConsent`, `GoldenTicketWinnerProfile`, `KioskSession`, `LiveRip`, `ShippingRequest`, `Item`, `PackInstance`, `QrCode`, `Location`, and `User`.
+- `3ca0dc6 feat(browser-rip): add client skeleton and whip tests`
+  - Section 13 step 2. Created `packages/browser-rip-client` with the initial `BrowserRipClient`, WHIP publish helper, and focused unit tests.
+- `dbb532f feat(browser-rip): add browser session routes and dev test page`
+  - Section 13 step 3. Extended `POST /api/kiosk/start` for `ingestMode: "BROWSER"` + `goldenTicketCode`, added `GET /api/kiosk/[sessionId]/whip-url`, and added the admin-only `/dev/browser-rip-test` page.
+- `2fcd586 fix(schema): handle GOLDEN_TICKET_PRIZE in CollectibleCategory switches`
+  - Post-step-3 cleanup. Fixed frontend/admin enum narrowing fallout after adding `CollectibleCategory.GOLDEN_TICKET_PRIZE`.
+- `f488663 fix(live): inline mux playback for live rips`
+  - Section 13 step 4. Fixed the existing Mux playback gap by rendering inline `@mux/mux-player-react` playback on `pages/live/[slug].tsx` and aligning `components/LiveRipPreview.tsx`.
+- `535777f feat(golden-ticket): add admin prize minting and ticket pdfs`
+  - Section 13 step 5. Added `pages/admin/golden/prizes.tsx`, `GET/POST /api/admin/golden/prizes`, `GET /api/admin/golden/tickets/[id]/pdf`, and `lib/server/goldenTicket.ts` helpers for code generation, ticket numbering, grouping, and printable PDF generation.
+- `1a56397 feat(golden-ticket): place tickets during packing`
+  - Section 13 step 6. Added `POST /api/admin/golden/tickets/[id]/place`, extended the existing packing scan flow to accept Golden Ticket QRs during pack assembly, and surfaced Golden Ticket presence in packing UI/location payloads.
+- `6f87bd9 feat(golden-ticket): winner claim flow end-to-end`
+  - Section 13 step 7. Added the single-page `/golden/claim/[code]` winner flow, ticket lookup/consent/reaction upload/claim APIs, transaction-backed claim finalization, minimal `/golden/[ticketNumber]` winner page support, and browser-rip integration for countdown + reveal capture.
+
+### Spec Status
+- Completed:
+  - Section 2 data-model changes required for browser ingest and Golden Ticket flows.
+  - Section 3.1 browser-rip client foundation, with later step-7 extensions so the client now publishes the attached composite canvas plus mic audio instead of remaining a pure skeleton.
+  - Section 3.2 `POST /api/kiosk/start` browser-ingest extension.
+  - Section 3.3 `GET /api/kiosk/[sessionId]/whip-url`.
+  - Section 3.4 inline Mux playback fix on the live detail page and shared preview path.
+  - Section 3.5 `KioskSession.userId` / browser-session ownership plumbing.
+  - Section 4.1 seven-screen winner flow on `pages/golden/claim/[code].tsx`.
+  - Section 4.2 consent capture with verbatim text + version.
+  - Section 4.5 permissions-denied recovery flow.
+  - Section 5.2 admin prize creation + ticket minting + ticket PDF generation.
+  - Section 5.3 Golden Ticket placement inside the existing packing flow.
+  - Section 7.1 routes required for the current winner flow: ticket lookup, consent, reaction upload, claim finalization, winner detail lookup, and share-card redirect fallback.
+  - Section 13 steps 1, 2, 3, 4, 5, 6, and 7, plus the cleanup commit after step 3.
+- Partially complete or intentionally pulled forward:
+  - Section 4.4 / step 10 share-card support is only a redirect/fallback route today. The real generated share-card asset flow is still pending.
+  - Section 6.3 / step 15 has a minimal `/golden/[ticketNumber]` page because step 7 needed already-claimed redirects and a confirmation target, but the polished winner-profile experience is not finished.
+  - Section 7.2 admin routes exist only for prizes, ticket placement, and PDFs. Queue, kill-switch, and winner-moderation routes remain open.
+  - Section 11 outbound SMS behavior exists behind `OUTBOUND_SMS_ENABLED`, but the dedicated wrapper/cleanup step is still open if you want strict spec-sequence parity.
+- Still pending:
+  - Section 4.3 public live banner/kill-switch UX polish not covered by step 7.
+  - Section 5.1 main `/admin/golden` dashboard shell.
+  - Section 5.4 / Section 13 step 12 admin live queue + kill switch.
+  - Section 5.5 / Section 13 step 13 admin winners moderation.
+  - Section 6.1 / Section 13 step 16 full `/live` redesign.
+  - Remaining public/admin list/stat routes in Section 7 that those pending pages depend on.
+  - Section 9 / Section 13 step 17 full acceptance run-through.
+
+### Cross-Cutting Assumptions And Branch Realities
+- The Golden Ticket spec file `tk-golden-ticket-codex-spec-v1.md` was provided in chat during implementation and is not checked into this checkout.
+- Earlier architecture references used during takeover were only present in a sibling checkout, so a fresh agent should treat the spec plus `docs/handoffs/SESSION_LOG.md` as the authoritative implementation trail for this branch.
+- Browser-ingest auth follows the existing checked-in bearer-token `useSession` pattern, not a server-readable cookie session. Browser mode explicitly does not reuse kiosk-secret auth.
+- Online/browser reveals are serialized through the shared Online location Mux stream. Busy-path behavior is already implemented as `409 { error: "ONLINE_STREAM_BUSY" }`.
+- `GoldenTicket.prizeItemId` is unique, so multi-ticket prize minting creates one house-owned `Item` per ticket and groups them in admin via `Item.detailsJson.goldenTicketPrizeGroupId`.
+- Golden Ticket-specific prize metadata currently lives in `Item.detailsJson`; `Item.set` is fixed to `"Golden Ticket Prize"` for these rows.
+- Reveal video, poster, and prize photo uploads reuse the existing `/api/live-rips/upload` pipeline. Reaction uploads reuse the live-media storage path directly instead of inventing a new uploader.
+- Golden Ticket placement is only valid while a pack is still `READY_FOR_PACKING`; `PACKED` and `LOADED` are treated as already sealed/shipped.
+- `lib/server/goldenClaim.ts` + `lib/server/kioskCompletion.ts` are now the main claim finalization path. Future work should extend those helpers rather than re-implementing claim completion inside routes/pages.
+- `GET /api/golden/[ticketNumber]/share-card` exists today as a fallback redirect contract, not the final generated share-card implementation.
+- `GET /api/golden/[ticketNumber]/share-card` is now the real `@vercel/og` endpoint. It uses the same public winner gate as the trophy page, probes the Mux thumbnail with a 2-second GET, and falls back to a text-only card when reaction media is unavailable.
+- The minimal `/golden/[ticketNumber]` page exists only because step 7 needed a claimed-ticket redirect target and a confirmation destination. Do not mark step 15 complete off that page alone.
+- `/golden/[ticketNumber]` is now the full public trophy page and uses a server-side public gate shared with `GET /api/golden/winners/[ticketNumber]`: ticket status must be `CLAIMED` or `FULFILLED`, and a `GoldenTicketWinnerProfile` row must exist.
+- Public winner location display still comes from `GoldenTicket.sourceLocation.name`; shipping destination fields are intentionally not used on the public hall/detail surfaces.
+- Repo-wide validation still has one known pre-existing failure outside Golden Ticket scope: `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` fails on `components/maps/IndoorMap.tsx` because the repo is missing `leaflet` declarations there.
+- `/golden` now exists as the public hall page. It uses `/packs` as the Shop Mystery Packs CTA because that is the current public browse/buy route in `AppShell` and the existing Golden Ticket invalid page already uses the same path.
+- The hall API interprets “published” winner rows as all current `GoldenTicketWinnerProfile` rows because the schema does not yet have an unpublish flag; step 13 moderation can narrow that later.
+- `GET /api/golden/stats` returns `featuredTicketIds` as underlying `GoldenTicket.id` values so the stats payload lines up with the hall-card item ids.
+- The public hall page stays on the existing shared Tailwind/theme stack (`night`, `gold`, `font-heading`, built-in `shimmer`) and does not add a new font dependency.
+
+### Recommended Next Pickups
+- Step 10:
+  - Build the actual share-card generator behind the already-created `GET /api/golden/[ticketNumber]/share-card` route and persist/use real generated assets instead of the current redirect fallback.
+- Step 12:
+  - Build the admin queue/kill-switch path on top of existing `KioskSession.isGoldenTicket`, `ingestMode = BROWSER`, and the completion/claim writes already produced by step 7.
+- Step 14:
+  - Build `/golden` against the existing claimed-ticket data and winner-detail route; do not rebuild the claim flow or winner lookup contracts from scratch.
+- If strict Section 13 sequencing matters before the above:
+  - treat step 8 and step 9 as behavior already landed inside step 7, and treat step 11 as a cleanup/wrapper pass around the already-flagged outbound SMS behavior.
+
+## Session Update (2026-04-21, Golden Ticket Section 13 step 4 inline Mux playback fix)
+- Re-read `AGENTS.md` and continued from the already-complete steps 1-3 plus schema cleanup on `feature/kingshunt`.
+- Landed Section 13 step 4 only:
+  - `frontend/nextjs-app/pages/live/[slug].tsx` now renders inline Mux playback via `@mux/mux-player-react` whenever `liveRip.muxPlaybackId` is present
+  - `frontend/nextjs-app/components/LiveRipPreview.tsx` now prefers `MuxPlayer` for Mux-backed rows while preserving the existing YouTube, MP4, generic HLS, and external-link behavior for non-Mux entries
+  - live-rip list callers now pass `muxPlaybackId` through from existing data sources (`pages/live.tsx`, `pages/index.tsx`, `pages/locations.tsx`, `pages/api/locations/index.ts`)
+  - added the new frontend dependency in `frontend/nextjs-app/package.json` / `pnpm-lock.yaml`
+- Validation completed:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/live/[slug].tsx' --file components/LiveRipPreview.tsx --file pages/live.tsx --file pages/index.tsx --file pages/locations.tsx --file pages/api/locations/index.ts`
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> still fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` types issue
+  - `git diff --check`
+- Assumptions / notes:
+  - no checked-in seed or fixture data for a Mux-backed `LiveRip` row was found in this checkout, so the code path was verified against the existing schema/API/runtime code instead of inventing test data
+  - verification path used the existing `LiveRip.muxPlaybackId` schema field plus the current Mux webhook / live-rips query surfaces that already persist and return Mux playback IDs
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-21, Golden Ticket takeover context verification)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified branch state and sync status before takeover:
+  - `git switch feature/kingshunt` -> already on branch
+  - `git pull --ff-only origin feature/kingshunt` -> `Already up to date.`
+  - `git log --oneline --decorate -n 8 feature/kingshunt` confirms the four Golden Ticket branch commits currently atop local `feature/kingshunt`
+- Context sources reviewed for this takeover:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+  - the Golden Ticket spec text provided directly in the user prompt because `tk-golden-ticket-codex-spec-v1.md` is not checked into this worktree
+  - sibling architecture docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/docs/...` because `TEN_KINGS_SYSTEM_ARCHITECTURE.md` and `docs/architecture/{01-data-model,03-live-rip-video}.md` are not present in this checkout
+- Takeover conclusions inherited from prior handoff, not re-litigated:
+  - steps 1-3 plus the post-step-3 schema cleanup commit are already complete on local `feature/kingshunt`
+  - next planned implementation target remains Section 13 step 4: Mux inline playback fix on `pages/live/[slug].tsx` and any needed alignment in `components/LiveRipPreview.tsx`
+- No source-code changes, deploy, restart, migration execution, runtime mutation, or DB mutation were performed in this session.
+
+## Session Update (2026-04-21, CollectibleCategory frontend cleanup for GOLDEN_TICKET_PRIZE)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Landed a narrow frontend cleanup commit after step 3:
+  - widened the shared `CollectibleCategoryValue` constants/labels to include `GOLDEN_TICKET_PRIZE`
+  - added a dedicated admin card badge style for `GOLDEN_TICKET_PRIZE`
+- Result:
+  - the step-1 `CollectibleCategory` type fallout in `frontend/nextjs-app` is resolved
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` now only fails on the pre-existing `leaflet` declaration error in `components/maps/IndoorMap.tsx`
+- Validation completed:
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit`
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file lib/adminInventory.ts --file components/admin/CardTile.tsx --file lib/server/packTypes.ts --file pages/api/admin/inventory/assign.ts --file 'pages/api/admin/inventory/cards/[cardId].ts'`
+  - `git diff --check`
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-21, Golden Ticket Section 13 step 3 browser-ingest session start + WHIP route + dev page)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Landed Section 13 step 3 only at the current `feature/kingshunt` HEAD:
+  - extended `POST /api/kiosk/start` with `ingestMode` and `goldenTicketCode`
+  - added `GET /api/kiosk/[sessionId]/whip-url`
+  - added admin-only dev page `pages/dev/browser-rip-test.tsx`
+- Browser-ingest scope:
+  - `ingestMode: "BROWSER"` now requires an authenticated user session and does not accept the kiosk secret path
+  - browser sessions resolve the shared Online location, reuse its Mux stream, and return `409 { error: "ONLINE_STREAM_BUSY", retryAfterSeconds }` when another active browser session already occupies it
+  - browser sessions persist `userId`, `ingestMode`, `whipUploadUrl`, and optional Golden Ticket scan metadata on `KioskSession`
+- OBS safeguard:
+  - the default OBS branch remains the legacy code path, still guarded by `x-kiosk-secret`, with pack validation and Mux provisioning behavior kept in place
+- Dev page notes:
+  - uses `@tenkings/browser-rip-client`
+  - requests permissions, starts WHIP publish, then drives `COUNTDOWN -> LIVE -> REVEAL -> COMPLETE` with the existing kiosk control-token stage route
+  - remains admin-only by copying the same `useSession` + admin-allowlist gate pattern used on existing `/admin/*` pages
+- Validation completed:
+  - `pnpm install --offline`
+  - `pnpm --filter @tenkings/browser-rip-client build`
+  - `pnpm --filter @tenkings/browser-rip-client test`
+  - `pnpm --filter @tenkings/nextjs-app exec node -e "console.log(require.resolve('@tenkings/browser-rip-client'))"`
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` (fails on pre-existing repo issues outside this step: missing `leaflet` types plus `CollectibleCategory` fallout from step 1)
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/kiosk/start.ts --file 'pages/api/kiosk/[sessionId]/whip-url.ts' --file pages/dev/browser-rip-test.tsx --file lib/server/kioskSession.ts --file lib/server/mux.ts`
+  - `git diff --check`
+- Assumptions / notes for later steps:
+  - the checked-in app authenticates users via the existing bearer token from `useSession`, not a server-readable session cookie, so browser mode uses that current session transport while explicitly rejecting the kiosk-secret path
+  - the dev test page uses the existing stage route for `REVEAL` and `COMPLETE` rather than a real prize reveal payload because the full browser reveal choreography and claim flow land in later steps
+  - `/api/kiosk/[sessionId]/whip-url` keeps the Section 3.3 fields and adds `whipUploadUrl` as a convenience field so the client can consume the exact publish URL without rebuilding it
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-21, requested AGENTS/docs verification + git-state refresh)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `3ca0dc6`
+  - `git log --oneline -n 1` -> `3ca0dc6 feat(browser-rip): add client skeleton and whip tests`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-21, Golden Ticket Section 13 step 2 browser-rip package skeleton)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Landed Section 13 step 2 only at commit `3ca0dc6`:
+  - new workspace package `packages/browser-rip-client`
+- Package scope:
+  - added `BrowserRipClient` skeleton with the public API surface from the spec
+  - added a standalone `publishOfferToWhip(...)` helper and `WhipPublishError`
+  - added focused unit tests for the WHIP publisher handshake/error paths
+  - kept this step isolated from app/runtime integration; no Next.js route/page changes yet
+- Validation completed:
+  - `pnpm --filter @tenkings/browser-rip-client build`
+  - `pnpm --filter @tenkings/browser-rip-client test`
+  - `git diff --check -- packages/browser-rip-client`
+- Assumptions / notes for the next step:
+  - this package uses the existing root TypeScript binary path in scripts because the new workspace package has not had a dedicated local `node_modules` symlink bootstrapped yet
+  - `BrowserRipClient.start()` currently establishes permissions, starts local recording, performs the WHIP handshake, and sets the initial `countdown` stage; the full countdown/live/reveal orchestration remains for later steps
+- Current local repo state after commit and handoff updates:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `3ca0dc6`
+  - `git log --oneline -n 1` -> `3ca0dc6 feat(browser-rip): add client skeleton and whip tests`
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-21, Golden Ticket Section 13 step 1 schema + migration)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Read the Golden Ticket context docs before editing:
+  - architecture docs were only present in sibling checkout `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean-auto-promote-prefetch-refs/docs/...`
+  - `tk-golden-ticket-codex-spec-v1.md` was not checked in locally, so implementation followed the user-provided spec text
+- Landed Section 13 step 1 only at commit `f2afebd`:
+  - `packages/database/prisma/schema.prisma`
+  - `packages/database/prisma/migrations/20260422_golden_ticket_and_browser_ingest/migration.sql`
+- Schema/migration scope:
+  - added `KioskIngestMode`, `GoldenTicketStatus`, and `GoldenTicketConsentStatus`
+  - extended `QrCodeType` with `GOLDEN_TICKET` and `CollectibleCategory` with `GOLDEN_TICKET_PRIZE`
+  - added Golden Ticket tables plus browser-ingest/golden-ticket fields on `User`, `LiveRip`, `ShippingRequest`, `PackInstance`, `KioskSession`, `Location`, `Item`, and `QrCode`
+  - preserved existing kiosk default path by keeping `KioskSession.ingestMode @default(OBS)`
+- Validation completed:
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database generate`
+  - `git diff --check -- packages/database/prisma/schema.prisma packages/database/prisma/migrations/20260422_golden_ticket_and_browser_ingest/migration.sql`
+- Assumptions recorded for later PR description:
+  - used `LiveRip.createdAt` for the Golden Ticket composite index because `LiveRip` does not currently have a `publishedAt` column
+  - treated `ShippingRequest.goldenTicketId` as the canonical FK and left `GoldenTicket.shippingRequest` as the back relation only, to avoid a duplicate two-FK cycle in step 1
+- Current local repo state after commit and handoff updates:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `f2afebd`
+  - `git log --oneline -n 1` -> `f2afebd feat(golden-ticket): add browser ingest and ticket schema`
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-13, requested AGENTS/docs verification + git-state refresh)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-12, current AGENTS/docs verification + git-state refresh)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-12, requested AGENTS/docs verification + git-state refresh)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-04, requested AGENTS/docs verification + git-state refresh)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-04, docs-only repo state refresh)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Verified current workstation repo state without changing code or runtime:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- Updated handoff docs only:
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+## Session Update (2026-04-03, production Location coordinate update for Folsom Premium Outlets)
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Logged the planned production DB write in `docs/handoffs/SESSION_LOG.md` before execution.
+- Opened an SSH session to droplet `104.131.27.245`, changed to `/root/tenkings-backend`, and exported `DATABASE_URL` from the live `bytebot-lite-service` container.
+- Executed the user-requested `UPDATE "Location"` for `slug = 'folsom-premium-outlets'` with:
+  - `latitude = 38.6438568`
+  - `longitude = -121.1885226`
+  - `venueCenterLat = 38.6436`
+  - `venueCenterLng = -121.1874`
+  - `geofenceRadiusM = 600`
+  - requested landmarks/checkpoints payload
+  - `walkingTimeMin = 3`
+  - `walkingDirections = NULL`
+  - `updatedAt = NOW()`
+- Verification observed on the droplet:
+  - `DATABASE_URL length: 145`
+  - `UPDATE 1`
+  - `SELECT slug, latitude, longitude FROM "Location" WHERE slug = 'folsom-premium-outlets';`
+  - returned row: `folsom-premium-outlets | 38.6438568 | -121.1885226`
+- Final local repo-state check after the remote write:
+  - `git status -sb` -> `## feature/kingshunt`
+  - only modified tracked files present locally: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+- No deploy, restart, or migration was executed in this session.
+
+## Session Update (2026-04-03, final local repo state refresh after handoff update)
+- Rechecked the workstation repo state at the end of the session after writing the handoff entries.
+- Current local repo state:
+  - `git status -sb` -> `## feature/kingshunt`
+  - modified tracked files: `docs/HANDOFF_SET_OPS.md`, `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/kingshunt`
+  - `git rev-parse --short HEAD` -> `63cb950`
+  - `git log --oneline -n 1` -> `63cb950 feat(kingshunt): add locator map and QR hunt flow`
+- This final repo-state snapshot supersedes earlier same-day local HEAD references that still showed `09d602f`.
 
 ## Session Update (2026-04-13, stocker turn-by-turn nav + indoor map fix + admin live dashboard polish)
 - Re-read required startup docs in `/Users/markthomas/tenkings-task27-main` per `AGENTS.md`.
@@ -8325,3 +8979,154 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings
   - `git diff --check` -> pass
 - No deploy, restart, migration, DB write, or destructive operation was executed.
+## Golden Ticket Section 13 Step 5 - Admin Prize Minting + Ticket PDFs (2026-04-21)
+- Landed the step-5 admin surface on `feature/kingshunt`:
+  - `pages/admin/golden/prizes.tsx`
+  - `GET/POST /api/admin/golden/prizes`
+  - `GET /api/admin/golden/tickets/[id]/pdf`
+  - `lib/server/goldenTicket.ts`
+- Reused the existing monorepo PDF stack (`pdfkit` + `qrcode`) instead of adding a new library.
+- Important schema-driven assumption:
+  - `GoldenTicket.prizeItemId` is unique, so minting multiple tickets for one logical prize creates one duplicated house-owned `Item` per ticket.
+  - Those duplicated prize items are grouped via `Item.detailsJson.goldenTicketPrizeGroupId`.
+- Additional metadata assumption:
+  - `Item` has no native prize description/category/size/photo-gallery fields, so Golden Ticket prize metadata is stored in `Item.detailsJson`.
+  - `Item.set` is fixed to `"Golden Ticket Prize"` for these rows.
+- Upload assumption:
+  - reused the existing `/api/live-rips/upload` pipeline for reveal video, reveal poster, and prize photo uploads
+  - local-mode relative `/uploads/...` URLs are accepted by the new create API
+- Ticket PDFs are generated once at mint time, stored through the existing storage helper, and the admin PDF route falls back to regeneration if the stored object cannot be read.
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/admin/golden/prizes.tsx --file pages/api/admin/golden/prizes.ts --file 'pages/api/admin/golden/tickets/[id]/pdf.ts' --file lib/server/goldenTicket.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> only remaining failure is the pre-existing `components/maps/IndoorMap.tsx` `leaflet` declaration error
+  - `git diff --check` -> pass
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed for this task.
+
+## Golden Ticket Section 13 Step 6 - Packing Placement Integration (2026-04-21)
+- Landed step 6 on `feature/kingshunt` by extending the existing packing flow rather than creating a parallel assembly path:
+  - new `POST /api/admin/golden/tickets/[id]/place`
+  - shared placement helper in `lib/server/goldenTicket.ts`
+  - existing `pages/api/admin/packing/scan-card.ts` now accepts Golden Ticket QRs during active-pack assembly
+  - `pages/api/admin/packing/location.ts` + `pages/admin/packing.tsx` now surface a Golden Ticket badge for packs that already contain one
+- Validation and placement rules now enforce:
+  - ticket must still be `MINTED`
+  - pack must still be `READY_FOR_PACKING`
+  - `PACKED` / `LOADED` packs are treated as already sealed/shipped and rejected
+  - pack may not already contain another Golden Ticket
+- Resolution assumption:
+  - when placement is driven by pack QR code, the target pack resolves from either the bound `PackInstance.packQrCodeId` or the reserved `PackLabel.packInstanceId`, so placement works before sealing as part of the normal packing queue
+- Metadata assumption:
+  - placement updates Golden Ticket QR metadata with `placedInPackId` + `placedAt`, but does not currently stamp `sourceLocationId` during placement
+- Validation:
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/api/admin/packing/scan-card.ts --file pages/api/admin/packing/location.ts --file pages/admin/packing.tsx --file lib/server/goldenTicket.ts --file 'pages/api/admin/golden/tickets/[id]/place.ts'` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> only remaining failure is the pre-existing `components/maps/IndoorMap.tsx` `leaflet` declaration error
+  - `git diff --check` -> pass
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed for this task.
+
+## Golden Ticket Section 13 Step 7 - Winner Claim Flow End-to-End (2026-04-21)
+- Landed the full winner claim flow on `feature/kingshunt`:
+  - `pages/golden/claim/[code].tsx` now runs the seven-screen reveal flow in-place
+  - public claim APIs now exist for ticket lookup, consent capture, reaction upload, and final claim submit
+  - pulled forward the minimal public winner-profile/share-card routes required for Screen 1 redirect + Screen 7 confirmation URLs
+- Added a shared `lib/server/kioskCompletion.ts` helper so Golden Ticket claim finalization can create/update `LiveRip` inside the same Prisma transaction as the ownership transfer, shipping request, ticket status flip, and winner-profile creation.
+- Browser-rip note:
+  - `@tenkings/browser-rip-client` now publishes the attached composite canvas stream plus mic audio
+  - the page owns the countdown/founder-video/PiP render loop and audio beeps
+- Assumptions:
+  - DOB is still persisted through `POST /api/golden/consent`; there is no separate DOB-save route yet
+  - `GET /api/golden/[ticketNumber]/share-card` currently redirects to the best available public asset until the dedicated generated share-card step lands
+  - outbound winner SMS is implemented behind `OUTBOUND_SMS_ENABLED` using direct Twilio REST with `TWILIO_MESSAGING_SERVICE_SID` or `TWILIO_SMS_FROM`
+- Validation:
+  - `pnpm --filter @tenkings/browser-rip-client build` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/golden/claim/[code].tsx' --file 'pages/golden/[ticketNumber].tsx' --file pages/golden/invalid.tsx --file 'pages/api/golden/ticket/[code].ts' --file pages/api/golden/consent.ts --file pages/api/golden/reaction/upload.ts --file 'pages/api/golden/claim/[code].ts' --file 'pages/api/golden/winners/[ticketNumber].ts' --file 'pages/api/golden/[ticketNumber]/share-card.ts' --file lib/server/goldenClaim.ts --file lib/server/kioskCompletion.ts --file 'pages/api/kiosk/[sessionId]/complete.ts' --file pages/api/mux/webhook.ts` -> pass
+  - `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> only remaining failure is the pre-existing `components/maps/IndoorMap.tsx` `leaflet` declaration error
+  - `git diff --check` -> pass
+- No deploy, restart, migration execution, runtime mutation, or DB mutation was executed for this task.
+
+## 2026-04-22 - AGENTS startup sync and git report refresh
+
+### Summary
+- Re-read the required startup docs in `/Users/markthomas/tenkings/ten-kings-mystery-packs-clean` per `AGENTS.md`.
+- Performed a status-only repo verification for the current checkout.
+- No code changes, deploy, restart, migration, runtime mutation, or DB mutation were executed in this session.
+
+### Files Reviewed
+- `AGENTS.md`
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Repo State
+- `git status -sb` -> `## feature/kingshunt`
+- `git branch --show-current` -> `feature/kingshunt`
+- `git rev-parse --short HEAD` -> `e342bd3`
+
+### Notes
+- This was a docs-and-git-state verification session only.
+
+## 2026-04-22 - Golden Ticket Step 16 /live public redesign + Mux watermark
+
+### Summary
+- Replaced the interim public `/live` list with the new two-state Golden Ticket live page:
+  - idle/default state with portrait player, stats row, and recent reveal grid
+  - live takeover state with near full-height portrait player, countdown/live overlays, and compact stat pill
+- Added a new public `GET /api/live/current` snapshot endpoint plus server helpers so `/live` can poll current Golden Ticket session state every 2 seconds and poll stats/recent reveals every 5 seconds.
+- Added Mux watermark overlay configuration for newly created live streams via `new_asset_settings.inputs[].overlay_settings`; no deploy, restart, migration, runtime mutation, or DB mutation was executed in this session.
+
+### Files Updated
+- `frontend/nextjs-app/pages/live.tsx`
+- `frontend/nextjs-app/pages/api/live/current.ts`
+- `frontend/nextjs-app/lib/server/goldenLive.ts`
+- `frontend/nextjs-app/lib/server/goldenClaim.ts`
+- `frontend/nextjs-app/pages/api/golden/winners/index.ts`
+- `frontend/nextjs-app/lib/server/mux.ts`
+- `frontend/nextjs-app/lib/server/kioskSessionLifecycle.ts`
+- `frontend/nextjs-app/pages/api/kiosk/display.ts`
+- `frontend/nextjs-app/pages/golden/claim/[code].tsx`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Implementation Notes
+- `/live` now renders without `AppShell` and uses the locked black/gold presentation with:
+  - centered `/brand/tenkings-logo.png` header
+  - portrait 9:16 player in both states
+  - top ticket banner/chip
+  - bottom-right web watermark overlay using the full Ten Kings logo asset
+  - `RECENT REVEALS` 2-column portrait grid fed from `/api/golden/winners?limit=4&sort=recent`
+- Added a `sort=recent` option to the existing winners API without changing the Hall page’s default featured-first ordering.
+- Extended Golden Ticket hall stats with `totalMinted` so `/live` can render:
+  - `FOUND`
+  - `IN CIRCULATION`
+  - `TOTAL`
+- Countdown synchronization:
+  - `/live` viewers use `countdownEndsAt` from the current Golden Ticket `KioskSession`
+  - the winner claim page now also keys its countdown loop off `countdownEndsAt` instead of a purely local 5-second loop
+- Polling choice:
+  - used polling, not push/SSE/WebSocket, because `frontend/nextjs-app` does not already ship a public real-time transport
+  - `/api/live/current` polls every 2 seconds
+  - `/api/golden/stats` and `/api/golden/winners?limit=4&sort=recent` poll every 5 seconds
+- Mux watermark path:
+  - new live streams created by `createMuxLiveStream(...)` now embed `/brand/tenkings-logo.png` as a bottom-right watermark at roughly 8% video height and 3% margin with 70% opacity
+  - this applies to live playback and assets created from those newly created streams
+
+### Assumptions
+- `LEFT` in the live-state pill is `totalMinted - claimedCount` with a floor of `0`.
+- Viewer count remains omitted for now because there is no existing Mux metrics path or viewer-count cache in this checkout; the badge falls back to `LIVE`.
+- The square `frontend/nextjs-app/public/brand/tenkings-logo.png` is the intended asset for both:
+  - the small centered header logo
+  - the bottom-right in-player watermark/web overlay
+- `listGoldenTicketWinners(...)` now includes a `TODO(step-13)` note at the query site so moderation can later add the explicit published filter without changing the current public behavior.
+- Existing location streams with already-persisted `muxStreamId` / `muxStreamKey` / `muxPlaybackId` will not retroactively gain the watermark because Mux only accepts the overlay inputs at live-stream creation time.
+
+### Validation
+- `pnpm --filter @tenkings/nextjs-app exec next lint --file pages/live.tsx --file pages/api/live/current.ts --file lib/server/goldenLive.ts --file lib/server/mux.ts --file pages/api/kiosk/display.ts --file pages/api/golden/winners/index.ts --file 'pages/golden/claim/[code].tsx' --file lib/server/goldenClaim.ts --file lib/server/kioskSessionLifecycle.ts` -> pass
+- `pnpm --filter @tenkings/nextjs-app exec tsc --noEmit` -> fails only on the pre-existing `components/maps/IndoorMap.tsx` missing `leaflet` declaration
+- `git diff --check` -> pass
+
+### Runbook Note
+- Existing streams need a separate maintenance reprovision step before they pick up the new watermark:
+  - rotate or recreate each persisted Mux live stream used for Golden Ticket sessions
+  - persist the replacement stream ids/keys/playback ids (or clear the old location Mux fields so the next kiosk start recreates them)
+  - do not expect watermark coverage on older pre-Step-16 streams until that reprovision is completed

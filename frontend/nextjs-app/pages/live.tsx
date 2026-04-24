@@ -1,703 +1,708 @@
+/* eslint-disable @next/next/no-img-element */
 import Head from "next/head";
+import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
-import AppShell from "../components/AppShell";
-import { useSession } from "../hooks/useSession";
-import { hasAdminAccess, hasAdminPhoneAccess } from "../constants/admin";
-import LiveRipPreview from "../components/LiveRipPreview";
+import MuxPlayer from "@mux/mux-player-react";
+import type { GetServerSideProps, InferGetServerSidePropsType } from "next";
+import { startTransition, useEffect, useRef, useState } from "react";
 
-interface LocationRecord {
+const GOLD = "#C9A63D";
+const LIVE_RED = "#DC2626";
+const CURRENT_POLL_MS = 2000;
+const SECONDARY_POLL_MS = 5000;
+const COUNTDOWN_TOTAL_SECONDS = 5;
+const INTERACTION_STORAGE_KEY = "golden-live:interaction-armed";
+const PLAYER_UNMUTE_STORAGE_KEY = "golden-live:player-unmuted";
+
+type LiveCurrentSession = {
   id: string;
-  name: string;
-  slug: string;
-}
-
-interface LiveRipRecord {
-  id: string;
-  slug: string;
-  title: string;
-  description: string | null;
-  videoUrl: string;
-  thumbnailUrl: string | null;
-  featured: boolean;
-  location: LocationRecord | null;
-  createdAt: string;
-  viewCount: number | null;
-}
-
-interface LiveRipFormState {
-  id?: string;
-  title: string;
-  slug: string;
-  description: string;
-  videoUrl: string;
-  thumbnailUrl: string;
-  locationId: string;
-  featured: boolean;
-  viewCount: string;
-}
-
-const emptyFormState: LiveRipFormState = {
-  title: "",
-  slug: "",
-  description: "",
-  videoUrl: "",
-  thumbnailUrl: "",
-  locationId: "",
-  featured: true,
-  viewCount: "",
+  status: "COUNTDOWN" | "LIVE" | "REVEAL" | "COMPLETE" | "CANCELLED";
+  countdownEndsAt: string;
+  liveEndsAt: string | null;
+  muxPlaybackId: string | null;
+  videoUrl: string | null;
 };
 
-type EditMode = "create" | "edit" | null;
+type GoldenLiveIdleReveal = {
+  id: string;
+  slug: string;
+  title: string;
+  ticketNumber: number | null;
+  muxPlaybackId: string | null;
+  videoUrl: string;
+  thumbnailUrl: string | null;
+  prizeImageUrl: string | null;
+  winnerPhotoUrl: string | null;
+  winnerDisplayName: string | null;
+};
 
-export default function LivePage() {
-  const { session, ensureSession, logout } = useSession();
-  const [liveRips, setLiveRips] = useState<LiveRipRecord[]>([]);
-  const [locations, setLocations] = useState<LocationRecord[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [flash, setFlash] = useState<string | null>(null);
-  const [editMode, setEditMode] = useState<EditMode>(null);
-  const [formState, setFormState] = useState<LiveRipFormState>(emptyFormState);
-  const [saving, setSaving] = useState(false);
-  const [filterLocation, setFilterLocation] = useState<string>("");
-  const [uploadingVideo, setUploadingVideo] = useState(false);
-  const [uploadingThumbnail, setUploadingThumbnail] = useState(false);
-  const [activePreviewId, setActivePreviewId] = useState<string | null>(null);
+type GoldenLiveSnapshot = {
+  polledAt: string;
+  viewerCount: number | null;
+  currentSession: LiveCurrentSession | null;
+  idleReveal: GoldenLiveIdleReveal | null;
+};
 
-  const isAdmin = useMemo(() => {
-    if (!session) {
-      return false;
-    }
-    return hasAdminAccess(session.user.id) || hasAdminPhoneAccess(session.user.phone);
-  }, [session]);
+type GoldenLiveStats = {
+  claimedCount: number;
+  placedCount: number;
+  totalMinted: number;
+  featuredTicketIds: string[];
+};
 
-  useEffect(() => {
-    if (!flash) {
-      return;
-    }
-    const timeout = window.setTimeout(() => setFlash(null), 4000);
-    return () => window.clearTimeout(timeout);
-  }, [flash]);
-
-  useEffect(() => {
-    let mounted = true;
-    setLoading(true);
-    setError(null);
-
-    const headers: Record<string, string> = {};
-    if (session?.token) {
-      headers.Authorization = `Bearer ${session.token}`;
-    }
-
-    const loadLiveRips = async () => {
-      const res = await fetch("/api/live-rips");
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const message = typeof payload?.message === "string" ? payload.message : "Failed to load live rips";
-        throw new Error(message);
-      }
-      return payload as { liveRips?: LiveRipRecord[] };
-    };
-
-    const loadLocations = async () => {
-      const res = await fetch("/api/locations", { headers });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const message = typeof payload?.message === "string" ? payload.message : "Failed to load locations";
-        throw new Error(message);
-      }
-      return payload as { locations?: Array<{ id: string; name: string; slug: string }> };
-    };
-
-    Promise.allSettled([loadLiveRips(), loadLocations()])
-      .then(([liveResult, locationResult]) => {
-        if (!mounted) {
-          return;
-        }
-
-        let liveError: string | null = null;
-        if (liveResult.status === "fulfilled") {
-          const fetched = liveResult.value.liveRips ?? [];
-          setLiveRips(
-            fetched.map((rip) => ({
-              ...rip,
-              viewCount: typeof rip.viewCount === "number" ? rip.viewCount : null,
-            }))
-          );
-        } else {
-          liveError = liveResult.reason instanceof Error ? liveResult.reason.message : "Failed to load live rips";
-        }
-
-        if (locationResult.status === "fulfilled") {
-          const list = locationResult.value.locations ?? [];
-          setLocations(
-            list.map((location) => ({
-              id: location.id,
-              name: location.name,
-              slug: location.slug,
-            }))
-          );
-        } else {
-          const message =
-            locationResult.reason instanceof Error
-              ? locationResult.reason.message
-              : "Failed to load locations";
-          setFlash(message);
-        }
-
-        setError(liveError);
-      })
-      .catch((err: unknown) => {
-        if (!mounted) {
-          return;
-        }
-        const message = err instanceof Error ? err.message : "Failed to load live rips";
-        setError(message);
-      })
-      .finally(() => {
-        if (mounted) {
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      mounted = false;
-    };
-  }, [session?.token]);
-
-  const filteredLiveRips = useMemo(() => {
-    if (!filterLocation) {
-      return liveRips;
-    }
-    return liveRips.filter((liveRip) => liveRip.location?.id === filterLocation);
-  }, [liveRips, filterLocation]);
-
-  useEffect(() => {
-    if (activePreviewId && !filteredLiveRips.some((rip) => rip.id === activePreviewId)) {
-      setActivePreviewId(null);
-    }
-  }, [activePreviewId, filteredLiveRips]);
-
-  const beginCreate = useCallback(() => {
-    setEditMode("create");
-    setFormState({ ...emptyFormState });
-  }, []);
-
-  const beginEdit = useCallback((liveRip: LiveRipRecord) => {
-    setEditMode("edit");
-    setFormState({
-      id: liveRip.id,
-      title: liveRip.title,
-      slug: liveRip.slug,
-      description: liveRip.description ?? "",
-      videoUrl: liveRip.videoUrl,
-      thumbnailUrl: liveRip.thumbnailUrl ?? "",
-      locationId: liveRip.location?.id ?? "",
-      featured: liveRip.featured,
-      viewCount: liveRip.viewCount != null ? String(liveRip.viewCount) : "",
-    });
-  }, []);
-
-  const closeEditor = useCallback(() => {
-    setEditMode(null);
-    setFormState({ ...emptyFormState });
-  }, []);
-
-  const handleFormChange = (field: keyof LiveRipFormState, value: string | boolean) => {
-    setFormState((prev) => ({ ...prev, [field]: value }));
+type GoldenLiveWinner = {
+  id: string;
+  ticketNumber: number;
+  winnerProfileUrl: string;
+  displayName: string;
+  publishedAt: string;
+  claimedAt: string | null;
+  winnerPhotoUrl: string | null;
+  prize: {
+    name: string;
+    imageUrl: string | null;
+    thumbnailUrl: string | null;
   };
+  liveRip: {
+    slug: string;
+    title: string;
+    videoUrl: string;
+    thumbnailUrl: string | null;
+    muxPlaybackId: string | null;
+  } | null;
+};
 
-  const uploadMediaFile = useCallback(
-    async (file: File, kind: "video" | "thumbnail") => {
-      let activeSession = session;
-      if (!activeSession) {
-        try {
-          activeSession = await ensureSession();
-        } catch (error) {
-          if (!(error instanceof Error && error.message === "Authentication cancelled")) {
-            setFlash("Sign in to upload media.");
-          }
-          return null;
-        }
-      }
+type WinnersResponse = {
+  winners: GoldenLiveWinner[];
+};
 
-      if (!activeSession) {
-        return null;
-      }
+type LiveCurrentResponse = GoldenLiveSnapshot & {
+  message?: string;
+};
 
-      const params = new URLSearchParams({
-        kind,
-        fileName: file.name,
-      });
-      if (file.type) {
-        params.set("contentType", file.type);
-      }
+function buildMuxThumbnailUrl(playbackId: string) {
+  return `https://image.mux.com/${encodeURIComponent(playbackId)}/thumbnail.jpg?time=3&width=540&height=960&fit_mode=smartcrop`;
+}
 
-      const headers = new Headers();
-      headers.set("Authorization", `Bearer ${activeSession.token}`);
-      headers.set("Content-Type", file.type || "application/octet-stream");
+function formatMetric(value: number) {
+  return new Intl.NumberFormat("en-US").format(value);
+}
 
-      const response = await fetch(`/api/live-rips/upload?${params.toString()}`, {
-        method: "PUT",
-        headers,
-        body: file,
-      });
+function getFirstName(displayName: string | null) {
+  if (!displayName) {
+    return "KING";
+  }
+  const [firstToken] = displayName.trim().split(/\s+/);
+  return (firstToken || displayName).toUpperCase();
+}
 
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        const message = typeof payload?.message === "string" ? payload.message : "Upload failed";
-        throw new Error(message);
-      }
+function buildRevealCaption(ticketNumber: number) {
+  const variants = [
+    `GOLDEN TICKET #${ticketNumber} FOUND`,
+    `TICKET #${ticketNumber} CLAIMED`,
+    `KINGDOM SHOT #${ticketNumber}`,
+    `BEST PULL EVER! #${ticketNumber}`,
+  ];
+  return variants[ticketNumber % variants.length] ?? variants[0];
+}
 
-      return payload as {
-        url: string;
-        storageKey: string;
-        contentType: string;
-        size: number;
-        kind: "video" | "thumbnail";
-      };
-    },
-    [ensureSession, session]
+function TicketBanner({
+  label,
+  large = false,
+}: {
+  label: string;
+  large?: boolean;
+}) {
+  return (
+    <div
+      className={`relative inline-flex items-center justify-center overflow-hidden rounded-full border bg-black/85 px-5 text-center shadow-[0_0_30px_rgba(0,0,0,0.6)] ${
+        large ? "min-h-[48px] w-[min(92%,26rem)] py-3" : "min-h-[32px] py-1.5"
+      }`}
+      style={{ borderColor: GOLD }}
+    >
+      <span aria-hidden className="absolute left-0 top-1/2 h-4 w-4 -translate-x-1/2 -translate-y-1/2 rounded-full bg-black" />
+      <span aria-hidden className="absolute right-0 top-1/2 h-4 w-4 translate-x-1/2 -translate-y-1/2 rounded-full bg-black" />
+      <span
+        className={`${large ? "text-xl" : "text-sm"} font-heading uppercase tracking-[0.16em] text-[#f5d37a]`}
+      >
+        {label}
+      </span>
+    </div>
   );
+}
 
-  const handleFileUpload = useCallback(
-    async (event: ChangeEvent<HTMLInputElement>, kind: "video" | "thumbnail") => {
-      const file = event.target.files?.[0];
-      event.target.value = "";
-      if (!file) {
-        return;
-      }
-      const setBusy = kind === "video" ? setUploadingVideo : setUploadingThumbnail;
-      setBusy(true);
-      try {
-        const result = await uploadMediaFile(file, kind);
-        if (!result) {
-          return;
-        }
-        setFormState((prev) =>
-          kind === "video"
-            ? { ...prev, videoUrl: result.url }
-            : { ...prev, thumbnailUrl: result.url }
-        );
-        setFlash(kind === "video" ? "Video uploaded" : "Thumbnail uploaded");
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Upload failed";
-        setFlash(message);
-      } finally {
-        setBusy(false);
-      }
-    },
-    [uploadMediaFile]
+function WatermarkLogo() {
+  return (
+    <div className="pointer-events-none absolute bottom-4 right-4 z-20 opacity-70 sm:bottom-5 sm:right-5">
+      <div className="relative h-12 w-12">
+        <Image src="/brand/tenkings-logo.png" alt="" fill sizes="48px" className="object-contain" />
+      </div>
+    </div>
   );
+}
 
-  const refreshLiveRips = useCallback(async () => {
-    try {
-      const res = await fetch("/api/live-rips");
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        throw new Error(payload?.message ?? "Failed to refresh live rips");
-      }
-      const payload = (await res.json()) as { liveRips: LiveRipRecord[] };
-      setLiveRips(
-        (payload.liveRips ?? []).map((rip) => ({
-          ...rip,
-          viewCount: typeof rip.viewCount === "number" ? rip.viewCount : null,
-        }))
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to refresh live rips";
-      setFlash(message);
-    }
-  }, []);
+function LiveBadge({ viewerCount }: { viewerCount: number | null }) {
+  return (
+    <div className="absolute right-4 top-4 z-20 rounded-full border border-white/10 bg-black/78 px-3 py-2 shadow-[0_16px_40px_rgba(0,0,0,0.45)]">
+      <div className="flex items-center gap-2">
+        <span className="tk-live-dot h-2.5 w-2.5 rounded-full bg-red-600" />
+        <span className="font-heading text-sm uppercase tracking-[0.18em] text-white">
+          {viewerCount && viewerCount > 0 ? `LIVE · ${viewerCount}` : "LIVE"}
+        </span>
+      </div>
+    </div>
+  );
+}
 
-  const handleSave = useCallback(async () => {
-    if (!editMode) {
-      return;
-    }
-    setSaving(true);
+function StatCard({ value, label }: { value: number; label: string }) {
+  return (
+    <div className="rounded-[1.2rem] border border-[#C9A63D] bg-[#050505] px-3 py-4 text-center shadow-[0_18px_50px_rgba(0,0,0,0.45)]">
+      <p className="font-heading text-4xl leading-none tracking-[0.08em] text-[#f5d37a] sm:text-5xl">{formatMetric(value)}</p>
+      <p className="mt-2 text-[10px] uppercase tracking-[0.32em] text-[#b99839] sm:text-xs">{label}</p>
+    </div>
+  );
+}
 
-    let activeSession = session;
-    if (!activeSession) {
-      try {
-        activeSession = await ensureSession();
-      } catch (authError) {
-        const message =
-          authError instanceof Error && authError.message === "Authentication cancelled"
-            ? null
-            : "Sign in to manage live rips.";
-        if (message) {
-          setFlash(message);
+function RevealThumbnail({ winner }: { winner: GoldenLiveWinner }) {
+  const sources = [
+    winner.liveRip?.muxPlaybackId ? buildMuxThumbnailUrl(winner.liveRip.muxPlaybackId) : null,
+    winner.liveRip?.thumbnailUrl ?? null,
+    winner.prize.thumbnailUrl ?? null,
+    winner.prize.imageUrl ?? null,
+    winner.winnerPhotoUrl ?? null,
+  ].filter((value): value is string => Boolean(value));
+
+  const [sourceIndex, setSourceIndex] = useState(0);
+
+  useEffect(() => {
+    setSourceIndex(0);
+  }, [winner.id]);
+
+  const src = sources[sourceIndex] ?? null;
+
+  if (!src) {
+    return (
+      <div className="flex aspect-[9/16] items-center justify-center bg-black px-4 text-center font-heading text-lg uppercase tracking-[0.12em] text-[#b99839]">
+        Golden Ticket
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={`Golden Ticket #${winner.ticketNumber} reveal`}
+      className="aspect-[9/16] h-full w-full object-cover"
+      loading="lazy"
+      onError={() => {
+        if (sourceIndex < sources.length - 1) {
+          setSourceIndex(sourceIndex + 1);
         }
-        setSaving(false);
-        return;
-      }
-    }
+      }}
+    />
+  );
+}
 
-    if (!activeSession) {
-      setSaving(false);
-      return;
-    }
+function RecentRevealCard({ winner }: { winner: GoldenLiveWinner }) {
+  return (
+    <Link href={winner.winnerProfileUrl} className="group block">
+      <article className="space-y-3">
+        <div className="relative overflow-hidden rounded-[1.3rem] border border-[#C9A63D] bg-black shadow-[0_18px_50px_rgba(0,0,0,0.42)]">
+          <RevealThumbnail winner={winner} />
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-black via-black/55 to-transparent" />
+          <div className="pointer-events-none absolute inset-x-3 bottom-3">
+            <p
+              className="font-heading text-[1.15rem] uppercase leading-[0.88] tracking-[0.05em] text-[#f8f2cf] sm:text-[1.4rem]"
+              style={{
+                textShadow:
+                  "0 2px 0 rgba(0,0,0,0.92), 0 4px 18px rgba(0,0,0,0.95), 0 0 22px rgba(0,0,0,0.8)",
+              }}
+            >
+              {buildRevealCaption(winner.ticketNumber)}
+            </p>
+          </div>
+        </div>
+        <p className="text-center text-[11px] uppercase tracking-[0.28em] text-[#d9bb58] sm:text-xs">
+          {getFirstName(winner.displayName)} #{winner.ticketNumber}
+        </p>
+      </article>
+    </Link>
+  );
+}
 
-    const rawViewCount = formState.viewCount.trim();
-    const parsedViewCount = rawViewCount.length ? Number.parseInt(rawViewCount, 10) : undefined;
+function LivePlayer({
+  title,
+  playbackId,
+  videoUrl,
+  live,
+  muted,
+}: {
+  title: string;
+  playbackId: string | null;
+  videoUrl: string | null;
+  live: boolean;
+  muted: boolean;
+}) {
+  if (playbackId) {
+    return (
+      <MuxPlayer
+        playbackId={playbackId}
+        streamType={live ? "live" : "on-demand"}
+        metadataVideoTitle={title}
+        title={title}
+        autoPlay
+        muted={muted}
+        loop={!live}
+        playsInline
+        className="h-full w-full"
+      />
+    );
+  }
 
-    const body = {
-      title: formState.title.trim(),
-      slug: (formState.slug || formState.title).trim(),
-      description: formState.description.trim(),
-      videoUrl: formState.videoUrl.trim(),
-      thumbnailUrl: formState.thumbnailUrl.trim(),
-      locationId: formState.locationId,
-      featured: formState.featured,
-      viewCount:
-        typeof parsedViewCount === "number" && Number.isFinite(parsedViewCount)
-          ? Math.max(0, parsedViewCount)
-          : undefined,
-    };
+  if (videoUrl) {
+    return (
+      <video
+        autoPlay
+        muted={muted}
+        loop={!live}
+        playsInline
+        controls={false}
+        className="h-full w-full object-cover"
+        src={videoUrl}
+      />
+    );
+  }
 
-    try {
-      const endpoint = editMode === "create" ? "/api/live-rips" : `/api/live-rips/${formState.id}`;
-      const method = editMode === "create" ? "POST" : "PUT";
-      let tokenToUse = activeSession.token;
-      let retried = false;
+  return (
+    <div className="flex h-full w-full items-center justify-center bg-black px-6 text-center font-heading text-2xl uppercase tracking-[0.12em] text-[#b99839]">
+      Next Rip Coming Soon
+    </div>
+  );
+}
 
-      while (true) {
-        const response = await fetch(endpoint, {
-          method,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${tokenToUse}`,
-          },
-          body: JSON.stringify(body),
-        });
+export default function LivePage({
+  initialSnapshot,
+  initialStats,
+  initialWinners,
+}: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  const [snapshot, setSnapshot] = useState<GoldenLiveSnapshot>(initialSnapshot);
+  const [stats, setStats] = useState<GoldenLiveStats>(initialStats);
+  const [winners, setWinners] = useState<GoldenLiveWinner[]>(initialWinners);
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
+  const [playerMuted, setPlayerMuted] = useState(true);
+  const [now, setNow] = useState(() => Date.now());
 
-        if (response.ok) {
-          await refreshLiveRips();
-          setFlash("Live rip saved");
-          closeEditor();
-          break;
-        }
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const lastCountdownSessionIdRef = useRef<string | null>(null);
+  const lastAnnouncedCountdownRef = useRef<number | null>(null);
+  const liftoffPlayedForSessionRef = useRef<string | null>(null);
 
-        const payload = await response.json().catch(() => ({}));
-
-        if (response.status === 401 && !retried) {
-          retried = true;
-          logout();
-          try {
-            const renewedSession = await ensureSession();
-            if (!renewedSession) {
-              setFlash("Sign in to manage live rips.");
-              return;
-            }
-            activeSession = renewedSession;
-            tokenToUse = renewedSession.token;
-            continue;
-          } catch (authError) {
-            const message =
-              authError instanceof Error && authError.message === "Authentication cancelled"
-                ? "Sign in to manage live rips."
-                : payload?.message ?? "Sign in to manage live rips.";
-            setFlash(message);
-            return;
-          }
-        }
-
-        throw new Error(payload?.message ?? "Unable to save live rip");
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Unable to save live rip";
-      setFlash(message);
-    } finally {
-      setSaving(false);
-    }
-  }, [editMode, formState, session, refreshLiveRips, closeEditor, ensureSession, logout]);
-
-  const handleCopyLink = async (slug: string) => {
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
-    try {
-      const url = `${window.location.origin}/live/${slug}`;
-      await navigator.clipboard.writeText(url);
-      setFlash("Link copied to clipboard");
-    } catch (error) {
-      setFlash("Unable to copy link");
+
+    const storedInteraction = window.sessionStorage.getItem(INTERACTION_STORAGE_KEY) === "1";
+    const storedUnmuted = window.sessionStorage.getItem(PLAYER_UNMUTE_STORAGE_KEY) === "1";
+
+    if (storedInteraction) {
+      setHasUserInteracted(true);
+    }
+    if (storedUnmuted) {
+      setPlayerMuted(false);
+    }
+
+    const markInteraction = () => {
+      setHasUserInteracted(true);
+      window.sessionStorage.setItem(INTERACTION_STORAGE_KEY, "1");
+    };
+
+    window.addEventListener("pointerdown", markInteraction, { passive: true });
+    window.addEventListener("keydown", markInteraction);
+
+    return () => {
+      window.removeEventListener("pointerdown", markInteraction);
+      window.removeEventListener("keydown", markInteraction);
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadCurrent = async () => {
+      try {
+        const response = await fetch("/api/live/current", {
+          headers: {
+            accept: "application/json",
+          },
+        });
+        const payload = (await response.json().catch(() => ({}))) as LiveCurrentResponse;
+        if (!response.ok || !payload.polledAt) {
+          throw new Error(payload.message ?? "Failed to refresh live status");
+        }
+        if (cancelled) {
+          return;
+        }
+        startTransition(() => {
+          setSnapshot(payload);
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("Failed to refresh /live current snapshot", error);
+        }
+      }
+    };
+
+    void loadCurrent();
+    const interval = window.setInterval(() => {
+      void loadCurrent();
+    }, CURRENT_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSecondary = async () => {
+      try {
+        const [statsResponse, winnersResponse] = await Promise.all([
+          fetch("/api/golden/stats", { headers: { accept: "application/json" } }),
+          fetch("/api/golden/winners?limit=4&sort=recent", { headers: { accept: "application/json" } }),
+        ]);
+
+        const [statsPayload, winnersPayload] = await Promise.all([
+          statsResponse.json().catch(() => ({})),
+          winnersResponse.json().catch(() => ({})),
+        ]);
+
+        if (!statsResponse.ok || typeof statsPayload?.claimedCount !== "number") {
+          throw new Error("Failed to refresh Golden Ticket stats");
+        }
+        if (!winnersResponse.ok || !Array.isArray(winnersPayload?.winners)) {
+          throw new Error("Failed to refresh recent Golden Ticket reveals");
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        startTransition(() => {
+          setStats(statsPayload as GoldenLiveStats);
+          setWinners((winnersPayload as WinnersResponse).winners);
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.warn("Failed to refresh /live secondary data", error);
+        }
+      }
+    };
+
+    void loadSecondary();
+    const interval = window.setInterval(() => {
+      void loadSecondary();
+    }, SECONDARY_POLL_MS);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, []);
+
+  const currentSession = snapshot.currentSession;
+  const currentCountdownValue =
+    currentSession?.status === "COUNTDOWN"
+      ? Math.min(COUNTDOWN_TOTAL_SECONDS, Math.max(0, Math.ceil((new Date(currentSession.countdownEndsAt).getTime() - now) / 1000)))
+      : null;
+  const showCountdownOverlay = currentSession?.status === "COUNTDOWN" && currentCountdownValue !== null && currentCountdownValue > 0;
+  const isLiveTakeover = currentSession?.status === "LIVE" || currentSession?.status === "REVEAL";
+  const leftCount = Math.max(stats.totalMinted - stats.claimedCount, 0);
+
+  const activePlayerPlaybackId = currentSession?.muxPlaybackId ?? snapshot.idleReveal?.muxPlaybackId ?? null;
+  const activePlayerVideoUrl = currentSession?.videoUrl ?? snapshot.idleReveal?.videoUrl ?? null;
+  const activePlayerTitle = isLiveTakeover
+    ? "Ten Kings Golden Ticket Reveal"
+    : snapshot.idleReveal?.title ?? "Ten Kings Golden Ticket Reveal";
+
+  useEffect(() => {
+    if (!hasUserInteracted || typeof window === "undefined") {
+      return;
+    }
+
+    if (!audioContextRef.current) {
+      audioContextRef.current = new window.AudioContext();
+    }
+
+    if (audioContextRef.current.state === "suspended") {
+      void audioContextRef.current.resume();
+    }
+  }, [hasUserInteracted]);
+
+  useEffect(() => {
+    const sessionId = currentSession?.id ?? null;
+    if (lastCountdownSessionIdRef.current !== sessionId) {
+      lastCountdownSessionIdRef.current = sessionId;
+      lastAnnouncedCountdownRef.current = null;
+      if (liftoffPlayedForSessionRef.current !== sessionId) {
+        liftoffPlayedForSessionRef.current = null;
+      }
+    }
+  }, [currentSession?.id]);
+
+  useEffect(() => {
+    if (!hasUserInteracted || currentSession?.status !== "COUNTDOWN" || currentCountdownValue === null) {
+      return;
+    }
+
+    const playTone = async (frequency: number, durationMs: number, bend = false) => {
+      if (!audioContextRef.current) {
+        return;
+      }
+
+      if (audioContextRef.current.state === "suspended") {
+        await audioContextRef.current.resume();
+      }
+
+      const context = audioContextRef.current;
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(frequency, context.currentTime);
+      if (bend) {
+        oscillator.frequency.linearRampToValueAtTime(frequency * 1.2, context.currentTime + durationMs / 1000);
+      }
+      gain.gain.setValueAtTime(0.0001, context.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.2, context.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + durationMs / 1000);
+
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + durationMs / 1000 + 0.02);
+    };
+
+    if (
+      currentCountdownValue > 0 &&
+      currentCountdownValue <= COUNTDOWN_TOTAL_SECONDS &&
+      currentCountdownValue !== lastAnnouncedCountdownRef.current
+    ) {
+      lastAnnouncedCountdownRef.current = currentCountdownValue;
+      void playTone(440, 150);
+      return;
+    }
+
+    if (currentCountdownValue === 0 && liftoffPlayedForSessionRef.current !== currentSession.id) {
+      liftoffPlayedForSessionRef.current = currentSession.id;
+      void playTone(880, 600, true);
+    }
+  }, [currentCountdownValue, currentSession?.id, currentSession?.status, hasUserInteracted]);
+
+  const handleUnmute = () => {
+    setHasUserInteracted(true);
+    setPlayerMuted(false);
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem(INTERACTION_STORAGE_KEY, "1");
+      window.sessionStorage.setItem(PLAYER_UNMUTE_STORAGE_KEY, "1");
     }
   };
 
   return (
-    <AppShell>
+    <>
       <Head>
-        <title>Ten Kings · Live Rips</title>
+        <title>Ten Kings Live</title>
         <meta
           name="description"
-          content="Watch Ten Kings live rips from our collectible vending machines and share the biggest hits."
+          content="Watch the next Ten Kings Golden Ticket reveal live, then revisit the latest crowned winners."
         />
+        <link rel="preconnect" href="https://stream.mux.com" />
+        <link rel="dns-prefetch" href="https://stream.mux.com" />
+        <link rel="preconnect" href="https://image.mux.com" />
+        <link rel="dns-prefetch" href="https://image.mux.com" />
       </Head>
 
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-10 px-6 py-12">
-        <header className="space-y-4">
-          <p className="text-sm uppercase tracking-[0.3em] text-violet-300">Ten Kings Live</p>
-          <h1 className="font-heading text-4xl uppercase tracking-[0.2em] text-white md:text-5xl">Recent Live Rips</h1>
-          <p className="text-sm text-slate-400">
-            Relive the best pulls from Ten Kings locations. Share the hype or copy a link for your location page.
-          </p>
-        </header>
+      <main className="golden-live-page min-h-screen bg-black px-4 pb-16 pt-5 text-[#f5d37a] sm:px-6">
+        <div className="mx-auto flex max-w-6xl flex-col items-center">
+          <header className="flex w-full justify-center pb-4">
+            <div className="relative h-14 w-14">
+              <Image src="/brand/tenkings-logo.png" alt="Ten Kings Collectibles" fill sizes="56px" className="object-contain" priority />
+            </div>
+          </header>
 
-        {(flash || error) && (
-          <div
-            className={`rounded-2xl border px-6 py-4 text-sm ${
-              error
-                ? "border-rose-500/40 bg-rose-500/10 text-rose-200"
-                : "border-sky-500/40 bg-sky-500/10 text-sky-200"
+          <section
+            className={`relative flex w-full flex-col items-center ${
+              isLiveTakeover ? "min-h-[calc(100vh-110px)] justify-start" : ""
             }`}
           >
-            {error ?? flash}
-          </div>
-        )}
-
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="text-xs uppercase tracking-[0.3em] text-slate-400">
-              Filter by location
-              <select
-                value={filterLocation}
-                onChange={(event) => setFilterLocation(event.target.value)}
-                className="ml-3 rounded-full border border-white/10 bg-night-900/70 px-4 py-2 text-xs uppercase tracking-[0.3em] text-slate-200 outline-none focus:border-gold-400"
-              >
-                <option value="">All locations</option>
-                {locations.map((location) => (
-                  <option key={location.id} value={location.id}>
-                    {location.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={beginCreate}
-              className="self-start rounded-full border border-gold-500/60 bg-gold-500 px-6 py-2 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400"
+            <div
+              className={`relative overflow-hidden rounded-[1.8rem] border bg-black shadow-[0_28px_80px_rgba(0,0,0,0.58)] ${
+                isLiveTakeover ? "mt-1" : "mt-3"
+              }`}
+              style={{
+                borderColor: GOLD,
+                width: isLiveTakeover ? "min(94vw, calc((100vh - 112px) * 9 / 16))" : "min(90vw, calc((100vh - 260px) * 9 / 16))",
+                aspectRatio: "9 / 16",
+              }}
             >
-              Add video
-            </button>
-          )}
-        </div>
-
-        {loading ? (
-          <div className="rounded-3xl border border-white/10 bg-night-900/60 px-6 py-12 text-center text-sm text-slate-400">
-            Loading live rips…
-          </div>
-        ) : filteredLiveRips.length === 0 ? (
-          <div className="rounded-3xl border border-white/10 bg-night-900/60 px-6 py-12 text-center text-sm text-slate-400">
-            No live rips yet. Add one to kick things off!
-          </div>
-        ) : (
-          <div className="grid gap-8 md:grid-cols-2 xl:grid-cols-3">
-            {filteredLiveRips.map((liveRip) => (
-              <article
-                key={liveRip.id}
-                className="flex flex-col gap-4 rounded-[2.25rem] border border-white/10 bg-night-900/70 p-6 shadow-card transition hover:border-gold-400/60 hover:shadow-glow"
-              >
-                <div className="space-y-2">
-                  <p className="text-xs uppercase tracking-[0.3em] text-slate-400">{liveRip.location?.name ?? "Ten Kings"}</p>
-                  <h2 className="font-heading text-2xl uppercase tracking-[0.2em] text-white">{liveRip.title}</h2>
-                  <p className="text-xs text-slate-500">{new Date(liveRip.createdAt).toLocaleString()}</p>
+              {activePlayerPlaybackId || activePlayerVideoUrl ? (
+                <LivePlayer
+                  title={activePlayerTitle}
+                  playbackId={activePlayerPlaybackId}
+                  videoUrl={activePlayerVideoUrl}
+                  live={Boolean(currentSession)}
+                  muted={playerMuted}
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center bg-black px-6 text-center font-heading text-[clamp(2rem,6vw,4rem)] uppercase tracking-[0.12em] text-[#b99839]">
+                  Next Rip Coming Soon
                 </div>
+              )}
 
-                <LiveRipPreview
-                  id={liveRip.id}
-                  title={liveRip.title}
-                  videoUrl={liveRip.videoUrl}
-                  thumbnailUrl={liveRip.thumbnailUrl}
-                  muted={activePreviewId !== liveRip.id}
-                  onToggleMute={() =>
-                    setActivePreviewId((prev) => (prev === liveRip.id ? null : liveRip.id))
-                  }
-                  viewCount={liveRip.viewCount}
-                />
+              <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.4),transparent_22%,transparent_72%,rgba(0,0,0,0.6))]" />
 
-                {liveRip.description && (
-                  <p className="text-sm text-slate-300">{liveRip.description}</p>
-                )}
-
-                <div className="flex flex-wrap items-center gap-3 pt-2">
-                  <Link
-                    href={`/live/${liveRip.slug}`}
-                    className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-gold-300 hover:text-gold-200"
-                  >
-                    View page
-                  </Link>
-                  <button
-                    type="button"
-                    onClick={() => handleCopyLink(liveRip.slug)}
-                    className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-gold-300 hover:text-gold-200"
-                  >
-                    Copy link
-                  </button>
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      onClick={() => beginEdit(liveRip)}
-                      className="rounded-full border border-white/20 px-4 py-2 text-[10px] uppercase tracking-[0.3em] text-slate-200 transition hover:border-white/40 hover:text-white"
-                    >
-                      Edit
-                    </button>
-                  )}
+              {showCountdownOverlay ? (
+                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/66 px-6 text-center backdrop-blur-[2px]">
+                  <TicketBanner label="TEN KINGS GOLDEN TICKET REVEAL" large />
+                  <p className="mt-8 font-heading text-[clamp(7rem,28vw,14rem)] leading-none tracking-[0.06em] text-[#f5d37a]">
+                    {currentCountdownValue}
+                  </p>
                 </div>
-              </article>
-            ))}
-          </div>
-        )}
-      </div>
+              ) : (
+                <>
+                  <div className="absolute left-4 top-4 z-20 sm:left-5 sm:top-5">
+                    <TicketBanner
+                      label={isLiveTakeover ? "TEN KINGS GOLDEN TICKET REVEAL" : "GOLDEN TICKET REVEAL"}
+                      large={isLiveTakeover}
+                    />
+                  </div>
+                  {isLiveTakeover ? <LiveBadge viewerCount={snapshot.viewerCount} /> : null}
+                </>
+              )}
 
-      {editMode && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-6 py-10">
-          <div className="absolute inset-0 bg-black/70" onClick={closeEditor} />
-          <div className="relative z-10 w-full max-w-2xl space-y-6 rounded-3xl border border-white/10 bg-night-900/95 p-6 shadow-2xl md:p-10">
-            <h3 className="font-heading text-2xl uppercase tracking-[0.24em] text-white">
-              {editMode === "create" ? "Add live rip" : "Edit live rip"}
-            </h3>
-            <div className="grid gap-4 text-sm text-slate-200">
-              <label className="flex flex-col gap-2">
-                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Title</span>
-                <input
-                  value={formState.title}
-                  onChange={(event) => handleFormChange("title", event.target.value)}
-                  className="rounded-xl border border-white/10 bg-night-900/70 px-4 py-3 text-white outline-none focus:border-gold-400"
-                  placeholder="Headline to show on the page"
-                />
-              </label>
-              <label className="flex flex-col gap-2">
-                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Slug</span>
-                <input
-                  value={formState.slug}
-                  onChange={(event) => handleFormChange("slug", event.target.value)}
-                  className="rounded-xl border border-white/10 bg-night-900/70 px-4 py-3 text-white outline-none focus:border-gold-400"
-                  placeholder="unique-url-slug"
-                />
-              </label>
-              <label className="flex flex-col gap-2">
-                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Video URL</span>
-                <input
-                  value={formState.videoUrl}
-                  onChange={(event) => handleFormChange("videoUrl", event.target.value)}
-                  className="rounded-xl border border-white/10 bg-night-900/70 px-4 py-3 text-white outline-none focus:border-gold-400"
-                  placeholder="https://"
-                />
-                <span className="text-[11px] text-slate-500">Paste a link or upload a file below.</span>
-              </label>
-              <label className="flex flex-col gap-2">
-                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Upload video</span>
-                <input
-                  type="file"
-                  accept="video/mp4,video/*"
-                  onChange={(event) => handleFileUpload(event, "video")}
-                  disabled={uploadingVideo}
-                  className="rounded-xl border border-dashed border-white/10 bg-night-900/60 px-4 py-3 text-xs text-slate-300 focus:border-gold-400"
-                />
-                {uploadingVideo ? (
-                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-500">Uploading…</span>
-                ) : formState.videoUrl ? (
-                  <span className="text-[11px] text-emerald-300">Video ready</span>
-                ) : null}
-              </label>
-              <label className="flex flex-col gap-2">
-                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Thumbnail URL (optional)</span>
-                <input
-                  value={formState.thumbnailUrl}
-                  onChange={(event) => handleFormChange("thumbnailUrl", event.target.value)}
-                  className="rounded-xl border border-white/10 bg-night-900/70 px-4 py-3 text-white outline-none focus:border-gold-400"
-                  placeholder="https://"
-                />
-              </label>
-              <label className="flex flex-col gap-2">
-                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Upload thumbnail</span>
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp,image/gif"
-                  onChange={(event) => handleFileUpload(event, "thumbnail")}
-                  disabled={uploadingThumbnail}
-                  className="rounded-xl border border-dashed border-white/10 bg-night-900/60 px-4 py-3 text-xs text-slate-300 focus:border-gold-400"
-                />
-                {uploadingThumbnail ? (
-                  <span className="text-[11px] uppercase tracking-[0.3em] text-slate-500">Uploading…</span>
-                ) : formState.thumbnailUrl ? (
-                  <span className="text-[11px] text-emerald-300">Thumbnail ready</span>
-                ) : (
-                  <span className="text-[11px] text-slate-500">Optional image that shows in previews.</span>
-                )}
-              </label>
-              <label className="flex flex-col gap-2">
-                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Description</span>
-                <textarea
-                  value={formState.description}
-                  onChange={(event) => handleFormChange("description", event.target.value)}
-                  className="min-h-[100px] rounded-xl border border-white/10 bg-night-900/70 px-4 py-3 text-white outline-none focus:border-gold-400"
-                  placeholder="Optional summary or context"
-                />
-              </label>
-              <label className="flex flex-col gap-2">
-                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">Location</span>
-                <select
-                  value={formState.locationId}
-                  onChange={(event) => handleFormChange("locationId", event.target.value)}
-                  className="rounded-xl border border-white/10 bg-night-900/70 px-4 py-3 text-white outline-none focus:border-gold-400"
+              {isLiveTakeover ? (
+                <div className="absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-full border border-[#C9A63D]/60 bg-black/76 px-4 py-2 shadow-[0_20px_50px_rgba(0,0,0,0.45)]">
+                  <p className="whitespace-nowrap font-heading text-sm uppercase tracking-[0.18em] text-[#f5d37a] sm:text-base">
+                    {stats.claimedCount} FOUND · {leftCount} LEFT · LIVE NOW
+                  </p>
+                </div>
+              ) : null}
+
+              <WatermarkLogo />
+
+              {!isLiveTakeover && playerMuted ? (
+                <button
+                  type="button"
+                  onClick={handleUnmute}
+                  className="absolute bottom-4 left-4 z-20 rounded-full border border-[#C9A63D]/60 bg-black/78 px-3 py-2 text-[10px] uppercase tracking-[0.28em] text-[#f5d37a] transition hover:border-[#f5d37a] hover:text-[#f8e6ab] sm:bottom-5 sm:left-5"
                 >
-                  <option value="">Unassigned</option>
-                  {locations.map((location) => (
-                    <option key={location.id} value={location.id}>
-                      {location.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-2">
-                <span className="text-xs uppercase tracking-[0.3em] text-slate-400">External views (optional)</span>
-                <input
-                  type="number"
-                  min={0}
-                  value={formState.viewCount}
-                  onChange={(event) => handleFormChange("viewCount", event.target.value)}
-                  className="rounded-xl border border-white/10 bg-night-900/70 px-4 py-3 text-white outline-none focus:border-gold-400"
-                  placeholder="913"
-                />
-                <span className="text-[11px] text-slate-500">Use this to display counts from platforms like YouTube.</span>
-              </label>
-              <label className="flex items-center gap-2 text-xs uppercase tracking-[0.3em] text-slate-400">
-                <input
-                  type="checkbox"
-                  checked={formState.featured}
-                  onChange={(event) => handleFormChange("featured", event.target.checked)}
-                  className="h-4 w-4 rounded border-white/20 bg-night-900/70"
-                />
-                Feature on top of list
-              </label>
+                  Tap to unmute
+                </button>
+              ) : null}
             </div>
 
-            <div className="flex flex-wrap justify-end gap-3">
-              <button
-                type="button"
-                onClick={closeEditor}
-                className="rounded-full border border-white/15 px-6 py-2 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
+            {!isLiveTakeover ? (
+              <>
+                <div className="mt-5 grid w-full max-w-4xl grid-cols-3 gap-3 sm:mt-6 sm:gap-4">
+                  <StatCard value={stats.claimedCount} label="Found" />
+                  <StatCard value={stats.placedCount} label="In Circulation" />
+                  <StatCard value={stats.totalMinted} label="Total" />
+                </div>
+              </>
+            ) : null}
+          </section>
+
+          <section className={`w-full max-w-5xl ${isLiveTakeover ? "pt-12" : "pt-10"}`}>
+            <h2 className="text-center font-heading text-4xl uppercase tracking-[0.16em] text-[#f5d37a] sm:text-5xl">
+              Recent Reveals
+            </h2>
+
+            {winners.length === 0 ? (
+              <div className="mt-6 rounded-[1.6rem] border border-[#C9A63D]/55 bg-black px-6 py-12 text-center shadow-[0_18px_50px_rgba(0,0,0,0.35)]">
+                <p className="font-heading text-2xl uppercase tracking-[0.12em] text-[#b99839]">
+                  The next Golden Ticket starts the reel.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-6 grid grid-cols-2 gap-4 sm:gap-5">
+                {winners.slice(0, 4).map((winner) => (
+                  <RecentRevealCard key={winner.id} winner={winner} />
+                ))}
+              </div>
+            )}
+
+            <div className="mt-8 flex justify-center">
+              <Link
+                href="/golden"
+                className="rounded-full border border-[#C9A63D]/70 px-5 py-3 text-[11px] uppercase tracking-[0.3em] text-[#f5d37a] transition hover:border-[#f5d37a] hover:text-[#fff4cb]"
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={saving}
-                className="rounded-full border border-gold-500/60 bg-gold-500 px-6 py-2 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/10 disabled:text-slate-500"
-              >
-                {saving ? "Saving…" : "Save"}
-              </button>
+                Enter the Hall
+              </Link>
             </div>
-          </div>
+          </section>
         </div>
-      )}
-    </AppShell>
+      </main>
+
+      <style jsx global>{`
+        @keyframes tk-live-pulse {
+          0% {
+            transform: scale(1);
+            box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.65);
+          }
+          70% {
+            transform: scale(1.05);
+            box-shadow: 0 0 0 12px rgba(220, 38, 38, 0);
+          }
+          100% {
+            transform: scale(1);
+            box-shadow: 0 0 0 0 rgba(220, 38, 38, 0);
+          }
+        }
+
+        .tk-live-dot {
+          animation: tk-live-pulse 1.4s ease-out infinite;
+        }
+
+        .golden-live-page mux-player {
+          --media-control-background: rgba(0, 0, 0, 0.7);
+          --media-control-color: #f5d37a;
+          --media-live-button-indicator-color: ${LIVE_RED};
+          height: 100%;
+          width: 100%;
+        }
+      `}</style>
+    </>
   );
 }
+
+export const getServerSideProps: GetServerSideProps<{
+  initialSnapshot: GoldenLiveSnapshot;
+  initialStats: GoldenLiveStats;
+  initialWinners: GoldenLiveWinner[];
+}> = async () => {
+  const [{ getGoldenLiveSnapshot }, { getGoldenTicketHallStats, listGoldenTicketWinners }] = await Promise.all([
+    import("../lib/server/goldenLive"),
+    import("../lib/server/goldenClaim"),
+  ]);
+
+  const [initialSnapshot, initialStats, winners] = await Promise.all([
+    getGoldenLiveSnapshot(),
+    getGoldenTicketHallStats(),
+    listGoldenTicketWinners({ limit: 4, order: "recent" }),
+  ]);
+
+  return {
+    props: {
+      initialSnapshot,
+      initialStats,
+      initialWinners: winners.winners,
+    },
+  };
+};
