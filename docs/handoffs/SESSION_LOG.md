@@ -16955,11 +16955,16 @@ By tapping "Unlock My Reveal" below, I confirm that:
   - failed `_prisma_migrations` row exists for `20260422_golden_ticket_and_browser_ingest`
   - no `GoldenTicket`, `GoldenTicketConsent`, or `GoldenTicketWinnerProfile` tables exist after the failed deploy, consistent with transaction rollback
 
-### Recovery Plan
-- Correct `packages/database/prisma/migrations/20260422_golden_ticket_and_browser_ingest/migration.sql` so Golden Ticket foreign-key columns that reference existing UUID primary keys are created as `UUID`:
+### Recovery Actions
+- Corrected the Golden Ticket base migration so foreign-key columns that reference existing UUID primary keys are created as `UUID`:
   - `GoldenTicket.qrCodeId`
   - `GoldenTicket.claimedKioskSessionId`
   - `GoldenTicket.sourceLocationId`
-- Run production migration recovery before re-pushing/redeploying:
+- Ran production migration recovery:
   - `prisma migrate resolve --rolled-back 20260422_golden_ticket_and_browser_ingest`
-- Then push the correction to `main` and let Vercel production auto-deploy run `prisma migrate deploy` again.
+  - observed result: migration `20260422_golden_ticket_and_browser_ingest` marked as rolled back
+- Follow-up status showed the same migration name was no longer reported as pending, so the corrected migration was renamed to force a fresh application attempt with a new migration name:
+  - from `packages/database/prisma/migrations/20260422_golden_ticket_and_browser_ingest`
+  - to `packages/database/prisma/migrations/20260422230000_golden_ticket_and_browser_ingest`
+- Kept `packages/database/prisma/migrations/20260422_golden_ticket_and_browser_ingest` as a no-op marker because production `_prisma_migrations` contains that rolled-back migration name; removing it made Prisma report local/database history divergence.
+- The corrected base migration sorts before the no-op marker and before `20260423000000_make_golden_ticket_winner_published_at_nullable`, so production deploy should apply the corrected base migration first, retain the old rolled-back name for history consistency, then apply the nullable/backfill follow-up.
