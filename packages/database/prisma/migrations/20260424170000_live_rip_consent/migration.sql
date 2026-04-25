@@ -1,18 +1,22 @@
 -- CreateEnum
-CREATE TYPE "LiveRipStatus" AS ENUM ('PENDING', 'LIVE', 'COMPLETE', 'CANCELLED');
+DO $$ BEGIN
+  CREATE TYPE "LiveRipStatus" AS ENUM ('PENDING', 'LIVE', 'COMPLETE', 'CANCELLED');
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
 
 -- AlterTable
 ALTER TABLE "LiveRip"
-  ADD COLUMN "userId" TEXT,
-  ADD COLUMN "status" "LiveRipStatus" NOT NULL DEFAULT 'COMPLETE',
-  ADD COLUMN "muxStreamId" TEXT,
-  ADD COLUMN "muxStreamKey" TEXT,
-  ADD COLUMN "whipUploadUrl" TEXT,
-  ADD COLUMN "startedAt" TIMESTAMP(3),
-  ADD COLUMN "endedAt" TIMESTAMP(3);
+  ADD COLUMN IF NOT EXISTS "userId" TEXT,
+  ADD COLUMN IF NOT EXISTS "status" "LiveRipStatus" NOT NULL DEFAULT 'COMPLETE',
+  ADD COLUMN IF NOT EXISTS "muxStreamId" TEXT,
+  ADD COLUMN IF NOT EXISTS "muxStreamKey" TEXT,
+  ADD COLUMN IF NOT EXISTS "whipUploadUrl" TEXT,
+  ADD COLUMN IF NOT EXISTS "startedAt" TIMESTAMP(3),
+  ADD COLUMN IF NOT EXISTS "endedAt" TIMESTAMP(3);
 
 -- CreateTable
-CREATE TABLE "LiveRipConsent" (
+CREATE TABLE IF NOT EXISTS "LiveRipConsent" (
   "id" TEXT NOT NULL,
   "userId" TEXT NOT NULL,
   "liveRipId" uuid,
@@ -26,34 +30,46 @@ CREATE TABLE "LiveRipConsent" (
 );
 
 -- CreateIndex
-CREATE INDEX "LiveRip_status_isGoldenTicket_createdAt_idx" ON "LiveRip"("status", "isGoldenTicket", "createdAt");
+CREATE INDEX IF NOT EXISTS "LiveRip_status_isGoldenTicket_createdAt_idx" ON "LiveRip"("status", "isGoldenTicket", "createdAt");
 
 -- CreateIndex
-CREATE INDEX "LiveRip_userId_idx" ON "LiveRip"("userId");
+CREATE INDEX IF NOT EXISTS "LiveRip_userId_idx" ON "LiveRip"("userId");
 
 -- CreateIndex
-CREATE INDEX "LiveRip_muxStreamId_idx" ON "LiveRip"("muxStreamId");
+CREATE INDEX IF NOT EXISTS "LiveRip_muxStreamId_idx" ON "LiveRip"("muxStreamId");
 
 -- CreateIndex
-CREATE INDEX "LiveRipConsent_userId_idx" ON "LiveRipConsent"("userId");
+CREATE INDEX IF NOT EXISTS "LiveRipConsent_userId_idx" ON "LiveRipConsent"("userId");
 
 -- CreateIndex
-CREATE INDEX "LiveRipConsent_liveRipId_idx" ON "LiveRipConsent"("liveRipId");
+CREATE INDEX IF NOT EXISTS "LiveRipConsent_liveRipId_idx" ON "LiveRipConsent"("liveRipId");
 
 -- AddForeignKey
-ALTER TABLE "LiveRip"
-  ADD CONSTRAINT "LiveRip_userId_fkey"
-  FOREIGN KEY ("userId") REFERENCES "User"("id")
-  ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "LiveRip"
+    ADD CONSTRAINT "LiveRip_userId_fkey"
+    FOREIGN KEY ("userId") REFERENCES "User"("id")
+    ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "LiveRipConsent"
-  ADD CONSTRAINT "LiveRipConsent_userId_fkey"
-  FOREIGN KEY ("userId") REFERENCES "User"("id")
-  ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "LiveRipConsent"
+    ADD CONSTRAINT "LiveRipConsent_userId_fkey"
+    FOREIGN KEY ("userId") REFERENCES "User"("id")
+    ON DELETE RESTRICT ON UPDATE CASCADE;
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
 
 -- AddForeignKey
-ALTER TABLE "LiveRipConsent"
-  ADD CONSTRAINT "LiveRipConsent_liveRipId_fkey"
-  FOREIGN KEY ("liveRipId") REFERENCES "LiveRip"("id")
-  ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$ BEGIN
+  ALTER TABLE "LiveRipConsent"
+    ADD CONSTRAINT "LiveRipConsent_liveRipId_fkey"
+    FOREIGN KEY ("liveRipId") REFERENCES "LiveRip"("id")
+    ON DELETE SET NULL ON UPDATE CASCADE;
+EXCEPTION
+  WHEN duplicate_object THEN null;
+END $$;
