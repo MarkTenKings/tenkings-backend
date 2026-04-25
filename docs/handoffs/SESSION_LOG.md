@@ -17005,3 +17005,81 @@ By tapping "Unlock My Reveal" below, I confirm that:
   - `pnpm --filter @tenkings/nextjs-app exec next lint --file 'pages/golden/claim/[code].tsx' --file lib/server/goldenClaim.ts --file lib/goldenConsent.ts` -> pass
   - `pnpm --filter @tenkings/browser-rip-client run build` -> pass
   - `pnpm --filter @tenkings/nextjs-app run build` -> pass locally with only pre-existing non-fatal warnings (`<img>` lint warnings, outdated browserslist/tailwind glob warning)
+
+## 2026-04-24 - Rip It Live + unified /live implementation
+
+### Summary
+- Re-read `AGENTS.md` and required startup docs from `/Users/markthomas/tenkings-task27-main`.
+- Fetched latest `origin/main` and created clean worktree `/Users/markthomas/tenkings-rip-it-live` on `feature/rip-it-live` from `origin/main` at `cbb9180`.
+- Implemented unified `/live` gallery states:
+  - idle replay rows/grid
+  - regular active `Live Rips` row with muted autoplay live cards
+  - active Golden Ticket hero with muted autoplay and tap-to-unmute, plus optional regular live row
+- Added `/api/live/state` and server helpers for active Golden Ticket stream, active regular live rips, past Golden Ticket reveals, and mixed past rips.
+- Added buyer-side Rip It Live checkout toggle in `pages/packs.tsx`, default OFF.
+- Added ON-flow modal with server-canonical consent fetch, DOB gate, consent checkbox, and camera/mic permission request.
+- Added Go Live screen using `@tenkings/browser-rip-client` / `BrowserRipClient` to publish browser camera/mic via WHIP.
+- Added live-rip purchase/start/complete APIs that create one `LiveRip`, one `LiveRipConsent`, provision Mux, and return WHIP/watch metadata.
+- Added Mux webhook handling for buyer-created `LiveRip` rows.
+- Added Prisma `LiveRipStatus`, live-rip Mux/user/timing fields, `LiveRipConsent` model, and migration `20260424170000_live_rip_consent`.
+- Aligned GitHub CI pnpm/Prisma/GHCR setup by removing the stale hard-coded `pnpm/action-setup` version, adding `@tenkings/database` Prisma generation before the workspace build, lowercasing GHCR image repository tags for Docker, and preserving/building workspace packages plus root TypeScript config in the frontend Docker build.
+- No deploy, restart, migration execution, runtime DB mutation, merge, or destructive operation was executed.
+
+### Files Updated
+- `frontend/nextjs-app/pages/live.tsx`
+- `frontend/nextjs-app/pages/live/[slug].tsx`
+- `frontend/nextjs-app/pages/packs.tsx`
+- `frontend/nextjs-app/lib/api.ts`
+- `frontend/nextjs-app/lib/liveRipConsent.ts`
+- `frontend/nextjs-app/lib/server/liveRip.ts`
+- `frontend/nextjs-app/pages/api/live/state.ts`
+- `frontend/nextjs-app/pages/api/live-rip/consent.ts`
+- `frontend/nextjs-app/pages/api/live-rip/purchase.ts`
+- `frontend/nextjs-app/pages/api/live-rip/[liveRipId]/start.ts`
+- `frontend/nextjs-app/pages/api/live-rip/[liveRipId]/complete.ts`
+- `frontend/nextjs-app/pages/api/mux/webhook.ts`
+- `frontend/nextjs-app/package.json`
+- `frontend/nextjs-app/Dockerfile`
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260424170000_live_rip_consent/migration.sql`
+- `packages/database/src/index.ts`
+- `pnpm-lock.yaml`
+- `.github/workflows/ci.yml`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm install --ignore-scripts` -> completed after dependency linking; initial plain install hit an `iohook` prebuild 404 under local Node 25.
+- `pnpm --filter @tenkings/database generate` -> pass with local Node engine warning.
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass.
+- `pnpm --filter @tenkings/browser-rip-client run build` -> pass.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsc -p tsconfig.json --noEmit` -> pass.
+- Targeted `next lint` for changed live/pack/API/helper files -> pass.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing unrelated warnings (`<img>` warnings in admin pages, stale Browserslist/baseline-browser-mapping data, Tailwind CSS glob warning).
+- `pnpm --filter '@tenkings/*' run --if-present build` after Prisma generate -> pass with the same existing unrelated Next warnings and local Node 25 engine warning.
+- `git diff --check` -> pass.
+
+### Required Env Vars Before Merge
+- `LIVE_RIP_CONSENT_TEXT_VERSION`
+  - default: `v1.0-2026-04-24`
+- `LIVE_RIP_CONSENT_TEXT`
+  - default:
+```text
+By enabling Rip It Live, I confirm:
+
+• I am 18 years of age or older.
+• I grant Ten Kings permission to access my camera and microphone for the duration of this live rip.
+• I consent to having my pack opening livestreamed publicly on collect.tenkings.co/live and recorded for replay.
+• I grant Ten Kings a perpetual, royalty-free license to use, display, and distribute the recording.
+• I understand the stream cannot be retracted once it begins.
+• I have read and agree to the Ten Kings Terms of Service and Privacy Policy.
+```
+
+### Notes
+- Migration was created but not run.
+- The provided mockup paths under `/home/user/workspace` were not present in this macOS workspace, so the `/live` rebuild followed the written spec directly.
+- Current `pages/packs.tsx` flow is single-pack purchase; this implementation creates one `LiveRip` per successful live purchase and models the session as sequential, but there is no existing multi-pack cart UI to exercise multiple packs from one checkout.
+- PR opened against `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/5`
+- Vercel preview ready: `https://tenkings-backend-nextjs-app-git-feature-rip-it-live-ten-kings.vercel.app`
+- Do not merge or deploy until reviewed.

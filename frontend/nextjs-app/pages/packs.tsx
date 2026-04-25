@@ -3,6 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/router";
+import { BrowserRipClient, type RipError, type RipStage } from "@tenkings/browser-rip-client";
 import AppShell from "../components/AppShell";
 import { ChaseCarousel } from "../components/ChaseCarousel";
 import StripeCheckout from "../components/StripeCheckout";
@@ -15,6 +16,11 @@ import {
   purchasePack,
 } from "../lib/api";
 import { formatTkd } from "../lib/formatters";
+import {
+  LIVE_RIP_CONSENT_TEXT,
+  LIVE_RIP_CONSENT_TEXT_VERSION,
+  LIVE_RIP_MIN_AGE,
+} from "../lib/liveRipConsent";
 import type { NormalizedClassification } from "@tenkings/shared";
 
 const BUYBACK_RATE = 0.75;
@@ -60,6 +66,41 @@ type RevealItem = {
   buybackAvailable: boolean;
   buybackAccepted: boolean;
   normalized: NormalizedClassification | null;
+};
+
+type LiveRipConsentState = {
+  enabled: true;
+  dob: string;
+  consentTextVersion: string;
+  consentTextSnapshot: string;
+  consentedAt: string;
+};
+
+type BuyerLiveRipSession = {
+  id: string;
+  slug: string;
+  streamKey: string | null;
+  muxPlaybackId: string | null;
+  playbackUrl: string | null;
+  whipUploadUrl: string;
+  watchUrl: string;
+  pack: any;
+  opened: boolean;
+  completed: boolean;
+  category: PackCategory;
+  tier: PackTier;
+};
+
+type LiveRipDobParts = {
+  month: string;
+  day: string;
+  year: string;
+};
+
+const emptyLiveRipDob: LiveRipDobParts = {
+  month: "",
+  day: "",
+  year: "",
 };
 
 const catalog: PackCategory[] = [
@@ -234,6 +275,9 @@ const tierImageOverrides: Record<string, string> = {
 const canonical = (value: string | null | undefined) =>
   value ? value.replace(/[^a-z0-9]/gi, "").toLowerCase() : "";
 
+const inputClass =
+  "w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-3 text-sm text-white placeholder:text-slate-500 focus:border-gold-500 focus:outline-none focus:ring-2 focus:ring-gold-500/30";
+
 const categoryEnumById: Record<CategoryId, string> = {
   sports: "SPORTS",
   pokemon: "POKEMON",
@@ -386,6 +430,41 @@ const buildNormalizedFacts = (normalized: NormalizedClassification | null): Norm
   });
 
   return facts;
+};
+
+const buildDobIso = (parts: LiveRipDobParts) => {
+  if (!parts.year || !parts.month || !parts.day) {
+    return null;
+  }
+  const year = Number.parseInt(parts.year, 10);
+  const month = Number.parseInt(parts.month, 10);
+  const day = Number.parseInt(parts.day, 10);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) {
+    return null;
+  }
+  const date = new Date(Date.UTC(year, month - 1, day, 12));
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+};
+
+const isAdultDob = (dobIso: string) => {
+  const [year, month, day] = dobIso.split("-").map((part) => Number.parseInt(part, 10));
+  const dob = new Date(Date.UTC(year, month - 1, day, 12));
+  const now = new Date();
+  let age = now.getUTCFullYear() - dob.getUTCFullYear();
+  const monthDiff = now.getUTCMonth() - dob.getUTCMonth();
+  const dayDiff = now.getUTCDate() - dob.getUTCDate();
+  if (monthDiff < 0 || (monthDiff === 0 && dayDiff < 0)) {
+    age -= 1;
+  }
+  return age >= LIVE_RIP_MIN_AGE;
 };
 
 const placeholderReveal = (category: PackCategory, tier: PackTier): RevealItem => ({
@@ -600,6 +679,192 @@ function RevealModal({
   );
 }
 
+interface LiveRipConsentModalProps {
+  dob: LiveRipDobParts;
+  consentText: string;
+  consentChecked: boolean;
+  permissionGranted: boolean;
+  permissionBusy: boolean;
+  error: string | null;
+  onDobChange: (parts: LiveRipDobParts) => void;
+  onConsentCheckedChange: (checked: boolean) => void;
+  onRequestPermissions: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+  onUnderage: () => void;
+}
+
+function LiveRipConsentModal({
+  dob,
+  consentText,
+  consentChecked,
+  permissionGranted,
+  permissionBusy,
+  error,
+  onDobChange,
+  onConsentCheckedChange,
+  onRequestPermissions,
+  onConfirm,
+  onCancel,
+  onUnderage,
+}: LiveRipConsentModalProps) {
+  const dobIso = buildDobIso(dob);
+  const dobComplete = Boolean(dob.month && dob.day && dob.year);
+  const underage = Boolean(dobIso && !isAdultDob(dobIso));
+  const canConfirm = Boolean(dobIso && !underage && consentChecked && permissionGranted);
+
+  useEffect(() => {
+    if (!underage) {
+      return;
+    }
+    const timer = window.setTimeout(onUnderage, 1200);
+    return () => window.clearTimeout(timer);
+  }, [onUnderage, underage]);
+
+  const years = useMemo(() => {
+    const current = new Date().getUTCFullYear();
+    return Array.from({ length: 100 }, (_, index) => String(current - index));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6">
+      <div className="absolute inset-0 bg-black/75" onClick={onCancel} />
+      <div
+        className="relative z-10 w-full max-w-3xl overflow-y-auto rounded-[2rem] border border-gold-500/35 bg-night-900/95 p-6 shadow-2xl"
+        style={{ maxHeight: "calc(100vh - 2rem)" }}
+      >
+        <button
+          type="button"
+          onClick={onCancel}
+          className="absolute right-4 top-4 rounded-full border border-white/20 px-3 py-1 text-[10px] uppercase tracking-[0.28em] text-slate-300 transition hover:border-white/40 hover:text-white"
+        >
+          Close
+        </button>
+
+        <div className="space-y-6">
+          <header className="pr-16">
+            <p className="text-xs uppercase tracking-[0.34em] text-gold-300">Rip It Live</p>
+            <h2 className="mt-3 font-heading text-3xl uppercase tracking-[0.16em] text-white">
+              Stream your unboxing
+            </h2>
+            <p className="mt-2 text-sm text-slate-300">
+              Confirm your age, consent, and camera access before this toggle can stay on.
+            </p>
+          </header>
+
+          <section className="rounded-2xl border border-white/10 bg-black/35 p-5">
+            <h3 className="text-xs uppercase tracking-[0.3em] text-slate-400">Date of birth</h3>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <select
+                value={dob.month}
+                onChange={(event) => onDobChange({ ...dob, month: event.target.value })}
+                className={inputClass}
+              >
+                <option value="">Month</option>
+                {Array.from({ length: 12 }, (_, index) => {
+                  const value = String(index + 1).padStart(2, "0");
+                  return (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  );
+                })}
+              </select>
+              <select
+                value={dob.day}
+                onChange={(event) => onDobChange({ ...dob, day: event.target.value })}
+                className={inputClass}
+              >
+                <option value="">Day</option>
+                {Array.from({ length: 31 }, (_, index) => {
+                  const value = String(index + 1).padStart(2, "0");
+                  return (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  );
+                })}
+              </select>
+              <select
+                value={dob.year}
+                onChange={(event) => onDobChange({ ...dob, year: event.target.value })}
+                className={inputClass}
+              >
+                <option value="">Year</option>
+                {years.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {underage ? (
+              <p className="mt-3 text-sm text-rose-200">You must be 18 or older to stream a live rip.</p>
+            ) : dobComplete && !dobIso ? (
+              <p className="mt-3 text-sm text-rose-200">Choose a valid date of birth.</p>
+            ) : null}
+          </section>
+
+          <section className="rounded-2xl border border-white/10 bg-black/35 p-5">
+            <h3 className="text-xs uppercase tracking-[0.3em] text-slate-400">Consent</h3>
+            <pre className="mt-3 whitespace-pre-wrap font-sans text-sm leading-7 text-slate-200">
+              {consentText}
+            </pre>
+            <label className="mt-4 flex items-start gap-3 text-sm text-slate-200">
+              <input
+                type="checkbox"
+                checked={consentChecked}
+                onChange={(event) => onConsentCheckedChange(event.target.checked)}
+                className="mt-1 h-4 w-4 rounded border-white/20 bg-black/60 text-gold-500"
+              />
+              <span>I have read and agree to the above</span>
+            </label>
+          </section>
+
+          <section className="rounded-2xl border border-white/10 bg-black/35 p-5">
+            <h3 className="text-xs uppercase tracking-[0.3em] text-slate-400">Camera + mic</h3>
+            <p className="mt-2 text-sm text-slate-300">
+              Browser permission is required before checkout can proceed with Rip It Live enabled.
+            </p>
+            <button
+              type="button"
+              onClick={onRequestPermissions}
+              disabled={permissionBusy || permissionGranted}
+              className="mt-4 rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-xs font-semibold uppercase tracking-[0.3em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/15 disabled:bg-white/10 disabled:text-slate-500"
+            >
+              {permissionGranted ? "Camera + mic granted" : permissionBusy ? "Requesting..." : "Allow camera + mic"}
+            </button>
+          </section>
+
+          {error ? (
+            <div className="rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap items-center justify-end gap-3">
+            <button
+              type="button"
+              onClick={onCancel}
+              className="rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.3em] text-slate-300 transition hover:border-white/40 hover:text-white"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={!canConfirm}
+              className="rounded-full border border-gold-500/60 bg-gold-500 px-7 py-3 text-xs font-semibold uppercase tracking-[0.3em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/15 disabled:bg-white/10 disabled:text-slate-500"
+            >
+              Confirm Rip It Live
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Packs() {
   const router = useRouter();
   const { ensureSession, updateWalletBalance, logout } = useSession();
@@ -607,7 +872,7 @@ export default function Packs() {
   const [definitions, setDefinitions] = useState<any[]>([]);
   const [definitionsLoading, setDefinitionsLoading] = useState(false);
   const [alert, setAlert] = useState<Alert | null>(null);
-  const [step, setStep] = useState<"category" | "tier" | "pick" | "checkout" | "reveal">("category");
+  const [step, setStep] = useState<"category" | "tier" | "pick" | "checkout" | "go-live" | "reveal">("category");
   const [categoryId, setCategoryId] = useState<CategoryId | null>(null);
   const [tierId, setTierId] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
@@ -622,7 +887,116 @@ export default function Packs() {
   const [resolution, setResolution] = useState<"collection" | "buyback" | null>(null);
   const [showRevealModal, setShowRevealModal] = useState(false);
   const [revealStage, setRevealStage] = useState<"intro" | "rip" | "card">("intro");
+  const [ripItLiveEnabled, setRipItLiveEnabled] = useState(false);
+  const [liveRipConsent, setLiveRipConsent] = useState<LiveRipConsentState | null>(null);
+  const [liveRipConsentOpen, setLiveRipConsentOpen] = useState(false);
+  const [liveRipDob, setLiveRipDob] = useState<LiveRipDobParts>(emptyLiveRipDob);
+  const [liveRipConsentChecked, setLiveRipConsentChecked] = useState(false);
+  const [liveRipPermissionGranted, setLiveRipPermissionGranted] = useState(false);
+  const [liveRipPermissionBusy, setLiveRipPermissionBusy] = useState(false);
+  const [liveRipConsentError, setLiveRipConsentError] = useState<string | null>(null);
+  const [liveRipConsentCopy, setLiveRipConsentCopy] = useState({
+    text: LIVE_RIP_CONSENT_TEXT,
+    version: LIVE_RIP_CONSENT_TEXT_VERSION,
+  });
+  const [buyerLiveRip, setBuyerLiveRip] = useState<BuyerLiveRipSession | null>(null);
+  const [buyerLiveStage, setBuyerLiveStage] = useState<RipStage>("idle");
+  const [buyerLiveBusy, setBuyerLiveBusy] = useState(false);
+  const [buyerLiveError, setBuyerLiveError] = useState<string | null>(null);
   const revealSectionRef = useRef<HTMLDivElement | null>(null);
+  const buyerLivePreviewRef = useRef<HTMLVideoElement | null>(null);
+  const buyerLiveClientRef = useRef<BrowserRipClient | null>(null);
+
+  const resetRipItLiveOptIn = useCallback((message?: string) => {
+    setRipItLiveEnabled(false);
+    setLiveRipConsent(null);
+    setLiveRipConsentOpen(false);
+    setLiveRipDob(emptyLiveRipDob);
+    setLiveRipConsentChecked(false);
+    setLiveRipPermissionGranted(false);
+    setLiveRipPermissionBusy(false);
+    setLiveRipConsentError(null);
+    if (message) {
+      setAlert({ type: "info", text: message });
+    }
+  }, []);
+
+  const handleRipItLiveToggle = async (enabled: boolean) => {
+    if (!enabled) {
+      resetRipItLiveOptIn();
+      return;
+    }
+    setRipItLiveEnabled(true);
+    setLiveRipConsentOpen(true);
+    setLiveRipConsentError(null);
+    try {
+      const response = await fetch("/api/live-rip/consent", {
+        headers: { accept: "application/json" },
+      });
+      const payload = (await response.json().catch(() => ({}))) as {
+        consentText?: string;
+        consentTextVersion?: string;
+        message?: string;
+      };
+      if (!response.ok || !payload.consentText || !payload.consentTextVersion) {
+        throw new Error(payload.message ?? "Unable to load live rip consent text.");
+      }
+      setLiveRipConsentCopy({
+        text: payload.consentText,
+        version: payload.consentTextVersion,
+      });
+    } catch (error) {
+      resetRipItLiveOptIn(error instanceof Error ? error.message : "Unable to load live rip consent text.");
+    }
+  };
+
+  const requestLiveRipPermissions = async () => {
+    try {
+      setLiveRipPermissionBusy(true);
+      setLiveRipConsentError(null);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+      stream.getTracks().forEach((track) => track.stop());
+      setLiveRipPermissionGranted(true);
+    } catch (error) {
+      resetRipItLiveOptIn("Camera and microphone permissions are required to stream a live rip.");
+    } finally {
+      setLiveRipPermissionBusy(false);
+    }
+  };
+
+  const confirmRipItLiveConsent = () => {
+    const dob = buildDobIso(liveRipDob);
+    if (!dob) {
+      setLiveRipConsentError("Choose a valid date of birth.");
+      return;
+    }
+    if (!isAdultDob(dob)) {
+      resetRipItLiveOptIn("You must be 18 or older to stream a live rip.");
+      return;
+    }
+    if (!liveRipConsentChecked) {
+      setLiveRipConsentError("Consent is required to stream a live rip.");
+      return;
+    }
+    if (!liveRipPermissionGranted) {
+      setLiveRipConsentError("Camera and microphone permissions are required.");
+      return;
+    }
+
+    setLiveRipConsent({
+      enabled: true,
+      dob,
+      consentTextVersion: liveRipConsentCopy.version,
+      consentTextSnapshot: liveRipConsentCopy.text,
+      consentedAt: new Date().toISOString(),
+    });
+    setRipItLiveEnabled(true);
+    setLiveRipConsentOpen(false);
+    setLiveRipConsentError(null);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -664,29 +1038,7 @@ export default function Packs() {
     setStripeIntent(null);
   }, [categoryId, tierId]);
 
-  const finalizePurchase = async (
-    session: SessionPayload,
-    matchedDefinition: any,
-    currentCategory: PackCategory,
-    currentTier: PackTier,
-    payment:
-      | { method: "wallet" }
-      | { method: "stripe"; paymentIntentId: string }
-  ) => {
-    const response = await purchasePack({
-      packDefinitionId: matchedDefinition.id,
-      userId: session.user.id,
-      paymentMethod: payment.method,
-      ...(payment.method === "stripe"
-        ? { paymentIntentId: payment.paymentIntentId }
-        : {}),
-    });
-
-    if (response.walletBalance !== null && response.walletBalance !== undefined) {
-      updateWalletBalance(response.walletBalance);
-    }
-
-    const opened = await openPack(response.pack.id, session.user.id);
+  const applyOpenedPack = (opened: { pack: any }, currentCategory: PackCategory, currentTier: PackTier) => {
     const slots: any[] = opened.pack?.slots ?? [];
     const highlightSlot =
       slots.find((slot) => slot.item) ??
@@ -734,6 +1086,54 @@ export default function Packs() {
       type: "success",
       text: `Pack ${opened.pack.id} ripped! Enjoy the reveal.`,
     });
+  };
+
+  const finalizePurchase = async (
+    session: SessionPayload,
+    matchedDefinition: any,
+    currentCategory: PackCategory,
+    currentTier: PackTier,
+    payment:
+      | { method: "wallet" }
+      | { method: "stripe"; paymentIntentId: string }
+  ) => {
+    const response = await purchasePack({
+      packDefinitionId: matchedDefinition.id,
+      userId: session.user.id,
+      paymentMethod: payment.method,
+      ...(payment.method === "stripe"
+        ? { paymentIntentId: payment.paymentIntentId }
+        : {}),
+      ...(liveRipConsent ? { liveRip: liveRipConsent } : {}),
+    });
+
+    if (response.walletBalance !== null && response.walletBalance !== undefined) {
+      updateWalletBalance(response.walletBalance);
+    }
+
+    if (liveRipConsent && "liveRip" in response && response.liveRip) {
+      const liveResponse = response as typeof response & {
+        liveRip: Omit<BuyerLiveRipSession, "pack" | "opened" | "completed" | "category" | "tier">;
+      };
+      setBuyerLiveRip({
+        ...liveResponse.liveRip,
+        pack: response.pack,
+        opened: false,
+        completed: false,
+        category: currentCategory,
+        tier: currentTier,
+      });
+      setStripeIntent(null);
+      setAlert({
+        type: "success",
+        text: "Rip It Live is ready. Preview your camera, start streaming, then open your pack.",
+      });
+      setStep("go-live");
+      return;
+    }
+
+    const opened = await openPack(response.pack.id, session.user.id);
+    applyOpenedPack(opened, currentCategory, currentTier);
     setStep("reveal");
   };
 
@@ -767,8 +1167,10 @@ export default function Packs() {
     setReveal(null);
     setShowRevealModal(false);
     setRevealStage("intro");
+    resetRipItLiveOptIn();
+    setBuyerLiveRip(null);
     setStep(matchedCategory.comingSoon ? "category" : "tier");
-  }, [router.isReady, router.query.category, categoryId]);
+  }, [router.isReady, router.query.category, categoryId, resetRipItLiveOptIn]);
 
   useEffect(() => {
     if (!showRevealModal) {
@@ -866,6 +1268,8 @@ export default function Packs() {
     setResolution(null);
     setShowRevealModal(false);
     setRevealStage("intro");
+    resetRipItLiveOptIn();
+    setBuyerLiveRip(null);
     setStep(nextCategory?.comingSoon ? "category" : "tier");
     if (nextCategory && !nextCategory.comingSoon) {
       router.replace({ pathname: router.pathname, query: { category: id } }, undefined, { shallow: true }).catch(() => undefined);
@@ -890,6 +1294,8 @@ export default function Packs() {
     setResolution(null);
     setShowRevealModal(false);
     setRevealStage("intro");
+    resetRipItLiveOptIn();
+    setBuyerLiveRip(null);
     setStep("pick");
   };
 
@@ -922,6 +1328,10 @@ export default function Packs() {
     setResolution(null);
     setShowRevealModal(false);
     setRevealStage("intro");
+    if (target !== "go-live") {
+      resetRipItLiveOptIn();
+      setBuyerLiveRip(null);
+    }
     setStep(target);
   };
 
@@ -1033,6 +1443,131 @@ export default function Packs() {
       setAlert({ type: "error", text: message });
     } finally {
       setCtaBusy(false);
+    }
+  };
+
+  const buyerLiveRipId = buyerLiveRip?.id ?? null;
+  const buyerLiveRipWhipUploadUrl = buyerLiveRip?.whipUploadUrl ?? null;
+
+  useEffect(() => {
+    if (!buyerLiveRipId || !buyerLiveRipWhipUploadUrl) {
+      return;
+    }
+
+    setBuyerLiveStage("idle");
+    setBuyerLiveError(null);
+
+    const client = new BrowserRipClient({
+      sessionId: buyerLiveRipId,
+      whipUrl: buyerLiveRipWhipUploadUrl,
+      revealVideoUrl: "",
+      countdownSeconds: 0,
+      liveSeconds: 0,
+      overlayTitle: "TEN KINGS RIP IT LIVE",
+      onStageChange: (stage) => setBuyerLiveStage(stage),
+      onError: (error: RipError) => setBuyerLiveError(error.message),
+      onReactionBlob: () => undefined,
+    });
+
+    buyerLiveClientRef.current = client;
+    if (buyerLivePreviewRef.current) {
+      client.attachPreview(buyerLivePreviewRef.current);
+    }
+    void client.requestPermissions().catch((error) => {
+      setBuyerLiveError(error instanceof Error ? error.message : "Camera preview failed.");
+    });
+
+    return () => {
+      void client.stop().catch(() => undefined);
+      if (buyerLiveClientRef.current === client) {
+        buyerLiveClientRef.current = null;
+      }
+    };
+  }, [buyerLiveRipId, buyerLiveRipWhipUploadUrl]);
+
+  const startBuyerLiveRip = async () => {
+    if (!buyerLiveRip || !buyerLiveClientRef.current) {
+      return;
+    }
+
+    try {
+      setBuyerLiveBusy(true);
+      setBuyerLiveError(null);
+      const activeSession = await ensureSession();
+      await buyerLiveClientRef.current.start();
+      const response = await fetch(`/api/live-rip/${buyerLiveRip.id}/start`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${activeSession.token}`,
+        },
+      });
+      const payload = (await response.json().catch(() => ({}))) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message ?? "Failed to mark live rip as started.");
+      }
+      setBuyerLiveStage("live");
+      setAlert({ type: "success", text: "You are live. Open your pack on camera when ready." });
+    } catch (error) {
+      setBuyerLiveError(error instanceof Error ? error.message : "Failed to start live stream.");
+      await buyerLiveClientRef.current?.stop().catch(() => undefined);
+    } finally {
+      setBuyerLiveBusy(false);
+    }
+  };
+
+  const openBuyerLiveRipPack = async () => {
+    if (!buyerLiveRip || buyerLiveRip.opened) {
+      return;
+    }
+
+    try {
+      setBuyerLiveBusy(true);
+      setBuyerLiveError(null);
+      const activeSession = await ensureSession();
+      const opened = await openPack(buyerLiveRip.pack.id, activeSession.user.id);
+      applyOpenedPack(opened, buyerLiveRip.category, buyerLiveRip.tier);
+      setBuyerLiveRip((current) => current ? { ...current, pack: opened.pack, opened: true } : current);
+      setAlert({ type: "success", text: "Pack opened. End the stream when your live rip is complete." });
+    } catch (error) {
+      setBuyerLiveError(error instanceof Error ? error.message : "Failed to open pack during live rip.");
+    } finally {
+      setBuyerLiveBusy(false);
+    }
+  };
+
+  const completeBuyerLiveRip = async () => {
+    if (!buyerLiveRip) {
+      return;
+    }
+
+    try {
+      setBuyerLiveBusy(true);
+      setBuyerLiveError(null);
+      const activeSession = await ensureSession();
+      await buyerLiveClientRef.current?.stop().catch(() => undefined);
+      const response = await fetch(`/api/live-rip/${buyerLiveRip.id}/complete`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${activeSession.token}`,
+        },
+      });
+      const payload = (await response.json().catch(() => ({}))) as { message?: string };
+      if (!response.ok) {
+        throw new Error(payload.message ?? "Failed to finalize live rip.");
+      }
+      setBuyerLiveRip((current) => current ? { ...current, completed: true } : current);
+      setRipItLiveEnabled(false);
+      setLiveRipConsent(null);
+      setBuyerLiveStage("complete");
+      if (reveal) {
+        setShowRevealModal(true);
+        setStep("reveal");
+      }
+      setAlert({ type: "success", text: "Live rip saved. The replay will appear on /live after Mux finishes processing." });
+    } catch (error) {
+      setBuyerLiveError(error instanceof Error ? error.message : "Failed to finalize live rip.");
+    } finally {
+      setBuyerLiveBusy(false);
     }
   };
 
@@ -1160,9 +1695,15 @@ export default function Packs() {
               <span className="text-slate-700">•</span>
               <li className={step !== "category" ? "text-gold-400" : "text-white/60"}>Tier</li>
               <span className="text-slate-700">•</span>
-              <li className={step === "pick" || step === "checkout" || step === "reveal" ? "text-gold-400" : "text-white/60"}>Pick</li>
+              <li className={step === "pick" || step === "checkout" || step === "go-live" || step === "reveal" ? "text-gold-400" : "text-white/60"}>Pick</li>
               <span className="text-slate-700">•</span>
-              <li className={step === "checkout" || step === "reveal" ? "text-gold-400" : "text-white/60"}>Checkout</li>
+              <li className={step === "checkout" || step === "go-live" || step === "reveal" ? "text-gold-400" : "text-white/60"}>Checkout</li>
+              {ripItLiveEnabled || step === "go-live" ? (
+                <>
+                  <span className="text-slate-700">•</span>
+                  <li className={step === "go-live" || step === "reveal" ? "text-gold-400" : "text-white/60"}>Live</li>
+                </>
+              ) : null}
               <span className="text-slate-700">•</span>
               <li className={step === "reveal" ? "text-gold-400" : "text-white/60"}>Reveal</li>
             </ol>
@@ -1487,6 +2028,40 @@ export default function Packs() {
                 )}
               </div>
 
+              <div className="mt-8 rounded-[1.5rem] border border-gold-500/30 bg-black/35 p-5">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h4 className="font-heading text-2xl uppercase tracking-[0.16em] text-white">Rip It Live</h4>
+                    <p className="mt-1 text-sm text-slate-300">
+                      Stream your unboxing live to the Ten Kings community
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={ripItLiveEnabled}
+                    onClick={() => void handleRipItLiveToggle(!ripItLiveEnabled)}
+                    className={`relative h-10 w-20 rounded-full border transition ${
+                      ripItLiveEnabled
+                        ? "border-gold-400 bg-gold-500 shadow-glow"
+                        : "border-white/15 bg-night-900"
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-1 h-8 w-8 rounded-full bg-white transition ${
+                        ripItLiveEnabled ? "left-11" : "left-1"
+                      }`}
+                    />
+                    <span className="sr-only">Toggle Rip It Live</span>
+                  </button>
+                </div>
+                {ripItLiveEnabled && liveRipConsent ? (
+                  <p className="mt-3 text-xs uppercase tracking-[0.24em] text-gold-200">
+                    Ready for live checkout · consent {liveRipConsent.consentTextVersion}
+                  </p>
+                ) : null}
+              </div>
+
               <div className="mt-8 flex flex-wrap items-center justify-between gap-4">
                 <p className="text-xs text-slate-500">
                   TKD buyback guarantee at {Math.round(BUYBACK_RATE * 100)}% of market value. See {" "}
@@ -1499,7 +2074,7 @@ export default function Packs() {
                   type="button"
                   onClick={completePurchase}
                   className="rounded-full border border-gold-500/60 bg-gold-500 px-8 py-3 text-xs font-semibold uppercase tracking-[0.32em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/15 disabled:bg-white/10 disabled:text-slate-500"
-                  disabled={ctaBusy || (paymentMethod === "card" && stripeIntent !== null)}
+                  disabled={ctaBusy || (paymentMethod === "card" && stripeIntent !== null) || (ripItLiveEnabled && !liveRipConsent)}
                 >
                   {ctaBusy
                     ? "Processing…"
@@ -1510,6 +2085,79 @@ export default function Packs() {
                       : "Use TKD Balance"}
                 </button>
               </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {step === "go-live" && buyerLiveRip && (
+        <section className="bg-black py-20">
+          <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6">
+            <header className="space-y-3 text-center">
+              <p className="uppercase tracking-[0.34em] text-gold-300">Rip It Live</p>
+              <h2 className="font-heading text-5xl uppercase tracking-[0.16em] text-white">Go Live</h2>
+              <p className="mx-auto max-w-2xl text-sm text-slate-300">
+                Preview your camera, start the stream, open your pack on camera, then end the stream to save the replay.
+              </p>
+            </header>
+
+            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="overflow-hidden rounded-[2rem] border border-gold-500/40 bg-night-900 shadow-2xl">
+                <div className="relative aspect-video bg-black">
+                  <video ref={buyerLivePreviewRef} muted playsInline className="h-full w-full object-cover" />
+                  <div className="pointer-events-none absolute left-4 top-4 rounded-full bg-red-600 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.24em] text-white">
+                    {buyerLiveStage === "live" ? "Live" : "Preview"}
+                  </div>
+                </div>
+              </div>
+
+              <aside className="rounded-[2rem] border border-white/10 bg-night-900/80 p-6">
+                <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Stream status</p>
+                <p className="mt-2 font-heading text-3xl uppercase tracking-[0.12em] text-white">
+                  {buyerLiveStage === "live"
+                    ? "Live now"
+                    : buyerLiveStage === "complete"
+                      ? "Complete"
+                      : "Ready"}
+                </p>
+                <p className="mt-3 text-sm text-slate-300">
+                  Watch URL:{" "}
+                  <a href={buyerLiveRip.watchUrl} target="_blank" rel="noreferrer" className="text-gold-300 underline">
+                    {buyerLiveRip.watchUrl}
+                  </a>
+                </p>
+                <div className="mt-6 grid gap-3">
+                  <button
+                    type="button"
+                    onClick={startBuyerLiveRip}
+                    disabled={buyerLiveBusy || buyerLiveStage === "live" || buyerLiveRip.completed}
+                    className="rounded-full border border-gold-500/60 bg-gold-500 px-6 py-3 text-xs font-semibold uppercase tracking-[0.3em] text-night-900 shadow-glow transition hover:bg-gold-400 disabled:cursor-not-allowed disabled:border-white/15 disabled:bg-white/10 disabled:text-slate-500"
+                  >
+                    {buyerLiveBusy && buyerLiveStage !== "live" ? "Starting..." : "Start streaming"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openBuyerLiveRipPack}
+                    disabled={buyerLiveBusy || buyerLiveStage !== "live" || buyerLiveRip.opened}
+                    className="rounded-full border border-white/20 px-6 py-3 text-xs uppercase tracking-[0.3em] text-slate-200 transition hover:border-gold-300 hover:text-gold-200 disabled:cursor-not-allowed disabled:border-white/10 disabled:text-slate-600"
+                  >
+                    {buyerLiveRip.opened ? "Pack opened" : "Open pack on stream"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={completeBuyerLiveRip}
+                    disabled={buyerLiveBusy || buyerLiveStage !== "live" || !buyerLiveRip.opened || buyerLiveRip.completed}
+                    className="rounded-full border border-emerald-400/40 bg-emerald-500/15 px-6 py-3 text-xs uppercase tracking-[0.3em] text-emerald-200 transition hover:border-emerald-300 hover:text-emerald-100 disabled:cursor-not-allowed disabled:border-white/10 disabled:bg-white/5 disabled:text-slate-600"
+                  >
+                    End stream & save replay
+                  </button>
+                </div>
+                {buyerLiveError ? (
+                  <div className="mt-5 rounded-2xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+                    {buyerLiveError}
+                  </div>
+                ) : null}
+              </aside>
             </div>
           </div>
         </section>
@@ -1669,6 +2317,23 @@ export default function Packs() {
           canAcceptBuyback={reveal.buybackAvailable && !reveal.buybackAccepted}
           buybackAccepted={reveal.buybackAccepted}
           collectionSaved={resolution === "collection"}
+        />
+      )}
+
+      {liveRipConsentOpen && (
+        <LiveRipConsentModal
+          dob={liveRipDob}
+          consentText={liveRipConsentCopy.text}
+          consentChecked={liveRipConsentChecked}
+          permissionGranted={liveRipPermissionGranted}
+          permissionBusy={liveRipPermissionBusy}
+          error={liveRipConsentError}
+          onDobChange={setLiveRipDob}
+          onConsentCheckedChange={setLiveRipConsentChecked}
+          onRequestPermissions={() => void requestLiveRipPermissions()}
+          onConfirm={confirmRipItLiveConsent}
+          onCancel={() => resetRipItLiveOptIn()}
+          onUnderage={() => resetRipItLiveOptIn("You must be 18 or older to stream a live rip.")}
         />
       )}
     </AppShell>
