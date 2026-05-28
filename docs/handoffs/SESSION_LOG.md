@@ -17796,6 +17796,27 @@ By enabling Rip It Live, I confirm:
 - Fix helper ID nullability alignment and evidence-link indexes before any staging/prod migration run.
 - Recommendation: keep PR #6 draft / needs fixes before ready-for-review.
 
+## 2026-05-28 - AI Grader foundation merge-readiness audit
+
+### Summary
+- User reported the merge-readiness audit for draft PR #6 completed.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/6`.
+- Current reported HEAD: `27776f7a99b194c325bde0be1cf6b8af02b2ddbd`.
+- Branch `feature/ai-grader-v5-foundation` was clean and tracking origin; PR remained open, draft, and mergeable with all checks passing.
+- Audit conclusion: keep PR #6 draft because merging to `main` likely triggers a Vercel production deploy, and the current production Vercel build path runs Prisma migrations automatically.
+- No merge, deploy, migration execution, runtime DB operation, destructive operation, or service/hardware implementation was performed.
+
+### Findings
+- Blocker before merge: `scripts/vercel-build.sh` runs `pnpm --filter @tenkings/database run migrate:deploy` when `VERCEL_ENV=production`.
+- Merge to `main` likely triggers Vercel production deploy based on Vercel preview checks and prior PR #5 production deploy history.
+- GitHub CI/Docker builds run Prisma generate/build paths but do not apply migrations.
+- Runtime risk is low if no migration runs because no production code queries the new AI Grader models yet; the high-risk path is automatic migration execution during Vercel production build.
+
+### Next Action
+- Keep PR #6 draft.
+- Add a small deployment-safety change that gates production migration execution behind explicit approval, or split the draft AI Grader migration out of PR #6.
+- Before any migration execution, run a dedicated migration readiness pass against staging or a disposable restored DB.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary

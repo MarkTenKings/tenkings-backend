@@ -50,7 +50,10 @@
   - `CaptureManifest.helperInstanceId` is required in the Prisma schema and draft migration.
   - certificate readiness now requires `GradeCertificateContract.sourceGradeRunStatus` to be present, `COMPLETE`, and consistent with a supplied `gradeRunStatus`.
   - `EvidenceArtifact` now indexes `gradeRunId`, `authRunId`, and `certificateId`.
-- Draft migration remains unapplied; PR #6 should remain draft pending follow-up CI/review.
+- Merge-readiness audit found a release blocker: `scripts/vercel-build.sh` runs `pnpm --filter @tenkings/database run migrate:deploy` when `VERCEL_ENV=production`, and merge to `main` likely triggers Vercel production deploy based on current Vercel PR checks and prior PR #5 history.
+- GitHub CI/Docker builds generate Prisma client and build artifacts but do not apply migrations.
+- Runtime risk is low if no migration runs because no production code queries the new AI Grader models yet; the high-risk path is automatic migration execution during Vercel production build.
+- Draft migration remains unapplied; keep PR #6 draft until production migration execution is explicitly gated or the migration is split from the PR.
 - No merge, deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)
