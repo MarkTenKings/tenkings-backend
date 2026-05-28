@@ -46,6 +46,11 @@
   - Low: `EvidenceArtifact` linkage columns `gradeRunId`, `authRunId`, and `certificateId` are under-indexed for likely evidence/certificate/replay queries.
 - Migration verdict from review: additive and source-mergeable in principle, but do not execute yet; fix the helper ID nullability decision and evidence-link indexes before staging/prod migration.
 - Recommendation remains: keep PR #6 draft / needs fixes before ready-for-review.
+- Follow-up fix session resolved the three review findings in the draft foundation:
+  - `CaptureManifest.helperInstanceId` is required in the Prisma schema and draft migration.
+  - certificate readiness now requires `GradeCertificateContract.sourceGradeRunStatus` to be present, `COMPLETE`, and consistent with a supplied `gradeRunStatus`.
+  - `EvidenceArtifact` now indexes `gradeRunId`, `authRunId`, and `certificateId`.
+- Draft migration remains unapplied; PR #6 should remain draft pending follow-up CI/review.
 - No merge, deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)

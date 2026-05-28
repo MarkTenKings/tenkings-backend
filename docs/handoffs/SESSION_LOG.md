@@ -17731,6 +17731,32 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-28 - AI Grader foundation review fixes
+
+### Summary
+- Applied the PR #6 foundation review fixes while keeping the PR draft.
+- Made `CaptureManifest.helperInstanceId` required in the Prisma schema and draft migration.
+- Added `EvidenceArtifact` indexes for `gradeRunId`, `authRunId`, and `certificateId` in both Prisma schema and draft migration SQL.
+- Tightened `validateCertificateEvidenceReadiness` so readiness requires `GradeCertificateContract.sourceGradeRunStatus` to be present, `COMPLETE`, and consistent with a supplied `gradeRunStatus`.
+- Added tests for conflicting source GradeRun status, missing source GradeRun status, and the existing matching `COMPLETE` pass path.
+- No merge, deploy, migration execution, runtime DB operation, destructive operation, or service/hardware implementation was performed.
+
+### Files Changed
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260528120000_ai_grader_v5_foundation/migration.sql`
+- `packages/shared/src/aiGrader.ts`
+- `packages/shared/tests/aiGrader.test.js`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader foundation draft PR opened
 
 ### Summary

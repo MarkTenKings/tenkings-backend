@@ -200,7 +200,7 @@ CREATE TABLE "CaptureManifest" (
     "rigId" TEXT NOT NULL,
     "locationId" TEXT NOT NULL,
     "operatorId" TEXT NOT NULL,
-    "helperInstanceId" TEXT,
+    "helperInstanceId" TEXT NOT NULL,
     "helperVersion" TEXT NOT NULL,
     "driverVersions" JSONB NOT NULL,
     "componentSerials" JSONB NOT NULL,
@@ -584,6 +584,15 @@ CREATE INDEX "EvidenceArtifact_tenantId_evidenceClass_createdAt_idx" ON "Evidenc
 
 -- CreateIndex
 CREATE INDEX "EvidenceArtifact_captureSessionId_idx" ON "EvidenceArtifact"("captureSessionId");
+
+-- CreateIndex
+CREATE INDEX "EvidenceArtifact_gradeRunId_idx" ON "EvidenceArtifact"("gradeRunId");
+
+-- CreateIndex
+CREATE INDEX "EvidenceArtifact_authRunId_idx" ON "EvidenceArtifact"("authRunId");
+
+-- CreateIndex
+CREATE INDEX "EvidenceArtifact_certificateId_idx" ON "EvidenceArtifact"("certificateId");
 
 -- CreateIndex
 CREATE INDEX "CustodyEvent_tenantId_certificateId_occurredAt_idx" ON "CustodyEvent"("tenantId", "certificateId", "occurredAt");

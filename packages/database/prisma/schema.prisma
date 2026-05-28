@@ -2588,7 +2588,7 @@ model CaptureManifest {
   rigId                  String
   locationId             String
   operatorId             String
-  helperInstanceId       String?
+  helperInstanceId       String
   helperVersion          String
   driverVersions         Json
   componentSerials       Json
@@ -2848,6 +2848,9 @@ model EvidenceArtifact {
   @@unique([storageKey])
   @@index([tenantId, evidenceClass, createdAt])
   @@index([captureSessionId])
+  @@index([gradeRunId])
+  @@index([authRunId])
+  @@index([certificateId])
 }
 
 model CustodyEvent {

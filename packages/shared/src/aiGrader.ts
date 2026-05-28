@@ -3537,8 +3537,34 @@ export function validateCertificateEvidenceReadiness(value: unknown): AiGraderVa
   const certificateResult = validateCertificateAllowedForMode(value.certificate);
   issues.push(...certificateResult.issues.map((entry) => ({ ...entry, path: `${path}.${entry.path}` })));
 
+  const certificate = isRecord(value.certificate) ? value.certificate : undefined;
+  const certificateSourceGradeRunStatus = certificate?.sourceGradeRunStatus;
+
+  if (certificateSourceGradeRunStatus !== "COMPLETE") {
+    issues.push(
+      issue(
+        `${path}.certificate.sourceGradeRunStatus`,
+        "CERTIFICATE_BLOCKED",
+        "GradeCertificate sourceGradeRunStatus must be COMPLETE for certificate readiness."
+      )
+    );
+  }
+
   if (value.gradeRunStatus !== "COMPLETE") {
     issues.push(issue(`${path}.gradeRunStatus`, "CERTIFICATE_BLOCKED", "GradeCertificate requires a complete GradeRun."));
+  }
+  if (
+    value.gradeRunStatus != null &&
+    certificateSourceGradeRunStatus != null &&
+    value.gradeRunStatus !== certificateSourceGradeRunStatus
+  ) {
+    issues.push(
+      issue(
+        `${path}.gradeRunStatus`,
+        "CERTIFICATE_BLOCKED",
+        "supplied gradeRunStatus must match GradeCertificate sourceGradeRunStatus."
+      )
+    );
   }
 
   if (!Array.isArray(value.evidenceArtifacts)) {

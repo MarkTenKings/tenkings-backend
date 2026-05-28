@@ -1317,7 +1317,7 @@ test("validateEvidenceArtifactContract rejects missing checksum, storage, and so
 
 test("validateCertificateEvidenceReadiness accepts STANDARD and FORENSIC grade certificates", () => {
   const standardResult = validateCertificateEvidenceReadiness({
-    certificate: gradeCertificate({ mode: "STANDARD" }),
+    certificate: gradeCertificate({ mode: "STANDARD", sourceGradeRunStatus: "COMPLETE" }),
     gradeRunStatus: "COMPLETE",
     evidenceArtifacts: [evidenceArtifactContract()],
   });
@@ -1338,6 +1338,28 @@ test("validateCertificateEvidenceReadiness accepts STANDARD and FORENSIC grade c
 
   assert.equal(standardResult.valid, true);
   assert.equal(forensicResult.valid, true);
+});
+
+test("validateCertificateEvidenceReadiness rejects conflicting source GradeRun status", () => {
+  const result = validateCertificateEvidenceReadiness({
+    certificate: gradeCertificate({ sourceGradeRunStatus: "FAILED" }),
+    gradeRunStatus: "COMPLETE",
+    evidenceArtifacts: [evidenceArtifactContract()],
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("CERTIFICATE_BLOCKED"));
+});
+
+test("validateCertificateEvidenceReadiness rejects missing source GradeRun status", () => {
+  const result = validateCertificateEvidenceReadiness({
+    certificate: gradeCertificate({ sourceGradeRunStatus: undefined }),
+    gradeRunStatus: "COMPLETE",
+    evidenceArtifacts: [evidenceArtifactContract()],
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("CERTIFICATE_BLOCKED"));
 });
 
 test("validateCertificateAllowedForMode rejects AUTH_ONLY certificate grade values", () => {
