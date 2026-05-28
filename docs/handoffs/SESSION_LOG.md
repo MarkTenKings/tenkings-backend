@@ -17737,12 +17737,17 @@ By enabling Rip It Live, I confirm:
 - User reported the Phase 10 handoff docs were committed and the AI Grader v5 foundation branch was pushed.
 - Draft PR opened for review only: `https://github.com/MarkTenKings/tenkings-backend/pull/6`.
 - Branch: `feature/ai-grader-v5-foundation`.
-- HEAD reported: `066c088ca64be65b6011c2859276dd5f9d8b4c06` (`docs: record ai grader phase 10 commit`).
+- Initial PR-open HEAD reported: `066c088ca64be65b6011c2859276dd5f9d8b4c06` (`docs: record ai grader phase 10 commit`).
+- Latest checkpoint HEAD reported: `c6028249e1fe72c3361d82e1ea17f6578c14917a`.
 - PR status reported: open, draft, base `main`, head `feature/ai-grader-v5-foundation`.
-- Checks reported at PR creation:
-  - Install & Build: queued
-  - Vercel: pending
-  - Vercel Preview Comments: success.
+- Checks reported after checkpoint pass:
+  - CI Install & Build -> pass
+  - CI Docker images for frontend, ingestion, marketplace, pack, pricing, vault, vending-gw, wallet -> pass
+  - Vercel -> pass
+  - Vercel Preview Comments -> pass.
+- PR includes the v5 spec, draft Prisma schema/migration, shared contracts/FSM/validators/helpers, and tests.
+- PR explicitly does not include hardware drivers, capture implementation, grading math, auth algorithms, frontend report UI/PDF, migration execution, deploys, restarts, runtime DB operations, or destructive operations.
+- Remaining risk: draft migration remains unapplied and needs migration/readiness review before merge.
 - No merge, deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
 
 ## 2026-05-28 - AI Grader Phase 10 committed
