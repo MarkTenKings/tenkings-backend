@@ -17348,3 +17348,50 @@ By enabling Rip It Live, I confirm:
 ### Operations Reminder
 - Do not apply the draft migration yet.
 - Do not start Phase 2 until the foundation branch/commit is clean.
+
+## 2026-05-28 - AI Grader Phase 2 contracts and pure FSM spine
+
+### Summary
+- Started approved Phase 2 only after committing the remaining handoff note cleanup on `feature/ai-grader-v5-foundation`.
+- Added shared TypeScript contracts from `tk-ai-grader-codex-spec-v5.md` Sections 3, 4, 5, 6.1-6.3, 7.1-7.2, 8.2-8.4, and 13.
+- Added a pure `transitionOrchestratorState` FSM function in `@tenkings/shared`; it writes no files, controls no hardware, calls no services, and performs no DB/runtime operations.
+- Added Node test-runner coverage for the STANDARD happy path, QUICK macro-only path, operator override path, invalid guard rejection, and all named v5 error states.
+- No hardware drivers, capture code, grading math, authentication algorithms, frontend pages, reports, deploys, migrations, runtime DB operations, or destructive operations were implemented.
+
+### Files Changed
+- `packages/shared/src/aiGrader.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/aiGrader.test.js`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
+## 2026-05-28 - AI Grader Phase 2 review guidance
+
+### Summary
+- User pasted the implementation agent's Phase 2 completion report for shared AI Grader contracts and the pure orchestrator FSM.
+- Performed a read-only spot check of `packages/shared/src/aiGrader.ts`, `packages/shared/src/index.ts`, and `packages/shared/tests/aiGrader.test.js`.
+- Phase 2 stayed in the approved scope: shared contracts, a pure FSM transition helper, and Node test coverage only.
+- Recommended fixing two small spec-alignment issues before committing Phase 2:
+  - include the `MICRO_CORNERS`, `MICRO_EDGES`, and `MICRO_SURFACE` values in the exported shared `GradingElement` type so it matches the Phase 1 Prisma enum surface
+  - require explicit true `sessionBelongsToTenant`, `rigActive`, and `operatorAuthorized` guards for `INIT -> MACRO_PREFLIGHT` instead of accepting missing guard values
+- No code edits, tests, deploy, restart, migration execution, runtime DB operation, or destructive operation was performed by this review session.
+
+## 2026-05-28 - AI Grader Phase 2 cleanup before commit
+
+### Summary
+- Applied the approved Phase 2 cleanup fixes before commit.
+- Added `MICRO_CORNERS`, `MICRO_EDGES`, and `MICRO_SURFACE` to the shared `GradingElement` type.
+- Tightened `INIT -> MACRO_PREFLIGHT` so `sessionBelongsToTenant`, `rigActive`, and `operatorAuthorized` must be explicitly `true`.
+- Updated FSM tests so the happy path passes those guards and missing INIT guards reject the transition.
+- No schema/migration files, hardware drivers, capture code, grading math, authentication algorithms, frontend pages, reports, deploys, restarts, runtime DB operations, destructive operations, or Phase 3 work were performed.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 38 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.

@@ -25,6 +25,31 @@
   - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
   - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
 
+## Session Update (2026-05-28, AI Grader Phase 2 cleanup ready for commit)
+- Phase 2 cleanup was applied on `feature/ai-grader-v5-foundation` before commit:
+  - added `MICRO_CORNERS`, `MICRO_EDGES`, and `MICRO_SURFACE` to shared `GradingElement`
+  - tightened `INIT -> MACRO_PREFLIGHT` so `sessionBelongsToTenant`, `rigActive`, and `operatorAuthorized` must be explicitly `true`
+  - updated FSM tests so the happy path supplies those guards and missing INIT guards reject the transition
+- Validation after cleanup:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 38 tests
+  - `git diff --check` -> pass
+- Commit scope is limited to shared contracts/FSM/tests and handoff docs. No schema/migration files, hardware drivers, grading math, auth algorithms, frontend, reports, deploys, restarts, runtime DB operations, or destructive operations were touched.
+
+## Session Update (2026-05-28, AI Grader Phase 2 review guidance)
+- Phase 2 shared AI Grader contracts and pure FSM are implemented but not committed on `feature/ai-grader-v5-foundation`.
+- Reported changed files:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation reported by implementation agent:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 37 tests
+  - `git diff --check` -> pass
+- Review guidance before commit: add shared `GradingElement` values for `MICRO_CORNERS`, `MICRO_EDGES`, `MICRO_SURFACE`; require explicit true session/rig/operator guards for `INIT -> MACRO_PREFLIGHT`.
+- No hardware drivers, capture implementation, grading math, auth algorithms, frontend pages, reports, migrations, deploys, restarts, runtime DB operations, or destructive operations were performed.
+
 ## Session Update (2026-05-28, AI Grader Phase 1 foundation committed)
 - The AI Grader v5 database foundation is now committed on dedicated branch `feature/ai-grader-v5-foundation`.
 - Commit: `c553da6d243948a352d1f8e623c49998a0bc358b` (`feat(ai-grader): add v5 database foundation draft`).
