@@ -5,8 +5,10 @@ const {
   buildInitialAiGraderAlgorithmVersions,
   buildInitialAiGraderThresholdSets,
   buildMacroSuspectRegionId,
+  buildMicroSpotPackageId,
   buildModePlan,
   buildRuntimeEnvironmentFingerprint,
+  buildStandardSpotPlan,
   normalizeBackSideCardCoordinates,
   sortAndSelectStandardSurfaceSuspects,
   transitionOrchestratorState,
@@ -18,8 +20,12 @@ const {
   validateDeviceCapabilityManifest,
   validateMacroPipelineOutput,
   validateMacroSuspectRegion,
+  validateMicroPackageForFusion,
+  validateMicroSpotCaptureFrames,
+  validateMicroSpotCapturePackage,
   validateReplayTolerance,
   validateRuntimeEnvironmentFingerprint,
+  validateStandardSpotPlan,
   validateThresholdSetVersionSeed,
 } = require("../dist/aiGrader");
 
@@ -207,6 +213,74 @@ function macroOutput(overrides = {}) {
   };
 }
 
+function artifact(overrides = {}) {
+  return {
+    storageKey: "captures/session-1/micro-frame.jpg",
+    checksumSha256: SHA_256,
+    widthPx: 1600,
+    heightPx: 1200,
+    ...overrides,
+  };
+}
+
+function microSpotFrames(overrides = {}) {
+  return {
+    edrBase: artifact({ storageKey: "captures/session-1/edr-base.jpg" }),
+    polarizedAllOn: artifact({ storageKey: "captures/session-1/polarized-all-on.jpg" }),
+    flcLed0: artifact({ storageKey: "captures/session-1/flc-led-0.jpg" }),
+    flcLed1: artifact({ storageKey: "captures/session-1/flc-led-1.jpg" }),
+    flcLed2: artifact({ storageKey: "captures/session-1/flc-led-2.jpg" }),
+    flcLed3: artifact({ storageKey: "captures/session-1/flc-led-3.jpg" }),
+    flcLed4: artifact({ storageKey: "captures/session-1/flc-led-4.jpg" }),
+    flcLed5: artifact({ storageKey: "captures/session-1/flc-led-5.jpg" }),
+    flcLed6: artifact({ storageKey: "captures/session-1/flc-led-6.jpg" }),
+    flcLed7: artifact({ storageKey: "captures/session-1/flc-led-7.jpg" }),
+    ...overrides,
+  };
+}
+
+function microPackage(overrides = {}) {
+  const element = overrides.element ?? "CORNERS";
+  const side = overrides.side ?? "FRONT";
+  const spotIndex = overrides.spotIndex ?? 1;
+  const sourceSuspectRegionId =
+    Object.prototype.hasOwnProperty.call(overrides, "sourceSuspectRegionId")
+      ? overrides.sourceSuspectRegionId
+      : element === "SURFACE"
+        ? "macro-suspect-1"
+        : undefined;
+  const base = {
+    id: buildMicroSpotPackageId({
+      sessionId: "session-1",
+      side,
+      element,
+      spotIndex,
+      sourceSuspectRegionId,
+    }),
+    sessionId: "session-1",
+    captureManifestId: "capture-manifest-1",
+    side,
+    element,
+    spotIndex,
+    totalSpots: element === "SURFACE" ? 1 : 4,
+    stageXMicrons: 10000,
+    stageYMicrons: 12000,
+    microMagnification: 220,
+    amrReading: 0.12,
+    focusScore: 0.95,
+    frames: microSpotFrames(),
+    capturedAt: ISO_TIME,
+    validForClassification: true,
+  };
+  if (sourceSuspectRegionId !== undefined) {
+    base.sourceSuspectRegionId = sourceSuspectRegionId;
+  }
+  return {
+    ...base,
+    ...overrides,
+  };
+}
+
 test("validateMacroPipelineOutput accepts a valid macro output", () => {
   const result = validateMacroPipelineOutput(macroOutput());
 
@@ -331,6 +405,141 @@ test("validateCardToStageTransformInput checks transform calibration contract", 
   assert.equal(validResult.valid, true);
   assert.equal(invalidResult.valid, false);
   assert.ok(issueCodes(invalidResult).includes("INVALID_TRANSFORM"));
+});
+
+test("validateMicroSpotCapturePackage accepts a valid corner package", () => {
+  const result = validateMicroSpotCapturePackage(microPackage({ element: "CORNERS", totalSpots: 4 }));
+  const fusionResult = validateMicroPackageForFusion(microPackage({ element: "CORNERS", totalSpots: 4 }), {
+    sessionId: "session-1",
+    captureManifestId: "capture-manifest-1",
+    side: "FRONT",
+  });
+
+  assert.equal(result.valid, true);
+  assert.equal(fusionResult.valid, true);
+});
+
+test("validateMicroSpotCapturePackage accepts a valid edge package", () => {
+  const result = validateMicroSpotCapturePackage(microPackage({ element: "EDGES", spotIndex: 2, totalSpots: 4 }));
+
+  assert.equal(result.valid, true);
+});
+
+test("validateMicroSpotCapturePackage accepts a valid surface package linked to suspect id", () => {
+  const result = validateMicroSpotCapturePackage(
+    microPackage({
+      element: "SURFACE",
+      spotIndex: 1,
+      totalSpots: 3,
+      sourceSuspectRegionId: "macro-suspect-1",
+    })
+  );
+
+  assert.equal(result.valid, true);
+});
+
+test("validateMicroSpotCaptureFrames rejects missing FLC frames", () => {
+  const frames = microSpotFrames();
+  delete frames.flcLed7;
+  const result = validateMicroSpotCaptureFrames(frames);
+  const packageResult = validateMicroSpotCapturePackage(
+    microPackage({
+      frames,
+      validForClassification: true,
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.equal(packageResult.valid, false);
+  assert.ok(issueCodes(result).includes("MISSING_FRAME"));
+  assert.ok(issueCodes(packageResult).includes("MICRO_EVIDENCE_INCOMPLETE"));
+});
+
+test("validateMicroSpotCapturePackage rejects surface package without source suspect id", () => {
+  const result = validateMicroSpotCapturePackage(
+    microPackage({
+      element: "SURFACE",
+      sourceSuspectRegionId: undefined,
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("MODE_MISSING_SURFACE_REGION"));
+});
+
+test("validateMicroSpotCapturePackage rejects corner and edge packages with source suspect id", () => {
+  const cornerResult = validateMicroSpotCapturePackage(
+    microPackage({
+      element: "CORNERS",
+      sourceSuspectRegionId: "macro-suspect-1",
+    })
+  );
+  const edgeResult = validateMicroSpotCapturePackage(
+    microPackage({
+      element: "EDGES",
+      sourceSuspectRegionId: "macro-suspect-1",
+    })
+  );
+
+  assert.equal(cornerResult.valid, false);
+  assert.equal(edgeResult.valid, false);
+  assert.ok(issueCodes(cornerResult).includes("INVALID_MICRO_PACKAGE"));
+  assert.ok(issueCodes(edgeResult).includes("INVALID_MICRO_PACKAGE"));
+});
+
+test("buildStandardSpotPlan supports zero surface suspects", () => {
+  const plan = buildStandardSpotPlan({
+    sessionId: "session-1",
+    side: "FRONT",
+    surfaceSuspects: [],
+  });
+  const result = validateStandardSpotPlan(plan);
+
+  assert.equal(result.valid, true);
+  assert.equal(plan.spots.filter((spot) => spot.element === "CORNERS").length, 4);
+  assert.equal(plan.spots.filter((spot) => spot.element === "EDGES").length, 4);
+  assert.equal(plan.spots.filter((spot) => spot.element === "SURFACE").length, 0);
+});
+
+test("buildStandardSpotPlan routes top 3 surface suspects", () => {
+  const suspects = [
+    macroSuspect({ id: "suspect-1", rank: 1, score: 0.85 }),
+    macroSuspect({ id: "suspect-2", rank: 2, score: 0.95 }),
+    macroSuspect({ id: "suspect-3", rank: 3, score: 0.78 }),
+    macroSuspect({ id: "suspect-4", rank: 4, score: 0.74 }),
+  ];
+  const plan = buildStandardSpotPlan({
+    sessionId: "session-1",
+    side: "FRONT",
+    surfaceSuspects: suspects,
+  });
+  const surfaceSpots = plan.spots.filter((spot) => spot.element === "SURFACE");
+
+  assert.equal(validateStandardSpotPlan(plan).valid, true);
+  assert.deepEqual(
+    surfaceSpots.map((spot) => spot.sourceSuspectRegionId),
+    ["suspect-2", "suspect-1", "suspect-3"]
+  );
+});
+
+test("validateMicroPackageForFusion rejects incomplete packages as non-clean evidence", () => {
+  const frames = microSpotFrames();
+  delete frames.flcLed3;
+  const result = validateMicroPackageForFusion(
+    microPackage({
+      frames,
+      validForClassification: false,
+    }),
+    {
+      sessionId: "session-1",
+      captureManifestId: "capture-manifest-1",
+      side: "FRONT",
+    }
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("MISSING_FRAME"));
+  assert.ok(issueCodes(result).includes("MICRO_EVIDENCE_INCOMPLETE"));
 });
 
 test("buildInitialAiGraderAlgorithmVersions returns valid provenance seeds", () => {

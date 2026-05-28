@@ -201,12 +201,26 @@ export interface MacroPipelineOutput {
   evidenceArtifacts: EvidenceArtifactRef[];
 }
 
+export type MicroSpotElement = "CORNERS" | "EDGES" | "SURFACE" | "CMYK_AUTHENTICATION";
+export type StandardSpotPlanElement = Exclude<MicroSpotElement, "CMYK_AUTHENTICATION">;
+export type MicroSpotFrameKey =
+  | "edrBase"
+  | "polarizedAllOn"
+  | "flcLed0"
+  | "flcLed1"
+  | "flcLed2"
+  | "flcLed3"
+  | "flcLed4"
+  | "flcLed5"
+  | "flcLed6"
+  | "flcLed7";
+
 export interface MicroSpotCapturePackage {
   id: string;
   sessionId: string;
   captureManifestId: string;
   side: CaptureSide;
-  element: "CORNERS" | "EDGES" | "SURFACE" | "CMYK_AUTHENTICATION";
+  element: MicroSpotElement;
   spotIndex: number;
   totalSpots: number;
   sourceSuspectRegionId?: string;
@@ -229,6 +243,49 @@ export interface MicroSpotCapturePackage {
   };
   capturedAt: string;
   validForClassification: boolean;
+}
+
+export interface BuildMicroSpotPackageIdInput {
+  sessionId: string;
+  side: CaptureSide;
+  element: MicroSpotElement;
+  spotIndex: number;
+  sourceSuspectRegionId?: string;
+}
+
+export interface StandardSpotPlanSpot {
+  id: string;
+  sessionId: string;
+  side: CaptureSide;
+  element: StandardSpotPlanElement;
+  label: string;
+  spotIndex: number;
+  totalSpots: number;
+  sourceSuspectRegionId?: string;
+}
+
+export interface StandardSpotPlan {
+  sessionId: string;
+  side: CaptureSide;
+  surfaceSuspectThreshold: number;
+  surfaceTopN: number;
+  spots: StandardSpotPlanSpot[];
+}
+
+export interface BuildStandardSpotPlanInput {
+  sessionId: string;
+  side: CaptureSide;
+  surfaceSuspects?: MacroSuspectRegion[];
+  threshold?: number;
+  surfaceTopN?: number;
+}
+
+export interface MicroPackageFusionValidationOptions {
+  sessionId?: string;
+  captureManifestId?: string;
+  side?: CaptureSide;
+  allowedElements?: readonly MicroSpotElement[];
+  sourceSuspectRegionIds?: readonly string[];
 }
 
 export type FusionActionType = "LOWER" | "HOLD" | "DUST_CORRECT" | "WARNING_ONLY";
@@ -299,6 +356,10 @@ export type AiGraderValidationIssueCode =
   | "INVALID_RECT"
   | "INVALID_SCORE"
   | "INVALID_RANK"
+  | "INVALID_SPOT_PLAN"
+  | "INVALID_MICRO_PACKAGE"
+  | "MISSING_FRAME"
+  | "MICRO_EVIDENCE_INCOMPLETE"
   | "INVALID_ARRAY"
   | "INVALID_RECORD"
   | "INVALID_NUMBER"
@@ -457,6 +518,32 @@ const GRADING_MODES = [
 ] as const;
 
 const CAPTURE_SIDES = ["FRONT", "BACK"] as const;
+const MICRO_SPOT_ELEMENTS = ["CORNERS", "EDGES", "SURFACE", "CMYK_AUTHENTICATION"] as const;
+const STANDARD_SPOT_PLAN_ELEMENTS = ["CORNERS", "EDGES", "SURFACE"] as const;
+const REQUIRED_MICRO_SPOT_FRAME_KEYS = [
+  "edrBase",
+  "polarizedAllOn",
+  "flcLed0",
+  "flcLed1",
+  "flcLed2",
+  "flcLed3",
+  "flcLed4",
+  "flcLed5",
+  "flcLed6",
+  "flcLed7",
+] as const satisfies readonly MicroSpotFrameKey[];
+const REQUIRED_FLC_FRAME_KEYS = [
+  "flcLed0",
+  "flcLed1",
+  "flcLed2",
+  "flcLed3",
+  "flcLed4",
+  "flcLed5",
+  "flcLed6",
+  "flcLed7",
+] as const satisfies readonly MicroSpotFrameKey[];
+const STANDARD_CORNER_SPOT_LABELS = ["TOP_LEFT", "TOP_RIGHT", "BOTTOM_RIGHT", "BOTTOM_LEFT"] as const;
+const STANDARD_EDGE_SPOT_LABELS = ["TOP_MIDPOINT", "RIGHT_MIDPOINT", "BOTTOM_MIDPOINT", "LEFT_MIDPOINT"] as const;
 
 const GRADING_CAPTURE_KINDS = [
   "COLOR_CHECKER_FRONT",
@@ -514,6 +601,8 @@ const DEVICE_HEALTH_STATUSES = ["PASS", "WARN", "FAIL"] as const;
 
 const GRADING_MODE_VALUES = new Set<string>(GRADING_MODES);
 const CAPTURE_SIDE_VALUES = new Set<string>(CAPTURE_SIDES);
+const MICRO_SPOT_ELEMENT_VALUES = new Set<string>(MICRO_SPOT_ELEMENTS);
+const STANDARD_SPOT_PLAN_ELEMENT_VALUES = new Set<string>(STANDARD_SPOT_PLAN_ELEMENTS);
 const GRADING_CAPTURE_KIND_VALUES = new Set<string>(GRADING_CAPTURE_KINDS);
 const DEVICE_TYPE_VALUES = new Set<string>(DEVICE_TYPES);
 const COORDINATE_UNIT_VALUES = new Set<string>(COORDINATE_UNITS);
@@ -523,6 +612,8 @@ const CONTAINER_DIGEST_RE = /^(?:sha256:)?[a-f0-9]{64}$/i;
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 const AI_GRADER_SEED_ACTIVE_FROM = "2026-05-28T00:00:00.000Z";
+export const STANDARD_CORNERS_PER_SIDE = 4;
+export const STANDARD_EDGES_PER_SIDE = 4;
 export const DEFAULT_SURFACE_SUSPECT_THRESHOLD = 0.72;
 export const DEFAULT_STANDARD_SURFACE_TOP_N = 3;
 const STANDARD_SPOT_FUSION_SOURCE_HASH = "1".repeat(64);
@@ -563,6 +654,10 @@ function hasValidContainerDigest(value: unknown): boolean {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 function requireString(
@@ -688,6 +783,38 @@ function validateEvidenceArtifactRef(value: unknown, path: string, issues: AiGra
       issues.push(issue(`${path}.${field}`, "INVALID_NUMBER", `${field} must be a non-negative finite number when provided.`));
     }
   });
+}
+
+function missingMicroSpotFrameKeys(value: unknown): MicroSpotFrameKey[] {
+  if (!isRecord(value)) {
+    return [...REQUIRED_MICRO_SPOT_FRAME_KEYS];
+  }
+
+  return REQUIRED_MICRO_SPOT_FRAME_KEYS.filter((frameKey) => value[frameKey] == null);
+}
+
+function validateMicroSpotCaptureFramesInternal(
+  value: unknown,
+  path: string
+): AiGraderValidationIssue[] {
+  const issues: AiGraderValidationIssue[] = [];
+
+  if (!isRecord(value)) {
+    issues.push(issue(path, "INVALID_RECORD", `${path} must be a micro spot frame object.`));
+    return issues;
+  }
+
+  REQUIRED_MICRO_SPOT_FRAME_KEYS.forEach((frameKey) => {
+    const frame = value[frameKey];
+    const framePath = `${path}.${frameKey}`;
+    if (frame == null) {
+      issues.push(issue(framePath, "MISSING_FRAME", `${frameKey} is required.`));
+      return;
+    }
+    validateEvidenceArtifactRef(frame, framePath, issues);
+  });
+
+  return issues;
 }
 
 function centeringReferencesMicroscopeEvidence(value: unknown): boolean {
@@ -1358,6 +1485,299 @@ export function validateCardToStageTransformInput(value: unknown): AiGraderValid
     ) {
       issues.push(issue(`${path}.stageTargetMicrons.y`, "INVALID_TRANSFORM", "stage target y is outside safe travel bounds."));
     }
+  }
+
+  return validationResult(issues);
+}
+
+export function buildMicroSpotPackageId(input: BuildMicroSpotPackageIdInput): string {
+  const base = [
+    "micro-spot",
+    input.sessionId.trim(),
+    input.side,
+    input.element,
+    String(input.spotIndex),
+  ];
+  if (isNonEmptyString(input.sourceSuspectRegionId)) {
+    base.push(input.sourceSuspectRegionId.trim());
+  }
+  return base.join(":");
+}
+
+export function validateMicroSpotCaptureFrames(value: unknown): AiGraderValidationResult {
+  return validationResult(validateMicroSpotCaptureFramesInternal(value, "frames"));
+}
+
+export function validateMicroSpotCapturePackage(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "microPackage";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "MicroSpotCapturePackage must be an object.")]);
+  }
+
+  ["id", "sessionId", "captureManifestId"].forEach((field) => requireString(value, field, path, issues));
+
+  if (!isNonEmptyString(value.side) || !CAPTURE_SIDE_VALUES.has(value.side)) {
+    issues.push(issue(`${path}.side`, "INVALID_ENUM", "side must be FRONT or BACK."));
+  }
+
+  if (!isNonEmptyString(value.element) || !MICRO_SPOT_ELEMENT_VALUES.has(value.element)) {
+    issues.push(issue(`${path}.element`, "INVALID_ENUM", "element must be CORNERS, EDGES, SURFACE, or CMYK_AUTHENTICATION."));
+  }
+
+  if (!isPositiveInteger(value.spotIndex)) {
+    issues.push(issue(`${path}.spotIndex`, "INVALID_MICRO_PACKAGE", "spotIndex must be a positive integer."));
+  }
+  if (!isPositiveInteger(value.totalSpots)) {
+    issues.push(issue(`${path}.totalSpots`, "INVALID_MICRO_PACKAGE", "totalSpots must be a positive integer."));
+  }
+  if (isPositiveInteger(value.spotIndex) && isPositiveInteger(value.totalSpots) && value.spotIndex > value.totalSpots) {
+    issues.push(issue(`${path}.spotIndex`, "INVALID_MICRO_PACKAGE", "spotIndex must be less than or equal to totalSpots."));
+  }
+
+  if (value.element === "SURFACE") {
+    if (!isNonEmptyString(value.sourceSuspectRegionId)) {
+      issues.push(issue(`${path}.sourceSuspectRegionId`, "MODE_MISSING_SURFACE_REGION", "SURFACE packages must link to a source suspect region."));
+    }
+  } else if (value.sourceSuspectRegionId != null) {
+    issues.push(issue(`${path}.sourceSuspectRegionId`, "INVALID_MICRO_PACKAGE", "non-surface packages must not link to a source suspect region."));
+  }
+
+  ["stageXMicrons", "stageYMicrons", "amrReading"].forEach((field) => {
+    if (!isFiniteNumber(value[field])) {
+      issues.push(issue(`${path}.${field}`, "INVALID_NUMBER", `${field} must be a finite number.`));
+    }
+  });
+  if (!isFiniteNumber(value.microMagnification) || value.microMagnification <= 0) {
+    issues.push(issue(`${path}.microMagnification`, "INVALID_NUMBER", "microMagnification must be a positive finite number."));
+  }
+  if (!isFiniteNumber(value.focusScore) || value.focusScore < 0) {
+    issues.push(issue(`${path}.focusScore`, "INVALID_NUMBER", "focusScore must be a non-negative finite number."));
+  }
+  if (!hasValidTimestamp(value.capturedAt)) {
+    issues.push(issue(`${path}.capturedAt`, "INVALID_TIMESTAMP", "capturedAt must be a valid timestamp string."));
+  }
+  if (typeof value.validForClassification !== "boolean") {
+    issues.push(issue(`${path}.validForClassification`, "INVALID_TYPE", "validForClassification must be a boolean."));
+  }
+
+  const frameIssues = validateMicroSpotCaptureFramesInternal(value.frames, `${path}.frames`);
+  issues.push(...frameIssues);
+
+  const missingFlcFrames = missingMicroSpotFrameKeys(value.frames).filter((frameKey) =>
+    REQUIRED_FLC_FRAME_KEYS.some((requiredFrameKey) => requiredFrameKey === frameKey)
+  );
+  if (missingFlcFrames.length > 0 && value.validForClassification === true) {
+    issues.push(issue(`${path}.validForClassification`, "MICRO_EVIDENCE_INCOMPLETE", "missing FLC frames cannot be marked valid for classification."));
+  }
+
+  return validationResult(issues);
+}
+
+export function buildStandardSpotPlan(input: BuildStandardSpotPlanInput): StandardSpotPlan {
+  const surfaceTopN = input.surfaceTopN ?? DEFAULT_STANDARD_SURFACE_TOP_N;
+  const threshold = input.threshold ?? DEFAULT_SURFACE_SUSPECT_THRESHOLD;
+  const surfaceSuspects = sortAndSelectStandardSurfaceSuspects(input.surfaceSuspects ?? [], {
+    side: input.side,
+    threshold,
+    topN: surfaceTopN,
+  });
+
+  const cornerSpots: StandardSpotPlanSpot[] = STANDARD_CORNER_SPOT_LABELS.map((label, index) => ({
+    id: buildMicroSpotPackageId({
+      sessionId: input.sessionId,
+      side: input.side,
+      element: "CORNERS",
+      spotIndex: index + 1,
+    }),
+    sessionId: input.sessionId,
+    side: input.side,
+    element: "CORNERS",
+    label,
+    spotIndex: index + 1,
+    totalSpots: STANDARD_CORNERS_PER_SIDE,
+  }));
+
+  const edgeSpots: StandardSpotPlanSpot[] = STANDARD_EDGE_SPOT_LABELS.map((label, index) => ({
+    id: buildMicroSpotPackageId({
+      sessionId: input.sessionId,
+      side: input.side,
+      element: "EDGES",
+      spotIndex: index + 1,
+    }),
+    sessionId: input.sessionId,
+    side: input.side,
+    element: "EDGES",
+    label,
+    spotIndex: index + 1,
+    totalSpots: STANDARD_EDGES_PER_SIDE,
+  }));
+
+  const surfaceSpots: StandardSpotPlanSpot[] = surfaceSuspects.map((suspect, index) => ({
+    id: buildMicroSpotPackageId({
+      sessionId: input.sessionId,
+      side: input.side,
+      element: "SURFACE",
+      spotIndex: index + 1,
+      sourceSuspectRegionId: suspect.id,
+    }),
+    sessionId: input.sessionId,
+    side: input.side,
+    element: "SURFACE",
+    label: `SURFACE_${index + 1}`,
+    spotIndex: index + 1,
+    totalSpots: surfaceSuspects.length,
+    sourceSuspectRegionId: suspect.id,
+  }));
+
+  return {
+    sessionId: input.sessionId,
+    side: input.side,
+    surfaceSuspectThreshold: threshold,
+    surfaceTopN,
+    spots: [...cornerSpots, ...edgeSpots, ...surfaceSpots],
+  };
+}
+
+function validateStandardSpotPlanSpot(
+  spot: unknown,
+  path: string,
+  plan: Record<string, unknown>,
+  issues: AiGraderValidationIssue[]
+) {
+  if (!isRecord(spot)) {
+    issues.push(issue(path, "INVALID_RECORD", `${path} must be a spot plan object.`));
+    return;
+  }
+
+  ["id", "sessionId", "label"].forEach((field) => requireString(spot, field, path, issues));
+  if (spot.sessionId !== plan.sessionId) {
+    issues.push(issue(`${path}.sessionId`, "INVALID_SPOT_PLAN", "spot sessionId must match plan sessionId."));
+  }
+  if (!isNonEmptyString(spot.side) || !CAPTURE_SIDE_VALUES.has(spot.side)) {
+    issues.push(issue(`${path}.side`, "INVALID_ENUM", "spot side must be FRONT or BACK."));
+  } else if (spot.side !== plan.side) {
+    issues.push(issue(`${path}.side`, "INVALID_SPOT_PLAN", "spot side must match plan side."));
+  }
+  if (!isNonEmptyString(spot.element) || !STANDARD_SPOT_PLAN_ELEMENT_VALUES.has(spot.element)) {
+    issues.push(issue(`${path}.element`, "INVALID_ENUM", "STANDARD spot plan element must be CORNERS, EDGES, or SURFACE."));
+  }
+  if (!isPositiveInteger(spot.spotIndex)) {
+    issues.push(issue(`${path}.spotIndex`, "INVALID_SPOT_PLAN", "spotIndex must be a positive integer."));
+  }
+  if (!isPositiveInteger(spot.totalSpots)) {
+    issues.push(issue(`${path}.totalSpots`, "INVALID_SPOT_PLAN", "totalSpots must be a positive integer."));
+  }
+  if (isPositiveInteger(spot.spotIndex) && isPositiveInteger(spot.totalSpots) && spot.spotIndex > spot.totalSpots) {
+    issues.push(issue(`${path}.spotIndex`, "INVALID_SPOT_PLAN", "spotIndex must be less than or equal to totalSpots."));
+  }
+  if (spot.element === "SURFACE") {
+    if (!isNonEmptyString(spot.sourceSuspectRegionId)) {
+      issues.push(issue(`${path}.sourceSuspectRegionId`, "MODE_MISSING_SURFACE_REGION", "surface plan spots must link to a source suspect region."));
+    }
+  } else if (spot.sourceSuspectRegionId != null) {
+    issues.push(issue(`${path}.sourceSuspectRegionId`, "INVALID_SPOT_PLAN", "corner and edge plan spots must not link to a source suspect region."));
+  }
+}
+
+export function validateStandardSpotPlan(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "standardSpotPlan";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "StandardSpotPlan must be an object.")]);
+  }
+
+  requireString(value, "sessionId", path, issues);
+  if (!isNonEmptyString(value.side) || !CAPTURE_SIDE_VALUES.has(value.side)) {
+    issues.push(issue(`${path}.side`, "INVALID_ENUM", "side must be FRONT or BACK."));
+  }
+  if (!isFiniteNumber(value.surfaceSuspectThreshold) || value.surfaceSuspectThreshold < 0 || value.surfaceSuspectThreshold > 1) {
+    issues.push(issue(`${path}.surfaceSuspectThreshold`, "INVALID_SCORE", "surfaceSuspectThreshold must be 0-1."));
+  }
+  if (!Number.isInteger(value.surfaceTopN) || !isFiniteNumber(value.surfaceTopN) || value.surfaceTopN < 0 || value.surfaceTopN > DEFAULT_STANDARD_SURFACE_TOP_N) {
+    issues.push(issue(`${path}.surfaceTopN`, "INVALID_SPOT_PLAN", "surfaceTopN must be an integer from 0 to 3."));
+  }
+
+  if (!Array.isArray(value.spots)) {
+    issues.push(issue(`${path}.spots`, "INVALID_ARRAY", "spots must be an array."));
+    return validationResult(issues);
+  }
+
+  value.spots.forEach((spot, index) => validateStandardSpotPlanSpot(spot, `${path}.spots[${index}]`, value, issues));
+
+  const typedSpots = value.spots.filter(isRecord);
+  const cornerSpots = typedSpots.filter((spot) => spot.element === "CORNERS" && spot.side === value.side);
+  const edgeSpots = typedSpots.filter((spot) => spot.element === "EDGES" && spot.side === value.side);
+  const surfaceSpots = typedSpots.filter((spot) => spot.element === "SURFACE" && spot.side === value.side);
+
+  if (cornerSpots.length !== STANDARD_CORNERS_PER_SIDE || edgeSpots.length !== STANDARD_EDGES_PER_SIDE) {
+    issues.push(issue(`${path}.spots`, "MODE_MISSING_MICRO_SPOTS", "STANDARD spot plan must include 4 corner and 4 edge spots per side."));
+  }
+  if (surfaceSpots.length > DEFAULT_STANDARD_SURFACE_TOP_N || surfaceSpots.length > Number(value.surfaceTopN)) {
+    issues.push(issue(`${path}.spots`, "MODE_TOO_MANY_SURFACE_SPOTS", "STANDARD spot plan allows at most 3 routed surface suspect spots per side."));
+  }
+
+  [
+    { element: "CORNERS", expectedTotal: STANDARD_CORNERS_PER_SIDE, spots: cornerSpots },
+    { element: "EDGES", expectedTotal: STANDARD_EDGES_PER_SIDE, spots: edgeSpots },
+    { element: "SURFACE", expectedTotal: surfaceSpots.length, spots: surfaceSpots },
+  ].forEach(({ element, expectedTotal, spots }) => {
+    const seen = new Set<number>();
+    spots.forEach((spot) => {
+      if (spot.totalSpots !== expectedTotal) {
+        issues.push(issue(`${path}.spots.${element}.totalSpots`, "INVALID_SPOT_PLAN", `${element} totalSpots must match the planned spot count.`));
+      }
+      if (typeof spot.spotIndex === "number") {
+        seen.add(spot.spotIndex);
+      }
+    });
+    for (let index = 1; index <= expectedTotal; index += 1) {
+      if (!seen.has(index)) {
+        issues.push(issue(`${path}.spots.${element}.spotIndex`, "INVALID_SPOT_PLAN", `${element} spot indexes must be contiguous from 1 to ${expectedTotal}.`));
+        break;
+      }
+    }
+  });
+
+  return validationResult(issues);
+}
+
+export function validateMicroPackageForFusion(
+  value: unknown,
+  options: MicroPackageFusionValidationOptions = {}
+): AiGraderValidationResult {
+  const issues = [...validateMicroSpotCapturePackage(value).issues];
+  const path = "microPackage";
+
+  if (!isRecord(value)) {
+    return validationResult(issues);
+  }
+
+  const allowedElements = options.allowedElements ?? STANDARD_SPOT_PLAN_ELEMENTS;
+  if (!isNonEmptyString(value.element) || !allowedElements.includes(value.element as MicroSpotElement)) {
+    issues.push(issue(`${path}.element`, "INVALID_ENUM", "package element is not allowed for this fusion context."));
+  }
+  if (value.validForClassification !== true) {
+    issues.push(issue(`${path}.validForClassification`, "MICRO_EVIDENCE_INCOMPLETE", "incomplete micro evidence must be reviewed and cannot enter fusion as clean evidence."));
+  }
+  if (isNonEmptyString(options.sessionId) && value.sessionId !== options.sessionId) {
+    issues.push(issue(`${path}.sessionId`, "INVALID_MICRO_PACKAGE", "package sessionId does not match the fusion context."));
+  }
+  if (isNonEmptyString(options.captureManifestId) && value.captureManifestId !== options.captureManifestId) {
+    issues.push(issue(`${path}.captureManifestId`, "INVALID_MICRO_PACKAGE", "package captureManifestId does not match the fusion context."));
+  }
+  if (isNonEmptyString(options.side) && value.side !== options.side) {
+    issues.push(issue(`${path}.side`, "INVALID_MICRO_PACKAGE", "package side does not match the fusion context."));
+  }
+  if (
+    Array.isArray(options.sourceSuspectRegionIds) &&
+    value.element === "SURFACE" &&
+    isNonEmptyString(value.sourceSuspectRegionId) &&
+    !options.sourceSuspectRegionIds.includes(value.sourceSuspectRegionId)
+  ) {
+    issues.push(issue(`${path}.sourceSuspectRegionId`, "MODE_MISSING_SURFACE_REGION", "surface package source suspect region is not part of the routed plan."));
   }
 
   return validationResult(issues);

@@ -17396,6 +17396,27 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-28 - AI Grader Phase 6 micro spot package helpers
+
+### Summary
+- Implemented Phase 6 as pure shared micro spot package contract helpers in `@tenkings/shared`.
+- Added `validateMicroSpotCapturePackage`, `validateMicroSpotCaptureFrames`, `buildMicroSpotPackageId`, `buildStandardSpotPlan`, `validateStandardSpotPlan`, and `validateMicroPackageForFusion`.
+- Enforced v5 micro contract rules for STANDARD 4 corner + 4 edge + 0-3 surface packages per side, required EDR/polarized/8-FLC frame artifacts, source suspect linkage for SURFACE packages, source suspect absence for corner/edge packages, coordinate/AMR/magnification/focus/timestamp validation, and explicit incomplete-evidence rejection for fusion.
+- Added tests for valid corner, edge, and linked surface packages; missing FLC frame handling; bad source suspect linkage; zero-suspect and top-3 STANDARD plans; and incomplete package rejection as non-clean evidence.
+- No Dino-Lite SDK, ACRO/GRBL movement, autofocus, real image capture, upload/checksum generation from files, grading math, STANDARD fusion implementation, auth algorithms, frontend pages, schema/migration changes, deploys, restarts, runtime DB operations, destructive operations, or Phase 7 work were performed.
+
+### Files Changed
+- `packages/shared/src/aiGrader.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/aiGrader.test.js`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 70 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader Phase 3 manifest validation helpers
 
 ### Summary
