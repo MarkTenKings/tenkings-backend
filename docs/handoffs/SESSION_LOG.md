@@ -17730,3 +17730,24 @@ By enabling Rip It Live, I confirm:
 - `pnpm --filter @tenkings/shared test` -> pass, 103 tests.
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
+## 2026-05-28 - AI Grader Phase 10 committed
+
+### Summary
+- User reported Phase 10 evidence, certificate, custody, and public-report contract helpers completed and committed on `feature/ai-grader-v5-foundation`.
+- Commit: `14ca02e522eb13fc65f63dbf9ac5f52df06f565b` (`feat(ai-grader): add report and certificate contract helpers`).
+- Phase 9 handoff cleanup and previous work are pushed; Phase 10 commit is local-only until the next push.
+- Final reported status: `## feature/ai-grader-v5-foundation...origin/feature/ai-grader-v5-foundation [ahead 1]`.
+- Files changed:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Phase 10 stayed pure shared contract work with no report UI, PDF generation, object storage upload, checksum generation from files, DB writes, migrations, hardware drivers, capture code, grading math, auth algorithms, deploys, restarts, runtime DB operations, or destructive operations.
+- `GradeCertificateContract` includes `sourceGradeRunStatus` as contract-level validation context so helpers can enforce complete GradeRun readiness without DB reads.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 103 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
