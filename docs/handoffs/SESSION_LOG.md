@@ -17750,6 +17750,26 @@ By enabling Rip It Live, I confirm:
 - Remaining risk: draft migration remains unapplied and needs migration/readiness review before merge.
 - No merge, deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
 
+## 2026-05-28 - AI Grader foundation PR review findings
+
+### Summary
+- User reported the draft PR #6 foundation review and migration-readiness audit completed.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/6`.
+- Latest reported HEAD after the review checkpoint: `1dc2a826de60d0a780d5c56a5351f5ef4c617801`.
+- Branch remained clean and tracking `origin/feature/ai-grader-v5-foundation`.
+- All checks and local validation passed, including CI Install & Build, Docker image jobs, Vercel, database build/Prisma validate, shared build/tests, and `git diff --check`.
+- PR remains draft; no merge, deploy, migration execution, runtime DB operation, destructive operation, or service/hardware implementation occurred.
+
+### Findings
+- Medium: `CaptureManifest.helperInstanceId` is required by the v5 spec/shared contract/validator but nullable in the Prisma draft schema and migration. Decide required vs optional, then align schema, migration, contract, and tests before migration execution.
+- Medium: certificate readiness can ignore `GradeCertificateContract.sourceGradeRunStatus` when a separate `gradeRunStatus` is supplied. Add mismatch/failed-status coverage before using this as a certificate gate.
+- Low: `EvidenceArtifact` FK/query linkage fields `gradeRunId`, `authRunId`, and `certificateId` are under-indexed. Add indexes before applying the migration.
+
+### Migration Verdict
+- Draft migration is additive and source-mergeable in principle, but should not be executed yet.
+- Fix helper ID nullability alignment and evidence-link indexes before any staging/prod migration run.
+- Recommendation: keep PR #6 draft / needs fixes before ready-for-review.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary

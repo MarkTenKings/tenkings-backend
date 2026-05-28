@@ -28,6 +28,7 @@
 ## Session Update (2026-05-28, AI Grader foundation draft PR opened)
 - AI Grader v5 foundation branch was pushed and opened as a draft PR for review only.
 - Branch: `feature/ai-grader-v5-foundation`.
+- Latest review/audit HEAD reported: `1dc2a826de60d0a780d5c56a5351f5ef4c617801`.
 - Latest HEAD/checkpoint reported after PR status review: `c6028249e1fe72c3361d82e1ea17f6578c14917a`.
 - Initial PR-open HEAD was `066c088ca64be65b6011c2859276dd5f9d8b4c06` (`docs: record ai grader phase 10 commit`).
 - Draft PR: `https://github.com/MarkTenKings/tenkings-backend/pull/6`.
@@ -39,7 +40,12 @@
   - Vercel Preview Comments: pass
 - PR includes the v5 spec, draft Prisma schema/migration, shared contracts/FSM/validators/helpers, and tests.
 - PR explicitly does not include hardware drivers, capture implementation, grading math, auth algorithms, frontend report UI/PDF, migration execution, deploys, restarts, runtime DB operations, or destructive operations.
-- Remaining risk: draft migration remains unapplied and needs migration/readiness review before merge.
+- Foundation review findings before ready-for-review:
+  - Medium: `CaptureManifest.helperInstanceId` is required by spec/shared contract but nullable in Prisma draft schema/migration.
+  - Medium: certificate readiness helper can ignore the certificate contract's own `sourceGradeRunStatus` when a separate `gradeRunStatus` is supplied.
+  - Low: `EvidenceArtifact` linkage columns `gradeRunId`, `authRunId`, and `certificateId` are under-indexed for likely evidence/certificate/replay queries.
+- Migration verdict from review: additive and source-mergeable in principle, but do not execute yet; fix the helper ID nullability decision and evidence-link indexes before staging/prod migration.
+- Recommendation remains: keep PR #6 draft / needs fixes before ready-for-review.
 - No merge, deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)
