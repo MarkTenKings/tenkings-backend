@@ -17449,6 +17449,27 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-28 - AI Grader Phase 5 macro pipeline contract helpers
+
+### Summary
+- Implemented Phase 5 as pure shared macro pipeline contract helpers in `@tenkings/shared`.
+- Added `validateMacroSuspectRegion`, `validateMacroPipelineOutput`, `sortAndSelectStandardSurfaceSuspects`, `buildMacroSuspectRegionId`, `normalizeBackSideCardCoordinates`, and `validateCardToStageTransformInput`.
+- Enforced v5 macro contract rules for SURFACE-only suspect regions, normalized 0-1 scores, default 0.72 threshold, STANDARD top-N routing default of 3, zero-suspect STANDARD compatibility, positive-size rectangles, centering isolation from microscope evidence, and contract-level card-to-stage calibration inputs.
+- Added tests for valid macro output, invalid suspect score/rect/rank/side/element, top-N routing, zero-suspect behavior, default threshold behavior, centering microscope-evidence rejection, back-side coordinate normalization, and transform input validation.
+- No image processing, photometric stereo/math internals, macro capture, card-to-stage hardware movement, database writes, migrations, hardware drivers, microscope capture, auth algorithms, frontend pages, reports, deploys, restarts, runtime DB operations, destructive operations, or Phase 6 work were performed.
+
+### Files Changed
+- `packages/shared/src/aiGrader.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/aiGrader.test.js`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 61 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader Phase 4 committed
 
 ### Summary

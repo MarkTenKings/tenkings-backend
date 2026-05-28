@@ -4,14 +4,20 @@ const {
   ORCHESTRATOR_NAMED_ERROR_STATES,
   buildInitialAiGraderAlgorithmVersions,
   buildInitialAiGraderThresholdSets,
+  buildMacroSuspectRegionId,
   buildModePlan,
   buildRuntimeEnvironmentFingerprint,
+  normalizeBackSideCardCoordinates,
+  sortAndSelectStandardSurfaceSuspects,
   transitionOrchestratorState,
   validateAlgorithmVersionSeed,
+  validateCardToStageTransformInput,
   validateCaptureManifest,
   validateCaptureManifestForMode,
   validateCaptureManifestFrame,
   validateDeviceCapabilityManifest,
+  validateMacroPipelineOutput,
+  validateMacroSuspectRegion,
   validateReplayTolerance,
   validateRuntimeEnvironmentFingerprint,
   validateThresholdSetVersionSeed,
@@ -137,6 +143,195 @@ function forensicCaptureManifest(overrides = {}) {
     ...overrides,
   });
 }
+
+function macroSuspect(overrides = {}) {
+  const rank = overrides.rank ?? 1;
+  const side = overrides.side ?? "FRONT";
+  const thresholdSetId = overrides.thresholdSetId ?? "threshold-1";
+  return {
+    id: buildMacroSuspectRegionId({
+      sessionId: "session-1",
+      side,
+      rank,
+      thresholdSetId,
+    }),
+    sessionId: "session-1",
+    side,
+    element: "SURFACE",
+    rank,
+    score: 0.9,
+    threshold: 0.72,
+    reasonCodes: ["DARKFIELD_ANOMALY"],
+    cardMm: { x: 10, y: 20, w: 3, h: 4 },
+    warpedPx: { x: 320, y: 640, w: 96, h: 128 },
+    sourcePx: { x: 300, y: 620, w: 100, h: 132 },
+    macroCaptureIds: ["macro-frame-1"],
+    thresholdSetId,
+    ...overrides,
+  };
+}
+
+function macroOutput(overrides = {}) {
+  return {
+    sessionId: "session-1",
+    side: "FRONT",
+    captureManifestId: "capture-manifest-1",
+    algorithmVersionId: "algorithm-1",
+    thresholdSetVersionId: "threshold-1",
+    centeringMeasurement: {
+      horizontalPercent: 50,
+      verticalPercent: 50,
+      leftMm: 2,
+      rightMm: 2,
+      topMm: 3,
+      bottomMm: 3,
+    },
+    provisionalGrades: {
+      centering: 10,
+      corners: 9,
+      edges: 9,
+      surface: 8,
+    },
+    macroMeasurements: {
+      surfaceCompositeScore: 0.9,
+    },
+    suspectRegions: [macroSuspect()],
+    physicalGateResults: [{ gate: "raw-card-holder", status: "PASS" }],
+    evidenceArtifacts: [
+      {
+        storageKey: "captures/session-1/macro-output.json",
+        checksumSha256: SHA_256,
+      },
+    ],
+    ...overrides,
+  };
+}
+
+test("validateMacroPipelineOutput accepts a valid macro output", () => {
+  const result = validateMacroPipelineOutput(macroOutput());
+
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.issues, []);
+});
+
+test("validateMacroSuspectRegion rejects invalid score, rect, rank, side, and element", () => {
+  const result = validateMacroSuspectRegion(
+    macroSuspect({
+      side: "LEFT",
+      element: "CORNERS",
+      rank: 0,
+      score: 1.2,
+      cardMm: { x: 0, y: 0, w: 0, h: 4 },
+      warpedPx: { x: 0, y: 0, w: 10, h: -1 },
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("INVALID_ENUM"));
+  assert.ok(issueCodes(result).includes("INVALID_RANK"));
+  assert.ok(issueCodes(result).includes("INVALID_SCORE"));
+  assert.ok(issueCodes(result).includes("INVALID_RECT"));
+});
+
+test("sortAndSelectStandardSurfaceSuspects routes top-N suspects above threshold", () => {
+  const selected = sortAndSelectStandardSurfaceSuspects(
+    [
+      macroSuspect({ rank: 1, score: 0.88 }),
+      macroSuspect({ rank: 2, score: 0.93 }),
+      macroSuspect({ rank: 3, score: 0.77 }),
+      macroSuspect({ rank: 4, score: 0.91 }),
+      macroSuspect({ rank: 5, score: 0.5 }),
+    ],
+    { topN: 3, threshold: 0.72 }
+  );
+
+  assert.deepEqual(
+    selected.map((entry) => entry.rank),
+    [2, 4, 1]
+  );
+});
+
+test("sortAndSelectStandardSurfaceSuspects supports zero-suspect STANDARD behavior", () => {
+  const selected = sortAndSelectStandardSurfaceSuspects([
+    macroSuspect({ rank: 1, score: 0.2 }),
+    macroSuspect({ rank: 2, score: 0.71 }),
+  ]);
+
+  assert.deepEqual(selected, []);
+});
+
+test("sortAndSelectStandardSurfaceSuspects uses the default 0.72 threshold", () => {
+  const selected = sortAndSelectStandardSurfaceSuspects([
+    macroSuspect({ rank: 1, score: 0.71 }),
+    macroSuspect({ rank: 2, score: 0.72 }),
+  ]);
+
+  assert.deepEqual(
+    selected.map((entry) => entry.rank),
+    [2]
+  );
+});
+
+test("validateMacroPipelineOutput rejects centering microscope evidence", () => {
+  const result = validateMacroPipelineOutput(
+    macroOutput({
+      centeringMeasurement: {
+        horizontalPercent: 50,
+        microEvidenceArtifactIds: ["micro-frame-1"],
+      },
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("CENTERING_USES_MICROSCOPE_EVIDENCE"));
+});
+
+test("normalizeBackSideCardCoordinates mirrors back-side rectangles into corrected card coordinates", () => {
+  const rect = normalizeBackSideCardCoordinates({
+    side: "BACK",
+    rect: { x: 10, y: 5, w: 4, h: 6 },
+    cardWidthMm: 100,
+    cardHeightMm: 140,
+  });
+
+  assert.deepEqual(rect, { x: 86, y: 5, w: 4, h: 6 });
+});
+
+test("validateCardToStageTransformInput checks transform calibration contract", () => {
+  const validResult = validateCardToStageTransformInput({
+    side: "BACK",
+    cardPointMm: { x: 50, y: 70 },
+    transformType: "AFFINE",
+    calibrationSnapshotId: "calibration-1",
+    validAt: ISO_TIME,
+    expiresAt: "2026-05-29T12:00:00.000Z",
+    holderFiducialsVisible: true,
+    acroHomeEstablished: true,
+    fiducialPointCount: 4,
+    rmsResidualMicrons: 25,
+    backSideOrientationCorrectionStored: true,
+    stageTargetMicrons: { x: 10000, y: 12000 },
+    safeTravelBoundsMicrons: { minX: 0, maxX: 20000, minY: 0, maxY: 20000 },
+  });
+
+  const invalidResult = validateCardToStageTransformInput({
+    side: "BACK",
+    cardPointMm: { x: 50, y: 70 },
+    transformType: "AFFINE",
+    calibrationSnapshotId: "calibration-1",
+    validAt: ISO_TIME,
+    holderFiducialsVisible: false,
+    acroHomeEstablished: false,
+    fiducialPointCount: 3,
+    rmsResidualMicrons: 75,
+    stageTargetMicrons: { x: 30000, y: 12000 },
+    safeTravelBoundsMicrons: { minX: 0, maxX: 20000, minY: 0, maxY: 20000 },
+  });
+
+  assert.equal(validResult.valid, true);
+  assert.equal(invalidResult.valid, false);
+  assert.ok(issueCodes(invalidResult).includes("INVALID_TRANSFORM"));
+});
 
 test("buildInitialAiGraderAlgorithmVersions returns valid provenance seeds", () => {
   const seeds = buildInitialAiGraderAlgorithmVersions();

@@ -296,11 +296,16 @@ export type AiGraderValidationIssueCode =
   | "INVALID_CHECKSUM"
   | "INVALID_VERSION"
   | "INVALID_TOLERANCE"
+  | "INVALID_RECT"
+  | "INVALID_SCORE"
+  | "INVALID_RANK"
   | "INVALID_ARRAY"
   | "INVALID_RECORD"
   | "INVALID_NUMBER"
   | "MISSING_TOLERANCE"
   | "REPLAY_TOLERANCE_EXCEEDED"
+  | "CENTERING_USES_MICROSCOPE_EVIDENCE"
+  | "INVALID_TRANSFORM"
   | "EMPTY_ARRAY"
   | "MODE_MISSING_MACRO_FRAME"
   | "MODE_MISSING_MICRO_SPOTS"
@@ -323,6 +328,50 @@ export interface AiGraderValidationResult {
 export interface CaptureManifestModeValidationOptions {
   side?: CaptureSide;
   surfaceTopN?: number;
+}
+
+export interface MacroSuspectRegionSelectionOptions {
+  side?: CaptureSide;
+  threshold?: number;
+  topN?: number;
+}
+
+export interface BuildMacroSuspectRegionIdInput {
+  sessionId: string;
+  side: CaptureSide;
+  rank: number;
+  thresholdSetId?: string;
+}
+
+export interface CardCoordinateNormalizationInput {
+  side: CaptureSide;
+  rect: Rect;
+  cardWidthMm: number;
+  cardHeightMm: number;
+  backOrientationCorrected?: boolean;
+}
+
+export interface StageTravelBoundsMicrons {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
+export interface CardToStageTransformInput {
+  side: CaptureSide;
+  cardPointMm: { x: number; y: number };
+  transformType: "AFFINE" | "HOMOGRAPHY";
+  calibrationSnapshotId: string;
+  validAt: string;
+  expiresAt?: string;
+  holderFiducialsVisible: boolean;
+  acroHomeEstablished: boolean;
+  fiducialPointCount: number;
+  rmsResidualMicrons: number;
+  backSideOrientationCorrectionStored?: boolean;
+  stageTargetMicrons?: { x: number; y: number };
+  safeTravelBoundsMicrons?: StageTravelBoundsMicrons;
 }
 
 export type NumericToleranceMap = Record<string, number>;
@@ -474,6 +523,8 @@ const CONTAINER_DIGEST_RE = /^(?:sha256:)?[a-f0-9]{64}$/i;
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
 
 const AI_GRADER_SEED_ACTIVE_FROM = "2026-05-28T00:00:00.000Z";
+export const DEFAULT_SURFACE_SUSPECT_THRESHOLD = 0.72;
+export const DEFAULT_STANDARD_SURFACE_TOP_N = 3;
 const STANDARD_SPOT_FUSION_SOURCE_HASH = "1".repeat(64);
 const MACRO_PIPELINE_SOURCE_HASH = "2".repeat(64);
 const CMYK_PRINT_PROFILE_SOURCE_HASH = "3".repeat(64);
@@ -598,6 +649,66 @@ function validateNumericToleranceMap(value: unknown, path: string, issues: AiGra
     if (!isNonEmptyString(key) || !isFiniteNumber(tolerance) || tolerance < 0) {
       issues.push(issue(`${path}.${key}`, "INVALID_TOLERANCE", "Numeric tolerances must be non-negative finite numbers."));
     }
+  });
+}
+
+function validateRect(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (!isRecord(value)) {
+    issues.push(issue(path, "INVALID_RECT", `${path} must be a rectangle object.`));
+    return;
+  }
+
+  ["x", "y", "w", "h"].forEach((field) => {
+    if (!isFiniteNumber(value[field])) {
+      issues.push(issue(`${path}.${field}`, "INVALID_RECT", `${field} must be a finite number.`));
+    }
+  });
+
+  if (isFiniteNumber(value.w) && value.w <= 0) {
+    issues.push(issue(`${path}.w`, "INVALID_RECT", "w must be greater than 0."));
+  }
+  if (isFiniteNumber(value.h) && value.h <= 0) {
+    issues.push(issue(`${path}.h`, "INVALID_RECT", "h must be greater than 0."));
+  }
+}
+
+function validateEvidenceArtifactRef(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (!isRecord(value)) {
+    issues.push(issue(path, "INVALID_RECORD", `${path} must be an evidence artifact reference object.`));
+    return;
+  }
+
+  requireString(value, "storageKey", path, issues);
+  if (!hasValidSha256(value.checksumSha256)) {
+    issues.push(issue(`${path}.checksumSha256`, "INVALID_CHECKSUM", "checksumSha256 must be a 64-character hex SHA-256 digest."));
+  }
+
+  ["byteSize", "widthPx", "heightPx"].forEach((field) => {
+    if (value[field] != null && (!isFiniteNumber(value[field]) || value[field] < 0)) {
+      issues.push(issue(`${path}.${field}`, "INVALID_NUMBER", `${field} must be a non-negative finite number when provided.`));
+    }
+  });
+}
+
+function centeringReferencesMicroscopeEvidence(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((entry) => centeringReferencesMicroscopeEvidence(entry));
+  }
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return Object.entries(value).some(([key, entry]) => {
+    const normalizedKey = key.toLowerCase();
+    if (
+      normalizedKey.includes("micro") ||
+      normalizedKey.includes("microscope") ||
+      normalizedKey.includes("spotpackage") ||
+      normalizedKey.includes("spot_package")
+    ) {
+      return true;
+    }
+    return centeringReferencesMicroscopeEvidence(entry);
   });
 }
 
@@ -945,6 +1056,307 @@ export function validateCaptureManifestForMode(
     }
     if (authPatchCount < 5) {
       issues.push(issue("manifest.frameList", "MODE_MISSING_AUTH_PATCHES", `FORENSIC requires at least 5 microscope auth patches${sideLabel}.`));
+    }
+  }
+
+  return validationResult(issues);
+}
+
+export function buildMacroSuspectRegionId(input: BuildMacroSuspectRegionIdInput): string {
+  const base = [
+    "macro-suspect",
+    input.sessionId.trim(),
+    input.side,
+    "SURFACE",
+    String(input.rank),
+  ];
+  if (isNonEmptyString(input.thresholdSetId)) {
+    base.push(input.thresholdSetId.trim());
+  }
+  return base.join(":");
+}
+
+export function normalizeBackSideCardCoordinates(input: CardCoordinateNormalizationInput): Rect {
+  if (input.side !== "BACK" || input.backOrientationCorrected) {
+    return { ...input.rect };
+  }
+
+  return {
+    x: input.cardWidthMm - input.rect.x - input.rect.w,
+    y: input.rect.y,
+    w: input.rect.w,
+    h: input.rect.h,
+  };
+}
+
+export function sortAndSelectStandardSurfaceSuspects(
+  suspects: MacroSuspectRegion[],
+  options: MacroSuspectRegionSelectionOptions = {}
+): MacroSuspectRegion[] {
+  const threshold = options.threshold ?? DEFAULT_SURFACE_SUSPECT_THRESHOLD;
+  const topN = options.topN ?? DEFAULT_STANDARD_SURFACE_TOP_N;
+  if (topN <= 0) {
+    return [];
+  }
+
+  return suspects
+    .filter((suspect) => suspect.element === "SURFACE")
+    .filter((suspect) => !options.side || suspect.side === options.side)
+    .filter((suspect) => suspect.score >= threshold)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      return left.rank - right.rank;
+    })
+    .slice(0, topN)
+    .map((suspect) => ({ ...suspect }));
+}
+
+export function validateMacroSuspectRegion(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "suspect";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "MacroSuspectRegion must be an object.")]);
+  }
+
+  ["id", "sessionId", "thresholdSetId"].forEach((field) => requireString(value, field, path, issues));
+
+  if (!isNonEmptyString(value.side) || !CAPTURE_SIDE_VALUES.has(value.side)) {
+    issues.push(issue(`${path}.side`, "INVALID_ENUM", "side must be FRONT or BACK."));
+  }
+  if (value.element !== "SURFACE") {
+    issues.push(issue(`${path}.element`, "INVALID_ENUM", "MacroSuspectRegion.element must be SURFACE."));
+  }
+  const rank = value.rank;
+  if (typeof rank !== "number" || !Number.isInteger(rank) || rank < 1) {
+    issues.push(issue(`${path}.rank`, "INVALID_RANK", "rank must be a positive integer."));
+  }
+  if (!isFiniteNumber(value.score) || value.score < 0 || value.score > 1) {
+    issues.push(issue(`${path}.score`, "INVALID_SCORE", "score must be a normalized value from 0 to 1."));
+  }
+  if (!isFiniteNumber(value.threshold) || value.threshold < 0 || value.threshold > 1) {
+    issues.push(issue(`${path}.threshold`, "INVALID_SCORE", "threshold must be a normalized value from 0 to 1."));
+  }
+
+  requireStringArray(value.reasonCodes, `${path}.reasonCodes`, issues);
+  requireStringArray(value.macroCaptureIds, `${path}.macroCaptureIds`, issues);
+  validateRect(value.cardMm, `${path}.cardMm`, issues);
+  validateRect(value.warpedPx, `${path}.warpedPx`, issues);
+  if (value.sourcePx != null) {
+    validateRect(value.sourcePx, `${path}.sourcePx`, issues);
+  }
+  if (value.heatmapStorageKey != null && !isNonEmptyString(value.heatmapStorageKey)) {
+    issues.push(issue(`${path}.heatmapStorageKey`, "REQUIRED", "heatmapStorageKey must be non-empty when provided."));
+  }
+
+  return validationResult(issues);
+}
+
+export function validateMacroPipelineOutput(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "macroOutput";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "MacroPipelineOutput must be an object.")]);
+  }
+
+  [
+    "sessionId",
+    "captureManifestId",
+    "algorithmVersionId",
+    "thresholdSetVersionId",
+  ].forEach((field) => requireString(value, field, path, issues));
+
+  if (!isNonEmptyString(value.side) || !CAPTURE_SIDE_VALUES.has(value.side)) {
+    issues.push(issue(`${path}.side`, "INVALID_ENUM", "side must be FRONT or BACK."));
+  }
+
+  if (!isRecord(value.centeringMeasurement)) {
+    issues.push(issue(`${path}.centeringMeasurement`, "INVALID_RECORD", "centeringMeasurement must be an object."));
+  } else if (centeringReferencesMicroscopeEvidence(value.centeringMeasurement)) {
+    issues.push(issue(`${path}.centeringMeasurement`, "CENTERING_USES_MICROSCOPE_EVIDENCE", "Centering must not reference microscope evidence."));
+  }
+
+  if (!isRecord(value.provisionalGrades)) {
+    issues.push(issue(`${path}.provisionalGrades`, "INVALID_RECORD", "provisionalGrades must be an object."));
+  } else {
+    const provisionalGrades = value.provisionalGrades;
+    ["centering", "corners", "edges", "surface"].forEach((field) => {
+      if (!isFiniteNumber(provisionalGrades[field])) {
+        issues.push(issue(`${path}.provisionalGrades.${field}`, "INVALID_NUMBER", `${field} provisional grade must be a finite number.`));
+      }
+    });
+  }
+
+  if (!isRecord(value.macroMeasurements)) {
+    issues.push(issue(`${path}.macroMeasurements`, "INVALID_RECORD", "macroMeasurements must be an object."));
+  }
+
+  if (!Array.isArray(value.suspectRegions)) {
+    issues.push(issue(`${path}.suspectRegions`, "INVALID_ARRAY", "suspectRegions must be an array."));
+  } else {
+    value.suspectRegions.forEach((suspect, index) => {
+      const result = validateMacroSuspectRegion(suspect);
+      result.issues.forEach((entry) => {
+        issues.push({
+          ...entry,
+          path: `${path}.suspectRegions[${index}]${entry.path.startsWith("suspect") ? entry.path.slice("suspect".length) : `.${entry.path}`}`,
+        });
+      });
+      if (isRecord(suspect) && suspect.sessionId !== value.sessionId) {
+        issues.push(issue(`${path}.suspectRegions[${index}].sessionId`, "INVALID_RECORD", "suspect sessionId must match macro output sessionId."));
+      }
+      if (isRecord(suspect) && suspect.side !== value.side) {
+        issues.push(issue(`${path}.suspectRegions[${index}].side`, "INVALID_ENUM", "suspect side must match macro output side."));
+      }
+    });
+  }
+
+  if (!Array.isArray(value.physicalGateResults)) {
+    issues.push(issue(`${path}.physicalGateResults`, "INVALID_ARRAY", "physicalGateResults must be an array."));
+  } else {
+    value.physicalGateResults.forEach((gate, index) => {
+      const gatePath = `${path}.physicalGateResults[${index}]`;
+      if (!isRecord(gate)) {
+        issues.push(issue(gatePath, "INVALID_RECORD", `${gatePath} must be an object.`));
+        return;
+      }
+      requireString(gate, "gate", gatePath, issues);
+      if (!isNonEmptyString(gate.status) || !["PASS", "WARN", "FAIL", "REVIEW"].includes(gate.status)) {
+        issues.push(issue(`${gatePath}.status`, "INVALID_ENUM", "physical gate status must be PASS, WARN, FAIL, or REVIEW."));
+      }
+    });
+  }
+
+  if (!Array.isArray(value.evidenceArtifacts)) {
+    issues.push(issue(`${path}.evidenceArtifacts`, "INVALID_ARRAY", "evidenceArtifacts must be an array."));
+  } else {
+    value.evidenceArtifacts.forEach((artifact, index) => {
+      validateEvidenceArtifactRef(artifact, `${path}.evidenceArtifacts[${index}]`, issues);
+    });
+  }
+
+  return validationResult(issues);
+}
+
+export function validateCardToStageTransformInput(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "transform";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "CardToStageTransformInput must be an object.")]);
+  }
+
+  requireString(value, "calibrationSnapshotId", path, issues);
+
+  if (!isNonEmptyString(value.side) || !CAPTURE_SIDE_VALUES.has(value.side)) {
+    issues.push(issue(`${path}.side`, "INVALID_ENUM", "side must be FRONT or BACK."));
+  }
+  if (value.transformType !== "AFFINE" && value.transformType !== "HOMOGRAPHY") {
+    issues.push(issue(`${path}.transformType`, "INVALID_ENUM", "transformType must be AFFINE or HOMOGRAPHY."));
+  }
+  if (!hasValidTimestamp(value.validAt)) {
+    issues.push(issue(`${path}.validAt`, "INVALID_TIMESTAMP", "validAt must be a valid timestamp string."));
+  }
+  if (value.expiresAt != null && !hasValidTimestamp(value.expiresAt)) {
+    issues.push(issue(`${path}.expiresAt`, "INVALID_TIMESTAMP", "expiresAt must be a valid timestamp string."));
+  }
+  if (
+    hasValidTimestamp(value.validAt) &&
+    hasValidTimestamp(value.expiresAt) &&
+    Date.parse(String(value.expiresAt)) <= Date.parse(String(value.validAt))
+  ) {
+    issues.push(issue(`${path}.expiresAt`, "INVALID_TIMESTAMP", "expiresAt must be later than validAt."));
+  }
+  if (value.holderFiducialsVisible !== true) {
+    issues.push(issue(`${path}.holderFiducialsVisible`, "INVALID_TRANSFORM", "holder fiducials must be visible."));
+  }
+  if (value.acroHomeEstablished !== true) {
+    issues.push(issue(`${path}.acroHomeEstablished`, "INVALID_TRANSFORM", "ACRO home must be established."));
+  }
+  const fiducialPointCount = value.fiducialPointCount;
+  if (typeof fiducialPointCount !== "number" || !Number.isInteger(fiducialPointCount) || fiducialPointCount < 4) {
+    issues.push(issue(`${path}.fiducialPointCount`, "INVALID_TRANSFORM", "at least 4 fiducial points are required."));
+  }
+  if (!isFiniteNumber(value.rmsResidualMicrons) || value.rmsResidualMicrons < 0 || value.rmsResidualMicrons > 50) {
+    issues.push(issue(`${path}.rmsResidualMicrons`, "INVALID_TRANSFORM", "RMS residual must be 0-50 microns."));
+  }
+  if (value.side === "BACK" && value.backSideOrientationCorrectionStored !== true) {
+    issues.push(issue(`${path}.backSideOrientationCorrectionStored`, "INVALID_TRANSFORM", "back-side orientation correction must be stored."));
+  }
+
+  if (!isRecord(value.cardPointMm)) {
+    issues.push(issue(`${path}.cardPointMm`, "INVALID_RECORD", "cardPointMm must be an object."));
+  } else {
+    const cardPointMm = value.cardPointMm;
+    ["x", "y"].forEach((field) => {
+      if (!isFiniteNumber(cardPointMm[field])) {
+        issues.push(issue(`${path}.cardPointMm.${field}`, "INVALID_NUMBER", `${field} must be a finite number.`));
+      }
+    });
+  }
+
+  if (value.stageTargetMicrons != null) {
+    if (!isRecord(value.stageTargetMicrons)) {
+      issues.push(issue(`${path}.stageTargetMicrons`, "INVALID_RECORD", "stageTargetMicrons must be an object when provided."));
+    } else {
+      const stageTargetMicrons = value.stageTargetMicrons;
+      ["x", "y"].forEach((field) => {
+        if (!isFiniteNumber(stageTargetMicrons[field])) {
+          issues.push(issue(`${path}.stageTargetMicrons.${field}`, "INVALID_NUMBER", `${field} must be a finite number.`));
+        }
+      });
+    }
+  }
+
+  if (value.safeTravelBoundsMicrons != null) {
+    if (!isRecord(value.safeTravelBoundsMicrons)) {
+      issues.push(issue(`${path}.safeTravelBoundsMicrons`, "INVALID_RECORD", "safeTravelBoundsMicrons must be an object when provided."));
+    } else {
+      const safeTravelBoundsMicrons = value.safeTravelBoundsMicrons;
+      ["minX", "maxX", "minY", "maxY"].forEach((field) => {
+        if (!isFiniteNumber(safeTravelBoundsMicrons[field])) {
+          issues.push(issue(`${path}.safeTravelBoundsMicrons.${field}`, "INVALID_NUMBER", `${field} must be a finite number.`));
+        }
+      });
+      if (
+        isFiniteNumber(safeTravelBoundsMicrons.minX) &&
+        isFiniteNumber(safeTravelBoundsMicrons.maxX) &&
+        safeTravelBoundsMicrons.minX >= safeTravelBoundsMicrons.maxX
+      ) {
+        issues.push(issue(`${path}.safeTravelBoundsMicrons.maxX`, "INVALID_TRANSFORM", "maxX must be greater than minX."));
+      }
+      if (
+        isFiniteNumber(safeTravelBoundsMicrons.minY) &&
+        isFiniteNumber(safeTravelBoundsMicrons.maxY) &&
+        safeTravelBoundsMicrons.minY >= safeTravelBoundsMicrons.maxY
+      ) {
+        issues.push(issue(`${path}.safeTravelBoundsMicrons.maxY`, "INVALID_TRANSFORM", "maxY must be greater than minY."));
+      }
+    }
+  }
+
+  if (isRecord(value.stageTargetMicrons) && isRecord(value.safeTravelBoundsMicrons)) {
+    const x = value.stageTargetMicrons.x;
+    const y = value.stageTargetMicrons.y;
+    const bounds = value.safeTravelBoundsMicrons;
+    if (
+      isFiniteNumber(x) &&
+      isFiniteNumber(bounds.minX) &&
+      isFiniteNumber(bounds.maxX) &&
+      (x < bounds.minX || x > bounds.maxX)
+    ) {
+      issues.push(issue(`${path}.stageTargetMicrons.x`, "INVALID_TRANSFORM", "stage target x is outside safe travel bounds."));
+    }
+    if (
+      isFiniteNumber(y) &&
+      isFiniteNumber(bounds.minY) &&
+      isFiniteNumber(bounds.maxY) &&
+      (y < bounds.minY || y > bounds.maxY)
+    ) {
+      issues.push(issue(`${path}.stageTargetMicrons.y`, "INVALID_TRANSFORM", "stage target y is outside safe travel bounds."));
     }
   }
 
