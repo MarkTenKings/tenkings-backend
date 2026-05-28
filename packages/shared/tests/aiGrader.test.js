@@ -2,12 +2,19 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   ORCHESTRATOR_NAMED_ERROR_STATES,
+  buildInitialAiGraderAlgorithmVersions,
+  buildInitialAiGraderThresholdSets,
   buildModePlan,
+  buildRuntimeEnvironmentFingerprint,
   transitionOrchestratorState,
+  validateAlgorithmVersionSeed,
   validateCaptureManifest,
   validateCaptureManifestForMode,
   validateCaptureManifestFrame,
   validateDeviceCapabilityManifest,
+  validateReplayTolerance,
+  validateRuntimeEnvironmentFingerprint,
+  validateThresholdSetVersionSeed,
 } = require("../dist/aiGrader");
 
 const SHA_256 = "a".repeat(64);
@@ -130,6 +137,130 @@ function forensicCaptureManifest(overrides = {}) {
     ...overrides,
   });
 }
+
+test("buildInitialAiGraderAlgorithmVersions returns valid provenance seeds", () => {
+  const seeds = buildInitialAiGraderAlgorithmVersions();
+  const names = seeds.map((seed) => seed.name).sort();
+
+  assert.deepEqual(names, [
+    "CMYK_PRINT_PROFILE_V1",
+    "MACRO_PIPELINE_V1",
+    "STANDARD_SPOT_FUSION_V1",
+  ]);
+  seeds.forEach((seed) => {
+    assert.equal(validateAlgorithmVersionSeed(seed).valid, true);
+  });
+});
+
+test("validateAlgorithmVersionSeed rejects invalid hashes, versions, and tolerances", () => {
+  const seed = {
+    ...buildInitialAiGraderAlgorithmVersions()[0],
+    semanticVersion: "v1",
+    sourceHash: "not-a-sha",
+    numericTolerance: { finalGrade: -1 },
+  };
+  const result = validateAlgorithmVersionSeed(seed);
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("INVALID_VERSION"));
+  assert.ok(issueCodes(result).includes("INVALID_CHECKSUM"));
+  assert.ok(issueCodes(result).includes("INVALID_TOLERANCE"));
+});
+
+test("buildInitialAiGraderThresholdSets returns valid threshold seeds", () => {
+  const seeds = buildInitialAiGraderThresholdSets();
+
+  assert.equal(seeds.length, 1);
+  assert.equal(seeds[0].name, "DEFAULT_AI_GRADER_THRESHOLDS_V1");
+  assert.equal(validateThresholdSetVersionSeed(seeds[0]).valid, true);
+});
+
+test("validateThresholdSetVersionSeed rejects invalid hash, version, and empty thresholds", () => {
+  const seed = {
+    ...buildInitialAiGraderThresholdSets()[0],
+    semanticVersion: "1",
+    sourceHash: "bad",
+    thresholds: {},
+  };
+  const result = validateThresholdSetVersionSeed(seed);
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("INVALID_VERSION"));
+  assert.ok(issueCodes(result).includes("INVALID_CHECKSUM"));
+  assert.ok(issueCodes(result).includes("EMPTY_ARRAY"));
+});
+
+test("buildRuntimeEnvironmentFingerprint creates a valid runtime fingerprint", () => {
+  const fingerprint = buildRuntimeEnvironmentFingerprint({
+    label: "shared-test",
+    containerDigest: `sha256:${"b".repeat(64)}`,
+    nodeVersion: "20.11.1",
+    dependencyLockHash: SHA_256,
+    osInfo: { platform: "darwin" },
+  });
+  const result = validateRuntimeEnvironmentFingerprint(fingerprint);
+
+  assert.equal(fingerprint.fingerprintKey, `${fingerprint.containerDigest}::${fingerprint.dependencyLockHash}`);
+  assert.equal(result.valid, true);
+});
+
+test("validateRuntimeEnvironmentFingerprint rejects bad digests and fingerprint keys", () => {
+  const fingerprint = buildRuntimeEnvironmentFingerprint({
+    label: "shared-test",
+    containerDigest: "bad",
+    dependencyLockHash: "bad",
+  });
+  const result = validateRuntimeEnvironmentFingerprint({
+    ...fingerprint,
+    fingerprintKey: "mismatch",
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("INVALID_CHECKSUM"));
+});
+
+test("validateReplayTolerance reports replay pass and fail against numeric tolerances", () => {
+  const passing = validateReplayTolerance({
+    sourceGradeRunId: "grade-run-1",
+    algorithmVersionId: "algorithm-1",
+    thresholdSetVersionId: "threshold-1",
+    runtimeEnvironmentId: "runtime-1",
+    inputChecksum: SHA_256,
+    outputChecksum: "b".repeat(64),
+    deltas: {
+      finalGrade: 0,
+      measurement: 0.0000005,
+    },
+    numericTolerance: {
+      finalGrade: 0,
+      measurement: 0.000001,
+    },
+  });
+
+  const failing = validateReplayTolerance({
+    sourceGradeRunId: "grade-run-1",
+    algorithmVersionId: "algorithm-1",
+    thresholdSetVersionId: "threshold-1",
+    runtimeEnvironmentId: "runtime-1",
+    inputChecksum: SHA_256,
+    outputChecksum: "b".repeat(64),
+    deltas: {
+      finalGrade: 0.5,
+      missingTolerance: 1,
+    },
+    numericTolerance: {
+      finalGrade: 0,
+    },
+  });
+
+  assert.equal(passing.validInput, true);
+  assert.equal(passing.tolerancePassed, true);
+  assert.equal(passing.checked, 2);
+  assert.equal(failing.validInput, false);
+  assert.equal(failing.tolerancePassed, false);
+  assert.equal(failing.failures.length, 1);
+  assert.ok(issueCodes(failing).includes("MISSING_TOLERANCE"));
+});
 
 test("validateDeviceCapabilityManifest accepts a valid manifest", () => {
   const result = validateDeviceCapabilityManifest(validDeviceCapabilityManifest());

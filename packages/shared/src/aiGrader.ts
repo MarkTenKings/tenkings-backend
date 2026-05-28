@@ -294,9 +294,13 @@ export type AiGraderValidationIssueCode =
   | "INVALID_ENUM"
   | "INVALID_TIMESTAMP"
   | "INVALID_CHECKSUM"
+  | "INVALID_VERSION"
+  | "INVALID_TOLERANCE"
   | "INVALID_ARRAY"
   | "INVALID_RECORD"
   | "INVALID_NUMBER"
+  | "MISSING_TOLERANCE"
+  | "REPLAY_TOLERANCE_EXCEEDED"
   | "EMPTY_ARRAY"
   | "MODE_MISSING_MACRO_FRAME"
   | "MODE_MISSING_MICRO_SPOTS"
@@ -319,6 +323,77 @@ export interface AiGraderValidationResult {
 export interface CaptureManifestModeValidationOptions {
   side?: CaptureSide;
   surfaceTopN?: number;
+}
+
+export type NumericToleranceMap = Record<string, number>;
+
+export interface AlgorithmVersionSeed {
+  name: string;
+  semanticVersion: string;
+  sourceHash: string;
+  internalReference?: string;
+  patentReference?: string;
+  numericTolerance: NumericToleranceMap;
+  activeFrom?: string;
+  activeTo?: string;
+}
+
+export interface ThresholdSetVersionSeed {
+  name: string;
+  semanticVersion: string;
+  thresholds: Record<string, unknown>;
+  sourceHash?: string;
+  activeFrom?: string;
+  activeTo?: string;
+}
+
+export interface RuntimeEnvironmentFingerprintInput {
+  label: string;
+  containerDigest: string;
+  pythonVersion?: string | null;
+  nodeVersion?: string | null;
+  opencvVersion?: string | null;
+  numpyVersion?: string | null;
+  dependencyLockHash: string;
+  osInfo?: Record<string, unknown> | null;
+}
+
+export interface RuntimeEnvironmentFingerprint {
+  label: string;
+  containerDigest: string;
+  pythonVersion?: string;
+  nodeVersion?: string;
+  opencvVersion?: string;
+  numpyVersion?: string;
+  dependencyLockHash: string;
+  osInfo?: Record<string, unknown>;
+  fingerprintKey: string;
+}
+
+export interface ReplayRunInput {
+  sourceGradeRunId: string;
+  algorithmVersionId: string;
+  thresholdSetVersionId: string;
+  runtimeEnvironmentId: string;
+  inputChecksum: string;
+  outputChecksum: string;
+  deltas: Record<string, number>;
+  numericTolerance: NumericToleranceMap;
+}
+
+export interface ReplayToleranceFailure {
+  path: string;
+  delta: number;
+  tolerance: number;
+}
+
+export interface ReplayToleranceResult {
+  validInput: boolean;
+  tolerancePassed: boolean;
+  checked: number;
+  maxAbsDelta: number;
+  failures: ReplayToleranceFailure[];
+  issues: AiGraderValidationIssue[];
 }
 
 const GRADING_MODES = [
@@ -395,6 +470,14 @@ const DEVICE_TYPE_VALUES = new Set<string>(DEVICE_TYPES);
 const COORDINATE_UNIT_VALUES = new Set<string>(COORDINATE_UNITS);
 const DEVICE_HEALTH_STATUS_VALUES = new Set<string>(DEVICE_HEALTH_STATUSES);
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
+const CONTAINER_DIGEST_RE = /^(?:sha256:)?[a-f0-9]{64}$/i;
+const SEMVER_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
+
+const AI_GRADER_SEED_ACTIVE_FROM = "2026-05-28T00:00:00.000Z";
+const STANDARD_SPOT_FUSION_SOURCE_HASH = "1".repeat(64);
+const MACRO_PIPELINE_SOURCE_HASH = "2".repeat(64);
+const CMYK_PRINT_PROFILE_SOURCE_HASH = "3".repeat(64);
+const DEFAULT_THRESHOLDS_SOURCE_HASH = "4".repeat(64);
 
 function validationResult(issues: AiGraderValidationIssue[]): AiGraderValidationResult {
   return {
@@ -421,6 +504,10 @@ function hasValidTimestamp(value: unknown): boolean {
 
 function hasValidSha256(value: unknown): boolean {
   return typeof value === "string" && SHA256_HEX_RE.test(value);
+}
+
+function hasValidContainerDigest(value: unknown): boolean {
+  return typeof value === "string" && CONTAINER_DIGEST_RE.test(value);
 }
 
 function isFiniteNumber(value: unknown): value is number {
@@ -470,6 +557,46 @@ function validateStringRecord(value: unknown, path: string, issues: AiGraderVali
   entries.forEach(([key, entry]) => {
     if (!isNonEmptyString(key) || !isNonEmptyString(entry)) {
       issues.push(issue(`${path}.${key}`, "REQUIRED", `${path}.${key} must be a non-empty string.`));
+    }
+  });
+}
+
+function validateSemver(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (!isNonEmptyString(value) || !SEMVER_RE.test(value)) {
+    issues.push(issue(path, "INVALID_VERSION", `${path} must be a semantic version string.`));
+  }
+}
+
+function validateDateWindow(record: Record<string, unknown>, path: string, issues: AiGraderValidationIssue[]) {
+  if (record.activeFrom != null && !hasValidTimestamp(record.activeFrom)) {
+    issues.push(issue(`${path}.activeFrom`, "INVALID_TIMESTAMP", "activeFrom must be a valid timestamp string."));
+  }
+  if (record.activeTo != null && !hasValidTimestamp(record.activeTo)) {
+    issues.push(issue(`${path}.activeTo`, "INVALID_TIMESTAMP", "activeTo must be a valid timestamp string."));
+  }
+  if (
+    hasValidTimestamp(record.activeFrom) &&
+    hasValidTimestamp(record.activeTo) &&
+    Date.parse(String(record.activeTo)) <= Date.parse(String(record.activeFrom))
+  ) {
+    issues.push(issue(`${path}.activeTo`, "INVALID_TIMESTAMP", "activeTo must be later than activeFrom."));
+  }
+}
+
+function validateNumericToleranceMap(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (!isRecord(value)) {
+    issues.push(issue(path, "INVALID_RECORD", `${path} must be an object.`));
+    return;
+  }
+
+  const entries = Object.entries(value);
+  if (entries.length === 0) {
+    issues.push(issue(path, "EMPTY_ARRAY", `${path} must include at least one tolerance.`));
+  }
+
+  entries.forEach(([key, tolerance]) => {
+    if (!isNonEmptyString(key) || !isFiniteNumber(tolerance) || tolerance < 0) {
+      issues.push(issue(`${path}.${key}`, "INVALID_TOLERANCE", "Numeric tolerances must be non-negative finite numbers."));
     }
   });
 }
@@ -822,6 +949,271 @@ export function validateCaptureManifestForMode(
   }
 
   return validationResult(issues);
+}
+
+export function buildInitialAiGraderAlgorithmVersions(): AlgorithmVersionSeed[] {
+  const seeds: AlgorithmVersionSeed[] = [
+    {
+      name: "STANDARD_SPOT_FUSION_V1",
+      semanticVersion: "1.0.0",
+      sourceHash: STANDARD_SPOT_FUSION_SOURCE_HASH,
+      internalReference: "v5.standard.spot_fusion",
+      numericTolerance: {
+        finalGrade: 0,
+        elementGrade: 0,
+        measurement: 0.000001,
+      },
+      activeFrom: AI_GRADER_SEED_ACTIVE_FROM,
+    },
+    {
+      name: "MACRO_PIPELINE_V1",
+      semanticVersion: "1.0.0",
+      sourceHash: MACRO_PIPELINE_SOURCE_HASH,
+      internalReference: "v5.macro.pipeline",
+      numericTolerance: {
+        centeringMicrons: 15,
+        suspectScore: 0.000001,
+        provisionalGrade: 0,
+      },
+      activeFrom: AI_GRADER_SEED_ACTIVE_FROM,
+    },
+    {
+      name: "CMYK_PRINT_PROFILE_V1",
+      semanticVersion: "1.0.0",
+      sourceHash: CMYK_PRINT_PROFILE_SOURCE_HASH,
+      internalReference: "v5.auth.cmyk_print_profile",
+      numericTolerance: {
+        cmykDistance: 0.000001,
+        fingerprintComponent: 0.000001,
+      },
+      activeFrom: AI_GRADER_SEED_ACTIVE_FROM,
+    },
+  ];
+
+  return seeds.map((seed) => ({
+    ...seed,
+    numericTolerance: { ...seed.numericTolerance },
+  }));
+}
+
+export function buildInitialAiGraderThresholdSets(): ThresholdSetVersionSeed[] {
+  const seeds: ThresholdSetVersionSeed[] = [
+    {
+      name: "DEFAULT_AI_GRADER_THRESHOLDS_V1",
+      semanticVersion: "1.0.0",
+      sourceHash: DEFAULT_THRESHOLDS_SOURCE_HASH,
+      thresholds: {
+        surfaceSuspectThreshold: 0.72,
+        standardSurfaceTopN: 3,
+        standardCornersPerSide: 4,
+        standardEdgesPerSide: 4,
+        authPatchCount: 5,
+        replayTolerance: {
+          finalGrade: 0,
+          elementGrade: 0,
+          measurement: 0.000001,
+        },
+      },
+      activeFrom: AI_GRADER_SEED_ACTIVE_FROM,
+    },
+  ];
+
+  return seeds.map((seed) => ({
+    ...seed,
+    thresholds: { ...seed.thresholds },
+  }));
+}
+
+export function buildRuntimeEnvironmentFingerprint(
+  input: RuntimeEnvironmentFingerprintInput
+): RuntimeEnvironmentFingerprint {
+  const normalized: RuntimeEnvironmentFingerprint = {
+    label: input.label.trim(),
+    containerDigest: input.containerDigest.trim(),
+    dependencyLockHash: input.dependencyLockHash.trim(),
+    fingerprintKey: `${input.containerDigest.trim()}::${input.dependencyLockHash.trim()}`,
+  };
+
+  if (isNonEmptyString(input.pythonVersion)) {
+    normalized.pythonVersion = input.pythonVersion.trim();
+  }
+  if (isNonEmptyString(input.nodeVersion)) {
+    normalized.nodeVersion = input.nodeVersion.trim();
+  }
+  if (isNonEmptyString(input.opencvVersion)) {
+    normalized.opencvVersion = input.opencvVersion.trim();
+  }
+  if (isNonEmptyString(input.numpyVersion)) {
+    normalized.numpyVersion = input.numpyVersion.trim();
+  }
+  if (isRecord(input.osInfo)) {
+    normalized.osInfo = { ...input.osInfo };
+  }
+
+  return normalized;
+}
+
+export function validateAlgorithmVersionSeed(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "seed";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "AlgorithmVersionSeed must be an object.")]);
+  }
+
+  requireString(value, "name", path, issues);
+  validateSemver(value.semanticVersion, `${path}.semanticVersion`, issues);
+
+  if (!hasValidSha256(value.sourceHash)) {
+    issues.push(issue(`${path}.sourceHash`, "INVALID_CHECKSUM", "sourceHash must be a 64-character hex SHA-256 digest."));
+  }
+
+  if (value.internalReference != null && !isNonEmptyString(value.internalReference)) {
+    issues.push(issue(`${path}.internalReference`, "REQUIRED", "internalReference must be non-empty when provided."));
+  }
+  if (value.patentReference != null && !isNonEmptyString(value.patentReference)) {
+    issues.push(issue(`${path}.patentReference`, "REQUIRED", "patentReference must be non-empty when provided."));
+  }
+
+  validateNumericToleranceMap(value.numericTolerance, `${path}.numericTolerance`, issues);
+  validateDateWindow(value, path, issues);
+
+  return validationResult(issues);
+}
+
+export function validateThresholdSetVersionSeed(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "seed";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "ThresholdSetVersionSeed must be an object.")]);
+  }
+
+  requireString(value, "name", path, issues);
+  validateSemver(value.semanticVersion, `${path}.semanticVersion`, issues);
+
+  if (!isRecord(value.thresholds)) {
+    issues.push(issue(`${path}.thresholds`, "INVALID_RECORD", "thresholds must be an object."));
+  } else if (Object.keys(value.thresholds).length === 0) {
+    issues.push(issue(`${path}.thresholds`, "EMPTY_ARRAY", "thresholds must include at least one threshold."));
+  }
+
+  if (value.sourceHash != null && !hasValidSha256(value.sourceHash)) {
+    issues.push(issue(`${path}.sourceHash`, "INVALID_CHECKSUM", "sourceHash must be a 64-character hex SHA-256 digest when provided."));
+  }
+
+  validateDateWindow(value, path, issues);
+
+  return validationResult(issues);
+}
+
+export function validateRuntimeEnvironmentFingerprint(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "fingerprint";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "RuntimeEnvironmentFingerprint must be an object.")]);
+  }
+
+  requireString(value, "label", path, issues);
+  requireString(value, "containerDigest", path, issues);
+  requireString(value, "dependencyLockHash", path, issues);
+  requireString(value, "fingerprintKey", path, issues);
+
+  if (!hasValidContainerDigest(value.containerDigest)) {
+    issues.push(issue(`${path}.containerDigest`, "INVALID_CHECKSUM", "containerDigest must be a sha256 digest."));
+  }
+  if (!hasValidSha256(value.dependencyLockHash)) {
+    issues.push(issue(`${path}.dependencyLockHash`, "INVALID_CHECKSUM", "dependencyLockHash must be a 64-character hex SHA-256 digest."));
+  }
+  if (
+    isNonEmptyString(value.containerDigest) &&
+    isNonEmptyString(value.dependencyLockHash) &&
+    value.fingerprintKey !== `${value.containerDigest}::${value.dependencyLockHash}`
+  ) {
+    issues.push(issue(`${path}.fingerprintKey`, "INVALID_CHECKSUM", "fingerprintKey must match containerDigest and dependencyLockHash."));
+  }
+
+  ["pythonVersion", "nodeVersion", "opencvVersion", "numpyVersion"].forEach((field) => {
+    if (value[field] != null && !isNonEmptyString(value[field])) {
+      issues.push(issue(`${path}.${field}`, "REQUIRED", `${field} must be non-empty when provided.`));
+    }
+  });
+
+  if (value.osInfo != null && !isRecord(value.osInfo)) {
+    issues.push(issue(`${path}.osInfo`, "INVALID_RECORD", "osInfo must be an object when provided."));
+  }
+
+  return validationResult(issues);
+}
+
+export function validateReplayTolerance(input: ReplayRunInput): ReplayToleranceResult {
+  const issues: AiGraderValidationIssue[] = [];
+
+  if (!isRecord(input)) {
+    return {
+      validInput: false,
+      tolerancePassed: false,
+      checked: 0,
+      maxAbsDelta: 0,
+      failures: [],
+      issues: [issue("replay", "INVALID_RECORD", "ReplayRunInput must be an object.")],
+    };
+  }
+
+  [
+    "sourceGradeRunId",
+    "algorithmVersionId",
+    "thresholdSetVersionId",
+    "runtimeEnvironmentId",
+  ].forEach((field) => requireString(input as unknown as Record<string, unknown>, field, "replay", issues));
+
+  if (!hasValidSha256(input.inputChecksum)) {
+    issues.push(issue("replay.inputChecksum", "INVALID_CHECKSUM", "inputChecksum must be a 64-character hex SHA-256 digest."));
+  }
+  if (!hasValidSha256(input.outputChecksum)) {
+    issues.push(issue("replay.outputChecksum", "INVALID_CHECKSUM", "outputChecksum must be a 64-character hex SHA-256 digest."));
+  }
+
+  if (!isRecord(input.deltas)) {
+    issues.push(issue("replay.deltas", "INVALID_RECORD", "deltas must be an object."));
+  }
+  validateNumericToleranceMap(input.numericTolerance, "replay.numericTolerance", issues);
+
+  const failures: ReplayToleranceFailure[] = [];
+  let checked = 0;
+  let maxAbsDelta = 0;
+
+  if (isRecord(input.deltas) && isRecord(input.numericTolerance)) {
+    Object.entries(input.deltas).forEach(([path, rawDelta]) => {
+      if (!isFiniteNumber(rawDelta)) {
+        issues.push(issue(`replay.deltas.${path}`, "INVALID_NUMBER", "Replay deltas must be finite numbers."));
+        return;
+      }
+
+      const rawTolerance = input.numericTolerance[path];
+      if (!isFiniteNumber(rawTolerance)) {
+        issues.push(issue(`replay.numericTolerance.${path}`, "MISSING_TOLERANCE", "Each replay delta must have a numeric tolerance."));
+        return;
+      }
+
+      checked += 1;
+      const absDelta = Math.abs(rawDelta);
+      maxAbsDelta = Math.max(maxAbsDelta, absDelta);
+      if (absDelta > rawTolerance) {
+        failures.push({ path, delta: rawDelta, tolerance: rawTolerance });
+      }
+    });
+  }
+
+  return {
+    validInput: issues.length === 0,
+    tolerancePassed: issues.length === 0 && failures.length === 0,
+    checked,
+    maxAbsDelta,
+    failures,
+    issues,
+  };
 }
 
 export type OrchestratorState =

@@ -17427,6 +17427,28 @@ By enabling Rip It Live, I confirm:
 - No PR was opened or merged.
 - No Phase 4 work, deploy, restart, migration execution, runtime DB operation, or destructive operation was performed.
 
+## 2026-05-28 - AI Grader Phase 4 version registry seed contracts
+
+### Summary
+- Implemented Phase 4 as pure shared provenance registry contracts and validation in `@tenkings/shared`.
+- Added shared types for `AlgorithmVersionSeed`, `ThresholdSetVersionSeed`, `RuntimeEnvironmentFingerprint`, `ReplayRunInput`, and `ReplayToleranceResult`.
+- Added pure helper functions for initial algorithm seeds, initial threshold seeds, runtime environment fingerprint construction, algorithm/threshold/runtime validation, and replay tolerance validation.
+- Included seed definitions for `STANDARD_SPOT_FUSION_V1`, `MACRO_PIPELINE_V1`, `CMYK_PRINT_PROFILE_V1`, and `DEFAULT_AI_GRADER_THRESHOLDS_V1`.
+- Added tests for valid seeds, invalid hashes/versions/tolerances, runtime fingerprint validation, and replay tolerance pass/fail.
+- No Prisma seed execution, database writes, migrations, hardware drivers, capture implementation, grading math internals, auth algorithms, frontend pages, reports, deploys, restarts, runtime DB operations, destructive operations, or Phase 5 work were performed.
+
+### Files Changed
+- `packages/shared/src/aiGrader.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/aiGrader.test.js`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 53 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader Phase 3 committed
 
 ### Summary
