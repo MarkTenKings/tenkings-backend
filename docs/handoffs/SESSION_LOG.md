@@ -17437,6 +17437,27 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-28 - AI Grader Phase 7 STANDARD fusion contract helpers
+
+### Summary
+- Implemented Phase 7 as pure shared STANDARD fusion contract helpers in `@tenkings/shared`.
+- Added `validateFusionAction`, `validateStandardFusionInput`, `validateStandardFusionOutput`, `buildFusionAction`, `validateStandardFusionScope`, `validateCenteringIgnoresMicroEvidence`, and `validateDustCorrectionBounds`.
+- Enforced v5 fusion guardrails for centering isolation, inspected-package scope, surface suspect linkage, required algorithm/threshold/runtime provenance, action/region/spot linkage, bounded dust correction, and excessive-dust warning/review handling.
+- Added tests for valid LOWER, HOLD, and DUST_CORRECT actions; invalid centering micro input; invalid unvisited-region action; invalid dust correction above the recomputed macro bound; excessive-dust warning path; and missing fusion provenance references.
+- No grading math, image processing, macro/micro detection algorithms, database writes, migrations, hardware drivers, capture code, auth algorithms, frontend pages, reports, deploys, restarts, runtime DB operations, destructive operations, or Phase 8 work were performed.
+
+### Files Changed
+- `packages/shared/src/aiGrader.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/aiGrader.test.js`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 78 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader Phase 3 manifest validation helpers
 
 ### Summary

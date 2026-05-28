@@ -305,6 +305,38 @@ export interface FusionAction {
   reasonCodes: string[];
 }
 
+export interface BuildFusionActionInput {
+  action: FusionActionType;
+  element: StandardSpotPlanElement;
+  side: CaptureSide;
+  regionId?: string;
+  spotPackageId: string;
+  macroMeasurement: Record<string, unknown>;
+  microMeasurement: Record<string, unknown>;
+  gradeBefore: number;
+  gradeAfter: number;
+  algorithmVersionId: string;
+  thresholdSetVersionId: string;
+  reasonCodes: string[];
+}
+
+export interface StandardFusionScopeValidationInput {
+  action: FusionAction;
+  microPackages: MicroSpotCapturePackage[];
+  macroOutput?: MacroPipelineOutput;
+  standardSpotPlan?: StandardSpotPlan;
+}
+
+export interface DustCorrectionBoundsInput {
+  action: FusionAction;
+  recomputedMacroGradeWithoutInspectedContamination?: number;
+  excessiveDustBurden?: boolean;
+}
+
+export interface StandardFusionOutputValidationOptions {
+  input?: StandardFusionInput;
+}
+
 export interface ModePlan {
   mode: GradingMode;
   macroRequired: boolean;
@@ -358,6 +390,9 @@ export type AiGraderValidationIssueCode =
   | "INVALID_RANK"
   | "INVALID_SPOT_PLAN"
   | "INVALID_MICRO_PACKAGE"
+  | "INVALID_FUSION_ACTION"
+  | "INVALID_FUSION_SCOPE"
+  | "INVALID_DUST_CORRECTION"
   | "MISSING_FRAME"
   | "MICRO_EVIDENCE_INCOMPLETE"
   | "INVALID_ARRAY"
@@ -520,6 +555,7 @@ const GRADING_MODES = [
 const CAPTURE_SIDES = ["FRONT", "BACK"] as const;
 const MICRO_SPOT_ELEMENTS = ["CORNERS", "EDGES", "SURFACE", "CMYK_AUTHENTICATION"] as const;
 const STANDARD_SPOT_PLAN_ELEMENTS = ["CORNERS", "EDGES", "SURFACE"] as const;
+const FUSION_ACTION_TYPES = ["LOWER", "HOLD", "DUST_CORRECT", "WARNING_ONLY"] as const;
 const REQUIRED_MICRO_SPOT_FRAME_KEYS = [
   "edrBase",
   "polarizedAllOn",
@@ -603,6 +639,7 @@ const GRADING_MODE_VALUES = new Set<string>(GRADING_MODES);
 const CAPTURE_SIDE_VALUES = new Set<string>(CAPTURE_SIDES);
 const MICRO_SPOT_ELEMENT_VALUES = new Set<string>(MICRO_SPOT_ELEMENTS);
 const STANDARD_SPOT_PLAN_ELEMENT_VALUES = new Set<string>(STANDARD_SPOT_PLAN_ELEMENTS);
+const FUSION_ACTION_TYPE_VALUES = new Set<string>(FUSION_ACTION_TYPES);
 const GRADING_CAPTURE_KIND_VALUES = new Set<string>(GRADING_CAPTURE_KINDS);
 const DEVICE_TYPE_VALUES = new Set<string>(DEVICE_TYPES);
 const COORDINATE_UNIT_VALUES = new Set<string>(COORDINATE_UNITS);
@@ -785,6 +822,12 @@ function validateEvidenceArtifactRef(value: unknown, path: string, issues: AiGra
   });
 }
 
+function validateUnknownRecordPresent(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (!isRecord(value)) {
+    issues.push(issue(path, "INVALID_RECORD", `${path} must be an object.`));
+  }
+}
+
 function missingMicroSpotFrameKeys(value: unknown): MicroSpotFrameKey[] {
   if (!isRecord(value)) {
     return [...REQUIRED_MICRO_SPOT_FRAME_KEYS];
@@ -837,6 +880,63 @@ function centeringReferencesMicroscopeEvidence(value: unknown): boolean {
     }
     return centeringReferencesMicroscopeEvidence(entry);
   });
+}
+
+function actionReferencesCentering(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return value.element === "CENTERING";
+}
+
+function validateFusionActionsIgnoreCentering(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (!Array.isArray(value)) {
+    return;
+  }
+  value.forEach((entry, index) => {
+    if (actionReferencesCentering(entry)) {
+      issues.push(issue(`${path}[${index}].element`, "CENTERING_USES_MICROSCOPE_EVIDENCE", "Fusion actions must not target centering."));
+    }
+  });
+}
+
+function finiteRecordNumber(record: unknown, fields: string[]): number | undefined {
+  if (!isRecord(record)) {
+    return undefined;
+  }
+  for (const field of fields) {
+    const value = record[field];
+    if (isFiniteNumber(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function recordBoolean(record: unknown, fields: string[]): boolean | undefined {
+  if (!isRecord(record)) {
+    return undefined;
+  }
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value === "boolean") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function recordString(record: unknown, fields: string[]): string | undefined {
+  if (!isRecord(record)) {
+    return undefined;
+  }
+  for (const field of fields) {
+    const value = record[field];
+    if (isNonEmptyString(value)) {
+      return value;
+    }
+  }
+  return undefined;
 }
 
 function validateCaptureManifestFrameInternal(value: unknown, path: string): AiGraderValidationIssue[] {
@@ -1779,6 +1879,326 @@ export function validateMicroPackageForFusion(
   ) {
     issues.push(issue(`${path}.sourceSuspectRegionId`, "MODE_MISSING_SURFACE_REGION", "surface package source suspect region is not part of the routed plan."));
   }
+
+  return validationResult(issues);
+}
+
+export function buildFusionAction(input: BuildFusionActionInput): FusionAction {
+  const action: FusionAction = {
+    action: input.action,
+    element: input.element,
+    side: input.side,
+    spotPackageId: input.spotPackageId.trim(),
+    macroMeasurement: { ...input.macroMeasurement },
+    microMeasurement: { ...input.microMeasurement },
+    gradeBefore: input.gradeBefore,
+    gradeAfter: input.gradeAfter,
+    algorithmVersionId: input.algorithmVersionId.trim(),
+    thresholdSetVersionId: input.thresholdSetVersionId.trim(),
+    reasonCodes: [...input.reasonCodes],
+  };
+
+  if (isNonEmptyString(input.regionId)) {
+    action.regionId = input.regionId.trim();
+  }
+
+  return action;
+}
+
+export function validateFusionAction(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "fusionAction";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "FusionAction must be an object.")]);
+  }
+
+  if (!isNonEmptyString(value.action) || !FUSION_ACTION_TYPE_VALUES.has(value.action)) {
+    issues.push(issue(`${path}.action`, "INVALID_ENUM", "action must be LOWER, HOLD, DUST_CORRECT, or WARNING_ONLY."));
+  }
+  if (!isNonEmptyString(value.element) || !STANDARD_SPOT_PLAN_ELEMENT_VALUES.has(value.element)) {
+    issues.push(issue(`${path}.element`, "INVALID_ENUM", "STANDARD fusion actions may target only CORNERS, EDGES, or SURFACE."));
+  }
+  if (!isNonEmptyString(value.side) || !CAPTURE_SIDE_VALUES.has(value.side)) {
+    issues.push(issue(`${path}.side`, "INVALID_ENUM", "side must be FRONT or BACK."));
+  }
+
+  ["spotPackageId", "algorithmVersionId", "thresholdSetVersionId"].forEach((field) => requireString(value, field, path, issues));
+  requireStringArray(value.reasonCodes, `${path}.reasonCodes`, issues);
+  validateUnknownRecordPresent(value.macroMeasurement, `${path}.macroMeasurement`, issues);
+  validateUnknownRecordPresent(value.microMeasurement, `${path}.microMeasurement`, issues);
+
+  if (!isFiniteNumber(value.gradeBefore)) {
+    issues.push(issue(`${path}.gradeBefore`, "INVALID_NUMBER", "gradeBefore must be a finite number."));
+  }
+  if (!isFiniteNumber(value.gradeAfter)) {
+    issues.push(issue(`${path}.gradeAfter`, "INVALID_NUMBER", "gradeAfter must be a finite number."));
+  }
+
+  if (value.regionId != null && !isNonEmptyString(value.regionId)) {
+    issues.push(issue(`${path}.regionId`, "REQUIRED", "regionId must be non-empty when provided."));
+  }
+  if ((value.element === "SURFACE" || value.action === "DUST_CORRECT") && !isNonEmptyString(value.regionId)) {
+    issues.push(issue(`${path}.regionId`, "INVALID_FUSION_ACTION", "surface and dust-correction actions must record the inspected regionId."));
+  }
+  if (value.action === "LOWER" && isFiniteNumber(value.gradeBefore) && isFiniteNumber(value.gradeAfter) && value.gradeAfter > value.gradeBefore) {
+    issues.push(issue(`${path}.gradeAfter`, "INVALID_FUSION_ACTION", "LOWER actions may lower or hold, but must not raise the grade."));
+  }
+  if (value.action === "HOLD" && isFiniteNumber(value.gradeBefore) && isFiniteNumber(value.gradeAfter) && value.gradeAfter !== value.gradeBefore) {
+    issues.push(issue(`${path}.gradeAfter`, "INVALID_FUSION_ACTION", "HOLD actions must leave the grade unchanged."));
+  }
+  if (value.action === "WARNING_ONLY" && isFiniteNumber(value.gradeBefore) && isFiniteNumber(value.gradeAfter) && value.gradeAfter !== value.gradeBefore) {
+    issues.push(issue(`${path}.gradeAfter`, "INVALID_FUSION_ACTION", "WARNING_ONLY actions must not change grades."));
+  }
+
+  issues.push(...validateDustCorrectionBounds({ action: value as unknown as FusionAction }).issues);
+
+  return validationResult(issues);
+}
+
+export function validateCenteringIgnoresMicroEvidence(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+
+  if (!isRecord(value)) {
+    return validationResult([issue("centering", "INVALID_RECORD", "Input must be an object.")]);
+  }
+
+  if (isRecord(value.centeringMeasurement) && centeringReferencesMicroscopeEvidence(value.centeringMeasurement)) {
+    issues.push(issue("centeringMeasurement", "CENTERING_USES_MICROSCOPE_EVIDENCE", "Centering must not reference microscope evidence."));
+  }
+
+  if (isRecord(value.macroOutput) && isRecord(value.macroOutput.centeringMeasurement) && centeringReferencesMicroscopeEvidence(value.macroOutput.centeringMeasurement)) {
+    issues.push(issue("macroOutput.centeringMeasurement", "CENTERING_USES_MICROSCOPE_EVIDENCE", "Centering must not reference microscope evidence."));
+  }
+
+  validateFusionActionsIgnoreCentering(value.fusionActions, "fusionActions", issues);
+  if (isRecord(value.gradeRunDraft)) {
+    validateFusionActionsIgnoreCentering(value.gradeRunDraft.fusionActions, "gradeRunDraft.fusionActions", issues);
+  }
+
+  return validationResult(issues);
+}
+
+export function validateStandardFusionScope(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "fusionScope";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "StandardFusionScopeValidationInput must be an object.")]);
+  }
+
+  const action = value.action;
+  const microPackages = Array.isArray(value.microPackages) ? value.microPackages.filter(isRecord) : [];
+  if (!Array.isArray(value.microPackages)) {
+    issues.push(issue(`${path}.microPackages`, "INVALID_ARRAY", "microPackages must be an array."));
+  }
+  issues.push(...validateFusionAction(action).issues.map((entry) => ({ ...entry, path: `${path}.${entry.path}` })));
+
+  if (!isRecord(action)) {
+    return validationResult(issues);
+  }
+
+  const packageMatch = microPackages.find((entry) => entry.id === action.spotPackageId);
+  if (!packageMatch) {
+    issues.push(issue(`${path}.action.spotPackageId`, "INVALID_FUSION_SCOPE", "fusion action must link to an inspected micro spot package."));
+    return validationResult(issues);
+  }
+
+  if (packageMatch.validForClassification !== true) {
+    issues.push(issue(`${path}.microPackages.${String(packageMatch.id)}.validForClassification`, "MICRO_EVIDENCE_INCOMPLETE", "fusion cannot consume incomplete micro evidence as clean evidence."));
+  }
+  if (packageMatch.element !== action.element) {
+    issues.push(issue(`${path}.action.element`, "INVALID_FUSION_SCOPE", "fusion action element must match the inspected micro package element."));
+  }
+  if (packageMatch.side !== action.side) {
+    issues.push(issue(`${path}.action.side`, "INVALID_FUSION_SCOPE", "fusion action side must match the inspected micro package side."));
+  }
+
+  if (action.element === "SURFACE") {
+    if (!isNonEmptyString(packageMatch.sourceSuspectRegionId) || packageMatch.sourceSuspectRegionId !== action.regionId) {
+      issues.push(issue(`${path}.action.regionId`, "INVALID_FUSION_SCOPE", "surface fusion may affect only the inspected source suspect region."));
+    }
+    if (isRecord(value.macroOutput)) {
+      const suspectIds = Array.isArray(value.macroOutput.suspectRegions)
+        ? value.macroOutput.suspectRegions.filter(isRecord).map((suspect) => suspect.id)
+        : [];
+      if (!suspectIds.includes(action.regionId)) {
+        issues.push(issue(`${path}.action.regionId`, "INVALID_FUSION_SCOPE", "surface fusion regionId must exist in macro suspect regions."));
+      }
+    }
+  } else if (action.regionId != null && isRecord(value.standardSpotPlan)) {
+    const visitedRegionIds = Array.isArray(value.standardSpotPlan.spots)
+      ? value.standardSpotPlan.spots
+          .filter(isRecord)
+          .map((spot) => spot.id)
+          .concat(value.standardSpotPlan.spots.filter(isRecord).map((spot) => spot.label).filter(isNonEmptyString))
+      : [];
+    if (!visitedRegionIds.includes(action.regionId)) {
+      issues.push(issue(`${path}.action.regionId`, "INVALID_FUSION_SCOPE", "corner/edge fusion regionId must be in the inspected spot plan when provided."));
+    }
+  }
+
+  return validationResult(issues);
+}
+
+export function validateDustCorrectionBounds(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "dustCorrection";
+
+  if (!isRecord(value) || !isRecord(value.action)) {
+    return validationResult([issue(path, "INVALID_RECORD", "DustCorrectionBoundsInput must include an action object.")]);
+  }
+
+  const action = value.action;
+  const excessiveDustBurden =
+    value.excessiveDustBurden === true ||
+    recordBoolean(action.microMeasurement, ["excessiveDustBurden", "excessiveDust", "broadDustBurden"]) === true ||
+    recordBoolean(action.macroMeasurement, ["excessiveDustBurden", "excessiveDust", "broadDustBurden"]) === true;
+
+  if (excessiveDustBurden) {
+    if (action.action === "DUST_CORRECT") {
+      issues.push(issue(`${path}.action`, "INVALID_DUST_CORRECTION", "excessive dust burden requires warning/review, not broad dust correction."));
+    }
+    if (action.action === "WARNING_ONLY" && isFiniteNumber(action.gradeBefore) && isFiniteNumber(action.gradeAfter) && action.gradeAfter !== action.gradeBefore) {
+      issues.push(issue(`${path}.gradeAfter`, "INVALID_DUST_CORRECTION", "excessive dust warning actions must not change grades."));
+    }
+  }
+
+  if (action.action !== "DUST_CORRECT") {
+    return validationResult(issues);
+  }
+
+  if (action.element !== "SURFACE") {
+    issues.push(issue(`${path}.element`, "INVALID_DUST_CORRECTION", "DUST_CORRECT actions must be scoped to a surface suspect region."));
+  }
+  if (!isNonEmptyString(action.regionId)) {
+    issues.push(issue(`${path}.regionId`, "INVALID_DUST_CORRECTION", "DUST_CORRECT actions must record the overlapping macro suspect region."));
+  }
+  if (isFiniteNumber(action.gradeBefore) && isFiniteNumber(action.gradeAfter) && action.gradeAfter < action.gradeBefore) {
+    issues.push(issue(`${path}.gradeAfter`, "INVALID_DUST_CORRECTION", "DUST_CORRECT actions must not lower the grade."));
+  }
+
+  const overlapConfirmed =
+    recordBoolean(action.microMeasurement, ["directlyOverlapsMacroSuspectRegion", "overlapsMacroSuspectRegion", "dustDirectlyOverlapsRegion"]) === true ||
+    recordString(action.microMeasurement, ["overlappingRegionId", "overlappedRegionId", "sourceSuspectRegionId"]) === action.regionId;
+  if (!overlapConfirmed) {
+    issues.push(issue(`${path}.microMeasurement`, "INVALID_DUST_CORRECTION", "dust correction requires micro evidence directly overlapping the macro suspect region."));
+  }
+
+  const recomputedBound = isFiniteNumber(value.recomputedMacroGradeWithoutInspectedContamination)
+    ? value.recomputedMacroGradeWithoutInspectedContamination
+    : finiteRecordNumber(action.macroMeasurement, [
+        "recomputedMacroGradeWithoutInspectedContamination",
+        "macroGradeWithInspectedContaminationExcluded",
+        "maxGradeAfterDustCorrection",
+      ]);
+  if (!isFiniteNumber(recomputedBound)) {
+    issues.push(issue(`${path}.recomputedMacroGradeWithoutInspectedContamination`, "REQUIRED", "dust correction must record the recomputed macro grade bound."));
+  } else if (isFiniteNumber(action.gradeAfter) && action.gradeAfter > recomputedBound) {
+    issues.push(issue(`${path}.gradeAfter`, "INVALID_DUST_CORRECTION", "dust correction must not exceed the recomputed macro grade with inspected contamination excluded."));
+  }
+
+  return validationResult(issues);
+}
+
+export function validateStandardFusionInput(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "standardFusionInput";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "StandardFusionInput must be an object.")]);
+  }
+
+  ["algorithmVersionId", "thresholdSetVersionId", "runtimeEnvironmentId"].forEach((field) => requireString(value, field, path, issues));
+
+  const macroResult = validateMacroPipelineOutput(value.macroOutput);
+  issues.push(...macroResult.issues.map((entry) => ({ ...entry, path: `${path}.${entry.path}` })));
+  const captureResult = validateCaptureManifest(value.captureManifest);
+  issues.push(...captureResult.issues.map((entry) => ({ ...entry, path: `${path}.${entry.path}` })));
+  const centeringResult = validateCenteringIgnoresMicroEvidence(value);
+  issues.push(...centeringResult.issues.map((entry) => ({ ...entry, path: `${path}.${entry.path}` })));
+
+  if (isRecord(value.macroOutput)) {
+    if (value.macroOutput.algorithmVersionId !== value.algorithmVersionId) {
+      issues.push(issue(`${path}.algorithmVersionId`, "INVALID_FUSION_SCOPE", "algorithmVersionId must match the macro output provenance."));
+    }
+    if (value.macroOutput.thresholdSetVersionId !== value.thresholdSetVersionId) {
+      issues.push(issue(`${path}.thresholdSetVersionId`, "INVALID_FUSION_SCOPE", "thresholdSetVersionId must match the macro output provenance."));
+    }
+    if (isRecord(value.captureManifest) && value.macroOutput.captureManifestId !== value.captureManifest.id) {
+      issues.push(issue(`${path}.captureManifest.id`, "INVALID_FUSION_SCOPE", "captureManifest must match macroOutput.captureManifestId."));
+    }
+  }
+
+  if (!Array.isArray(value.microPackages)) {
+    issues.push(issue(`${path}.microPackages`, "INVALID_ARRAY", "microPackages must be an array."));
+  } else {
+    const sourceSuspectRegionIds =
+      isRecord(value.macroOutput) && Array.isArray(value.macroOutput.suspectRegions)
+        ? value.macroOutput.suspectRegions.filter(isRecord).map((suspect) => String(suspect.id))
+        : [];
+    value.microPackages.forEach((microPackage, index) => {
+      const result = validateMicroPackageForFusion(microPackage, {
+        sessionId: isRecord(value.macroOutput) && isNonEmptyString(value.macroOutput.sessionId) ? value.macroOutput.sessionId : undefined,
+        captureManifestId: isRecord(value.captureManifest) && isNonEmptyString(value.captureManifest.id) ? value.captureManifest.id : undefined,
+        side: isRecord(value.macroOutput) && isNonEmptyString(value.macroOutput.side) && CAPTURE_SIDE_VALUES.has(value.macroOutput.side) ? (value.macroOutput.side as CaptureSide) : undefined,
+        sourceSuspectRegionIds,
+      });
+      issues.push(...result.issues.map((entry) => ({ ...entry, path: `${path}.microPackages[${index}].${entry.path}` })));
+    });
+  }
+
+  return validationResult(issues);
+}
+
+export function validateStandardFusionOutput(
+  value: unknown,
+  options: StandardFusionOutputValidationOptions = {}
+): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "standardFusionOutput";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "StandardFusionOutput must be an object.")]);
+  }
+  if (!isRecord(value.gradeRunDraft)) {
+    return validationResult([issue(`${path}.gradeRunDraft`, "INVALID_RECORD", "gradeRunDraft must be an object.")]);
+  }
+
+  const draft = value.gradeRunDraft;
+  validateUnknownRecordPresent(draft.macroMeasurements, `${path}.gradeRunDraft.macroMeasurements`, issues);
+  validateUnknownRecordPresent(draft.microMeasurements, `${path}.gradeRunDraft.microMeasurements`, issues);
+  requireStringArray(draft.warnings, `${path}.gradeRunDraft.warnings`, issues, { allowEmpty: true });
+
+  if (!isRecord(draft.finalGrades)) {
+    issues.push(issue(`${path}.gradeRunDraft.finalGrades`, "INVALID_RECORD", "finalGrades must be an object."));
+  } else {
+    Object.entries(draft.finalGrades).forEach(([key, grade]) => {
+      if (!isFiniteNumber(grade)) {
+        issues.push(issue(`${path}.gradeRunDraft.finalGrades.${key}`, "INVALID_NUMBER", "final grade values must be finite numbers."));
+      }
+    });
+  }
+
+  if (!Array.isArray(draft.fusionActions)) {
+    issues.push(issue(`${path}.gradeRunDraft.fusionActions`, "INVALID_ARRAY", "fusionActions must be an array."));
+  } else {
+    draft.fusionActions.forEach((action, index) => {
+      const actionResult = validateFusionAction(action);
+      issues.push(...actionResult.issues.map((entry) => ({ ...entry, path: `${path}.gradeRunDraft.fusionActions[${index}].${entry.path}` })));
+      if (options.input) {
+        const scopeResult = validateStandardFusionScope({
+          action,
+          microPackages: options.input.microPackages,
+          macroOutput: options.input.macroOutput,
+        });
+        issues.push(...scopeResult.issues.map((entry) => ({ ...entry, path: `${path}.gradeRunDraft.fusionActions[${index}].${entry.path}` })));
+      }
+    });
+  }
+
+  const centeringResult = validateCenteringIgnoresMicroEvidence(value);
+  issues.push(...centeringResult.issues.map((entry) => ({ ...entry, path: `${path}.${entry.path}` })));
 
   return validationResult(issues);
 }

@@ -4,6 +4,7 @@ const {
   ORCHESTRATOR_NAMED_ERROR_STATES,
   buildInitialAiGraderAlgorithmVersions,
   buildInitialAiGraderThresholdSets,
+  buildFusionAction,
   buildMacroSuspectRegionId,
   buildMicroSpotPackageId,
   buildModePlan,
@@ -17,7 +18,10 @@ const {
   validateCaptureManifest,
   validateCaptureManifestForMode,
   validateCaptureManifestFrame,
+  validateCenteringIgnoresMicroEvidence,
   validateDeviceCapabilityManifest,
+  validateDustCorrectionBounds,
+  validateFusionAction,
   validateMacroPipelineOutput,
   validateMacroSuspectRegion,
   validateMicroPackageForFusion,
@@ -25,6 +29,9 @@ const {
   validateMicroSpotCapturePackage,
   validateReplayTolerance,
   validateRuntimeEnvironmentFingerprint,
+  validateStandardFusionInput,
+  validateStandardFusionOutput,
+  validateStandardFusionScope,
   validateStandardSpotPlan,
   validateThresholdSetVersionSeed,
 } = require("../dist/aiGrader");
@@ -278,6 +285,87 @@ function microPackage(overrides = {}) {
   return {
     ...base,
     ...overrides,
+  };
+}
+
+function standardFusionInput(overrides = {}) {
+  const suspect = macroSuspect({ id: "macro-suspect-1", rank: 1, score: 0.9 });
+  const macro = macroOutput({ suspectRegions: [suspect] });
+  return {
+    macroOutput: macro,
+    microPackages: [
+      microPackage({ id: "corner-package-1", element: "CORNERS", spotIndex: 1, totalSpots: 4 }),
+      microPackage({ id: "edge-package-1", element: "EDGES", spotIndex: 1, totalSpots: 4 }),
+      microPackage({
+        id: "surface-package-1",
+        element: "SURFACE",
+        spotIndex: 1,
+        totalSpots: 1,
+        sourceSuspectRegionId: "macro-suspect-1",
+      }),
+    ],
+    captureManifest: baseCaptureManifest({
+      id: "capture-manifest-1",
+      captureSessionId: "session-1",
+    }),
+    algorithmVersionId: "algorithm-1",
+    thresholdSetVersionId: "threshold-1",
+    runtimeEnvironmentId: "runtime-1",
+    ...overrides,
+  };
+}
+
+function fusionAction(overrides = {}) {
+  const element = overrides.element ?? "SURFACE";
+  const action = overrides.action ?? "LOWER";
+  const regionId =
+    Object.prototype.hasOwnProperty.call(overrides, "regionId")
+      ? overrides.regionId
+      : element === "SURFACE" || action === "DUST_CORRECT"
+        ? "macro-suspect-1"
+        : undefined;
+  const spotPackageId =
+    overrides.spotPackageId ??
+    (element === "CORNERS" ? "corner-package-1" : element === "EDGES" ? "edge-package-1" : "surface-package-1");
+  const base = buildFusionAction({
+    action,
+    element,
+    side: "FRONT",
+    regionId,
+    spotPackageId,
+    macroMeasurement: {
+      provisionalGrade: 8,
+      recomputedMacroGradeWithoutInspectedContamination: 9,
+    },
+    microMeasurement: {
+      finding: action === "DUST_CORRECT" ? "LINT" : "REAL_DEFECT",
+      directlyOverlapsMacroSuspectRegion: action === "DUST_CORRECT",
+      overlappingRegionId: regionId,
+    },
+    gradeBefore: action === "DUST_CORRECT" ? 8 : 9,
+    gradeAfter: action === "LOWER" ? 8 : action === "DUST_CORRECT" ? 8.5 : 9,
+    algorithmVersionId: "algorithm-1",
+    thresholdSetVersionId: "threshold-1",
+    reasonCodes: [action === "DUST_CORRECT" ? "INSPECTED_LINT" : "MICRO_CONFIRMED_DEFECT"],
+  });
+  return {
+    ...base,
+    ...overrides,
+  };
+}
+
+function standardFusionOutput(actions, overrides = {}) {
+  const { gradeRunDraft = {}, ...outputOverrides } = overrides;
+  return {
+    gradeRunDraft: {
+      macroMeasurements: { surface: 8 },
+      microMeasurements: { inspectedSpotCount: actions.length },
+      fusionActions: actions,
+      finalGrades: { corners: 8, edges: 9, surface: 8.5 },
+      warnings: [],
+      ...gradeRunDraft,
+    },
+    ...outputOverrides,
   };
 }
 
@@ -540,6 +628,175 @@ test("validateMicroPackageForFusion rejects incomplete packages as non-clean evi
   assert.equal(result.valid, false);
   assert.ok(issueCodes(result).includes("MISSING_FRAME"));
   assert.ok(issueCodes(result).includes("MICRO_EVIDENCE_INCOMPLETE"));
+});
+
+test("validateFusionAction accepts a valid LOWER action", () => {
+  const input = standardFusionInput();
+  const action = fusionAction({
+    action: "LOWER",
+    element: "CORNERS",
+    spotPackageId: "corner-package-1",
+    gradeBefore: 9,
+    gradeAfter: 8,
+  });
+
+  assert.equal(validateStandardFusionInput(input).valid, true);
+  assert.equal(validateFusionAction(action).valid, true);
+  assert.equal(
+    validateStandardFusionScope({
+      action,
+      microPackages: input.microPackages,
+      macroOutput: input.macroOutput,
+    }).valid,
+    true
+  );
+  assert.equal(validateStandardFusionOutput(standardFusionOutput([action]), { input }).valid, true);
+});
+
+test("validateFusionAction accepts a valid HOLD action", () => {
+  const input = standardFusionInput();
+  const action = fusionAction({
+    action: "HOLD",
+    element: "EDGES",
+    spotPackageId: "edge-package-1",
+    gradeBefore: 9,
+    gradeAfter: 9,
+    reasonCodes: ["MICRO_CONFIRMED_CLEAN"],
+  });
+
+  assert.equal(validateFusionAction(action).valid, true);
+  assert.equal(
+    validateStandardFusionScope({
+      action,
+      microPackages: input.microPackages,
+      macroOutput: input.macroOutput,
+    }).valid,
+    true
+  );
+});
+
+test("validateFusionAction accepts a bounded DUST_CORRECT action", () => {
+  const input = standardFusionInput();
+  const action = fusionAction({
+    action: "DUST_CORRECT",
+    element: "SURFACE",
+    regionId: "macro-suspect-1",
+    spotPackageId: "surface-package-1",
+    gradeBefore: 8,
+    gradeAfter: 8.5,
+    reasonCodes: ["INSPECTED_LINT"],
+  });
+
+  assert.equal(validateFusionAction(action).valid, true);
+  assert.equal(validateDustCorrectionBounds({ action }).valid, true);
+  assert.equal(
+    validateStandardFusionScope({
+      action,
+      microPackages: input.microPackages,
+      macroOutput: input.macroOutput,
+    }).valid,
+    true
+  );
+});
+
+test("validateStandardFusionInput rejects centering micro input", () => {
+  const input = standardFusionInput({
+    macroOutput: macroOutput({
+      suspectRegions: [macroSuspect({ id: "macro-suspect-1" })],
+      centeringMeasurement: {
+        horizontalPercent: 50,
+        microEvidenceArtifactIds: ["micro-frame-1"],
+      },
+    }),
+  });
+  const result = validateStandardFusionInput(input);
+  const centeringResult = validateCenteringIgnoresMicroEvidence(input);
+
+  assert.equal(result.valid, false);
+  assert.equal(centeringResult.valid, false);
+  assert.ok(issueCodes(result).includes("CENTERING_USES_MICROSCOPE_EVIDENCE"));
+});
+
+test("validateStandardFusionScope rejects an action affecting an unvisited region", () => {
+  const input = standardFusionInput();
+  const action = fusionAction({
+    action: "LOWER",
+    element: "SURFACE",
+    regionId: "unvisited-region",
+    spotPackageId: "surface-package-1",
+    gradeBefore: 9,
+    gradeAfter: 8,
+  });
+  const result = validateStandardFusionScope({
+    action,
+    microPackages: input.microPackages,
+    macroOutput: input.macroOutput,
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("INVALID_FUSION_SCOPE"));
+});
+
+test("validateDustCorrectionBounds rejects dust correction above the allowed bound", () => {
+  const action = fusionAction({
+    action: "DUST_CORRECT",
+    element: "SURFACE",
+    regionId: "macro-suspect-1",
+    spotPackageId: "surface-package-1",
+    gradeBefore: 8,
+    gradeAfter: 9.5,
+    macroMeasurement: {
+      provisionalGrade: 8,
+      recomputedMacroGradeWithoutInspectedContamination: 9,
+    },
+    microMeasurement: {
+      finding: "LINT",
+      directlyOverlapsMacroSuspectRegion: true,
+      overlappingRegionId: "macro-suspect-1",
+    },
+  });
+  const result = validateDustCorrectionBounds({ action });
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("INVALID_DUST_CORRECTION"));
+});
+
+test("validateFusionAction supports warning path for excessive dust", () => {
+  const input = standardFusionInput();
+  const action = fusionAction({
+    action: "WARNING_ONLY",
+    element: "SURFACE",
+    regionId: "macro-suspect-1",
+    spotPackageId: "surface-package-1",
+    gradeBefore: 8,
+    gradeAfter: 8,
+    microMeasurement: {
+      excessiveDustBurden: true,
+    },
+    reasonCodes: ["EXCESSIVE_DUST_BURDEN"],
+  });
+  const output = standardFusionOutput([action], {
+    gradeRunDraft: {
+      warnings: ["EXCESSIVE_DUST_BURDEN"],
+    },
+  });
+
+  assert.equal(validateFusionAction(action).valid, true);
+  assert.equal(validateDustCorrectionBounds({ action }).valid, true);
+  assert.equal(validateStandardFusionOutput(output, { input }).valid, true);
+});
+
+test("validateStandardFusionInput requires algorithm, threshold, and runtime references", () => {
+  const result = validateStandardFusionInput(
+    standardFusionInput({
+      algorithmVersionId: "",
+      thresholdSetVersionId: "",
+      runtimeEnvironmentId: "",
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("REQUIRED"));
 });
 
 test("buildInitialAiGraderAlgorithmVersions returns valid provenance seeds", () => {
