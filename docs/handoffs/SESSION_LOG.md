@@ -17666,3 +17666,25 @@ By enabling Rip It Live, I confirm:
 - `pnpm --filter @tenkings/shared test` -> pass, 38 tests.
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
+## 2026-05-28 - AI Grader Phase 9 authentication product boundary contract helpers
+
+### Summary
+- Implemented Phase 9 as pure shared authentication product-governance contracts and validators in `@tenkings/shared`.
+- Added Prisma-aligned auth verdict/profile status unions plus `CardIdentityInput`, `CardPrintProfileContract`, `AuthRunContract`, and `AuthProfileLifecycleDecision` contracts.
+- Added pure helpers for card identity validation, print profile contract validation, auth run validation, lifecycle transition validation, profile-state verdict resolution, and public auth report claim-boundary validation.
+- Enforced v5 auth boundaries for operator-supplied card identity, no image-derived identity, first-seen profiles resolving to `REFERENCE_NEEDED`, production verdicts requiring an `ACTIVE` profile, non-active profile blocking, AUTH_ONLY no-grade output, lifecycle state transitions, and CMYK print-profile claim scope.
+- Added tests for valid identity, missing identity fields, first-seen candidate handling, ACTIVE verdict allowance, QUARANTINED/RETIRED blocking, invalid lifecycle transitions, overbroad public authenticity wording, and AUTH_ONLY no-grade output.
+- No CMYK image extraction, fingerprint matching math, profile DB writes, Prisma seed/execution, database writes, migrations, hardware drivers, capture code, frontend pages, reports, deploys, restarts, runtime DB operations, destructive operations, or Phase 10 work were performed.
+
+### Files Changed
+- `packages/shared/src/aiGrader.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/aiGrader.test.js`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 94 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.

@@ -11,12 +11,18 @@ const {
   buildRuntimeEnvironmentFingerprint,
   buildStandardSpotPlan,
   normalizeBackSideCardCoordinates,
+  resolveAuthVerdictFromProfileState,
   requiresPhysicalGateReview,
   sortAndSelectStandardSurfaceSuspects,
   transitionOrchestratorState,
   validateAlgorithmVersionSeed,
   validateArmInterlockForState,
+  validateAuthProfileLifecycleTransition,
+  validateAuthReportClaimBoundary,
+  validateAuthRunContract,
   validateCardToStageTransformInput,
+  validateCardIdentityInput,
+  validateCardPrintProfileContract,
   validateCalibrationFreshness,
   validateCalibrationSnapshotContract,
   validateCaptureManifest,
@@ -443,6 +449,72 @@ function physicalGate(overrides = {}) {
     status: "PASS",
     detail: "within calibrated size tolerance",
     evidenceArtifacts: [artifact({ storageKey: "gates/trimmed-card-size.json" })],
+    ...overrides,
+  };
+}
+
+function cardIdentity(overrides = {}) {
+  return {
+    cardSet: "2026 Topps Chrome",
+    cardNumber: "101",
+    printRun: "first-edition",
+    identitySource: "OPERATOR_SUPPLIED",
+    notes: "operator read from card label",
+    ...overrides,
+  };
+}
+
+function cardPrintProfile(overrides = {}) {
+  return {
+    id: "profile-1",
+    tenantId: "tenant-1",
+    cardSet: "2026 Topps Chrome",
+    cardNumber: "101",
+    printRun: "first-edition",
+    printRunKey: "first-edition",
+    state: "ACTIVE",
+    referenceFingerprint: {
+      cmykPatches: [0.1, 0.2, 0.3, 0.4],
+      patchCount: 5,
+    },
+    referenceAuthRunId: "auth-run-reference-1",
+    approvedByOperatorId: "operator-approver",
+    approvedAt: ISO_TIME,
+    version: 1,
+    notes: "curated reference profile",
+    createdAt: ISO_TIME,
+    updatedAt: ISO_TIME,
+    ...overrides,
+  };
+}
+
+function authRun(overrides = {}) {
+  return {
+    id: "auth-run-1",
+    captureSessionId: "session-1",
+    captureManifestId: "capture-manifest-1",
+    algorithmVersionId: "algorithm-cmyk-1",
+    runtimeEnvironmentId: "runtime-1",
+    cardPrintProfileId: "profile-1",
+    tenantId: "tenant-1",
+    cardSet: "2026 Topps Chrome",
+    cardNumber: "101",
+    printRun: "first-edition",
+    verdict: "REFERENCE_NEEDED",
+    distance: 0.02,
+    status: "COMPLETE",
+    measurements: {
+      cmykDistance: 0.02,
+    },
+    evidence: {
+      comparisonScope: "CMYK_PRINT_PROFILE",
+    },
+    inputChecksum: SHA_256,
+    outputChecksum: "b".repeat(64),
+    startedAt: ISO_TIME,
+    finishedAt: "2026-05-28T12:01:00.000Z",
+    mode: "AUTH_ONLY",
+    profileState: "ACTIVE",
     ...overrides,
   };
 }
@@ -991,6 +1063,130 @@ test("validateCertificateAllowedByPhysicalGates blocks unresolved physical gate"
 
   assert.equal(result.valid, false);
   assert.ok(issueCodes(result).includes("CERTIFICATE_BLOCKED"));
+});
+
+test("validateCardIdentityInput accepts operator-supplied auth identity", () => {
+  const result = validateCardIdentityInput(cardIdentity(), { mode: "AUTH_ONLY" });
+
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.issues, []);
+});
+
+test("validateCardIdentityInput rejects missing cardSet and cardNumber", () => {
+  const result = validateCardIdentityInput(
+    cardIdentity({
+      cardSet: "",
+      cardNumber: "",
+    }),
+    { mode: "FORENSIC" }
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("AUTH_IDENTITY_REQUIRED"));
+});
+
+test("first-seen candidate auth profile resolves to REFERENCE_NEEDED", () => {
+  const profile = cardPrintProfile({
+    state: "CANDIDATE",
+    approvedByOperatorId: undefined,
+    approvedAt: undefined,
+  });
+  const profileResult = validateCardPrintProfileContract(profile);
+  const verdict = resolveAuthVerdictFromProfileState(profile, "AUTHENTIC");
+  const runResult = validateAuthRunContract(
+    authRun({
+      cardPrintProfileId: undefined,
+      verdict: "REFERENCE_NEEDED",
+      profileState: "CANDIDATE",
+    })
+  );
+
+  assert.equal(profileResult.valid, true);
+  assert.equal(verdict, "REFERENCE_NEEDED");
+  assert.equal(runResult.valid, true);
+});
+
+test("ACTIVE auth profile allows production comparison verdicts", () => {
+  const profile = cardPrintProfile();
+  const verdict = resolveAuthVerdictFromProfileState(profile, "AUTHENTIC");
+  const runResult = validateAuthRunContract(
+    authRun({
+      verdict,
+      profileState: "ACTIVE",
+      cardPrintProfileId: "profile-1",
+    })
+  );
+
+  assert.equal(validateCardPrintProfileContract(profile).valid, true);
+  assert.equal(verdict, "AUTHENTIC");
+  assert.equal(runResult.valid, true);
+});
+
+test("QUARANTINED and RETIRED auth profiles block production verdicts", () => {
+  const quarantined = validateAuthRunContract(
+    authRun({
+      verdict: "PROBABLY_AUTHENTIC",
+      profileState: "QUARANTINED",
+    })
+  );
+  const retired = validateAuthRunContract(
+    authRun({
+      verdict: "SUSPICIOUS",
+      profileState: "RETIRED",
+    })
+  );
+
+  assert.equal(quarantined.valid, false);
+  assert.equal(retired.valid, false);
+  assert.ok(issueCodes(quarantined).includes("AUTH_PROFILE_NOT_ACTIVE"));
+  assert.ok(issueCodes(retired).includes("AUTH_PROFILE_NOT_ACTIVE"));
+});
+
+test("validateAuthProfileLifecycleTransition rejects invalid transition", () => {
+  const result = validateAuthProfileLifecycleTransition({
+    from: "RETIRED",
+    to: "ACTIVE",
+    actorOperatorId: "operator-1",
+    reviewedByOperatorId: "operator-reviewer",
+    reasonCode: "reopen-retired-profile",
+    decidedAt: ISO_TIME,
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("INVALID_AUTH_PROFILE_TRANSITION"));
+});
+
+test("validateAuthReportClaimBoundary rejects overbroad authenticity wording", () => {
+  const result = validateAuthReportClaimBoundary({
+    verdict: "AUTHENTIC",
+    reportText: "CMYK print-profile comparison proves full authenticity.",
+    mode: "AUTH_ONLY",
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("INVALID_AUTH_CLAIM"));
+});
+
+test("AUTH_ONLY auth run produces verdict contract but no grade values", () => {
+  const validResult = validateAuthRunContract(
+    authRun({
+      verdict: "REFERENCE_NEEDED",
+      profileState: "CANDIDATE",
+      cardPrintProfileId: undefined,
+      finalGrades: {},
+    })
+  );
+  const invalidResult = validateAuthRunContract(
+    authRun({
+      verdict: "AUTHENTIC",
+      profileState: "ACTIVE",
+      finalGrades: { surface: 9 },
+    })
+  );
+
+  assert.equal(validResult.valid, true);
+  assert.equal(invalidResult.valid, false);
+  assert.ok(issueCodes(invalidResult).includes("INVALID_AUTH_CLAIM"));
 });
 
 test("buildInitialAiGraderAlgorithmVersions returns valid provenance seeds", () => {

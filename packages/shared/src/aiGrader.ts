@@ -232,6 +232,93 @@ export interface PhysicalGateDecision {
   decidedAt?: string;
 }
 
+export type AuthVerdict =
+  | "REFERENCE_NEEDED"
+  | "AUTHENTIC"
+  | "PROBABLY_AUTHENTIC"
+  | "SUSPICIOUS"
+  | "LIKELY_COUNTERFEIT";
+
+export type PrintProfileStatus =
+  | "CANDIDATE"
+  | "CURATED_REFERENCE"
+  | "ACTIVE"
+  | "QUARANTINED"
+  | "RETIRED";
+
+export type AuthRunStatus = "PENDING" | "RUNNING" | "COMPLETE" | "FAILED";
+
+export interface CardIdentityInput {
+  cardSet: string;
+  cardNumber: string;
+  printRun?: string;
+  identitySource?: "OPERATOR_SUPPLIED" | "MANIFEST" | "CURATED_REFERENCE";
+  notes?: string;
+}
+
+export interface CardIdentityValidationOptions {
+  mode?: GradingMode;
+}
+
+export interface CardPrintProfileContract {
+  id: string;
+  tenantId: string;
+  cardSet: string;
+  cardNumber: string;
+  printRun?: string;
+  printRunKey: string;
+  state: PrintProfileStatus;
+  referenceFingerprint: Record<string, unknown>;
+  referenceAuthRunId?: string;
+  approvedByOperatorId?: string;
+  approvedAt?: string;
+  version: number;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AuthRunContract {
+  id: string;
+  captureSessionId?: string;
+  captureManifestId?: string;
+  algorithmVersionId: string;
+  runtimeEnvironmentId: string;
+  cardPrintProfileId?: string;
+  tenantId: string;
+  cardSet: string;
+  cardNumber: string;
+  printRun?: string;
+  verdict: AuthVerdict;
+  distance?: number;
+  status: AuthRunStatus;
+  measurements: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  inputChecksum?: string;
+  outputChecksum?: string;
+  errorCode?: string;
+  startedAt: string;
+  finishedAt?: string;
+  mode?: GradingMode;
+  finalGrades?: Record<string, number>;
+  profileState?: PrintProfileStatus;
+}
+
+export interface AuthProfileLifecycleDecision {
+  from: PrintProfileStatus;
+  to: PrintProfileStatus;
+  actorOperatorId: string;
+  reasonCode: string;
+  reviewedByOperatorId?: string;
+  decidedAt: string;
+}
+
+export interface AuthReportClaimBoundaryInput {
+  verdict: AuthVerdict;
+  reportText: string;
+  mode?: GradingMode;
+}
+
 export interface CenteringMeasurement {
   leftMm?: number;
   rightMm?: number;
@@ -479,6 +566,11 @@ export type AiGraderValidationIssueCode =
   | "MACRO_OBSTRUCTION_DETECTED"
   | "PHYSICAL_GATE_REVIEW"
   | "CERTIFICATE_BLOCKED"
+  | "AUTH_IDENTITY_REQUIRED"
+  | "AUTH_PROFILE_NOT_ACTIVE"
+  | "INVALID_AUTH_VERDICT"
+  | "INVALID_AUTH_PROFILE_TRANSITION"
+  | "INVALID_AUTH_CLAIM"
   | "MISSING_FRAME"
   | "MICRO_EVIDENCE_INCOMPLETE"
   | "INVALID_ARRAY"
@@ -745,6 +837,40 @@ const PHYSICAL_GATE_KINDS = [
   "FRONT_BACK_SANDWICH_MISMATCH",
   "CUSTODY_BREAK_AFTER_CERTIFICATION",
 ] as const;
+const AUTH_VERDICTS = [
+  "REFERENCE_NEEDED",
+  "AUTHENTIC",
+  "PROBABLY_AUTHENTIC",
+  "SUSPICIOUS",
+  "LIKELY_COUNTERFEIT",
+] as const;
+const PRINT_PROFILE_STATUSES = [
+  "CANDIDATE",
+  "CURATED_REFERENCE",
+  "ACTIVE",
+  "QUARANTINED",
+  "RETIRED",
+] as const;
+const AUTH_RUN_STATUSES = ["PENDING", "RUNNING", "COMPLETE", "FAILED"] as const;
+const PRODUCTION_AUTH_VERDICTS = [
+  "AUTHENTIC",
+  "PROBABLY_AUTHENTIC",
+  "SUSPICIOUS",
+  "LIKELY_COUNTERFEIT",
+] as const;
+const AUTH_IDENTITY_SOURCES = ["OPERATOR_SUPPLIED", "MANIFEST", "CURATED_REFERENCE"] as const;
+const AUTH_PROFILE_ALLOWED_TRANSITIONS = new Set<string>([
+  "CANDIDATE->CURATED_REFERENCE",
+  "CANDIDATE->QUARANTINED",
+  "CANDIDATE->RETIRED",
+  "CURATED_REFERENCE->ACTIVE",
+  "CURATED_REFERENCE->QUARANTINED",
+  "CURATED_REFERENCE->RETIRED",
+  "ACTIVE->QUARANTINED",
+  "ACTIVE->RETIRED",
+  "QUARANTINED->CURATED_REFERENCE",
+  "QUARANTINED->RETIRED",
+]);
 export const DEFAULT_REQUIRED_CALIBRATION_TYPES: readonly CalibrationType[] = [
   "COLOR_CHECKER_CCM",
   "STAGE_HOME",
@@ -773,6 +899,11 @@ const PHYSICAL_GATE_STATUS_VALUES = new Set<string>(PHYSICAL_GATE_STATUSES);
 const ARM_POSITION_VALUES = new Set<string>(ARM_POSITIONS);
 const CALIBRATION_TYPE_VALUES = new Set<string>(CALIBRATION_TYPES);
 const PHYSICAL_GATE_KIND_VALUES = new Set<string>(PHYSICAL_GATE_KINDS);
+const AUTH_VERDICT_VALUES = new Set<string>(AUTH_VERDICTS);
+const PRINT_PROFILE_STATUS_VALUES = new Set<string>(PRINT_PROFILE_STATUSES);
+const AUTH_RUN_STATUS_VALUES = new Set<string>(AUTH_RUN_STATUSES);
+const PRODUCTION_AUTH_VERDICT_VALUES = new Set<string>(PRODUCTION_AUTH_VERDICTS);
+const AUTH_IDENTITY_SOURCE_VALUES = new Set<string>(AUTH_IDENTITY_SOURCES);
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 const CONTAINER_DIGEST_RE = /^(?:sha256:)?[a-f0-9]{64}$/i;
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
@@ -2725,6 +2856,321 @@ export function validateCertificateAllowedByPhysicalGates(value: unknown): AiGra
       issues.push(issue(`${path}[${index}]`, "CERTIFICATE_BLOCKED", "unresolved physical gate blocks certificate issuance."));
     }
   });
+
+  return validationResult(issues);
+}
+
+function isProductionAuthVerdict(value: unknown): value is Exclude<AuthVerdict, "REFERENCE_NEEDED"> {
+  return isNonEmptyString(value) && PRODUCTION_AUTH_VERDICT_VALUES.has(value);
+}
+
+function profileStatusFrom(value: unknown): PrintProfileStatus | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  if (isNonEmptyString(value.state) && PRINT_PROFILE_STATUS_VALUES.has(value.state)) {
+    return value.state as PrintProfileStatus;
+  }
+  return undefined;
+}
+
+function validateOptionalNonEmptyString(
+  record: Record<string, unknown>,
+  field: string,
+  path: string,
+  issues: AiGraderValidationIssue[]
+) {
+  if (record[field] != null && !isNonEmptyString(record[field])) {
+    issues.push(issue(`${path}.${field}`, "REQUIRED", `${field} must be non-empty when provided.`));
+  }
+}
+
+function recordSuggestsImageDerivedIdentity(value: Record<string, unknown>): boolean {
+  const identitySource = isNonEmptyString(value.identitySource) ? value.identitySource.toUpperCase() : "";
+  const source = isNonEmptyString(value.source) ? value.source.toUpperCase() : "";
+  return (
+    identitySource === "IMAGE" ||
+    source === "IMAGE" ||
+    value.inferredFromImage === true ||
+    value.imageDerivedIdentity === true ||
+    value.cardIdentifiedFromImage === true
+  );
+}
+
+function validateAuthIdentityFields(
+  value: Record<string, unknown>,
+  path: string,
+  issues: AiGraderValidationIssue[]
+) {
+  if (!isNonEmptyString(value.cardSet)) {
+    issues.push(issue(`${path}.cardSet`, "AUTH_IDENTITY_REQUIRED", "operator-supplied cardSet is required for auth."));
+  }
+  if (!isNonEmptyString(value.cardNumber)) {
+    issues.push(issue(`${path}.cardNumber`, "AUTH_IDENTITY_REQUIRED", "operator-supplied cardNumber is required for auth."));
+  }
+  validateOptionalNonEmptyString(value, "printRun", path, issues);
+  validateOptionalNonEmptyString(value, "notes", path, issues);
+}
+
+export function validateCardIdentityInput(
+  value: unknown,
+  options: CardIdentityValidationOptions = {}
+): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "cardIdentity";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "CardIdentityInput must be an object.")]);
+  }
+
+  validateAuthIdentityFields(value, path, issues);
+
+  if (
+    value.identitySource != null &&
+    (!isNonEmptyString(value.identitySource) || !AUTH_IDENTITY_SOURCE_VALUES.has(value.identitySource))
+  ) {
+    issues.push(issue(`${path}.identitySource`, "INVALID_ENUM", "identitySource must be OPERATOR_SUPPLIED, MANIFEST, or CURATED_REFERENCE."));
+  }
+
+  if ((options.mode === "AUTH_ONLY" || options.mode === "FORENSIC") && value.identitySource !== "OPERATOR_SUPPLIED") {
+    issues.push(issue(`${path}.identitySource`, "AUTH_IDENTITY_REQUIRED", `${options.mode} auth requires an operator-supplied card identity.`));
+  }
+
+  if (recordSuggestsImageDerivedIdentity(value)) {
+    issues.push(issue(path, "AUTH_IDENTITY_REQUIRED", "v5 auth does not identify the card from images."));
+  }
+
+  return validationResult(issues);
+}
+
+export function validateCardPrintProfileContract(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "cardPrintProfile";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "CardPrintProfileContract must be an object.")]);
+  }
+
+  ["id", "tenantId", "cardSet", "cardNumber", "printRunKey", "createdAt", "updatedAt"].forEach((field) => {
+    requireString(value, field, path, issues);
+  });
+  validateOptionalNonEmptyString(value, "printRun", path, issues);
+  validateOptionalNonEmptyString(value, "referenceAuthRunId", path, issues);
+  validateOptionalNonEmptyString(value, "approvedByOperatorId", path, issues);
+  validateOptionalNonEmptyString(value, "notes", path, issues);
+
+  if (!isNonEmptyString(value.state) || !PRINT_PROFILE_STATUS_VALUES.has(value.state)) {
+    issues.push(issue(`${path}.state`, "INVALID_ENUM", "state must match the supported PrintProfileStatus enum."));
+  }
+  if (!isRecord(value.referenceFingerprint) || Object.keys(value.referenceFingerprint).length === 0) {
+    issues.push(issue(`${path}.referenceFingerprint`, "INVALID_RECORD", "referenceFingerprint must be a non-empty object."));
+  }
+  if (!isPositiveInteger(value.version)) {
+    issues.push(issue(`${path}.version`, "INVALID_VERSION", "version must be a positive integer."));
+  }
+  if (!hasValidTimestamp(value.createdAt)) {
+    issues.push(issue(`${path}.createdAt`, "INVALID_TIMESTAMP", "createdAt must be a valid timestamp string."));
+  }
+  if (!hasValidTimestamp(value.updatedAt)) {
+    issues.push(issue(`${path}.updatedAt`, "INVALID_TIMESTAMP", "updatedAt must be a valid timestamp string."));
+  }
+  if (value.approvedAt != null && !hasValidTimestamp(value.approvedAt)) {
+    issues.push(issue(`${path}.approvedAt`, "INVALID_TIMESTAMP", "approvedAt must be a valid timestamp string when provided."));
+  }
+
+  if ((value.state === "CURATED_REFERENCE" || value.state === "ACTIVE") && !isNonEmptyString(value.approvedByOperatorId)) {
+    issues.push(issue(`${path}.approvedByOperatorId`, "REQUIRED", "approved profiles require an authorized approving operator."));
+  }
+  if ((value.state === "CURATED_REFERENCE" || value.state === "ACTIVE") && !hasValidTimestamp(value.approvedAt)) {
+    issues.push(issue(`${path}.approvedAt`, "INVALID_TIMESTAMP", "approved profiles require approvedAt."));
+  }
+
+  return validationResult(issues);
+}
+
+export function resolveAuthVerdictFromProfileState(
+  profile: unknown,
+  requestedVerdict: unknown = "REFERENCE_NEEDED"
+): AuthVerdict {
+  if (profileStatusFrom(profile) !== "ACTIVE") {
+    return "REFERENCE_NEEDED";
+  }
+  if (isProductionAuthVerdict(requestedVerdict)) {
+    return requestedVerdict;
+  }
+  return "REFERENCE_NEEDED";
+}
+
+export function validateAuthRunContract(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "authRun";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "AuthRunContract must be an object.")]);
+  }
+
+  [
+    "id",
+    "algorithmVersionId",
+    "runtimeEnvironmentId",
+    "tenantId",
+    "cardSet",
+    "cardNumber",
+    "startedAt",
+  ].forEach((field) => requireString(value, field, path, issues));
+  [
+    "captureSessionId",
+    "captureManifestId",
+    "cardPrintProfileId",
+    "printRun",
+    "errorCode",
+  ].forEach((field) => validateOptionalNonEmptyString(value, field, path, issues));
+
+  validateAuthIdentityFields(value, path, issues);
+
+  if (!isNonEmptyString(value.verdict) || !AUTH_VERDICT_VALUES.has(value.verdict)) {
+    issues.push(issue(`${path}.verdict`, "INVALID_AUTH_VERDICT", "verdict must match the supported AuthVerdict enum."));
+  }
+  if (!isNonEmptyString(value.status) || !AUTH_RUN_STATUS_VALUES.has(value.status)) {
+    issues.push(issue(`${path}.status`, "INVALID_ENUM", "status must match the supported AuthRunStatus enum."));
+  }
+  if (!isRecord(value.measurements)) {
+    issues.push(issue(`${path}.measurements`, "INVALID_RECORD", "measurements must be an object."));
+  }
+  if (!isRecord(value.evidence)) {
+    issues.push(issue(`${path}.evidence`, "INVALID_RECORD", "evidence must be an object."));
+  }
+  if (value.distance != null && (!isFiniteNumber(value.distance) || value.distance < 0)) {
+    issues.push(issue(`${path}.distance`, "INVALID_NUMBER", "distance must be a non-negative finite number when provided."));
+  }
+  if (value.inputChecksum != null && !hasValidSha256(value.inputChecksum)) {
+    issues.push(issue(`${path}.inputChecksum`, "INVALID_CHECKSUM", "inputChecksum must be a 64-character hex SHA-256 digest when provided."));
+  }
+  if (value.outputChecksum != null && !hasValidSha256(value.outputChecksum)) {
+    issues.push(issue(`${path}.outputChecksum`, "INVALID_CHECKSUM", "outputChecksum must be a 64-character hex SHA-256 digest when provided."));
+  }
+  if (!hasValidTimestamp(value.startedAt)) {
+    issues.push(issue(`${path}.startedAt`, "INVALID_TIMESTAMP", "startedAt must be a valid timestamp string."));
+  }
+  if (value.finishedAt != null && !hasValidTimestamp(value.finishedAt)) {
+    issues.push(issue(`${path}.finishedAt`, "INVALID_TIMESTAMP", "finishedAt must be a valid timestamp string when provided."));
+  }
+  if (
+    hasValidTimestamp(value.startedAt) &&
+    hasValidTimestamp(value.finishedAt) &&
+    Date.parse(String(value.finishedAt)) <= Date.parse(String(value.startedAt))
+  ) {
+    issues.push(issue(`${path}.finishedAt`, "INVALID_TIMESTAMP", "finishedAt must be later than startedAt."));
+  }
+  if (value.mode != null && (!isNonEmptyString(value.mode) || !GRADING_MODE_VALUES.has(value.mode))) {
+    issues.push(issue(`${path}.mode`, "INVALID_ENUM", "mode must be a supported GradingMode when provided."));
+  }
+  if (value.profileState != null && (!isNonEmptyString(value.profileState) || !PRINT_PROFILE_STATUS_VALUES.has(value.profileState))) {
+    issues.push(issue(`${path}.profileState`, "INVALID_ENUM", "profileState must match PrintProfileStatus when provided."));
+  }
+  if (value.finalGrades != null && !isRecord(value.finalGrades)) {
+    issues.push(issue(`${path}.finalGrades`, "INVALID_RECORD", "finalGrades must be an object when provided."));
+  }
+
+  if (value.mode === "AUTH_ONLY" && isRecord(value.finalGrades) && Object.keys(value.finalGrades).length > 0) {
+    issues.push(issue(`${path}.finalGrades`, "INVALID_AUTH_CLAIM", "AUTH_ONLY produces an auth verdict contract but no grade values."));
+  }
+
+  if (isProductionAuthVerdict(value.verdict)) {
+    if (value.profileState !== "ACTIVE" || !isNonEmptyString(value.cardPrintProfileId)) {
+      issues.push(issue(`${path}.verdict`, "AUTH_PROFILE_NOT_ACTIVE", "only an ACTIVE curated print profile can produce production auth verdicts."));
+    }
+  }
+
+  return validationResult(issues);
+}
+
+export function validateAuthProfileLifecycleTransition(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "authProfileLifecycle";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "AuthProfileLifecycleDecision must be an object.")]);
+  }
+
+  if (!isNonEmptyString(value.from) || !PRINT_PROFILE_STATUS_VALUES.has(value.from)) {
+    issues.push(issue(`${path}.from`, "INVALID_ENUM", "from must match PrintProfileStatus."));
+  }
+  if (!isNonEmptyString(value.to) || !PRINT_PROFILE_STATUS_VALUES.has(value.to)) {
+    issues.push(issue(`${path}.to`, "INVALID_ENUM", "to must match PrintProfileStatus."));
+  }
+  requireString(value, "actorOperatorId", path, issues);
+  requireString(value, "reasonCode", path, issues);
+  if (!hasValidTimestamp(value.decidedAt)) {
+    issues.push(issue(`${path}.decidedAt`, "INVALID_TIMESTAMP", "decidedAt must be a valid timestamp string."));
+  }
+  validateOptionalNonEmptyString(value, "reviewedByOperatorId", path, issues);
+
+  if (isNonEmptyString(value.from) && isNonEmptyString(value.to) && PRINT_PROFILE_STATUS_VALUES.has(value.from) && PRINT_PROFILE_STATUS_VALUES.has(value.to)) {
+    const transitionKey = `${value.from}->${value.to}`;
+    if (!AUTH_PROFILE_ALLOWED_TRANSITIONS.has(transitionKey)) {
+      issues.push(issue(path, "INVALID_AUTH_PROFILE_TRANSITION", `${transitionKey} is not an allowed CardPrintProfile lifecycle transition.`));
+    }
+  }
+
+  if ((value.to === "CURATED_REFERENCE" || value.to === "ACTIVE") && !isNonEmptyString(value.reviewedByOperatorId)) {
+    issues.push(issue(`${path}.reviewedByOperatorId`, "REQUIRED", "curated or active profile transitions require reviewer approval."));
+  }
+  if (isNonEmptyString(value.reviewedByOperatorId) && value.reviewedByOperatorId === value.actorOperatorId) {
+    issues.push(issue(`${path}.reviewedByOperatorId`, "INVALID_AUTH_PROFILE_TRANSITION", "auth profile approval requires role separation."));
+  }
+
+  return validationResult(issues);
+}
+
+export function validateAuthReportClaimBoundary(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "authReport";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "AuthReportClaimBoundaryInput must be an object.")]);
+  }
+
+  if (!isNonEmptyString(value.verdict) || !AUTH_VERDICT_VALUES.has(value.verdict)) {
+    issues.push(issue(`${path}.verdict`, "INVALID_AUTH_VERDICT", "verdict must match the supported AuthVerdict enum."));
+  }
+  if (!isNonEmptyString(value.reportText)) {
+    issues.push(issue(`${path}.reportText`, "REQUIRED", "reportText is required."));
+    return validationResult(issues);
+  }
+  if (value.mode != null && (!isNonEmptyString(value.mode) || !GRADING_MODE_VALUES.has(value.mode))) {
+    issues.push(issue(`${path}.mode`, "INVALID_ENUM", "mode must be a supported GradingMode when provided."));
+  }
+
+  const normalizedText = value.reportText.toLowerCase();
+  const overbroadClaimPatterns = [
+    /\bfully authentic\b/,
+    /\bfull authenticity\b/,
+    /\bproves full authenticity\b/,
+    /\bguaranteed authentic\b/,
+    /\b100%\s*authentic\b/,
+    /\bproves authentic\b/,
+    /\bcertifies authentic\b/,
+    /\bcomplete authenticity\b/,
+  ];
+  if (overbroadClaimPatterns.some((pattern) => pattern.test(normalizedText))) {
+    issues.push(issue(`${path}.reportText`, "INVALID_AUTH_CLAIM", "CMYK print-profile comparison alone must not claim full authenticity."));
+  }
+
+  if (!normalizedText.includes("print-profile") && !normalizedText.includes("cmyk")) {
+    issues.push(issue(`${path}.reportText`, "INVALID_AUTH_CLAIM", "public auth language must state the CMYK print-profile comparison scope."));
+  }
+
+  if (value.verdict === "REFERENCE_NEEDED") {
+    const explainsReferenceNeeded =
+      normalizedText.includes("reference_needed") ||
+      normalizedText.includes("reference needed") ||
+      normalizedText.includes("no active curated profile") ||
+      normalizedText.includes("no active curated reference");
+    if (!explainsReferenceNeeded) {
+      issues.push(issue(`${path}.reportText`, "INVALID_AUTH_CLAIM", "REFERENCE_NEEDED reports must say no active curated profile/reference was available."));
+    }
+  }
 
   return validationResult(issues);
 }
