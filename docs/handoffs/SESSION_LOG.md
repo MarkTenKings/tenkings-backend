@@ -17083,3 +17083,268 @@ By enabling Rip It Live, I confirm:
 - PR opened against `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/5`
 - Vercel preview ready: `https://tenkings-backend-nextjs-app-git-feature-rip-it-live-ten-kings.vercel.app`
 - Do not merge or deploy until reviewed.
+
+## 2026-04-25 - PR #5 production shipment blocked on migration idempotency check
+
+### Summary
+- Re-read `AGENTS.md` and required startup docs before attempting PR #5 production shipment.
+- User confirmed `LIVE_RIP_CONSENT_TEXT_VERSION` and `LIVE_RIP_CONSENT_TEXT` are set in Vercel Production, Preview, and Development.
+- Per requested gate, verified migration/deploy wiring before merge.
+- Stopped before merge/deploy because the new migration SQL is not partial-apply idempotent.
+- No merge, deploy, restart, migration execution, runtime DB mutation, smoke check, or destructive operation was executed.
+
+### Required Git Report
+- `git status -sb` -> `## feature/rip-it-live...origin/feature/rip-it-live`
+- `git branch --show-current` -> `feature/rip-it-live`
+- `git rev-parse --short HEAD` -> `f9a54b1`
+
+### Verification Evidence
+- Migration file exists:
+  - `packages/database/prisma/migrations/20260424170000_live_rip_consent/migration.sql`
+- `scripts/vercel-build.sh` runs `pnpm --filter @tenkings/database run migrate:deploy` before `pnpm --filter @tenkings/nextjs-app run build`.
+- `packages/database/prisma/schema.prisma` includes `LiveRipConsent`, `User.liveRipConsents`, and `LiveRip.consents`.
+- `git diff --name-status origin/main...HEAD -- packages/database/prisma/migrations packages/database/prisma/schema.prisma scripts/vercel-build.sh` showed only:
+  - `A packages/database/prisma/migrations/20260424170000_live_rip_consent/migration.sql`
+  - `M packages/database/prisma/schema.prisma`
+
+### Blocker
+- `20260424170000_live_rip_consent/migration.sql` uses unguarded DDL:
+  - `CREATE TYPE "LiveRipStatus" AS ENUM ...`
+  - `ALTER TABLE "LiveRip" ADD COLUMN ...`
+  - `CREATE TABLE "LiveRipConsent" ...`
+  - `CREATE INDEX ...`
+  - `ALTER TABLE ... ADD CONSTRAINT ...`
+- This is safe for a first successful Prisma migration application and will be skipped once `_prisma_migrations` records it as complete.
+- It is not safe if partially applied before completion; rerun can fail on already-created enum/table/columns/indexes/constraints.
+- Per the user instruction, PR #5 was not merged and production deploy was not started.
+
+## 2026-04-25 - PR #5 migration idempotency fix and production shipment plan
+
+### Summary
+- Re-read `AGENTS.md` and required startup docs before making changes.
+- User requested making `20260424170000_live_rip_consent` partial-apply idempotent, then resuming PR #5 production shipment.
+- Edited only `packages/database/prisma/migrations/20260424170000_live_rip_consent/migration.sql` for the pushed fix.
+- Pushed commit `d6d9560` with message `fix(migration): make live_rip_consent idempotent for partial-apply safety`.
+
+### Required Git Report
+- `git status -sb` -> `## feature/rip-it-live...origin/feature/rip-it-live` plus pre-existing handoff-doc modifications
+- `git branch --show-current` -> `feature/rip-it-live`
+- `git rev-parse --short HEAD` -> `f9a54b1`
+
+### Idempotency Fix
+- Wrapped `CREATE TYPE "LiveRipStatus"` in a `DO $$ ... EXCEPTION WHEN duplicate_object THEN null; END $$;` block.
+- Changed `CREATE TABLE "LiveRipConsent"` to `CREATE TABLE IF NOT EXISTS`.
+- Changed all `CREATE INDEX` statements to `CREATE INDEX IF NOT EXISTS`.
+- Changed all `ALTER TABLE "LiveRip" ADD COLUMN` clauses to `ADD COLUMN IF NOT EXISTS`.
+- Wrapped all foreign-key `ALTER TABLE ... ADD CONSTRAINT` statements in duplicate-object-safe `DO $$` blocks.
+
+### Validation
+- `pnpm --filter @tenkings/database exec prisma format --schema prisma/schema.prisma` -> command passed; schema alignment-only rewrite was reverted so no schema change is included.
+- `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass.
+- `git diff --cached --check` -> pass before commit.
+- Staged commit contained only `packages/database/prisma/migrations/20260424170000_live_rip_consent/migration.sql`.
+
+### Planned Production Shipment
+- Wait for PR #5 preview/checks to pass after `d6d9560`.
+- Merge PR #5 with `gh pr merge 5 --merge`.
+- Watch the Vercel production deploy.
+- If production build succeeds, run requested smoke checks and verify `_prisma_migrations.finished_at` for `20260424170000_live_rip_consent`.
+- Do not roll back unless explicitly requested.
+
+## 2026-04-25 - PR #5 shipped to production
+
+### Summary
+- PR #5 preview/checks passed after idempotency fix commit `d6d9560`.
+- Merged PR #5 into `main` with merge commit `7a57811947a7645f7831302b2fcd04d92332b66e`.
+- Vercel production deployment completed successfully.
+- Production smoke checks passed.
+- Production `_prisma_migrations` contains `20260424170000_live_rip_consent` with `finished_at` set.
+
+### Deployment Evidence
+- Merge command: `gh pr merge 5 --merge`
+- Merge commit: `7a57811947a7645f7831302b2fcd04d92332b66e`
+- Vercel production deploy URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/3h2pnZDq4Wdvnuuzqws1xKu3iDZv`
+- Vercel final status: `success` / `Deployment has completed`
+
+### Smoke Checks
+- `curl -sS -o /dev/null -w "%{http_code}\n" https://collect.tenkings.co/live` -> `200`
+- `curl -sS -o /dev/null -w "%{http_code}\n" https://collect.tenkings.co/packs` -> `200`
+- `curl -sS -o /dev/null -w "%{http_code}\n" https://collect.tenkings.co/api/live/state` -> `200`
+- `/api/live/state` returned valid JSON with keys `goldenTicketActive`, `regularActive`, `goldenTicketReveals`, and `pastRips`.
+- `curl -sS https://collect.tenkings.co/live | grep -i "ten kings"` -> match found (`<title ...>Ten Kings Live</title>`).
+
+### Migration Verification
+- Queried production `_prisma_migrations` via the documented droplet `DATABASE_URL` source.
+- Result: `20260424170000_live_rip_consent|2026-04-25 07:06:49.66572+00`
+
+### Final Git Report
+- `git status -sb` -> `## feature/rip-it-live...origin/feature/rip-it-live` plus handoff-doc modifications
+- `git branch --show-current` -> `feature/rip-it-live`
+- `git rev-parse --short HEAD` -> `d6d9560`
+
+## 2026-05-28 - AGENTS startup sync and git-state refresh
+
+### Summary
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings-rip-it-live`.
+- Captured the requested local git state for the current checkout.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+### Files Reviewed
+- `AGENTS.md`
+- `docs/context/MASTER_PRODUCT_CONTEXT.md`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/runbooks/SET_OPS_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Repo State
+- `git status -sb` -> `## feature/rip-it-live...origin/feature/rip-it-live` plus modified `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`
+- `git branch --show-current` -> `feature/rip-it-live`
+- `git rev-parse --short HEAD` -> `d6d9560`
+
+### Current Turn Confirmation
+- 2026-05-28 final-response refresh confirmed the same AGENTS startup docs and required git report before final response.
+- No deploy, restart, migration, test run, code edit, runtime DB operation, or destructive data operation was executed.
+
+## 2026-05-28 - AI Grader v4.1 spec pre-implementation review
+
+### Summary
+- Reviewed the pasted `tk-ai-grader-codex-spec-v4.md` rev 4.1 and `Capability-TAGGrading-TenKingswithmicroscope-Winne.csv` content before implementation.
+- Treated M0 as authoritative and legacy warning-banner sections as reference only where superseded.
+- Produced a review-only buildability audit, competitive coherence check, proposed M0 amendment deltas, and readiness decision.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+### High-Severity Review Notes
+- STANDARD mode timing is internally inconsistent: 9-12 microscope visits per side at 6-8 seconds per visit cannot fit the stated ~125 second card target.
+- Macro surface suspect routing lacks an implementation contract for coordinate frame, data shape, thresholds, and side-specific persistence.
+- The v4.1 Prisma enum alias plan can break existing v3 rows if the database currently stores uppercase legacy enum values.
+- The orchestrator needs explicit retry/abort/degrade paths for arm confirmation, ACRO homing, Dino-Lite drops, and failed spot-checks.
+- Spot-check fusion needs a new rule because targeted micro samples cannot safely apply the legacy full-raster "micro can only lower" rule without qualification.
+- Calibration drift, microscope arm interlock, and human override audit capture need first-class spec coverage before implementation.
+
+## 2026-05-28 - AI Grader final synthesis blocked on missing reviewer outputs
+
+### Summary
+- User requested Prompt 4 Chief-of-Staff synthesis for the AI Grader spec package.
+- Local search found the authoritative spec and comparison CSV in `/Users/markthomas/Downloads`.
+- Only one prior AI Grader review summary was present in the handoff docs; the full Lead Engineer, Principal Architect, and Red Team outputs were not present in the message or local file search.
+- Did not produce the six requested synthesis outputs because doing so would require inventing reviewer findings and would violate the user's "no new findings" rule.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+### Inputs Found
+- `/Users/markthomas/Downloads/tk-ai-grader-codex-spec-v4.md`
+- `/Users/markthomas/Downloads/Capability-TAGGrading-TenKingswithmicroscope-Winne.csv`
+- Existing review summary entries in `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`
+
+## 2026-05-28 - AI Grader v4.1 Principal Architect review
+
+### Summary
+- Reviewed the pasted `tk-ai-grader-codex-spec-v4.md` rev 4.1, comparison CSV, and Reviewer A Lead Engineer output at CTO/system-design level.
+- Avoided duplicating Reviewer A implementation findings and focused on 18-month to 3-year architecture durability.
+- Produced review-only outputs covering architectural soundness, competitive moat durability, structural spec amendments, and CTO sign-off.
+- CTO conclusion: resolve structural architecture issues in the spec before implementation, especially bounded contexts, capture/run provenance, versioned math IP, multi-rig calibration identity, authentication governance, and evidence lifecycle.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+## 2026-05-28 - AI Grader v4.1 Red Team re-run
+
+### Summary
+- Reviewed the pasted `tk-ai-grader-codex-spec-v4.md` rev 4.1, comparison CSV, Reviewer A covered-topic exclusions, and full pasted Reviewer B Principal Architect output.
+- Avoided duplicating A's implementation findings and B's architecture/provenance findings.
+- Produced review-only Red Team outputs covering physical-card attacks, operational abuse/failure, public and legal risk, competitive counter-moves, and launch blockers.
+- Verified current public/legal context from FTC advertising/AI guidance, ADA web guidance, California sports-card alteration law, Georgia deceptive-trade-practices law, and official TAG/PSA public materials.
+- Red Team conclusion: do not publicly launch as an AI grader/authenticator until claims, sampling disclosure, physical alteration checks, security/custody controls, ADA/report accessibility, and operator/insider abuse controls are addressed.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+## 2026-05-28 - AI Grader v4.2 Chief-of-Staff synthesis
+
+### Summary
+- Synthesized the pasted AI Grader v4.1 spec package, comparison CSV, and all three reviewer outputs into a single decision-grade v4.2 recommendation.
+- Consolidated duplicate A/B/C findings, reconciled amendment proposals, and prepared the master register, final amendment set, go/no-go recommendation, strategic risks, and Day 1 Codex brief.
+- Synthesis conclusion: NO-GO for coding until pre-code blockers are merged into v4.2, especially mode/timing truth, suspect-region and capture-package contracts, orchestrator failure policy, enum migration safety, bounded contexts/provenance, and public/authentication claim boundaries.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+## 2026-05-28 - AI Grader v5 standalone spec authored
+
+### Summary
+- Authored `tk-ai-grader-codex-spec-v5.md` as a complete standalone technical master blueprint for a fresh Codex implementation agent.
+- Promoted the canonical raw-card LEAN rig workflow into root content and removed stale legacy contradictions.
+- Integrated all v4.2 amendments inline, including changelog line ranges, orchestration FSM, Prisma schema blueprint, contracts, governance, guardrails, and acceptance gates.
+- No runtime code, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+### File Created
+- `tk-ai-grader-codex-spec-v5.md`
+
+## 2026-05-28 - AI Grader implementation-session handoff prep
+
+### Summary
+- User confirmed they found the correct `tk-ai-grader-codex-spec-v5.md` and asked how to start a fresh Codex implementation session.
+- Prepared recommended new-session instructions: read `AGENTS.md`, standard startup docs, then `tk-ai-grader-codex-spec-v5.md`; begin with an implementation plan and repo-impact map against v5 Section 16 before product code.
+- Explicitly preserved guardrails: no deploy/restart/migrate/destructive operations without approval, and no runtime product code until the v5 pre-code acceptance checklist is confirmed or exact gaps are identified.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+## 2026-05-28 - AI Grader foundation phase approval guidance
+
+### Summary
+- User pasted the fresh implementation agent's first response after it read startup docs and `tk-ai-grader-codex-spec-v5.md`.
+- Implementation agent confirmed branch `feature/rip-it-live`, HEAD `d6d9560`, v5 spec present/readable, and proposed a schema-only foundation phase.
+- Recommended approving Phase 1 only, scoped to Prisma schema/provenance foundation and draft migration; no migration execution, deploy, restart, runtime DB operation, or destructive operation.
+- This coordination session made no code edits, ran no tests, and performed no deploy/restart/migration/runtime DB/destructive operation.
+
+## 2026-05-28 - AI Grader v5 Phase 1 database foundation draft
+
+### Summary
+- Implemented only the approved Phase 1 database/provenance foundation from `tk-ai-grader-codex-spec-v5.md` Section 10.
+- Added v5 Prisma enums and durable grader/auth/capture/provenance models to `packages/database/prisma/schema.prisma`.
+- Added draft migration SQL at `packages/database/prisma/migrations/20260528120000_ai_grader_v5_foundation/migration.sql`.
+- Kept the foundation additive and separate from existing commerce/card workflows; no frontend pages, helper drivers, grading math, orchestrator runtime, auth algorithms, report UI, or product workflows were implemented.
+- No deploy, restart, migration execution, runtime DB operation, or destructive operation was executed.
+
+### Scope Notes
+- Existing Prisma schema collision check found no model/enum name collisions for the v5 foundation names.
+- Existing adjacent models (`User`, `Location`, `SetAuditEvent`, `CardVariant`, and taxonomy models) were left unchanged.
+- `packages/database/src/index.ts` was inspected but has no net change in this phase because exporting newly added Prisma enums would require regenerated Prisma Client artifacts, and `prisma generate` was not part of the approved validation list.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` initially failed because `DATABASE_URL` was unset in the shell.
+- Re-run with dummy local URL for schema loading only:
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `git diff --check` -> pass.
+
+### Operations
+- Migration was drafted only and was not applied to any database.
+- No deploy/restart/migrate command was executed.
+
+## 2026-05-28 - AI Grader Phase 1 draft review and next-step guidance
+
+### Summary
+- User pasted the fresh implementation agent's Phase 1 completion report for the v5 AI Grader database/provenance foundation.
+- Performed a read-only spot check of the actual `schema.prisma` and draft migration diff.
+- Confirmed the draft is additive and aligned with the v5 Section 10 foundation shape: it adds grader/auth/capture/provenance enums and models without wiring runtime product code.
+- Noted that `packages/database/src/index.ts` has no net change because Prisma Client generation was intentionally not part of Phase 1.
+- Recommended the next implementation step be a commit-readiness/branch-strategy pass before Phase 2 runtime/contracts work.
+- No deploy, restart, migration execution, runtime DB operation, destructive operation, or product code execution was performed by this review session.
+
+### Next-Step Guidance
+- Decide whether to continue on `feature/rip-it-live` or move AI Grader to a fresh dedicated branch from current `main`.
+- Keep `tk-ai-grader-codex-spec-v5.md`, `packages/database/prisma/schema.prisma`, the draft migration folder, and handoff docs together in the eventual commit.
+- Do not apply the migration until production enum-label compatibility and deployment timing are explicitly approved.
+
+## 2026-05-28 - AI Grader Phase 1 commit-readiness review
+
+### Summary
+- User pasted the implementation agent's commit-readiness pass for the v5 AI Grader database foundation.
+- Agent confirmed branch `feature/rip-it-live`, HEAD `d6d9560`, v5 spec present/readable, validation passing, and no blocking schema/migration issues.
+- Agent recommended moving the work to a dedicated `feature/ai-grader-v5-foundation` branch before commit because `feature/rip-it-live` no longer matches the work.
+- Recommended next step: create the dedicated branch, preserve the current AI Grader files, then commit only the AI Grader foundation scope.
+- No deploy, restart, migration execution, runtime DB operation, destructive operation, or product code execution was performed by this coordination session.
+
+### Commit Scope Recommended
+- `tk-ai-grader-codex-spec-v5.md`
+- `packages/database/prisma/schema.prisma`
+- `packages/database/prisma/migrations/20260528120000_ai_grader_v5_foundation/migration.sql`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Operations Reminder
+- Do not apply the draft migration yet.
+- Do not start Phase 2 until the foundation branch/commit is clean.

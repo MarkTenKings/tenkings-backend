@@ -355,6 +355,185 @@ enum NoteSource {
   HUMAN_ADDED
 }
 
+enum GradingMode {
+  QUICK
+  STANDARD
+  FORENSIC
+  AUTH_ONLY
+
+  MACRO_ONLY          @map("MACRO_ONLY")
+  MACRO_PLUS_CORNERS @map("MACRO_PLUS_CORNERS")
+  MACRO_PLUS_EDGES   @map("MACRO_PLUS_EDGES")
+  FULL_TWO_SCALE     @map("FULL_TWO_SCALE")
+}
+
+enum CaptureSide {
+  FRONT
+  BACK
+}
+
+enum GradingElement {
+  CENTERING
+  CORNERS
+  EDGES
+  SURFACE
+  COMPOSITE
+  MICRO_CORNERS
+  MICRO_EDGES
+  MICRO_SURFACE
+  CMYK_AUTHENTICATION
+}
+
+enum GradingCaptureKind {
+  COLOR_CHECKER_FRONT
+  COLOR_CHECKER_BACK
+  FRONT_DIFFUSE
+  BACK_DIFFUSE
+  FRONT_DARKFIELD
+  BACK_DARKFIELD
+  FRONT_LED_0
+  FRONT_LED_1
+  FRONT_LED_2
+  FRONT_LED_3
+  FRONT_LED_4
+  FRONT_LED_5
+  FRONT_LED_6
+  FRONT_LED_7
+  BACK_LED_0
+  BACK_LED_1
+  BACK_LED_2
+  BACK_LED_3
+  BACK_LED_4
+  BACK_LED_5
+  BACK_LED_6
+  BACK_LED_7
+  MICRO_CORNER_SPOT
+  MICRO_EDGE_SPOT
+  MICRO_SURFACE_SPOT
+  MICRO_AUTH_PATCH
+  MICRO_CORNER_TILE
+  MICRO_EDGE_TILE
+  MICRO_SURFACE_TILE
+  EDR_BASE
+  POLARIZED_ALL_ON
+  FLC_LED_0
+  FLC_LED_1
+  FLC_LED_2
+  FLC_LED_3
+  FLC_LED_4
+  FLC_LED_5
+  FLC_LED_6
+  FLC_LED_7
+}
+
+enum CaptureSessionStatus {
+  CREATED
+  RUNNING
+  PAUSED
+  MICRO_INCOMPLETE_REQUIRES_REVIEW
+  PHYSICAL_GATE_REVIEW
+  REVIEW
+  COMPLETE
+  ABORTED
+}
+
+enum GradeRunStatus {
+  PENDING
+  RUNNING
+  COMPLETE
+  FAILED
+  REPLAYED
+}
+
+enum AuthRunStatus {
+  PENDING
+  RUNNING
+  COMPLETE
+  FAILED
+}
+
+enum AuthVerdict {
+  REFERENCE_NEEDED
+  AUTHENTIC
+  PROBABLY_AUTHENTIC
+  SUSPICIOUS
+  LIKELY_COUNTERFEIT
+}
+
+enum PrintProfileStatus {
+  CANDIDATE
+  CURATED_REFERENCE
+  ACTIVE
+  QUARANTINED
+  RETIRED
+}
+
+enum EvidenceClass {
+  ORIGINAL
+  DERIVED
+  PUBLIC
+  PRIVATE
+}
+
+enum CertificateStatus {
+  DRAFT
+  ACTIVE
+  REVOKED
+  SUPERSEDED
+}
+
+enum RigComponentType {
+  MACRO_CAMERA
+  LENS
+  LED_DOME
+  LED_CONTROLLER
+  MICROSCOPE
+  XY_STAGE
+  ARM_INTERLOCK
+  HOLDER
+  CALIBRATION_TARGET
+}
+
+enum CalibrationType {
+  COLOR_CHECKER_CCM
+  MACRO_INTRINSICS
+  MACRO_FLAT_FIELD
+  STAGE_HOME
+  CARD_JIG_TRANSFORM
+  MICROSCOPE_PX_PER_MICRON
+  MICROSCOPE_FOCUS_BASELINE
+  LED_INTENSITY_HEALTH
+  ARM_INTERLOCK_HEALTH
+}
+
+enum OperatorOverrideReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AuditEventOutcome {
+  SUCCESS
+  FAILURE
+  DENIED
+  WARNING
+}
+
+enum CustodyEventType {
+  INTAKE
+  CAPTURE_START
+  CAPTURE_COMPLETE
+  VAULT_IN
+  VAULT_OUT
+  SHIPPED
+  RECEIVED
+  SLAB_SENT
+  SLAB_RETURNED
+  CERTIFICATE_ISSUED
+  CERTIFICATE_REVOKED
+  CUSTODY_BREAK
+}
+
 model User {
   id                      String                @id @default(uuid())
   email                   String?               @unique
@@ -2227,4 +2406,512 @@ model LocationVisit {
 
   @@index([locationId])
   @@index([visitedAt])
+}
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  locations RigLocation[]
+  rigs      CaptureRig[]
+  operators Operator[]
+}
+
+model RigLocation {
+  id        String   @id @default(cuid())
+  tenantId  String
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  name      String
+  address   Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rigs CaptureRig[]
+
+  @@index([tenantId])
+}
+
+model Operator {
+  id          String   @id @default(cuid())
+  tenantId    String
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  userId      String?
+  email       String
+  displayName String
+  roles       Json
+  status      String   @default("ACTIVE")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([tenantId, email])
+  @@index([userId])
+}
+
+model CaptureRig {
+  id         String      @id @default(cuid())
+  tenantId   String
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  locationId String
+  location   RigLocation @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  label      String
+  rigVersion String      @default("LEAN_V5")
+  status     String      @default("ACTIVE")
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  components           RigComponent[]
+  helperInstances      HelperInstance[]
+  calibrationSnapshots CalibrationSnapshot[]
+  captureSessions      CaptureSession[]
+
+  @@index([tenantId, locationId])
+}
+
+model RigComponent {
+  id           String           @id @default(cuid())
+  rigId        String
+  rig          CaptureRig       @relation(fields: [rigId], references: [id], onDelete: Cascade)
+  type         RigComponentType
+  manufacturer String
+  model        String
+  serial       String
+  driverName   String?
+  metadata     Json?
+  mountedAt    DateTime         @default(now())
+  retiredAt    DateTime?
+
+  @@unique([rigId, type, serial])
+  @@index([serial])
+}
+
+model HelperInstance {
+  id            String     @id @default(cuid())
+  rigId         String
+  rig           CaptureRig @relation(fields: [rigId], references: [id], onDelete: Cascade)
+  machineId     String
+  helperVersion String
+  config        Json?
+  status        String     @default("ACTIVE")
+  lastSeenAt    DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  capabilityManifests DeviceCapabilityManifest[]
+  captureSessions     CaptureSession[]
+
+  @@unique([machineId])
+  @@index([rigId])
+}
+
+model DeviceCapabilityManifest {
+  id                       String         @id @default(cuid())
+  helperInstanceId         String
+  helperInstance           HelperInstance @relation(fields: [helperInstanceId], references: [id], onDelete: Cascade)
+  rigId                    String
+  manifestVersion          String
+  driverName               String
+  driverVersion            String
+  deviceType               String
+  componentSerial          String
+  supportedCapturePackages Json
+  coordinateUnits          Json
+  timingCharacteristics    Json
+  healthChecks             Json
+  requiredCalibrationTypes Json
+  checksum                 String
+  observedAt               DateTime       @default(now())
+
+  @@index([rigId, deviceType])
+  @@unique([helperInstanceId, checksum])
+}
+
+model CalibrationSnapshot {
+  id                String          @id @default(cuid())
+  rigId             String
+  rig               CaptureRig      @relation(fields: [rigId], references: [id], onDelete: Cascade)
+  calibrationType   CalibrationType
+  componentSerials  Json
+  artifactKeys      Json
+  artifactChecksums Json
+  residuals         Json?
+  operatorId        String?
+  validityStartsAt  DateTime        @default(now())
+  validityEndsAt    DateTime?
+  supersededById    String?
+  supersessionReason String?
+  createdAt         DateTime        @default(now())
+
+  @@index([rigId, calibrationType, validityStartsAt])
+}
+
+model CaptureSession {
+  id                  String               @id @default(cuid())
+  tenantId            String
+  rigId               String
+  rig                 CaptureRig           @relation(fields: [rigId], references: [id], onDelete: Restrict)
+  locationId          String
+  operatorId          String
+  helperInstanceId    String?
+  helperInstance      HelperInstance?      @relation(fields: [helperInstanceId], references: [id], onDelete: SetNull)
+  gradingMode         GradingMode          @default(STANDARD)
+  status              CaptureSessionStatus @default(CREATED)
+  currentState        String               @default("INIT")
+  errorCode           String?
+  rawCardOnly         Boolean              @default(true)
+  cardIdentity        Json?
+  physicalGateResults Json?
+  startedAt           DateTime?
+  finishedAt          DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  captureManifests CaptureManifest[]
+  suspectRegions   GradingSuspectRegion[]
+  gradeRuns        GradeRun[]
+  authRuns         AuthRun[]
+  evidenceArtifacts EvidenceArtifact[]
+  overrides        OperatorOverride[]
+  custodyEvents    CustodyEvent[]
+
+  @@index([tenantId, rigId, status])
+  @@index([operatorId, createdAt])
+}
+
+model CaptureManifest {
+  id                     String         @id @default(cuid())
+  captureSessionId       String
+  captureSession         CaptureSession @relation(fields: [captureSessionId], references: [id], onDelete: Cascade)
+  tenantId               String
+  rigId                  String
+  locationId             String
+  operatorId             String
+  helperInstanceId       String?
+  helperVersion          String
+  driverVersions         Json
+  componentSerials       Json
+  calibrationSnapshotIds Json
+  frameList              Json
+  operatorPrompts        Json
+  deviceHealth           Json
+  checksum               String         @unique
+  createdAt              DateTime       @default(now())
+
+  gradeRuns GradeRun[]
+  authRuns  AuthRun[]
+
+  @@index([captureSessionId])
+  @@index([tenantId, rigId, createdAt])
+}
+
+model GradingSuspectRegion {
+  id               String         @id @default(cuid())
+  sessionId        String
+  session          CaptureSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  side             CaptureSide
+  element          GradingElement
+  rank             Int
+  score            Float
+  threshold        Float
+  reasonCodes      Json
+  cardMm           Json
+  warpedPx         Json
+  sourcePx         Json?
+  heatmapStorageKey String?
+  macroCaptureIds  Json
+  routedCaptureIds Json?
+  thresholdSetId   String?
+  createdAt        DateTime       @default(now())
+
+  @@index([sessionId, side, element])
+  @@unique([sessionId, side, element, rank])
+}
+
+model AlgorithmVersion {
+  id                String   @id @default(cuid())
+  name              String
+  semanticVersion   String
+  sourceHash        String
+  internalReference String?
+  patentReference   String?
+  numericTolerance  Json
+  activeFrom        DateTime @default(now())
+  activeTo          DateTime?
+  createdAt         DateTime @default(now())
+
+  gradeRuns  GradeRun[]
+  authRuns   AuthRun[]
+  replayRuns ReplayRun[]
+
+  @@unique([name, semanticVersion])
+}
+
+model ThresholdSetVersion {
+  id              String   @id @default(cuid())
+  name            String
+  semanticVersion String
+  thresholds      Json
+  sourceHash      String?
+  activeFrom      DateTime @default(now())
+  activeTo        DateTime?
+  createdAt       DateTime @default(now())
+
+  gradeRuns  GradeRun[]
+  replayRuns ReplayRun[]
+
+  @@unique([name, semanticVersion])
+}
+
+model RuntimeEnvironment {
+  id                 String   @id @default(cuid())
+  label              String
+  containerDigest    String
+  pythonVersion      String?
+  nodeVersion        String?
+  opencvVersion      String?
+  numpyVersion       String?
+  dependencyLockHash String
+  osInfo             Json?
+  createdAt          DateTime @default(now())
+
+  gradeRuns  GradeRun[]
+  authRuns   AuthRun[]
+  replayRuns ReplayRun[]
+
+  @@unique([containerDigest, dependencyLockHash])
+}
+
+model GradeRun {
+  id                    String              @id @default(cuid())
+  captureSessionId      String
+  captureSession        CaptureSession      @relation(fields: [captureSessionId], references: [id], onDelete: Cascade)
+  captureManifestId     String
+  captureManifest       CaptureManifest     @relation(fields: [captureManifestId], references: [id], onDelete: Restrict)
+  algorithmVersionId    String
+  algorithmVersion      AlgorithmVersion    @relation(fields: [algorithmVersionId], references: [id], onDelete: Restrict)
+  thresholdSetVersionId String
+  thresholdSetVersion   ThresholdSetVersion @relation(fields: [thresholdSetVersionId], references: [id], onDelete: Restrict)
+  runtimeEnvironmentId  String
+  runtimeEnvironment    RuntimeEnvironment  @relation(fields: [runtimeEnvironmentId], references: [id], onDelete: Restrict)
+  status                GradeRunStatus      @default(PENDING)
+  mode                  GradingMode
+  inputChecksum         String
+  outputChecksum        String?
+  macroMeasurements     Json
+  microMeasurements     Json?
+  fusionActions         Json
+  finalGrades           Json?
+  confidence            Json?
+  warnings              Json?
+  errorCode             String?
+  startedAt             DateTime            @default(now())
+  finishedAt            DateTime?
+
+  certificate       GradeCertificate?
+  evidenceArtifacts EvidenceArtifact[]
+  overrides         OperatorOverride[]
+  replayRuns        ReplayRun[]
+
+  @@index([captureSessionId, status])
+  @@index([algorithmVersionId, thresholdSetVersionId])
+}
+
+model ReplayRun {
+  id                    String              @id @default(cuid())
+  sourceGradeRunId      String
+  sourceGradeRun        GradeRun            @relation(fields: [sourceGradeRunId], references: [id], onDelete: Cascade)
+  algorithmVersionId    String
+  algorithmVersion      AlgorithmVersion    @relation(fields: [algorithmVersionId], references: [id], onDelete: Restrict)
+  thresholdSetVersionId String
+  thresholdSetVersion   ThresholdSetVersion @relation(fields: [thresholdSetVersionId], references: [id], onDelete: Restrict)
+  runtimeEnvironmentId  String
+  runtimeEnvironment    RuntimeEnvironment  @relation(fields: [runtimeEnvironmentId], references: [id], onDelete: Restrict)
+  inputChecksum         String
+  outputChecksum        String
+  deltas                Json
+  tolerancePassed       Boolean
+  createdAt             DateTime            @default(now())
+
+  @@index([sourceGradeRunId])
+}
+
+model AuthRun {
+  id                   String             @id @default(cuid())
+  captureSessionId     String?
+  captureSession       CaptureSession?    @relation(fields: [captureSessionId], references: [id], onDelete: SetNull)
+  captureManifestId    String?
+  captureManifest      CaptureManifest?   @relation(fields: [captureManifestId], references: [id], onDelete: SetNull)
+  algorithmVersionId   String
+  algorithmVersion     AlgorithmVersion   @relation(fields: [algorithmVersionId], references: [id], onDelete: Restrict)
+  runtimeEnvironmentId String
+  runtimeEnvironment   RuntimeEnvironment @relation(fields: [runtimeEnvironmentId], references: [id], onDelete: Restrict)
+  cardPrintProfileId   String?
+  cardPrintProfile     CardPrintProfile?  @relation(fields: [cardPrintProfileId], references: [id], onDelete: SetNull)
+  tenantId             String
+  cardSet              String
+  cardNumber           String
+  printRun             String?
+  verdict              AuthVerdict
+  distance             Float?
+  status               AuthRunStatus      @default(PENDING)
+  measurements         Json
+  evidence             Json
+  inputChecksum        String?
+  outputChecksum       String?
+  errorCode            String?
+  startedAt            DateTime           @default(now())
+  finishedAt           DateTime?
+
+  certificates      GradeCertificate[]
+  evidenceArtifacts EvidenceArtifact[]
+
+  @@index([tenantId, cardSet, cardNumber])
+  @@index([captureSessionId])
+}
+
+model CardPrintProfile {
+  id                  String             @id @default(cuid())
+  tenantId            String
+  cardSet             String
+  cardNumber          String
+  printRun            String?
+  printRunKey         String             @default("")
+  state               PrintProfileStatus @default(CANDIDATE)
+  referenceFingerprint Json
+  referenceAuthRunId  String?
+  approvedByOperatorId String?
+  approvedAt          DateTime?
+  version             Int                @default(1)
+  notes               String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  authRuns AuthRun[]
+
+  @@unique([tenantId, cardSet, cardNumber, printRunKey, version])
+  @@index([tenantId, cardSet, cardNumber, state])
+}
+
+model GradeCertificate {
+  id                String            @id @default(cuid())
+  tenantId          String
+  gradeRunId        String            @unique
+  gradeRun          GradeRun          @relation(fields: [gradeRunId], references: [id], onDelete: Restrict)
+  authRunId         String?
+  authRun           AuthRun?          @relation(fields: [authRunId], references: [id], onDelete: SetNull)
+  publicSlug        String            @unique
+  certificateNumber String            @unique
+  status            CertificateStatus @default(DRAFT)
+  mode              GradingMode
+  finalGrades       Json?
+  publicReportKey   String?
+  custodyStatus     String            @default("IN_TEN_KINGS_CUSTODY")
+  issuedAt          DateTime?
+  revokedAt         DateTime?
+  revocationReason  String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  evidenceArtifacts EvidenceArtifact[]
+  custodyEvents     CustodyEvent[]
+  overrides         OperatorOverride[]
+
+  @@index([tenantId, status])
+}
+
+model EvidenceArtifact {
+  id               String            @id @default(cuid())
+  tenantId         String
+  captureSessionId String?
+  captureSession   CaptureSession?   @relation(fields: [captureSessionId], references: [id], onDelete: SetNull)
+  gradeRunId       String?
+  gradeRun         GradeRun?         @relation(fields: [gradeRunId], references: [id], onDelete: SetNull)
+  authRunId        String?
+  authRun          AuthRun?          @relation(fields: [authRunId], references: [id], onDelete: SetNull)
+  certificateId    String?
+  certificate      GradeCertificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  evidenceClass    EvidenceClass
+  kind             String
+  storageKey       String
+  checksumSha256   String
+  mimeType         String
+  byteSize         Int?
+  widthPx          Int?
+  heightPx         Int?
+  retentionUntil   DateTime?
+  publicUrl        String?
+  metadata         Json?
+  createdAt        DateTime          @default(now())
+
+  @@unique([storageKey])
+  @@index([tenantId, evidenceClass, createdAt])
+  @@index([captureSessionId])
+}
+
+model CustodyEvent {
+  id                 String            @id @default(cuid())
+  tenantId           String
+  certificateId      String?
+  certificate        GradeCertificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  captureSessionId   String?
+  captureSession     CaptureSession?   @relation(fields: [captureSessionId], references: [id], onDelete: SetNull)
+  type               CustodyEventType
+  fromOperatorId     String?
+  toOperatorId       String?
+  fromLocationId     String?
+  toLocationId       String?
+  evidenceArtifactIds Json?
+  notes              String?
+  checksum           String
+  occurredAt         DateTime          @default(now())
+
+  @@index([tenantId, certificateId, occurredAt])
+  @@index([captureSessionId])
+}
+
+model OperatorOverride {
+  id                 String                       @id @default(cuid())
+  tenantId           String
+  captureSessionId   String
+  captureSession     CaptureSession               @relation(fields: [captureSessionId], references: [id], onDelete: Cascade)
+  gradeRunId         String?
+  gradeRun           GradeRun?                    @relation(fields: [gradeRunId], references: [id], onDelete: SetNull)
+  certificateId      String?
+  certificate        GradeCertificate?            @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+  operatorId         String
+  originalGrades     Json
+  overrideGrades     Json
+  reasonCode         String
+  reasonText         String?
+  evidenceArtifactIds Json?
+  reviewStatus       OperatorOverrideReviewStatus @default(PENDING)
+  reviewedBy         String?
+  reviewedAt         DateTime?
+  createdAt          DateTime                     @default(now())
+
+  @@index([tenantId, captureSessionId])
+  @@index([operatorId, createdAt])
+}
+
+model AuditEvent {
+  id              String            @id @default(cuid())
+  tenantId        String
+  actorOperatorId String?
+  actorUserId     String?
+  entityType      String
+  entityId        String
+  action          String
+  outcome         AuditEventOutcome
+  before          Json?
+  after           Json?
+  reasonCode      String?
+  ipAddress       String?
+  userAgent       String?
+  checksum        String
+  createdAt       DateTime          @default(now())
+
+  @@index([tenantId, entityType, entityId])
+  @@index([actorOperatorId, createdAt])
 }
