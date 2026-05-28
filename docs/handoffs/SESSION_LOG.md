@@ -17479,6 +17479,26 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-28 - AI Grader Phase 8 committed
+
+### Summary
+- User reported Phase 8 calibration and gate contract helpers completed and committed on `feature/ai-grader-v5-foundation`.
+- Commit: `38900887233ddc1f1f3bee0bf36e760bb99f9fb3` (`feat(ai-grader): add calibration and gate contract helpers`).
+- Pre-Phase 8 handoff cleanup was committed and pushed through `9ec23ea`; Phase 8 commit is local-only until the next push.
+- Final reported status: `## feature/ai-grader-v5-foundation...origin/feature/ai-grader-v5-foundation [ahead 1]`.
+- Files changed:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Phase 8 stayed pure policy/contract enforcement with no sensor reads, interlock driver, obstruction implementation, calibration scripts, DB writes, migrations, hardware drivers, capture code, grading math, auth algorithms, frontend, reports, deploys, restarts, runtime DB operations, or destructive operations.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 86 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader Phase 7 committed
 
 ### Summary
