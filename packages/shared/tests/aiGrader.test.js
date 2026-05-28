@@ -2,8 +2,16 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   ORCHESTRATOR_NAMED_ERROR_STATES,
+  buildModePlan,
   transitionOrchestratorState,
+  validateCaptureManifest,
+  validateCaptureManifestForMode,
+  validateCaptureManifestFrame,
+  validateDeviceCapabilityManifest,
 } = require("../dist/aiGrader");
+
+const SHA_256 = "a".repeat(64);
+const ISO_TIME = "2026-05-28T12:00:00.000Z";
 
 function transition(currentState, event, guardResults = {}, errorCode) {
   return transitionOrchestratorState({
@@ -22,6 +30,195 @@ function expectAccepted(currentState, event, nextState, guardResults = {}, error
   assert.equal(result.nextState, nextState);
   assert.match(result.auditEventId, /^pending:session-1:/);
 }
+
+function issueCodes(result) {
+  return result.issues.map((entry) => entry.code);
+}
+
+function validDeviceCapabilityManifest(overrides = {}) {
+  return {
+    id: "manifest-1",
+    rigId: "rig-1",
+    helperInstanceId: "helper-1",
+    driverName: "basler_camera.py",
+    driverVersion: "1.0.0",
+    deviceType: "MACRO_CAMERA",
+    componentSerial: "BASLER-123",
+    supportedCapturePackages: ["MACRO_FRONT"],
+    coordinateUnits: { image: "px", stage: "micron" },
+    timingCharacteristics: { captureMs: 120 },
+    healthChecks: [{ name: "camera-open", required: true, timeoutMs: 1000 }],
+    requiredCalibrationTypes: ["COLOR_CHECKER_CCM"],
+    checksum: "manifest-checksum",
+    observedAt: ISO_TIME,
+    ...overrides,
+  };
+}
+
+function frame(kind, side = "FRONT", overrides = {}) {
+  return {
+    frameId: `${kind.toLowerCase()}-${side.toLowerCase()}-${Math.random().toString(16).slice(2)}`,
+    kind,
+    side,
+    storageKey: `captures/session-1/${kind}.jpg`,
+    checksumSha256: SHA_256,
+    capturedAt: ISO_TIME,
+    widthPx: 2048,
+    heightPx: 2048,
+    ...overrides,
+  };
+}
+
+function macroFrame(side = "FRONT") {
+  return frame(side === "FRONT" ? "FRONT_DIFFUSE" : "BACK_DIFFUSE", side);
+}
+
+function baseCaptureManifest(overrides = {}) {
+  return {
+    id: "capture-manifest-1",
+    captureSessionId: "session-1",
+    tenantId: "tenant-1",
+    rigId: "rig-1",
+    locationId: "location-1",
+    operatorId: "operator-1",
+    helperInstanceId: "helper-1",
+    helperVersion: "1.0.0",
+    driverVersions: { macro: "1.0.0" },
+    componentSerials: { macroCamera: "BASLER-123" },
+    calibrationSnapshotIds: ["calibration-1"],
+    frameList: [macroFrame("FRONT")],
+    operatorPrompts: [{ prompt: "Confirm arm out", shownAt: ISO_TIME, confirmedAt: ISO_TIME }],
+    deviceHealth: [{ check: "camera-open", status: "PASS" }],
+    checksumSha256: SHA_256,
+    createdAt: ISO_TIME,
+    ...overrides,
+  };
+}
+
+function standardCaptureManifest() {
+  return baseCaptureManifest({
+    frameList: [
+      macroFrame("FRONT"),
+      ...Array.from({ length: 4 }, (_, index) => frame("MICRO_CORNER_SPOT", "FRONT", { frameId: `corner-${index}` })),
+      ...Array.from({ length: 4 }, (_, index) => frame("MICRO_EDGE_SPOT", "FRONT", { frameId: `edge-${index}` })),
+      frame("MICRO_SURFACE_SPOT", "FRONT", {
+        frameId: "surface-0",
+        sourceSuspectRegionId: "region-1",
+      }),
+    ],
+  });
+}
+
+function authOnlyCaptureManifest() {
+  return baseCaptureManifest({
+    frameList: [
+      macroFrame("FRONT"),
+      ...Array.from({ length: 5 }, (_, index) => frame("MICRO_AUTH_PATCH", "FRONT", { frameId: `auth-${index}` })),
+    ],
+  });
+}
+
+function forensicCaptureManifest(overrides = {}) {
+  return baseCaptureManifest({
+    frameList: [
+      macroFrame("FRONT"),
+      frame("MICRO_CORNER_TILE", "FRONT", { frameId: "corner-tile" }),
+      frame("MICRO_EDGE_TILE", "FRONT", { frameId: "edge-tile" }),
+      frame("MICRO_SURFACE_TILE", "FRONT", { frameId: "surface-tile" }),
+      ...Array.from({ length: 5 }, (_, index) => frame("MICRO_AUTH_PATCH", "FRONT", { frameId: `forensic-auth-${index}` })),
+    ],
+    ...overrides,
+  });
+}
+
+test("validateDeviceCapabilityManifest accepts a valid manifest", () => {
+  const result = validateDeviceCapabilityManifest(validDeviceCapabilityManifest());
+
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.issues, []);
+});
+
+test("validateDeviceCapabilityManifest rejects invalid driver and component fields", () => {
+  const result = validateDeviceCapabilityManifest(
+    validDeviceCapabilityManifest({
+      driverName: "",
+      componentSerial: "",
+      deviceType: "BAD_DEVICE",
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("REQUIRED"));
+  assert.ok(issueCodes(result).includes("INVALID_ENUM"));
+});
+
+test("validateCaptureManifest accepts a structurally valid manifest", () => {
+  const result = validateCaptureManifest(baseCaptureManifest());
+
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.issues, []);
+});
+
+test("validateCaptureManifestFrame rejects bad checksum, storage key, and timestamp", () => {
+  const result = validateCaptureManifestFrame(
+    frame("FRONT_DIFFUSE", "FRONT", {
+      storageKey: "",
+      checksumSha256: "not-a-sha",
+      capturedAt: "not-a-date",
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("REQUIRED"));
+  assert.ok(issueCodes(result).includes("INVALID_CHECKSUM"));
+  assert.ok(issueCodes(result).includes("INVALID_TIMESTAMP"));
+});
+
+test("validateCaptureManifestForMode treats QUICK as macro-only", () => {
+  const plan = buildModePlan("QUICK");
+  const result = validateCaptureManifestForMode(baseCaptureManifest(), "QUICK", { side: "FRONT" });
+
+  assert.equal(plan.microscopePlan.type, "NONE");
+  assert.equal(result.valid, true);
+});
+
+test("validateCaptureManifestForMode enforces STANDARD macro and micro spot expectations", () => {
+  const validResult = validateCaptureManifestForMode(standardCaptureManifest(), "STANDARD", { side: "FRONT" });
+  const invalidResult = validateCaptureManifestForMode(baseCaptureManifest(), "STANDARD", { side: "FRONT" });
+
+  assert.equal(validResult.valid, true);
+  assert.equal(invalidResult.valid, false);
+  assert.ok(issueCodes(invalidResult).includes("MODE_MISSING_MICRO_SPOTS"));
+});
+
+test("validateCaptureManifestForMode enforces AUTH_ONLY auth patch expectations", () => {
+  const validResult = validateCaptureManifestForMode(authOnlyCaptureManifest(), "AUTH_ONLY", { side: "FRONT" });
+  const invalidResult = validateCaptureManifestForMode(baseCaptureManifest(), "AUTH_ONLY", { side: "FRONT" });
+
+  assert.equal(validResult.valid, true);
+  assert.equal(invalidResult.valid, false);
+  assert.ok(issueCodes(invalidResult).includes("MODE_MISSING_AUTH_PATCHES"));
+});
+
+test("validateCaptureManifestForMode enforces FORENSIC raster and auth expectations at contract level", () => {
+  const validResult = validateCaptureManifestForMode(forensicCaptureManifest(), "FORENSIC", { side: "FRONT" });
+  const invalidResult = validateCaptureManifestForMode(
+    forensicCaptureManifest({
+      frameList: [
+        macroFrame("FRONT"),
+        frame("MICRO_CORNER_TILE", "FRONT", { frameId: "corner-tile" }),
+        frame("MICRO_EDGE_TILE", "FRONT", { frameId: "edge-tile" }),
+        ...Array.from({ length: 5 }, (_, index) => frame("MICRO_AUTH_PATCH", "FRONT", { frameId: `auth-${index}` })),
+      ],
+    }),
+    "FORENSIC",
+    { side: "FRONT" }
+  );
+
+  assert.equal(validResult.valid, true);
+  assert.equal(invalidResult.valid, false);
+  assert.ok(issueCodes(invalidResult).includes("MODE_MISSING_FORENSIC_RASTER"));
+});
 
 test("transitionOrchestratorState follows the STANDARD happy path", () => {
   expectAccepted("INIT", "SESSION_CREATED", "MACRO_PREFLIGHT", {

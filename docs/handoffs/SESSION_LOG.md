@@ -17396,6 +17396,27 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-28 - AI Grader Phase 3 manifest validation helpers
+
+### Summary
+- Implemented Phase 3 as pure shared contract enforcement in `@tenkings/shared`.
+- Added `buildModePlan`, `validateDeviceCapabilityManifest`, `validateCaptureManifest`, `validateCaptureManifestFrame`, and `validateCaptureManifestForMode`.
+- Validators return structured validation results with issue codes and paths; they do not throw for validation failures.
+- Added tests for valid and invalid device manifests, capture manifests, frame checksum/storage/timestamp failures, QUICK macro-only mode, STANDARD micro spot expectations, AUTH_ONLY patch expectations, and FORENSIC raster/auth contract expectations.
+- No hardware drivers, capture execution, object storage upload, checksum generation from files, grading math, macro suspect detection, microscope capture, auth algorithms, frontend pages, schema/migration changes, migration execution, deploys, restarts, runtime DB operations, destructive operations, or Phase 4 work were performed.
+
+### Files Changed
+- `packages/shared/src/aiGrader.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/aiGrader.test.js`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 46 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader Phase 2 committed
 
 ### Summary

@@ -119,8 +119,12 @@ export {
   resolveOcrLlmAttempt,
 } from "./ocrLlmFallback";
 export type {
+  AiGraderValidationIssue,
+  AiGraderValidationIssueCode,
+  AiGraderValidationResult,
   CaptureManifest,
   CaptureManifestFrame,
+  CaptureManifestModeValidationOptions,
   CaptureSide,
   CenteringMeasurement,
   CoordinateUnit,
@@ -153,5 +157,10 @@ export type {
 } from "./aiGrader";
 export {
   ORCHESTRATOR_NAMED_ERROR_STATES,
+  buildModePlan,
   transitionOrchestratorState,
+  validateCaptureManifest,
+  validateCaptureManifestForMode,
+  validateCaptureManifestFrame,
+  validateDeviceCapabilityManifest,
 } from "./aiGrader";
