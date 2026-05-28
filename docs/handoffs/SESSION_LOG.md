@@ -17708,3 +17708,25 @@ By enabling Rip It Live, I confirm:
 - `pnpm --filter @tenkings/shared test` -> pass, 94 tests.
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
+## 2026-05-28 - AI Grader Phase 10 evidence, certificate, custody, and public-report contract helpers
+
+### Summary
+- Implemented Phase 10 as pure shared evidence, certificate, custody, and public-report contract helpers in `@tenkings/shared`.
+- Added Prisma-aligned `EvidenceClass`, `CertificateStatus`, and `CustodyEventType` unions plus `EvidenceArtifactContract`, `GradeCertificateContract`, `CustodyEventContract`, `PublicReportDisclosure`, and `PublicReportClaimCheck`.
+- Added validators for evidence artifacts, grade certificates, custody events, certificate evidence readiness, mode/certificate compatibility, custody-chain trust, public report disclosure, and public claim text.
+- Enforced v5 boundaries for original evidence source linkage and checksums, complete GradeRun readiness for certificates, AUTH_ONLY no-grade certificates, public report disclosure/accessibility/private evidence limits, custody-break certificate blocking, and disallowed public claims.
+- Added tests for valid original evidence, invalid missing evidence checksum/storage/source linkage, valid STANDARD/FORENSIC certificates, invalid AUTH_ONLY grade values, missing report mode/accessibility text, private public evidence exposure, custody break blocking, and disallowed claim text.
+- No report UI, PDF generation, object storage upload, checksum generation from files, DB writes, migrations, hardware drivers, capture code, grading math, auth algorithms, deploys, restarts, runtime DB operations, destructive operations, or service implementation work was performed.
+
+### Files Changed
+- `packages/shared/src/aiGrader.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/aiGrader.test.js`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 103 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.

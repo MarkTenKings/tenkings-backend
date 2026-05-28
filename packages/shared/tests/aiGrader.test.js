@@ -29,9 +29,14 @@ const {
   validateCaptureManifestForMode,
   validateCaptureManifestFrame,
   validateCenteringIgnoresMicroEvidence,
+  validateCertificateAllowedForMode,
   validateCertificateAllowedByPhysicalGates,
+  validateCertificateEvidenceReadiness,
+  validateCustodyChainForCertificate,
+  validateCustodyEventContract,
   validateDeviceCapabilityManifest,
   validateDustCorrectionBounds,
+  validateEvidenceArtifactContract,
   validateFusionAction,
   validateMacroPipelineOutput,
   validateMacroSuspectRegion,
@@ -41,6 +46,8 @@ const {
   validateMicroSpotCaptureFrames,
   validateMicroSpotCapturePackage,
   validatePhysicalGateResult,
+  validatePublicClaimText,
+  validatePublicReportDisclosure,
   validateReplayTolerance,
   validateRequiredCalibrationSet,
   validateRuntimeEnvironmentFingerprint,
@@ -515,6 +522,100 @@ function authRun(overrides = {}) {
     finishedAt: "2026-05-28T12:01:00.000Z",
     mode: "AUTH_ONLY",
     profileState: "ACTIVE",
+    ...overrides,
+  };
+}
+
+function evidenceArtifactContract(overrides = {}) {
+  return {
+    id: "evidence-1",
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    gradeRunId: "grade-run-1",
+    certificateId: "certificate-1",
+    evidenceClass: "ORIGINAL",
+    kind: "MACRO_RAW_FRAME",
+    storageKey: "original/session-1/macro-front.tiff",
+    checksumSha256: SHA_256,
+    mimeType: "image/tiff",
+    byteSize: 2048,
+    widthPx: 4096,
+    heightPx: 4096,
+    createdAt: ISO_TIME,
+    ...overrides,
+  };
+}
+
+function gradeCertificate(overrides = {}) {
+  return {
+    id: "certificate-1",
+    tenantId: "tenant-1",
+    gradeRunId: "grade-run-1",
+    authRunId: "auth-run-1",
+    publicSlug: "cert-2026-0001",
+    certificateNumber: "TK-2026-0001",
+    status: "ACTIVE",
+    mode: "STANDARD",
+    finalGrades: {
+      centering: 10,
+      corners: 9,
+      edges: 9,
+      surface: 8.5,
+      composite: 9,
+    },
+    publicReportKey: "reports/cert-2026-0001/index.json",
+    custodyStatus: "IN_TEN_KINGS_CUSTODY",
+    issuedAt: ISO_TIME,
+    sourceGradeRunStatus: "COMPLETE",
+    createdAt: ISO_TIME,
+    updatedAt: ISO_TIME,
+    ...overrides,
+  };
+}
+
+function custodyEvent(overrides = {}) {
+  return {
+    id: "custody-event-1",
+    tenantId: "tenant-1",
+    certificateId: "certificate-1",
+    captureSessionId: "session-1",
+    type: "CERTIFICATE_ISSUED",
+    fromOperatorId: "operator-1",
+    toLocationId: "vault-1",
+    evidenceArtifactIds: ["evidence-1"],
+    checksum: SHA_256,
+    occurredAt: ISO_TIME,
+    ...overrides,
+  };
+}
+
+function publicReportDisclosure(overrides = {}) {
+  return {
+    mode: "STANDARD",
+    microscopeInspection: "SAMPLED",
+    inspectedRegions: ["front corners", "front edges", "surface suspect region 1"],
+    uninspectedLimitations: ["not a full-card microscope raster"],
+    gradeValues: {
+      centering: 10,
+      corners: 9,
+      edges: 9,
+      surface: 8.5,
+      composite: 9,
+    },
+    evidenceSummaries: ["macro evidence and routed microscope spots reviewed"],
+    warnings: [],
+    authVerdictScope: "No auth verdict requested for this STANDARD report.",
+    accessibilityText: ["Surface suspect overlay shows inspected region 1 near top edge."],
+    publicEvidenceArtifacts: [
+      evidenceArtifactContract({
+        id: "public-evidence-1",
+        evidenceClass: "PUBLIC",
+        kind: "REPORT_CROP",
+        storageKey: "public/reports/cert-2026-0001/surface-crop.jpg",
+        mimeType: "image/jpeg",
+        publicUrl: "https://reports.example/cert-2026-0001/surface-crop.jpg",
+      }),
+    ],
     ...overrides,
   };
 }
@@ -1187,6 +1288,142 @@ test("AUTH_ONLY auth run produces verdict contract but no grade values", () => {
   assert.equal(validResult.valid, true);
   assert.equal(invalidResult.valid, false);
   assert.ok(issueCodes(invalidResult).includes("INVALID_AUTH_CLAIM"));
+});
+
+test("validateEvidenceArtifactContract accepts a valid original artifact", () => {
+  const result = validateEvidenceArtifactContract(evidenceArtifactContract());
+
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.issues, []);
+});
+
+test("validateEvidenceArtifactContract rejects missing checksum, storage, and source linkage", () => {
+  const result = validateEvidenceArtifactContract(
+    evidenceArtifactContract({
+      captureSessionId: undefined,
+      gradeRunId: undefined,
+      authRunId: undefined,
+      certificateId: undefined,
+      storageKey: "",
+      checksumSha256: "bad",
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("REQUIRED"));
+  assert.ok(issueCodes(result).includes("INVALID_CHECKSUM"));
+  assert.ok(issueCodes(result).includes("INVALID_EVIDENCE_ARTIFACT"));
+});
+
+test("validateCertificateEvidenceReadiness accepts STANDARD and FORENSIC grade certificates", () => {
+  const standardResult = validateCertificateEvidenceReadiness({
+    certificate: gradeCertificate({ mode: "STANDARD" }),
+    gradeRunStatus: "COMPLETE",
+    evidenceArtifacts: [evidenceArtifactContract()],
+  });
+  const forensicResult = validateCertificateEvidenceReadiness({
+    certificate: gradeCertificate({
+      mode: "FORENSIC",
+      finalGrades: {
+        centering: 10,
+        corners: 9,
+        edges: 9,
+        surface: 8.5,
+        composite: 9,
+      },
+    }),
+    gradeRunStatus: "COMPLETE",
+    evidenceArtifacts: [evidenceArtifactContract({ id: "evidence-2", storageKey: "original/session-1/forensic-raster.tiff" })],
+  });
+
+  assert.equal(standardResult.valid, true);
+  assert.equal(forensicResult.valid, true);
+});
+
+test("validateCertificateAllowedForMode rejects AUTH_ONLY certificate grade values", () => {
+  const result = validateCertificateAllowedForMode(
+    gradeCertificate({
+      mode: "AUTH_ONLY",
+      finalGrades: { composite: 9 },
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("CERTIFICATE_BLOCKED"));
+});
+
+test("validatePublicReportDisclosure rejects missing mode disclosure", () => {
+  const result = validatePublicReportDisclosure(
+    publicReportDisclosure({
+      mode: undefined,
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("INVALID_PUBLIC_REPORT"));
+});
+
+test("validatePublicReportDisclosure rejects missing accessibility text", () => {
+  const result = validatePublicReportDisclosure(
+    publicReportDisclosure({
+      accessibilityText: [],
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("EMPTY_ARRAY"));
+});
+
+test("validatePublicReportDisclosure rejects private evidence exposed publicly", () => {
+  const result = validatePublicReportDisclosure(
+    publicReportDisclosure({
+      publicEvidenceArtifacts: [
+        evidenceArtifactContract({
+          id: "private-evidence-1",
+          evidenceClass: "PRIVATE",
+          kind: "FULL_PRIVATE_MANIFEST",
+          storageKey: "private/manifests/capture-manifest.json",
+          publicUrl: "https://reports.example/private/manifest.json",
+        }),
+      ],
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("PRIVATE_EVIDENCE_EXPOSED"));
+});
+
+test("validateCustodyChainForCertificate blocks certificate trust on custody break", () => {
+  const result = validateCustodyChainForCertificate({
+    certificateId: "certificate-1",
+    custodyEvents: [
+      custodyEvent(),
+      custodyEvent({
+        id: "custody-break-1",
+        type: "CUSTODY_BREAK",
+        notes: "seal mismatch after vault out",
+      }),
+    ],
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("CERTIFICATE_BLOCKED"));
+});
+
+test("validatePublicClaimText rejects disallowed public claims", () => {
+  const standardResult = validatePublicClaimText({
+    mode: "STANDARD",
+    claimText: "STANDARD is full-card microscope inspection.",
+  });
+  const authResult = validatePublicClaimText({
+    mode: "AUTH_ONLY",
+    claimText: "CMYK print-profile comparison alone proves full authenticity.",
+  });
+
+  assert.equal(standardResult.valid, false);
+  assert.equal(authResult.valid, false);
+  assert.ok(issueCodes(standardResult).includes("INVALID_PUBLIC_CLAIM"));
+  assert.ok(issueCodes(authResult).includes("INVALID_PUBLIC_CLAIM"));
 });
 
 test("buildInitialAiGraderAlgorithmVersions returns valid provenance seeds", () => {

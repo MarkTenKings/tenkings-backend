@@ -319,6 +319,101 @@ export interface AuthReportClaimBoundaryInput {
   mode?: GradingMode;
 }
 
+export type EvidenceClass = "ORIGINAL" | "DERIVED" | "PUBLIC" | "PRIVATE";
+export type CertificateStatus = "DRAFT" | "ACTIVE" | "REVOKED" | "SUPERSEDED";
+export type CustodyEventType =
+  | "INTAKE"
+  | "CAPTURE_START"
+  | "CAPTURE_COMPLETE"
+  | "VAULT_IN"
+  | "VAULT_OUT"
+  | "SHIPPED"
+  | "RECEIVED"
+  | "SLAB_SENT"
+  | "SLAB_RETURNED"
+  | "CERTIFICATE_ISSUED"
+  | "CERTIFICATE_REVOKED"
+  | "CUSTODY_BREAK";
+
+export interface EvidenceArtifactContract {
+  id: string;
+  tenantId: string;
+  captureSessionId?: string;
+  gradeRunId?: string;
+  authRunId?: string;
+  certificateId?: string;
+  evidenceClass: EvidenceClass;
+  kind: string;
+  storageKey: string;
+  checksumSha256: string;
+  mimeType: string;
+  byteSize?: number;
+  widthPx?: number;
+  heightPx?: number;
+  retentionUntil?: string;
+  publicUrl?: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface GradeCertificateContract {
+  id: string;
+  tenantId: string;
+  gradeRunId: string;
+  authRunId?: string;
+  publicSlug: string;
+  certificateNumber: string;
+  status: CertificateStatus;
+  mode: GradingMode;
+  finalGrades?: Record<string, number>;
+  publicReportKey?: string;
+  custodyStatus: string;
+  issuedAt?: string;
+  revokedAt?: string;
+  revocationReason?: string;
+  sourceGradeRunStatus?: "PENDING" | "RUNNING" | "COMPLETE" | "FAILED" | "REPLAYED";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CustodyEventContract {
+  id: string;
+  tenantId: string;
+  certificateId?: string;
+  captureSessionId?: string;
+  type: CustodyEventType;
+  fromOperatorId?: string;
+  toOperatorId?: string;
+  fromLocationId?: string;
+  toLocationId?: string;
+  evidenceArtifactIds?: string[];
+  notes?: string;
+  checksum: string;
+  occurredAt: string;
+}
+
+export interface PublicReportDisclosure {
+  mode: GradingMode;
+  microscopeInspection: "NONE" | "SAMPLED" | "EXHAUSTIVE" | "AUTH_PATCHES";
+  inspectedRegions: string[];
+  uninspectedLimitations: string[];
+  gradeValues?: Record<string, number>;
+  evidenceSummaries: string[];
+  warnings: string[];
+  authVerdictScope: string;
+  accessibilityText: string[];
+  publicEvidenceArtifacts?: EvidenceArtifactContract[];
+  privateManifestExposed?: boolean;
+  calibrationArtifactsExposed?: boolean;
+  sourceCodeExposed?: boolean;
+  proprietaryFusionDetailsExposed?: boolean;
+}
+
+export interface PublicReportClaimCheck {
+  claimText: string;
+  mode?: GradingMode;
+}
+
 export interface CenteringMeasurement {
   leftMm?: number;
   rightMm?: number;
@@ -571,6 +666,12 @@ export type AiGraderValidationIssueCode =
   | "INVALID_AUTH_VERDICT"
   | "INVALID_AUTH_PROFILE_TRANSITION"
   | "INVALID_AUTH_CLAIM"
+  | "INVALID_EVIDENCE_ARTIFACT"
+  | "INVALID_CERTIFICATE"
+  | "INVALID_CUSTODY"
+  | "INVALID_PUBLIC_REPORT"
+  | "PRIVATE_EVIDENCE_EXPOSED"
+  | "INVALID_PUBLIC_CLAIM"
   | "MISSING_FRAME"
   | "MICRO_EVIDENCE_INCOMPLETE"
   | "INVALID_ARRAY"
@@ -871,6 +972,25 @@ const AUTH_PROFILE_ALLOWED_TRANSITIONS = new Set<string>([
   "QUARANTINED->CURATED_REFERENCE",
   "QUARANTINED->RETIRED",
 ]);
+const EVIDENCE_CLASSES = ["ORIGINAL", "DERIVED", "PUBLIC", "PRIVATE"] as const;
+const CERTIFICATE_STATUSES = ["DRAFT", "ACTIVE", "REVOKED", "SUPERSEDED"] as const;
+const CUSTODY_EVENT_TYPES = [
+  "INTAKE",
+  "CAPTURE_START",
+  "CAPTURE_COMPLETE",
+  "VAULT_IN",
+  "VAULT_OUT",
+  "SHIPPED",
+  "RECEIVED",
+  "SLAB_SENT",
+  "SLAB_RETURNED",
+  "CERTIFICATE_ISSUED",
+  "CERTIFICATE_REVOKED",
+  "CUSTODY_BREAK",
+] as const;
+const GRADE_RUN_STATUSES = ["PENDING", "RUNNING", "COMPLETE", "FAILED", "REPLAYED"] as const;
+const PUBLIC_REPORT_MODES = ["QUICK", "STANDARD", "FORENSIC", "AUTH_ONLY"] as const;
+const MICROSCOPE_INSPECTION_DISCLOSURES = ["NONE", "SAMPLED", "EXHAUSTIVE", "AUTH_PATCHES"] as const;
 export const DEFAULT_REQUIRED_CALIBRATION_TYPES: readonly CalibrationType[] = [
   "COLOR_CHECKER_CCM",
   "STAGE_HOME",
@@ -904,6 +1024,12 @@ const PRINT_PROFILE_STATUS_VALUES = new Set<string>(PRINT_PROFILE_STATUSES);
 const AUTH_RUN_STATUS_VALUES = new Set<string>(AUTH_RUN_STATUSES);
 const PRODUCTION_AUTH_VERDICT_VALUES = new Set<string>(PRODUCTION_AUTH_VERDICTS);
 const AUTH_IDENTITY_SOURCE_VALUES = new Set<string>(AUTH_IDENTITY_SOURCES);
+const EVIDENCE_CLASS_VALUES = new Set<string>(EVIDENCE_CLASSES);
+const CERTIFICATE_STATUS_VALUES = new Set<string>(CERTIFICATE_STATUSES);
+const CUSTODY_EVENT_TYPE_VALUES = new Set<string>(CUSTODY_EVENT_TYPES);
+const GRADE_RUN_STATUS_VALUES = new Set<string>(GRADE_RUN_STATUSES);
+const PUBLIC_REPORT_MODE_VALUES = new Set<string>(PUBLIC_REPORT_MODES);
+const MICROSCOPE_INSPECTION_DISCLOSURE_VALUES = new Set<string>(MICROSCOPE_INSPECTION_DISCLOSURES);
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 const CONTAINER_DIGEST_RE = /^(?:sha256:)?[a-f0-9]{64}$/i;
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
@@ -3170,6 +3296,389 @@ export function validateAuthReportClaimBoundary(value: unknown): AiGraderValidat
     if (!explainsReferenceNeeded) {
       issues.push(issue(`${path}.reportText`, "INVALID_AUTH_CLAIM", "REFERENCE_NEEDED reports must say no active curated profile/reference was available."));
     }
+  }
+
+  return validationResult(issues);
+}
+
+function hasEvidenceSourceLinkage(value: Record<string, unknown>): boolean {
+  return (
+    isNonEmptyString(value.captureSessionId) ||
+    isNonEmptyString(value.gradeRunId) ||
+    isNonEmptyString(value.authRunId) ||
+    isNonEmptyString(value.certificateId)
+  );
+}
+
+function validateOptionalPositiveNumber(
+  record: Record<string, unknown>,
+  field: string,
+  path: string,
+  issues: AiGraderValidationIssue[]
+) {
+  if (record[field] != null && (!isFiniteNumber(record[field]) || record[field] < 0)) {
+    issues.push(issue(`${path}.${field}`, "INVALID_NUMBER", `${field} must be a non-negative finite number when provided.`));
+  }
+}
+
+function validateStringArrayShape(
+  value: unknown,
+  path: string,
+  issues: AiGraderValidationIssue[],
+  options: { allowEmpty?: boolean } = {}
+) {
+  if (!Array.isArray(value)) {
+    issues.push(issue(path, "INVALID_ARRAY", `${path} must be an array.`));
+    return;
+  }
+  if (!options.allowEmpty && value.length === 0) {
+    issues.push(issue(path, "EMPTY_ARRAY", `${path} must include at least one value.`));
+  }
+  value.forEach((entry, index) => {
+    if (!isNonEmptyString(entry)) {
+      issues.push(issue(`${path}[${index}]`, "REQUIRED", `${path}[${index}] must be a non-empty string.`));
+    }
+  });
+}
+
+function containsPrivateEvidenceMarker(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const kind = isNonEmptyString(value.kind) ? value.kind.toLowerCase() : "";
+  const storageKey = isNonEmptyString(value.storageKey) ? value.storageKey.toLowerCase() : "";
+  return (
+    value.evidenceClass === "PRIVATE" ||
+    value.evidenceClass === "ORIGINAL" ||
+    kind.includes("manifest") ||
+    kind.includes("calibration") ||
+    kind.includes("source_code") ||
+    kind.includes("source-code") ||
+    kind.includes("algorithm") ||
+    storageKey.includes("/private/") ||
+    storageKey.includes("manifest") ||
+    storageKey.includes("calibration")
+  );
+}
+
+export function validateEvidenceArtifactContract(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "evidenceArtifact";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "EvidenceArtifactContract must be an object.")]);
+  }
+
+  ["id", "tenantId", "kind", "storageKey", "mimeType", "createdAt"].forEach((field) => requireString(value, field, path, issues));
+  ["captureSessionId", "gradeRunId", "authRunId", "certificateId", "publicUrl"].forEach((field) => {
+    validateOptionalNonEmptyString(value, field, path, issues);
+  });
+
+  if (!isNonEmptyString(value.evidenceClass) || !EVIDENCE_CLASS_VALUES.has(value.evidenceClass)) {
+    issues.push(issue(`${path}.evidenceClass`, "INVALID_ENUM", "evidenceClass must match the supported EvidenceClass enum."));
+  }
+  if (!hasValidSha256(value.checksumSha256)) {
+    issues.push(issue(`${path}.checksumSha256`, "INVALID_CHECKSUM", "checksumSha256 must be a 64-character hex SHA-256 digest."));
+  }
+  if (!hasValidTimestamp(value.createdAt)) {
+    issues.push(issue(`${path}.createdAt`, "INVALID_TIMESTAMP", "createdAt must be a valid timestamp string."));
+  }
+  if (value.retentionUntil != null && !hasValidTimestamp(value.retentionUntil)) {
+    issues.push(issue(`${path}.retentionUntil`, "INVALID_TIMESTAMP", "retentionUntil must be a valid timestamp string when provided."));
+  }
+  ["byteSize", "widthPx", "heightPx"].forEach((field) => validateOptionalPositiveNumber(value, field, path, issues));
+  if (value.metadata != null && !isRecord(value.metadata)) {
+    issues.push(issue(`${path}.metadata`, "INVALID_RECORD", "metadata must be an object when provided."));
+  }
+
+  if (value.evidenceClass === "ORIGINAL" && !hasEvidenceSourceLinkage(value)) {
+    issues.push(issue(path, "INVALID_EVIDENCE_ARTIFACT", "original evidence artifacts require capture, grade, auth, or certificate source linkage."));
+  }
+  if ((value.evidenceClass === "ORIGINAL" || value.evidenceClass === "PRIVATE") && value.publicUrl != null) {
+    issues.push(issue(`${path}.publicUrl`, "PRIVATE_EVIDENCE_EXPOSED", "original and private evidence artifacts must not be directly public."));
+  }
+
+  return validationResult(issues);
+}
+
+export function validateGradeCertificateContract(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "certificate";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "GradeCertificateContract must be an object.")]);
+  }
+
+  [
+    "id",
+    "tenantId",
+    "gradeRunId",
+    "publicSlug",
+    "certificateNumber",
+    "custodyStatus",
+    "createdAt",
+    "updatedAt",
+  ].forEach((field) => requireString(value, field, path, issues));
+  ["authRunId", "publicReportKey", "revocationReason"].forEach((field) => {
+    validateOptionalNonEmptyString(value, field, path, issues);
+  });
+
+  if (!isNonEmptyString(value.status) || !CERTIFICATE_STATUS_VALUES.has(value.status)) {
+    issues.push(issue(`${path}.status`, "INVALID_ENUM", "status must match the supported CertificateStatus enum."));
+  }
+  if (!isNonEmptyString(value.mode) || !GRADING_MODE_VALUES.has(value.mode)) {
+    issues.push(issue(`${path}.mode`, "INVALID_ENUM", "mode must be a supported GradingMode."));
+  }
+  if (value.finalGrades != null && !isRecord(value.finalGrades)) {
+    issues.push(issue(`${path}.finalGrades`, "INVALID_RECORD", "finalGrades must be an object when provided."));
+  } else if (isRecord(value.finalGrades)) {
+    Object.entries(value.finalGrades).forEach(([field, grade]) => {
+      if (!isFiniteNumber(grade)) {
+        issues.push(issue(`${path}.finalGrades.${field}`, "INVALID_NUMBER", "final grade values must be finite numbers."));
+      }
+    });
+  }
+  if (!hasValidTimestamp(value.createdAt)) {
+    issues.push(issue(`${path}.createdAt`, "INVALID_TIMESTAMP", "createdAt must be a valid timestamp string."));
+  }
+  if (!hasValidTimestamp(value.updatedAt)) {
+    issues.push(issue(`${path}.updatedAt`, "INVALID_TIMESTAMP", "updatedAt must be a valid timestamp string."));
+  }
+  if (value.issuedAt != null && !hasValidTimestamp(value.issuedAt)) {
+    issues.push(issue(`${path}.issuedAt`, "INVALID_TIMESTAMP", "issuedAt must be a valid timestamp string when provided."));
+  }
+  if (value.revokedAt != null && !hasValidTimestamp(value.revokedAt)) {
+    issues.push(issue(`${path}.revokedAt`, "INVALID_TIMESTAMP", "revokedAt must be a valid timestamp string when provided."));
+  }
+  if (value.sourceGradeRunStatus != null && (!isNonEmptyString(value.sourceGradeRunStatus) || !GRADE_RUN_STATUS_VALUES.has(value.sourceGradeRunStatus))) {
+    issues.push(issue(`${path}.sourceGradeRunStatus`, "INVALID_ENUM", "sourceGradeRunStatus must match GradeRunStatus when provided."));
+  }
+  if (value.status === "ACTIVE" && !hasValidTimestamp(value.issuedAt)) {
+    issues.push(issue(`${path}.issuedAt`, "INVALID_CERTIFICATE", "active certificates require issuedAt."));
+  }
+  if (value.status === "ACTIVE" && !isNonEmptyString(value.publicReportKey)) {
+    issues.push(issue(`${path}.publicReportKey`, "INVALID_CERTIFICATE", "active certificates require publicReportKey."));
+  }
+  if (value.status === "REVOKED" && (!hasValidTimestamp(value.revokedAt) || !isNonEmptyString(value.revocationReason))) {
+    issues.push(issue(`${path}.revokedAt`, "INVALID_CERTIFICATE", "revoked certificates require revokedAt and revocationReason."));
+  }
+
+  if (value.mode === "AUTH_ONLY" && isRecord(value.finalGrades) && Object.keys(value.finalGrades).length > 0) {
+    issues.push(issue(`${path}.finalGrades`, "CERTIFICATE_BLOCKED", "AUTH_ONLY cannot certify grade values."));
+  }
+
+  return validationResult(issues);
+}
+
+export function validateCustodyEventContract(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "custodyEvent";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "CustodyEventContract must be an object.")]);
+  }
+
+  ["id", "tenantId", "checksum", "occurredAt"].forEach((field) => requireString(value, field, path, issues));
+  ["certificateId", "captureSessionId", "fromOperatorId", "toOperatorId", "fromLocationId", "toLocationId", "notes"].forEach((field) => {
+    validateOptionalNonEmptyString(value, field, path, issues);
+  });
+
+  if (!isNonEmptyString(value.type) || !CUSTODY_EVENT_TYPE_VALUES.has(value.type)) {
+    issues.push(issue(`${path}.type`, "INVALID_ENUM", "type must match the supported CustodyEventType enum."));
+  }
+  if (!hasValidSha256(value.checksum)) {
+    issues.push(issue(`${path}.checksum`, "INVALID_CHECKSUM", "checksum must be a 64-character hex SHA-256 digest."));
+  }
+  if (!hasValidTimestamp(value.occurredAt)) {
+    issues.push(issue(`${path}.occurredAt`, "INVALID_TIMESTAMP", "occurredAt must be a valid timestamp string."));
+  }
+  if (value.evidenceArtifactIds != null) {
+    validateStringArrayShape(value.evidenceArtifactIds, `${path}.evidenceArtifactIds`, issues, { allowEmpty: true });
+  }
+  if (!isNonEmptyString(value.certificateId) && !isNonEmptyString(value.captureSessionId)) {
+    issues.push(issue(path, "INVALID_CUSTODY", "custody events require certificateId or captureSessionId linkage."));
+  }
+  if (
+    (value.type === "CERTIFICATE_ISSUED" || value.type === "CERTIFICATE_REVOKED" || value.type === "CUSTODY_BREAK") &&
+    !isNonEmptyString(value.certificateId)
+  ) {
+    issues.push(issue(`${path}.certificateId`, "INVALID_CUSTODY", `${value.type} custody events require certificateId.`));
+  }
+
+  return validationResult(issues);
+}
+
+export function validateCertificateAllowedForMode(value: unknown): AiGraderValidationResult {
+  const issues = [...validateGradeCertificateContract(value).issues];
+
+  if (!isRecord(value)) {
+    return validationResult(issues);
+  }
+
+  const finalGrades = isRecord(value.finalGrades) ? value.finalGrades : {};
+  if ((value.mode === "STANDARD" || value.mode === "FORENSIC" || value.mode === "QUICK") && Object.keys(finalGrades).length === 0) {
+    issues.push(issue("certificate.finalGrades", "INVALID_CERTIFICATE", `${value.mode} certificates require grade values.`));
+  }
+  if (value.mode === "AUTH_ONLY" && Object.keys(finalGrades).length > 0) {
+    issues.push(issue("certificate.finalGrades", "CERTIFICATE_BLOCKED", "AUTH_ONLY cannot certify grade values."));
+  }
+
+  return validationResult(issues);
+}
+
+export function validateCertificateEvidenceReadiness(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "certificateReadiness";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "certificate readiness input must be an object.")]);
+  }
+
+  const certificateResult = validateCertificateAllowedForMode(value.certificate);
+  issues.push(...certificateResult.issues.map((entry) => ({ ...entry, path: `${path}.${entry.path}` })));
+
+  if (value.gradeRunStatus !== "COMPLETE") {
+    issues.push(issue(`${path}.gradeRunStatus`, "CERTIFICATE_BLOCKED", "GradeCertificate requires a complete GradeRun."));
+  }
+
+  if (!Array.isArray(value.evidenceArtifacts)) {
+    issues.push(issue(`${path}.evidenceArtifacts`, "INVALID_ARRAY", "evidenceArtifacts must be an array."));
+  } else {
+    let originalCount = 0;
+    value.evidenceArtifacts.forEach((artifact, index) => {
+      const result = validateEvidenceArtifactContract(artifact);
+      issues.push(...result.issues.map((entry) => ({ ...entry, path: `${path}.evidenceArtifacts[${index}].${entry.path}` })));
+      if (isRecord(artifact) && artifact.evidenceClass === "ORIGINAL") {
+        originalCount += 1;
+      }
+    });
+    if (originalCount === 0) {
+      issues.push(issue(`${path}.evidenceArtifacts`, "CERTIFICATE_BLOCKED", "certifiable grade evidence requires at least one original artifact."));
+    }
+  }
+
+  return validationResult(issues);
+}
+
+export function validateCustodyChainForCertificate(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "custodyChain";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "custody chain input must be an object.")]);
+  }
+  requireString(value, "certificateId", path, issues);
+
+  if (!Array.isArray(value.custodyEvents)) {
+    issues.push(issue(`${path}.custodyEvents`, "INVALID_ARRAY", "custodyEvents must be an array."));
+    return validationResult(issues);
+  }
+
+  value.custodyEvents.forEach((event, index) => {
+    const result = validateCustodyEventContract(event);
+    issues.push(...result.issues.map((entry) => ({ ...entry, path: `${path}.custodyEvents[${index}].${entry.path}` })));
+    if (isRecord(event) && event.type === "CUSTODY_BREAK") {
+      issues.push(issue(`${path}.custodyEvents[${index}]`, "CERTIFICATE_BLOCKED", "custody break blocks or flags certificate trust."));
+    }
+    if (isRecord(event) && isNonEmptyString(value.certificateId) && isNonEmptyString(event.certificateId) && event.certificateId !== value.certificateId) {
+      issues.push(issue(`${path}.custodyEvents[${index}].certificateId`, "INVALID_CUSTODY", "custody event certificateId must match the certificate."));
+    }
+  });
+
+  return validationResult(issues);
+}
+
+export function validatePublicClaimText(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "publicClaim";
+
+  const claimText = typeof value === "string" ? value : isRecord(value) ? value.claimText : undefined;
+  const mode = isRecord(value) ? value.mode : undefined;
+
+  if (!isNonEmptyString(claimText)) {
+    return validationResult([issue(`${path}.claimText`, "REQUIRED", "claimText is required.")]);
+  }
+  if (mode != null && (!isNonEmptyString(mode) || !GRADING_MODE_VALUES.has(mode))) {
+    issues.push(issue(`${path}.mode`, "INVALID_ENUM", "mode must be a supported GradingMode when provided."));
+  }
+
+  const normalized = claimText.toLowerCase();
+  const disallowedPatterns = [
+    /standard\s+(?:is\s+)?(?:a\s+)?full[- ]card microscope inspection/,
+    /standard.*full[- ]card.*microscope/,
+    /full[- ]card.*microscope.*standard/,
+    /physical recapture.*always.*(?:same|identical|matching).*grade/,
+    /always.*same grade.*physical recapture/,
+    /cmyk.*(?:alone|comparison alone|print-profile comparison alone).*proves.*full authenticity/,
+    /cmyk.*proves.*full authenticity/,
+    /12\s*second.*standard/,
+    /standard.*12\s*second/,
+    /industrial[- ]rig.*pixel density.*lean/,
+    /lean.*industrial[- ]rig.*pixel density/,
+  ];
+
+  if (disallowedPatterns.some((pattern) => pattern.test(normalized))) {
+    issues.push(issue(`${path}.claimText`, "INVALID_PUBLIC_CLAIM", "public claim is disallowed by v5 legal guardrails."));
+  }
+
+  return validationResult(issues);
+}
+
+export function validatePublicReportDisclosure(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "publicReport";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "PublicReportDisclosure must be an object.")]);
+  }
+
+  if (!isNonEmptyString(value.mode) || !PUBLIC_REPORT_MODE_VALUES.has(value.mode)) {
+    issues.push(issue(`${path}.mode`, "INVALID_PUBLIC_REPORT", "public reports must disclose mode as QUICK, STANDARD, FORENSIC, or AUTH_ONLY."));
+  }
+  if (!isNonEmptyString(value.microscopeInspection) || !MICROSCOPE_INSPECTION_DISCLOSURE_VALUES.has(value.microscopeInspection)) {
+    issues.push(issue(`${path}.microscopeInspection`, "INVALID_PUBLIC_REPORT", "public reports must disclose whether microscope inspection was sampled or exhaustive."));
+  }
+  validateStringArrayShape(value.inspectedRegions, `${path}.inspectedRegions`, issues);
+  validateStringArrayShape(value.uninspectedLimitations, `${path}.uninspectedLimitations`, issues);
+  validateStringArrayShape(value.evidenceSummaries, `${path}.evidenceSummaries`, issues);
+  validateStringArrayShape(value.warnings, `${path}.warnings`, issues, { allowEmpty: true });
+  validateStringArrayShape(value.accessibilityText, `${path}.accessibilityText`, issues);
+  if (!isNonEmptyString(value.authVerdictScope)) {
+    issues.push(issue(`${path}.authVerdictScope`, "INVALID_PUBLIC_REPORT", "public reports must disclose auth verdict scope, including REFERENCE_NEEDED when applicable."));
+  }
+  if (value.gradeValues != null && !isRecord(value.gradeValues)) {
+    issues.push(issue(`${path}.gradeValues`, "INVALID_RECORD", "gradeValues must be an object when provided."));
+  } else if (isRecord(value.gradeValues)) {
+    Object.entries(value.gradeValues).forEach(([field, grade]) => {
+      if (!isFiniteNumber(grade)) {
+        issues.push(issue(`${path}.gradeValues.${field}`, "INVALID_NUMBER", "grade values must be finite numbers."));
+      }
+    });
+  }
+
+  [
+    "privateManifestExposed",
+    "calibrationArtifactsExposed",
+    "sourceCodeExposed",
+    "proprietaryFusionDetailsExposed",
+  ].forEach((field) => {
+    if (value[field] === true) {
+      issues.push(issue(`${path}.${field}`, "PRIVATE_EVIDENCE_EXPOSED", "public reports must not expose private manifests, calibration artifacts, source code, or proprietary fusion details."));
+    } else if (value[field] != null && typeof value[field] !== "boolean") {
+      issues.push(issue(`${path}.${field}`, "INVALID_TYPE", `${field} must be a boolean when provided.`));
+    }
+  });
+
+  if (Array.isArray(value.publicEvidenceArtifacts)) {
+    value.publicEvidenceArtifacts.forEach((artifact, index) => {
+      const result = validateEvidenceArtifactContract(artifact);
+      issues.push(...result.issues.map((entry) => ({ ...entry, path: `${path}.publicEvidenceArtifacts[${index}].${entry.path}` })));
+      if (containsPrivateEvidenceMarker(artifact)) {
+        issues.push(issue(`${path}.publicEvidenceArtifacts[${index}]`, "PRIVATE_EVIDENCE_EXPOSED", "public reports must not expose original, private, manifest, calibration, source code, or algorithm artifacts."));
+      }
+    });
+  } else if (value.publicEvidenceArtifacts != null) {
+    issues.push(issue(`${path}.publicEvidenceArtifacts`, "INVALID_ARRAY", "publicEvidenceArtifacts must be an array when provided."));
   }
 
   return validationResult(issues);
