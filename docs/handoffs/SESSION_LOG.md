@@ -17731,6 +17731,30 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-28 - Vercel Prisma migration gate
+
+### Summary
+- Implemented deployment safety for PR #6 before leaving draft.
+- Changed `scripts/vercel-build.sh` so Prisma migrations run only when `RUN_DB_MIGRATIONS=true`.
+- Vercel production builds now log that migrations are skipped when `VERCEL_ENV=production` and `RUN_DB_MIGRATIONS` is not `true`, then continue the build.
+- Updated `docs/runbooks/DEPLOY_RUNBOOK.md` with the new Vercel migration gate behavior.
+- Updated `docs/HANDOFF_SET_OPS.md` to record that the AI Grader draft migration remains unapplied and production migration execution still requires explicit approval.
+- No merge, deploy, migration execution, runtime DB operation, destructive operation, or service/hardware implementation was performed.
+
+### Files Changed
+- `scripts/vercel-build.sh`
+- `docs/runbooks/DEPLOY_RUNBOOK.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `bash -n scripts/vercel-build.sh` -> pass.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader foundation review fixes
 
 ### Summary

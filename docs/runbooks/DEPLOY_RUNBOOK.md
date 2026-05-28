@@ -8,6 +8,12 @@ owner: Mark
 - Always confirm remote parity before restart/migrate
 - Record every deploy/restart/migrate in `docs/handoffs/SESSION_LOG.md`
 
+## Vercel Migration Gate
+- Vercel production builds do not run Prisma migrations by default.
+- `scripts/vercel-build.sh` runs `pnpm --filter @tenkings/database run migrate:deploy` only when `RUN_DB_MIGRATIONS=true`.
+- If `VERCEL_ENV=production` and `RUN_DB_MIGRATIONS` is not `true`, the build logs that migrations are skipped and continues.
+- To intentionally apply migrations through Vercel, set `RUN_DB_MIGRATIONS=true` for the approved deploy, verify migration readiness first, then remove or reset the flag after the deploy.
+
 ## Workstation Deploy Flow
 ```bash
 cd /Users/markthomas/tenkings/ten-kings-mystery-packs-clean

@@ -53,7 +53,9 @@
 - Merge-readiness audit found a release blocker: `scripts/vercel-build.sh` runs `pnpm --filter @tenkings/database run migrate:deploy` when `VERCEL_ENV=production`, and merge to `main` likely triggers Vercel production deploy based on current Vercel PR checks and prior PR #5 history.
 - GitHub CI/Docker builds generate Prisma client and build artifacts but do not apply migrations.
 - Runtime risk is low if no migration runs because no production code queries the new AI Grader models yet; the high-risk path is automatic migration execution during Vercel production build.
-- Draft migration remains unapplied; keep PR #6 draft until production migration execution is explicitly gated or the migration is split from the PR.
+- Deployment safety follow-up changed `scripts/vercel-build.sh` so Vercel production builds skip Prisma migrations by default and run them only when `RUN_DB_MIGRATIONS=true`.
+- `docs/runbooks/DEPLOY_RUNBOOK.md` now documents the Vercel migration gate.
+- Draft migration remains unapplied; PR #6 can proceed to review only after deployment-safety CI passes, but migration execution still requires explicit approval and a dedicated readiness pass.
 - No merge, deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)
