@@ -155,6 +155,83 @@ export interface PhysicalGateResult {
   evidenceArtifacts?: EvidenceArtifactRef[];
 }
 
+export type CalibrationType =
+  | "COLOR_CHECKER_CCM"
+  | "MACRO_INTRINSICS"
+  | "MACRO_FLAT_FIELD"
+  | "STAGE_HOME"
+  | "CARD_JIG_TRANSFORM"
+  | "MICROSCOPE_PX_PER_MICRON"
+  | "MICROSCOPE_FOCUS_BASELINE"
+  | "LED_INTENSITY_HEALTH"
+  | "ARM_INTERLOCK_HEALTH";
+
+export interface CalibrationSnapshotContract {
+  id: string;
+  rigId: string;
+  calibrationType: CalibrationType;
+  componentSerials: Record<string, string>;
+  artifactKeys: string[];
+  artifactChecksums: string[];
+  residuals?: Record<string, unknown>;
+  operatorId?: string;
+  validityStartsAt: string;
+  validityEndsAt?: string;
+  createdAt: string;
+}
+
+export interface CalibrationFreshnessOptions {
+  asOf?: string;
+  maxAgeHours?: number;
+  cardsSinceCalibration?: number;
+  maxCardsSinceCalibration?: number;
+}
+
+export interface RequiredCalibrationSetOptions extends CalibrationFreshnessOptions {
+  requiredTypes?: readonly CalibrationType[];
+  rigId?: string;
+}
+
+export type ArmPosition = "ARM_IN" | "ARM_OUT";
+
+export interface ArmInterlockStatus {
+  hardwarePosition: ArmPosition;
+  operatorConfirmedPosition?: ArmPosition;
+  obstructionDetected?: boolean;
+  obstructionCheckPassed?: boolean;
+  positionReadable?: boolean;
+  checkedAt: string;
+}
+
+export interface ArmInterlockStateValidationInput {
+  status: ArmInterlockStatus;
+  requiredPosition?: ArmPosition;
+  operatorConfirmedPosition?: ArmPosition;
+}
+
+export type PhysicalGateKind =
+  | "TRIMMED_CARD_SIZE"
+  | "THICKNESS_MASS_LAYER_ANOMALY"
+  | "UNEXPECTED_HOLDER_OR_SLEEVE"
+  | "COATING_GLOSS_ANOMALY"
+  | "RESIDUE_ADHESIVE"
+  | "RECOLORING_RESTORATION"
+  | "EXCESSIVE_DUST"
+  | "FOREIGN_REFLECTIVE_MATERIAL"
+  | "FRONT_BACK_SANDWICH_MISMATCH"
+  | "CUSTODY_BREAK_AFTER_CERTIFICATION";
+
+export interface PhysicalGateDecision {
+  gate: PhysicalGateKind;
+  status: PhysicalGateStatus;
+  detail?: string;
+  evidenceArtifacts?: EvidenceArtifactRef[];
+  reviewRequired?: boolean;
+  resolved?: boolean;
+  reviewerId?: string;
+  decidedAt?: string;
+}
+
 export interface CenteringMeasurement {
   leftMm?: number;
   rightMm?: number;
@@ -393,6 +470,15 @@ export type AiGraderValidationIssueCode =
   | "INVALID_FUSION_ACTION"
   | "INVALID_FUSION_SCOPE"
   | "INVALID_DUST_CORRECTION"
+  | "INVALID_CALIBRATION"
+  | "CALIBRATION_STALE"
+  | "CALIBRATION_EXPIRED"
+  | "MISSING_CALIBRATION"
+  | "ARM_POSITION_CONFLICT"
+  | "ARM_GATE_BLOCKED"
+  | "MACRO_OBSTRUCTION_DETECTED"
+  | "PHYSICAL_GATE_REVIEW"
+  | "CERTIFICATE_BLOCKED"
   | "MISSING_FRAME"
   | "MICRO_EVIDENCE_INCOMPLETE"
   | "INVALID_ARRAY"
@@ -634,6 +720,45 @@ const DEVICE_TYPES = [
 
 const COORDINATE_UNITS = ["px", "mm", "micron", "degree", "bitmask"] as const;
 const DEVICE_HEALTH_STATUSES = ["PASS", "WARN", "FAIL"] as const;
+const PHYSICAL_GATE_STATUSES = ["PASS", "WARN", "FAIL", "REVIEW"] as const;
+const ARM_POSITIONS = ["ARM_IN", "ARM_OUT"] as const;
+const CALIBRATION_TYPES = [
+  "COLOR_CHECKER_CCM",
+  "MACRO_INTRINSICS",
+  "MACRO_FLAT_FIELD",
+  "STAGE_HOME",
+  "CARD_JIG_TRANSFORM",
+  "MICROSCOPE_PX_PER_MICRON",
+  "MICROSCOPE_FOCUS_BASELINE",
+  "LED_INTENSITY_HEALTH",
+  "ARM_INTERLOCK_HEALTH",
+] as const;
+const PHYSICAL_GATE_KINDS = [
+  "TRIMMED_CARD_SIZE",
+  "THICKNESS_MASS_LAYER_ANOMALY",
+  "UNEXPECTED_HOLDER_OR_SLEEVE",
+  "COATING_GLOSS_ANOMALY",
+  "RESIDUE_ADHESIVE",
+  "RECOLORING_RESTORATION",
+  "EXCESSIVE_DUST",
+  "FOREIGN_REFLECTIVE_MATERIAL",
+  "FRONT_BACK_SANDWICH_MISMATCH",
+  "CUSTODY_BREAK_AFTER_CERTIFICATION",
+] as const;
+export const DEFAULT_REQUIRED_CALIBRATION_TYPES: readonly CalibrationType[] = [
+  "COLOR_CHECKER_CCM",
+  "STAGE_HOME",
+  "CARD_JIG_TRANSFORM",
+  "MICROSCOPE_PX_PER_MICRON",
+  "MICROSCOPE_FOCUS_BASELINE",
+  "LED_INTENSITY_HEALTH",
+  "ARM_INTERLOCK_HEALTH",
+] as const;
+export const COLOR_CHECKER_MAX_MEAN_DELTA_E = 2.0;
+export const STAGE_TRANSFORM_MAX_RMS_RESIDUAL_MICRONS = 50;
+export const LED_MAX_CHANNEL_DEVIATION_PERCENT = 10;
+export const MICROSCOPE_SCALE_MAX_MISMATCH_PERCENT = 2;
+export const FOCUS_BASELINE_MAX_DROP_PERCENT = 15;
 
 const GRADING_MODE_VALUES = new Set<string>(GRADING_MODES);
 const CAPTURE_SIDE_VALUES = new Set<string>(CAPTURE_SIDES);
@@ -644,6 +769,10 @@ const GRADING_CAPTURE_KIND_VALUES = new Set<string>(GRADING_CAPTURE_KINDS);
 const DEVICE_TYPE_VALUES = new Set<string>(DEVICE_TYPES);
 const COORDINATE_UNIT_VALUES = new Set<string>(COORDINATE_UNITS);
 const DEVICE_HEALTH_STATUS_VALUES = new Set<string>(DEVICE_HEALTH_STATUSES);
+const PHYSICAL_GATE_STATUS_VALUES = new Set<string>(PHYSICAL_GATE_STATUSES);
+const ARM_POSITION_VALUES = new Set<string>(ARM_POSITIONS);
+const CALIBRATION_TYPE_VALUES = new Set<string>(CALIBRATION_TYPES);
+const PHYSICAL_GATE_KIND_VALUES = new Set<string>(PHYSICAL_GATE_KINDS);
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 const CONTAINER_DIGEST_RE = /^(?:sha256:)?[a-f0-9]{64}$/i;
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/;
@@ -764,6 +893,13 @@ function validateDateWindow(record: Record<string, unknown>, path: string, issue
   ) {
     issues.push(issue(`${path}.activeTo`, "INVALID_TIMESTAMP", "activeTo must be later than activeFrom."));
   }
+}
+
+function timestampMillis(value: unknown): number | undefined {
+  if (!hasValidTimestamp(value)) {
+    return undefined;
+  }
+  return Date.parse(String(value));
 }
 
 function validateNumericToleranceMap(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
@@ -2199,6 +2335,396 @@ export function validateStandardFusionOutput(
 
   const centeringResult = validateCenteringIgnoresMicroEvidence(value);
   issues.push(...centeringResult.issues.map((entry) => ({ ...entry, path: `${path}.${entry.path}` })));
+
+  return validationResult(issues);
+}
+
+function requireCalibrationMetric(
+  residuals: unknown,
+  fields: string[],
+  path: string,
+  issues: AiGraderValidationIssue[]
+): number | undefined {
+  const value = finiteRecordNumber(residuals, fields);
+  if (!isFiniteNumber(value)) {
+    issues.push(issue(path, "REQUIRED", `${path} is required for this calibration type.`));
+    return undefined;
+  }
+  return value;
+}
+
+function validateCalibrationThresholds(value: Record<string, unknown>, path: string, issues: AiGraderValidationIssue[]) {
+  const residuals = value.residuals;
+
+  switch (value.calibrationType) {
+    case "COLOR_CHECKER_CCM": {
+      const meanDeltaE = requireCalibrationMetric(residuals, ["meanPatchDeltaE", "meanDeltaE"], `${path}.residuals.meanDeltaE`, issues);
+      if (isFiniteNumber(meanDeltaE) && meanDeltaE > COLOR_CHECKER_MAX_MEAN_DELTA_E) {
+        issues.push(issue(`${path}.residuals.meanDeltaE`, "INVALID_CALIBRATION", "ColorChecker mean DeltaE must be <= 2.0."));
+      }
+      break;
+    }
+    case "CARD_JIG_TRANSFORM": {
+      const residual = requireCalibrationMetric(residuals, ["rmsResidualMicrons", "rmsResidualUm"], `${path}.residuals.rmsResidualMicrons`, issues);
+      if (isFiniteNumber(residual) && residual > STAGE_TRANSFORM_MAX_RMS_RESIDUAL_MICRONS) {
+        issues.push(issue(`${path}.residuals.rmsResidualMicrons`, "INVALID_CALIBRATION", "card-jig transform RMS residual must be <= 50 microns."));
+      }
+      break;
+    }
+    case "LED_INTENSITY_HEALTH": {
+      const deviation = requireCalibrationMetric(
+        residuals,
+        ["maxChannelDeviationPercent", "ledChannelDeviationPercent", "channelDeviationPercent"],
+        `${path}.residuals.maxChannelDeviationPercent`,
+        issues
+      );
+      if (isFiniteNumber(deviation) && deviation > LED_MAX_CHANNEL_DEVIATION_PERCENT) {
+        issues.push(issue(`${path}.residuals.maxChannelDeviationPercent`, "INVALID_CALIBRATION", "LED channel deviation must be <= 10%."));
+      }
+      break;
+    }
+    case "STAGE_HOME": {
+      if (recordBoolean(residuals, ["homeSuccess"]) !== true) {
+        issues.push(issue(`${path}.residuals.homeSuccess`, "INVALID_CALIBRATION", "ACRO home calibration must record homeSuccess=true."));
+      }
+      if (recordBoolean(residuals, ["positionReadable"]) !== true) {
+        issues.push(issue(`${path}.residuals.positionReadable`, "INVALID_CALIBRATION", "ACRO home calibration must record positionReadable=true."));
+      }
+      break;
+    }
+    case "MICROSCOPE_PX_PER_MICRON": {
+      const mismatch = requireCalibrationMetric(
+        residuals,
+        ["scaleMismatchPercent", "maxScaleMismatchPercent"],
+        `${path}.residuals.scaleMismatchPercent`,
+        issues
+      );
+      if (isFiniteNumber(mismatch) && mismatch > MICROSCOPE_SCALE_MAX_MISMATCH_PERCENT) {
+        issues.push(issue(`${path}.residuals.scaleMismatchPercent`, "INVALID_CALIBRATION", "microscope scale mismatch must be <= 2%."));
+      }
+      break;
+    }
+    case "MICROSCOPE_FOCUS_BASELINE": {
+      const drop = requireCalibrationMetric(
+        residuals,
+        ["focusScoreDropPercent", "maxFocusScoreDropPercent"],
+        `${path}.residuals.focusScoreDropPercent`,
+        issues
+      );
+      if (isFiniteNumber(drop) && drop > FOCUS_BASELINE_MAX_DROP_PERCENT) {
+        issues.push(issue(`${path}.residuals.focusScoreDropPercent`, "INVALID_CALIBRATION", "focus baseline drop must be <= 15%."));
+      }
+      break;
+    }
+    case "ARM_INTERLOCK_HEALTH": {
+      if (recordBoolean(residuals, ["interlockOperatorMismatch", "operatorMismatch"]) === true) {
+        issues.push(issue(`${path}.residuals.interlockOperatorMismatch`, "ARM_POSITION_CONFLICT", "arm interlock calibration must not show operator/hardware mismatch."));
+      }
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+export function validateCalibrationSnapshotContract(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "calibration";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "CalibrationSnapshotContract must be an object.")]);
+  }
+
+  ["id", "rigId", "validityStartsAt", "createdAt"].forEach((field) => requireString(value, field, path, issues));
+
+  if (!isNonEmptyString(value.calibrationType) || !CALIBRATION_TYPE_VALUES.has(value.calibrationType)) {
+    issues.push(issue(`${path}.calibrationType`, "INVALID_ENUM", "calibrationType must match the supported CalibrationType enum."));
+  }
+  validateStringRecord(value.componentSerials, `${path}.componentSerials`, issues);
+  requireStringArray(value.artifactKeys, `${path}.artifactKeys`, issues);
+
+  if (!Array.isArray(value.artifactChecksums)) {
+    issues.push(issue(`${path}.artifactChecksums`, "INVALID_ARRAY", "artifactChecksums must be an array."));
+  } else if (value.artifactChecksums.length === 0) {
+    issues.push(issue(`${path}.artifactChecksums`, "EMPTY_ARRAY", "artifactChecksums must include at least one checksum."));
+  } else {
+    value.artifactChecksums.forEach((entry, index) => {
+      if (!hasValidSha256(entry)) {
+        issues.push(issue(`${path}.artifactChecksums[${index}]`, "INVALID_CHECKSUM", "artifact checksum must be a 64-character hex SHA-256 digest."));
+      }
+    });
+  }
+
+  if (value.residuals != null && !isRecord(value.residuals)) {
+    issues.push(issue(`${path}.residuals`, "INVALID_RECORD", "residuals must be an object when provided."));
+  }
+  if (value.operatorId != null && !isNonEmptyString(value.operatorId)) {
+    issues.push(issue(`${path}.operatorId`, "REQUIRED", "operatorId must be non-empty when provided."));
+  }
+  if (!hasValidTimestamp(value.validityStartsAt)) {
+    issues.push(issue(`${path}.validityStartsAt`, "INVALID_TIMESTAMP", "validityStartsAt must be a valid timestamp string."));
+  }
+  if (!hasValidTimestamp(value.createdAt)) {
+    issues.push(issue(`${path}.createdAt`, "INVALID_TIMESTAMP", "createdAt must be a valid timestamp string."));
+  }
+  if (value.validityEndsAt != null && !hasValidTimestamp(value.validityEndsAt)) {
+    issues.push(issue(`${path}.validityEndsAt`, "INVALID_TIMESTAMP", "validityEndsAt must be a valid timestamp string when provided."));
+  }
+  if (
+    hasValidTimestamp(value.validityStartsAt) &&
+    hasValidTimestamp(value.validityEndsAt) &&
+    Date.parse(String(value.validityEndsAt)) <= Date.parse(String(value.validityStartsAt))
+  ) {
+    issues.push(issue(`${path}.validityEndsAt`, "INVALID_TIMESTAMP", "validityEndsAt must be later than validityStartsAt."));
+  }
+
+  validateCalibrationThresholds(value, path, issues);
+
+  return validationResult(issues);
+}
+
+export function validateCalibrationFreshness(
+  value: unknown,
+  options: CalibrationFreshnessOptions = {}
+): AiGraderValidationResult {
+  const issues = [...validateCalibrationSnapshotContract(value).issues];
+  const path = "calibration";
+
+  if (!isRecord(value)) {
+    return validationResult(issues);
+  }
+
+  const asOfMs = timestampMillis(options.asOf) ?? Date.now();
+  const startsAtMs = timestampMillis(value.validityStartsAt);
+  const endsAtMs = timestampMillis(value.validityEndsAt);
+  const createdAtMs = timestampMillis(value.createdAt);
+
+  if (isFiniteNumber(startsAtMs) && startsAtMs > asOfMs) {
+    issues.push(issue(`${path}.validityStartsAt`, "CALIBRATION_STALE", "calibration is not active yet."));
+  }
+  if (isFiniteNumber(endsAtMs) && endsAtMs <= asOfMs) {
+    issues.push(issue(`${path}.validityEndsAt`, "CALIBRATION_EXPIRED", "expired calibration blocks certifiable GradeRun."));
+  }
+  if (isFiniteNumber(createdAtMs) && isFiniteNumber(options.maxAgeHours)) {
+    const ageHours = (asOfMs - createdAtMs) / 3_600_000;
+    if (ageHours > options.maxAgeHours) {
+      issues.push(issue(`${path}.createdAt`, "CALIBRATION_STALE", "stale calibration blocks certifiable GradeRun."));
+    }
+  }
+  if (
+    isFiniteNumber(options.cardsSinceCalibration) &&
+    isFiniteNumber(options.maxCardsSinceCalibration) &&
+    options.cardsSinceCalibration > options.maxCardsSinceCalibration
+  ) {
+    issues.push(issue(`${path}.cardsSinceCalibration`, "CALIBRATION_STALE", "calibration card cadence has expired."));
+  }
+
+  return validationResult(issues);
+}
+
+export function validateRequiredCalibrationSet(
+  value: unknown,
+  options: RequiredCalibrationSetOptions = {}
+): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "calibrationSet";
+
+  if (!Array.isArray(value)) {
+    return validationResult([issue(path, "INVALID_ARRAY", "calibration set must be an array.")]);
+  }
+
+  const requiredTypes = options.requiredTypes ?? DEFAULT_REQUIRED_CALIBRATION_TYPES;
+  const activeTypes = new Set<string>();
+
+  value.forEach((snapshot, index) => {
+    const result = validateCalibrationFreshness(snapshot, options);
+    issues.push(...result.issues.map((entry) => ({ ...entry, path: `${path}[${index}].${entry.path}` })));
+
+    if (!isRecord(snapshot)) {
+      return;
+    }
+    if (isNonEmptyString(options.rigId) && snapshot.rigId !== options.rigId) {
+      issues.push(issue(`${path}[${index}].rigId`, "INVALID_CALIBRATION", "calibration rigId must match the active rig."));
+    }
+    if (isNonEmptyString(snapshot.calibrationType) && CALIBRATION_TYPE_VALUES.has(snapshot.calibrationType) && result.valid) {
+      activeTypes.add(snapshot.calibrationType);
+    }
+  });
+
+  requiredTypes.forEach((calibrationType) => {
+    if (!activeTypes.has(calibrationType)) {
+      issues.push(issue(`${path}.${calibrationType}`, "MISSING_CALIBRATION", `${calibrationType} calibration is required.`));
+    }
+  });
+
+  return validationResult(issues);
+}
+
+function validateArmInterlockStatusShape(value: unknown, path: string, issues: AiGraderValidationIssue[]): Record<string, unknown> | undefined {
+  if (!isRecord(value)) {
+    issues.push(issue(path, "INVALID_RECORD", `${path} must be an ArmInterlockStatus object.`));
+    return undefined;
+  }
+  if (!isNonEmptyString(value.hardwarePosition) || !ARM_POSITION_VALUES.has(value.hardwarePosition)) {
+    issues.push(issue(`${path}.hardwarePosition`, "INVALID_ENUM", "hardwarePosition must be ARM_IN or ARM_OUT."));
+  }
+  if (value.operatorConfirmedPosition != null && (!isNonEmptyString(value.operatorConfirmedPosition) || !ARM_POSITION_VALUES.has(value.operatorConfirmedPosition))) {
+    issues.push(issue(`${path}.operatorConfirmedPosition`, "INVALID_ENUM", "operatorConfirmedPosition must be ARM_IN or ARM_OUT when provided."));
+  }
+  if (!hasValidTimestamp(value.checkedAt)) {
+    issues.push(issue(`${path}.checkedAt`, "INVALID_TIMESTAMP", "checkedAt must be a valid timestamp string."));
+  }
+  ["obstructionDetected", "obstructionCheckPassed", "positionReadable"].forEach((field) => {
+    if (value[field] != null && typeof value[field] !== "boolean") {
+      issues.push(issue(`${path}.${field}`, "INVALID_TYPE", `${field} must be a boolean when provided.`));
+    }
+  });
+  if (value.positionReadable === false) {
+    issues.push(issue(`${path}.positionReadable`, "ARM_GATE_BLOCKED", "arm interlock position must be readable."));
+  }
+  if (
+    isNonEmptyString(value.hardwarePosition) &&
+    isNonEmptyString(value.operatorConfirmedPosition) &&
+    value.hardwarePosition !== value.operatorConfirmedPosition
+  ) {
+    issues.push(issue(`${path}.operatorConfirmedPosition`, "ARM_POSITION_CONFLICT", "hardware/operator disagreement maps to ARM_POSITION_CONFLICT."));
+  }
+  return value;
+}
+
+export function validateArmInterlockForState(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "armInterlock";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "ArmInterlockStateValidationInput must be an object.")]);
+  }
+
+  const status = validateArmInterlockStatusShape(value.status, `${path}.status`, issues);
+  const requiredPosition = value.requiredPosition;
+  if (requiredPosition != null && (!isNonEmptyString(requiredPosition) || !ARM_POSITION_VALUES.has(requiredPosition))) {
+    issues.push(issue(`${path}.requiredPosition`, "INVALID_ENUM", "requiredPosition must be ARM_IN or ARM_OUT when provided."));
+  }
+  if (status && isNonEmptyString(requiredPosition) && ARM_POSITION_VALUES.has(requiredPosition) && status.hardwarePosition !== requiredPosition) {
+    issues.push(issue(`${path}.status.hardwarePosition`, "ARM_GATE_BLOCKED", `hardware arm must be ${requiredPosition}.`));
+  }
+  if (value.operatorConfirmedPosition != null && status) {
+    if (!isNonEmptyString(value.operatorConfirmedPosition) || !ARM_POSITION_VALUES.has(value.operatorConfirmedPosition)) {
+      issues.push(issue(`${path}.operatorConfirmedPosition`, "INVALID_ENUM", "operatorConfirmedPosition must be ARM_IN or ARM_OUT when provided."));
+    } else if (status.hardwarePosition !== value.operatorConfirmedPosition) {
+      issues.push(issue(`${path}.operatorConfirmedPosition`, "ARM_POSITION_CONFLICT", "hardware/operator disagreement maps to ARM_POSITION_CONFLICT."));
+    }
+  }
+
+  return validationResult(issues);
+}
+
+export function validateMacroCaptureArmGate(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const status = validateArmInterlockStatusShape(value, "macroArmGate", issues);
+
+  if (status) {
+    issues.push(...validateArmInterlockForState({ status, requiredPosition: "ARM_OUT" }).issues.map((entry) => ({ ...entry, path: entry.path.replace("armInterlock", "macroArmGate") })));
+    if (status.obstructionDetected === true || status.obstructionCheckPassed !== true) {
+      issues.push(issue("macroArmGate.obstructionCheckPassed", "MACRO_OBSTRUCTION_DETECTED", "macro capture is blocked unless obstruction detection passes."));
+    }
+  }
+
+  return validationResult(issues);
+}
+
+export function validateMicroscopeCaptureArmGate(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const status = validateArmInterlockStatusShape(value, "microscopeArmGate", issues);
+
+  if (status) {
+    issues.push(...validateArmInterlockForState({ status, requiredPosition: "ARM_IN" }).issues.map((entry) => ({ ...entry, path: entry.path.replace("armInterlock", "microscopeArmGate") })));
+  }
+
+  return validationResult(issues);
+}
+
+function physicalGateStatus(value: unknown): PhysicalGateStatus | undefined {
+  if (isRecord(value) && isNonEmptyString(value.status) && PHYSICAL_GATE_STATUS_VALUES.has(value.status)) {
+    return value.status as PhysicalGateStatus;
+  }
+  return undefined;
+}
+
+export function requiresPhysicalGateReview(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.resolved === true) {
+    return false;
+  }
+  const status = physicalGateStatus(value);
+  return value.reviewRequired === true || status === "FAIL" || status === "REVIEW";
+}
+
+export function validatePhysicalGateResult(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "physicalGate";
+
+  if (!isRecord(value)) {
+    return validationResult([issue(path, "INVALID_RECORD", "PhysicalGateDecision must be an object.")]);
+  }
+
+  if (!isNonEmptyString(value.gate) || !PHYSICAL_GATE_KIND_VALUES.has(value.gate)) {
+    issues.push(issue(`${path}.gate`, "INVALID_ENUM", "gate must be a supported PhysicalGateKind."));
+  }
+  if (!isNonEmptyString(value.status) || !PHYSICAL_GATE_STATUS_VALUES.has(value.status)) {
+    issues.push(issue(`${path}.status`, "INVALID_ENUM", "status must be PASS, WARN, FAIL, or REVIEW."));
+  }
+  if (value.detail != null && typeof value.detail !== "string") {
+    issues.push(issue(`${path}.detail`, "INVALID_TYPE", "detail must be a string when provided."));
+  }
+  if (value.reviewRequired != null && typeof value.reviewRequired !== "boolean") {
+    issues.push(issue(`${path}.reviewRequired`, "INVALID_TYPE", "reviewRequired must be a boolean when provided."));
+  }
+  if (value.resolved != null && typeof value.resolved !== "boolean") {
+    issues.push(issue(`${path}.resolved`, "INVALID_TYPE", "resolved must be a boolean when provided."));
+  }
+  if (value.reviewerId != null && !isNonEmptyString(value.reviewerId)) {
+    issues.push(issue(`${path}.reviewerId`, "REQUIRED", "reviewerId must be non-empty when provided."));
+  }
+  if (value.decidedAt != null && !hasValidTimestamp(value.decidedAt)) {
+    issues.push(issue(`${path}.decidedAt`, "INVALID_TIMESTAMP", "decidedAt must be a valid timestamp when provided."));
+  }
+  if (Array.isArray(value.evidenceArtifacts)) {
+    value.evidenceArtifacts.forEach((artifact, index) => {
+      validateEvidenceArtifactRef(artifact, `${path}.evidenceArtifacts[${index}]`, issues);
+    });
+  } else if (value.evidenceArtifacts != null) {
+    issues.push(issue(`${path}.evidenceArtifacts`, "INVALID_ARRAY", "evidenceArtifacts must be an array when provided."));
+  }
+
+  if (requiresPhysicalGateReview(value)) {
+    issues.push(issue(path, "PHYSICAL_GATE_REVIEW", "physical gate requires authorized review before certificate issuance."));
+  }
+  if (value.resolved === true && !isNonEmptyString(value.reviewerId)) {
+    issues.push(issue(`${path}.reviewerId`, "REQUIRED", "resolved physical gates require reviewerId."));
+  }
+
+  return validationResult(issues);
+}
+
+export function validateCertificateAllowedByPhysicalGates(value: unknown): AiGraderValidationResult {
+  const issues: AiGraderValidationIssue[] = [];
+  const path = "physicalGates";
+
+  if (!Array.isArray(value)) {
+    return validationResult([issue(path, "INVALID_ARRAY", "physical gates must be an array.")]);
+  }
+
+  value.forEach((gate, index) => {
+    const result = validatePhysicalGateResult(gate);
+    const nonBlockingIssues = result.issues.filter((entry) => entry.code !== "PHYSICAL_GATE_REVIEW");
+    issues.push(...nonBlockingIssues.map((entry) => ({ ...entry, path: `${path}[${index}].${entry.path}` })));
+    if (requiresPhysicalGateReview(gate)) {
+      issues.push(issue(`${path}[${index}]`, "CERTIFICATE_BLOCKED", "unresolved physical gate blocks certificate issuance."));
+    }
+  });
 
   return validationResult(issues);
 }

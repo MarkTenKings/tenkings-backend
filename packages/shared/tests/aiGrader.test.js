@@ -11,23 +11,32 @@ const {
   buildRuntimeEnvironmentFingerprint,
   buildStandardSpotPlan,
   normalizeBackSideCardCoordinates,
+  requiresPhysicalGateReview,
   sortAndSelectStandardSurfaceSuspects,
   transitionOrchestratorState,
   validateAlgorithmVersionSeed,
+  validateArmInterlockForState,
   validateCardToStageTransformInput,
+  validateCalibrationFreshness,
+  validateCalibrationSnapshotContract,
   validateCaptureManifest,
   validateCaptureManifestForMode,
   validateCaptureManifestFrame,
   validateCenteringIgnoresMicroEvidence,
+  validateCertificateAllowedByPhysicalGates,
   validateDeviceCapabilityManifest,
   validateDustCorrectionBounds,
   validateFusionAction,
   validateMacroPipelineOutput,
   validateMacroSuspectRegion,
+  validateMacroCaptureArmGate,
+  validateMicroscopeCaptureArmGate,
   validateMicroPackageForFusion,
   validateMicroSpotCaptureFrames,
   validateMicroSpotCapturePackage,
+  validatePhysicalGateResult,
   validateReplayTolerance,
+  validateRequiredCalibrationSet,
   validateRuntimeEnvironmentFingerprint,
   validateStandardFusionInput,
   validateStandardFusionOutput,
@@ -366,6 +375,75 @@ function standardFusionOutput(actions, overrides = {}) {
       ...gradeRunDraft,
     },
     ...outputOverrides,
+  };
+}
+
+function calibrationResiduals(calibrationType, overrides = {}) {
+  const defaults = {
+    COLOR_CHECKER_CCM: { meanDeltaE: 1.2 },
+    MACRO_INTRINSICS: { reprojectionErrorPx: 0.5 },
+    MACRO_FLAT_FIELD: { maxFalloffPercent: 4 },
+    STAGE_HOME: { homeSuccess: true, positionReadable: true },
+    CARD_JIG_TRANSFORM: { rmsResidualMicrons: 25 },
+    MICROSCOPE_PX_PER_MICRON: { scaleMismatchPercent: 1.2 },
+    MICROSCOPE_FOCUS_BASELINE: { focusScoreDropPercent: 5 },
+    LED_INTENSITY_HEALTH: { maxChannelDeviationPercent: 6 },
+    ARM_INTERLOCK_HEALTH: { interlockOperatorMismatch: false },
+  };
+  return {
+    ...defaults[calibrationType],
+    ...overrides,
+  };
+}
+
+function calibrationSnapshot(calibrationType, overrides = {}) {
+  return {
+    id: `calibration-${calibrationType.toLowerCase()}`,
+    rigId: "rig-1",
+    calibrationType,
+    componentSerials: { target: "TARGET-1", device: "DEVICE-1" },
+    artifactKeys: [`calibrations/rig-1/${calibrationType}.json`],
+    artifactChecksums: [SHA_256],
+    residuals: calibrationResiduals(calibrationType),
+    operatorId: "operator-1",
+    validityStartsAt: "2026-05-28T00:00:00.000Z",
+    validityEndsAt: "2026-05-29T00:00:00.000Z",
+    createdAt: "2026-05-28T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function requiredCalibrationSet() {
+  return [
+    calibrationSnapshot("COLOR_CHECKER_CCM"),
+    calibrationSnapshot("STAGE_HOME"),
+    calibrationSnapshot("CARD_JIG_TRANSFORM"),
+    calibrationSnapshot("MICROSCOPE_PX_PER_MICRON"),
+    calibrationSnapshot("MICROSCOPE_FOCUS_BASELINE"),
+    calibrationSnapshot("LED_INTENSITY_HEALTH"),
+    calibrationSnapshot("ARM_INTERLOCK_HEALTH"),
+  ];
+}
+
+function armStatus(overrides = {}) {
+  return {
+    hardwarePosition: "ARM_OUT",
+    operatorConfirmedPosition: "ARM_OUT",
+    obstructionDetected: false,
+    obstructionCheckPassed: true,
+    positionReadable: true,
+    checkedAt: ISO_TIME,
+    ...overrides,
+  };
+}
+
+function physicalGate(overrides = {}) {
+  return {
+    gate: "TRIMMED_CARD_SIZE",
+    status: "PASS",
+    detail: "within calibrated size tolerance",
+    evidenceArtifacts: [artifact({ storageKey: "gates/trimmed-card-size.json" })],
+    ...overrides,
   };
 }
 
@@ -797,6 +875,122 @@ test("validateStandardFusionInput requires algorithm, threshold, and runtime ref
 
   assert.equal(result.valid, false);
   assert.ok(issueCodes(result).includes("REQUIRED"));
+});
+
+test("validateRequiredCalibrationSet accepts a valid calibration set", () => {
+  const result = validateRequiredCalibrationSet(requiredCalibrationSet(), {
+    asOf: ISO_TIME,
+    rigId: "rig-1",
+    maxAgeHours: 48,
+  });
+
+  assert.equal(result.valid, true);
+});
+
+test("validateCalibrationFreshness rejects stale and expired calibration", () => {
+  const expired = validateCalibrationFreshness(
+    calibrationSnapshot("COLOR_CHECKER_CCM", {
+      validityEndsAt: "2026-05-28T11:00:00.000Z",
+    }),
+    { asOf: ISO_TIME }
+  );
+  const stale = validateCalibrationFreshness(
+    calibrationSnapshot("CARD_JIG_TRANSFORM", {
+      createdAt: "2026-05-27T00:00:00.000Z",
+    }),
+    { asOf: ISO_TIME, maxAgeHours: 2 }
+  );
+
+  assert.equal(expired.valid, false);
+  assert.equal(stale.valid, false);
+  assert.ok(issueCodes(expired).includes("CALIBRATION_EXPIRED"));
+  assert.ok(issueCodes(stale).includes("CALIBRATION_STALE"));
+});
+
+test("validateCalibrationSnapshotContract rejects failing residual, DeltaE, and LED deviation", () => {
+  const colorResult = validateCalibrationSnapshotContract(
+    calibrationSnapshot("COLOR_CHECKER_CCM", {
+      residuals: calibrationResiduals("COLOR_CHECKER_CCM", { meanDeltaE: 2.1 }),
+    })
+  );
+  const transformResult = validateCalibrationSnapshotContract(
+    calibrationSnapshot("CARD_JIG_TRANSFORM", {
+      residuals: calibrationResiduals("CARD_JIG_TRANSFORM", { rmsResidualMicrons: 51 }),
+    })
+  );
+  const ledResult = validateCalibrationSnapshotContract(
+    calibrationSnapshot("LED_INTENSITY_HEALTH", {
+      residuals: calibrationResiduals("LED_INTENSITY_HEALTH", { maxChannelDeviationPercent: 11 }),
+    })
+  );
+
+  assert.equal(colorResult.valid, false);
+  assert.equal(transformResult.valid, false);
+  assert.equal(ledResult.valid, false);
+  assert.ok(issueCodes(colorResult).includes("INVALID_CALIBRATION"));
+  assert.ok(issueCodes(transformResult).includes("INVALID_CALIBRATION"));
+  assert.ok(issueCodes(ledResult).includes("INVALID_CALIBRATION"));
+});
+
+test("validateMacroCaptureArmGate blocks macro capture when arm is IN", () => {
+  const result = validateMacroCaptureArmGate(
+    armStatus({
+      hardwarePosition: "ARM_IN",
+      operatorConfirmedPosition: "ARM_IN",
+      obstructionCheckPassed: true,
+    })
+  );
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("ARM_GATE_BLOCKED"));
+});
+
+test("validateMicroscopeCaptureArmGate blocks microscope capture when arm is OUT", () => {
+  const result = validateMicroscopeCaptureArmGate(armStatus({ hardwarePosition: "ARM_OUT" }));
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("ARM_GATE_BLOCKED"));
+});
+
+test("validateArmInterlockForState detects operator and hardware conflict", () => {
+  const result = validateArmInterlockForState({
+    status: armStatus({
+      hardwarePosition: "ARM_IN",
+      operatorConfirmedPosition: "ARM_OUT",
+    }),
+    requiredPosition: "ARM_IN",
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("ARM_POSITION_CONFLICT"));
+});
+
+test("validatePhysicalGateResult handles PASS, WARN, FAIL, and REVIEW behavior", () => {
+  const passResult = validatePhysicalGateResult(physicalGate({ status: "PASS" }));
+  const warnResult = validatePhysicalGateResult(physicalGate({ status: "WARN" }));
+  const failResult = validatePhysicalGateResult(physicalGate({ status: "FAIL", detail: "trimmed size out of bounds" }));
+  const reviewResult = validatePhysicalGateResult(physicalGate({ status: "REVIEW", detail: "manual review required" }));
+
+  assert.equal(passResult.valid, true);
+  assert.equal(warnResult.valid, true);
+  assert.equal(failResult.valid, false);
+  assert.equal(reviewResult.valid, false);
+  assert.equal(requiresPhysicalGateReview(physicalGate({ status: "PASS" })), false);
+  assert.equal(requiresPhysicalGateReview(physicalGate({ status: "WARN" })), false);
+  assert.equal(requiresPhysicalGateReview(physicalGate({ status: "FAIL" })), true);
+  assert.equal(requiresPhysicalGateReview(physicalGate({ status: "REVIEW" })), true);
+  assert.ok(issueCodes(failResult).includes("PHYSICAL_GATE_REVIEW"));
+  assert.ok(issueCodes(reviewResult).includes("PHYSICAL_GATE_REVIEW"));
+});
+
+test("validateCertificateAllowedByPhysicalGates blocks unresolved physical gate", () => {
+  const result = validateCertificateAllowedByPhysicalGates([
+    physicalGate({ status: "PASS" }),
+    physicalGate({ gate: "EXCESSIVE_DUST", status: "REVIEW", detail: "clean and reshoot required" }),
+  ]);
+
+  assert.equal(result.valid, false);
+  assert.ok(issueCodes(result).includes("CERTIFICATE_BLOCKED"));
 });
 
 test("buildInitialAiGraderAlgorithmVersions returns valid provenance seeds", () => {

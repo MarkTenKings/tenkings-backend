@@ -17458,6 +17458,27 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-28 - AI Grader Phase 8 calibration and gate contract helpers
+
+### Summary
+- Implemented Phase 8 as pure shared calibration, arm interlock, and physical gate contract helpers in `@tenkings/shared`.
+- Added `CalibrationType`, `CalibrationSnapshotContract`, arm interlock types, physical gate types, and validators for calibration snapshots/freshness/sets, macro and microscope arm gates, physical gate decisions, and certificate blocking.
+- Enforced v5 thresholds for expired/stale calibration, card-jig RMS residual <=50 microns, ColorChecker mean DeltaE <=2.0, LED channel deviation <=10%, macro capture arm OUT plus obstruction pass, microscope capture arm IN, arm conflict detection, and unresolved physical-gate certificate blockers.
+- Added tests for valid calibration set, stale/expired calibration, failing residual/DeltaE/LED deviation, macro and microscope arm blocking, arm conflict, PASS/WARN/FAIL/REVIEW physical gate behavior, and unresolved gate certificate blocking.
+- No real sensor reads, hardware interlock driver, camera preview obstruction implementation, calibration scripts, DB writes, migrations, hardware drivers, capture code, grading math, auth algorithms, frontend pages, reports, deploys, restarts, runtime DB operations, destructive operations, or Phase 9 work were performed.
+
+### Files Changed
+- `packages/shared/src/aiGrader.ts`
+- `packages/shared/src/index.ts`
+- `packages/shared/tests/aiGrader.test.js`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/shared build` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 86 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader Phase 7 committed
 
 ### Summary
