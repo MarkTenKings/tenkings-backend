@@ -18047,6 +18047,31 @@ By enabling Rip It Live, I confirm:
 - AI Grader Prisma migration remains committed but unapplied.
 - Do not start hardware/capture, image-processing/grading math, frontend/API exposure, auth algorithms, reports, PDFs, migrations, or runtime DB operations without a dedicated approved phase.
 
+## 2026-05-29 - AI Grader grade run persistence helpers
+
+### Summary
+- Created branch `feature/ai-grader-grade-run-persistence` from fetched `origin/main` at `acd95804b62e690bef9ce2355dd9db07a223c5b2`.
+- Added injectable database service helpers for the next backend foundation slice only.
+- `persistMicroSpotPackage` validates tenant/session scope through `CaptureSession`, validates shared `MicroSpotCapturePackage`, requires EDR, polarized, and FLC LED frame evidence, and persists package/frame metadata as `EvidenceArtifact` records.
+- `createGradeRunDraft` creates PENDING/RUNNING GradeRun data with manifest, algorithm, threshold, runtime, macro/micro measurement, and input checksum references without computing grades.
+- `finalizeGradeRun` completes GradeRun records with finalGrades, fusionActions, outputChecksum, confidence, and warnings; STANDARD completion is blocked without fusion actions.
+- `linkEvidenceArtifact` validates artifact checksum/source linkage and verifies captureSession, gradeRun, authRun, and certificate references within tenant scope before writing.
+- No Prisma schema changes, migration files, frontend/API routes, hardware/capture code, image-processing/grading math, auth algorithms, report/PDF work, migrations, deploys, restarts, runtime DB operations, or `RUN_DB_MIGRATIONS=true` changes were performed.
+
+### Files Changed
+- `packages/database/src/aiGraderService.ts`
+- `packages/database/tests/aiGraderService.test.js`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 28 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`; Next.js still reports existing `<img>` lint warnings in admin pages.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary
