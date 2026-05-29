@@ -18267,3 +18267,34 @@ By enabling Rip It Live, I confirm:
 - AI Grader Prisma migration remains committed but unapplied.
 - AI Grader API routes and UI write actions remain disabled unless `AI_GRADER_API_ENABLED=true`; do not enable them in production until migration and runtime rollout are explicitly approved.
 - Do not start hardware/capture, image-processing/grading math, CMYK/auth algorithms, report UI, PDFs, migrations, or runtime DB operations without a dedicated approved phase.
+
+## 2026-05-29 - AI Grader migration readiness pass
+
+### Summary
+- Created branch `feature/ai-grader-migration-readiness` from latest `origin/main` at `49c2d3b71a10026b041dbae1e9844463b90d78be`.
+- Confirmed the branch is not detached.
+- Identified the committed AI Grader migration: `packages/database/prisma/migrations/20260528120000_ai_grader_v5_foundation/migration.sql`.
+- `process.env.DATABASE_URL` was unset; no real local `.env` file was present.
+- `psql`, `pg_isready`, and `docker` were unavailable, so no safe disposable local Postgres path existed in this environment.
+- The migration was not applied. Static review and schema/build/test validation were completed only.
+- Added readiness report: `docs/ai-grader-migration-readiness.md`.
+
+### Findings
+- Static SQL review found additive DDL only: new enums, tables, indexes, and foreign keys.
+- No `DROP`, `ALTER TYPE`, `ALTER TABLE ... DROP`, or `ALTER TABLE ... ALTER COLUMN` statements were found.
+- Primary remaining readiness blocker is execution on a disposable local/test Postgres target.
+- Recommendation remains to keep `AI_GRADER_API_ENABLED` disabled until migration execution and runtime rollout are explicitly approved.
+
+### Validation Evidence
+- `DATABASE_URL=postgresql://<user>:<redacted>@localhost:5432/tenkings_ai_grader_readiness pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- Local warnings only: Node `v25.6.1`, repo expects `20.x`; Next.js still reports existing `<img>` lint warnings in unrelated admin pages.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.

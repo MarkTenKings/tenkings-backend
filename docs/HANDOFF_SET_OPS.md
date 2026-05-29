@@ -9768,3 +9768,20 @@ Build Set Ops UI flow with:
 - No migrations, `RUN_DB_MIGRATIONS=true`, manual deploy command, runtime DB operation, deploy restart, or next AI Grader phase work was run during merge verification.
 - AI Grader API routes and UI write actions remain disabled unless `AI_GRADER_API_ENABLED=true`; keep the API disabled in production until the migration and runtime rollout are explicitly approved.
 - Continue to avoid hardware/capture, image-processing/grading math, CMYK/auth algorithms, reports, PDFs, migrations, runtime DB operations, unsafe public routes, and DB-backed UI calls unless the existing API feature gate allows them.
+
+## Session Update (2026-05-29, AI Grader migration readiness pass)
+- Branch: `feature/ai-grader-migration-readiness`, created from `origin/main` at `49c2d3b71a10026b041dbae1e9844463b90d78be`.
+- AI Grader migration reviewed: `packages/database/prisma/migrations/20260528120000_ai_grader_v5_foundation/migration.sql`.
+- Disposable DB execution was blocked because `DATABASE_URL` was unset and local Postgres/Docker tooling was unavailable (`psql`, `pg_isready`, and `docker` not found).
+- No migration apply/status command was run against any database.
+- Prisma schema validation passed with a dummy localhost URL used only for validation:
+  - `DATABASE_URL=postgresql://<user>:<redacted>@localhost:5432/tenkings_ai_grader_readiness pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+- Static SQL review found additive DDL only: new enums, tables, indexes, and foreign keys. No `DROP`, `ALTER TYPE`, `ALTER TABLE ... DROP`, or `ALTER TABLE ... ALTER COLUMN` statements were found.
+- Added readiness report: `docs/ai-grader-migration-readiness.md`.
+- Validation:
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, and no runtime DB operation against a real app DB.
+- Remaining required step before staging/prod approval: run `prisma migrate deploy/status` against a disposable local/test Postgres target, verify the AI Grader objects exist, then proceed through the approved staging/prod migration window with backups and `AI_GRADER_API_ENABLED` still disabled.
