@@ -73,6 +73,18 @@
   - Docker image job now explicitly requests `contents: read` and `packages: write`.
   - Scope is limited to `.github/workflows/ci.yml` and handoff docs.
   - No AI Grader implementation, migration, manual deploy, runtime DB operation, or `RUN_DB_MIGRATIONS=true` change was made.
+- PR #7 merged the GHCR permissions fix:
+  - PR: `https://github.com/MarkTenKings/tenkings-backend/pull/7`
+  - merge commit/final `origin/main` HEAD: `1e42c381d6dfef8c146c3d0cdac5cd50c625f519`
+  - post-merge GitHub Actions run `26611172590` succeeded
+  - GHCR Docker image push passed for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw
+  - Vercel production deploy ran automatically and succeeded
+  - user reported no migrations, no `RUN_DB_MIGRATIONS=true`, no runtime DB operations, and no manual deploy commands
+- Next AI Grader service-layer branch prepared:
+  - handoff docs on `fix/ghcr-package-permissions` committed/pushed as `60c73dcd770fae672b7a6390d43c97f6469060e8` (`docs: record ghcr permission fix merge`)
+  - branch `feature/ai-grader-service-foundation` created directly from fetched `origin/main` at `1e42c381d6dfef8c146c3d0cdac5cd50c625f519`
+  - local `main` could not be checked out in this worktree because a sibling worktree has `main` checked out with a dirty `docs/handoffs/SESSION_LOG.md`; no changes were pulled over that dirty worktree
+  - final reported status: `feature/ai-grader-service-foundation...origin/main`
 - Draft migration remains unapplied; migration execution still requires explicit approval and a dedicated readiness pass.
 - No manual deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
 
