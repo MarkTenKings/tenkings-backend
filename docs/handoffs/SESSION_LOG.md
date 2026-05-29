@@ -18147,3 +18147,51 @@ By enabling Rip It Live, I confirm:
 ### Remaining Guardrails
 - AI Grader Prisma migration remains committed but unapplied.
 - Do not start hardware/capture, image-processing/grading math, frontend UI, auth algorithms, reports, PDFs, migrations, or runtime DB operations without a dedicated approved phase.
+
+## 2026-05-29 - AI Grader admin API scaffold
+
+### Summary
+- Part A completed before this implementation:
+  - PR #12 was merged into `main` with merge commit `f8e96a5b45d8a2a81c77b90b4ee1cdb2b35b3639`.
+  - PR #12 post-merge GitHub Actions run `26627221293` succeeded.
+  - PR #12 Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/BcDTwS5HhckFrMy6MM61evVgg7GG`.
+  - Handoff docs were updated and pushed to `main` as `7af0c8c4034d3d16d012e78c465a22e5e8d9fa39`.
+  - The docs-only GitHub Actions run `26627514363` and Vercel production deploy `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/EfJBr4KtG2b1WgvaNTBpf2np43z4` both succeeded.
+- Created branch `feature/ai-grader-admin-api-scaffold` from verified `origin/main` at `7af0c8c4034d3d16d012e78c465a22e5e8d9fa39`.
+- Added a server-only admin AI Grader API scaffold behind `AI_GRADER_API_ENABLED=true`.
+- The disabled feature gate returns a clear `AI_GRADER_API_DISABLED` response before admin auth or AI Grader service loading.
+- Added a catch-all admin API route for status/health plus thin persistence calls:
+  - `GET /api/admin/ai-grader/status`
+  - `GET /api/admin/ai-grader/health`
+  - `POST /api/admin/ai-grader/capture-sessions/draft`
+  - `POST /api/admin/ai-grader/orchestrator/transition`
+  - `POST /api/admin/ai-grader/macro/suspect-regions`
+  - `POST /api/admin/ai-grader/grade-runs/draft`
+  - `POST /api/admin/ai-grader/grade-runs/finalize`
+  - `POST /api/admin/ai-grader/auth-runs/draft`
+  - `POST /api/admin/ai-grader/auth-runs/finalize`
+- Runtime adapter lazy-loads the existing admin auth helper and injectable AI Grader database service only after the feature gate passes.
+- Tests use mocked auth/service dependencies and do not require a Prisma singleton or runtime DB call.
+- No frontend UI, hardware/capture code, image-processing/grading math, CMYK/auth algorithms, report/PDF work, migrations, deploys, restarts, runtime DB operations, or `RUN_DB_MIGRATIONS=true` changes were performed.
+
+### Files Changed
+- `frontend/nextjs-app/lib/server/aiGraderApi.ts`
+- `frontend/nextjs-app/lib/server/aiGraderApiRuntime.ts`
+- `frontend/nextjs-app/pages/api/admin/ai-grader/[...action].ts`
+- `frontend/nextjs-app/tests/aiGraderApi.test.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts` -> pass, 6 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`; Next.js still reports existing `<img>` lint warnings and existing Browserslist/Tailwind warnings.
+
+### Remaining Guardrails
+- AI Grader Prisma migration remains committed but unapplied.
+- The admin API scaffold is disabled unless `AI_GRADER_API_ENABLED=true`; do not enable it in production until the AI Grader tables have been migrated and a dedicated runtime rollout is approved.
+- Continue to avoid migrations, `RUN_DB_MIGRATIONS=true`, manual deploys/restarts, runtime DB operations, hardware/capture, image-processing/grading math, CMYK/auth algorithms, report UI, and PDFs without an explicit approved phase.
