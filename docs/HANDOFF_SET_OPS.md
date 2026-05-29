@@ -60,8 +60,21 @@
   - PR #6 open, ready for review, mergeable
   - CI Install & Build, Docker images, Vercel, and Vercel Preview Comments all pass
   - Vercel production builds now skip Prisma migrations by default; `migrate:deploy` only runs when `RUN_DB_MIGRATIONS=true`
+- PR #6 was merged into `main`:
+  - cleanup commit before merge: `fdf90b967e824bceb36dea9404b1cdfbe13ad2e3`
+  - merge commit: `4bc7ad26444c35b7fad6bc808ba7cbc2b2fb55bb`
+  - final `origin/main` HEAD: `4bc7ad26444c35b7fad6bc808ba7cbc2b2fb55bb`
+  - PR merged at `2026-05-29T00:08:31Z`
+- Post-merge Vercel production deployment ran automatically and completed successfully.
+- User reported they did not run migrations manually, did not set `RUN_DB_MIGRATIONS=true`, did not run deploy commands manually, and did not run runtime DB operations.
+- Vercel build-log access was not available through the checked status API, so the migration-skip line was not directly quoted; the build script gate is present and `RUN_DB_MIGRATIONS` was unset in the session.
+- Post-merge GitHub Actions run `26609815377` failed in the Docker image matrix at GHCR push with `denied: installation not allowed to Create organization package`; logs showed `GITHUB_TOKEN` had Packages: read, so this appears to be a package permission/publishing issue, not an AI Grader build failure.
+- GHCR permissions follow-up is on branch `fix/ghcr-package-permissions`:
+  - Docker image job now explicitly requests `contents: read` and `packages: write`.
+  - Scope is limited to `.github/workflows/ci.yml` and handoff docs.
+  - No AI Grader implementation, migration, manual deploy, runtime DB operation, or `RUN_DB_MIGRATIONS=true` change was made.
 - Draft migration remains unapplied; migration execution still requires explicit approval and a dedicated readiness pass.
-- No merge, deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
+- No manual deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)
 - Phase 10 evidence, certificate, custody, and public-report contract helpers are committed on `feature/ai-grader-v5-foundation`.
