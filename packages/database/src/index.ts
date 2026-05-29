@@ -34,3 +34,4 @@ export {
 export * from "./bytebotLiteJobs";
 export * from "./mint";
 export * from "./batches";
+export * from "./aiGraderService";

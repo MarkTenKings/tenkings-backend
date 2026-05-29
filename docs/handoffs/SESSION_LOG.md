@@ -17890,6 +17890,64 @@ By enabling Rip It Live, I confirm:
 - Any migration execution still requires explicit approval and a dedicated readiness pass.
 - Service/hardware implementation has not started.
 
+## 2026-05-28 - GHCR package publishing permission fix merged
+
+### Summary
+- User reported PR #7 was opened and merged.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/7`.
+- Merge commit/final `origin/main` HEAD: `1e42c381d6dfef8c146c3d0cdac5cd50c625f519`.
+- Post-merge GitHub Actions run `26611172590` succeeded.
+- GHCR Docker image push passed for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy ran automatically and succeeded.
+- User reported no migrations, no `RUN_DB_MIGRATIONS=true`, no runtime DB operations, and no manual deploy commands.
+
+### Remaining Guardrails
+- Draft AI Grader migration remains unapplied.
+- Any migration execution still requires explicit approval and a dedicated readiness pass.
+- Service/hardware implementation has not started.
+
+## 2026-05-28 - AI Grader service branch prepared
+
+### Summary
+- User reported the handoff docs on `fix/ghcr-package-permissions` were committed and pushed as `60c73dcd770fae672b7a6390d43c97f6469060e8` (`docs: record ghcr permission fix merge`).
+- Created new branch `feature/ai-grader-service-foundation` directly from fetched `origin/main` at `1e42c381d6dfef8c146c3d0cdac5cd50c625f519`.
+- Final reported status: `## feature/ai-grader-service-foundation...origin/main`.
+- Local `main` could not be checked out in this worktree because a sibling worktree has `main` checked out with a dirty `docs/handoffs/SESSION_LOG.md`; no changes were pulled over that dirty worktree.
+- No migrations, runtime DB operations, manual deploys, or `RUN_DB_MIGRATIONS=true` changes were run.
+
+### Next Guardrail
+- Continue AI Grader service-layer work on `feature/ai-grader-service-foundation`.
+- Draft AI Grader migration remains unapplied until explicit approval and a dedicated migration readiness pass.
+
+## 2026-05-29 - AI Grader database service helpers
+
+### Summary
+- Implemented the AI Grader service-layer foundation slice in the database package only.
+- Added injectable, mocked-client persistence helpers for:
+  - creating `CaptureSession` draft records
+  - recording `CaptureManifest` payloads with explicit `checksumSha256` -> Prisma `checksum` mapping
+  - recording `EvidenceArtifact` metadata
+  - recording `AuditEvent` entries
+  - reading `CaptureSession` state by tenant/session id
+- Used shared validators for `CaptureManifest` and `EvidenceArtifactContract`.
+- Kept helper typing structural so local builds do not require regenerating Prisma client or touching a database while the AI Grader migration remains unapplied.
+- Added mocked `node:test` coverage for the approved helper paths and validation rejections.
+- No Prisma schema changes, migration files, frontend routes, hardware/capture code, grading math, auth algorithms, report UI/PDF work, migrations, deploys, restarts, runtime DB operations, or production DB calls were performed.
+
+### Files Changed
+- `packages/database/src/aiGraderService.ts`
+- `packages/database/src/index.ts`
+- `packages/database/tests/aiGraderService.test.js`
+- `packages/database/package.json`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 8 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary
