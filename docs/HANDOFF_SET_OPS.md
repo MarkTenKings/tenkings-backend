@@ -9676,3 +9676,12 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app build` -> pass.
   - `git diff --check` -> pass.
 - Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no manual deploys/restarts, no runtime DB operations, no frontend/API routes, no hardware/capture, no image-processing/grading math, no CMYK/auth algorithms, and no report UI/PDF work.
+
+## Session Update (2026-05-29, AI Grader auth/certificate persistence PR #12 merged)
+- PR #12 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/12`.
+- Merge commit/final post-merge `origin/main` HEAD before this handoff docs update: `f8e96a5b45d8a2a81c77b90b4ee1cdb2b35b3639`.
+- GitHub Actions post-merge run `26627221293` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/BcDTwS5HhckFrMy6MM61evVgg7GG`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- No migrations, `RUN_DB_MIGRATIONS=true`, manual deploy command, runtime DB operation, deploy restart, or next AI Grader phase work was run during merge verification.
+- Next approved slice is AI Grader admin API scaffold, feature-gated off by default; continue to avoid frontend UI, hardware/capture, image-processing/grading math, CMYK/auth algorithms, reports, PDFs, migrations, and runtime DB operations.

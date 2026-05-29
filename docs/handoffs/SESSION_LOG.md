@@ -18132,3 +18132,18 @@ By enabling Rip It Live, I confirm:
 - `pnpm --filter @tenkings/nextjs-app build` -> pass.
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`; Next.js still reports existing `<img>` lint warnings in admin pages.
+
+## 2026-05-29 - AI Grader auth/certificate persistence PR #12 merged
+
+### Summary
+- PR #12 merged into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/12`.
+- Merge commit/final post-merge `origin/main` HEAD before this handoff docs update: `f8e96a5b45d8a2a81c77b90b4ee1cdb2b35b3639`.
+- Post-merge GitHub Actions run `26627221293` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/BcDTwS5HhckFrMy6MM61evVgg7GG`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- No migrations, `RUN_DB_MIGRATIONS=true`, manual deploy command, runtime DB operation, deploy restart, or next AI Grader phase work was run during the merge verification.
+
+### Remaining Guardrails
+- AI Grader Prisma migration remains committed but unapplied.
+- Do not start hardware/capture, image-processing/grading math, frontend UI, auth algorithms, reports, PDFs, migrations, or runtime DB operations without a dedicated approved phase.
