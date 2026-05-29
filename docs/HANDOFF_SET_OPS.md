@@ -9758,3 +9758,13 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app build` -> pass.
 - Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation, no hardware/capture code, no image-processing/grading math, no CMYK/auth algorithms, no reports, no PDFs, and no unsafe public routes.
 - Remaining risk: the AI Grader Prisma migration is still unapplied, so keep `AI_GRADER_API_ENABLED` disabled in production until migration and runtime rollout are explicitly approved.
+
+## Session Update (2026-05-29, AI Grader admin UI shell PR #14 merged)
+- PR #14 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/14`.
+- Merge commit/final post-merge `origin/main` HEAD before this handoff docs update: `b3d007b0137d30c3569a5b92b2fe589df8d6d642`.
+- GitHub Actions post-merge run `26635172167` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/9xNxNXiujDBE5bRzT8VCdDTzTGvv`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- No migrations, `RUN_DB_MIGRATIONS=true`, manual deploy command, runtime DB operation, deploy restart, or next AI Grader phase work was run during merge verification.
+- AI Grader API routes and UI write actions remain disabled unless `AI_GRADER_API_ENABLED=true`; keep the API disabled in production until the migration and runtime rollout are explicitly approved.
+- Continue to avoid hardware/capture, image-processing/grading math, CMYK/auth algorithms, reports, PDFs, migrations, runtime DB operations, unsafe public routes, and DB-backed UI calls unless the existing API feature gate allows them.
