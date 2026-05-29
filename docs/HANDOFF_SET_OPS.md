@@ -107,6 +107,10 @@
   - branch `feature/ai-grader-macro-persistence` created from fetched `origin/main` at `e7356f58c0d90c9c2382a8a91dd6689e70bc9294`
   - local implementation adds injectable helpers for `MacroSuspectRegion` -> `GradingSuspectRegion` persistence and macro pipeline completion audit metadata
   - mocked tests cover valid persistence, invalid-region rejection, tenant/session scoping, duplicate-rank rejection, completion audit event creation, and injected service factory access
+  - PR #10 merged at `2026-05-29T06:11:50Z`; merge commit/final post-merge `origin/main` HEAD was `8a44a075c1273fa7b09e4d105d2e9d465ef7a87f`
+  - post-merge GitHub Actions run `26621354453` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw
+  - Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/9tVPYtSWcSo1MENVcnKD2oUjGYmX`
+  - migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`
   - no migrations, deploys, restarts, runtime DB operations, frontend/API routes, hardware/capture code, image-processing/grading math, auth algorithms, reports, PDFs, or `RUN_DB_MIGRATIONS=true` changes were run
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)
