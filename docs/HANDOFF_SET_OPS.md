@@ -87,6 +87,14 @@
   - final reported status: `feature/ai-grader-service-foundation...origin/main`
 - Draft migration remains unapplied; migration execution still requires explicit approval and a dedicated readiness pass.
 - No manual deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
+- PR #8 merged the AI Grader database service foundation:
+  - PR: `https://github.com/MarkTenKings/tenkings-backend/pull/8`
+  - service branch final HEAD before merge: `0cb52ff77f41d833c7d76844875bd8509fdb0e36` (`docs: record ai grader service branch prep`)
+  - merge commit/final `origin/main` HEAD: `c1a9727cd6baea82a5a41cc8c535d88661c22668`
+  - Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/4CoiTrZpAVzSq83AyRR4VvvJ1nB4`
+  - GitHub Actions run `26616256431` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw
+  - migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`
+  - no manual deploy, migration command, runtime DB operation, destructive operation, or Phase 2 service work was run
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)
 - Phase 10 evidence, certificate, custody, and public-report contract helpers are committed on `feature/ai-grader-v5-foundation`.

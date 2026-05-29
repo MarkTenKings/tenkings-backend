@@ -17948,6 +17948,26 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-29 - AI Grader service foundation PR merged
+
+### Summary
+- Merged PR #8 into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/8`.
+- Service branch final HEAD before merge: `0cb52ff77f41d833c7d76844875bd8509fdb0e36` (`docs: record ai grader service branch prep`).
+- Merge commit/final `origin/main` HEAD: `c1a9727cd6baea82a5a41cc8c535d88661c22668`.
+- Vercel production deploy completed successfully:
+  - `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/4CoiTrZpAVzSq83AyRR4VvvJ1nB4`
+- GitHub Actions run `26616256431` succeeded:
+  - Install & Build -> pass
+  - Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw -> pass
+- `scripts/vercel-build.sh` gates Prisma migrations behind `RUN_DB_MIGRATIONS=true`; `RUN_DB_MIGRATIONS` was not set to `true` in this session, so migrations remained skipped by default.
+- No manual deploy, migration command, runtime DB operation, destructive operation, or Phase 2 service work was run.
+
+### Remaining Guardrails
+- Draft AI Grader migration remains unapplied.
+- Any migration execution still requires explicit approval and a dedicated readiness pass.
+- No runtime AI Grader code path currently calls the new service helpers from production routes.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary
