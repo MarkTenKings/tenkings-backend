@@ -9785,3 +9785,24 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app build` -> pass.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, and no runtime DB operation against a real app DB.
 - Remaining required step before staging/prod approval: run `prisma migrate deploy/status` against a disposable local/test Postgres target, verify the AI Grader objects exist, then proceed through the approved staging/prod migration window with backups and `AI_GRADER_API_ENABLED` still disabled.
+
+## Session Update (2026-05-29, AI Grader migration readiness disposable DB path)
+- Continued PR #15 on branch `feature/ai-grader-migration-readiness`.
+- Inspected existing local DB/Compose patterns.
+  - Existing repo pattern is `infra/docker-compose.yml`, which defines a full-stack persistent `postgres:15` service on shared port `5432` and database `tenkings`.
+  - That pattern is useful background but is not ideal for isolated migration readiness because it uses a shared app DB name and persistent volume.
+- Added `docker-compose.ai-grader-migration.yml` for an isolated disposable readiness path.
+  - Service: `ai-grader-migration-postgres`.
+  - Image: `postgres:15`.
+  - Host binding: `127.0.0.1:55432`.
+  - Database: `tenkings_ai_grader_readiness`.
+  - User: `tenkings_readiness`.
+  - Storage: tmpfs-backed Postgres data directory discarded after teardown.
+- Updated `docs/ai-grader-migration-readiness.md` with the exact safe command sequence:
+  - start disposable Postgres
+  - run `prisma migrate deploy`
+  - run `prisma migrate status`
+  - verify representative AI Grader enums/tables through container `psql`
+  - tear down with `docker compose -f docker-compose.ai-grader-migration.yml down -v`
+- Live disposable migration apply remains blocked in this workstation because `docker`, `psql`, and `pg_isready` are still unavailable.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, and no runtime DB operation against a real app DB.

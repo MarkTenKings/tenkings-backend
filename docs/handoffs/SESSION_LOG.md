@@ -18298,3 +18298,21 @@ By enabling Rip It Live, I confirm:
 - `RUN_DB_MIGRATIONS=true` was not set.
 - No manual deploy/restart was run.
 - No runtime DB operation against a real app database was run.
+
+## 2026-05-29 - AI Grader migration readiness disposable DB path
+
+### Summary
+- Continued PR #15 on branch `feature/ai-grader-migration-readiness`.
+- Inspected the repo for Docker/DB patterns.
+- Existing pattern: `infra/docker-compose.yml` includes a full-stack persistent `postgres:15` service on shared port `5432` and shared database `tenkings`.
+- Added a dedicated disposable readiness Compose file: `docker-compose.ai-grader-migration.yml`.
+- The disposable service uses `postgres:15`, loopback-only host binding `127.0.0.1:55432`, throwaway database `tenkings_ai_grader_readiness`, throwaway user `tenkings_readiness`, and tmpfs-backed storage.
+- Docker/Postgres tooling is still unavailable in this workstation (`docker`, `psql`, and `pg_isready` not found), so the migration was not applied locally.
+- Updated `docs/ai-grader-migration-readiness.md` with the safe command sequence for `prisma migrate deploy/status`, enum/table verification through container `psql`, and teardown.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- PR #15 remains draft until the migration is actually applied to a disposable Postgres target and verified.

@@ -25,17 +25,31 @@ No production, staging, hosted, or real app database was used.
 
 `process.env.DATABASE_URL` was unset in this shell. The repo contains only example/docker env files with local container-style `postgres` hosts; no real local `.env` with a usable disposable database URL was present.
 
-Checked local tooling for a disposable DB path:
+Checked local tooling for a disposable DB path during the first pass and again while adding the disposable Compose path:
 
 - `psql` not available
 - `pg_isready` not available
 - `docker` not available
 
-Because there was no usable local Postgres client/server/container path, the migration was not applied. The only `DATABASE_URL` value supplied during this pass was a dummy localhost URL for `prisma validate`:
+Because there was no usable local Postgres client/server/container path, the migration was not applied. The only `DATABASE_URL` value supplied during that pass was a dummy localhost URL for `prisma validate`:
 
 `postgresql://<user>:<redacted>@localhost:5432/tenkings_ai_grader_readiness`
 
 That command validates Prisma schema configuration and did not apply migrations.
+
+The repo now includes a dedicated disposable Postgres Compose file for the next migration-readiness run:
+
+`docker-compose.ai-grader-migration.yml`
+
+Safety properties:
+
+- local Docker only
+- loopback-only host binding: `127.0.0.1:55432`
+- throwaway database: `tenkings_ai_grader_readiness`
+- throwaway user: `tenkings_readiness`
+- no shared app database name
+- no production, staging, hosted, or external URL
+- tmpfs-backed Postgres data directory, discarded when the container stops
 
 ## Validation Performed
 
@@ -68,6 +82,51 @@ Blocker: no safe disposable local Postgres target was available in this checkout
 
 Because the migration was not executed, this pass does not prove that the full migration chain applies cleanly on an empty or copied database. It validates the Prisma schema and static migration shape only.
 
+## Disposable DB Command Sequence
+
+Use this sequence only on a workstation with Docker available. It intentionally does not use `.env`, production, staging, hosted, or shared app database URLs.
+
+Safe disposable URL, with non-secret throwaway credentials:
+
+`postgresql://tenkings_readiness:<redacted>@127.0.0.1:55432/tenkings_ai_grader_readiness?schema=public`
+
+Commands:
+
+```sh
+docker compose -f docker-compose.ai-grader-migration.yml up -d
+
+docker compose -f docker-compose.ai-grader-migration.yml exec -T \
+  ai-grader-migration-postgres \
+  pg_isready -U tenkings_readiness -d tenkings_ai_grader_readiness
+
+DATABASE_URL='postgresql://tenkings_readiness:tenkings_readiness@127.0.0.1:55432/tenkings_ai_grader_readiness?schema=public' \
+  pnpm --filter @tenkings/database exec prisma migrate deploy --schema prisma/schema.prisma
+
+DATABASE_URL='postgresql://tenkings_readiness:tenkings_readiness@127.0.0.1:55432/tenkings_ai_grader_readiness?schema=public' \
+  pnpm --filter @tenkings/database exec prisma migrate status --schema prisma/schema.prisma
+
+docker compose -f docker-compose.ai-grader-migration.yml exec -T \
+  ai-grader-migration-postgres \
+  psql -U tenkings_readiness -d tenkings_ai_grader_readiness \
+  -c "select typname from pg_type where typname in ('CaptureSessionStatus', 'GradeRunStatus', 'AuthVerdict') order by typname;"
+
+docker compose -f docker-compose.ai-grader-migration.yml exec -T \
+  ai-grader-migration-postgres \
+  psql -U tenkings_readiness -d tenkings_ai_grader_readiness \
+  -c "select tablename from pg_tables where schemaname = 'public' and tablename in ('CaptureSession', 'CaptureManifest', 'GradeRun', 'AuthRun', 'GradeCertificate', 'EvidenceArtifact', 'AuditEvent') order by tablename;"
+
+docker compose -f docker-compose.ai-grader-migration.yml down -v
+```
+
+Expected verification result:
+
+- `migrate deploy` applies the full committed Prisma migration chain without drift or failed migration records.
+- `migrate status` reports the database schema is up to date.
+- The enum query returns the AI Grader enum names.
+- The table query returns the AI Grader table names.
+
+If any command fails, keep PR #15 draft and treat the failure as a migration readiness blocker until the failure is understood and fixed.
+
 ## Findings And Risks
 
 No migration SQL blocker was found by static review.
@@ -82,7 +141,7 @@ Observed risk profile:
 
 ## Recommended Approval Path
 
-1. Provision a disposable local Postgres database matching the production major version, or a throwaway staging clone with no production credentials exposed to development tooling.
+1. Run the dedicated disposable Compose path above on a workstation with Docker available, or provision a disposable local Postgres database matching the production major version.
 2. Run only against that disposable target:
    - `DATABASE_URL=<disposable-url> pnpm --filter @tenkings/database exec prisma migrate deploy --schema prisma/schema.prisma`
    - `DATABASE_URL=<disposable-url> pnpm --filter @tenkings/database exec prisma migrate status --schema prisma/schema.prisma`
