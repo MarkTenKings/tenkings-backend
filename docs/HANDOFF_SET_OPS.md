@@ -73,6 +73,13 @@
   - Docker image job now explicitly requests `contents: read` and `packages: write`.
   - Scope is limited to `.github/workflows/ci.yml` and handoff docs.
   - No AI Grader implementation, migration, manual deploy, runtime DB operation, or `RUN_DB_MIGRATIONS=true` change was made.
+- PR #7 merged the GHCR permissions fix:
+  - PR: `https://github.com/MarkTenKings/tenkings-backend/pull/7`
+  - merge commit/final `origin/main` HEAD: `1e42c381d6dfef8c146c3d0cdac5cd50c625f519`
+  - post-merge GitHub Actions run `26611172590` succeeded
+  - GHCR Docker image push passed for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw
+  - Vercel production deploy ran automatically and succeeded
+  - user reported no migrations, no `RUN_DB_MIGRATIONS=true`, no runtime DB operations, and no manual deploy commands
 - Draft migration remains unapplied; migration execution still requires explicit approval and a dedicated readiness pass.
 - No manual deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
 

@@ -17890,6 +17890,22 @@ By enabling Rip It Live, I confirm:
 - Any migration execution still requires explicit approval and a dedicated readiness pass.
 - Service/hardware implementation has not started.
 
+## 2026-05-28 - GHCR package publishing permission fix merged
+
+### Summary
+- User reported PR #7 was opened and merged.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/7`.
+- Merge commit/final `origin/main` HEAD: `1e42c381d6dfef8c146c3d0cdac5cd50c625f519`.
+- Post-merge GitHub Actions run `26611172590` succeeded.
+- GHCR Docker image push passed for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy ran automatically and succeeded.
+- User reported no migrations, no `RUN_DB_MIGRATIONS=true`, no runtime DB operations, and no manual deploy commands.
+
+### Remaining Guardrails
+- Draft AI Grader migration remains unapplied.
+- Any migration execution still requires explicit approval and a dedicated readiness pass.
+- Service/hardware implementation has not started.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary
