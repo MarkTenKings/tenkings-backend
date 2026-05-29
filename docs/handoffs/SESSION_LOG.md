@@ -17971,6 +17971,28 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-29 - AI Grader orchestrator persistence PR #9 build fix
+
+### Summary
+- PR #9 failed `Install & Build` and Vercel because `packages/database/src/aiGraderService.ts` imported `node:crypto`, and the Next.js build pulled that exported database service path through `@tenkings/database`.
+- Removed the Node crypto import without adding another Node crypto dependency.
+- Kept orchestrator audit checksum behavior as 64-character lowercase SHA-256 hex by using `globalThis.crypto.subtle.digest("SHA-256", ...)` inside the existing async persistence flow.
+- Scope stayed limited to the database service helper build fix plus handoff docs.
+- No migrations, `RUN_DB_MIGRATIONS=true`, deploys, restarts, runtime DB operations, frontend/API routes, hardware/capture code, grading math, auth algorithms, reports, or PDFs were run or added.
+
+### Files Changed
+- `packages/database/src/aiGraderService.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 13 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary

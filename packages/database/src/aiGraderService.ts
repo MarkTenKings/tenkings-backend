@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type {
   AiGraderValidationIssue,
@@ -354,8 +353,14 @@ function stableJson(value: unknown): string {
     .join(",")}}`;
 }
 
-function buildAuditChecksum(value: unknown) {
-  return createHash("sha256").update(stableJson(value)).digest("hex");
+function bytesToHex(bytes: Uint8Array) {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function buildAuditChecksum(value: unknown) {
+  const encoded = new TextEncoder().encode(stableJson(value));
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", encoded);
+  return bytesToHex(new Uint8Array(digest));
 }
 
 function isoDate(value: string, path: string) {
@@ -434,7 +439,7 @@ function auditOutcomeForStatus(status: CaptureSessionPersistedStatus): RecordAud
   return "SUCCESS";
 }
 
-function buildTransitionAuditInput(
+async function buildTransitionAuditInput(
   session: CaptureSessionState,
   input: PersistOrchestratorTransitionInput,
   nextState: OrchestratorState,
@@ -443,7 +448,7 @@ function buildTransitionAuditInput(
   occurredAt: Date,
   transitionAuditEventId: string,
   userVisibleMessage?: string
-): RecordAuditEventInput {
+): Promise<RecordAuditEventInput> {
   const before = {
     currentState: session.currentState,
     status: session.status,
@@ -458,7 +463,7 @@ function buildTransitionAuditInput(
     transitionAuditEventId,
     userVisibleMessage: userVisibleMessage ?? null,
   };
-  const checksum = buildAuditChecksum({
+  const checksum = await buildAuditChecksum({
     tenantId: input.tenantId,
     captureSessionId: input.captureSessionId,
     before,
@@ -675,7 +680,7 @@ export async function persistOrchestratorTransition(
 
     const auditEvent = await recordAuditEvent(
       tx,
-      buildTransitionAuditInput(
+      await buildTransitionAuditInput(
         session,
         input,
         transition.nextState,

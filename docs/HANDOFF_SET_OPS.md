@@ -97,6 +97,7 @@
 - AI Grader orchestrator persistence helper branch started:
   - branch `feature/ai-grader-orchestrator-persistence` created from fetched `origin/main` at `c1a9727cd6baea82a5a41cc8c535d88661c22668`
   - local implementation adds injectable orchestrator transition persistence helpers and mocked tests only
+  - PR #9 build fix removed the `node:crypto` import from the exported database service path and keeps audit checksums via build-safe Web Crypto SHA-256
   - no migrations, deploys, restarts, runtime DB operations, frontend/API routes, hardware/capture code, grading math, auth algorithms, reports, PDFs, or `RUN_DB_MIGRATIONS=true` changes were run
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)
