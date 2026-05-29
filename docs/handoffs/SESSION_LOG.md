@@ -17993,6 +17993,21 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-29 - AI Grader orchestrator persistence PR #9 merged
+
+### Summary
+- PR #9 merged into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/9`.
+- Merge commit/final post-merge `origin/main` HEAD: `7a6136e149d50137377a2f5238fada2add8472bc`.
+- Post-merge GitHub Actions run `26619956994` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/DKzshqD5vhQNFWj97xaAzHAGZa5n`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- No migrations, `RUN_DB_MIGRATIONS=true`, manual deploy command, runtime DB operation, deploy restart, or next AI Grader phase work was run.
+
+### Remaining Guardrails
+- AI Grader Prisma migration remains committed but unapplied.
+- Do not start hardware/capture, grading math, frontend/API exposure, auth algorithms, reports, PDFs, migrations, or runtime DB operations without a dedicated approved phase.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary

@@ -98,6 +98,10 @@
   - branch `feature/ai-grader-orchestrator-persistence` created from fetched `origin/main` at `c1a9727cd6baea82a5a41cc8c535d88661c22668`
   - local implementation adds injectable orchestrator transition persistence helpers and mocked tests only
   - PR #9 build fix removed the `node:crypto` import from the exported database service path and keeps audit checksums via build-safe Web Crypto SHA-256
+  - PR #9 merged at `2026-05-29T05:30:12Z`; merge commit/final post-merge `origin/main` HEAD was `7a6136e149d50137377a2f5238fada2add8472bc`
+  - post-merge GitHub Actions run `26619956994` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw
+  - Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/DKzshqD5vhQNFWj97xaAzHAGZa5n`
+  - migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`
   - no migrations, deploys, restarts, runtime DB operations, frontend/API routes, hardware/capture code, grading math, auth algorithms, reports, PDFs, or `RUN_DB_MIGRATIONS=true` changes were run
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)
