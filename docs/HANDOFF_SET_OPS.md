@@ -55,7 +55,12 @@
 - Runtime risk is low if no migration runs because no production code queries the new AI Grader models yet; the high-risk path is automatic migration execution during Vercel production build.
 - Deployment safety follow-up changed `scripts/vercel-build.sh` so Vercel production builds skip Prisma migrations by default and run them only when `RUN_DB_MIGRATIONS=true`.
 - `docs/runbooks/DEPLOY_RUNBOOK.md` now documents the Vercel migration gate.
-- Draft migration remains unapplied; PR #6 can proceed to review only after deployment-safety CI passes, but migration execution still requires explicit approval and a dedicated readiness pass.
+- Final readiness checkpoint reported:
+  - HEAD `aad82d40dfec886b61050471247891beaadc8367`
+  - PR #6 open, ready for review, mergeable
+  - CI Install & Build, Docker images, Vercel, and Vercel Preview Comments all pass
+  - Vercel production builds now skip Prisma migrations by default; `migrate:deploy` only runs when `RUN_DB_MIGRATIONS=true`
+- Draft migration remains unapplied; migration execution still requires explicit approval and a dedicated readiness pass.
 - No merge, deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)

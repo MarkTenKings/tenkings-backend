@@ -17841,6 +17841,26 @@ By enabling Rip It Live, I confirm:
 - Add a small deployment-safety change that gates production migration execution behind explicit approval, or split the draft AI Grader migration out of PR #6.
 - Before any migration execution, run a dedicated migration readiness pass against staging or a disposable restored DB.
 
+## 2026-05-28 - AI Grader foundation PR ready for review
+
+### Summary
+- User reported the deployment safety gate was implemented, checks passed, and PR #6 was converted out of draft.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/6`.
+- Branch: `feature/ai-grader-v5-foundation`.
+- HEAD reported: `aad82d40dfec886b61050471247891beaadc8367`.
+- PR state: open, ready for review, mergeable.
+- Checks reported green:
+  - CI Install & Build -> pass
+  - Docker images for frontend, ingestion, marketplace, pack, pricing, vault, vending-gw, wallet -> pass
+  - Vercel -> pass
+  - Vercel Preview Comments -> pass.
+- Confirmed present at HEAD: AI Grader foundation fixes, Vercel Prisma migration gate, and `DEPLOY_RUNBOOK.md` migration gate docs.
+- Vercel production builds now skip Prisma migrations by default; `migrate:deploy` only runs when `RUN_DB_MIGRATIONS=true`.
+- No merge, migration execution, runtime DB operation, or production deploy was performed; PR check deployments were the existing GitHub/Vercel preview path.
+
+### Remaining Guardrail
+- Migration execution remains a separate explicit approval path and should require a dedicated migration readiness pass before staging/prod execution.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary
