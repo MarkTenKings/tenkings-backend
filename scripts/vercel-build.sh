@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "${VERCEL_ENV:-}" = "production" ] || [ "${RUN_DB_MIGRATIONS:-false}" = "true" ]; then
+if [ "${RUN_DB_MIGRATIONS:-false}" = "true" ]; then
+  echo "RUN_DB_MIGRATIONS=true; running Prisma migrations before build."
   pnpm --filter @tenkings/database run migrate:deploy
+elif [ "${VERCEL_ENV:-}" = "production" ]; then
+  echo "VERCEL_ENV=production and RUN_DB_MIGRATIONS is not true; skipping Prisma migrations."
 fi
 pnpm --filter @tenkings/database run generate
 

@@ -1,12 +1,12 @@
 # Set Ops Handoff (Living)
 
 ## Current State
-- Last reviewed: `2026-04-24` (implemented `feature/rip-it-live` from latest `origin/main`: unified `/live` gallery with active Golden Ticket hero/live-rip rows/replay rails, buyer-side Rip It Live toggle and browser WHIP flow, live-rip consent infrastructure, checked-in migration, and CI pnpm/Prisma/GHCR setup alignment; validation passed; PR opened; no deploy, restart, migration execution, runtime DB mutation, merge, or destructive operation executed)
+- Last reviewed: `2026-04-25` (PR #5 merged to `main` with merge commit `7a57811947a7645f7831302b2fcd04d92332b66e`; Vercel production deploy `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/3h2pnZDq4Wdvnuuzqws1xKu3iDZv` completed successfully; production `_prisma_migrations` contains `20260424170000_live_rip_consent` with `finished_at=2026-04-25 07:06:49.66572+00`)
 - Branch: `feature/rip-it-live`
 - Current local git state before this handoff refresh:
   - `git status -sb`:
     - `## feature/rip-it-live...origin/feature/rip-it-live`
-    - clean after push
+    - clean before this handoff doc update
   - modified/new tracked scope:
     - `/live` page and `/live/[slug]` watch behavior
     - live state and buyer live-rip API routes
@@ -18,12 +18,400 @@
   - deleted tracked paths: none
 - Latest committed baseline before this work:
   - `cbb9180` fix(golden-ticket): split consent constants from server code
-- Environments touched this session: workstation feature worktree `/Users/markthomas/tenkings-rip-it-live`; GitHub fetch/push/PR creation; Vercel preview build; local dependency install/link; local validation/build only; no deploy, restart, migration execution, runtime DB mutation, merge, or destructive operation was executed
+- Environments touched this session: workstation feature worktree `/Users/markthomas/tenkings-rip-it-live`; GitHub fetch/push/PR creation; Vercel preview and production builds; local validation/build; GitHub PR merge; production smoke checks; read-only production `_prisma_migrations` verification over the documented droplet `DATABASE_URL` source; no restart or destructive operation was executed
 - PR: `https://github.com/MarkTenKings/tenkings-backend/pull/5`
 - Vercel preview: `https://tenkings-backend-nextjs-app-git-feature-rip-it-live-ten-kings.vercel.app`
 - New env vars for production before merge:
   - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
   - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
+
+## Session Update (2026-05-28, AI Grader foundation draft PR opened)
+- AI Grader v5 foundation branch was pushed and opened as a draft PR for review only.
+- Branch: `feature/ai-grader-v5-foundation`.
+- Latest review/audit HEAD reported: `1dc2a826de60d0a780d5c56a5351f5ef4c617801`.
+- Latest HEAD/checkpoint reported after PR status review: `c6028249e1fe72c3361d82e1ea17f6578c14917a`.
+- Initial PR-open HEAD was `066c088ca64be65b6011c2859276dd5f9d8b4c06` (`docs: record ai grader phase 10 commit`).
+- Draft PR: `https://github.com/MarkTenKings/tenkings-backend/pull/6`.
+- PR status reported: open, draft, base `main`, head `feature/ai-grader-v5-foundation`.
+- Checks reported after checkpoint pass: all pass
+  - CI Install & Build: pass
+  - CI Docker images: frontend, ingestion, marketplace, pack, pricing, vault, vending-gw, wallet all pass
+  - Vercel: pass
+  - Vercel Preview Comments: pass
+- PR includes the v5 spec, draft Prisma schema/migration, shared contracts/FSM/validators/helpers, and tests.
+- PR explicitly does not include hardware drivers, capture implementation, grading math, auth algorithms, frontend report UI/PDF, migration execution, deploys, restarts, runtime DB operations, or destructive operations.
+- Foundation review findings before ready-for-review:
+  - Medium: `CaptureManifest.helperInstanceId` is required by spec/shared contract but nullable in Prisma draft schema/migration.
+  - Medium: certificate readiness helper can ignore the certificate contract's own `sourceGradeRunStatus` when a separate `gradeRunStatus` is supplied.
+  - Low: `EvidenceArtifact` linkage columns `gradeRunId`, `authRunId`, and `certificateId` are under-indexed for likely evidence/certificate/replay queries.
+- Migration verdict from review: additive and source-mergeable in principle, but do not execute yet; fix the helper ID nullability decision and evidence-link indexes before staging/prod migration.
+- Recommendation remains: keep PR #6 draft / needs fixes before ready-for-review.
+- Follow-up fix session resolved the three review findings in the draft foundation:
+  - `CaptureManifest.helperInstanceId` is required in the Prisma schema and draft migration.
+  - certificate readiness now requires `GradeCertificateContract.sourceGradeRunStatus` to be present, `COMPLETE`, and consistent with a supplied `gradeRunStatus`.
+  - `EvidenceArtifact` now indexes `gradeRunId`, `authRunId`, and `certificateId`.
+- Merge-readiness audit found a release blocker: `scripts/vercel-build.sh` runs `pnpm --filter @tenkings/database run migrate:deploy` when `VERCEL_ENV=production`, and merge to `main` likely triggers Vercel production deploy based on current Vercel PR checks and prior PR #5 history.
+- GitHub CI/Docker builds generate Prisma client and build artifacts but do not apply migrations.
+- Runtime risk is low if no migration runs because no production code queries the new AI Grader models yet; the high-risk path is automatic migration execution during Vercel production build.
+- Deployment safety follow-up changed `scripts/vercel-build.sh` so Vercel production builds skip Prisma migrations by default and run them only when `RUN_DB_MIGRATIONS=true`.
+- `docs/runbooks/DEPLOY_RUNBOOK.md` now documents the Vercel migration gate.
+- Final readiness checkpoint reported:
+  - HEAD `aad82d40dfec886b61050471247891beaadc8367`
+  - PR #6 open, ready for review, mergeable
+  - CI Install & Build, Docker images, Vercel, and Vercel Preview Comments all pass
+  - Vercel production builds now skip Prisma migrations by default; `migrate:deploy` only runs when `RUN_DB_MIGRATIONS=true`
+- Draft migration remains unapplied; migration execution still requires explicit approval and a dedicated readiness pass.
+- No merge, deploy, migration, runtime DB operation, destructive operation, or service/hardware implementation was run.
+
+## Session Update (2026-05-28, AI Grader Phase 10 committed)
+- Phase 10 evidence, certificate, custody, and public-report contract helpers are committed on `feature/ai-grader-v5-foundation`.
+- Commit: `14ca02e522eb13fc65f63dbf9ac5f52df06f565b` (`feat(ai-grader): add report and certificate contract helpers`).
+- Phase 9 handoff cleanup and previous work are pushed; Phase 10 commit is local-only until the next push.
+- Final reported status: `feature/ai-grader-v5-foundation...origin/feature/ai-grader-v5-foundation [ahead 1]`.
+- Committed Phase 10 scope reported by implementation agent:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation reported:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 103 tests
+  - `git diff --check` -> pass
+  - local warning only: Node `v25.6.1`, repo expects `20.x`
+- Phase 10 stayed pure shared contract work; no report UI, PDF generation, object storage upload, checksum generation from files, DB writes, migrations, hardware drivers, capture code, grading math, auth algorithms, deploys, restarts, runtime DB operations, or destructive operations were performed.
+
+## Session Update (2026-05-28, AI Grader Phase 9 committed)
+- Phase 9 authentication product boundary contract helpers are committed on `feature/ai-grader-v5-foundation`.
+- Commit: `d954475868e4064e80fe1ac861299baac2505657` (`feat(ai-grader): add authentication contract helpers`).
+- Pre-Phase 9 cleanup was completed and pushed; Phase 9 commit is local-only until the next push.
+- Final reported status: `feature/ai-grader-v5-foundation...origin/feature/ai-grader-v5-foundation [ahead 1]`.
+- Committed Phase 9 scope reported by implementation agent:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation reported:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 94 tests
+  - `git diff --check` -> pass
+  - local warning only: Node `v25.6.1`, repo expects `20.x`
+- Phase 9 stayed pure shared auth governance/contracts only; no DB writes, migrations, deploys, restarts, runtime DB operations, hardware, capture, CMYK math, frontend, or reports were implemented.
+
+## Session Update (2026-05-28, AI Grader Phase 8 committed)
+- Phase 8 calibration and gate contract helpers are committed on `feature/ai-grader-v5-foundation`.
+- Commit: `38900887233ddc1f1f3bee0bf36e760bb99f9fb3` (`feat(ai-grader): add calibration and gate contract helpers`).
+- Pre-Phase 8 handoff cleanup was committed and pushed through `9ec23ea`; Phase 8 commit is local-only until the next push.
+- Final reported status: `feature/ai-grader-v5-foundation...origin/feature/ai-grader-v5-foundation [ahead 1]`.
+- Committed Phase 8 scope reported by implementation agent:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation reported:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 86 tests
+  - `git diff --check` -> pass
+  - local warning only: Node `v25.6.1`, repo expects `20.x`
+- Phase 8 stayed pure policy/contract enforcement; no sensor reads, interlock driver, obstruction implementation, calibration scripts, DB writes, migrations, hardware drivers, capture code, grading math, auth algorithms, frontend, reports, deploys, restarts, runtime DB operations, or destructive operations were performed.
+
+## Session Update (2026-05-28, AI Grader Phase 7 committed)
+- Phase 7 STANDARD fusion contract helpers are committed on `feature/ai-grader-v5-foundation`.
+- Commit: `6bcb88898e2263836b9bdc0c8c96ee5f1d21a65a` (`feat(ai-grader): add standard fusion contract helpers`).
+- Pre-Phase 7 handoff cleanup was committed and pushed through `cedf602`; Phase 7 commit is local-only until the next push.
+- Final reported status: `feature/ai-grader-v5-foundation...origin/feature/ai-grader-v5-foundation [ahead 1]`.
+- Committed Phase 7 scope reported by implementation agent:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation reported:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 78 tests
+  - `git diff --check` -> pass
+  - local warning only: Node `v25.6.1`, repo expects `20.x`
+- Phase 7 stayed contract-only; no grading math, image processing, detection algorithms, DB writes, migrations, hardware, capture code, auth algorithms, frontend, reports, deploys, restarts, runtime DB operations, or destructive operations were performed.
+
+## Session Update (2026-05-28, AI Grader Phase 6 committed)
+- Phase 6 micro spot package helpers are committed on `feature/ai-grader-v5-foundation`.
+- Commit: `18c14b1f8f33f58d7bdb4360737aed422b746519` (`feat(ai-grader): add micro spot package helpers`).
+- Pre-Phase 6 handoff cleanup was pushed through docs commit `3207f07`; Phase 6 commit is local-only until the next push.
+- Final reported status: `feature/ai-grader-v5-foundation...origin/feature/ai-grader-v5-foundation [ahead 1]`.
+- Committed Phase 6 scope reported by implementation agent:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation reported:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 70 tests
+  - `git diff --check` -> pass
+  - local warning only: Node `v25.6.1`, repo expects `20.x`
+- Phase 6 stayed pure contract enforcement; no Dino-Lite/ACRO work, autofocus, real capture, uploads/checksum generation, grading math, fusion implementation, auth algorithms, frontend, schema/migration changes, deploys, restarts, runtime DB operations, or destructive operations were performed.
+
+## Session Update (2026-05-28, AI Grader Phase 5 committed)
+- Phase 5 macro pipeline contract helpers are committed on `feature/ai-grader-v5-foundation`.
+- Commit: `8f3c5bcf46420d854ea3c992e4765773d7f16c8a` (`feat(ai-grader): add macro pipeline contract helpers`).
+- Final reported status: `feature/ai-grader-v5-foundation...origin/feature/ai-grader-v5-foundation [ahead 1]`; Phase 5 commit is local-only until the next push.
+- Committed Phase 5 scope reported by implementation agent:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation reported:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 61 tests
+  - `git diff --check` -> pass
+  - local warning only: Node `v25.6.1`, repo expects `20.x`
+- Phase 5 stayed pure shared macro pipeline contract helpers/tests only; no image processing, grading math, hardware, DB writes, migrations, deploys, restarts, or runtime DB operations were performed.
+
+## Session Update (2026-05-28, AI Grader Phase 4 committed)
+- Phase 4 version registry seed contracts are committed on `feature/ai-grader-v5-foundation`.
+- Commit: `7a70a1bf3cc6c436c51b7299e728f2e8ccdce620`.
+- Final reported status: `feature/ai-grader-v5-foundation...origin/feature/ai-grader-v5-foundation [ahead 2]`.
+- Committed Phase 4 scope reported by implementation agent:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation reported:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 53 tests
+  - `git diff --check` -> pass
+  - local warning only: Node `v25.6.1`, repo expects `20.x`
+- Phase 4 stayed pure shared code/tests only; no Prisma seed execution, DB writes, migrations, hardware, capture, grading math, auth algorithms, frontend, reports, deploy/restart/runtime DB/destructive operations were performed.
+
+## Session Update (2026-05-28, AI Grader Phase 3 committed)
+- Phase 3 manifest validation helpers are committed on `feature/ai-grader-v5-foundation`.
+- Commit: `22dd1d302f0a88fe68248f334656a66fda15ca75` (`feat(ai-grader): add manifest validation helpers`).
+- Prior docs cleanup commit: `facfc75` (`docs: record ai grader phase 2 commit`).
+- Phase 3 handoff cleanup and branch push completed after the commit:
+  - cleanup commit `63688abb1fbf88ebfb35b5d79cf7054cf7c62bc9` (`docs: record ai grader phase 3 commit`)
+  - branch now tracks `origin/feature/ai-grader-v5-foundation`
+  - final reported status: `feature/ai-grader-v5-foundation...origin/feature/ai-grader-v5-foundation`
+- Committed Phase 3 scope reported by implementation agent:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation reported:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 46 tests
+  - `git diff --check` -> pass
+  - local warning only: Node `v25.6.1`, repo expects `20.x`
+- Final status reported: `feature/ai-grader-v5-foundation...origin/main [ahead 5]`.
+- Phase 3 stayed contract-level only; no hardware drivers, capture implementation, object storage upload, checksum generation from files, grading math, macro suspect detection, microscope capture, auth algorithms, frontend, schema/migration changes, migration execution, deploys, restarts, runtime DB operations, or destructive operations were performed.
+
+## Session Update (2026-05-28, AI Grader Phase 2 cleanup ready for commit)
+- Phase 2 cleanup was applied on `feature/ai-grader-v5-foundation` before commit:
+  - added `MICRO_CORNERS`, `MICRO_EDGES`, and `MICRO_SURFACE` to shared `GradingElement`
+  - tightened `INIT -> MACRO_PREFLIGHT` so `sessionBelongsToTenant`, `rigActive`, and `operatorAuthorized` must be explicitly `true`
+  - updated FSM tests so the happy path supplies those guards and missing INIT guards reject the transition
+- Validation after cleanup:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 38 tests
+  - `git diff --check` -> pass
+- Phase 2 was committed as `f06bc6a322ca763ff106044c8260ca53521af59d` (`feat(ai-grader): add shared contracts and orchestrator fsm`).
+- Final status reported after commit: `feature/ai-grader-v5-foundation...origin/main [ahead 3]` with a clean worktree.
+- Commit scope was limited to shared contracts/FSM/tests and handoff docs. No schema/migration files, hardware drivers, grading math, auth algorithms, frontend, reports, deploys, restarts, runtime DB operations, or destructive operations were touched.
+
+## Session Update (2026-05-28, AI Grader Phase 2 review guidance)
+- Phase 2 shared AI Grader contracts and pure FSM are implemented but not committed on `feature/ai-grader-v5-foundation`.
+- Reported changed files:
+  - `packages/shared/src/aiGrader.ts`
+  - `packages/shared/src/index.ts`
+  - `packages/shared/tests/aiGrader.test.js`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation reported by implementation agent:
+  - `pnpm --filter @tenkings/shared build` -> pass
+  - `pnpm --filter @tenkings/shared test` -> pass, 37 tests
+  - `git diff --check` -> pass
+- Review guidance before commit: add shared `GradingElement` values for `MICRO_CORNERS`, `MICRO_EDGES`, `MICRO_SURFACE`; require explicit true session/rig/operator guards for `INIT -> MACRO_PREFLIGHT`.
+- No hardware drivers, capture implementation, grading math, auth algorithms, frontend pages, reports, migrations, deploys, restarts, runtime DB operations, or destructive operations were performed.
+
+## Session Update (2026-05-28, AI Grader Phase 1 foundation committed)
+- The AI Grader v5 database foundation is now committed on dedicated branch `feature/ai-grader-v5-foundation`.
+- Commit: `c553da6d243948a352d1f8e623c49998a0bc358b` (`feat(ai-grader): add v5 database foundation draft`).
+- Committed scope reported by the implementation agent:
+  - `tk-ai-grader-codex-spec-v5.md`
+  - `packages/database/prisma/schema.prisma`
+  - `packages/database/prisma/migrations/20260528120000_ai_grader_v5_foundation/migration.sql`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation reported by the implementation agent:
+  - `git diff --check` -> pass
+  - Prisma validate with dummy `DATABASE_URL` -> pass
+  - `pnpm --filter @tenkings/database build` -> pass
+  - local warning only: Node `v25.6.1`, repo expects `20.x`
+- Final status after commit: branch ahead of `origin/main` by 1 with `docs/HANDOFF_SET_OPS.md` still dirty and intentionally not included in the foundation commit.
+- No Phase 2 work, deploy, restart, migration execution, runtime DB operation, or destructive operation was performed.
+
+## Session Update (2026-05-28, AI Grader Phase 1 draft review)
+- Reviewed the fresh implementation agent's Phase 1 completion report and performed a read-only spot check of the actual Prisma schema/migration diff.
+- Current AI Grader draft state:
+  - branch `feature/rip-it-live`, HEAD previously reported as `d6d9560`
+  - `tk-ai-grader-codex-spec-v5.md` remains untracked and should be committed with the foundation work or intentionally moved to a dedicated AI Grader branch
+  - `packages/database/prisma/schema.prisma` contains the additive v5 grader/auth/capture/provenance enums and models
+  - `packages/database/prisma/migrations/20260528120000_ai_grader_v5_foundation/migration.sql` is drafted only and has not been applied
+- Review read: Phase 1 is acceptable as a draft foundation; the next implementation step should be a commit-readiness/branch-strategy pass, not runtime product work.
+- Recommended before Phase 2: decide whether to continue on `feature/rip-it-live` or move this large AI Grader build to a fresh dedicated branch from current `main`; then commit the v5 spec, schema, migration, and handoff docs together.
+- No deploy, restart, migration execution, runtime DB operation, destructive operation, or product code execution was performed by this review session.
+
+## Session Update (2026-05-28, AI Grader foundation phase approval guidance)
+- User pasted the fresh implementation agent's first response after it read `AGENTS.md`, the standard startup docs, and `tk-ai-grader-codex-spec-v5.md`.
+- Implementation agent report:
+  - branch `feature/rip-it-live`, HEAD `d6d9560`
+  - `tk-ai-grader-codex-spec-v5.md` present/readable
+  - dirty docs plus untracked v5 spec
+  - v5 Section 16 pre-code spec gate considered satisfied
+  - first proposed phase limited to database schema/provenance foundation and a draft migration, with no migration execution
+- Recommended user response: approve Phase 1 only, explicitly limiting edits to `packages/database/prisma/schema.prisma`, a draft migration folder, `packages/database/src/index.ts`, and the session log; allow validation commands only; continue to forbid deploy/restart/migrate/destructive operations.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed by this coordination session.
+
+## Session Update (2026-05-28, AI Grader implementation-session handoff prep)
+- User confirmed they found the correct `tk-ai-grader-codex-spec-v5.md` file and asked for the best way to start a fresh Codex implementation session.
+- Recommended next-session flow:
+  - Start from `/Users/markthomas/tenkings-rip-it-live`.
+  - In the new session, first require the agent to follow `AGENTS.md` and read the standard startup docs.
+  - Then require the agent to read `tk-ai-grader-codex-spec-v5.md` end to end before making code changes.
+  - First deliverable should be a short implementation plan and repo-impact map against the v5 Section 16 pre-code checklist.
+  - Do not run deploy/restart/migrate/destructive operations without explicit approval.
+  - Do not start by implementing runtime product code until the agent confirms the v5 pre-code acceptance checklist is satisfied or identifies exact gaps.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+## Session Update (2026-05-28, AI Grader v5 standalone spec authored)
+- Authored `tk-ai-grader-codex-spec-v5.md` in `/Users/markthomas/tenkings-rip-it-live` as a standalone implementation-ready technical blueprint.
+- Integrated the v4.1 source content and all v4.2 Chief-of-Staff amendments inline, with M0 decisions promoted into the root architecture and stale legacy contradictions removed.
+- Included changelog line ranges, canonical modes/timing, bounded contexts, device/capture contracts, orchestrator FSM, macro suspect contract, micro spot package contract, STANDARD fusion rule, full Prisma schema blueprint, calibration/interlock/auth governance, physical alteration gates, public claim guardrails, acceptance tests, and the pre-code checklist.
+- No runtime code, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+## Session Update (2026-05-28, AI Grader v4.2 Chief-of-Staff synthesis)
+- Synthesized the pasted `tk-ai-grader-codex-spec-v4.md` rev 4.1, comparison CSV, Reviewer A Lead Engineer output, Reviewer B Principal Architect output, and Reviewer C Red Team output into a decision-grade v4.2 recommendation.
+- Consolidated duplicate findings across reviewers, reconciled A/B/C amendment proposals, and produced a final amendment set, go/no-go recommendation, strategic risks, and Day 1 implementation brief.
+- Synthesis conclusion: NO-GO for coding until the pre-code blockers in timing/mode truth, suspect-region contract, capture package/failure handling, migration safety, bounded contexts/provenance, and public/authentication claim boundaries are incorporated into v4.2.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+## Session Update (2026-05-28, AI Grader v4.1 Red Team re-run)
+- Reviewed the pasted `tk-ai-grader-codex-spec-v4.md` rev 4.1, comparison CSV, covered-topic exclusions from Reviewer A, and full pasted Reviewer B Principal Architect output.
+- Avoided duplicating A's implementation findings and B's architecture/provenance findings; focused on physical-card adversarial attacks, operational abuse, public/reputational failure, legal/regulatory exposure, and competitor counter-moves.
+- Verified current public/legal context from FTC advertising/AI guidance, ADA web guidance, California sports-card alteration law, Georgia deceptive-trade-practices law, and official TAG/PSA public materials.
+- Red Team conclusion: public launch as an AI grader/authenticator remains unsafe until claims, sampling disclosure, physical alteration checks, security/custody controls, ADA/report accessibility, and operator/insider abuse controls are addressed.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+## Session Update (2026-05-28, AI Grader v4.1 Principal Architect review)
+- Reviewed the pasted `tk-ai-grader-codex-spec-v4.md` rev 4.1, comparison CSV, and Reviewer A Lead Engineer output at CTO/system-design level.
+- Avoided duplicating Reviewer A implementation findings; focused on service boundaries, driver contracts, provenance, math IP, multi-rig readiness, authentication product separation, evidence lifecycle, and public/private IP disclosure.
+- Used current official competitor context for TAG/PSA claims while treating the CSV as the user's public-claims input.
+- CTO conclusion: architecture has structural issues that should be resolved in spec before implementation, mainly around bounded contexts, immutable capture/run provenance, versioned algorithm artifacts, multi-rig calibration identity, authentication governance, and evidence lifecycle.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+## Session Update (2026-05-28, AI Grader final synthesis blocked)
+- User requested the Prompt 4 Chief-of-Staff synthesis for `tk-ai-grader-codex-spec-v4.md` rev 4.1, comparison CSV, and all three prior reviewer outputs.
+- Local inputs found:
+  - `/Users/markthomas/Downloads/tk-ai-grader-codex-spec-v4.md`
+  - `/Users/markthomas/Downloads/Capability-TAGGrading-TenKingswithmicroscope-Winne.csv`
+  - one prior AI Grader review summary in `docs/HANDOFF_SET_OPS.md` / `docs/handoffs/SESSION_LOG.md`
+- Blocker: the three full reviewer outputs (Lead Engineer, Principal Architect, Red Team) were not present in the message or local file search, so producing a master register/amendment set would require inventing findings and would violate the user's "no new findings" rule.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+## Session Update (2026-05-28, AI Grader v4.1 spec pre-implementation review)
+- Reviewed the pasted `tk-ai-grader-codex-spec-v4.md` rev 4.1 and `Capability-TAGGrading-TenKingswithmicroscope-Winne.csv` content as a senior pre-implementation audit.
+- Treated M0 as authoritative and legacy warning-banner sections as reference only where superseded.
+- Produced review-only outputs covering buildability gaps, competitive claim coherence, proposed M0 amendments, and implementation readiness.
+- Key blockers identified before implementation:
+  - STANDARD timing math conflicts with 9-12 microscope visits per side and 6-8 seconds per visit.
+  - Macro-to-microscope suspect-region contract lacks coordinate frame, schema, thresholds, and persistence shape.
+  - v3 enum alias migration plan is unsafe if existing DB values are uppercase legacy enum values.
+  - Orchestrator lacks explicit error/retry/abort state handling for arm position, ACRO home, Dino-Lite USB drop, and failed spot-checks.
+  - Spot-check fusion semantics conflict with legacy "micro can only lower" when micro sees only sampled regions and dust correction can raise provisional macro grades.
+  - Calibration drift and microscope arm-position trust need explicit interlocks and recency policy.
+  - Operator grade overrides need first-class schema/audit capture.
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+
+## Session Update (2026-05-28, AGENTS startup sync + git-state refresh)
+- Re-read `AGENTS.md` and the required startup docs in `/Users/markthomas/tenkings-rip-it-live` before reporting git state.
+- Files reviewed:
+  - `AGENTS.md`
+  - `docs/context/MASTER_PRODUCT_CONTEXT.md`
+  - `docs/runbooks/DEPLOY_RUNBOOK.md`
+  - `docs/runbooks/SET_OPS_RUNBOOK.md`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Required git report:
+  - `git status -sb` -> `## feature/rip-it-live...origin/feature/rip-it-live` plus modified `docs/HANDOFF_SET_OPS.md` and `docs/handoffs/SESSION_LOG.md`
+  - `git branch --show-current` -> `feature/rip-it-live`
+  - `git rev-parse --short HEAD` -> `d6d9560`
+- No code edits, tests, deploy, restart, migration, runtime DB operation, or destructive data operation was executed.
+- 2026-05-28 final-response refresh confirmed the same startup docs and git report before final response; no deploy, restart, migration, test run, code edit, runtime DB operation, or destructive data operation was executed.
+
+## Session Update (2026-04-25, PR #5 migration verification blocked before merge)
+- User requested verification that the Rip It Live migration will run on the next production deploy, then merge PR #5 and watch production.
+- Re-read `AGENTS.md` and the required startup docs before any merge/deploy action.
+- Required git report before action:
+  - `git status -sb` -> `## feature/rip-it-live...origin/feature/rip-it-live`
+  - `git branch --show-current` -> `feature/rip-it-live`
+  - `git rev-parse --short HEAD` -> `f9a54b1`
+- Verified migration file exists:
+  - `packages/database/prisma/migrations/20260424170000_live_rip_consent/migration.sql`
+- Verified `scripts/vercel-build.sh` runs migrations before the Next build:
+  - `pnpm --filter @tenkings/database run migrate:deploy`
+  - `pnpm --filter @tenkings/nextjs-app run build`
+- Verified Prisma schema includes `LiveRipConsent` plus relations to `User` and `LiveRip`.
+- Verified migration diff against current `origin/main`:
+  - only new migration file is `20260424170000_live_rip_consent/migration.sql`
+  - `packages/database/prisma/schema.prisma` is also changed for the model/relations
+- Blocker:
+  - `20260424170000_live_rip_consent/migration.sql` is not partial-apply idempotent
+  - it uses unguarded `CREATE TYPE`, `ALTER TABLE ... ADD COLUMN`, `CREATE TABLE`, `CREATE INDEX`, and `ALTER TABLE ... ADD CONSTRAINT`
+  - Prisma will skip the migration after a successful `_prisma_migrations` record, but if production partially applies the SQL before the migration is recorded as complete, a rerun can fail on already-created enum/table/columns/indexes/constraints
+- Per user instruction, stopped before Part 2:
+  - did not run `gh pr merge`
+  - did not deploy
+  - did not run migrations
+  - did not run smoke checks or prod DB verification
+
+## Session Update (2026-04-25, PR #5 idempotency fix planned for production shipment)
+- User requested making `20260424170000_live_rip_consent` partial-apply idempotent, then resuming PR #5 production shipment.
+- Required git report before action:
+  - `git status -sb` -> `## feature/rip-it-live...origin/feature/rip-it-live` plus pre-existing handoff-doc modifications
+  - `git branch --show-current` -> `feature/rip-it-live`
+  - `git rev-parse --short HEAD` -> `f9a54b1`
+- Migration idempotency fix:
+  - commit `d6d9560` `fix(migration): make live_rip_consent idempotent for partial-apply safety`
+  - only staged/committed file: `packages/database/prisma/migrations/20260424170000_live_rip_consent/migration.sql`
+  - logical migration effect unchanged
+  - added guards for enum/table/index/columns/foreign-key constraints
+- Validation before push:
+  - `pnpm --filter @tenkings/database exec prisma format --schema prisma/schema.prisma` -> command passed; its alignment-only `schema.prisma` rewrite was reverted so no schema change is included
+  - `DATABASE_URL='postgresql://user:pass@localhost:5432/db' pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass
+  - `git diff --cached --check` -> pass
+  - feature diff excluding handoff docs -> only `packages/database/prisma/migrations/20260424170000_live_rip_consent/migration.sql`
+- Planned next actions:
+  - wait for PR #5 Vercel preview/checks to go green
+  - merge PR #5 using `gh pr merge 5 --merge`
+  - watch Vercel production deploy
+  - run `/live`, `/packs`, `/api/live/state`, and rendered-page smoke checks
+  - verify `_prisma_migrations.finished_at` for `20260424170000_live_rip_consent`
+
+## Session Update (2026-04-25, PR #5 shipped to production)
+- PR #5 post-fix preview/checks completed successfully on commit `d6d9560`.
+- Merged PR #5 using merge commit as requested:
+  - command: `gh pr merge 5 --merge`
+  - merge commit: `7a57811947a7645f7831302b2fcd04d92332b66e`
+- Vercel production deploy completed successfully:
+  - deploy URL: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/3h2pnZDq4Wdvnuuzqws1xKu3iDZv`
+  - final status: `success` / `Deployment has completed`
+- Production smoke checks:
+  - `curl -sS -o /dev/null -w "%{http_code}\n" https://collect.tenkings.co/live` -> `200`
+  - `curl -sS -o /dev/null -w "%{http_code}\n" https://collect.tenkings.co/packs` -> `200`
+  - `curl -sS -o /dev/null -w "%{http_code}\n" https://collect.tenkings.co/api/live/state` -> `200`
+  - `/api/live/state` returned valid JSON with keys `goldenTicketActive`, `regularActive`, `goldenTicketReveals`, and `pastRips`
+  - `curl -sS https://collect.tenkings.co/live | grep -i "ten kings"` -> match found (`<title ...>Ten Kings Live</title>`)
+- Production migration verification:
+  - queried `_prisma_migrations` via documented droplet `DATABASE_URL` source
+  - row found: `20260424170000_live_rip_consent|2026-04-25 07:06:49.66572+00`
+- Final local git state before this handoff refresh:
+  - `git status -sb` -> `## feature/rip-it-live...origin/feature/rip-it-live` plus handoff-doc modifications
+  - `git branch --show-current` -> `feature/rip-it-live`
+  - `git rev-parse --short HEAD` -> `d6d9560`
 
 ## Session Update (2026-04-24, Rip It Live + unified /live implementation)
 - Re-read required startup docs in `/Users/markthomas/tenkings-task27-main`, then created clean feature worktree `/Users/markthomas/tenkings-rip-it-live` from latest fetched `origin/main`.
