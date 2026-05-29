@@ -118,6 +118,10 @@
   - micro spot package persistence stores package metadata plus required EDR, polarized, and FLC LED frame evidence as `EvidenceArtifact` records through the injected client
   - mocked tests cover valid micro package persistence, missing FLC frame rejection before writes, GradeRun draft creation, COMPLETE finalization payloads, STANDARD completion blocking without fusion actions, evidence source/scope validation, no-source evidence rejection, and injected service factory access
   - validation passed locally: `pnpm --filter @tenkings/database build`, `pnpm --filter @tenkings/database test`, `pnpm --filter @tenkings/shared test`, `pnpm --filter @tenkings/nextjs-app build`, and `git diff --check`
+  - PR #11 merged at `2026-05-29T07:26:40Z`; merge commit/final post-merge `origin/main` HEAD was `cf56f42f1e200f74399d9cf312faf24405f684cf`
+  - post-merge GitHub Actions run `26624211370` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw
+  - Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/9FcCQJLa6ZJpNVigeqmk1Rt1Faw9`
+  - migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`
   - no migrations, deploys, restarts, runtime DB operations, frontend/API routes, hardware/capture code, image-processing/grading math, auth algorithms, reports, PDFs, or `RUN_DB_MIGRATIONS=true` changes were run
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)
