@@ -9658,3 +9658,21 @@ Build Set Ops UI flow with:
   - rotate or recreate each persisted Mux live stream used for Golden Ticket sessions
   - persist the replacement stream ids/keys/playback ids (or clear the old location Mux fields so the next kiosk start recreates them)
   - do not expect watermark coverage on older pre-Step-16 streams until that reprovision is completed
+
+## Session Update (2026-05-29, AI Grader auth/certificate persistence helpers)
+- Branch: `feature/ai-grader-auth-certificate-persistence`.
+- Scope stayed database service persistence/policy only: AuthRun draft/finalization, CardPrintProfile candidate/approval/quarantine/retire, GradeCertificate readiness/draft/issue/revoke, and audit-event persistence.
+- AuthRun first-seen/no-active-profile behavior remains `REFERENCE_NEEDED`; no helper marks a first profile authentic automatically and no CMYK/auth algorithm was added.
+- GradeCertificate readiness blocks incomplete GradeRun, unacceptable AuthRun, unresolved physical gates, unreviewed operator overrides, custody breaks, and missing/invalid original evidence before certificate draft/issue writes.
+- Files changed:
+  - `packages/database/src/aiGraderService.ts`
+  - `packages/database/tests/aiGraderService.test.js`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation:
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass.
+  - `git diff --check` -> pass.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no manual deploys/restarts, no runtime DB operations, no frontend/API routes, no hardware/capture, no image-processing/grading math, no CMYK/auth algorithms, and no report UI/PDF work.
