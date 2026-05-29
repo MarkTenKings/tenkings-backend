@@ -9806,3 +9806,35 @@ Build Set Ops UI flow with:
   - tear down with `docker compose -f docker-compose.ai-grader-migration.yml down -v`
 - Live disposable migration apply remains blocked in this workstation because `docker`, `psql`, and `pg_isready` are still unavailable.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, and no runtime DB operation against a real app DB.
+
+## Session Update (2026-05-29, AI Grader migration readiness live disposable apply)
+- Continued PR #15 on branch `feature/ai-grader-migration-readiness`.
+- Docker became available:
+  - `docker --version` -> Docker version `29.5.2`
+  - `docker compose version` -> Docker Compose version `v5.1.3`
+- Started only `docker-compose.ai-grader-migration.yml`.
+  - Host/db: `127.0.0.1:55432/tenkings_ai_grader_readiness`.
+  - User: `tenkings_readiness`.
+  - This was the only migrated/query target.
+- First clean-chain `prisma migrate deploy` failed before the AI Grader migration:
+  - failed migration: `20260305143000_variant_program_identity`
+  - error: `P3018`, PostgreSQL `42703`
+  - cause: `CardVariantReferenceImage.storageKey` did not exist before the migration referenced it while duplicating reference rows.
+- Added idempotent migration `packages/database/prisma/migrations/20260305120000_cvri_storage_key/migration.sql`.
+  - Adds nullable `CardVariantReferenceImage.storageKey` if absent.
+  - Adds `CardVariantReferenceImage_storageKey_idx` if absent.
+  - No existing historical migration was edited.
+- Reset only the disposable DB with `docker compose -f docker-compose.ai-grader-migration.yml down -v`, restarted, and reran `prisma migrate deploy`.
+- Clean rerun applied all 67 migrations successfully, including:
+  - `20260305120000_cvri_storage_key`
+  - `20260528120000_ai_grader_v5_foundation`
+- `prisma migrate status` against the disposable DB reported `Database schema is up to date!`.
+- Verified representative AI Grader enums and tables through container `psql`.
+- Tore down the disposable DB with `docker compose -f docker-compose.ai-grader-migration.yml down -v`.
+- Validation:
+  - Prisma validate against disposable localhost URL -> pass.
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, and no runtime DB operation against a real app DB.

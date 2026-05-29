@@ -19,27 +19,33 @@ The migration is 724 lines and creates the AI Grader v5 foundation schema:
 - indexes/unique constraints for expected tenant, session, artifact, certificate, profile, and audit lookups
 - foreign keys among newly introduced AI Grader tables
 
+Readiness run also found and fixed a pre-existing clean-chain migration issue before the AI Grader migration:
+
+`packages/database/prisma/migrations/20260305120000_cvri_storage_key/migration.sql`
+
+This migration adds the current `CardVariantReferenceImage.storageKey` column and index before `20260305143000_variant_program_identity` uses that column while duplicating reference rows.
+
 ## Safety Decision
 
 No production, staging, hosted, or real app database was used.
 
-`process.env.DATABASE_URL` was unset in this shell. The repo contains only example/docker env files with local container-style `postgres` hosts; no real local `.env` with a usable disposable database URL was present.
+No ambient production or staging `DATABASE_URL` was used. The repo contains only example/docker env files with local container-style `postgres` hosts; no real local `.env` was used for this pass.
 
-Checked local tooling for a disposable DB path during the first pass and again while adding the disposable Compose path:
+The first pass had no usable local Docker/Postgres tooling. After Docker Desktop was installed, the live validation pass used only the dedicated disposable Compose target:
 
-- `psql` not available
-- `pg_isready` not available
-- `docker` not available
+- `docker --version` -> Docker version `29.5.2`
+- `docker compose version` -> Docker Compose version `v5.1.3`
+- compose file: `docker-compose.ai-grader-migration.yml`
+- local host/port: `127.0.0.1:55432`
+- database: `tenkings_ai_grader_readiness`
+- user: `tenkings_readiness`
+- storage: tmpfs-backed Postgres data directory, discarded on teardown
 
-Because there was no usable local Postgres client/server/container path, the migration was not applied. The only `DATABASE_URL` value supplied during that pass was a dummy localhost URL for `prisma validate`:
+Disposable URL, with password redacted:
 
-`postgresql://<user>:<redacted>@localhost:5432/tenkings_ai_grader_readiness`
+`postgresql://tenkings_readiness:<redacted>@127.0.0.1:55432/tenkings_ai_grader_readiness?schema=public`
 
-That command validates Prisma schema configuration and did not apply migrations.
-
-The repo now includes a dedicated disposable Postgres Compose file for the next migration-readiness run:
-
-`docker-compose.ai-grader-migration.yml`
+This URL is local-only and does not reference production, staging, hosted, or shared app databases.
 
 Safety properties:
 
@@ -54,9 +60,14 @@ Safety properties:
 ## Validation Performed
 
 - Identified AI Grader migration in `packages/database/prisma/migrations/20260528120000_ai_grader_v5_foundation/migration.sql`.
-- Ran Prisma schema validation with a dummy localhost URL:
-  - `DATABASE_URL=postgresql://<user>:<redacted>@localhost:5432/tenkings_ai_grader_readiness pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+- Started disposable Postgres with `docker-compose.ai-grader-migration.yml`.
+- Confirmed disposable Postgres was healthy and accepting connections.
+- Ran Prisma schema validation with the disposable localhost URL:
+  - `DATABASE_URL=postgresql://tenkings_readiness:<redacted>@127.0.0.1:55432/tenkings_ai_grader_readiness?schema=public pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
   - Result: pass.
+- Ran `prisma migrate deploy` against the disposable database.
+- Ran `prisma migrate status` against the disposable database.
+- Verified representative AI Grader enums and tables through container `psql`.
 - Ran static SQL review for destructive or rewrite operations:
   - no `DROP`
   - no `ALTER TYPE`
@@ -68,6 +79,8 @@ Safety properties:
   - `pnpm --filter @tenkings/database test` -> pass, 36 tests.
   - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
   - `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- Ran `git diff --check` -> pass.
+- Tore down the disposable Postgres container and tmpfs-backed data with `docker compose -f docker-compose.ai-grader-migration.yml down -v`.
 
 Local warnings only:
 
@@ -76,11 +89,31 @@ Local warnings only:
 
 ## Disposable DB Migration Execution
 
-Not run.
+Run on disposable local Postgres only.
 
-Blocker: no safe disposable local Postgres target was available in this checkout/session. `DATABASE_URL` was unset, and neither local Postgres client tooling nor Docker was present to provision a throwaway database. Running the migration against production or staging is explicitly out of scope for this pass.
+Initial clean-chain result:
 
-Because the migration was not executed, this pass does not prove that the full migration chain applies cleanly on an empty or copied database. It validates the Prisma schema and static migration shape only.
+- `prisma migrate deploy` reached the disposable database and failed before the AI Grader migration at `20260305143000_variant_program_identity`.
+- Error: `P3018`, PostgreSQL `42703`, column `storageKey` of relation `CardVariantReferenceImage` did not exist.
+- Direct disposable DB verification showed no AI Grader tables/enums existed after this failure, as expected.
+
+Fix added:
+
+- Added `packages/database/prisma/migrations/20260305120000_cvri_storage_key/migration.sql`.
+- The migration is idempotent:
+  - `ALTER TABLE "CardVariantReferenceImage" ADD COLUMN IF NOT EXISTS "storageKey" TEXT;`
+  - `CREATE INDEX IF NOT EXISTS "CardVariantReferenceImage_storageKey_idx" ON "CardVariantReferenceImage" ("storageKey");`
+- No already-committed migration file was edited.
+
+Clean rerun result:
+
+- Reset only the disposable DB with `docker compose -f docker-compose.ai-grader-migration.yml down -v`.
+- Restarted the same disposable DB.
+- `prisma migrate deploy` applied all 67 migrations successfully, including:
+  - `20260305120000_cvri_storage_key`
+  - `20260528120000_ai_grader_v5_foundation`
+- `prisma migrate status` reported: `Database schema is up to date!`
+- `_prisma_migrations` confirmed both `20260305120000_cvri_storage_key` and `20260528120000_ai_grader_v5_foundation` finished successfully.
 
 ## Disposable DB Command Sequence
 
@@ -129,7 +162,13 @@ If any command fails, keep PR #15 draft and treat the failure as a migration rea
 
 ## Findings And Risks
 
-No migration SQL blocker was found by static review.
+The AI Grader migration itself applied successfully after the clean-chain `CardVariantReferenceImage.storageKey` gap was fixed.
+
+Readiness finding fixed in this PR:
+
+- Clean databases did not have `CardVariantReferenceImage.storageKey` before `20260305143000_variant_program_identity` referenced it.
+- This caused the full migration chain to fail before reaching the AI Grader migration.
+- The new `20260305120000_cvri_storage_key` migration repairs that chain gap without editing historical migration SQL.
 
 Observed risk profile:
 
@@ -137,22 +176,50 @@ Observed risk profile:
 - It is still a large DDL migration. PostgreSQL will take catalog locks while creating types, tables, indexes, and constraints. This should be run during a controlled migration window even though the objects are new.
 - Object-name collision remains the primary apply risk. If any target database already contains out-of-band objects with names like `Tenant`, `CaptureSession`, `GradeRun`, `EvidenceArtifact`, or the new enum names, `migrate deploy` would fail.
 - Runtime readiness remains gated by table existence. Keep `AI_GRADER_API_ENABLED` disabled until after the migration is applied and verified.
-- Because this pass could not execute on a disposable database, relation/index naming and full migration-chain order need one more disposable/staging dry run before production approval.
+- Production/staging may already have `CardVariantReferenceImage.storageKey`; if so, `20260305120000_cvri_storage_key` should be a no-op because it uses `IF NOT EXISTS`. If the column is absent, it adds the nullable column and index before AI Grader migration approval.
+
+## Verification Queries
+
+AI Grader enum verification:
+
+```text
+       typname
+----------------------
+ AuthVerdict
+ CaptureSessionStatus
+ GradeRunStatus
+(3 rows)
+```
+
+AI Grader table verification:
+
+```text
+    tablename
+------------------
+ AuditEvent
+ AuthRun
+ CaptureManifest
+ CaptureSession
+ EvidenceArtifact
+ GradeCertificate
+ GradeRun
+(7 rows)
+```
 
 ## Recommended Approval Path
 
-1. Run the dedicated disposable Compose path above on a workstation with Docker available, or provision a disposable local Postgres database matching the production major version.
-2. Run only against that disposable target:
-   - `DATABASE_URL=<disposable-url> pnpm --filter @tenkings/database exec prisma migrate deploy --schema prisma/schema.prisma`
-   - `DATABASE_URL=<disposable-url> pnpm --filter @tenkings/database exec prisma migrate status --schema prisma/schema.prisma`
-3. Verify AI Grader enums/tables/indexes exist on the disposable target.
-4. Keep `AI_GRADER_API_ENABLED` disabled during and after migration verification until the runtime rollout is explicitly approved.
-5. For staging/prod:
+1. Keep `AI_GRADER_API_ENABLED` disabled during and after migration execution until the runtime rollout is explicitly approved.
+2. For staging/prod:
    - confirm backups and current migration status first
    - run migration through the approved deployment/migration path only
    - set `RUN_DB_MIGRATIONS=true` only in the approved migration window or migration job, never as a persistent default
    - monitor migration logs and database lock/wait metrics
    - confirm Vercel/build logs show the migration ran only when explicitly intended
+3. After migration execution, verify:
+   - `prisma migrate status` reports the database schema is up to date
+   - `20260305120000_cvri_storage_key` is marked finished
+   - `20260528120000_ai_grader_v5_foundation` is marked finished
+   - representative AI Grader tables/enums exist
 
 ## Explicit Non-Actions
 
@@ -161,3 +228,4 @@ Observed risk profile:
 - `RUN_DB_MIGRATIONS=true` was not set.
 - No manual deploy was run.
 - No runtime DB operation was run against a real app database.
+- Only the disposable local database at `127.0.0.1:55432/tenkings_ai_grader_readiness` was migrated and queried.

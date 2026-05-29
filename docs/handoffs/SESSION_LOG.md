@@ -18316,3 +18316,35 @@ By enabling Rip It Live, I confirm:
 - No manual deploy/restart was run.
 - No runtime DB operation against a real app database was run.
 - PR #15 remains draft until the migration is actually applied to a disposable Postgres target and verified.
+
+## 2026-05-29 - AI Grader migration readiness live disposable apply
+
+### Summary
+- Continued PR #15 on branch `feature/ai-grader-migration-readiness` after Docker Desktop became available.
+- Confirmed Docker availability:
+  - `docker --version` -> Docker version `29.5.2`
+  - `docker compose version` -> Docker Compose version `v5.1.3`
+- Started only `docker-compose.ai-grader-migration.yml`, with disposable Postgres on `127.0.0.1:55432` and database `tenkings_ai_grader_readiness`.
+- First clean-chain `prisma migrate deploy` against the disposable DB failed before AI Grader at `20260305143000_variant_program_identity`.
+- Failure was a pre-existing migration-chain gap: `CardVariantReferenceImage.storageKey` did not exist before that migration referenced it.
+- Added idempotent repair migration `packages/database/prisma/migrations/20260305120000_cvri_storage_key/migration.sql`.
+- Reset only the disposable DB with `docker compose -f docker-compose.ai-grader-migration.yml down -v`, restarted it, and reran `prisma migrate deploy`.
+- Clean rerun applied all 67 migrations successfully, including `20260305120000_cvri_storage_key` and `20260528120000_ai_grader_v5_foundation`.
+- `prisma migrate status` reported `Database schema is up to date!`.
+- Verified AI Grader enums existed: `AuthVerdict`, `CaptureSessionStatus`, `GradeRunStatus`.
+- Verified AI Grader tables existed: `AuditEvent`, `AuthRun`, `CaptureManifest`, `CaptureSession`, `EvidenceArtifact`, `GradeCertificate`, `GradeRun`.
+- Tore down the disposable DB with `docker compose -f docker-compose.ai-grader-migration.yml down -v`.
+
+### Validation Evidence
+- `DATABASE_URL=postgresql://tenkings_readiness:<redacted>@127.0.0.1:55432/tenkings_ai_grader_readiness?schema=public pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- Only the disposable local Postgres database was migrated and queried.
