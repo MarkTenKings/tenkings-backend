@@ -9,11 +9,13 @@ const {
   markCaptureSessionMicroIncompleteRequiresReview,
   markCaptureSessionPausedForOperatorTimeout,
   markCaptureSessionPhysicalGateReview,
+  persistMacroSuspectRegions,
   persistOrchestratorTransition,
   readCaptureSessionState,
   recordAuditEvent,
   recordCaptureManifest,
   recordEvidenceArtifact,
+  recordMacroPipelineCompletion,
 } = require("../dist/database/src/aiGraderService");
 
 const SHA_256 = "a".repeat(64);
@@ -85,6 +87,12 @@ function createMockDb(options = {}) {
       async create(args) {
         calls.push({ delegate: "evidenceArtifact", method: "create", args });
         return { id: args.data.id, storageKey: args.data.storageKey };
+      },
+    },
+    gradingSuspectRegion: {
+      async createMany(args) {
+        calls.push({ delegate: "gradingSuspectRegion", method: "createMany", args });
+        return { count: args.data.length };
       },
     },
     auditEvent: {
@@ -163,6 +171,57 @@ function evidenceArtifact(overrides = {}) {
     heightPx: 4096,
     metadata: { side: "FRONT" },
     createdAt: ISO_TIME,
+    ...overrides,
+  };
+}
+
+function macroSuspect(overrides = {}) {
+  const rank = overrides.rank ?? 1;
+  return {
+    id: `macro-suspect:session-1:FRONT:SURFACE:${rank}:threshold-1`,
+    sessionId: "session-1",
+    side: "FRONT",
+    element: "SURFACE",
+    rank,
+    score: 0.88,
+    threshold: 0.72,
+    reasonCodes: ["SURFACE_ANOMALY"],
+    cardMm: { x: 10, y: 12, w: 4, h: 5 },
+    warpedPx: { x: 100, y: 120, w: 40, h: 50 },
+    sourcePx: { x: 98, y: 118, w: 44, h: 54 },
+    heatmapStorageKey: "macro/session-1/front/surface-1.png",
+    macroCaptureIds: ["frame-1"],
+    thresholdSetId: "threshold-1",
+    ...overrides,
+  };
+}
+
+function macroPipelineOutput(overrides = {}) {
+  return {
+    sessionId: "session-1",
+    side: "FRONT",
+    captureManifestId: "manifest-1",
+    algorithmVersionId: "macro-algorithm-1",
+    thresholdSetVersionId: "threshold-version-1",
+    centeringMeasurement: { horizontalPercent: 50, verticalPercent: 51 },
+    provisionalGrades: {
+      centering: 9,
+      corners: 9,
+      edges: 8.5,
+      surface: 8,
+    },
+    macroMeasurements: { surfaceAnomalyCount: 1 },
+    suspectRegions: [macroSuspect()],
+    physicalGateResults: [{ gate: "EXCESSIVE_DUST", status: "PASS" }],
+    evidenceArtifacts: [
+      {
+        id: "evidence-1",
+        evidenceClass: "ORIGINAL",
+        kind: "MACRO_RAW_FRAME",
+        storageKey: "original/session-1/front-diffuse.tiff",
+        checksumSha256: SHA_256,
+      },
+    ],
     ...overrides,
   };
 }
@@ -388,6 +447,159 @@ test("persistOrchestratorTransition validates transition, updates session, and w
   assert.equal(calls[3].args.data.entityId, "session-1");
   assert.equal(calls[3].args.data.after.currentState, "MACRO_PREFLIGHT");
   assert.match(calls[3].args.data.checksum, /^[a-f0-9]{64}$/);
+});
+
+test("persistMacroSuspectRegions validates scoped regions and persists GradingSuspectRegion records", async () => {
+  const { db, calls } = createMockDb();
+
+  const result = await persistMacroSuspectRegions(db, {
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    side: "FRONT",
+    regions: [
+      macroSuspect({ rank: 1, score: 0.91 }),
+      macroSuspect({
+        id: "macro-suspect:session-1:FRONT:SURFACE:2:threshold-1",
+        rank: 2,
+        score: 0.83,
+        sourcePx: undefined,
+        heatmapStorageKey: undefined,
+      }),
+    ],
+  });
+
+  assert.equal(result.count, 2);
+  assert.equal(result.side, "FRONT");
+  assert.equal(result.session.id, "session-1");
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "captureSession.findFirst", "gradingSuspectRegion.createMany"]
+  );
+  assert.deepEqual(calls[1].args.where, {
+    id: "session-1",
+    tenantId: "tenant-1",
+  });
+  assert.equal(calls[2].args.data.length, 2);
+  assert.equal(calls[2].args.data[0].sessionId, "session-1");
+  assert.equal(calls[2].args.data[0].side, "FRONT");
+  assert.equal(calls[2].args.data[0].element, "SURFACE");
+  assert.equal(calls[2].args.data[0].rank, 1);
+  assert.deepEqual(calls[2].args.data[0].reasonCodes, ["SURFACE_ANOMALY"]);
+  assert.deepEqual(calls[2].args.data[0].cardMm, { x: 10, y: 12, w: 4, h: 5 });
+  assert.deepEqual(calls[2].args.data[0].macroCaptureIds, ["frame-1"]);
+  assert.equal(calls[2].args.data[0].thresholdSetId, "threshold-1");
+});
+
+test("persistMacroSuspectRegions rejects invalid suspect regions before DB writes", async () => {
+  const { db, calls } = createMockDb();
+
+  await expectValidationRejects(
+    () =>
+      persistMacroSuspectRegions(db, {
+        tenantId: "tenant-1",
+        captureSessionId: "session-1",
+        side: "FRONT",
+        regions: [
+          macroSuspect({
+            score: 1.2,
+            element: "CORNERS",
+            cardMm: { x: 0, y: 0, w: 0, h: 1 },
+          }),
+        ],
+      }),
+    "INVALID_SCORE"
+  );
+
+  assert.equal(calls.length, 0);
+});
+
+test("persistMacroSuspectRegions enforces tenant and session scoping", async () => {
+  const { db, calls } = createMockDb();
+
+  await expectValidationRejects(
+    () =>
+      persistMacroSuspectRegions(db, {
+        tenantId: "tenant-2",
+        captureSessionId: "session-1",
+        side: "FRONT",
+        regions: [macroSuspect()],
+      }),
+    "INVALID_RECORD"
+  );
+
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "captureSession.findFirst"]
+  );
+  assert.deepEqual(calls[1].args.where, {
+    id: "session-1",
+    tenantId: "tenant-2",
+  });
+});
+
+test("persistMacroSuspectRegions rejects duplicate ranks before DB writes", async () => {
+  const { db, calls } = createMockDb();
+
+  await expectValidationRejects(
+    () =>
+      persistMacroSuspectRegions(db, {
+        tenantId: "tenant-1",
+        captureSessionId: "session-1",
+        side: "FRONT",
+        regions: [
+          macroSuspect({ id: "suspect-1", rank: 1 }),
+          macroSuspect({ id: "suspect-2", rank: 1 }),
+        ],
+      }),
+    "INVALID_RANK"
+  );
+
+  assert.equal(calls.length, 0);
+});
+
+test("recordMacroPipelineCompletion writes audit event without direct session update", async () => {
+  const { db, calls } = createMockDb({ session: baseSession({ currentState: "MACRO_PIPELINE", status: "RUNNING" }) });
+
+  const result = await recordMacroPipelineCompletion(db, {
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    output: macroPipelineOutput(),
+    actorOperatorId: "operator-1",
+    actorUserId: "user-1",
+    occurredAt: ISO_TIME,
+  });
+
+  assert.deepEqual(result.auditEvent, {
+    id: "audit-1",
+    action: "ai_grader.macro_pipeline.completed",
+  });
+  assert.equal(result.orchestratorTransition, undefined);
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "captureSession.findFirst", "auditEvent.create"]
+  );
+  assert.equal(calls[2].args.data.action, "ai_grader.macro_pipeline.completed");
+  assert.equal(calls[2].args.data.outcome, "SUCCESS");
+  assert.equal(calls[2].args.data.entityId, "session-1");
+  assert.equal(calls[2].args.data.after.side, "FRONT");
+  assert.equal(calls[2].args.data.after.captureManifestId, "manifest-1");
+  assert.equal(calls[2].args.data.after.suspectRegionCount, 1);
+  assert.equal(calls[2].args.data.after.advanceOrchestrator, false);
+  assert.match(calls[2].args.data.checksum, /^[a-f0-9]{64}$/);
+});
+
+test("macro persistence helpers are exposed through the injected service factory", async () => {
+  const { db, calls } = createMockDb();
+  const service = createAiGraderService(db);
+
+  await service.persistMacroSuspectRegions({
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    side: "FRONT",
+    regions: [macroSuspect()],
+  });
+
+  assert.ok(calls.some((call) => call.delegate === "gradingSuspectRegion" && call.method === "createMany"));
 });
 
 test("persistOrchestratorTransition rejects invalid transitions before DB writes", async () => {

@@ -3,8 +3,11 @@ import type {
   AiGraderValidationIssue,
   AiGraderValidationIssueCode,
   CaptureManifest,
+  CaptureSide,
   EvidenceArtifactContract,
   GradingMode,
+  MacroPipelineOutput,
+  MacroSuspectRegion,
   OrchestratorEventType,
   OrchestratorGuardResults,
   OrchestratorState,
@@ -14,6 +17,8 @@ import {
   transitionOrchestratorState,
   validateCaptureManifest,
   validateEvidenceArtifactContract,
+  validateMacroPipelineOutput,
+  validateMacroSuspectRegion,
 } from "@tenkings/shared";
 
 type NullableJsonInput = Prisma.InputJsonValue | typeof Prisma.JsonNull;
@@ -91,6 +96,24 @@ export type EvidenceArtifactCreateData = {
   createdAt: Date;
 };
 
+export type GradingSuspectRegionCreateData = {
+  id: string;
+  sessionId: string;
+  side: CaptureSide;
+  element: "SURFACE";
+  rank: number;
+  score: number;
+  threshold: number;
+  reasonCodes: Prisma.InputJsonValue;
+  cardMm: Prisma.InputJsonValue;
+  warpedPx: Prisma.InputJsonValue;
+  sourcePx?: Prisma.InputJsonValue;
+  heatmapStorageKey?: string;
+  macroCaptureIds: Prisma.InputJsonValue;
+  routedCaptureIds?: Prisma.InputJsonValue;
+  thresholdSetId: string;
+};
+
 export type AuditEventCreateData = {
   id?: string;
   tenantId: string;
@@ -147,6 +170,9 @@ export type AiGraderServiceTransactionClient = {
   };
   evidenceArtifact: {
     create(args: { data: EvidenceArtifactCreateData }): Promise<unknown>;
+  };
+  gradingSuspectRegion: {
+    createMany(args: { data: GradingSuspectRegionCreateData[] }): Promise<{ count: number }>;
   };
 };
 
@@ -230,6 +256,40 @@ export type PersistedOrchestratorTransition = {
   userVisibleMessage?: string;
 };
 
+export type PersistMacroSuspectRegionsInput = {
+  tenantId: string;
+  captureSessionId: string;
+  side: CaptureSide;
+  regions: MacroSuspectRegion[];
+};
+
+export type PersistedMacroSuspectRegions = {
+  session: CaptureSessionState;
+  side: CaptureSide;
+  count: number;
+  regions: MacroSuspectRegion[];
+};
+
+export type RecordMacroPipelineCompletionInput = {
+  tenantId: string;
+  captureSessionId: string;
+  output: MacroPipelineOutput;
+  actorOperatorId?: string | null;
+  actorUserId?: string | null;
+  reasonCode?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  occurredAt?: string | Date;
+  advanceOrchestrator?: boolean;
+  orchestratorGuardResults?: OrchestratorGuardResults;
+};
+
+export type RecordedMacroPipelineCompletion = {
+  session: CaptureSessionState;
+  auditEvent: unknown;
+  orchestratorTransition?: PersistedOrchestratorTransition;
+};
+
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 const NAMED_ERROR_STATES = new Set<OrchestratorState>(ORCHESTRATOR_NAMED_ERROR_STATES);
 
@@ -281,6 +341,17 @@ function throwIfInvalid(message: string, issues: AiGraderValidationIssue[]) {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function prefixedIssue(pathPrefix: string, entry: AiGraderValidationIssue): AiGraderValidationIssue {
+  if (entry.path.length === 0) {
+    return { ...entry, path: pathPrefix };
+  }
+  return { ...entry, path: `${pathPrefix}.${entry.path}` };
+}
+
 function validateCaptureSessionDraftInput(input: CreateCaptureSessionDraftInput) {
   const issues: AiGraderValidationIssue[] = [];
 
@@ -315,6 +386,86 @@ function validateOrchestratorTransitionInput(input: PersistOrchestratorTransitio
   if (input.reasonCode != null) requireNonEmptyString(input.reasonCode, "orchestrator.reasonCode", issues);
 
   throwIfInvalid("Invalid orchestrator transition input.", issues);
+}
+
+function validateMacroSuspectRegionCollection(
+  regions: unknown,
+  input: Pick<PersistMacroSuspectRegionsInput, "captureSessionId" | "side">
+): AiGraderValidationIssue[] {
+  const issues: AiGraderValidationIssue[] = [];
+
+  if (!Array.isArray(regions)) {
+    issues.push(issue("macroSuspectRegions", "INVALID_ARRAY", "macroSuspectRegions must be an array."));
+    return issues;
+  }
+
+  const ranks = new Set<number>();
+  const ids = new Set<string>();
+  regions.forEach((region, index) => {
+    const path = `macroSuspectRegions[${index}]`;
+    const result = validateMacroSuspectRegion(region);
+    issues.push(...result.issues.map((entry) => prefixedIssue(path, entry)));
+
+    if (!isRecord(region)) {
+      return;
+    }
+
+    if (region.sessionId !== input.captureSessionId) {
+      issues.push(issue(`${path}.sessionId`, "INVALID_RECORD", "suspect sessionId must match captureSessionId."));
+    }
+    if (region.side !== input.side) {
+      issues.push(issue(`${path}.side`, "INVALID_ENUM", "suspect side must match the requested side."));
+    }
+    if (typeof region.rank === "number" && Number.isInteger(region.rank) && region.rank >= 1) {
+      if (ranks.has(region.rank)) {
+        issues.push(issue(`${path}.rank`, "INVALID_RANK", "suspect ranks must be unique per session, side, and element."));
+      }
+      ranks.add(region.rank);
+    }
+    if (typeof region.id === "string" && region.id.trim().length > 0) {
+      if (ids.has(region.id)) {
+        issues.push(issue(`${path}.id`, "INVALID_RECORD", "suspect ids must be unique."));
+      }
+      ids.add(region.id);
+    }
+  });
+
+  return issues;
+}
+
+function validatePersistMacroSuspectRegionsInput(input: PersistMacroSuspectRegionsInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "captureSession.tenantId", issues);
+  requireNonEmptyString(input.captureSessionId, "captureSession.id", issues);
+  if (input.side !== "FRONT" && input.side !== "BACK") {
+    issues.push(issue("macroSuspectRegions.side", "INVALID_ENUM", "side must be FRONT or BACK."));
+  }
+  issues.push(...validateMacroSuspectRegionCollection(input.regions, input));
+
+  throwIfInvalid("Invalid macro suspect regions input.", issues);
+}
+
+function validateMacroPipelineCompletionInput(input: RecordMacroPipelineCompletionInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "captureSession.tenantId", issues);
+  requireNonEmptyString(input.captureSessionId, "captureSession.id", issues);
+  if (input.reasonCode != null) requireNonEmptyString(input.reasonCode, "macroPipeline.reasonCode", issues);
+
+  const result = validateMacroPipelineOutput(input.output);
+  issues.push(...result.issues.map((entry) => prefixedIssue("macroPipeline", entry)));
+  if (input.output?.sessionId !== input.captureSessionId) {
+    issues.push(issue("macroPipeline.output.sessionId", "INVALID_RECORD", "macro output sessionId must match captureSessionId."));
+  }
+  if (input.output && Array.isArray(input.output.suspectRegions)) {
+    issues.push(...validateMacroSuspectRegionCollection(input.output.suspectRegions, {
+      captureSessionId: input.captureSessionId,
+      side: input.output.side,
+    }));
+  }
+
+  throwIfInvalid("Invalid macro pipeline completion input.", issues);
 }
 
 function validateAuditEventInput(input: RecordAuditEventInput) {
@@ -489,6 +640,56 @@ async function buildTransitionAuditInput(
   };
 }
 
+async function buildMacroPipelineCompletionAuditInput(
+  session: CaptureSessionState,
+  input: RecordMacroPipelineCompletionInput,
+  occurredAt: Date
+): Promise<RecordAuditEventInput> {
+  const output = input.output;
+  const before = {
+    currentState: session.currentState,
+    status: session.status,
+    errorCode: session.errorCode,
+  };
+  const after = {
+    sessionId: output.sessionId,
+    side: output.side,
+    captureManifestId: output.captureManifestId,
+    algorithmVersionId: output.algorithmVersionId,
+    thresholdSetVersionId: output.thresholdSetVersionId,
+    suspectRegionCount: output.suspectRegions.length,
+    physicalGateResultCount: output.physicalGateResults.length,
+    evidenceArtifactCount: output.evidenceArtifacts.length,
+    provisionalGrades: output.provisionalGrades,
+    macroMeasurements: output.macroMeasurements,
+    advanceOrchestrator: input.advanceOrchestrator === true,
+  };
+  const checksum = await buildAuditChecksum({
+    tenantId: input.tenantId,
+    captureSessionId: input.captureSessionId,
+    before,
+    after,
+    occurredAt: occurredAt.toISOString(),
+  });
+
+  return {
+    tenantId: input.tenantId,
+    actorOperatorId: input.actorOperatorId ?? null,
+    actorUserId: input.actorUserId ?? null,
+    entityType: "CaptureSession",
+    entityId: input.captureSessionId,
+    action: "ai_grader.macro_pipeline.completed",
+    outcome: "SUCCESS",
+    before: before as Prisma.InputJsonValue,
+    after: after as Prisma.InputJsonValue,
+    reasonCode: input.reasonCode ?? null,
+    ipAddress: input.ipAddress ?? null,
+    userAgent: input.userAgent ?? null,
+    checksum,
+    createdAt: occurredAt,
+  };
+}
+
 function transitionUpdateData(
   session: CaptureSessionState,
   nextState: OrchestratorState,
@@ -513,6 +714,25 @@ function runInAiGraderTransaction<T>(
     return db.$transaction(fn);
   }
   return fn(db);
+}
+
+function macroSuspectRegionCreateData(region: MacroSuspectRegion): GradingSuspectRegionCreateData {
+  return {
+    id: region.id,
+    sessionId: region.sessionId,
+    side: region.side,
+    element: "SURFACE",
+    rank: region.rank,
+    score: region.score,
+    threshold: region.threshold,
+    reasonCodes: region.reasonCodes,
+    cardMm: region.cardMm as unknown as Prisma.InputJsonValue,
+    warpedPx: region.warpedPx as unknown as Prisma.InputJsonValue,
+    sourcePx: region.sourcePx as unknown as Prisma.InputJsonValue | undefined,
+    heatmapStorageKey: region.heatmapStorageKey,
+    macroCaptureIds: region.macroCaptureIds,
+    thresholdSetId: region.thresholdSetId,
+  };
 }
 
 export async function createCaptureSessionDraft(
@@ -622,6 +842,97 @@ export async function recordAuditEvent(
   };
 
   return db.auditEvent.create({ data });
+}
+
+export async function persistMacroSuspectRegions(
+  db: AiGraderServicePrismaClient,
+  input: PersistMacroSuspectRegionsInput
+): Promise<PersistedMacroSuspectRegions> {
+  validatePersistMacroSuspectRegionsInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const session = await readCaptureSessionState(tx, {
+      tenantId: input.tenantId,
+      captureSessionId: input.captureSessionId,
+    });
+
+    if (!session) {
+      throw new AiGraderServiceValidationError("Capture session not found for tenant.", [
+        issue("captureSession", "INVALID_RECORD", "CaptureSession was not found for the supplied tenant and session id."),
+      ]);
+    }
+
+    if (input.regions.length === 0) {
+      return {
+        session,
+        side: input.side,
+        count: 0,
+        regions: [],
+      };
+    }
+
+    const result = await tx.gradingSuspectRegion.createMany({
+      data: input.regions.map(macroSuspectRegionCreateData),
+    });
+
+    return {
+      session,
+      side: input.side,
+      count: result.count,
+      regions: input.regions.map((region) => ({ ...region })),
+    };
+  });
+}
+
+export async function recordMacroPipelineCompletion(
+  db: AiGraderServicePrismaClient,
+  input: RecordMacroPipelineCompletionInput
+): Promise<RecordedMacroPipelineCompletion> {
+  validateMacroPipelineCompletionInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const session = await readCaptureSessionState(tx, {
+      tenantId: input.tenantId,
+      captureSessionId: input.captureSessionId,
+    });
+
+    if (!session) {
+      throw new AiGraderServiceValidationError("Capture session not found for tenant.", [
+        issue("captureSession", "INVALID_RECORD", "CaptureSession was not found for the supplied tenant and session id."),
+      ]);
+    }
+
+    const occurredAt = dateFromOptional(input.occurredAt, "macroPipeline.occurredAt");
+    const orchestratorTransition = input.advanceOrchestrator
+      ? await persistOrchestratorTransition(tx, {
+          tenantId: input.tenantId,
+          captureSessionId: input.captureSessionId,
+          event: "MACRO_PIPELINE_COMPLETE",
+          guardResults: {
+            macroOutputValid: true,
+            mode: session.gradingMode,
+            ...(input.orchestratorGuardResults ?? {}),
+          },
+          actorOperatorId: input.actorOperatorId ?? null,
+          actorUserId: input.actorUserId ?? null,
+          reasonCode: input.reasonCode ?? null,
+          ipAddress: input.ipAddress ?? null,
+          userAgent: input.userAgent ?? null,
+          occurredAt,
+        })
+      : undefined;
+
+    const auditEvent = await recordAuditEvent(
+      tx,
+      await buildMacroPipelineCompletionAuditInput(session, input, occurredAt)
+    );
+
+    return {
+      session,
+      auditEvent,
+      ...(orchestratorTransition ? { orchestratorTransition } : {}),
+    };
+  });
 }
 
 export async function persistOrchestratorTransition(
@@ -792,6 +1103,10 @@ export function createAiGraderService(db: AiGraderServicePrismaClient) {
     recordEvidenceArtifact: (artifact: EvidenceArtifactContract) =>
       recordEvidenceArtifact(db, artifact),
     recordAuditEvent: (input: RecordAuditEventInput) => recordAuditEvent(db, input),
+    persistMacroSuspectRegions: (input: PersistMacroSuspectRegionsInput) =>
+      persistMacroSuspectRegions(db, input),
+    recordMacroPipelineCompletion: (input: RecordMacroPipelineCompletionInput) =>
+      recordMacroPipelineCompletion(db, input),
     persistOrchestratorTransition: (input: PersistOrchestratorTransitionInput) =>
       persistOrchestratorTransition(db, input),
     markCaptureSessionPausedForOperatorTimeout: (input: CommonCaptureSessionStateUpdateInput) =>

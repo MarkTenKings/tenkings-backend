@@ -103,6 +103,11 @@
   - Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/DKzshqD5vhQNFWj97xaAzHAGZa5n`
   - migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`
   - no migrations, deploys, restarts, runtime DB operations, frontend/API routes, hardware/capture code, grading math, auth algorithms, reports, PDFs, or `RUN_DB_MIGRATIONS=true` changes were run
+- AI Grader macro pipeline persistence helper branch started:
+  - branch `feature/ai-grader-macro-persistence` created from fetched `origin/main` at `e7356f58c0d90c9c2382a8a91dd6689e70bc9294`
+  - local implementation adds injectable helpers for `MacroSuspectRegion` -> `GradingSuspectRegion` persistence and macro pipeline completion audit metadata
+  - mocked tests cover valid persistence, invalid-region rejection, tenant/session scoping, duplicate-rank rejection, completion audit event creation, and injected service factory access
+  - no migrations, deploys, restarts, runtime DB operations, frontend/API routes, hardware/capture code, image-processing/grading math, auth algorithms, reports, PDFs, or `RUN_DB_MIGRATIONS=true` changes were run
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)
 - Phase 10 evidence, certificate, custody, and public-report contract helpers are committed on `feature/ai-grader-v5-foundation`.

@@ -17366,7 +17366,7 @@ By enabling Rip It Live, I confirm:
 
 ### Validation Evidence
 - `pnpm --filter @tenkings/shared build` -> pass.
-- `pnpm --filter @tenkings/shared test` -> pass.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
@@ -18007,6 +18007,30 @@ By enabling Rip It Live, I confirm:
 ### Remaining Guardrails
 - AI Grader Prisma migration remains committed but unapplied.
 - Do not start hardware/capture, grading math, frontend/API exposure, auth algorithms, reports, PDFs, migrations, or runtime DB operations without a dedicated approved phase.
+
+## 2026-05-29 - AI Grader macro pipeline persistence helpers
+
+### Summary
+- Created branch `feature/ai-grader-macro-persistence` from fetched `origin/main` at `e7356f58c0d90c9c2382a8a91dd6689e70bc9294`.
+- Added injectable database service helpers for macro pipeline persistence only.
+- `persistMacroSuspectRegions` validates tenant/session scope through `CaptureSession` lookup, validates each shared `MacroSuspectRegion`, enforces same session/side plus unique rank/id semantics, and persists `GradingSuspectRegion` records through the injected client.
+- `recordMacroPipelineCompletion` validates shared `MacroPipelineOutput`, writes a macro completion `AuditEvent`, and can optionally advance orchestrator state only through the existing transition helper.
+- Added mocked database tests for valid suspect persistence, invalid-region rejection before writes, tenant/session scoping, duplicate-rank rejection before writes, macro completion audit creation, and service factory injection.
+- No Prisma schema changes, migration files, frontend/API routes, hardware/capture code, image-processing/grading math, auth algorithms, report/PDF work, migrations, deploys, restarts, runtime DB operations, or `RUN_DB_MIGRATIONS=true` changes were performed.
+
+### Files Changed
+- `packages/database/src/aiGraderService.ts`
+- `packages/database/tests/aiGraderService.test.js`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 19 tests.
+- `pnpm --filter @tenkings/shared test` -> pass.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
 ## 2026-05-28 - AI Grader Phase 10 committed
 
