@@ -17948,6 +17948,51 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-29 - AI Grader orchestrator persistence helpers
+
+### Summary
+- Created branch `feature/ai-grader-orchestrator-persistence` from fetched `origin/main` at `c1a9727cd6baea82a5a41cc8c535d88661c22668`.
+- Added injectable database-package helpers for orchestrator persistence only.
+- `persistOrchestratorTransition` reads `CaptureSession` by tenant/session id, validates the requested event through the shared FSM, updates scoped session state/status/errorCode fields, and writes an audit event inside an injected transaction/client shape.
+- Added common state helpers for operator timeout pause, micro incomplete review, physical gate review, abort with reason, and completion from a valid review state.
+- Tests use mocked Prisma-like delegates only; no live Prisma singleton or runtime database path is imported.
+- No Prisma schema changes, migration files, frontend/API routes, hardware/capture code, grading math, auth algorithms, report/PDF work, migrations, deploys, restarts, runtime DB operations, or `RUN_DB_MIGRATIONS=true` changes were performed.
+
+### Files Changed
+- `packages/database/src/aiGraderService.ts`
+- `packages/database/tests/aiGraderService.test.js`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 13 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
+## 2026-05-29 - AI Grader orchestrator persistence PR #9 build fix
+
+### Summary
+- PR #9 failed `Install & Build` and Vercel because `packages/database/src/aiGraderService.ts` imported `node:crypto`, and the Next.js build pulled that exported database service path through `@tenkings/database`.
+- Removed the Node crypto import without adding another Node crypto dependency.
+- Kept orchestrator audit checksum behavior as 64-character lowercase SHA-256 hex by using `globalThis.crypto.subtle.digest("SHA-256", ...)` inside the existing async persistence flow.
+- Scope stayed limited to the database service helper build fix plus handoff docs.
+- No migrations, `RUN_DB_MIGRATIONS=true`, deploys, restarts, runtime DB operations, frontend/API routes, hardware/capture code, grading math, auth algorithms, reports, or PDFs were run or added.
+
+### Files Changed
+- `packages/database/src/aiGraderService.ts`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 13 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary
