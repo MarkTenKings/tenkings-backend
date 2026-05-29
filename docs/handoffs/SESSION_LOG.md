@@ -17861,6 +17861,35 @@ By enabling Rip It Live, I confirm:
 ### Remaining Guardrail
 - Migration execution remains a separate explicit approval path and should require a dedicated migration readiness pass before staging/prod execution.
 
+## 2026-05-28 - AI Grader foundation PR merged
+
+### Summary
+- User reported PR #6 was merged into `main`.
+- PR: `https://github.com/MarkTenKings/tenkings-backend/pull/6`.
+- Cleanup commit before merge: `fdf90b967e824bceb36dea9404b1cdfbe13ad2e3`.
+- Merge commit: `4bc7ad26444c35b7fad6bc808ba7cbc2b2fb55bb`.
+- Final `origin/main` HEAD reported: `4bc7ad26444c35b7fad6bc808ba7cbc2b2fb55bb`.
+- PR status: merged at `2026-05-29T00:08:31Z`.
+- Vercel production deployment ran automatically and completed successfully.
+- User reported no manual migrations, no `RUN_DB_MIGRATIONS=true`, no manual deploy commands, and no runtime DB operations.
+- Vercel build-log access was unavailable through the checked status API, so the migration-skip line was not quoted directly; `scripts/vercel-build.sh` gates migrations and `RUN_DB_MIGRATIONS` was unset in the session.
+- Post-merge GitHub Actions run `26609815377` failed in the Docker image matrix at GHCR push with `denied: installation not allowed to Create organization package`; logs showed `GITHUB_TOKEN` had Packages: read. This appears to be a GHCR package permission/publishing issue, not an AI Grader build failure.
+
+## 2026-05-28 - GHCR package publishing permission fix
+
+### Summary
+- User requested a narrowly scoped fix for post-merge CI Docker image push failures.
+- Branch: `fix/ghcr-package-permissions` from `origin/main`.
+- Root cause: `.github/workflows/ci.yml` did not request explicit token permissions, so the post-merge Docker image jobs had `GITHUB_TOKEN` Packages: read while attempting to create/push GHCR packages.
+- Fix: Docker image job now requests `contents: read` and `packages: write`.
+- Scope stayed limited to CI/GHCR permissions plus handoff docs.
+- No AI Grader implementation, migration execution, manual deploy command, runtime DB operation, or `RUN_DB_MIGRATIONS=true` change was made.
+
+### Remaining Guardrails
+- Draft AI Grader migration remains unapplied.
+- Any migration execution still requires explicit approval and a dedicated readiness pass.
+- Service/hardware implementation has not started.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary
