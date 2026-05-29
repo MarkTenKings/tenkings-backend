@@ -3,6 +3,9 @@ const assert = require("node:assert/strict");
 const {
   AiGraderServiceValidationError,
   createAiGraderService,
+  createGradeRunDraft,
+  finalizeGradeRun,
+  linkEvidenceArtifact,
   createCaptureSessionDraft,
   markCaptureSessionAborted,
   markCaptureSessionComplete,
@@ -16,6 +19,7 @@ const {
   recordCaptureManifest,
   recordEvidenceArtifact,
   recordMacroPipelineCompletion,
+  persistMicroSpotPackage,
 } = require("../dist/database/src/aiGraderService");
 
 const SHA_256 = "a".repeat(64);
@@ -42,9 +46,42 @@ function baseSession(overrides = {}) {
   };
 }
 
+function baseGradeRun(overrides = {}) {
+  return {
+    id: "grade-run-1",
+    captureSessionId: "session-1",
+    captureManifestId: "manifest-1",
+    algorithmVersionId: "algorithm-1",
+    thresholdSetVersionId: "threshold-1",
+    runtimeEnvironmentId: "runtime-1",
+    status: "RUNNING",
+    mode: "STANDARD",
+    inputChecksum: SHA_256,
+    outputChecksum: null,
+    macroMeasurements: { surface: 8 },
+    microMeasurements: { inspectedSpotCount: 1 },
+    fusionActions: [],
+    finalGrades: null,
+    confidence: null,
+    warnings: null,
+    errorCode: null,
+    startedAt: new Date(ISO_TIME),
+    finishedAt: null,
+    ...overrides,
+  };
+}
+
 function createMockDb(options = {}) {
   const calls = [];
   let session = options.session ?? baseSession();
+  let gradeRun = options.gradeRun ?? baseGradeRun();
+  let authRun = options.authRun ?? { id: "auth-run-1", tenantId: "tenant-1", captureSessionId: "session-1" };
+  let certificate = options.certificate ?? {
+    id: "certificate-1",
+    tenantId: "tenant-1",
+    gradeRunId: "grade-run-1",
+    authRunId: null,
+  };
 
   const tx = {
     captureSession: {
@@ -89,6 +126,67 @@ function createMockDb(options = {}) {
         return { id: args.data.id, storageKey: args.data.storageKey };
       },
     },
+    gradeRun: {
+      async create(args) {
+        calls.push({ delegate: "gradeRun", method: "create", args });
+        gradeRun = {
+          id: args.data.id ?? "grade-run-1",
+          outputChecksum: null,
+          finalGrades: null,
+          confidence: null,
+          warnings: null,
+          errorCode: null,
+          finishedAt: null,
+          ...args.data,
+          startedAt: args.data.startedAt ?? new Date(ISO_TIME),
+        };
+        return { id: gradeRun.id, status: gradeRun.status };
+      },
+      async findFirst(args) {
+        calls.push({ delegate: "gradeRun", method: "findFirst", args });
+        if (
+          !gradeRun ||
+          gradeRun.id !== args.where.id ||
+          args.where.captureSession.tenantId !== "tenant-1"
+        ) {
+          return null;
+        }
+        return { ...gradeRun };
+      },
+      async updateMany(args) {
+        calls.push({ delegate: "gradeRun", method: "updateMany", args });
+        if (
+          !gradeRun ||
+          gradeRun.id !== args.where.id ||
+          args.where.captureSession.tenantId !== "tenant-1"
+        ) {
+          return { count: 0 };
+        }
+        gradeRun = {
+          ...gradeRun,
+          ...args.data,
+        };
+        return { count: 1 };
+      },
+    },
+    authRun: {
+      async findFirst(args) {
+        calls.push({ delegate: "authRun", method: "findFirst", args });
+        if (!authRun || authRun.id !== args.where.id || authRun.tenantId !== args.where.tenantId) {
+          return null;
+        }
+        return { ...authRun };
+      },
+    },
+    gradeCertificate: {
+      async findFirst(args) {
+        calls.push({ delegate: "gradeCertificate", method: "findFirst", args });
+        if (!certificate || certificate.id !== args.where.id || certificate.tenantId !== args.where.tenantId) {
+          return null;
+        }
+        return { ...certificate };
+      },
+    },
     gradingSuspectRegion: {
       async createMany(args) {
         calls.push({ delegate: "gradingSuspectRegion", method: "createMany", args });
@@ -117,6 +215,7 @@ function createMockDb(options = {}) {
     db,
     calls,
     getSession: () => session,
+    getGradeRun: () => gradeRun,
   };
 }
 
@@ -222,6 +321,89 @@ function macroPipelineOutput(overrides = {}) {
         checksumSha256: SHA_256,
       },
     ],
+    ...overrides,
+  };
+}
+
+function evidenceRef(frameKey, overrides = {}) {
+  return {
+    id: `micro-frame-${frameKey}`,
+    storageKey: `micro/session-1/${frameKey}.tiff`,
+    checksumSha256: SHA_256,
+    mimeType: "image/tiff",
+    byteSize: 4096,
+    widthPx: 2048,
+    heightPx: 2048,
+    ...overrides,
+  };
+}
+
+function microSpotFrames(overrides = {}) {
+  return {
+    edrBase: evidenceRef("edrBase"),
+    polarizedAllOn: evidenceRef("polarizedAllOn"),
+    flcLed0: evidenceRef("flcLed0"),
+    flcLed1: evidenceRef("flcLed1"),
+    flcLed2: evidenceRef("flcLed2"),
+    flcLed3: evidenceRef("flcLed3"),
+    flcLed4: evidenceRef("flcLed4"),
+    flcLed5: evidenceRef("flcLed5"),
+    flcLed6: evidenceRef("flcLed6"),
+    flcLed7: evidenceRef("flcLed7"),
+    ...overrides,
+  };
+}
+
+function microSpotPackage(overrides = {}) {
+  const element = overrides.element ?? "SURFACE";
+  const side = overrides.side ?? "FRONT";
+  const spotIndex = overrides.spotIndex ?? 1;
+  const sourceSuspectRegionId =
+    Object.prototype.hasOwnProperty.call(overrides, "sourceSuspectRegionId")
+      ? overrides.sourceSuspectRegionId
+      : element === "SURFACE"
+        ? "macro-suspect:session-1:FRONT:SURFACE:1:threshold-1"
+        : undefined;
+  const base = {
+    id: `micro-spot:session-1:${side}:${element}:${spotIndex}:${sourceSuspectRegionId ?? "standard"}`,
+    sessionId: "session-1",
+    captureManifestId: "manifest-1",
+    side,
+    element,
+    spotIndex,
+    totalSpots: element === "SURFACE" ? 1 : 4,
+    stageXMicrons: 1000,
+    stageYMicrons: 2000,
+    microMagnification: 220,
+    amrReading: 0.12,
+    focusScore: 0.91,
+    frames: microSpotFrames(),
+    capturedAt: ISO_TIME,
+    validForClassification: true,
+  };
+  if (sourceSuspectRegionId !== undefined) {
+    base.sourceSuspectRegionId = sourceSuspectRegionId;
+  }
+  return {
+    ...base,
+    ...overrides,
+  };
+}
+
+function fusionAction(overrides = {}) {
+  return {
+    action: "LOWER",
+    element: "SURFACE",
+    side: "FRONT",
+    regionId: "macro-suspect:session-1:FRONT:SURFACE:1:threshold-1",
+    spotPackageId: microSpotPackage().id,
+    macroMeasurement: { provisionalGrade: 9 },
+    microMeasurement: { finding: "REAL_DEFECT" },
+    gradeBefore: 9,
+    gradeAfter: 8,
+    algorithmVersionId: "algorithm-1",
+    thresholdSetVersionId: "threshold-1",
+    reasonCodes: ["MICRO_CONFIRMED_DEFECT"],
     ...overrides,
   };
 }
@@ -588,6 +770,223 @@ test("recordMacroPipelineCompletion writes audit event without direct session up
   assert.match(calls[2].args.data.checksum, /^[a-f0-9]{64}$/);
 });
 
+test("persistMicroSpotPackage persists package metadata and required frame evidence", async () => {
+  const { db, calls } = createMockDb({ session: baseSession({ currentState: "MICRO_SPOTS", status: "RUNNING" }) });
+  const pkg = microSpotPackage();
+
+  const result = await persistMicroSpotPackage(db, {
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    microSpotPackage: pkg,
+  });
+
+  assert.equal(result.session.id, "session-1");
+  assert.equal(result.microSpotPackage.id, pkg.id);
+  assert.equal(result.evidenceArtifacts.length, 11);
+  assert.deepEqual(
+    calls.slice(0, 3).map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "captureSession.findFirst", "evidenceArtifact.create"]
+  );
+  assert.equal(calls.length, 13);
+  assert.equal(calls[2].args.data.kind, "MICRO_SPOT_PACKAGE_METADATA");
+  assert.equal(calls[2].args.data.captureSessionId, "session-1");
+  assert.equal(calls[2].args.data.evidenceClass, "DERIVED");
+  assert.match(calls[2].args.data.checksumSha256, /^[a-f0-9]{64}$/);
+  assert.equal(calls[2].args.data.metadata.microSpotPackage.id, pkg.id);
+  const frameWrite = calls.find((call) => call.args?.data?.metadata?.frameKey === "flcLed7");
+  assert.equal(frameWrite.delegate, "evidenceArtifact");
+  assert.equal(frameWrite.args.data.kind, "MICRO_SPOT_FRAME");
+  assert.equal(frameWrite.args.data.storageKey, "micro/session-1/flcLed7.tiff");
+  assert.equal(frameWrite.args.data.metadata.captureManifestId, "manifest-1");
+});
+
+test("persistMicroSpotPackage rejects missing FLC frames before DB writes", async () => {
+  const { db, calls } = createMockDb();
+  const frames = microSpotFrames();
+  delete frames.flcLed7;
+
+  await expectValidationRejects(
+    () =>
+      persistMicroSpotPackage(db, {
+        tenantId: "tenant-1",
+        captureSessionId: "session-1",
+        microSpotPackage: microSpotPackage({ frames }),
+      }),
+    "MISSING_FRAME"
+  );
+
+  assert.equal(calls.length, 0);
+});
+
+test("createGradeRunDraft creates expected pending/running GradeRun data", async () => {
+  const { db, calls } = createMockDb({ session: baseSession({ currentState: "FUSION", status: "RUNNING" }) });
+
+  const result = await createGradeRunDraft(db, {
+    id: "grade-run-2",
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    captureManifestId: "manifest-1",
+    algorithmVersionId: "algorithm-1",
+    thresholdSetVersionId: "threshold-1",
+    runtimeEnvironmentId: "runtime-1",
+    inputChecksum: SHA_256,
+    macroMeasurements: { surface: 8 },
+    microMeasurements: { inspectedSpotCount: 1 },
+    startedAt: ISO_TIME,
+  });
+
+  assert.deepEqual(result.gradeRun, { id: "grade-run-2", status: "RUNNING" });
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "captureSession.findFirst", "gradeRun.create"]
+  );
+  assert.deepEqual(calls[1].args.where, {
+    id: "session-1",
+    tenantId: "tenant-1",
+  });
+  assert.equal(calls[2].args.data.captureSessionId, "session-1");
+  assert.equal(calls[2].args.data.captureManifestId, "manifest-1");
+  assert.equal(calls[2].args.data.status, "RUNNING");
+  assert.equal(calls[2].args.data.mode, "STANDARD");
+  assert.equal(calls[2].args.data.inputChecksum, SHA_256);
+  assert.deepEqual(calls[2].args.data.fusionActions, []);
+});
+
+test("finalizeGradeRun writes COMPLETE payload with fusion actions", async () => {
+  const { db, calls, getGradeRun } = createMockDb({
+    gradeRun: baseGradeRun({ id: "grade-run-1", status: "RUNNING", mode: "STANDARD" }),
+  });
+  const outputChecksum = "b".repeat(64);
+
+  const result = await finalizeGradeRun(db, {
+    tenantId: "tenant-1",
+    gradeRunId: "grade-run-1",
+    outputChecksum,
+    finalGrades: { corners: 8, edges: 9, surface: 8 },
+    fusionActions: [fusionAction()],
+    confidence: { overall: 0.93 },
+    warnings: ["MICRO_CONFIRMED_DEFECT"],
+    finishedAt: ISO_TIME,
+  });
+
+  assert.equal(result.updatedCount, 1);
+  assert.equal(getGradeRun().status, "COMPLETE");
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "gradeRun.findFirst", "gradeRun.updateMany"]
+  );
+  assert.deepEqual(calls[1].args.where, {
+    id: "grade-run-1",
+    captureSession: { tenantId: "tenant-1" },
+  });
+  assert.equal(calls[2].args.data.status, "COMPLETE");
+  assert.equal(calls[2].args.data.outputChecksum, outputChecksum);
+  assert.deepEqual(calls[2].args.data.finalGrades, { corners: 8, edges: 9, surface: 8 });
+  assert.equal(calls[2].args.data.fusionActions.length, 1);
+  assert.deepEqual(calls[2].args.data.confidence, { overall: 0.93 });
+  assert.deepEqual(calls[2].args.data.warnings, ["MICRO_CONFIRMED_DEFECT"]);
+  assert.ok(calls[2].args.data.finishedAt instanceof Date);
+});
+
+test("finalizeGradeRun rejects STANDARD completion without fusion actions before update writes", async () => {
+  const { db, calls } = createMockDb({
+    gradeRun: baseGradeRun({ id: "grade-run-1", status: "RUNNING", mode: "STANDARD" }),
+  });
+
+  await expectValidationRejects(
+    () =>
+      finalizeGradeRun(db, {
+        tenantId: "tenant-1",
+        gradeRunId: "grade-run-1",
+        outputChecksum: "b".repeat(64),
+        finalGrades: { surface: 8 },
+        fusionActions: [],
+      }),
+    "EMPTY_ARRAY"
+  );
+
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "gradeRun.findFirst"]
+  );
+});
+
+test("linkEvidenceArtifact attaches evidence only after scoped source validation", async () => {
+  const { db, calls } = createMockDb();
+
+  const result = await linkEvidenceArtifact(
+    db,
+    evidenceArtifact({
+      id: "grade-evidence-1",
+      captureSessionId: undefined,
+      gradeRunId: "grade-run-1",
+      kind: "GRADE_RUN_INPUT_BUNDLE",
+      evidenceClass: "DERIVED",
+      metadata: { gradeRunInput: true },
+    })
+  );
+
+  assert.deepEqual(result.artifact, {
+    id: "grade-evidence-1",
+    storageKey: "original/session-1/front-diffuse.tiff",
+  });
+  assert.equal(result.scopes.gradeRun.id, "grade-run-1");
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "gradeRun.findFirst", "evidenceArtifact.create"]
+  );
+  assert.deepEqual(calls[1].args.where, {
+    id: "grade-run-1",
+    captureSession: { tenantId: "tenant-1" },
+  });
+  assert.equal(calls[2].args.data.gradeRunId, "grade-run-1");
+  assert.equal(calls[2].args.data.captureSessionId, null);
+});
+
+test("linkEvidenceArtifact rejects artifacts with no source linkage before DB calls", async () => {
+  const { db, calls } = createMockDb();
+
+  await expectValidationRejects(
+    () =>
+      linkEvidenceArtifact(
+        db,
+        evidenceArtifact({
+          captureSessionId: undefined,
+          gradeRunId: undefined,
+          authRunId: undefined,
+          certificateId: undefined,
+          evidenceClass: "DERIVED",
+        })
+      ),
+    "INVALID_EVIDENCE_ARTIFACT"
+  );
+
+  assert.equal(calls.length, 0);
+});
+
+test("linkEvidenceArtifact enforces tenant/source scope before writes", async () => {
+  const { db, calls } = createMockDb();
+
+  await expectValidationRejects(
+    () =>
+      linkEvidenceArtifact(
+        db,
+        evidenceArtifact({
+          tenantId: "tenant-2",
+          captureSessionId: undefined,
+          gradeRunId: "grade-run-1",
+          evidenceClass: "DERIVED",
+        })
+      ),
+    "INVALID_RECORD"
+  );
+
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "gradeRun.findFirst"]
+  );
+});
+
 test("macro persistence helpers are exposed through the injected service factory", async () => {
   const { db, calls } = createMockDb();
   const service = createAiGraderService(db);
@@ -600,6 +999,24 @@ test("macro persistence helpers are exposed through the injected service factory
   });
 
   assert.ok(calls.some((call) => call.delegate === "gradingSuspectRegion" && call.method === "createMany"));
+});
+
+test("grade run helpers are exposed through the injected service factory without a singleton client", async () => {
+  const { db, calls } = createMockDb();
+  const service = createAiGraderService(db);
+
+  await service.createGradeRunDraft({
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    captureManifestId: "manifest-1",
+    algorithmVersionId: "algorithm-1",
+    thresholdSetVersionId: "threshold-1",
+    runtimeEnvironmentId: "runtime-1",
+    inputChecksum: SHA_256,
+    macroMeasurements: { surface: 8 },
+  });
+
+  assert.ok(calls.some((call) => call.delegate === "gradeRun" && call.method === "create"));
 });
 
 test("persistOrchestratorTransition rejects invalid transitions before DB writes", async () => {

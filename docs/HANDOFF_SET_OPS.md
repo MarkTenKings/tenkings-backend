@@ -112,6 +112,13 @@
   - Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/9tVPYtSWcSo1MENVcnKD2oUjGYmX`
   - migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`
   - no migrations, deploys, restarts, runtime DB operations, frontend/API routes, hardware/capture code, image-processing/grading math, auth algorithms, reports, PDFs, or `RUN_DB_MIGRATIONS=true` changes were run
+- AI Grader grade run persistence helper branch started:
+  - branch `feature/ai-grader-grade-run-persistence` created from fetched `origin/main` at `acd95804b62e690bef9ce2355dd9db07a223c5b2`
+  - local implementation adds injectable helpers for STANDARD micro spot package evidence metadata, GradeRun draft creation, GradeRun finalization, and tenant-scoped evidence linking
+  - micro spot package persistence stores package metadata plus required EDR, polarized, and FLC LED frame evidence as `EvidenceArtifact` records through the injected client
+  - mocked tests cover valid micro package persistence, missing FLC frame rejection before writes, GradeRun draft creation, COMPLETE finalization payloads, STANDARD completion blocking without fusion actions, evidence source/scope validation, no-source evidence rejection, and injected service factory access
+  - validation passed locally: `pnpm --filter @tenkings/database build`, `pnpm --filter @tenkings/database test`, `pnpm --filter @tenkings/shared test`, `pnpm --filter @tenkings/nextjs-app build`, and `git diff --check`
+  - no migrations, deploys, restarts, runtime DB operations, frontend/API routes, hardware/capture code, image-processing/grading math, auth algorithms, reports, PDFs, or `RUN_DB_MIGRATIONS=true` changes were run
 
 ## Session Update (2026-05-28, AI Grader Phase 10 committed)
 - Phase 10 evidence, certificate, custody, and public-report contract helpers are committed on `feature/ai-grader-v5-foundation`.

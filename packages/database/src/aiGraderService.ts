@@ -4,13 +4,18 @@ import type {
   AiGraderValidationIssueCode,
   CaptureManifest,
   CaptureSide,
+  EvidenceArtifactRef,
   EvidenceArtifactContract,
+  FusionAction,
   GradingMode,
   MacroPipelineOutput,
   MacroSuspectRegion,
+  MicroSpotCapturePackage,
+  MicroSpotFrameKey,
   OrchestratorEventType,
   OrchestratorGuardResults,
   OrchestratorState,
+  StandardFusionOutput,
 } from "@tenkings/shared";
 import {
   ORCHESTRATOR_NAMED_ERROR_STATES,
@@ -19,6 +24,8 @@ import {
   validateEvidenceArtifactContract,
   validateMacroPipelineOutput,
   validateMacroSuspectRegion,
+  validateMicroSpotCapturePackage,
+  validateStandardFusionOutput,
 } from "@tenkings/shared";
 
 type NullableJsonInput = Prisma.InputJsonValue | typeof Prisma.JsonNull;
@@ -114,6 +121,43 @@ export type GradingSuspectRegionCreateData = {
   thresholdSetId: string;
 };
 
+export type GradeRunStatus = "PENDING" | "RUNNING" | "COMPLETE" | "FAILED" | "REPLAYED";
+
+export type GradeRunCreateData = {
+  id?: string;
+  captureSessionId: string;
+  captureManifestId: string;
+  algorithmVersionId: string;
+  thresholdSetVersionId: string;
+  runtimeEnvironmentId: string;
+  status: GradeRunStatus;
+  mode: GradingMode;
+  inputChecksum: string;
+  outputChecksum?: string;
+  macroMeasurements: Prisma.InputJsonValue;
+  microMeasurements?: NullableJsonInput;
+  fusionActions: Prisma.InputJsonValue;
+  finalGrades?: NullableJsonInput;
+  confidence?: NullableJsonInput;
+  warnings?: NullableJsonInput;
+  errorCode?: string | null;
+  startedAt?: Date;
+  finishedAt?: Date;
+};
+
+export type GradeRunUpdateData = {
+  status: GradeRunStatus;
+  outputChecksum: string;
+  macroMeasurements?: Prisma.InputJsonValue;
+  microMeasurements?: NullableJsonInput;
+  fusionActions: Prisma.InputJsonValue;
+  finalGrades: Prisma.InputJsonValue;
+  confidence?: NullableJsonInput;
+  warnings?: NullableJsonInput;
+  errorCode: string | null;
+  finishedAt: Date;
+};
+
 export type AuditEventCreateData = {
   id?: string;
   tenantId: string;
@@ -150,6 +194,41 @@ export type CaptureSessionState = {
   updatedAt: Date;
 };
 
+export type GradeRunState = {
+  id: string;
+  captureSessionId: string;
+  captureManifestId: string;
+  algorithmVersionId: string;
+  thresholdSetVersionId: string;
+  runtimeEnvironmentId: string;
+  status: GradeRunStatus;
+  mode: GradingMode;
+  inputChecksum: string;
+  outputChecksum: string | null;
+  macroMeasurements: Prisma.JsonValue;
+  microMeasurements: Prisma.JsonValue | null;
+  fusionActions: Prisma.JsonValue;
+  finalGrades: Prisma.JsonValue | null;
+  confidence: Prisma.JsonValue | null;
+  warnings: Prisma.JsonValue | null;
+  errorCode: string | null;
+  startedAt: Date;
+  finishedAt: Date | null;
+};
+
+export type AuthRunScope = {
+  id: string;
+  tenantId: string;
+  captureSessionId: string | null;
+};
+
+export type GradeCertificateScope = {
+  id: string;
+  tenantId: string;
+  gradeRunId: string;
+  authRunId: string | null;
+};
+
 export type AiGraderServiceTransactionClient = {
   auditEvent: {
     create(args: { data: AuditEventCreateData }): Promise<unknown>;
@@ -170,6 +249,29 @@ export type AiGraderServiceTransactionClient = {
   };
   evidenceArtifact: {
     create(args: { data: EvidenceArtifactCreateData }): Promise<unknown>;
+  };
+  gradeRun: {
+    create(args: { data: GradeRunCreateData }): Promise<unknown>;
+    updateMany(args: {
+      where: { id: string; captureSession: { tenantId: string } };
+      data: GradeRunUpdateData;
+    }): Promise<{ count: number }>;
+    findFirst(args: {
+      where: { id: string; captureSession: { tenantId: string } };
+      select: typeof gradeRunStateSelect;
+    }): Promise<GradeRunState | null>;
+  };
+  authRun: {
+    findFirst(args: {
+      where: { id: string; tenantId: string };
+      select: typeof authRunScopeSelect;
+    }): Promise<AuthRunScope | null>;
+  };
+  gradeCertificate: {
+    findFirst(args: {
+      where: { id: string; tenantId: string };
+      select: typeof gradeCertificateScopeSelect;
+    }): Promise<GradeCertificateScope | null>;
   };
   gradingSuspectRegion: {
     createMany(args: { data: GradingSuspectRegionCreateData[] }): Promise<{ count: number }>;
@@ -290,8 +392,83 @@ export type RecordedMacroPipelineCompletion = {
   orchestratorTransition?: PersistedOrchestratorTransition;
 };
 
+export type PersistMicroSpotPackageInput = {
+  tenantId: string;
+  captureSessionId: string;
+  microSpotPackage: MicroSpotCapturePackage;
+  createdAt?: string | Date;
+};
+
+export type PersistedMicroSpotPackage = {
+  session: CaptureSessionState;
+  microSpotPackage: MicroSpotCapturePackage;
+  evidenceArtifacts: unknown[];
+};
+
+export type CreateGradeRunDraftInput = {
+  id?: string;
+  tenantId: string;
+  captureSessionId: string;
+  captureManifestId: string;
+  algorithmVersionId: string;
+  thresholdSetVersionId: string;
+  runtimeEnvironmentId: string;
+  mode?: GradingMode;
+  status?: Extract<GradeRunStatus, "PENDING" | "RUNNING">;
+  inputChecksum: string;
+  macroMeasurements: Record<string, unknown>;
+  microMeasurements?: Record<string, unknown> | null;
+  fusionActions?: FusionAction[];
+  startedAt?: string | Date;
+};
+
+export type CreatedGradeRunDraft = {
+  session: CaptureSessionState;
+  gradeRun: unknown;
+};
+
+export type FinalizeGradeRunInput = {
+  tenantId: string;
+  gradeRunId: string;
+  outputChecksum: string;
+  finalGrades: Record<string, number>;
+  fusionActions: FusionAction[];
+  macroMeasurements?: Record<string, unknown>;
+  microMeasurements?: Record<string, unknown> | null;
+  confidence?: Record<string, unknown> | null;
+  warnings?: string[];
+  finishedAt?: string | Date;
+};
+
+export type FinalizedGradeRun = {
+  gradeRun: GradeRunState;
+  updatedCount: number;
+};
+
+export type LinkedEvidenceArtifact = {
+  artifact: unknown;
+  scopes: {
+    captureSession?: CaptureSessionState;
+    gradeRun?: GradeRunState;
+    authRun?: AuthRunScope;
+    certificate?: GradeCertificateScope;
+  };
+};
+
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 const NAMED_ERROR_STATES = new Set<OrchestratorState>(ORCHESTRATOR_NAMED_ERROR_STATES);
+const REQUIRED_MICRO_SPOT_FRAME_KEYS: MicroSpotFrameKey[] = [
+  "edrBase",
+  "polarizedAllOn",
+  "flcLed0",
+  "flcLed1",
+  "flcLed2",
+  "flcLed3",
+  "flcLed4",
+  "flcLed5",
+  "flcLed6",
+  "flcLed7",
+];
 
 const captureSessionStateSelect = {
   id: true,
@@ -309,6 +486,41 @@ const captureSessionStateSelect = {
   finishedAt: true,
   createdAt: true,
   updatedAt: true,
+} as const;
+
+const gradeRunStateSelect = {
+  id: true,
+  captureSessionId: true,
+  captureManifestId: true,
+  algorithmVersionId: true,
+  thresholdSetVersionId: true,
+  runtimeEnvironmentId: true,
+  status: true,
+  mode: true,
+  inputChecksum: true,
+  outputChecksum: true,
+  macroMeasurements: true,
+  microMeasurements: true,
+  fusionActions: true,
+  finalGrades: true,
+  confidence: true,
+  warnings: true,
+  errorCode: true,
+  startedAt: true,
+  finishedAt: true,
+} as const;
+
+const authRunScopeSelect = {
+  id: true,
+  tenantId: true,
+  captureSessionId: true,
+} as const;
+
+const gradeCertificateScopeSelect = {
+  id: true,
+  tenantId: true,
+  gradeRunId: true,
+  authRunId: true,
 } as const;
 
 export class AiGraderServiceValidationError extends Error {
@@ -468,6 +680,137 @@ function validateMacroPipelineCompletionInput(input: RecordMacroPipelineCompleti
   throwIfInvalid("Invalid macro pipeline completion input.", issues);
 }
 
+function validateSha256(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (typeof value !== "string" || !SHA256_HEX_RE.test(value)) {
+    issues.push(issue(path, "INVALID_CHECKSUM", `${path} must be a 64-character hex SHA-256 digest.`));
+  }
+}
+
+function validateRecordInput(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (!isRecord(value)) {
+    issues.push(issue(path, "INVALID_RECORD", `${path} must be an object.`));
+  }
+}
+
+function validateOptionalRecordInput(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (value != null) {
+    validateRecordInput(value, path, issues);
+  }
+}
+
+function validateWarnings(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    issues.push(issue(path, "INVALID_ARRAY", `${path} must be an array when provided.`));
+    return;
+  }
+  value.forEach((entry, index) => {
+    if (typeof entry !== "string" || entry.trim().length === 0) {
+      issues.push(issue(`${path}[${index}]`, "REQUIRED", `${path}[${index}] must be a non-empty string.`));
+    }
+  });
+}
+
+function validateFinalGrades(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (!isRecord(value)) {
+    issues.push(issue(path, "INVALID_RECORD", `${path} must be an object.`));
+    return;
+  }
+
+  Object.entries(value).forEach(([key, grade]) => {
+    if (typeof grade !== "number" || !Number.isFinite(grade)) {
+      issues.push(issue(`${path}.${key}`, "INVALID_NUMBER", "final grade values must be finite numbers."));
+    }
+  });
+}
+
+function hasEvidenceSourceLinkage(artifact: EvidenceArtifactContract): boolean {
+  return Boolean(
+    artifact.captureSessionId ||
+      artifact.gradeRunId ||
+      artifact.authRunId ||
+      artifact.certificateId
+  );
+}
+
+function validatePersistMicroSpotPackageInput(input: PersistMicroSpotPackageInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "captureSession.tenantId", issues);
+  requireNonEmptyString(input.captureSessionId, "captureSession.id", issues);
+
+  const result = validateMicroSpotCapturePackage(input.microSpotPackage);
+  issues.push(...result.issues.map((entry) => prefixedIssue("microSpotPackage", entry)));
+
+  if (input.microSpotPackage?.sessionId !== input.captureSessionId) {
+    issues.push(issue("microSpotPackage.sessionId", "INVALID_MICRO_PACKAGE", "micro package sessionId must match captureSessionId."));
+  }
+  if (input.microSpotPackage?.element === "CMYK_AUTHENTICATION") {
+    issues.push(issue("microSpotPackage.element", "INVALID_ENUM", "STANDARD micro package persistence accepts CORNERS, EDGES, or SURFACE only."));
+  }
+  REQUIRED_MICRO_SPOT_FRAME_KEYS.forEach((frameKey) => {
+    if (!input.microSpotPackage?.frames || input.microSpotPackage.frames[frameKey] == null) {
+      issues.push(issue(`microSpotPackage.frames.${frameKey}`, "MISSING_FRAME", `${frameKey} is required.`));
+    }
+  });
+
+  throwIfInvalid("Invalid micro spot package input.", issues);
+}
+
+function validateCreateGradeRunDraftInput(input: CreateGradeRunDraftInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "gradeRun.tenantId", issues);
+  requireNonEmptyString(input.captureSessionId, "gradeRun.captureSessionId", issues);
+  requireNonEmptyString(input.captureManifestId, "gradeRun.captureManifestId", issues);
+  requireNonEmptyString(input.algorithmVersionId, "gradeRun.algorithmVersionId", issues);
+  requireNonEmptyString(input.thresholdSetVersionId, "gradeRun.thresholdSetVersionId", issues);
+  requireNonEmptyString(input.runtimeEnvironmentId, "gradeRun.runtimeEnvironmentId", issues);
+  if (input.id != null) requireNonEmptyString(input.id, "gradeRun.id", issues);
+  if (input.mode != null) requireNonEmptyString(input.mode, "gradeRun.mode", issues);
+  if (input.status != null && input.status !== "PENDING" && input.status !== "RUNNING") {
+    issues.push(issue("gradeRun.status", "INVALID_ENUM", "draft status must be PENDING or RUNNING."));
+  }
+  validateSha256(input.inputChecksum, "gradeRun.inputChecksum", issues);
+  validateRecordInput(input.macroMeasurements, "gradeRun.macroMeasurements", issues);
+  validateOptionalRecordInput(input.microMeasurements, "gradeRun.microMeasurements", issues);
+  if (input.fusionActions != null && !Array.isArray(input.fusionActions)) {
+    issues.push(issue("gradeRun.fusionActions", "INVALID_ARRAY", "fusionActions must be an array when provided."));
+  }
+
+  throwIfInvalid("Invalid grade run draft input.", issues);
+}
+
+function validateFinalizeGradeRunInput(input: FinalizeGradeRunInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "gradeRun.tenantId", issues);
+  requireNonEmptyString(input.gradeRunId, "gradeRun.id", issues);
+  validateSha256(input.outputChecksum, "gradeRun.outputChecksum", issues);
+  validateFinalGrades(input.finalGrades, "gradeRun.finalGrades", issues);
+  if (!Array.isArray(input.fusionActions)) {
+    issues.push(issue("gradeRun.fusionActions", "INVALID_ARRAY", "fusionActions must be an array."));
+  }
+  validateOptionalRecordInput(input.macroMeasurements, "gradeRun.macroMeasurements", issues);
+  validateOptionalRecordInput(input.microMeasurements, "gradeRun.microMeasurements", issues);
+  validateOptionalRecordInput(input.confidence, "gradeRun.confidence", issues);
+  validateWarnings(input.warnings, "gradeRun.warnings", issues);
+
+  throwIfInvalid("Invalid grade run finalization input.", issues);
+}
+
+function validateLinkEvidenceArtifactInput(artifact: EvidenceArtifactContract) {
+  assertValidEvidenceArtifact(artifact);
+
+  if (!hasEvidenceSourceLinkage(artifact)) {
+    throw new AiGraderServiceValidationError("Invalid evidence artifact linkage.", [
+      issue("evidenceArtifact", "INVALID_EVIDENCE_ARTIFACT", "evidence artifacts must link to a capture session, grade run, auth run, or certificate."),
+    ]);
+  }
+}
+
 function validateAuditEventInput(input: RecordAuditEventInput) {
   const issues: AiGraderValidationIssue[] = [];
 
@@ -551,6 +894,29 @@ function assertValidManifest(manifest: CaptureManifest) {
 function assertValidEvidenceArtifact(artifact: EvidenceArtifactContract) {
   const result = validateEvidenceArtifactContract(artifact);
   throwIfInvalid("Invalid evidence artifact.", result.issues);
+}
+
+function evidenceArtifactCreateData(artifact: EvidenceArtifactContract): EvidenceArtifactCreateData {
+  return {
+    id: artifact.id,
+    tenantId: artifact.tenantId,
+    captureSessionId: artifact.captureSessionId ?? null,
+    gradeRunId: artifact.gradeRunId ?? null,
+    authRunId: artifact.authRunId ?? null,
+    certificateId: artifact.certificateId ?? null,
+    evidenceClass: artifact.evidenceClass,
+    kind: artifact.kind,
+    storageKey: artifact.storageKey,
+    checksumSha256: artifact.checksumSha256,
+    mimeType: artifact.mimeType,
+    byteSize: artifact.byteSize,
+    widthPx: artifact.widthPx,
+    heightPx: artifact.heightPx,
+    retentionUntil: artifact.retentionUntil ? isoDate(artifact.retentionUntil, "evidenceArtifact.retentionUntil") : undefined,
+    publicUrl: artifact.publicUrl,
+    metadata: optionalNullableJson(artifact.metadata as Prisma.InputJsonValue | undefined),
+    createdAt: isoDate(artifact.createdAt, "evidenceArtifact.createdAt"),
+  };
 }
 
 function statusForOrchestratorState(state: OrchestratorState): CaptureSessionPersistedStatus {
@@ -735,6 +1101,106 @@ function macroSuspectRegionCreateData(region: MacroSuspectRegion): GradingSuspec
   };
 }
 
+function evidenceArtifactRefId(
+  microSpotPackage: MicroSpotCapturePackage,
+  frameKey: MicroSpotFrameKey,
+  frame: EvidenceArtifactRef
+) {
+  return frame.id ?? `${microSpotPackage.id}:${frameKey}`;
+}
+
+function microSpotFrameEvidenceArtifact(
+  input: PersistMicroSpotPackageInput,
+  frameKey: MicroSpotFrameKey,
+  frame: EvidenceArtifactRef,
+  createdAt: Date
+): EvidenceArtifactContract {
+  const microSpotPackage = input.microSpotPackage;
+  return {
+    id: evidenceArtifactRefId(microSpotPackage, frameKey, frame),
+    tenantId: input.tenantId,
+    captureSessionId: input.captureSessionId,
+    evidenceClass: "ORIGINAL",
+    kind: "MICRO_SPOT_FRAME",
+    storageKey: frame.storageKey,
+    checksumSha256: frame.checksumSha256,
+    mimeType: frame.mimeType ?? "image/tiff",
+    byteSize: frame.byteSize,
+    widthPx: frame.widthPx,
+    heightPx: frame.heightPx,
+    metadata: {
+      captureManifestId: microSpotPackage.captureManifestId,
+      microSpotPackageId: microSpotPackage.id,
+      frameKey,
+      side: microSpotPackage.side,
+      element: microSpotPackage.element,
+      spotIndex: microSpotPackage.spotIndex,
+      totalSpots: microSpotPackage.totalSpots,
+      sourceSuspectRegionId: microSpotPackage.sourceSuspectRegionId ?? null,
+      stageXMicrons: microSpotPackage.stageXMicrons,
+      stageYMicrons: microSpotPackage.stageYMicrons,
+      microMagnification: microSpotPackage.microMagnification,
+      amrReading: microSpotPackage.amrReading,
+      focusScore: microSpotPackage.focusScore,
+      validForClassification: microSpotPackage.validForClassification,
+    },
+    createdAt: createdAt.toISOString(),
+  };
+}
+
+async function microSpotPackageEvidenceArtifacts(
+  input: PersistMicroSpotPackageInput,
+  createdAt: Date
+): Promise<EvidenceArtifactContract[]> {
+  const frameArtifacts = REQUIRED_MICRO_SPOT_FRAME_KEYS.map((frameKey) =>
+    microSpotFrameEvidenceArtifact(input, frameKey, input.microSpotPackage.frames[frameKey], createdAt)
+  );
+  const packageChecksum = await buildAuditChecksum({
+    tenantId: input.tenantId,
+    captureSessionId: input.captureSessionId,
+    microSpotPackage: input.microSpotPackage,
+    frameArtifactIds: frameArtifacts.map((artifact) => artifact.id),
+  });
+
+  return [
+    {
+      id: `${input.microSpotPackage.id}:metadata`,
+      tenantId: input.tenantId,
+      captureSessionId: input.captureSessionId,
+      evidenceClass: "DERIVED",
+      kind: "MICRO_SPOT_PACKAGE_METADATA",
+      storageKey: `ai-grader/${input.captureSessionId}/micro-packages/${encodeURIComponent(input.microSpotPackage.id)}.json`,
+      checksumSha256: packageChecksum,
+      mimeType: "application/json",
+      metadata: {
+        captureManifestId: input.microSpotPackage.captureManifestId,
+        microSpotPackage: input.microSpotPackage,
+        frameArtifactIds: frameArtifacts.map((artifact) => artifact.id),
+      },
+      createdAt: createdAt.toISOString(),
+    },
+    ...frameArtifacts,
+  ];
+}
+
+function standardFusionOutputForFinalization(
+  input: FinalizeGradeRunInput,
+  gradeRun: GradeRunState
+): StandardFusionOutput {
+  return {
+    gradeRunDraft: {
+      macroMeasurements: input.macroMeasurements ?? (gradeRun.macroMeasurements as Record<string, unknown>),
+      microMeasurements:
+        input.microMeasurements ??
+        (gradeRun.microMeasurements as Record<string, unknown> | null) ??
+        {},
+      fusionActions: input.fusionActions,
+      finalGrades: input.finalGrades,
+      warnings: input.warnings ?? [],
+    },
+  };
+}
+
 export async function createCaptureSessionDraft(
   db: AiGraderServicePrismaClient,
   input: CreateCaptureSessionDraftInput
@@ -793,28 +1259,7 @@ export async function recordEvidenceArtifact(
 ) {
   assertValidEvidenceArtifact(artifact);
 
-  const data: EvidenceArtifactCreateData = {
-    id: artifact.id,
-    tenantId: artifact.tenantId,
-    captureSessionId: artifact.captureSessionId ?? null,
-    gradeRunId: artifact.gradeRunId ?? null,
-    authRunId: artifact.authRunId ?? null,
-    certificateId: artifact.certificateId ?? null,
-    evidenceClass: artifact.evidenceClass,
-    kind: artifact.kind,
-    storageKey: artifact.storageKey,
-    checksumSha256: artifact.checksumSha256,
-    mimeType: artifact.mimeType,
-    byteSize: artifact.byteSize,
-    widthPx: artifact.widthPx,
-    heightPx: artifact.heightPx,
-    retentionUntil: artifact.retentionUntil ? isoDate(artifact.retentionUntil, "evidenceArtifact.retentionUntil") : undefined,
-    publicUrl: artifact.publicUrl,
-    metadata: optionalNullableJson(artifact.metadata as Prisma.InputJsonValue | undefined),
-    createdAt: isoDate(artifact.createdAt, "evidenceArtifact.createdAt"),
-  };
-
-  return db.evidenceArtifact.create({ data });
+  return db.evidenceArtifact.create({ data: evidenceArtifactCreateData(artifact) });
 }
 
 export async function recordAuditEvent(
@@ -931,6 +1376,234 @@ export async function recordMacroPipelineCompletion(
       session,
       auditEvent,
       ...(orchestratorTransition ? { orchestratorTransition } : {}),
+    };
+  });
+}
+
+export async function persistMicroSpotPackage(
+  db: AiGraderServicePrismaClient,
+  input: PersistMicroSpotPackageInput
+): Promise<PersistedMicroSpotPackage> {
+  validatePersistMicroSpotPackageInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const session = await readCaptureSessionState(tx, {
+      tenantId: input.tenantId,
+      captureSessionId: input.captureSessionId,
+    });
+
+    if (!session) {
+      throw new AiGraderServiceValidationError("Capture session not found for tenant.", [
+        issue("captureSession", "INVALID_RECORD", "CaptureSession was not found for the supplied tenant and session id."),
+      ]);
+    }
+
+    const createdAt = dateFromOptional(input.createdAt ?? input.microSpotPackage.capturedAt, "microSpotPackage.createdAt");
+    const artifacts = await microSpotPackageEvidenceArtifacts(input, createdAt);
+    artifacts.forEach(assertValidEvidenceArtifact);
+
+    const persistedArtifacts = [];
+    for (const artifact of artifacts) {
+      persistedArtifacts.push(await tx.evidenceArtifact.create({ data: evidenceArtifactCreateData(artifact) }));
+    }
+
+    return {
+      session,
+      microSpotPackage: { ...input.microSpotPackage },
+      evidenceArtifacts: persistedArtifacts,
+    };
+  });
+}
+
+export async function createGradeRunDraft(
+  db: AiGraderServicePrismaClient,
+  input: CreateGradeRunDraftInput
+): Promise<CreatedGradeRunDraft> {
+  validateCreateGradeRunDraftInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const session = await readCaptureSessionState(tx, {
+      tenantId: input.tenantId,
+      captureSessionId: input.captureSessionId,
+    });
+
+    if (!session) {
+      throw new AiGraderServiceValidationError("Capture session not found for tenant.", [
+        issue("captureSession", "INVALID_RECORD", "CaptureSession was not found for the supplied tenant and session id."),
+      ]);
+    }
+
+    const mode = input.mode ?? session.gradingMode;
+    if (input.mode != null && input.mode !== session.gradingMode) {
+      throw new AiGraderServiceValidationError("Grade run mode does not match capture session.", [
+        issue("gradeRun.mode", "INVALID_RECORD", "grade run mode must match the scoped capture session gradingMode."),
+      ]);
+    }
+
+    const data: GradeRunCreateData = {
+      ...(input.id ? { id: input.id } : {}),
+      captureSessionId: input.captureSessionId,
+      captureManifestId: input.captureManifestId,
+      algorithmVersionId: input.algorithmVersionId,
+      thresholdSetVersionId: input.thresholdSetVersionId,
+      runtimeEnvironmentId: input.runtimeEnvironmentId,
+      status: input.status ?? "RUNNING",
+      mode,
+      inputChecksum: input.inputChecksum,
+      macroMeasurements: input.macroMeasurements as Prisma.InputJsonValue,
+      microMeasurements: optionalNullableJson(input.microMeasurements as Prisma.InputJsonValue | null | undefined),
+      fusionActions: (input.fusionActions ?? []) as unknown as Prisma.InputJsonValue,
+      startedAt: optionalDate(input.startedAt, "gradeRun.startedAt"),
+    };
+
+    return {
+      session,
+      gradeRun: await tx.gradeRun.create({ data }),
+    };
+  });
+}
+
+export async function finalizeGradeRun(
+  db: AiGraderServicePrismaClient,
+  input: FinalizeGradeRunInput
+): Promise<FinalizedGradeRun> {
+  validateFinalizeGradeRunInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const gradeRun = await tx.gradeRun.findFirst({
+      where: {
+        id: input.gradeRunId,
+        captureSession: { tenantId: input.tenantId },
+      },
+      select: gradeRunStateSelect,
+    });
+
+    if (!gradeRun) {
+      throw new AiGraderServiceValidationError("Grade run not found for tenant.", [
+        issue("gradeRun", "INVALID_RECORD", "GradeRun was not found for the supplied tenant and grade run id."),
+      ]);
+    }
+    if (gradeRun.status !== "PENDING" && gradeRun.status !== "RUNNING") {
+      throw new AiGraderServiceValidationError("Grade run cannot be finalized from current status.", [
+        issue("gradeRun.status", "INVALID_RECORD", "GradeRun finalization requires PENDING or RUNNING status."),
+      ]);
+    }
+    if (gradeRun.mode === "STANDARD" && input.fusionActions.length === 0) {
+      throw new AiGraderServiceValidationError("STANDARD grade run finalization requires fusion actions.", [
+        issue("gradeRun.fusionActions", "EMPTY_ARRAY", "STANDARD completion requires at least one fusion action."),
+      ]);
+    }
+
+    if (gradeRun.mode === "STANDARD") {
+      const fusionResult = validateStandardFusionOutput(standardFusionOutputForFinalization(input, gradeRun));
+      throwIfInvalid("Invalid STANDARD grade run finalization payload.", fusionResult.issues);
+    }
+
+    const update = await tx.gradeRun.updateMany({
+      where: {
+        id: input.gradeRunId,
+        captureSession: { tenantId: input.tenantId },
+      },
+      data: {
+        status: "COMPLETE",
+        outputChecksum: input.outputChecksum,
+        macroMeasurements: input.macroMeasurements as Prisma.InputJsonValue | undefined,
+        microMeasurements: optionalNullableJson(input.microMeasurements as Prisma.InputJsonValue | null | undefined),
+        fusionActions: input.fusionActions as unknown as Prisma.InputJsonValue,
+        finalGrades: input.finalGrades as Prisma.InputJsonValue,
+        confidence: optionalNullableJson(input.confidence as Prisma.InputJsonValue | null | undefined),
+        warnings: optionalNullableJson((input.warnings ?? []) as Prisma.InputJsonValue),
+        errorCode: null,
+        finishedAt: dateFromOptional(input.finishedAt, "gradeRun.finishedAt"),
+      },
+    });
+
+    if (update.count !== 1) {
+      throw new AiGraderServiceValidationError("Grade run update failed.", [
+        issue("gradeRun", "INVALID_RECORD", "GradeRun update did not match exactly one scoped row."),
+      ]);
+    }
+
+    return {
+      gradeRun,
+      updatedCount: update.count,
+    };
+  });
+}
+
+export async function linkEvidenceArtifact(
+  db: AiGraderServicePrismaClient,
+  artifact: EvidenceArtifactContract
+): Promise<LinkedEvidenceArtifact> {
+  validateLinkEvidenceArtifactInput(artifact);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const scopes: LinkedEvidenceArtifact["scopes"] = {};
+
+    if (artifact.captureSessionId) {
+      const captureSession = await readCaptureSessionState(tx, {
+        tenantId: artifact.tenantId,
+        captureSessionId: artifact.captureSessionId,
+      });
+      if (!captureSession) {
+        throw new AiGraderServiceValidationError("Capture session not found for evidence artifact.", [
+          issue("evidenceArtifact.captureSessionId", "INVALID_RECORD", "captureSessionId must belong to the artifact tenant."),
+        ]);
+      }
+      scopes.captureSession = captureSession;
+    }
+
+    if (artifact.gradeRunId) {
+      const gradeRun = await tx.gradeRun.findFirst({
+        where: {
+          id: artifact.gradeRunId,
+          captureSession: { tenantId: artifact.tenantId },
+        },
+        select: gradeRunStateSelect,
+      });
+      if (!gradeRun) {
+        throw new AiGraderServiceValidationError("Grade run not found for evidence artifact.", [
+          issue("evidenceArtifact.gradeRunId", "INVALID_RECORD", "gradeRunId must belong to the artifact tenant."),
+        ]);
+      }
+      scopes.gradeRun = gradeRun;
+    }
+
+    if (artifact.authRunId) {
+      const authRun = await tx.authRun.findFirst({
+        where: {
+          id: artifact.authRunId,
+          tenantId: artifact.tenantId,
+        },
+        select: authRunScopeSelect,
+      });
+      if (!authRun) {
+        throw new AiGraderServiceValidationError("Auth run not found for evidence artifact.", [
+          issue("evidenceArtifact.authRunId", "INVALID_RECORD", "authRunId must belong to the artifact tenant."),
+        ]);
+      }
+      scopes.authRun = authRun;
+    }
+
+    if (artifact.certificateId) {
+      const certificate = await tx.gradeCertificate.findFirst({
+        where: {
+          id: artifact.certificateId,
+          tenantId: artifact.tenantId,
+        },
+        select: gradeCertificateScopeSelect,
+      });
+      if (!certificate) {
+        throw new AiGraderServiceValidationError("Certificate not found for evidence artifact.", [
+          issue("evidenceArtifact.certificateId", "INVALID_RECORD", "certificateId must belong to the artifact tenant."),
+        ]);
+      }
+      scopes.certificate = certificate;
+    }
+
+    return {
+      artifact: await tx.evidenceArtifact.create({ data: evidenceArtifactCreateData(artifact) }),
+      scopes,
     };
   });
 }
@@ -1107,6 +1780,14 @@ export function createAiGraderService(db: AiGraderServicePrismaClient) {
       persistMacroSuspectRegions(db, input),
     recordMacroPipelineCompletion: (input: RecordMacroPipelineCompletionInput) =>
       recordMacroPipelineCompletion(db, input),
+    persistMicroSpotPackage: (input: PersistMicroSpotPackageInput) =>
+      persistMicroSpotPackage(db, input),
+    createGradeRunDraft: (input: CreateGradeRunDraftInput) =>
+      createGradeRunDraft(db, input),
+    finalizeGradeRun: (input: FinalizeGradeRunInput) =>
+      finalizeGradeRun(db, input),
+    linkEvidenceArtifact: (artifact: EvidenceArtifactContract) =>
+      linkEvidenceArtifact(db, artifact),
     persistOrchestratorTransition: (input: PersistOrchestratorTransitionInput) =>
       persistOrchestratorTransition(db, input),
     markCaptureSessionPausedForOperatorTimeout: (input: CommonCaptureSessionStateUpdateInput) =>
