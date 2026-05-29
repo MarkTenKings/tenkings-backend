@@ -3,8 +3,15 @@ const assert = require("node:assert/strict");
 const {
   AiGraderServiceValidationError,
   createAiGraderService,
+  approveCardPrintProfile,
+  checkGradeCertificateReadiness,
+  createAuthRunDraft,
+  createCandidateCardPrintProfile,
   createGradeRunDraft,
+  createGradeCertificateDraft,
   finalizeGradeRun,
+  finalizeAuthRun,
+  issueGradeCertificate,
   linkEvidenceArtifact,
   createCaptureSessionDraft,
   markCaptureSessionAborted,
@@ -20,6 +27,8 @@ const {
   recordEvidenceArtifact,
   recordMacroPipelineCompletion,
   persistMicroSpotPackage,
+  quarantineCardPrintProfile,
+  retireCardPrintProfile,
 } = require("../dist/database/src/aiGraderService");
 
 const SHA_256 = "a".repeat(64);
@@ -38,6 +47,7 @@ function baseSession(overrides = {}) {
     currentState: "INIT",
     errorCode: null,
     rawCardOnly: true,
+    physicalGateResults: [],
     startedAt: null,
     finishedAt: null,
     createdAt: new Date(ISO_TIME),
@@ -71,17 +81,103 @@ function baseGradeRun(overrides = {}) {
   };
 }
 
+function cardIdentity(overrides = {}) {
+  return {
+    cardSet: "2026 Test",
+    cardNumber: "1",
+    printRun: "alpha",
+    identitySource: "OPERATOR_SUPPLIED",
+    ...overrides,
+  };
+}
+
+function baseAuthRun(overrides = {}) {
+  return {
+    id: "auth-run-1",
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    captureManifestId: "manifest-1",
+    algorithmVersionId: "auth-algorithm-1",
+    runtimeEnvironmentId: "runtime-1",
+    cardPrintProfileId: "profile-1",
+    cardSet: "2026 Test",
+    cardNumber: "1",
+    printRun: "alpha",
+    verdict: "REFERENCE_NEEDED",
+    distance: null,
+    status: "RUNNING",
+    measurements: {},
+    evidence: {},
+    inputChecksum: SHA_256,
+    outputChecksum: null,
+    errorCode: null,
+    startedAt: new Date(ISO_TIME),
+    finishedAt: null,
+    ...overrides,
+  };
+}
+
+function baseCardPrintProfile(overrides = {}) {
+  return {
+    id: "profile-1",
+    tenantId: "tenant-1",
+    cardSet: "2026 Test",
+    cardNumber: "1",
+    printRun: "alpha",
+    printRunKey: "alpha",
+    state: "ACTIVE",
+    referenceFingerprint: { channels: ["cyan", "magenta", "yellow", "black"] },
+    referenceAuthRunId: "auth-run-0",
+    approvedByOperatorId: "operator-reviewer",
+    approvedAt: new Date(ISO_TIME),
+    version: 1,
+    notes: null,
+    createdAt: new Date(ISO_TIME),
+    updatedAt: new Date(ISO_TIME),
+    ...overrides,
+  };
+}
+
+function baseGradeCertificate(overrides = {}) {
+  return {
+    id: "certificate-1",
+    tenantId: "tenant-1",
+    gradeRunId: "grade-run-1",
+    authRunId: "auth-run-1",
+    publicSlug: "tk-2026-test-1",
+    certificateNumber: "TK-2026-000001",
+    status: "DRAFT",
+    mode: "STANDARD",
+    finalGrades: { surface: 8, corners: 9, edges: 9, centering: 9, composite: 8.5 },
+    publicReportKey: null,
+    custodyStatus: "IN_TEN_KINGS_CUSTODY",
+    issuedAt: null,
+    revokedAt: null,
+    revocationReason: null,
+    createdAt: new Date(ISO_TIME),
+    updatedAt: new Date(ISO_TIME),
+    ...overrides,
+  };
+}
+
 function createMockDb(options = {}) {
   const calls = [];
   let session = options.session ?? baseSession();
   let gradeRun = options.gradeRun ?? baseGradeRun();
-  let authRun = options.authRun ?? { id: "auth-run-1", tenantId: "tenant-1", captureSessionId: "session-1" };
-  let certificate = options.certificate ?? {
-    id: "certificate-1",
-    tenantId: "tenant-1",
-    gradeRunId: "grade-run-1",
-    authRunId: null,
-  };
+  let authRun = options.authRun ?? baseAuthRun();
+  let activeProfile =
+    Object.prototype.hasOwnProperty.call(options, "activeProfile")
+      ? options.activeProfile
+      : baseCardPrintProfile();
+  let profile = options.profile ?? activeProfile ?? baseCardPrintProfile({ state: "CANDIDATE" });
+  let certificate = Object.prototype.hasOwnProperty.call(options, "certificate")
+    ? options.certificate
+    : baseGradeCertificate();
+  const evidenceArtifacts = options.evidenceArtifacts ?? [
+    evidenceArtifactState({ gradeRunId: "grade-run-1" }),
+  ];
+  const operatorOverrides = options.operatorOverrides ?? [];
+  const custodyEvents = options.custodyEvents ?? [];
 
   const tx = {
     captureSession: {
@@ -124,6 +220,19 @@ function createMockDb(options = {}) {
       async create(args) {
         calls.push({ delegate: "evidenceArtifact", method: "create", args });
         return { id: args.data.id, storageKey: args.data.storageKey };
+      },
+      async findMany(args) {
+        calls.push({ delegate: "evidenceArtifact", method: "findMany", args });
+        return evidenceArtifacts.filter((artifact) => {
+          if (artifact.tenantId !== args.where.tenantId) return false;
+          return args.where.OR.some((scope) => {
+            if (scope.captureSessionId && artifact.captureSessionId === scope.captureSessionId) return true;
+            if (scope.gradeRunId && artifact.gradeRunId === scope.gradeRunId) return true;
+            if (scope.authRunId && artifact.authRunId === scope.authRunId) return true;
+            if (scope.certificateId && artifact.certificateId === scope.certificateId) return true;
+            return false;
+          });
+        });
       },
     },
     gradeRun: {
@@ -170,6 +279,19 @@ function createMockDb(options = {}) {
       },
     },
     authRun: {
+      async create(args) {
+        calls.push({ delegate: "authRun", method: "create", args });
+        authRun = {
+          id: args.data.id ?? "auth-run-1",
+          distance: null,
+          outputChecksum: null,
+          errorCode: null,
+          finishedAt: null,
+          ...args.data,
+          startedAt: args.data.startedAt ?? new Date(ISO_TIME),
+        };
+        return { id: authRun.id, status: authRun.status, verdict: authRun.verdict };
+      },
       async findFirst(args) {
         calls.push({ delegate: "authRun", method: "findFirst", args });
         if (!authRun || authRun.id !== args.where.id || authRun.tenantId !== args.where.tenantId) {
@@ -177,14 +299,125 @@ function createMockDb(options = {}) {
         }
         return { ...authRun };
       },
+      async updateMany(args) {
+        calls.push({ delegate: "authRun", method: "updateMany", args });
+        if (!authRun || authRun.id !== args.where.id || authRun.tenantId !== args.where.tenantId) {
+          return { count: 0 };
+        }
+        authRun = {
+          ...authRun,
+          ...args.data,
+        };
+        return { count: 1 };
+      },
+    },
+    cardPrintProfile: {
+      async create(args) {
+        calls.push({ delegate: "cardPrintProfile", method: "create", args });
+        profile = {
+          id: args.data.id ?? "profile-1",
+          approvedByOperatorId: null,
+          approvedAt: null,
+          notes: null,
+          ...args.data,
+          createdAt: args.data.createdAt ?? new Date(ISO_TIME),
+          updatedAt: args.data.updatedAt ?? new Date(ISO_TIME),
+        };
+        if (profile.state === "ACTIVE") {
+          activeProfile = profile;
+        }
+        return { id: profile.id, state: profile.state };
+      },
+      async findFirst(args) {
+        calls.push({ delegate: "cardPrintProfile", method: "findFirst", args });
+        const candidate = args.where.state === "ACTIVE" ? activeProfile : profile;
+        if (!candidate || candidate.tenantId !== args.where.tenantId) return null;
+        if (args.where.id && candidate.id !== args.where.id) return null;
+        if (args.where.cardSet && candidate.cardSet !== args.where.cardSet) return null;
+        if (args.where.cardNumber && candidate.cardNumber !== args.where.cardNumber) return null;
+        if (args.where.printRunKey != null && candidate.printRunKey !== args.where.printRunKey) return null;
+        if (args.where.state && candidate.state !== args.where.state) return null;
+        return { ...candidate };
+      },
+      async updateMany(args) {
+        calls.push({ delegate: "cardPrintProfile", method: "updateMany", args });
+        if (
+          !profile ||
+          profile.id !== args.where.id ||
+          profile.tenantId !== args.where.tenantId ||
+          (args.where.cardSet && profile.cardSet !== args.where.cardSet) ||
+          (args.where.cardNumber && profile.cardNumber !== args.where.cardNumber) ||
+          (args.where.printRunKey != null && profile.printRunKey !== args.where.printRunKey)
+        ) {
+          return { count: 0 };
+        }
+        profile = {
+          ...profile,
+          ...args.data,
+        };
+        if (profile.state === "ACTIVE") {
+          activeProfile = profile;
+        }
+        return { count: 1 };
+      },
     },
     gradeCertificate: {
+      async create(args) {
+        calls.push({ delegate: "gradeCertificate", method: "create", args });
+        certificate = {
+          id: args.data.id ?? "certificate-1",
+          publicReportKey: null,
+          issuedAt: null,
+          revokedAt: null,
+          revocationReason: null,
+          ...args.data,
+          createdAt: args.data.createdAt ?? new Date(ISO_TIME),
+          updatedAt: args.data.updatedAt ?? new Date(ISO_TIME),
+        };
+        return { id: certificate.id, status: certificate.status };
+      },
       async findFirst(args) {
         calls.push({ delegate: "gradeCertificate", method: "findFirst", args });
-        if (!certificate || certificate.id !== args.where.id || certificate.tenantId !== args.where.tenantId) {
+        if (!certificate || certificate.tenantId !== args.where.tenantId) {
           return null;
         }
+        if (args.where.id && certificate.id !== args.where.id) return null;
+        if (args.where.gradeRunId && certificate.gradeRunId !== args.where.gradeRunId) return null;
         return { ...certificate };
+      },
+      async updateMany(args) {
+        calls.push({ delegate: "gradeCertificate", method: "updateMany", args });
+        if (!certificate || certificate.id !== args.where.id || certificate.tenantId !== args.where.tenantId) {
+          return { count: 0 };
+        }
+        certificate = {
+          ...certificate,
+          ...args.data,
+        };
+        return { count: 1 };
+      },
+    },
+    operatorOverride: {
+      async findMany(args) {
+        calls.push({ delegate: "operatorOverride", method: "findMany", args });
+        return operatorOverrides.filter((override) => {
+          if (override.tenantId !== args.where.tenantId) return false;
+          if (args.where.captureSessionId && override.captureSessionId !== args.where.captureSessionId) return false;
+          if (args.where.gradeRunId && override.gradeRunId !== args.where.gradeRunId) return false;
+          if (args.where.certificateId && override.certificateId !== args.where.certificateId) return false;
+          return true;
+        });
+      },
+    },
+    custodyEvent: {
+      async findMany(args) {
+        calls.push({ delegate: "custodyEvent", method: "findMany", args });
+        return custodyEvents.filter((event) => {
+          if (event.tenantId !== args.where.tenantId) return false;
+          if (args.where.captureSessionId && event.captureSessionId !== args.where.captureSessionId) return false;
+          if (args.where.certificateId && event.certificateId !== args.where.certificateId) return false;
+          return true;
+        });
       },
     },
     gradingSuspectRegion: {
@@ -216,6 +449,9 @@ function createMockDb(options = {}) {
     calls,
     getSession: () => session,
     getGradeRun: () => gradeRun,
+    getAuthRun: () => authRun,
+    getProfile: () => profile,
+    getCertificate: () => certificate,
   };
 }
 
@@ -271,6 +507,24 @@ function evidenceArtifact(overrides = {}) {
     metadata: { side: "FRONT" },
     createdAt: ISO_TIME,
     ...overrides,
+  };
+}
+
+function evidenceArtifactState(overrides = {}) {
+  const artifact = evidenceArtifact(overrides);
+  return {
+    ...artifact,
+    captureSessionId: artifact.captureSessionId ?? null,
+    gradeRunId: artifact.gradeRunId ?? null,
+    authRunId: artifact.authRunId ?? null,
+    certificateId: artifact.certificateId ?? null,
+    byteSize: artifact.byteSize ?? null,
+    widthPx: artifact.widthPx ?? null,
+    heightPx: artifact.heightPx ?? null,
+    retentionUntil: artifact.retentionUntil ? new Date(artifact.retentionUntil) : null,
+    publicUrl: artifact.publicUrl ?? null,
+    metadata: artifact.metadata ?? null,
+    createdAt: new Date(artifact.createdAt),
   };
 }
 
@@ -911,6 +1165,322 @@ test("finalizeGradeRun rejects STANDARD completion without fusion actions before
   );
 });
 
+test("AuthRun draft and finalization persist through injected clients", async () => {
+  const draft = createMockDb({
+    session: baseSession({ currentState: "AUTH_CAPTURE", status: "RUNNING" }),
+    activeProfile: baseCardPrintProfile(),
+  });
+
+  const draftResult = await createAuthRunDraft(draft.db, {
+    id: "auth-run-2",
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    captureManifestId: "manifest-1",
+    cardIdentity: cardIdentity(),
+    algorithmVersionId: "auth-algorithm-1",
+    runtimeEnvironmentId: "runtime-1",
+    inputChecksum: SHA_256,
+    startedAt: ISO_TIME,
+  });
+
+  assert.equal(draftResult.authRun.id, "auth-run-2");
+  assert.equal(draftResult.verdict, "REFERENCE_NEEDED");
+  assert.deepEqual(
+    draft.calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "captureSession.findFirst", "cardPrintProfile.findFirst", "authRun.create"]
+  );
+  assert.equal(draft.calls[3].args.data.cardPrintProfileId, "profile-1");
+  assert.equal(draft.calls[3].args.data.verdict, "REFERENCE_NEEDED");
+
+  const finalization = createMockDb({
+    authRun: baseAuthRun({ id: "auth-run-1", status: "RUNNING", cardPrintProfileId: "profile-1" }),
+    profile: baseCardPrintProfile(),
+  });
+  const result = await finalizeAuthRun(finalization.db, {
+    tenantId: "tenant-1",
+    authRunId: "auth-run-1",
+    requestedVerdict: "AUTHENTIC",
+    distance: 0.12,
+    measurements: { deltaE: 1.2 },
+    evidence: { comparison: "metadata-only" },
+    outputChecksum: "b".repeat(64),
+    finishedAt: "2026-05-28T12:01:00.000Z",
+  });
+
+  assert.equal(result.resolvedVerdict, "AUTHENTIC");
+  assert.deepEqual(
+    finalization.calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "authRun.findFirst", "cardPrintProfile.findFirst", "authRun.updateMany"]
+  );
+  assert.equal(finalization.calls[3].args.data.status, "COMPLETE");
+  assert.equal(finalization.calls[3].args.data.verdict, "AUTHENTIC");
+  assert.equal(finalization.calls[3].args.data.outputChecksum, "b".repeat(64));
+});
+
+test("finalizeAuthRun supports REFERENCE_NEEDED when no active profile exists", async () => {
+  const { db, calls, getAuthRun } = createMockDb({
+    activeProfile: null,
+    profile: null,
+    authRun: baseAuthRun({
+      cardPrintProfileId: null,
+      status: "RUNNING",
+      verdict: "REFERENCE_NEEDED",
+    }),
+  });
+
+  await finalizeAuthRun(db, {
+    tenantId: "tenant-1",
+    authRunId: "auth-run-1",
+    requestedVerdict: "AUTHENTIC",
+    measurements: { noActiveReference: true },
+    evidence: { disclosure: "REFERENCE_NEEDED" },
+    outputChecksum: "b".repeat(64),
+    finishedAt: "2026-05-28T12:01:00.000Z",
+  });
+
+  assert.equal(getAuthRun().verdict, "REFERENCE_NEEDED");
+  assert.equal(getAuthRun().status, "COMPLETE");
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "authRun.findFirst", "authRun.updateMany"]
+  );
+});
+
+test("CardPrintProfile candidate creation and approval require authorized reviewer input", async () => {
+  const candidate = createMockDb({ profile: baseCardPrintProfile({ state: "CANDIDATE", approvedByOperatorId: null, approvedAt: null }) });
+
+  await createCandidateCardPrintProfile(candidate.db, {
+    id: "profile-2",
+    tenantId: "tenant-1",
+    cardIdentity: cardIdentity(),
+    referenceFingerprint: { histogram: [1, 2, 3] },
+    referenceAuthRunId: "auth-run-1",
+    createdAt: ISO_TIME,
+  });
+
+  assert.equal(candidate.calls[0].delegate, "cardPrintProfile");
+  assert.equal(candidate.calls[0].method, "create");
+  assert.equal(candidate.calls[0].args.data.state, "CANDIDATE");
+  assert.equal(candidate.calls[0].args.data.approvedByOperatorId, null);
+
+  const { db, calls } = createMockDb({
+    profile: baseCardPrintProfile({ state: "CANDIDATE", approvedByOperatorId: null, approvedAt: null }),
+  });
+
+  await expectValidationRejects(
+    () =>
+      approveCardPrintProfile(db, {
+        tenantId: "tenant-1",
+        profileId: "profile-1",
+        cardSet: "2026 Test",
+        cardNumber: "1",
+        printRun: "alpha",
+        toState: "ACTIVE",
+        actorOperatorId: "operator-1",
+        reviewedByOperatorId: "",
+        reasonCode: "approve-reference",
+        decidedAt: ISO_TIME,
+      }),
+    "REQUIRED"
+  );
+
+  assert.equal(calls.length, 0);
+});
+
+test("CardPrintProfile quarantine and retire helpers write expected states", async () => {
+  const quarantine = createMockDb({ profile: baseCardPrintProfile({ state: "ACTIVE" }) });
+  await quarantineCardPrintProfile(quarantine.db, {
+    tenantId: "tenant-1",
+    profileId: "profile-1",
+    cardSet: "2026 Test",
+    cardNumber: "1",
+    printRun: "alpha",
+    actorOperatorId: "operator-1",
+    reasonCode: "profile-drift",
+    decidedAt: ISO_TIME,
+  });
+
+  assert.equal(quarantine.getProfile().state, "QUARANTINED");
+  assert.equal(quarantine.calls[2].delegate, "cardPrintProfile");
+  assert.equal(quarantine.calls[2].method, "updateMany");
+  assert.equal(quarantine.calls[2].args.data.state, "QUARANTINED");
+
+  const retire = createMockDb({ profile: baseCardPrintProfile({ state: "ACTIVE" }) });
+  await retireCardPrintProfile(retire.db, {
+    tenantId: "tenant-1",
+    profileId: "profile-1",
+    cardSet: "2026 Test",
+    cardNumber: "1",
+    printRun: "alpha",
+    actorOperatorId: "operator-1",
+    reasonCode: "superseded-profile",
+    decidedAt: ISO_TIME,
+  });
+
+  assert.equal(retire.getProfile().state, "RETIRED");
+  assert.equal(retire.calls[2].args.data.state, "RETIRED");
+});
+
+test("certificate readiness blocks incomplete GradeRun", async () => {
+  const { db, calls } = createMockDb({
+    gradeRun: baseGradeRun({ status: "RUNNING", finalGrades: null }),
+    authRun: baseAuthRun({ status: "COMPLETE", verdict: "REFERENCE_NEEDED", cardPrintProfileId: null }),
+  });
+
+  const result = await checkGradeCertificateReadiness(db, {
+    tenantId: "tenant-1",
+    gradeRunId: "grade-run-1",
+    authRunId: "auth-run-1",
+  });
+
+  assert.equal(result.ready, false);
+  assert.ok(result.issues.some((entry) => entry.code === "CERTIFICATE_BLOCKED"));
+  assert.deepEqual(
+    calls.slice(0, 2).map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "gradeRun.findFirst"]
+  );
+});
+
+test("certificate readiness blocks unreviewed override, custody break, and missing evidence", async () => {
+  const completeGradeRun = baseGradeRun({
+    status: "COMPLETE",
+    outputChecksum: "b".repeat(64),
+    finalGrades: { surface: 8, corners: 9, edges: 9, centering: 9, composite: 8.5 },
+    finishedAt: new Date("2026-05-28T12:01:00.000Z"),
+  });
+  const completeAuthRun = baseAuthRun({
+    status: "COMPLETE",
+    verdict: "REFERENCE_NEEDED",
+    cardPrintProfileId: null,
+    finishedAt: new Date("2026-05-28T12:01:00.000Z"),
+  });
+
+  const override = createMockDb({
+    gradeRun: completeGradeRun,
+    authRun: completeAuthRun,
+    operatorOverrides: [
+      {
+        id: "override-1",
+        tenantId: "tenant-1",
+        captureSessionId: "session-1",
+        gradeRunId: "grade-run-1",
+        certificateId: null,
+        reviewStatus: "PENDING",
+      },
+    ],
+  });
+  const overrideResult = await checkGradeCertificateReadiness(override.db, {
+    tenantId: "tenant-1",
+    gradeRunId: "grade-run-1",
+    authRunId: "auth-run-1",
+  });
+  assert.equal(overrideResult.ready, false);
+  assert.ok(overrideResult.issues.some((entry) => entry.path === "certificate.operatorOverrides"));
+
+  const custody = createMockDb({
+    gradeRun: completeGradeRun,
+    authRun: completeAuthRun,
+    custodyEvents: [
+      {
+        id: "custody-1",
+        tenantId: "tenant-1",
+        captureSessionId: "session-1",
+        certificateId: null,
+        type: "CUSTODY_BREAK",
+      },
+    ],
+  });
+  const custodyResult = await checkGradeCertificateReadiness(custody.db, {
+    tenantId: "tenant-1",
+    gradeRunId: "grade-run-1",
+    authRunId: "auth-run-1",
+  });
+  assert.equal(custodyResult.ready, false);
+  assert.ok(custodyResult.issues.some((entry) => entry.path === "certificate.custody"));
+
+  const missingEvidence = createMockDb({
+    gradeRun: completeGradeRun,
+    authRun: completeAuthRun,
+    evidenceArtifacts: [],
+  });
+  const evidenceResult = await checkGradeCertificateReadiness(missingEvidence.db, {
+    tenantId: "tenant-1",
+    gradeRunId: "grade-run-1",
+    authRunId: "auth-run-1",
+  });
+  assert.equal(evidenceResult.ready, false);
+  assert.ok(evidenceResult.issues.some((entry) => entry.path.includes("evidenceArtifacts")));
+});
+
+test("certificate draft and issue helpers persist data and audit event", async () => {
+  const completeGradeRun = baseGradeRun({
+    status: "COMPLETE",
+    outputChecksum: "b".repeat(64),
+    finalGrades: { surface: 8, corners: 9, edges: 9, centering: 9, composite: 8.5 },
+    finishedAt: new Date("2026-05-28T12:01:00.000Z"),
+  });
+  const completeAuthRun = baseAuthRun({
+    status: "COMPLETE",
+    verdict: "REFERENCE_NEEDED",
+    cardPrintProfileId: null,
+    finishedAt: new Date("2026-05-28T12:01:00.000Z"),
+  });
+  const draft = createMockDb({
+    gradeRun: completeGradeRun,
+    authRun: completeAuthRun,
+    certificate: null,
+  });
+
+  const draftResult = await createGradeCertificateDraft(draft.db, {
+    id: "certificate-2",
+    tenantId: "tenant-1",
+    gradeRunId: "grade-run-1",
+    authRunId: "auth-run-1",
+    publicSlug: "tk-2026-test-2",
+    certificateNumber: "TK-2026-000002",
+    createdAt: ISO_TIME,
+  });
+
+  assert.equal(draftResult.readiness.ready, true);
+  assert.deepEqual(
+    draft.calls.map((call) => `${call.delegate}.${call.method}`),
+    [
+      "$transaction.$transaction",
+      "gradeRun.findFirst",
+      "captureSession.findFirst",
+      "authRun.findFirst",
+      "gradeCertificate.findFirst",
+      "evidenceArtifact.findMany",
+      "operatorOverride.findMany",
+      "custodyEvent.findMany",
+      "gradeCertificate.create",
+    ]
+  );
+  assert.equal(draft.calls[8].args.data.status, "DRAFT");
+  assert.equal(draft.calls[8].args.data.finalGrades.composite, 8.5);
+
+  const issue = createMockDb({
+    gradeRun: completeGradeRun,
+    authRun: completeAuthRun,
+    certificate: baseGradeCertificate(),
+  });
+  const issueResult = await issueGradeCertificate(issue.db, {
+    tenantId: "tenant-1",
+    certificateId: "certificate-1",
+    publicReportKey: "reports/certificate-1.json",
+    actorOperatorId: "operator-1",
+    issuedAt: ISO_TIME,
+  });
+
+  assert.equal(issueResult.readiness.ready, true);
+  assert.equal(issue.getCertificate().status, "ACTIVE");
+  assert.ok(issue.calls.some((call) => call.delegate === "gradeCertificate" && call.method === "updateMany"));
+  const auditCall = issue.calls.find((call) => call.delegate === "auditEvent" && call.method === "create");
+  assert.equal(auditCall.args.data.action, "ai_grader.certificate.issued");
+  assert.equal(auditCall.args.data.entityId, "certificate-1");
+  assert.match(auditCall.args.data.checksum, /^[a-f0-9]{64}$/);
+});
+
 test("linkEvidenceArtifact attaches evidence only after scoped source validation", async () => {
   const { db, calls } = createMockDb();
 
@@ -1017,6 +1587,27 @@ test("grade run helpers are exposed through the injected service factory without
   });
 
   assert.ok(calls.some((call) => call.delegate === "gradeRun" && call.method === "create"));
+});
+
+test("auth and certificate helpers are exposed through the injected service factory without a singleton client", async () => {
+  const { db, calls } = createMockDb({
+    session: baseSession({ currentState: "AUTH_CAPTURE", status: "RUNNING" }),
+    activeProfile: null,
+  });
+  const service = createAiGraderService(db);
+
+  await service.createAuthRunDraft({
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    captureManifestId: "manifest-1",
+    cardIdentity: cardIdentity(),
+    algorithmVersionId: "auth-algorithm-1",
+    runtimeEnvironmentId: "runtime-1",
+    inputChecksum: SHA_256,
+  });
+
+  assert.ok(calls.some((call) => call.delegate === "authRun" && call.method === "create"));
+  assert.ok(!calls.some((call) => call.delegate === "prisma"));
 });
 
 test("persistOrchestratorTransition rejects invalid transitions before DB writes", async () => {

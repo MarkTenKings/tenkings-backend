@@ -2,11 +2,18 @@ import { Prisma } from "@prisma/client";
 import type {
   AiGraderValidationIssue,
   AiGraderValidationIssueCode,
+  AuthRunContract,
+  AuthRunStatus,
+  AuthVerdict,
   CaptureManifest,
   CaptureSide,
+  CardIdentityInput,
+  CardPrintProfileContract,
+  CertificateStatus,
   EvidenceArtifactRef,
   EvidenceArtifactContract,
   FusionAction,
+  GradeCertificateContract,
   GradingMode,
   MacroPipelineOutput,
   MacroSuspectRegion,
@@ -15,12 +22,19 @@ import type {
   OrchestratorEventType,
   OrchestratorGuardResults,
   OrchestratorState,
+  PrintProfileStatus,
   StandardFusionOutput,
 } from "@tenkings/shared";
 import {
   ORCHESTRATOR_NAMED_ERROR_STATES,
+  resolveAuthVerdictFromProfileState,
   transitionOrchestratorState,
+  validateAuthProfileLifecycleTransition,
+  validateAuthRunContract,
   validateCaptureManifest,
+  validateCardIdentityInput,
+  validateCardPrintProfileContract,
+  validateCertificateEvidenceReadiness,
   validateEvidenceArtifactContract,
   validateMacroPipelineOutput,
   validateMacroSuspectRegion,
@@ -158,6 +172,94 @@ export type GradeRunUpdateData = {
   finishedAt: Date;
 };
 
+export type AuthRunCreateData = {
+  id?: string;
+  captureSessionId: string;
+  captureManifestId: string;
+  algorithmVersionId: string;
+  runtimeEnvironmentId: string;
+  cardPrintProfileId?: string | null;
+  tenantId: string;
+  cardSet: string;
+  cardNumber: string;
+  printRun?: string | null;
+  verdict: AuthVerdict;
+  distance?: number | null;
+  status: AuthRunStatus;
+  measurements: Prisma.InputJsonValue;
+  evidence: Prisma.InputJsonValue;
+  inputChecksum?: string | null;
+  outputChecksum?: string | null;
+  errorCode?: string | null;
+  startedAt?: Date;
+  finishedAt?: Date | null;
+};
+
+export type AuthRunUpdateData = {
+  verdict: AuthVerdict;
+  distance?: number | null;
+  status: AuthRunStatus;
+  measurements: Prisma.InputJsonValue;
+  evidence: Prisma.InputJsonValue;
+  outputChecksum?: string | null;
+  errorCode?: string | null;
+  finishedAt?: Date | null;
+};
+
+export type CardPrintProfileCreateData = {
+  id?: string;
+  tenantId: string;
+  cardSet: string;
+  cardNumber: string;
+  printRun?: string | null;
+  printRunKey: string;
+  state: PrintProfileStatus;
+  referenceFingerprint: Prisma.InputJsonValue;
+  referenceAuthRunId?: string | null;
+  approvedByOperatorId?: string | null;
+  approvedAt?: Date | null;
+  version?: number;
+  notes?: string | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+};
+
+export type CardPrintProfileUpdateData = {
+  state: PrintProfileStatus;
+  approvedByOperatorId?: string | null;
+  approvedAt?: Date | null;
+  notes?: string | null;
+  updatedAt?: Date;
+};
+
+export type GradeCertificateCreateData = {
+  id?: string;
+  tenantId: string;
+  gradeRunId: string;
+  authRunId?: string | null;
+  publicSlug: string;
+  certificateNumber: string;
+  status: CertificateStatus;
+  mode: GradingMode;
+  finalGrades?: NullableJsonInput;
+  publicReportKey?: string | null;
+  custodyStatus: string;
+  issuedAt?: Date | null;
+  revokedAt?: Date | null;
+  revocationReason?: string | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+};
+
+export type GradeCertificateUpdateData = {
+  status: CertificateStatus;
+  publicReportKey?: string | null;
+  issuedAt?: Date | null;
+  revokedAt?: Date | null;
+  revocationReason?: string | null;
+  updatedAt?: Date;
+};
+
 export type AuditEventCreateData = {
   id?: string;
   tenantId: string;
@@ -188,6 +290,7 @@ export type CaptureSessionState = {
   currentState: string;
   errorCode: string | null;
   rawCardOnly: boolean;
+  physicalGateResults: Prisma.JsonValue | null;
   startedAt: Date | null;
   finishedAt: Date | null;
   createdAt: Date;
@@ -216,17 +319,129 @@ export type GradeRunState = {
   finishedAt: Date | null;
 };
 
-export type AuthRunScope = {
+export type AuthRunState = {
   id: string;
   tenantId: string;
   captureSessionId: string | null;
+  captureManifestId: string | null;
+  algorithmVersionId: string;
+  runtimeEnvironmentId: string;
+  cardPrintProfileId: string | null;
+  cardSet: string;
+  cardNumber: string;
+  printRun: string | null;
+  verdict: AuthVerdict;
+  distance: number | null;
+  status: AuthRunStatus;
+  measurements: Prisma.JsonValue;
+  evidence: Prisma.JsonValue;
+  inputChecksum: string | null;
+  outputChecksum: string | null;
+  errorCode: string | null;
+  startedAt: Date;
+  finishedAt: Date | null;
 };
 
-export type GradeCertificateScope = {
+export type AuthRunScope = AuthRunState;
+
+export type CardPrintProfileState = {
+  id: string;
+  tenantId: string;
+  cardSet: string;
+  cardNumber: string;
+  printRun: string | null;
+  printRunKey: string;
+  state: PrintProfileStatus;
+  referenceFingerprint: Prisma.JsonValue;
+  referenceAuthRunId: string | null;
+  approvedByOperatorId: string | null;
+  approvedAt: Date | null;
+  version: number;
+  notes: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type GradeCertificateState = {
   id: string;
   tenantId: string;
   gradeRunId: string;
   authRunId: string | null;
+  publicSlug: string;
+  certificateNumber: string;
+  status: CertificateStatus;
+  mode: GradingMode;
+  finalGrades: Prisma.JsonValue | null;
+  publicReportKey: string | null;
+  custodyStatus: string;
+  issuedAt: Date | null;
+  revokedAt: Date | null;
+  revocationReason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+export type GradeCertificateScope = GradeCertificateState;
+
+export type EvidenceArtifactState = {
+  id: string;
+  tenantId: string;
+  captureSessionId: string | null;
+  gradeRunId: string | null;
+  authRunId: string | null;
+  certificateId: string | null;
+  evidenceClass: EvidenceArtifactContract["evidenceClass"];
+  kind: string;
+  storageKey: string;
+  checksumSha256: string;
+  mimeType: string;
+  byteSize: number | null;
+  widthPx: number | null;
+  heightPx: number | null;
+  retentionUntil: Date | null;
+  publicUrl: string | null;
+  metadata: Prisma.JsonValue | null;
+  createdAt: Date;
+};
+
+export type OperatorOverrideState = {
+  id: string;
+  tenantId: string;
+  captureSessionId: string;
+  gradeRunId: string | null;
+  certificateId: string | null;
+  reviewStatus: string;
+};
+
+export type CustodyEventState = {
+  id: string;
+  tenantId: string;
+  certificateId: string | null;
+  captureSessionId: string | null;
+  type: string;
+};
+
+type AuthRunContractSource = {
+  id?: string;
+  captureSessionId?: string | null;
+  captureManifestId?: string | null;
+  algorithmVersionId: string;
+  runtimeEnvironmentId: string;
+  cardPrintProfileId?: string | null;
+  tenantId: string;
+  cardSet: string;
+  cardNumber: string;
+  printRun?: string | null;
+  verdict: AuthVerdict;
+  distance?: number | null;
+  status: AuthRunStatus;
+  measurements: unknown;
+  evidence: unknown;
+  inputChecksum?: string | null;
+  outputChecksum?: string | null;
+  errorCode?: string | null;
+  startedAt?: string | Date;
+  finishedAt?: string | Date | null;
 };
 
 export type AiGraderServiceTransactionClient = {
@@ -249,6 +464,18 @@ export type AiGraderServiceTransactionClient = {
   };
   evidenceArtifact: {
     create(args: { data: EvidenceArtifactCreateData }): Promise<unknown>;
+    findMany(args: {
+      where: {
+        tenantId: string;
+        OR: Array<{
+          captureSessionId?: string;
+          gradeRunId?: string;
+          authRunId?: string;
+          certificateId?: string;
+        }>;
+      };
+      select: typeof evidenceArtifactStateSelect;
+    }): Promise<EvidenceArtifactState[]>;
   };
   gradeRun: {
     create(args: { data: GradeRunCreateData }): Promise<unknown>;
@@ -262,16 +489,62 @@ export type AiGraderServiceTransactionClient = {
     }): Promise<GradeRunState | null>;
   };
   authRun: {
+    create(args: { data: AuthRunCreateData }): Promise<unknown>;
+    updateMany(args: {
+      where: { id: string; tenantId: string };
+      data: AuthRunUpdateData;
+    }): Promise<{ count: number }>;
     findFirst(args: {
       where: { id: string; tenantId: string };
-      select: typeof authRunScopeSelect;
+      select: typeof authRunStateSelect;
     }): Promise<AuthRunScope | null>;
   };
-  gradeCertificate: {
+  cardPrintProfile: {
+    create(args: { data: CardPrintProfileCreateData }): Promise<unknown>;
+    updateMany(args: {
+      where: {
+        id: string;
+        tenantId: string;
+        cardSet?: string;
+        cardNumber?: string;
+        printRunKey?: string;
+      };
+      data: CardPrintProfileUpdateData;
+    }): Promise<{ count: number }>;
     findFirst(args: {
+      where: {
+        id?: string;
+        tenantId: string;
+        cardSet?: string;
+        cardNumber?: string;
+        printRunKey?: string;
+        state?: PrintProfileStatus;
+      };
+      select: typeof cardPrintProfileStateSelect;
+    }): Promise<CardPrintProfileState | null>;
+  };
+  gradeCertificate: {
+    create(args: { data: GradeCertificateCreateData }): Promise<unknown>;
+    updateMany(args: {
       where: { id: string; tenantId: string };
-      select: typeof gradeCertificateScopeSelect;
+      data: GradeCertificateUpdateData;
+    }): Promise<{ count: number }>;
+    findFirst(args: {
+      where: { id?: string; tenantId: string; gradeRunId?: string };
+      select: typeof gradeCertificateStateSelect;
     }): Promise<GradeCertificateScope | null>;
+  };
+  operatorOverride: {
+    findMany(args: {
+      where: { tenantId: string; captureSessionId?: string; gradeRunId?: string; certificateId?: string };
+      select: typeof operatorOverrideStateSelect;
+    }): Promise<OperatorOverrideState[]>;
+  };
+  custodyEvent: {
+    findMany(args: {
+      where: { tenantId: string; captureSessionId?: string; certificateId?: string };
+      select: typeof custodyEventStateSelect;
+    }): Promise<CustodyEventState[]>;
   };
   gradingSuspectRegion: {
     createMany(args: { data: GradingSuspectRegionCreateData[] }): Promise<{ count: number }>;
@@ -445,6 +718,164 @@ export type FinalizedGradeRun = {
   updatedCount: number;
 };
 
+export type CreateAuthRunDraftInput = {
+  id?: string;
+  tenantId: string;
+  captureSessionId: string;
+  captureManifestId: string;
+  cardIdentity: CardIdentityInput;
+  algorithmVersionId: string;
+  runtimeEnvironmentId: string;
+  cardPrintProfileId?: string;
+  status?: Extract<AuthRunStatus, "PENDING" | "RUNNING">;
+  measurements?: Record<string, unknown>;
+  evidence?: Record<string, unknown>;
+  inputChecksum?: string;
+  startedAt?: string | Date;
+};
+
+export type CreatedAuthRunDraft = {
+  session: CaptureSessionState;
+  profile: CardPrintProfileState | null;
+  verdict: AuthVerdict;
+  authRun: unknown;
+};
+
+export type FinalizeAuthRunInput = {
+  tenantId: string;
+  authRunId: string;
+  requestedVerdict: AuthVerdict;
+  status?: Extract<AuthRunStatus, "COMPLETE" | "FAILED">;
+  distance?: number | null;
+  measurements: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  outputChecksum?: string | null;
+  errorCode?: string | null;
+  finishedAt?: string | Date;
+};
+
+export type FinalizedAuthRun = {
+  authRun: AuthRunState;
+  profile: CardPrintProfileState | null;
+  resolvedVerdict: AuthVerdict;
+  updatedCount: number;
+};
+
+export type CreateCandidateCardPrintProfileInput = {
+  id?: string;
+  tenantId: string;
+  cardIdentity: CardIdentityInput;
+  referenceFingerprint: Record<string, unknown>;
+  referenceAuthRunId?: string | null;
+  version?: number;
+  notes?: string | null;
+  createdAt?: string | Date;
+};
+
+export type CreatedCandidateCardPrintProfile = {
+  profile: unknown;
+};
+
+export type ApproveCardPrintProfileInput = {
+  tenantId: string;
+  profileId: string;
+  cardSet: string;
+  cardNumber: string;
+  printRun?: string;
+  toState?: Extract<PrintProfileStatus, "CURATED_REFERENCE" | "ACTIVE">;
+  actorOperatorId: string;
+  reviewedByOperatorId: string;
+  reasonCode: string;
+  decidedAt?: string | Date;
+  notes?: string | null;
+};
+
+export type UpdateCardPrintProfileLifecycleInput = {
+  tenantId: string;
+  profileId: string;
+  cardSet: string;
+  cardNumber: string;
+  printRun?: string;
+  actorOperatorId: string;
+  reasonCode: string;
+  decidedAt?: string | Date;
+  notes?: string | null;
+};
+
+export type UpdatedCardPrintProfile = {
+  profile: CardPrintProfileState;
+  updatedCount: number;
+};
+
+export type CheckGradeCertificateReadinessInput = {
+  tenantId: string;
+  gradeRunId: string;
+  authRunId?: string | null;
+  certificateId?: string;
+  publicSlug?: string;
+  certificateNumber?: string;
+  custodyStatus?: string;
+};
+
+export type GradeCertificateReadinessResult = {
+  ready: boolean;
+  issues: AiGraderValidationIssue[];
+  gradeRun: GradeRunState | null;
+  authRun: AuthRunState | null;
+  certificate: GradeCertificateContract | null;
+  evidenceArtifacts: EvidenceArtifactContract[];
+  blockingOverrides: OperatorOverrideState[];
+  custodyBreaks: CustodyEventState[];
+};
+
+export type CreateGradeCertificateDraftInput = CheckGradeCertificateReadinessInput & {
+  id?: string;
+  publicSlug: string;
+  certificateNumber: string;
+  createdAt?: string | Date;
+};
+
+export type CreatedGradeCertificateDraft = {
+  readiness: GradeCertificateReadinessResult;
+  certificate: unknown;
+};
+
+export type IssueGradeCertificateInput = {
+  tenantId: string;
+  certificateId: string;
+  publicReportKey: string;
+  actorOperatorId: string;
+  actorUserId?: string | null;
+  reasonCode?: string | null;
+  issuedAt?: string | Date;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+};
+
+export type IssuedGradeCertificate = {
+  readiness: GradeCertificateReadinessResult;
+  certificate: GradeCertificateState;
+  updatedCount: number;
+  auditEvent: unknown;
+};
+
+export type RevokeGradeCertificateInput = {
+  tenantId: string;
+  certificateId: string;
+  revocationReason: string;
+  actorOperatorId: string;
+  actorUserId?: string | null;
+  revokedAt?: string | Date;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+};
+
+export type RevokedGradeCertificate = {
+  certificate: GradeCertificateState;
+  updatedCount: number;
+  auditEvent: unknown;
+};
+
 export type LinkedEvidenceArtifact = {
   artifact: unknown;
   scopes: {
@@ -469,6 +900,20 @@ const REQUIRED_MICRO_SPOT_FRAME_KEYS: MicroSpotFrameKey[] = [
   "flcLed6",
   "flcLed7",
 ];
+const AUTH_RUN_STATUSES = new Set<AuthRunStatus>(["PENDING", "RUNNING", "COMPLETE", "FAILED"]);
+const AUTH_VERDICTS = new Set<AuthVerdict>([
+  "REFERENCE_NEEDED",
+  "AUTHENTIC",
+  "PROBABLY_AUTHENTIC",
+  "SUSPICIOUS",
+  "LIKELY_COUNTERFEIT",
+]);
+const CERTIFICATE_ACCEPTABLE_AUTH_VERDICTS = new Set<AuthVerdict>([
+  "REFERENCE_NEEDED",
+  "AUTHENTIC",
+  "PROBABLY_AUTHENTIC",
+]);
+const BLOCKING_PHYSICAL_GATE_STATUSES = new Set(["FAIL", "BLOCK", "REVIEW"]);
 
 const captureSessionStateSelect = {
   id: true,
@@ -482,6 +927,7 @@ const captureSessionStateSelect = {
   currentState: true,
   errorCode: true,
   rawCardOnly: true,
+  physicalGateResults: true,
   startedAt: true,
   finishedAt: true,
   createdAt: true,
@@ -510,17 +956,106 @@ const gradeRunStateSelect = {
   finishedAt: true,
 } as const;
 
-const authRunScopeSelect = {
+const authRunStateSelect = {
   id: true,
   tenantId: true,
   captureSessionId: true,
+  captureManifestId: true,
+  algorithmVersionId: true,
+  runtimeEnvironmentId: true,
+  cardPrintProfileId: true,
+  cardSet: true,
+  cardNumber: true,
+  printRun: true,
+  verdict: true,
+  distance: true,
+  status: true,
+  measurements: true,
+  evidence: true,
+  inputChecksum: true,
+  outputChecksum: true,
+  errorCode: true,
+  startedAt: true,
+  finishedAt: true,
 } as const;
 
-const gradeCertificateScopeSelect = {
+const authRunScopeSelect = authRunStateSelect;
+
+const cardPrintProfileStateSelect = {
+  id: true,
+  tenantId: true,
+  cardSet: true,
+  cardNumber: true,
+  printRun: true,
+  printRunKey: true,
+  state: true,
+  referenceFingerprint: true,
+  referenceAuthRunId: true,
+  approvedByOperatorId: true,
+  approvedAt: true,
+  version: true,
+  notes: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+const gradeCertificateStateSelect = {
   id: true,
   tenantId: true,
   gradeRunId: true,
   authRunId: true,
+  publicSlug: true,
+  certificateNumber: true,
+  status: true,
+  mode: true,
+  finalGrades: true,
+  publicReportKey: true,
+  custodyStatus: true,
+  issuedAt: true,
+  revokedAt: true,
+  revocationReason: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+const gradeCertificateScopeSelect = gradeCertificateStateSelect;
+
+const evidenceArtifactStateSelect = {
+  id: true,
+  tenantId: true,
+  captureSessionId: true,
+  gradeRunId: true,
+  authRunId: true,
+  certificateId: true,
+  evidenceClass: true,
+  kind: true,
+  storageKey: true,
+  checksumSha256: true,
+  mimeType: true,
+  byteSize: true,
+  widthPx: true,
+  heightPx: true,
+  retentionUntil: true,
+  publicUrl: true,
+  metadata: true,
+  createdAt: true,
+} as const;
+
+const operatorOverrideStateSelect = {
+  id: true,
+  tenantId: true,
+  captureSessionId: true,
+  gradeRunId: true,
+  certificateId: true,
+  reviewStatus: true,
+} as const;
+
+const custodyEventStateSelect = {
+  id: true,
+  tenantId: true,
+  certificateId: true,
+  captureSessionId: true,
+  type: true,
 } as const;
 
 export class AiGraderServiceValidationError extends Error {
@@ -801,6 +1336,165 @@ function validateFinalizeGradeRunInput(input: FinalizeGradeRunInput) {
   throwIfInvalid("Invalid grade run finalization input.", issues);
 }
 
+function printRunKeyFrom(printRun: string | null | undefined) {
+  return printRun ?? "";
+}
+
+function requireOptionalSha256(value: unknown, path: string, issues: AiGraderValidationIssue[]) {
+  if (value != null) {
+    validateSha256(value, path, issues);
+  }
+}
+
+function validateCardIdentityContractInput(value: CardIdentityInput, pathPrefix: string, issues: AiGraderValidationIssue[]) {
+  const result = validateCardIdentityInput(value);
+  issues.push(...result.issues.map((entry) => prefixedIssue(pathPrefix, entry)));
+}
+
+function validateCreateAuthRunDraftInput(input: CreateAuthRunDraftInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "authRun.tenantId", issues);
+  requireNonEmptyString(input.captureSessionId, "authRun.captureSessionId", issues);
+  requireNonEmptyString(input.captureManifestId, "authRun.captureManifestId", issues);
+  requireNonEmptyString(input.algorithmVersionId, "authRun.algorithmVersionId", issues);
+  requireNonEmptyString(input.runtimeEnvironmentId, "authRun.runtimeEnvironmentId", issues);
+  if (input.id != null) requireNonEmptyString(input.id, "authRun.id", issues);
+  if (input.cardPrintProfileId != null) requireNonEmptyString(input.cardPrintProfileId, "authRun.cardPrintProfileId", issues);
+  if (input.status != null && input.status !== "PENDING" && input.status !== "RUNNING") {
+    issues.push(issue("authRun.status", "INVALID_ENUM", "draft status must be PENDING or RUNNING."));
+  }
+  validateCardIdentityContractInput(input.cardIdentity, "authRun", issues);
+  validateOptionalRecordInput(input.measurements, "authRun.measurements", issues);
+  validateOptionalRecordInput(input.evidence, "authRun.evidence", issues);
+  requireOptionalSha256(input.inputChecksum, "authRun.inputChecksum", issues);
+
+  throwIfInvalid("Invalid auth run draft input.", issues);
+}
+
+function validateFinalizeAuthRunInput(input: FinalizeAuthRunInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "authRun.tenantId", issues);
+  requireNonEmptyString(input.authRunId, "authRun.id", issues);
+  requireNonEmptyString(input.requestedVerdict, "authRun.requestedVerdict", issues);
+  if (input.requestedVerdict && !AUTH_VERDICTS.has(input.requestedVerdict)) {
+    issues.push(issue("authRun.requestedVerdict", "INVALID_AUTH_VERDICT", "requestedVerdict must match AuthVerdict."));
+  }
+  if (input.status != null && input.status !== "COMPLETE" && input.status !== "FAILED") {
+    issues.push(issue("authRun.status", "INVALID_ENUM", "final status must be COMPLETE or FAILED."));
+  }
+  if (input.distance != null && (typeof input.distance !== "number" || !Number.isFinite(input.distance) || input.distance < 0)) {
+    issues.push(issue("authRun.distance", "INVALID_NUMBER", "distance must be a non-negative finite number when provided."));
+  }
+  validateRecordInput(input.measurements, "authRun.measurements", issues);
+  validateRecordInput(input.evidence, "authRun.evidence", issues);
+  requireOptionalSha256(input.outputChecksum, "authRun.outputChecksum", issues);
+  if (input.errorCode != null) requireNonEmptyString(input.errorCode, "authRun.errorCode", issues);
+
+  throwIfInvalid("Invalid auth run finalization input.", issues);
+}
+
+function validateCreateCandidateCardPrintProfileInput(input: CreateCandidateCardPrintProfileInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "cardPrintProfile.tenantId", issues);
+  if (input.id != null) requireNonEmptyString(input.id, "cardPrintProfile.id", issues);
+  validateCardIdentityContractInput(input.cardIdentity, "cardPrintProfile", issues);
+  validateRecordInput(input.referenceFingerprint, "cardPrintProfile.referenceFingerprint", issues);
+  if (input.referenceAuthRunId != null) requireNonEmptyString(input.referenceAuthRunId, "cardPrintProfile.referenceAuthRunId", issues);
+  if (input.version != null && (!Number.isInteger(input.version) || input.version < 1)) {
+    issues.push(issue("cardPrintProfile.version", "INVALID_VERSION", "version must be a positive integer."));
+  }
+  if (input.notes != null) requireNonEmptyString(input.notes, "cardPrintProfile.notes", issues);
+
+  throwIfInvalid("Invalid card print profile candidate input.", issues);
+}
+
+function validateApproveCardPrintProfileInput(input: ApproveCardPrintProfileInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "cardPrintProfile.tenantId", issues);
+  requireNonEmptyString(input.profileId, "cardPrintProfile.id", issues);
+  requireNonEmptyString(input.cardSet, "cardPrintProfile.cardSet", issues);
+  requireNonEmptyString(input.cardNumber, "cardPrintProfile.cardNumber", issues);
+  if (input.printRun != null) requireNonEmptyString(input.printRun, "cardPrintProfile.printRun", issues);
+  requireNonEmptyString(input.actorOperatorId, "cardPrintProfile.actorOperatorId", issues);
+  requireNonEmptyString(input.reviewedByOperatorId, "cardPrintProfile.reviewedByOperatorId", issues);
+  requireNonEmptyString(input.reasonCode, "cardPrintProfile.reasonCode", issues);
+  if (input.toState != null && input.toState !== "CURATED_REFERENCE" && input.toState !== "ACTIVE") {
+    issues.push(issue("cardPrintProfile.toState", "INVALID_ENUM", "approval state must be CURATED_REFERENCE or ACTIVE."));
+  }
+  if (input.notes != null) requireNonEmptyString(input.notes, "cardPrintProfile.notes", issues);
+
+  throwIfInvalid("Invalid card print profile approval input.", issues);
+}
+
+function validateUpdateCardPrintProfileLifecycleInput(
+  input: UpdateCardPrintProfileLifecycleInput,
+  action: "quarantine" | "retire"
+) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "cardPrintProfile.tenantId", issues);
+  requireNonEmptyString(input.profileId, "cardPrintProfile.id", issues);
+  requireNonEmptyString(input.cardSet, "cardPrintProfile.cardSet", issues);
+  requireNonEmptyString(input.cardNumber, "cardPrintProfile.cardNumber", issues);
+  if (input.printRun != null) requireNonEmptyString(input.printRun, "cardPrintProfile.printRun", issues);
+  requireNonEmptyString(input.actorOperatorId, "cardPrintProfile.actorOperatorId", issues);
+  requireNonEmptyString(input.reasonCode, `cardPrintProfile.${action}ReasonCode`, issues);
+  if (input.notes != null) requireNonEmptyString(input.notes, "cardPrintProfile.notes", issues);
+
+  throwIfInvalid(`Invalid card print profile ${action} input.`, issues);
+}
+
+function validateCheckGradeCertificateReadinessInput(input: CheckGradeCertificateReadinessInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "certificate.tenantId", issues);
+  requireNonEmptyString(input.gradeRunId, "certificate.gradeRunId", issues);
+  if (input.authRunId != null) requireNonEmptyString(input.authRunId, "certificate.authRunId", issues);
+  if (input.certificateId != null) requireNonEmptyString(input.certificateId, "certificate.id", issues);
+  if (input.publicSlug != null) requireNonEmptyString(input.publicSlug, "certificate.publicSlug", issues);
+  if (input.certificateNumber != null) requireNonEmptyString(input.certificateNumber, "certificate.certificateNumber", issues);
+  if (input.custodyStatus != null) requireNonEmptyString(input.custodyStatus, "certificate.custodyStatus", issues);
+
+  throwIfInvalid("Invalid certificate readiness input.", issues);
+}
+
+function validateCreateGradeCertificateDraftInput(input: CreateGradeCertificateDraftInput) {
+  validateCheckGradeCertificateReadinessInput(input);
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.publicSlug, "certificate.publicSlug", issues);
+  requireNonEmptyString(input.certificateNumber, "certificate.certificateNumber", issues);
+
+  throwIfInvalid("Invalid certificate draft input.", issues);
+}
+
+function validateIssueGradeCertificateInput(input: IssueGradeCertificateInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "certificate.tenantId", issues);
+  requireNonEmptyString(input.certificateId, "certificate.id", issues);
+  requireNonEmptyString(input.publicReportKey, "certificate.publicReportKey", issues);
+  requireNonEmptyString(input.actorOperatorId, "certificate.actorOperatorId", issues);
+  if (input.reasonCode != null) requireNonEmptyString(input.reasonCode, "certificate.reasonCode", issues);
+
+  throwIfInvalid("Invalid certificate issue input.", issues);
+}
+
+function validateRevokeGradeCertificateInput(input: RevokeGradeCertificateInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "certificate.tenantId", issues);
+  requireNonEmptyString(input.certificateId, "certificate.id", issues);
+  requireNonEmptyString(input.revocationReason, "certificate.revocationReason", issues);
+  requireNonEmptyString(input.actorOperatorId, "certificate.actorOperatorId", issues);
+
+  throwIfInvalid("Invalid certificate revoke input.", issues);
+}
+
 function validateLinkEvidenceArtifactInput(artifact: EvidenceArtifactContract) {
   assertValidEvidenceArtifact(artifact);
 
@@ -886,6 +1580,33 @@ function dateFromOptional(value: string | Date | undefined, path: string) {
   return optionalDate(value, path) ?? new Date();
 }
 
+function timestampString(value: string | Date, path: string) {
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) {
+      throw new AiGraderServiceValidationError("Invalid timestamp.", [
+        issue(path, "INVALID_TIMESTAMP", `${path} must be a valid timestamp.`),
+      ]);
+    }
+    return value.toISOString();
+  }
+  return isoDate(value, path).toISOString();
+}
+
+function optionalTimestampString(value: string | Date | null | undefined, path: string) {
+  if (value == null) {
+    return undefined;
+  }
+  return timestampString(value, path);
+}
+
+function nonNullRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function optionalString(value: string | null | undefined) {
+  return value ?? undefined;
+}
+
 function assertValidManifest(manifest: CaptureManifest) {
   const result = validateCaptureManifest(manifest);
   throwIfInvalid("Invalid capture manifest.", result.issues);
@@ -916,6 +1637,149 @@ function evidenceArtifactCreateData(artifact: EvidenceArtifactContract): Evidenc
     publicUrl: artifact.publicUrl,
     metadata: optionalNullableJson(artifact.metadata as Prisma.InputJsonValue | undefined),
     createdAt: isoDate(artifact.createdAt, "evidenceArtifact.createdAt"),
+  };
+}
+
+function evidenceArtifactContractFromState(artifact: EvidenceArtifactState): EvidenceArtifactContract {
+  return {
+    id: artifact.id,
+    tenantId: artifact.tenantId,
+    ...(artifact.captureSessionId ? { captureSessionId: artifact.captureSessionId } : {}),
+    ...(artifact.gradeRunId ? { gradeRunId: artifact.gradeRunId } : {}),
+    ...(artifact.authRunId ? { authRunId: artifact.authRunId } : {}),
+    ...(artifact.certificateId ? { certificateId: artifact.certificateId } : {}),
+    evidenceClass: artifact.evidenceClass,
+    kind: artifact.kind,
+    storageKey: artifact.storageKey,
+    checksumSha256: artifact.checksumSha256,
+    mimeType: artifact.mimeType,
+    ...(artifact.byteSize != null ? { byteSize: artifact.byteSize } : {}),
+    ...(artifact.widthPx != null ? { widthPx: artifact.widthPx } : {}),
+    ...(artifact.heightPx != null ? { heightPx: artifact.heightPx } : {}),
+    ...(artifact.retentionUntil ? { retentionUntil: artifact.retentionUntil.toISOString() } : {}),
+    ...(artifact.publicUrl ? { publicUrl: artifact.publicUrl } : {}),
+    ...(isRecord(artifact.metadata) ? { metadata: artifact.metadata } : {}),
+    createdAt: artifact.createdAt.toISOString(),
+  };
+}
+
+function cardPrintProfileContractFromState(profile: CardPrintProfileState): CardPrintProfileContract {
+  return {
+    id: profile.id,
+    tenantId: profile.tenantId,
+    cardSet: profile.cardSet,
+    cardNumber: profile.cardNumber,
+    ...(profile.printRun ? { printRun: profile.printRun } : {}),
+    printRunKey: profile.printRunKey,
+    state: profile.state,
+    referenceFingerprint: nonNullRecord(profile.referenceFingerprint),
+    ...(profile.referenceAuthRunId ? { referenceAuthRunId: profile.referenceAuthRunId } : {}),
+    ...(profile.approvedByOperatorId ? { approvedByOperatorId: profile.approvedByOperatorId } : {}),
+    ...(profile.approvedAt ? { approvedAt: profile.approvedAt.toISOString() } : {}),
+    version: profile.version,
+    ...(profile.notes ? { notes: profile.notes } : {}),
+    createdAt: profile.createdAt.toISOString(),
+    updatedAt: profile.updatedAt.toISOString(),
+  };
+}
+
+function cardPrintProfileContractFromCreateData(data: CardPrintProfileCreateData, now: Date): CardPrintProfileContract {
+  return {
+    id: data.id ?? "card-print-profile-draft",
+    tenantId: data.tenantId,
+    cardSet: data.cardSet,
+    cardNumber: data.cardNumber,
+    ...(data.printRun ? { printRun: data.printRun } : {}),
+    printRunKey: data.printRunKey,
+    state: data.state,
+    referenceFingerprint: nonNullRecord(data.referenceFingerprint),
+    ...(data.referenceAuthRunId ? { referenceAuthRunId: data.referenceAuthRunId } : {}),
+    ...(data.approvedByOperatorId ? { approvedByOperatorId: data.approvedByOperatorId } : {}),
+    ...(data.approvedAt ? { approvedAt: data.approvedAt.toISOString() } : {}),
+    version: data.version ?? 1,
+    ...(data.notes ? { notes: data.notes } : {}),
+    createdAt: (data.createdAt ?? now).toISOString(),
+    updatedAt: (data.updatedAt ?? now).toISOString(),
+  };
+}
+
+function authRunContractFromData(
+  data: AuthRunContractSource,
+  profileState?: PrintProfileStatus
+): AuthRunContract {
+  return {
+    id: data.id ?? "auth-run-draft",
+    ...(data.captureSessionId ? { captureSessionId: data.captureSessionId } : {}),
+    ...(data.captureManifestId ? { captureManifestId: data.captureManifestId } : {}),
+    algorithmVersionId: data.algorithmVersionId,
+    runtimeEnvironmentId: data.runtimeEnvironmentId,
+    ...(data.cardPrintProfileId ? { cardPrintProfileId: data.cardPrintProfileId } : {}),
+    tenantId: data.tenantId,
+    cardSet: data.cardSet,
+    cardNumber: data.cardNumber,
+    ...(data.printRun ? { printRun: data.printRun } : {}),
+    verdict: data.verdict,
+    ...(data.distance != null ? { distance: data.distance } : {}),
+    status: data.status,
+    measurements: nonNullRecord(data.measurements),
+    evidence: nonNullRecord(data.evidence),
+    ...(data.inputChecksum ? { inputChecksum: data.inputChecksum } : {}),
+    ...(data.outputChecksum ? { outputChecksum: data.outputChecksum } : {}),
+    ...(data.errorCode ? { errorCode: data.errorCode } : {}),
+    startedAt: timestampString(data.startedAt ?? new Date(), "authRun.startedAt"),
+    ...(data.finishedAt ? { finishedAt: timestampString(data.finishedAt, "authRun.finishedAt") } : {}),
+    ...(profileState ? { profileState } : {}),
+  };
+}
+
+function gradeCertificateContractFromState(
+  certificate: GradeCertificateState,
+  sourceGradeRunStatus?: GradeRunStatus
+): GradeCertificateContract {
+  return {
+    id: certificate.id,
+    tenantId: certificate.tenantId,
+    gradeRunId: certificate.gradeRunId,
+    ...(certificate.authRunId ? { authRunId: certificate.authRunId } : {}),
+    publicSlug: certificate.publicSlug,
+    certificateNumber: certificate.certificateNumber,
+    status: certificate.status,
+    mode: certificate.mode,
+    ...(isRecord(certificate.finalGrades) ? { finalGrades: certificate.finalGrades as Record<string, number> } : {}),
+    ...(certificate.publicReportKey ? { publicReportKey: certificate.publicReportKey } : {}),
+    custodyStatus: certificate.custodyStatus,
+    ...(certificate.issuedAt ? { issuedAt: certificate.issuedAt.toISOString() } : {}),
+    ...(certificate.revokedAt ? { revokedAt: certificate.revokedAt.toISOString() } : {}),
+    ...(certificate.revocationReason ? { revocationReason: certificate.revocationReason } : {}),
+    ...(sourceGradeRunStatus ? { sourceGradeRunStatus } : {}),
+    createdAt: certificate.createdAt.toISOString(),
+    updatedAt: certificate.updatedAt.toISOString(),
+  };
+}
+
+function gradeCertificateContractFromCreateData(
+  data: GradeCertificateCreateData,
+  gradeRun: GradeRunState,
+  now: Date
+): GradeCertificateContract {
+  return {
+    id: data.id ?? "certificate-draft",
+    tenantId: data.tenantId,
+    gradeRunId: data.gradeRunId,
+    ...(data.authRunId ? { authRunId: data.authRunId } : {}),
+    publicSlug: data.publicSlug,
+    certificateNumber: data.certificateNumber,
+    status: data.status,
+    mode: data.mode,
+    ...(isRecord(data.finalGrades) ? { finalGrades: data.finalGrades as Record<string, number> } : {}),
+    ...(data.publicReportKey ? { publicReportKey: data.publicReportKey } : {}),
+    custodyStatus: data.custodyStatus,
+    ...(data.issuedAt ? { issuedAt: data.issuedAt.toISOString() } : {}),
+    ...(data.revokedAt ? { revokedAt: data.revokedAt.toISOString() } : {}),
+    ...(data.revocationReason ? { revocationReason: data.revocationReason } : {}),
+    sourceGradeRunStatus: gradeRun.status,
+    createdAt: (data.createdAt ?? now).toISOString(),
+    updatedAt: (data.updatedAt ?? now).toISOString(),
   };
 }
 
@@ -1531,6 +2395,389 @@ export async function finalizeGradeRun(
   });
 }
 
+async function readCardPrintProfileById(
+  tx: AiGraderServiceTransactionClient,
+  input: { tenantId: string; profileId: string }
+) {
+  return tx.cardPrintProfile.findFirst({
+    where: {
+      id: input.profileId,
+      tenantId: input.tenantId,
+    },
+    select: cardPrintProfileStateSelect,
+  });
+}
+
+async function readActiveCardPrintProfileForIdentity(
+  tx: AiGraderServiceTransactionClient,
+  input: { tenantId: string; cardIdentity: CardIdentityInput }
+) {
+  return tx.cardPrintProfile.findFirst({
+    where: {
+      tenantId: input.tenantId,
+      cardSet: input.cardIdentity.cardSet,
+      cardNumber: input.cardIdentity.cardNumber,
+      printRunKey: printRunKeyFrom(input.cardIdentity.printRun),
+      state: "ACTIVE",
+    },
+    select: cardPrintProfileStateSelect,
+  });
+}
+
+function assertCardPrintProfileScoped(
+  profile: CardPrintProfileState,
+  input: { cardSet: string; cardNumber: string; printRun?: string }
+) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  if (profile.cardSet !== input.cardSet) {
+    issues.push(issue("cardPrintProfile.cardSet", "INVALID_RECORD", "profile cardSet must match the scoped input."));
+  }
+  if (profile.cardNumber !== input.cardNumber) {
+    issues.push(issue("cardPrintProfile.cardNumber", "INVALID_RECORD", "profile cardNumber must match the scoped input."));
+  }
+  if (profile.printRunKey !== printRunKeyFrom(input.printRun)) {
+    issues.push(issue("cardPrintProfile.printRun", "INVALID_RECORD", "profile printRun must match the scoped input."));
+  }
+
+  throwIfInvalid("Card print profile scope mismatch.", issues);
+}
+
+function assertValidProfileLifecycleTransition(
+  profile: CardPrintProfileState,
+  toState: PrintProfileStatus,
+  input: {
+    actorOperatorId: string;
+    reviewedByOperatorId?: string;
+    reasonCode: string;
+    decidedAt: Date;
+  }
+) {
+  const result = validateAuthProfileLifecycleTransition({
+    from: profile.state,
+    to: toState,
+    actorOperatorId: input.actorOperatorId,
+    reviewedByOperatorId: input.reviewedByOperatorId,
+    reasonCode: input.reasonCode,
+    decidedAt: input.decidedAt.toISOString(),
+  });
+  throwIfInvalid("Invalid card print profile lifecycle transition.", result.issues);
+}
+
+export async function createAuthRunDraft(
+  db: AiGraderServicePrismaClient,
+  input: CreateAuthRunDraftInput
+): Promise<CreatedAuthRunDraft> {
+  validateCreateAuthRunDraftInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const session = await readCaptureSessionState(tx, {
+      tenantId: input.tenantId,
+      captureSessionId: input.captureSessionId,
+    });
+
+    if (!session) {
+      throw new AiGraderServiceValidationError("Capture session not found for auth run.", [
+        issue("authRun.captureSessionId", "INVALID_RECORD", "captureSessionId must belong to the auth run tenant."),
+      ]);
+    }
+
+    const profile = input.cardPrintProfileId
+      ? await readCardPrintProfileById(tx, { tenantId: input.tenantId, profileId: input.cardPrintProfileId })
+      : await readActiveCardPrintProfileForIdentity(tx, input);
+
+    if (input.cardPrintProfileId && !profile) {
+      throw new AiGraderServiceValidationError("Card print profile not found for auth run.", [
+        issue("authRun.cardPrintProfileId", "INVALID_RECORD", "cardPrintProfileId must belong to the auth run tenant."),
+      ]);
+    }
+
+    if (profile) {
+      assertCardPrintProfileScoped(profile, input.cardIdentity);
+    }
+
+    const startedAt = optionalDate(input.startedAt, "authRun.startedAt");
+    const verdict = resolveAuthVerdictFromProfileState(profile, "REFERENCE_NEEDED");
+    const data: AuthRunCreateData = {
+      ...(input.id ? { id: input.id } : {}),
+      captureSessionId: input.captureSessionId,
+      captureManifestId: input.captureManifestId,
+      algorithmVersionId: input.algorithmVersionId,
+      runtimeEnvironmentId: input.runtimeEnvironmentId,
+      cardPrintProfileId: profile?.state === "ACTIVE" ? profile.id : null,
+      tenantId: input.tenantId,
+      cardSet: input.cardIdentity.cardSet,
+      cardNumber: input.cardIdentity.cardNumber,
+      printRun: input.cardIdentity.printRun ?? null,
+      verdict,
+      status: input.status ?? "RUNNING",
+      measurements: (input.measurements ?? {}) as Prisma.InputJsonValue,
+      evidence: (input.evidence ?? {}) as Prisma.InputJsonValue,
+      inputChecksum: input.inputChecksum ?? null,
+      startedAt,
+    };
+
+    const contract = authRunContractFromData(data, profile?.state);
+    const result = validateAuthRunContract(contract);
+    throwIfInvalid("Invalid auth run draft payload.", result.issues);
+
+    return {
+      session,
+      profile,
+      verdict,
+      authRun: await tx.authRun.create({ data }),
+    };
+  });
+}
+
+export async function finalizeAuthRun(
+  db: AiGraderServicePrismaClient,
+  input: FinalizeAuthRunInput
+): Promise<FinalizedAuthRun> {
+  validateFinalizeAuthRunInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const authRun = await tx.authRun.findFirst({
+      where: {
+        id: input.authRunId,
+        tenantId: input.tenantId,
+      },
+      select: authRunStateSelect,
+    });
+
+    if (!authRun) {
+      throw new AiGraderServiceValidationError("Auth run not found for tenant.", [
+        issue("authRun", "INVALID_RECORD", "AuthRun was not found for the supplied tenant and auth run id."),
+      ]);
+    }
+    if (authRun.status !== "PENDING" && authRun.status !== "RUNNING") {
+      throw new AiGraderServiceValidationError("Auth run cannot be finalized from current status.", [
+        issue("authRun.status", "INVALID_RECORD", "AuthRun finalization requires PENDING or RUNNING status."),
+      ]);
+    }
+
+    const profile = authRun.cardPrintProfileId
+      ? await readCardPrintProfileById(tx, { tenantId: input.tenantId, profileId: authRun.cardPrintProfileId })
+      : null;
+    const resolvedVerdict = resolveAuthVerdictFromProfileState(profile, input.requestedVerdict);
+    const status = input.status ?? "COMPLETE";
+    const finishedAt = dateFromOptional(input.finishedAt, "authRun.finishedAt");
+    const updateData: AuthRunUpdateData = {
+      verdict: status === "FAILED" ? "REFERENCE_NEEDED" : resolvedVerdict,
+      distance: input.distance ?? null,
+      status,
+      measurements: input.measurements as Prisma.InputJsonValue,
+      evidence: input.evidence as Prisma.InputJsonValue,
+      outputChecksum: input.outputChecksum ?? null,
+      errorCode: input.errorCode ?? null,
+      finishedAt,
+    };
+    const contract = authRunContractFromData(
+      {
+        ...authRun,
+        ...updateData,
+      },
+      profile?.state
+    );
+    const result = validateAuthRunContract(contract);
+    throwIfInvalid("Invalid auth run finalization payload.", result.issues);
+
+    const update = await tx.authRun.updateMany({
+      where: {
+        id: input.authRunId,
+        tenantId: input.tenantId,
+      },
+      data: updateData,
+    });
+
+    if (update.count !== 1) {
+      throw new AiGraderServiceValidationError("Auth run update failed.", [
+        issue("authRun", "INVALID_RECORD", "AuthRun update did not match exactly one scoped row."),
+      ]);
+    }
+
+    return {
+      authRun,
+      profile,
+      resolvedVerdict: updateData.verdict,
+      updatedCount: update.count,
+    };
+  });
+}
+
+export async function createCandidateCardPrintProfile(
+  db: AiGraderServicePrismaClient,
+  input: CreateCandidateCardPrintProfileInput
+): Promise<CreatedCandidateCardPrintProfile> {
+  validateCreateCandidateCardPrintProfileInput(input);
+
+  const now = dateFromOptional(input.createdAt, "cardPrintProfile.createdAt");
+  const data: CardPrintProfileCreateData = {
+    ...(input.id ? { id: input.id } : {}),
+    tenantId: input.tenantId,
+    cardSet: input.cardIdentity.cardSet,
+    cardNumber: input.cardIdentity.cardNumber,
+    printRun: input.cardIdentity.printRun ?? null,
+    printRunKey: printRunKeyFrom(input.cardIdentity.printRun),
+    state: "CANDIDATE",
+    referenceFingerprint: input.referenceFingerprint as Prisma.InputJsonValue,
+    referenceAuthRunId: input.referenceAuthRunId ?? null,
+    approvedByOperatorId: null,
+    approvedAt: null,
+    version: input.version ?? 1,
+    notes: input.notes ?? null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const result = validateCardPrintProfileContract(cardPrintProfileContractFromCreateData(data, now));
+  throwIfInvalid("Invalid card print profile candidate payload.", result.issues);
+
+  return {
+    profile: await db.cardPrintProfile.create({ data }),
+  };
+}
+
+export async function approveCardPrintProfile(
+  db: AiGraderServicePrismaClient,
+  input: ApproveCardPrintProfileInput
+): Promise<UpdatedCardPrintProfile> {
+  validateApproveCardPrintProfileInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const profile = await readCardPrintProfileById(tx, {
+      tenantId: input.tenantId,
+      profileId: input.profileId,
+    });
+    if (!profile) {
+      throw new AiGraderServiceValidationError("Card print profile not found for tenant.", [
+        issue("cardPrintProfile", "INVALID_RECORD", "CardPrintProfile was not found for the supplied tenant and profile id."),
+      ]);
+    }
+    assertCardPrintProfileScoped(profile, input);
+
+    const decidedAt = dateFromOptional(input.decidedAt, "cardPrintProfile.decidedAt");
+    const toState = input.toState ?? "CURATED_REFERENCE";
+    assertValidProfileLifecycleTransition(profile, toState, {
+      actorOperatorId: input.actorOperatorId,
+      reviewedByOperatorId: input.reviewedByOperatorId,
+      reasonCode: input.reasonCode,
+      decidedAt,
+    });
+
+    const data: CardPrintProfileUpdateData = {
+      state: toState,
+      approvedByOperatorId: input.reviewedByOperatorId,
+      approvedAt: decidedAt,
+      notes: input.notes ?? profile.notes,
+      updatedAt: decidedAt,
+    };
+    const updatedProfile = {
+      ...profile,
+      ...data,
+    };
+    const result = validateCardPrintProfileContract(cardPrintProfileContractFromState(updatedProfile));
+    throwIfInvalid("Invalid card print profile approval payload.", result.issues);
+
+    const update = await tx.cardPrintProfile.updateMany({
+      where: {
+        id: input.profileId,
+        tenantId: input.tenantId,
+        cardSet: input.cardSet,
+        cardNumber: input.cardNumber,
+        printRunKey: printRunKeyFrom(input.printRun),
+      },
+      data,
+    });
+
+    if (update.count !== 1) {
+      throw new AiGraderServiceValidationError("Card print profile update failed.", [
+        issue("cardPrintProfile", "INVALID_RECORD", "CardPrintProfile update did not match exactly one scoped row."),
+      ]);
+    }
+
+    return {
+      profile,
+      updatedCount: update.count,
+    };
+  });
+}
+
+async function updateCardPrintProfileLifecycle(
+  db: AiGraderServicePrismaClient,
+  input: UpdateCardPrintProfileLifecycleInput,
+  toState: Extract<PrintProfileStatus, "QUARANTINED" | "RETIRED">
+): Promise<UpdatedCardPrintProfile> {
+  validateUpdateCardPrintProfileLifecycleInput(input, toState === "QUARANTINED" ? "quarantine" : "retire");
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const profile = await readCardPrintProfileById(tx, {
+      tenantId: input.tenantId,
+      profileId: input.profileId,
+    });
+    if (!profile) {
+      throw new AiGraderServiceValidationError("Card print profile not found for tenant.", [
+        issue("cardPrintProfile", "INVALID_RECORD", "CardPrintProfile was not found for the supplied tenant and profile id."),
+      ]);
+    }
+    assertCardPrintProfileScoped(profile, input);
+
+    const decidedAt = dateFromOptional(input.decidedAt, "cardPrintProfile.decidedAt");
+    assertValidProfileLifecycleTransition(profile, toState, {
+      actorOperatorId: input.actorOperatorId,
+      reasonCode: input.reasonCode,
+      decidedAt,
+    });
+
+    const data: CardPrintProfileUpdateData = {
+      state: toState,
+      notes: input.notes ?? profile.notes,
+      updatedAt: decidedAt,
+    };
+    const updatedProfile = {
+      ...profile,
+      ...data,
+    };
+    const result = validateCardPrintProfileContract(cardPrintProfileContractFromState(updatedProfile));
+    throwIfInvalid("Invalid card print profile lifecycle payload.", result.issues);
+
+    const update = await tx.cardPrintProfile.updateMany({
+      where: {
+        id: input.profileId,
+        tenantId: input.tenantId,
+        cardSet: input.cardSet,
+        cardNumber: input.cardNumber,
+        printRunKey: printRunKeyFrom(input.printRun),
+      },
+      data,
+    });
+
+    if (update.count !== 1) {
+      throw new AiGraderServiceValidationError("Card print profile update failed.", [
+        issue("cardPrintProfile", "INVALID_RECORD", "CardPrintProfile update did not match exactly one scoped row."),
+      ]);
+    }
+
+    return {
+      profile,
+      updatedCount: update.count,
+    };
+  });
+}
+
+export function quarantineCardPrintProfile(
+  db: AiGraderServicePrismaClient,
+  input: UpdateCardPrintProfileLifecycleInput
+) {
+  return updateCardPrintProfileLifecycle(db, input, "QUARANTINED");
+}
+
+export function retireCardPrintProfile(
+  db: AiGraderServicePrismaClient,
+  input: UpdateCardPrintProfileLifecycleInput
+) {
+  return updateCardPrintProfileLifecycle(db, input, "RETIRED");
+}
+
 export async function linkEvidenceArtifact(
   db: AiGraderServicePrismaClient,
   artifact: EvidenceArtifactContract
@@ -1604,6 +2851,443 @@ export async function linkEvidenceArtifact(
     return {
       artifact: await tx.evidenceArtifact.create({ data: evidenceArtifactCreateData(artifact) }),
       scopes,
+    };
+  });
+}
+
+function certificateReadinessIssue(path: string, message: string): AiGraderValidationIssue {
+  return issue(path, "CERTIFICATE_BLOCKED", message);
+}
+
+function physicalGateReadinessIssues(session: CaptureSessionState | null) {
+  const issues: AiGraderValidationIssue[] = [];
+  const gates = session?.physicalGateResults;
+  if (!Array.isArray(gates)) {
+    return issues;
+  }
+
+  gates.forEach((gate, index) => {
+    if (!isRecord(gate)) {
+      return;
+    }
+    const status = typeof gate.status === "string" ? gate.status : undefined;
+    const resolved = gate.resolved === true;
+    const reviewRequired = gate.reviewRequired === true;
+    if ((status && BLOCKING_PHYSICAL_GATE_STATUSES.has(status)) || (reviewRequired && !resolved)) {
+      issues.push(
+        certificateReadinessIssue(
+          `certificateReadiness.physicalGateResults[${index}]`,
+          "certificate readiness requires blocking physical gates to be reviewed and resolved."
+        )
+      );
+    }
+  });
+
+  return issues;
+}
+
+function validateReadyForCertificateIssue(readiness: GradeCertificateReadinessResult) {
+  if (!readiness.ready) {
+    throw new AiGraderServiceValidationError("Grade certificate is not ready.", readiness.issues);
+  }
+}
+
+async function readGradeCertificateById(
+  tx: AiGraderServiceTransactionClient,
+  input: { tenantId: string; certificateId: string }
+) {
+  return tx.gradeCertificate.findFirst({
+    where: {
+      id: input.certificateId,
+      tenantId: input.tenantId,
+    },
+    select: gradeCertificateStateSelect,
+  });
+}
+
+export async function checkGradeCertificateReadiness(
+  db: AiGraderServicePrismaClient,
+  input: CheckGradeCertificateReadinessInput
+): Promise<GradeCertificateReadinessResult> {
+  validateCheckGradeCertificateReadinessInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const issues: AiGraderValidationIssue[] = [];
+    const gradeRun = await tx.gradeRun.findFirst({
+      where: {
+        id: input.gradeRunId,
+        captureSession: { tenantId: input.tenantId },
+      },
+      select: gradeRunStateSelect,
+    });
+
+    if (!gradeRun) {
+      issues.push(issue("certificate.gradeRunId", "INVALID_RECORD", "GradeRun was not found for the supplied tenant."));
+      return {
+        ready: false,
+        issues,
+        gradeRun: null,
+        authRun: null,
+        certificate: null,
+        evidenceArtifacts: [],
+        blockingOverrides: [],
+        custodyBreaks: [],
+      };
+    }
+
+    const session = await readCaptureSessionState(tx, {
+      tenantId: input.tenantId,
+      captureSessionId: gradeRun.captureSessionId,
+    });
+    const authRun = input.authRunId
+      ? await tx.authRun.findFirst({
+          where: {
+            id: input.authRunId,
+            tenantId: input.tenantId,
+          },
+          select: authRunStateSelect,
+        })
+      : null;
+    if (input.authRunId && !authRun) {
+      issues.push(issue("certificate.authRunId", "INVALID_RECORD", "AuthRun was not found for the supplied tenant."));
+    }
+
+    const persistedCertificate = input.certificateId
+      ? await readGradeCertificateById(tx, { tenantId: input.tenantId, certificateId: input.certificateId })
+      : await tx.gradeCertificate.findFirst({
+          where: {
+            tenantId: input.tenantId,
+            gradeRunId: input.gradeRunId,
+          },
+          select: gradeCertificateStateSelect,
+        });
+
+    const evidenceArtifacts = (
+      await tx.evidenceArtifact.findMany({
+        where: {
+          tenantId: input.tenantId,
+          OR: [
+            { captureSessionId: gradeRun.captureSessionId },
+            { gradeRunId: gradeRun.id },
+            ...(authRun ? [{ authRunId: authRun.id }] : []),
+            ...(persistedCertificate ? [{ certificateId: persistedCertificate.id }] : []),
+          ],
+        },
+        select: evidenceArtifactStateSelect,
+      })
+    ).map(evidenceArtifactContractFromState);
+
+    const blockingOverrides = (
+      await tx.operatorOverride.findMany({
+        where: {
+          tenantId: input.tenantId,
+          captureSessionId: gradeRun.captureSessionId,
+        },
+        select: operatorOverrideStateSelect,
+      })
+    ).filter((override) => override.reviewStatus !== "APPROVED");
+
+    const custodyBreaks = (
+      await tx.custodyEvent.findMany({
+        where: {
+          tenantId: input.tenantId,
+          captureSessionId: gradeRun.captureSessionId,
+        },
+        select: custodyEventStateSelect,
+      })
+    ).filter((event) => event.type === "CUSTODY_BREAK");
+
+    const now = new Date();
+    const certificate = persistedCertificate
+      ? gradeCertificateContractFromState(persistedCertificate, gradeRun.status)
+      : gradeCertificateContractFromCreateData(
+          {
+            tenantId: input.tenantId,
+            gradeRunId: gradeRun.id,
+            authRunId: authRun?.id ?? input.authRunId ?? null,
+            publicSlug: input.publicSlug ?? "certificate-readiness",
+            certificateNumber: input.certificateNumber ?? "certificate-readiness",
+            status: "DRAFT",
+            mode: gradeRun.mode,
+            finalGrades: optionalNullableJson(gradeRun.finalGrades as Prisma.InputJsonValue | null | undefined),
+            custodyStatus: input.custodyStatus ?? "IN_TEN_KINGS_CUSTODY",
+            createdAt: now,
+            updatedAt: now,
+          },
+          gradeRun,
+          now
+        );
+
+    const readiness = validateCertificateEvidenceReadiness({
+      certificate,
+      gradeRunStatus: gradeRun.status,
+      evidenceArtifacts,
+    });
+    issues.push(...readiness.issues);
+    issues.push(...physicalGateReadinessIssues(session));
+
+    if (authRun) {
+      if (authRun.status !== "COMPLETE") {
+        issues.push(
+          certificateReadinessIssue("certificate.authRun.status", "certificate readiness requires AuthRun COMPLETE when authRunId is supplied.")
+        );
+      }
+      if (!CERTIFICATE_ACCEPTABLE_AUTH_VERDICTS.has(authRun.verdict)) {
+        issues.push(
+          certificateReadinessIssue("certificate.authRun.verdict", "certificate readiness blocks suspicious or counterfeit auth verdicts.")
+        );
+      }
+    }
+
+    if (blockingOverrides.length > 0) {
+      issues.push(
+        certificateReadinessIssue("certificate.operatorOverrides", "certificate readiness requires operator overrides to be reviewed.")
+      );
+    }
+    if (custodyBreaks.length > 0) {
+      issues.push(certificateReadinessIssue("certificate.custody", "certificate readiness blocks custody breaks."));
+    }
+
+    return {
+      ready: issues.length === 0,
+      issues,
+      gradeRun,
+      authRun,
+      certificate,
+      evidenceArtifacts,
+      blockingOverrides,
+      custodyBreaks,
+    };
+  });
+}
+
+export async function createGradeCertificateDraft(
+  db: AiGraderServicePrismaClient,
+  input: CreateGradeCertificateDraftInput
+): Promise<CreatedGradeCertificateDraft> {
+  validateCreateGradeCertificateDraftInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const readiness = await checkGradeCertificateReadiness(tx, input);
+    validateReadyForCertificateIssue(readiness);
+    const gradeRun = readiness.gradeRun;
+    if (!gradeRun) {
+      throw new AiGraderServiceValidationError("Grade run not found for certificate draft.", [
+        issue("certificate.gradeRunId", "INVALID_RECORD", "GradeRun was not found for the supplied tenant."),
+      ]);
+    }
+
+    const now = dateFromOptional(input.createdAt, "certificate.createdAt");
+    const data: GradeCertificateCreateData = {
+      ...(input.id ? { id: input.id } : {}),
+      tenantId: input.tenantId,
+      gradeRunId: input.gradeRunId,
+      authRunId: readiness.authRun?.id ?? input.authRunId ?? null,
+      publicSlug: input.publicSlug,
+      certificateNumber: input.certificateNumber,
+      status: "DRAFT",
+      mode: gradeRun.mode,
+      finalGrades: optionalNullableJson(gradeRun.finalGrades as Prisma.InputJsonValue | null | undefined),
+      publicReportKey: null,
+      custodyStatus: input.custodyStatus ?? "IN_TEN_KINGS_CUSTODY",
+      issuedAt: null,
+      revokedAt: null,
+      revocationReason: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const certificateContract = gradeCertificateContractFromCreateData(data, gradeRun, now);
+    const result = validateCertificateEvidenceReadiness({
+      certificate: certificateContract,
+      gradeRunStatus: gradeRun.status,
+      evidenceArtifacts: readiness.evidenceArtifacts,
+    });
+    throwIfInvalid("Invalid certificate draft payload.", result.issues);
+
+    return {
+      readiness,
+      certificate: await tx.gradeCertificate.create({ data }),
+    };
+  });
+}
+
+export async function issueGradeCertificate(
+  db: AiGraderServicePrismaClient,
+  input: IssueGradeCertificateInput
+): Promise<IssuedGradeCertificate> {
+  validateIssueGradeCertificateInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const certificate = await readGradeCertificateById(tx, {
+      tenantId: input.tenantId,
+      certificateId: input.certificateId,
+    });
+    if (!certificate) {
+      throw new AiGraderServiceValidationError("Grade certificate not found for tenant.", [
+        issue("certificate", "INVALID_RECORD", "GradeCertificate was not found for the supplied tenant and certificate id."),
+      ]);
+    }
+    if (certificate.status !== "DRAFT") {
+      throw new AiGraderServiceValidationError("Grade certificate cannot be issued from current status.", [
+        issue("certificate.status", "INVALID_CERTIFICATE", "only DRAFT certificates can be issued."),
+      ]);
+    }
+
+    const readiness = await checkGradeCertificateReadiness(tx, {
+      tenantId: input.tenantId,
+      gradeRunId: certificate.gradeRunId,
+      authRunId: certificate.authRunId,
+      certificateId: certificate.id,
+      publicSlug: certificate.publicSlug,
+      certificateNumber: certificate.certificateNumber,
+      custodyStatus: certificate.custodyStatus,
+    });
+    validateReadyForCertificateIssue(readiness);
+    const gradeRun = readiness.gradeRun;
+    if (!gradeRun) {
+      throw new AiGraderServiceValidationError("Grade run not found for certificate issue.", [
+        issue("certificate.gradeRunId", "INVALID_RECORD", "GradeRun was not found for the supplied tenant."),
+      ]);
+    }
+
+    const issuedAt = dateFromOptional(input.issuedAt, "certificate.issuedAt");
+    const data: GradeCertificateUpdateData = {
+      status: "ACTIVE",
+      publicReportKey: input.publicReportKey,
+      issuedAt,
+      updatedAt: issuedAt,
+    };
+    const activeCertificate = {
+      ...certificate,
+      ...data,
+    };
+    const activeContract = gradeCertificateContractFromState(activeCertificate, gradeRun.status);
+    const result = validateCertificateEvidenceReadiness({
+      certificate: activeContract,
+      gradeRunStatus: gradeRun.status,
+      evidenceArtifacts: readiness.evidenceArtifacts,
+    });
+    throwIfInvalid("Invalid certificate issue payload.", result.issues);
+
+    const update = await tx.gradeCertificate.updateMany({
+      where: {
+        id: input.certificateId,
+        tenantId: input.tenantId,
+      },
+      data,
+    });
+    if (update.count !== 1) {
+      throw new AiGraderServiceValidationError("Grade certificate update failed.", [
+        issue("certificate", "INVALID_RECORD", "GradeCertificate update did not match exactly one scoped row."),
+      ]);
+    }
+
+    const auditChecksum = await buildAuditChecksum({
+      tenantId: input.tenantId,
+      certificateId: input.certificateId,
+      action: "issue",
+      issuedAt: issuedAt.toISOString(),
+      publicReportKey: input.publicReportKey,
+    });
+    const auditEvent = await recordAuditEvent(tx, {
+      tenantId: input.tenantId,
+      actorOperatorId: input.actorOperatorId,
+      actorUserId: input.actorUserId ?? null,
+      entityType: "GradeCertificate",
+      entityId: input.certificateId,
+      action: "ai_grader.certificate.issued",
+      outcome: "SUCCESS",
+      before: { status: certificate.status } as Prisma.InputJsonValue,
+      after: {
+        status: "ACTIVE",
+        publicReportKey: input.publicReportKey,
+        issuedAt: issuedAt.toISOString(),
+      } as Prisma.InputJsonValue,
+      reasonCode: input.reasonCode ?? null,
+      ipAddress: input.ipAddress ?? null,
+      userAgent: input.userAgent ?? null,
+      checksum: auditChecksum,
+      createdAt: issuedAt,
+    });
+
+    return {
+      readiness,
+      certificate,
+      updatedCount: update.count,
+      auditEvent,
+    };
+  });
+}
+
+export async function revokeGradeCertificate(
+  db: AiGraderServicePrismaClient,
+  input: RevokeGradeCertificateInput
+): Promise<RevokedGradeCertificate> {
+  validateRevokeGradeCertificateInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const certificate = await readGradeCertificateById(tx, {
+      tenantId: input.tenantId,
+      certificateId: input.certificateId,
+    });
+    if (!certificate) {
+      throw new AiGraderServiceValidationError("Grade certificate not found for tenant.", [
+        issue("certificate", "INVALID_RECORD", "GradeCertificate was not found for the supplied tenant and certificate id."),
+      ]);
+    }
+
+    const revokedAt = dateFromOptional(input.revokedAt, "certificate.revokedAt");
+    const data: GradeCertificateUpdateData = {
+      status: "REVOKED",
+      revokedAt,
+      revocationReason: input.revocationReason,
+      updatedAt: revokedAt,
+    };
+    const update = await tx.gradeCertificate.updateMany({
+      where: {
+        id: input.certificateId,
+        tenantId: input.tenantId,
+      },
+      data,
+    });
+    if (update.count !== 1) {
+      throw new AiGraderServiceValidationError("Grade certificate update failed.", [
+        issue("certificate", "INVALID_RECORD", "GradeCertificate update did not match exactly one scoped row."),
+      ]);
+    }
+
+    const auditChecksum = await buildAuditChecksum({
+      tenantId: input.tenantId,
+      certificateId: input.certificateId,
+      action: "revoke",
+      revokedAt: revokedAt.toISOString(),
+      revocationReason: input.revocationReason,
+    });
+    const auditEvent = await recordAuditEvent(tx, {
+      tenantId: input.tenantId,
+      actorOperatorId: input.actorOperatorId,
+      actorUserId: input.actorUserId ?? null,
+      entityType: "GradeCertificate",
+      entityId: input.certificateId,
+      action: "ai_grader.certificate.revoked",
+      outcome: "SUCCESS",
+      before: { status: certificate.status } as Prisma.InputJsonValue,
+      after: {
+        status: "REVOKED",
+        revokedAt: revokedAt.toISOString(),
+        revocationReason: input.revocationReason,
+      } as Prisma.InputJsonValue,
+      reasonCode: input.revocationReason,
+      ipAddress: input.ipAddress ?? null,
+      userAgent: input.userAgent ?? null,
+      checksum: auditChecksum,
+      createdAt: revokedAt,
+    });
+
+    return {
+      certificate,
+      updatedCount: update.count,
+      auditEvent,
     };
   });
 }
@@ -1786,6 +3470,26 @@ export function createAiGraderService(db: AiGraderServicePrismaClient) {
       createGradeRunDraft(db, input),
     finalizeGradeRun: (input: FinalizeGradeRunInput) =>
       finalizeGradeRun(db, input),
+    createAuthRunDraft: (input: CreateAuthRunDraftInput) =>
+      createAuthRunDraft(db, input),
+    finalizeAuthRun: (input: FinalizeAuthRunInput) =>
+      finalizeAuthRun(db, input),
+    createCandidateCardPrintProfile: (input: CreateCandidateCardPrintProfileInput) =>
+      createCandidateCardPrintProfile(db, input),
+    approveCardPrintProfile: (input: ApproveCardPrintProfileInput) =>
+      approveCardPrintProfile(db, input),
+    quarantineCardPrintProfile: (input: UpdateCardPrintProfileLifecycleInput) =>
+      quarantineCardPrintProfile(db, input),
+    retireCardPrintProfile: (input: UpdateCardPrintProfileLifecycleInput) =>
+      retireCardPrintProfile(db, input),
+    checkGradeCertificateReadiness: (input: CheckGradeCertificateReadinessInput) =>
+      checkGradeCertificateReadiness(db, input),
+    createGradeCertificateDraft: (input: CreateGradeCertificateDraftInput) =>
+      createGradeCertificateDraft(db, input),
+    issueGradeCertificate: (input: IssueGradeCertificateInput) =>
+      issueGradeCertificate(db, input),
+    revokeGradeCertificate: (input: RevokeGradeCertificateInput) =>
+      revokeGradeCertificate(db, input),
     linkEvidenceArtifact: (artifact: EvidenceArtifactContract) =>
       linkEvidenceArtifact(db, artifact),
     persistOrchestratorTransition: (input: PersistOrchestratorTransitionInput) =>

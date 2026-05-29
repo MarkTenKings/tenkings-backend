@@ -18107,3 +18107,28 @@ By enabling Rip It Live, I confirm:
 - `pnpm --filter @tenkings/shared test` -> pass, 103 tests.
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
+## 2026-05-29 - AI Grader auth/certificate persistence helpers
+
+### Summary
+- Created branch `feature/ai-grader-auth-certificate-persistence` from latest `origin/main`.
+- Added injectable database service helpers for AuthRun draft/finalization, CardPrintProfile governance, GradeCertificate readiness/draft/issue/revoke, and certificate evidence/custody/override checks.
+- AuthRun helpers validate card identity/auth contracts, support `REFERENCE_NEEDED` when no ACTIVE print profile exists, and do not mark first-seen profiles authentic automatically.
+- CardPrintProfile helpers create CANDIDATE records and require authorized reviewer/operator inputs for CURATED_REFERENCE/ACTIVE approval; quarantine/retire paths require scoped tenant/card identity inputs and reasons.
+- GradeCertificate readiness returns a result object and blocks incomplete GradeRun, unacceptable AuthRun verdict/status, unresolved physical gates, unreviewed overrides, custody breaks, and missing/invalid original evidence.
+- Certificate draft/issue helpers persist database state only and create audit events for issue/revoke actions; no report UI or PDF generation was added.
+- No Prisma schema changes, migration files, frontend/API routes, hardware/capture code, image-processing/grading math, CMYK/auth algorithms, report/PDF work, migrations, deploys, restarts, runtime DB operations, or `RUN_DB_MIGRATIONS=true` changes were performed.
+
+### Files Changed
+- `packages/database/src/aiGraderService.ts`
+- `packages/database/tests/aiGraderService.test.js`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`; Next.js still reports existing `<img>` lint warnings in admin pages.
