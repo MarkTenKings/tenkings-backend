@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import type {
   AiGraderValidationIssue,
@@ -5,14 +6,28 @@ import type {
   CaptureManifest,
   EvidenceArtifactContract,
   GradingMode,
+  OrchestratorEventType,
+  OrchestratorGuardResults,
   OrchestratorState,
 } from "@tenkings/shared";
 import {
+  ORCHESTRATOR_NAMED_ERROR_STATES,
+  transitionOrchestratorState,
   validateCaptureManifest,
   validateEvidenceArtifactContract,
 } from "@tenkings/shared";
 
 type NullableJsonInput = Prisma.InputJsonValue | typeof Prisma.JsonNull;
+
+export type CaptureSessionPersistedStatus =
+  | "CREATED"
+  | "RUNNING"
+  | "PAUSED"
+  | "MICRO_INCOMPLETE_REQUIRES_REVIEW"
+  | "PHYSICAL_GATE_REVIEW"
+  | "REVIEW"
+  | "COMPLETE"
+  | "ABORTED";
 
 export type CaptureSessionDraftCreateData = {
   id?: string;
@@ -27,6 +42,14 @@ export type CaptureSessionDraftCreateData = {
   rawCardOnly: boolean;
   cardIdentity?: NullableJsonInput;
   physicalGateResults?: NullableJsonInput;
+};
+
+export type CaptureSessionUpdateData = {
+  currentState: OrchestratorState;
+  status: CaptureSessionPersistedStatus;
+  errorCode: string | null;
+  startedAt?: Date;
+  finishedAt?: Date;
 };
 
 export type CaptureManifestCreateData = {
@@ -105,7 +128,7 @@ export type CaptureSessionState = {
   updatedAt: Date;
 };
 
-export type AiGraderServicePrismaClient = {
+export type AiGraderServiceTransactionClient = {
   auditEvent: {
     create(args: { data: AuditEventCreateData }): Promise<unknown>;
   };
@@ -114,6 +137,10 @@ export type AiGraderServicePrismaClient = {
   };
   captureSession: {
     create(args: { data: CaptureSessionDraftCreateData }): Promise<unknown>;
+    updateMany(args: {
+      where: { id: string; tenantId: string };
+      data: CaptureSessionUpdateData;
+    }): Promise<{ count: number }>;
     findFirst(args: {
       where: { id: string; tenantId: string };
       select: typeof captureSessionStateSelect;
@@ -122,6 +149,12 @@ export type AiGraderServicePrismaClient = {
   evidenceArtifact: {
     create(args: { data: EvidenceArtifactCreateData }): Promise<unknown>;
   };
+};
+
+export type AiGraderServicePrismaClient = AiGraderServiceTransactionClient & {
+  $transaction?: <T>(
+    fn: (tx: AiGraderServiceTransactionClient) => Promise<T>
+  ) => Promise<T>;
 };
 
 export type CreateCaptureSessionDraftInput = {
@@ -161,7 +194,45 @@ export type RecordAuditEventInput = {
   createdAt?: string | Date;
 };
 
+export type PersistOrchestratorTransitionInput = {
+  tenantId: string;
+  captureSessionId: string;
+  event: OrchestratorEventType;
+  guardResults?: OrchestratorGuardResults;
+  errorCode?: string;
+  actorOperatorId?: string | null;
+  actorUserId?: string | null;
+  reasonCode?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  occurredAt?: string | Date;
+};
+
+export type CommonCaptureSessionStateUpdateInput = {
+  tenantId: string;
+  captureSessionId: string;
+  actorOperatorId?: string | null;
+  actorUserId?: string | null;
+  reasonCode?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  occurredAt?: string | Date;
+};
+
+export type PersistedOrchestratorTransition = {
+  session: CaptureSessionState;
+  fromState: string;
+  toState: OrchestratorState;
+  status: CaptureSessionPersistedStatus;
+  errorCode: string | null;
+  transitionAuditEventId: string;
+  auditEvent: unknown;
+  updatedCount: number;
+  userVisibleMessage?: string;
+};
+
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
+const NAMED_ERROR_STATES = new Set<OrchestratorState>(ORCHESTRATOR_NAMED_ERROR_STATES);
 
 const captureSessionStateSelect = {
   id: true,
@@ -235,6 +306,18 @@ function validateReadCaptureSessionStateInput(input: ReadCaptureSessionStateInpu
   throwIfInvalid("Invalid capture session state input.", issues);
 }
 
+function validateOrchestratorTransitionInput(input: PersistOrchestratorTransitionInput) {
+  const issues: AiGraderValidationIssue[] = [];
+
+  requireNonEmptyString(input.tenantId, "captureSession.tenantId", issues);
+  requireNonEmptyString(input.captureSessionId, "captureSession.id", issues);
+  requireNonEmptyString(input.event, "orchestrator.event", issues);
+  if (input.errorCode != null) requireNonEmptyString(input.errorCode, "orchestrator.errorCode", issues);
+  if (input.reasonCode != null) requireNonEmptyString(input.reasonCode, "orchestrator.reasonCode", issues);
+
+  throwIfInvalid("Invalid orchestrator transition input.", issues);
+}
+
 function validateAuditEventInput(input: RecordAuditEventInput) {
   const issues: AiGraderValidationIssue[] = [];
 
@@ -256,6 +339,23 @@ function optionalNullableJson(value: Prisma.InputJsonValue | null | undefined) {
     return undefined;
   }
   return value === null ? Prisma.JsonNull : value;
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableJson(entry)).join(",")}]`;
+  }
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => `${JSON.stringify(key)}:${stableJson(entry)}`)
+    .join(",")}}`;
+}
+
+function buildAuditChecksum(value: unknown) {
+  return createHash("sha256").update(stableJson(value)).digest("hex");
 }
 
 function isoDate(value: string, path: string) {
@@ -283,6 +383,10 @@ function optionalDate(value: string | Date | undefined, path: string) {
   return isoDate(value, path);
 }
 
+function dateFromOptional(value: string | Date | undefined, path: string) {
+  return optionalDate(value, path) ?? new Date();
+}
+
 function assertValidManifest(manifest: CaptureManifest) {
   const result = validateCaptureManifest(manifest);
   throwIfInvalid("Invalid capture manifest.", result.issues);
@@ -291,6 +395,119 @@ function assertValidManifest(manifest: CaptureManifest) {
 function assertValidEvidenceArtifact(artifact: EvidenceArtifactContract) {
   const result = validateEvidenceArtifactContract(artifact);
   throwIfInvalid("Invalid evidence artifact.", result.issues);
+}
+
+function statusForOrchestratorState(state: OrchestratorState): CaptureSessionPersistedStatus {
+  if (state === "INIT") return "CREATED";
+  if (state === "COMPLETE") return "COMPLETE";
+  if (state === "ABORTED") return "ABORTED";
+  if (state === "PAUSED_OPERATOR_TIMEOUT") return "PAUSED";
+  if (state === "MICRO_INCOMPLETE_REQUIRES_REVIEW") return "MICRO_INCOMPLETE_REQUIRES_REVIEW";
+  if (state === "PHYSICAL_GATE_REVIEW") return "PHYSICAL_GATE_REVIEW";
+  if (state === "REVIEW" || state === "OPERATOR_OVERRIDE_PENDING" || NAMED_ERROR_STATES.has(state)) return "REVIEW";
+  return "RUNNING";
+}
+
+function errorCodeForOrchestratorState(
+  state: OrchestratorState,
+  input: Pick<PersistOrchestratorTransitionInput, "errorCode" | "reasonCode">
+) {
+  if (!NAMED_ERROR_STATES.has(state)) {
+    return null;
+  }
+  if (state === "ABORTED" && input.reasonCode) {
+    return input.reasonCode;
+  }
+  return input.errorCode ?? input.reasonCode ?? state;
+}
+
+function auditOutcomeForStatus(status: CaptureSessionPersistedStatus): RecordAuditEventInput["outcome"] {
+  if (status === "ABORTED") return "FAILURE";
+  if (
+    status === "PAUSED" ||
+    status === "MICRO_INCOMPLETE_REQUIRES_REVIEW" ||
+    status === "PHYSICAL_GATE_REVIEW" ||
+    status === "REVIEW"
+  ) {
+    return "WARNING";
+  }
+  return "SUCCESS";
+}
+
+function buildTransitionAuditInput(
+  session: CaptureSessionState,
+  input: PersistOrchestratorTransitionInput,
+  nextState: OrchestratorState,
+  status: CaptureSessionPersistedStatus,
+  errorCode: string | null,
+  occurredAt: Date,
+  transitionAuditEventId: string,
+  userVisibleMessage?: string
+): RecordAuditEventInput {
+  const before = {
+    currentState: session.currentState,
+    status: session.status,
+    errorCode: session.errorCode,
+  };
+  const after = {
+    currentState: nextState,
+    status,
+    errorCode,
+    event: input.event,
+    guardResults: input.guardResults ?? {},
+    transitionAuditEventId,
+    userVisibleMessage: userVisibleMessage ?? null,
+  };
+  const checksum = buildAuditChecksum({
+    tenantId: input.tenantId,
+    captureSessionId: input.captureSessionId,
+    before,
+    after,
+    occurredAt: occurredAt.toISOString(),
+  });
+
+  return {
+    tenantId: input.tenantId,
+    actorOperatorId: input.actorOperatorId ?? null,
+    actorUserId: input.actorUserId ?? null,
+    entityType: "CaptureSession",
+    entityId: input.captureSessionId,
+    action: "ai_grader.orchestrator.transition",
+    outcome: auditOutcomeForStatus(status),
+    before: before as Prisma.InputJsonValue,
+    after: after as Prisma.InputJsonValue,
+    reasonCode: input.reasonCode ?? input.errorCode ?? null,
+    ipAddress: input.ipAddress ?? null,
+    userAgent: input.userAgent ?? null,
+    checksum,
+    createdAt: occurredAt,
+  };
+}
+
+function transitionUpdateData(
+  session: CaptureSessionState,
+  nextState: OrchestratorState,
+  status: CaptureSessionPersistedStatus,
+  errorCode: string | null,
+  occurredAt: Date
+): CaptureSessionUpdateData {
+  return {
+    currentState: nextState,
+    status,
+    errorCode,
+    ...(status === "RUNNING" && !session.startedAt ? { startedAt: occurredAt } : {}),
+    ...(status === "COMPLETE" || status === "ABORTED" ? { finishedAt: occurredAt } : {}),
+  };
+}
+
+function runInAiGraderTransaction<T>(
+  db: AiGraderServicePrismaClient,
+  fn: (tx: AiGraderServiceTransactionClient) => Promise<T>
+) {
+  if (db.$transaction) {
+    return db.$transaction(fn);
+  }
+  return fn(db);
 }
 
 export async function createCaptureSessionDraft(
@@ -402,6 +619,150 @@ export async function recordAuditEvent(
   return db.auditEvent.create({ data });
 }
 
+export async function persistOrchestratorTransition(
+  db: AiGraderServicePrismaClient,
+  input: PersistOrchestratorTransitionInput
+): Promise<PersistedOrchestratorTransition> {
+  validateOrchestratorTransitionInput(input);
+
+  return runInAiGraderTransaction(db, async (tx) => {
+    const session = await readCaptureSessionState(tx, {
+      tenantId: input.tenantId,
+      captureSessionId: input.captureSessionId,
+    });
+
+    if (!session) {
+      throw new AiGraderServiceValidationError("Capture session not found for tenant.", [
+        issue("captureSession", "INVALID_RECORD", "CaptureSession was not found for the supplied tenant and session id."),
+      ]);
+    }
+
+    const occurredAt = dateFromOptional(input.occurredAt, "orchestrator.occurredAt");
+    const transition = transitionOrchestratorState({
+      sessionId: input.captureSessionId,
+      currentState: session.currentState as OrchestratorState,
+      event: input.event,
+      guardResults: input.guardResults,
+      errorCode: input.errorCode,
+      occurredAt: occurredAt.toISOString(),
+    });
+
+    if (!transition.accepted) {
+      throw new AiGraderServiceValidationError("Invalid orchestrator transition.", [
+        issue(
+          "orchestrator.transition",
+          "INVALID_TRANSFORM",
+          `Transition ${input.event} is not valid from ${session.currentState}.`
+        ),
+      ]);
+    }
+
+    const status = statusForOrchestratorState(transition.nextState);
+    const errorCode = errorCodeForOrchestratorState(transition.nextState, input);
+    const update = await tx.captureSession.updateMany({
+      where: {
+        id: input.captureSessionId,
+        tenantId: input.tenantId,
+      },
+      data: transitionUpdateData(session, transition.nextState, status, errorCode, occurredAt),
+    });
+
+    if (update.count !== 1) {
+      throw new AiGraderServiceValidationError("Capture session update failed.", [
+        issue("captureSession", "INVALID_RECORD", "CaptureSession update did not match exactly one scoped row."),
+      ]);
+    }
+
+    const auditEvent = await recordAuditEvent(
+      tx,
+      buildTransitionAuditInput(
+        session,
+        input,
+        transition.nextState,
+        status,
+        errorCode,
+        occurredAt,
+        transition.auditEventId,
+        transition.userVisibleMessage
+      )
+    );
+
+    return {
+      session,
+      fromState: session.currentState,
+      toState: transition.nextState,
+      status,
+      errorCode,
+      transitionAuditEventId: transition.auditEventId,
+      auditEvent,
+      updatedCount: update.count,
+      userVisibleMessage: transition.userVisibleMessage,
+    };
+  });
+}
+
+export async function markCaptureSessionPausedForOperatorTimeout(
+  db: AiGraderServicePrismaClient,
+  input: CommonCaptureSessionStateUpdateInput
+) {
+  return persistOrchestratorTransition(db, {
+    ...input,
+    event: "ERROR",
+    errorCode: "PAUSED_OPERATOR_TIMEOUT",
+    reasonCode: input.reasonCode ?? "PAUSED_OPERATOR_TIMEOUT",
+  });
+}
+
+export async function markCaptureSessionMicroIncompleteRequiresReview(
+  db: AiGraderServicePrismaClient,
+  input: CommonCaptureSessionStateUpdateInput
+) {
+  return persistOrchestratorTransition(db, {
+    ...input,
+    event: "ERROR",
+    errorCode: "MICRO_INCOMPLETE_REQUIRES_REVIEW",
+    reasonCode: input.reasonCode ?? "MICRO_INCOMPLETE_REQUIRES_REVIEW",
+    guardResults: { operatorDecision: "COMPLETE_WITH_WARNING" },
+  });
+}
+
+export async function markCaptureSessionPhysicalGateReview(
+  db: AiGraderServicePrismaClient,
+  input: CommonCaptureSessionStateUpdateInput
+) {
+  return persistOrchestratorTransition(db, {
+    ...input,
+    event: "ERROR",
+    errorCode: "PHYSICAL_GATE_REVIEW",
+    reasonCode: input.reasonCode ?? "PHYSICAL_GATE_REVIEW",
+  });
+}
+
+export async function markCaptureSessionAborted(
+  db: AiGraderServicePrismaClient,
+  input: CommonCaptureSessionStateUpdateInput & { reasonCode: string }
+) {
+  return persistOrchestratorTransition(db, {
+    ...input,
+    event: "ABORT",
+    errorCode: input.reasonCode,
+  });
+}
+
+export async function markCaptureSessionComplete(
+  db: AiGraderServicePrismaClient,
+  input: CommonCaptureSessionStateUpdateInput
+) {
+  return persistOrchestratorTransition(db, {
+    ...input,
+    event: "OPERATOR_APPROVED",
+    guardResults: {
+      blockingGates: false,
+      overrideReviewedApproved: true,
+    },
+  });
+}
+
 export async function readCaptureSessionState(
   db: AiGraderServicePrismaClient,
   input: ReadCaptureSessionStateInput
@@ -426,6 +787,18 @@ export function createAiGraderService(db: AiGraderServicePrismaClient) {
     recordEvidenceArtifact: (artifact: EvidenceArtifactContract) =>
       recordEvidenceArtifact(db, artifact),
     recordAuditEvent: (input: RecordAuditEventInput) => recordAuditEvent(db, input),
+    persistOrchestratorTransition: (input: PersistOrchestratorTransitionInput) =>
+      persistOrchestratorTransition(db, input),
+    markCaptureSessionPausedForOperatorTimeout: (input: CommonCaptureSessionStateUpdateInput) =>
+      markCaptureSessionPausedForOperatorTimeout(db, input),
+    markCaptureSessionMicroIncompleteRequiresReview: (input: CommonCaptureSessionStateUpdateInput) =>
+      markCaptureSessionMicroIncompleteRequiresReview(db, input),
+    markCaptureSessionPhysicalGateReview: (input: CommonCaptureSessionStateUpdateInput) =>
+      markCaptureSessionPhysicalGateReview(db, input),
+    markCaptureSessionAborted: (input: CommonCaptureSessionStateUpdateInput & { reasonCode: string }) =>
+      markCaptureSessionAborted(db, input),
+    markCaptureSessionComplete: (input: CommonCaptureSessionStateUpdateInput) =>
+      markCaptureSessionComplete(db, input),
     readCaptureSessionState: (input: ReadCaptureSessionStateInput) =>
       readCaptureSessionState(db, input),
   };

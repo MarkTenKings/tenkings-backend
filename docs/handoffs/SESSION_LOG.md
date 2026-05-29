@@ -17948,6 +17948,29 @@ By enabling Rip It Live, I confirm:
 - `git diff --check` -> pass.
 - Local warning only: Node `v25.6.1`, repo expects `20.x`.
 
+## 2026-05-29 - AI Grader orchestrator persistence helpers
+
+### Summary
+- Created branch `feature/ai-grader-orchestrator-persistence` from fetched `origin/main` at `c1a9727cd6baea82a5a41cc8c535d88661c22668`.
+- Added injectable database-package helpers for orchestrator persistence only.
+- `persistOrchestratorTransition` reads `CaptureSession` by tenant/session id, validates the requested event through the shared FSM, updates scoped session state/status/errorCode fields, and writes an audit event inside an injected transaction/client shape.
+- Added common state helpers for operator timeout pause, micro incomplete review, physical gate review, abort with reason, and completion from a valid review state.
+- Tests use mocked Prisma-like delegates only; no live Prisma singleton or runtime database path is imported.
+- No Prisma schema changes, migration files, frontend/API routes, hardware/capture code, grading math, auth algorithms, report/PDF work, migrations, deploys, restarts, runtime DB operations, or `RUN_DB_MIGRATIONS=true` changes were performed.
+
+### Files Changed
+- `packages/database/src/aiGraderService.ts`
+- `packages/database/tests/aiGraderService.test.js`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 13 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `git diff --check` -> pass.
+- Local warning only: Node `v25.6.1`, repo expects `20.x`.
+
 ## 2026-05-28 - AI Grader Phase 10 committed
 
 ### Summary

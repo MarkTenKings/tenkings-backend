@@ -4,6 +4,12 @@ const {
   AiGraderServiceValidationError,
   createAiGraderService,
   createCaptureSessionDraft,
+  markCaptureSessionAborted,
+  markCaptureSessionComplete,
+  markCaptureSessionMicroIncompleteRequiresReview,
+  markCaptureSessionPausedForOperatorTimeout,
+  markCaptureSessionPhysicalGateReview,
+  persistOrchestratorTransition,
   readCaptureSessionState,
   recordAuditEvent,
   recordCaptureManifest,
@@ -13,10 +19,32 @@ const {
 const SHA_256 = "a".repeat(64);
 const ISO_TIME = "2026-05-28T12:00:00.000Z";
 
-function createMockDb() {
-  const calls = [];
+function baseSession(overrides = {}) {
+  return {
+    id: "session-1",
+    tenantId: "tenant-1",
+    rigId: "rig-1",
+    locationId: "location-1",
+    operatorId: "operator-1",
+    helperInstanceId: "helper-1",
+    gradingMode: "STANDARD",
+    status: "CREATED",
+    currentState: "INIT",
+    errorCode: null,
+    rawCardOnly: true,
+    startedAt: null,
+    finishedAt: null,
+    createdAt: new Date(ISO_TIME),
+    updatedAt: new Date(ISO_TIME),
+    ...overrides,
+  };
+}
 
-  const db = {
+function createMockDb(options = {}) {
+  const calls = [];
+  let session = options.session ?? baseSession();
+
+  const tx = {
     captureSession: {
       async create(args) {
         calls.push({ delegate: "captureSession", method: "create", args });
@@ -29,23 +57,22 @@ function createMockDb() {
       },
       async findFirst(args) {
         calls.push({ delegate: "captureSession", method: "findFirst", args });
-        return {
-          id: args.where.id,
-          tenantId: args.where.tenantId,
-          rigId: "rig-1",
-          locationId: "location-1",
-          operatorId: "operator-1",
-          helperInstanceId: "helper-1",
-          gradingMode: "STANDARD",
-          status: "CREATED",
-          currentState: "INIT",
-          errorCode: null,
-          rawCardOnly: true,
-          startedAt: null,
-          finishedAt: null,
-          createdAt: new Date(ISO_TIME),
+        if (!session || session.id !== args.where.id || session.tenantId !== args.where.tenantId) {
+          return null;
+        }
+        return { ...session };
+      },
+      async updateMany(args) {
+        calls.push({ delegate: "captureSession", method: "updateMany", args });
+        if (!session || session.id !== args.where.id || session.tenantId !== args.where.tenantId) {
+          return { count: 0 };
+        }
+        session = {
+          ...session,
+          ...args.data,
           updatedAt: new Date(ISO_TIME),
         };
+        return { count: 1 };
       },
     },
     captureManifest: {
@@ -68,7 +95,21 @@ function createMockDb() {
     },
   };
 
-  return { db, calls };
+  const db = options.withoutTransaction
+    ? tx
+    : {
+        ...tx,
+        async $transaction(callback) {
+          calls.push({ delegate: "$transaction", method: "$transaction" });
+          return callback(tx);
+        },
+      };
+
+  return {
+    db,
+    calls,
+    getSession: () => session,
+  };
 }
 
 function frame(overrides = {}) {
@@ -287,7 +328,7 @@ test("readCaptureSessionState reads state by tenant and session id", async () =>
 });
 
 test("readCaptureSessionState exported function uses the same injected client path", async () => {
-  const { db, calls } = createMockDb();
+  const { db, calls } = createMockDb({ session: baseSession({ id: "session-2" }) });
 
   const result = await readCaptureSessionState(db, {
     tenantId: "tenant-1",
@@ -297,4 +338,181 @@ test("readCaptureSessionState exported function uses the same injected client pa
   assert.equal(result.id, "session-2");
   assert.equal(calls.length, 1);
   assert.equal(calls[0].args.where.id, "session-2");
+});
+
+test("persistOrchestratorTransition validates transition, updates session, and writes audit event", async () => {
+  const { db, calls, getSession } = createMockDb();
+
+  const result = await persistOrchestratorTransition(db, {
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    event: "SESSION_CREATED",
+    guardResults: {
+      sessionBelongsToTenant: true,
+      rigActive: true,
+      operatorAuthorized: true,
+    },
+    actorOperatorId: "operator-1",
+    actorUserId: "user-1",
+    occurredAt: ISO_TIME,
+  });
+
+  assert.equal(result.fromState, "INIT");
+  assert.equal(result.toState, "MACRO_PREFLIGHT");
+  assert.equal(result.status, "RUNNING");
+  assert.equal(result.errorCode, null);
+  assert.equal(getSession().currentState, "MACRO_PREFLIGHT");
+  assert.equal(getSession().status, "RUNNING");
+  assert.equal(getSession().errorCode, null);
+  assert.ok(getSession().startedAt instanceof Date);
+
+  assert.equal(calls[0].delegate, "$transaction");
+  assert.equal(calls[1].delegate, "captureSession");
+  assert.equal(calls[1].method, "findFirst");
+  assert.deepEqual(calls[1].args.where, {
+    id: "session-1",
+    tenantId: "tenant-1",
+  });
+  assert.equal(calls[2].delegate, "captureSession");
+  assert.equal(calls[2].method, "updateMany");
+  assert.deepEqual(calls[2].args.where, {
+    id: "session-1",
+    tenantId: "tenant-1",
+  });
+  assert.equal(calls[2].args.data.currentState, "MACRO_PREFLIGHT");
+  assert.equal(calls[2].args.data.status, "RUNNING");
+  assert.equal(calls[3].delegate, "auditEvent");
+  assert.equal(calls[3].method, "create");
+  assert.equal(calls[3].args.data.action, "ai_grader.orchestrator.transition");
+  assert.equal(calls[3].args.data.outcome, "SUCCESS");
+  assert.equal(calls[3].args.data.entityId, "session-1");
+  assert.equal(calls[3].args.data.after.currentState, "MACRO_PREFLIGHT");
+  assert.match(calls[3].args.data.checksum, /^[a-f0-9]{64}$/);
+});
+
+test("persistOrchestratorTransition rejects invalid transitions before DB writes", async () => {
+  const { db, calls } = createMockDb();
+
+  await expectValidationRejects(
+    () =>
+      persistOrchestratorTransition(db, {
+        tenantId: "tenant-1",
+        captureSessionId: "session-1",
+        event: "PREFLIGHT_PASS",
+        guardResults: {
+          armPosition: "ARM_OUT",
+          noObstruction: true,
+          cardStable: true,
+        },
+        occurredAt: ISO_TIME,
+      }),
+    "INVALID_TRANSFORM"
+  );
+
+  assert.deepEqual(
+    calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "captureSession.findFirst"]
+  );
+});
+
+test("persistOrchestratorTransition enforces tenant and session scoping", async () => {
+  const { db, calls } = createMockDb();
+
+  await expectValidationRejects(
+    () =>
+      persistOrchestratorTransition(db, {
+        tenantId: "tenant-2",
+        captureSessionId: "session-1",
+        event: "SESSION_CREATED",
+        guardResults: {
+          sessionBelongsToTenant: true,
+          rigActive: true,
+          operatorAuthorized: true,
+        },
+        occurredAt: ISO_TIME,
+      }),
+    "INVALID_RECORD"
+  );
+
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].delegate, "captureSession");
+  assert.equal(calls[1].method, "findFirst");
+  assert.deepEqual(calls[1].args.where, {
+    id: "session-1",
+    tenantId: "tenant-2",
+  });
+});
+
+test("named error state helpers persist expected statuses and error codes", async () => {
+  const paused = createMockDb({ session: baseSession({ currentState: "ARM_IN_PROMPT", status: "RUNNING" }) });
+  await markCaptureSessionPausedForOperatorTimeout(paused.db, {
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    occurredAt: ISO_TIME,
+  });
+  assert.equal(paused.getSession().currentState, "PAUSED_OPERATOR_TIMEOUT");
+  assert.equal(paused.getSession().status, "PAUSED");
+  assert.equal(paused.getSession().errorCode, "PAUSED_OPERATOR_TIMEOUT");
+
+  const micro = createMockDb({ session: baseSession({ currentState: "MICRO_SPOTS", status: "RUNNING" }) });
+  await markCaptureSessionMicroIncompleteRequiresReview(micro.db, {
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    occurredAt: ISO_TIME,
+  });
+  assert.equal(micro.getSession().currentState, "MICRO_INCOMPLETE_REQUIRES_REVIEW");
+  assert.equal(micro.getSession().status, "MICRO_INCOMPLETE_REQUIRES_REVIEW");
+  assert.equal(micro.getSession().errorCode, "MICRO_INCOMPLETE_REQUIRES_REVIEW");
+
+  const physicalGate = createMockDb({ session: baseSession({ currentState: "MACRO_PREFLIGHT", status: "RUNNING" }) });
+  await markCaptureSessionPhysicalGateReview(physicalGate.db, {
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    occurredAt: ISO_TIME,
+  });
+  assert.equal(physicalGate.getSession().currentState, "PHYSICAL_GATE_REVIEW");
+  assert.equal(physicalGate.getSession().status, "PHYSICAL_GATE_REVIEW");
+  assert.equal(physicalGate.getSession().errorCode, "PHYSICAL_GATE_REVIEW");
+
+  const aborted = createMockDb({ session: baseSession({ currentState: "REVIEW", status: "REVIEW" }) });
+  await markCaptureSessionAborted(aborted.db, {
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    reasonCode: "OPERATOR_REJECTED",
+    occurredAt: ISO_TIME,
+  });
+  assert.equal(aborted.getSession().currentState, "ABORTED");
+  assert.equal(aborted.getSession().status, "ABORTED");
+  assert.equal(aborted.getSession().errorCode, "OPERATOR_REJECTED");
+  assert.ok(aborted.getSession().finishedAt instanceof Date);
+});
+
+test("markCaptureSessionComplete accepts review state and blocks invalid states", async () => {
+  const review = createMockDb({ session: baseSession({ currentState: "REVIEW", status: "REVIEW" }) });
+
+  await markCaptureSessionComplete(review.db, {
+    tenantId: "tenant-1",
+    captureSessionId: "session-1",
+    occurredAt: ISO_TIME,
+  });
+
+  assert.equal(review.getSession().currentState, "COMPLETE");
+  assert.equal(review.getSession().status, "COMPLETE");
+  assert.equal(review.getSession().errorCode, null);
+  assert.ok(review.getSession().finishedAt instanceof Date);
+
+  const fusion = createMockDb({ session: baseSession({ currentState: "FUSION", status: "RUNNING" }) });
+  await expectValidationRejects(
+    () =>
+      markCaptureSessionComplete(fusion.db, {
+        tenantId: "tenant-1",
+        captureSessionId: "session-1",
+        occurredAt: ISO_TIME,
+      }),
+    "INVALID_TRANSFORM"
+  );
+  assert.deepEqual(
+    fusion.calls.map((call) => `${call.delegate}.${call.method}`),
+    ["$transaction.$transaction", "captureSession.findFirst"]
+  );
 });
