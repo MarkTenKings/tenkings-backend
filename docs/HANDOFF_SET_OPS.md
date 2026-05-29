@@ -9729,3 +9729,32 @@ Build Set Ops UI flow with:
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - No migrations, `RUN_DB_MIGRATIONS=true`, manual deploy command, runtime DB operation, deploy restart, or next AI Grader phase work was run during merge verification.
 - Next approved slice is the feature-gated AI Grader admin UI shell; continue to avoid hardware/capture, image-processing/grading math, CMYK/auth algorithms, reports, PDFs, migrations, runtime DB operations, unsafe public routes, and DB-backed UI calls unless the existing API feature gate allows them.
+
+## Session Update (2026-05-29, AI Grader admin UI shell)
+- Part A completed before this branch:
+  - PR #13 merged with merge commit `c932a37308b9fd852b5ab33845d00eb5699b0ac7`.
+  - PR #13 post-merge GitHub Actions run `26630385563` and Vercel production deploy `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/5yVYkcywydX4xWNSPftG9oVwEDVW` succeeded.
+  - handoff docs follow-up commit `7b00cebfa83ec3a0fee478d6389008d2cf52b409` was pushed to `main`; its GitHub Actions run `26630731433` and Vercel production deploy `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/GssxhKsgZNPon4czJDrRaPNhJpfU` succeeded.
+  - migrations stayed skipped by the Vercel gate because `RUN_DB_MIGRATIONS=true` was not set.
+- Branch `feature/ai-grader-admin-ui-shell` was created from `origin/main` at `7b00cebfa83ec3a0fee478d6389008d2cf52b409`.
+- Added admin-only shell page `/admin/ai-grader` and linked it from the admin console Monitoring section.
+- The page uses existing admin session/admin-id/admin-phone gate helpers before loading AI Grader status.
+- The UI automatically calls only `/api/admin/ai-grader/status`; create/update operation cards remain disabled unless the feature-gated API returns `enabled: true`.
+- Added thin frontend client/helpers for status loading, operation POST paths, disabled response handling, validation error mapping, and admin gate state.
+- Added mocked client/gate tests covering disabled status, enabled status, validation errors, and admin gate behavior.
+- Files changed:
+  - `frontend/nextjs-app/lib/aiGraderAdminClient.ts`
+  - `frontend/nextjs-app/lib/aiGraderAdminUi.ts`
+  - `frontend/nextjs-app/pages/admin/ai-grader.tsx`
+  - `frontend/nextjs-app/pages/admin/index.tsx`
+  - `frontend/nextjs-app/tests/aiGraderAdminClient.test.ts`
+  - `docs/HANDOFF_SET_OPS.md`
+  - `docs/handoffs/SESSION_LOG.md`
+- Validation:
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts tests/aiGraderAdminClient.test.ts` -> pass, 11 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- Guardrails held: no migrations, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation, no hardware/capture code, no image-processing/grading math, no CMYK/auth algorithms, no reports, no PDFs, and no unsafe public routes.
+- Remaining risk: the AI Grader Prisma migration is still unapplied, so keep `AI_GRADER_API_ENABLED` disabled in production until migration and runtime rollout are explicitly approved.
