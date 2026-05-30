@@ -9913,3 +9913,14 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts tests/aiGraderAdminClient.test.ts`
   - `git diff --check`
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.
+
+## Session Update (2026-05-30, AI Grader simulator admin flow PR #17 merged)
+- PR #17 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/17`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `c2f4c3b845907d01381c6cb9f607b8e095eaffa0`.
+- PR #17 wired simulator generation into the feature-gated admin API/UI while keeping simulator mode behind both `AI_GRADER_API_ENABLED=true` and `AI_GRADER_SIMULATOR_ENABLED=true`.
+- Simulator-disabled responses return before admin auth, service loading, Prisma access, or simulator generation.
+- Post-merge GitHub Actions run `26673922593` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/45cBXGc7HspGg3ex4hGfptj5RujF`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, and no real hardware access.
+- Suggested next chunk, pending explicit approval: either a full simulated end-to-end admin session flow with no DB writes, or a staging/prod migration approval plan for real AI Grader persistence.
