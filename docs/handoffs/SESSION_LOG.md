@@ -18348,3 +18348,20 @@ By enabling Rip It Live, I confirm:
 - No manual deploy/restart was run.
 - No runtime DB operation against a real app database was run.
 - Only the disposable local Postgres database was migrated and queried.
+
+## 2026-05-30 - AI Grader migration readiness PR #15 merged
+
+### Summary
+- PR #15 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/15`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `b09d4ab0dc9e82e80ed5cddcad9376b91bb8cd5c`.
+- PR #15 included the disposable migration readiness report, disposable local Postgres Compose path, and idempotent clean-chain repair migration `20260305120000_cvri_storage_key`.
+- Post-merge GitHub Actions run `26671799174` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/5H1i6QZv2yBKyM5jT2GgbX6bMV1F`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- Do not enable `AI_GRADER_API_ENABLED=true` or start the next AI Grader phase until migration/runtime rollout is explicitly approved.

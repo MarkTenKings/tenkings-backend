@@ -9838,3 +9838,17 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
   - `pnpm --filter @tenkings/nextjs-app build` -> pass.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, and no runtime DB operation against a real app DB.
+
+## Session Update (2026-05-30, AI Grader migration readiness PR #15 merged)
+- PR #15 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/15`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `b09d4ab0dc9e82e80ed5cddcad9376b91bb8cd5c`.
+- PR #15 added:
+  - `docs/ai-grader-migration-readiness.md`
+  - `docker-compose.ai-grader-migration.yml`
+  - `packages/database/prisma/migrations/20260305120000_cvri_storage_key/migration.sql`
+  - handoff notes
+- Post-merge GitHub Actions run `26671799174` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/5H1i6QZv2yBKyM5jT2GgbX6bMV1F`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, and no next AI Grader phase work.
+- Remaining production rollout note: keep `AI_GRADER_API_ENABLED` disabled until the database migration and runtime rollout are explicitly approved.
