@@ -16,10 +16,14 @@ import {
   AiGraderAdminApiError,
   type AiGraderAdminApiStatus,
   type AiGraderAdminOperation,
+  type AiGraderSimulatorMode,
+  type AiGraderSimulatorResult,
   fetchAiGraderAdminStatus,
+  generateAiGraderSimulatorManifest,
   postAiGraderAdminOperation,
 } from "../../lib/aiGraderAdminClient";
 import {
+  canRunAiGraderSimulator,
   canSubmitAiGraderOperation,
   hasAiGraderAdminAccess,
   resolveAiGraderAdminGateState,
@@ -168,6 +172,8 @@ const PLACEHOLDER_SECTIONS = [
   },
 ];
 
+const CAPTURE_SIMULATOR_MODES: AiGraderSimulatorMode[] = ["QUICK", "STANDARD", "AUTH_ONLY"];
+
 function formatJson(value: unknown) {
   return JSON.stringify(value, null, 2);
 }
@@ -176,6 +182,193 @@ function statusTone(status: AiGraderAdminApiStatus | null) {
   if (!status) return "border-slate-500/30 text-slate-300";
   if (status.enabled) return "border-emerald-400/50 text-emerald-200";
   return "border-amber-400/50 text-amber-200";
+}
+
+function simulatorTone(status: AiGraderAdminApiStatus | null) {
+  if (!status) return "border-slate-500/30 text-slate-300";
+  if (status.enabled && status.simulator?.enabled) return "border-emerald-400/50 text-emerald-200";
+  return "border-amber-400/50 text-amber-200";
+}
+
+function SimulatorPanel({
+  enabled,
+  status,
+  adminHeaders,
+}: {
+  enabled: boolean;
+  status: AiGraderAdminApiStatus | null;
+  adminHeaders: Record<string, string>;
+}) {
+  const [mode, setMode] = useState<AiGraderSimulatorMode>("STANDARD");
+  const [result, setResult] = useState<AiGraderSimulatorResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const runSimulator = async (nextMode: AiGraderSimulatorMode) => {
+    if (!enabled) {
+      setError(status?.simulator?.message ?? "AI Grader simulator mode is disabled.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      setResult(await generateAiGraderSimulatorManifest(nextMode, adminHeaders));
+    } catch (requestError) {
+      if (requestError instanceof AiGraderAdminApiError) {
+        setError(requestError.message);
+      } else {
+        setError(requestError instanceof Error ? requestError.message : "AI Grader simulator request failed.");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const summary = result?.summary;
+
+  return (
+    <section className={adminPanelClass("p-5")}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">Simulator Mode</p>
+          <h2 className="mt-2 text-xl font-semibold text-white">Capture Manifest Generator</h2>
+        </div>
+        <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.2em] ${simulatorTone(status)}`}>
+          Simulator: {enabled ? "enabled" : "disabled"}
+        </span>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.85fr_1.15fr]">
+        <div className={adminSubpanelClass("flex flex-col gap-4 p-4")}>
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Capture Mode</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {CAPTURE_SIMULATOR_MODES.map((candidate) => (
+                <button
+                  key={candidate}
+                  type="button"
+                  onClick={() => setMode(candidate)}
+                  className={adminCx(
+                    "rounded-full border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] transition",
+                    mode === candidate
+                      ? "border-gold-500/70 bg-gold-500 text-night-900"
+                      : "border-white/12 bg-white/[0.03] text-slate-300 hover:border-white/35 hover:text-white"
+                  )}
+                >
+                  {candidate}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              disabled={!enabled || submitting}
+              onClick={() => runSimulator(mode)}
+              className={adminCx(
+                "rounded-full border px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] transition",
+                enabled && !submitting
+                  ? "border-gold-500/60 bg-gold-500 text-night-900 hover:bg-gold-400"
+                  : "cursor-not-allowed border-white/12 bg-white/[0.03] text-slate-500"
+              )}
+            >
+              {submitting ? "Generating" : "Generate Manifest"}
+            </button>
+            <button
+              type="button"
+              disabled={!enabled || submitting}
+              onClick={() => runSimulator("DEVICE_CAPABILITIES")}
+              className={adminCx(
+                "rounded-full border px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] transition",
+                enabled && !submitting
+                  ? "border-white/20 bg-white/[0.04] text-slate-100 hover:border-white/40"
+                  : "cursor-not-allowed border-white/12 bg-white/[0.03] text-slate-500"
+              )}
+            >
+              Device Capabilities
+            </button>
+          </div>
+
+          <p className={adminCx("text-sm", enabled ? "text-slate-400" : "text-amber-100/80")}>
+            {status?.simulator?.message ?? "Simulator status is unavailable until the API status endpoint responds."}
+          </p>
+          {error ? <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</p> : null}
+        </div>
+
+        <div className={adminSubpanelClass("p-4")}>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Mode</p>
+              <p className="mt-2 text-lg font-semibold text-white">{summary?.mode ?? mode}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Frames</p>
+              <p className="mt-2 text-lg font-semibold text-white">{summary?.frameCount ?? 0}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Micro Packages</p>
+              <p className="mt-2 text-lg font-semibold text-white">{summary?.microSpotPackageCount ?? 0}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Devices</p>
+              <p className="mt-2 text-lg font-semibold text-white">{summary?.deviceCapabilityCount ?? 0}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Helper</p>
+              <p className="mt-2 break-all text-sm font-semibold text-white">{summary?.helperInstanceId ?? "none"}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Validation</p>
+              <p className={adminCx("mt-2 text-lg font-semibold", summary?.validation.valid ? "text-emerald-200" : "text-slate-400")}>
+                {summary ? (summary.validation.valid ? "Valid" : "Invalid") : "Pending"}
+              </p>
+            </article>
+          </div>
+
+          {summary ? (
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Calibration Snapshots</p>
+                <ul className="mt-2 space-y-1 text-xs text-slate-300">
+                  {summary.calibrationSnapshotIds.length ? (
+                    summary.calibrationSnapshotIds.map((id) => (
+                      <li key={id} className="break-all rounded-lg bg-white/[0.03] px-2 py-1">
+                        {id}
+                      </li>
+                    ))
+                  ) : (
+                    <li className="text-slate-500">none</li>
+                  )}
+                </ul>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Storage Key Examples</p>
+                <ul className="mt-2 space-y-1 text-xs text-slate-300">
+                  {summary.storageKeyExamples.length ? (
+                    summary.storageKeyExamples.map((key) => (
+                      <li key={key} className="break-all rounded-lg bg-white/[0.03] px-2 py-1">
+                        {key}
+                      </li>
+                    ))
+                  ) : (
+                    <li className="text-slate-500">none</li>
+                  )}
+                </ul>
+              </div>
+            </div>
+          ) : null}
+
+          {result ? (
+            <pre className="mt-4 max-h-[300px] overflow-auto rounded-xl border border-white/10 bg-black p-3 text-xs leading-5 text-slate-200">
+              {formatJson(result)}
+            </pre>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function OperationCard({
@@ -275,6 +468,7 @@ export default function AiGraderAdminPage() {
   const gateState = resolveAiGraderAdminGateState({ loading: sessionLoading, session, isAdmin });
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
   const canSubmit = canSubmitAiGraderOperation(status);
+  const canRunSimulator = canRunAiGraderSimulator(status);
 
   const refreshStatus = useCallback(async () => {
     if (!session?.token) {
@@ -381,6 +575,9 @@ export default function AiGraderAdminPage() {
               <span className={`rounded-full border px-2 py-1 ${statusTone(status)}`}>
                 API: {statusLoading ? "checking" : status?.enabled ? "enabled" : "disabled"}
               </span>
+              <span className={`rounded-full border px-2 py-1 ${simulatorTone(status)}`}>
+                SIM: {statusLoading ? "checking" : canRunSimulator ? "enabled" : "disabled"}
+              </span>
               <span className="rounded-full border border-white/20 px-2 py-1 text-slate-400">admin only</span>
             </>
           }
@@ -414,9 +611,11 @@ export default function AiGraderAdminPage() {
             <p className="mt-2 text-sm text-slate-400">Status checks are safe while disabled and run before any DB-backed helper action.</p>
           </article>
           <article className={adminStatCardClass("p-4")}>
-            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Routes</p>
-            <p className="mt-2 text-2xl font-semibold text-white">{status?.routes?.length ?? 0}</p>
-            <p className="mt-2 text-sm text-slate-400">Persistence routes stay behind the same API gate and require admin auth.</p>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Simulator</p>
+            <p className={adminCx("mt-2 text-2xl font-semibold", canRunSimulator ? "text-emerald-200" : "text-amber-200")}>
+              {statusLoading ? "Checking" : canRunSimulator ? "Enabled" : "Disabled"}
+            </p>
+            <p className="mt-2 text-sm text-slate-400">{status?.simulator?.message ?? "Simulator actions require both API and simulator flags."}</p>
           </article>
         </section>
 
@@ -443,6 +642,8 @@ export default function AiGraderAdminPage() {
             </div>
           </section>
         ) : null}
+
+        <SimulatorPanel enabled={canRunSimulator} status={status} adminHeaders={adminHeaders} />
 
         <section className={adminPanelClass("p-5")}>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

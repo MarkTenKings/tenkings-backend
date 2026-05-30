@@ -22,6 +22,8 @@
     ],
     "baseUrl": ".",
     "paths": {
+      "@tenkings/ai-grader-simulator": ["../../packages/ai-grader-simulator/src/index.ts"],
+      "@tenkings/ai-grader-simulator/*": ["../../packages/ai-grader-simulator/src/*"],
       "@tenkings/database": ["../../packages/database/src/index.ts"],
       "@tenkings/database/*": ["../../packages/database/src/*"],
       "@tenkings/shared": ["../../packages/shared/src/index.ts"],

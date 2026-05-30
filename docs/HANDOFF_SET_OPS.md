@@ -9889,3 +9889,27 @@ Build Set Ops UI flow with:
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, and no real hardware access.
 - Suggested next chunk: wire the simulator into feature-gated admin API/UI simulated mode, still without production/staging migration, runtime DB use, or real hardware.
+
+## Session Update (2026-05-30, AI Grader simulator admin API/UI flow)
+- Created branch `feature/ai-grader-simulator-ui-flow` from latest `origin/main`.
+- Added `AI_GRADER_SIMULATOR_ENABLED=true` as a second gate for simulator actions; simulator actions also require `AI_GRADER_API_ENABLED=true`.
+- Added feature-gated admin API simulator generation at `POST /api/admin/ai-grader/simulator/generate`.
+- Supported simulator modes:
+  - `DEVICE_CAPABILITIES`
+  - `QUICK`
+  - `STANDARD`
+  - `AUTH_ONLY`
+- Simulator-disabled responses return before admin auth, service loading, Prisma access, or simulator generation.
+- Enabled simulator generation uses `@tenkings/ai-grader-simulator` only and does not load the AI Grader DB service helper.
+- Added simulator UI controls to `/admin/ai-grader` for mode selection, device capability generation, summary counts, helper/calibration data, storage key examples, validation status, and JSON inspection.
+- Updated client/UI helpers and tests for disabled and enabled simulator responses.
+- Validation passed:
+  - `pnpm --filter @tenkings/database build`
+  - `pnpm --filter @tenkings/database test`
+  - `pnpm --filter @tenkings/shared test`
+  - `pnpm --filter @tenkings/ai-grader-simulator build`
+  - `pnpm --filter @tenkings/ai-grader-simulator test`
+  - `pnpm --filter @tenkings/nextjs-app build`
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts tests/aiGraderAdminClient.test.ts`
+  - `git diff --check`
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.
