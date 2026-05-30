@@ -9768,3 +9768,73 @@ Build Set Ops UI flow with:
 - No migrations, `RUN_DB_MIGRATIONS=true`, manual deploy command, runtime DB operation, deploy restart, or next AI Grader phase work was run during merge verification.
 - AI Grader API routes and UI write actions remain disabled unless `AI_GRADER_API_ENABLED=true`; keep the API disabled in production until the migration and runtime rollout are explicitly approved.
 - Continue to avoid hardware/capture, image-processing/grading math, CMYK/auth algorithms, reports, PDFs, migrations, runtime DB operations, unsafe public routes, and DB-backed UI calls unless the existing API feature gate allows them.
+
+## Session Update (2026-05-29, AI Grader migration readiness pass)
+- Branch: `feature/ai-grader-migration-readiness`, created from `origin/main` at `49c2d3b71a10026b041dbae1e9844463b90d78be`.
+- AI Grader migration reviewed: `packages/database/prisma/migrations/20260528120000_ai_grader_v5_foundation/migration.sql`.
+- Disposable DB execution was blocked because `DATABASE_URL` was unset and local Postgres/Docker tooling was unavailable (`psql`, `pg_isready`, and `docker` not found).
+- No migration apply/status command was run against any database.
+- Prisma schema validation passed with a dummy localhost URL used only for validation:
+  - `DATABASE_URL=postgresql://<user>:<redacted>@localhost:5432/tenkings_ai_grader_readiness pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma`
+- Static SQL review found additive DDL only: new enums, tables, indexes, and foreign keys. No `DROP`, `ALTER TYPE`, `ALTER TABLE ... DROP`, or `ALTER TABLE ... ALTER COLUMN` statements were found.
+- Added readiness report: `docs/ai-grader-migration-readiness.md`.
+- Validation:
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, and no runtime DB operation against a real app DB.
+- Remaining required step before staging/prod approval: run `prisma migrate deploy/status` against a disposable local/test Postgres target, verify the AI Grader objects exist, then proceed through the approved staging/prod migration window with backups and `AI_GRADER_API_ENABLED` still disabled.
+
+## Session Update (2026-05-29, AI Grader migration readiness disposable DB path)
+- Continued PR #15 on branch `feature/ai-grader-migration-readiness`.
+- Inspected existing local DB/Compose patterns.
+  - Existing repo pattern is `infra/docker-compose.yml`, which defines a full-stack persistent `postgres:15` service on shared port `5432` and database `tenkings`.
+  - That pattern is useful background but is not ideal for isolated migration readiness because it uses a shared app DB name and persistent volume.
+- Added `docker-compose.ai-grader-migration.yml` for an isolated disposable readiness path.
+  - Service: `ai-grader-migration-postgres`.
+  - Image: `postgres:15`.
+  - Host binding: `127.0.0.1:55432`.
+  - Database: `tenkings_ai_grader_readiness`.
+  - User: `tenkings_readiness`.
+  - Storage: tmpfs-backed Postgres data directory discarded after teardown.
+- Updated `docs/ai-grader-migration-readiness.md` with the exact safe command sequence:
+  - start disposable Postgres
+  - run `prisma migrate deploy`
+  - run `prisma migrate status`
+  - verify representative AI Grader enums/tables through container `psql`
+  - tear down with `docker compose -f docker-compose.ai-grader-migration.yml down -v`
+- Live disposable migration apply remains blocked in this workstation because `docker`, `psql`, and `pg_isready` are still unavailable.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, and no runtime DB operation against a real app DB.
+
+## Session Update (2026-05-29, AI Grader migration readiness live disposable apply)
+- Continued PR #15 on branch `feature/ai-grader-migration-readiness`.
+- Docker became available:
+  - `docker --version` -> Docker version `29.5.2`
+  - `docker compose version` -> Docker Compose version `v5.1.3`
+- Started only `docker-compose.ai-grader-migration.yml`.
+  - Host/db: `127.0.0.1:55432/tenkings_ai_grader_readiness`.
+  - User: `tenkings_readiness`.
+  - This was the only migrated/query target.
+- First clean-chain `prisma migrate deploy` failed before the AI Grader migration:
+  - failed migration: `20260305143000_variant_program_identity`
+  - error: `P3018`, PostgreSQL `42703`
+  - cause: `CardVariantReferenceImage.storageKey` did not exist before the migration referenced it while duplicating reference rows.
+- Added idempotent migration `packages/database/prisma/migrations/20260305120000_cvri_storage_key/migration.sql`.
+  - Adds nullable `CardVariantReferenceImage.storageKey` if absent.
+  - Adds `CardVariantReferenceImage_storageKey_idx` if absent.
+  - No existing historical migration was edited.
+- Reset only the disposable DB with `docker compose -f docker-compose.ai-grader-migration.yml down -v`, restarted, and reran `prisma migrate deploy`.
+- Clean rerun applied all 67 migrations successfully, including:
+  - `20260305120000_cvri_storage_key`
+  - `20260528120000_ai_grader_v5_foundation`
+- `prisma migrate status` against the disposable DB reported `Database schema is up to date!`.
+- Verified representative AI Grader enums and tables through container `psql`.
+- Tore down the disposable DB with `docker compose -f docker-compose.ai-grader-migration.yml down -v`.
+- Validation:
+  - Prisma validate against disposable localhost URL -> pass.
+  - `pnpm --filter @tenkings/database build` -> pass.
+  - `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, and no runtime DB operation against a real app DB.

@@ -18267,3 +18267,84 @@ By enabling Rip It Live, I confirm:
 - AI Grader Prisma migration remains committed but unapplied.
 - AI Grader API routes and UI write actions remain disabled unless `AI_GRADER_API_ENABLED=true`; do not enable them in production until migration and runtime rollout are explicitly approved.
 - Do not start hardware/capture, image-processing/grading math, CMYK/auth algorithms, report UI, PDFs, migrations, or runtime DB operations without a dedicated approved phase.
+
+## 2026-05-29 - AI Grader migration readiness pass
+
+### Summary
+- Created branch `feature/ai-grader-migration-readiness` from latest `origin/main` at `49c2d3b71a10026b041dbae1e9844463b90d78be`.
+- Confirmed the branch is not detached.
+- Identified the committed AI Grader migration: `packages/database/prisma/migrations/20260528120000_ai_grader_v5_foundation/migration.sql`.
+- `process.env.DATABASE_URL` was unset; no real local `.env` file was present.
+- `psql`, `pg_isready`, and `docker` were unavailable, so no safe disposable local Postgres path existed in this environment.
+- The migration was not applied. Static review and schema/build/test validation were completed only.
+- Added readiness report: `docs/ai-grader-migration-readiness.md`.
+
+### Findings
+- Static SQL review found additive DDL only: new enums, tables, indexes, and foreign keys.
+- No `DROP`, `ALTER TYPE`, `ALTER TABLE ... DROP`, or `ALTER TABLE ... ALTER COLUMN` statements were found.
+- Primary remaining readiness blocker is execution on a disposable local/test Postgres target.
+- Recommendation remains to keep `AI_GRADER_API_ENABLED` disabled until migration execution and runtime rollout are explicitly approved.
+
+### Validation Evidence
+- `DATABASE_URL=postgresql://<user>:<redacted>@localhost:5432/tenkings_ai_grader_readiness pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass.
+- Local warnings only: Node `v25.6.1`, repo expects `20.x`; Next.js still reports existing `<img>` lint warnings in unrelated admin pages.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+
+## 2026-05-29 - AI Grader migration readiness disposable DB path
+
+### Summary
+- Continued PR #15 on branch `feature/ai-grader-migration-readiness`.
+- Inspected the repo for Docker/DB patterns.
+- Existing pattern: `infra/docker-compose.yml` includes a full-stack persistent `postgres:15` service on shared port `5432` and shared database `tenkings`.
+- Added a dedicated disposable readiness Compose file: `docker-compose.ai-grader-migration.yml`.
+- The disposable service uses `postgres:15`, loopback-only host binding `127.0.0.1:55432`, throwaway database `tenkings_ai_grader_readiness`, throwaway user `tenkings_readiness`, and tmpfs-backed storage.
+- Docker/Postgres tooling is still unavailable in this workstation (`docker`, `psql`, and `pg_isready` not found), so the migration was not applied locally.
+- Updated `docs/ai-grader-migration-readiness.md` with the safe command sequence for `prisma migrate deploy/status`, enum/table verification through container `psql`, and teardown.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- PR #15 remains draft until the migration is actually applied to a disposable Postgres target and verified.
+
+## 2026-05-29 - AI Grader migration readiness live disposable apply
+
+### Summary
+- Continued PR #15 on branch `feature/ai-grader-migration-readiness` after Docker Desktop became available.
+- Confirmed Docker availability:
+  - `docker --version` -> Docker version `29.5.2`
+  - `docker compose version` -> Docker Compose version `v5.1.3`
+- Started only `docker-compose.ai-grader-migration.yml`, with disposable Postgres on `127.0.0.1:55432` and database `tenkings_ai_grader_readiness`.
+- First clean-chain `prisma migrate deploy` against the disposable DB failed before AI Grader at `20260305143000_variant_program_identity`.
+- Failure was a pre-existing migration-chain gap: `CardVariantReferenceImage.storageKey` did not exist before that migration referenced it.
+- Added idempotent repair migration `packages/database/prisma/migrations/20260305120000_cvri_storage_key/migration.sql`.
+- Reset only the disposable DB with `docker compose -f docker-compose.ai-grader-migration.yml down -v`, restarted it, and reran `prisma migrate deploy`.
+- Clean rerun applied all 67 migrations successfully, including `20260305120000_cvri_storage_key` and `20260528120000_ai_grader_v5_foundation`.
+- `prisma migrate status` reported `Database schema is up to date!`.
+- Verified AI Grader enums existed: `AuthVerdict`, `CaptureSessionStatus`, `GradeRunStatus`.
+- Verified AI Grader tables existed: `AuditEvent`, `AuthRun`, `CaptureManifest`, `CaptureSession`, `EvidenceArtifact`, `GradeCertificate`, `GradeRun`.
+- Tore down the disposable DB with `docker compose -f docker-compose.ai-grader-migration.yml down -v`.
+
+### Validation Evidence
+- `DATABASE_URL=postgresql://tenkings_readiness:<redacted>@127.0.0.1:55432/tenkings_ai_grader_readiness?schema=public pnpm --filter @tenkings/database exec prisma validate --schema prisma/schema.prisma` -> pass.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- Only the disposable local Postgres database was migrated and queried.

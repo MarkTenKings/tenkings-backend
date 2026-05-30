@@ -1,0 +1,22 @@
+services:
+  ai-grader-migration-postgres:
+    image: postgres:15
+    container_name: tenkings-ai-grader-migration-postgres
+    environment:
+      POSTGRES_USER: tenkings_readiness
+      POSTGRES_PASSWORD: tenkings_readiness
+      POSTGRES_DB: tenkings_ai_grader_readiness
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data:rw,noexec,nosuid,size=512m
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U tenkings_readiness -d tenkings_ai_grader_readiness"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
