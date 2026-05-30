@@ -56,6 +56,10 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         config.simulator = { ...config.simulator, helperInstanceId: readOption(rest, index, "--helper-instance-id") };
         index += 1;
         break;
+      case "--driver-set":
+        config.driverSet = readOption(rest, index, "--driver-set");
+        index += 1;
+        break;
       case "--help":
       case "-h":
         return { command: "help", config };
@@ -74,8 +78,9 @@ function helpPayload() {
   return {
     service: "ai-grader-capture-helper",
     commands: ["health", "capabilities", "manifest --mode QUICK|STANDARD|AUTH_ONLY"],
-    options: ["--session-id", "--tenant-id", "--seed", "--helper-instance-id"],
+    options: ["--session-id", "--tenant-id", "--seed", "--helper-instance-id", "--driver-set mock"],
     mode: "simulator-only",
+    driverSet: "mock-only",
   };
 }
 

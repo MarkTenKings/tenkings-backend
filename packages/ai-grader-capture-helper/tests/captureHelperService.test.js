@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   CAPTURE_HELPER_HARDWARE_ACCESS,
+  SUPPORTED_CAPTURE_HELPER_DRIVER_SETS,
   SUPPORTED_CAPTURE_HELPER_BACKENDS,
   createCaptureHelperService,
   loadCaptureHelperConfig,
@@ -67,6 +68,7 @@ test("health returns simulator offline status without hardware access", () => {
   assert.equal(health.ok, true);
   assert.equal(health.service, "ai-grader-capture-helper");
   assert.equal(health.mode, "simulator");
+  assert.equal(health.driverSet, "mock");
   assert.equal(health.status, "simulator_offline");
   assert.equal(health.hardwareAccess, "disabled");
   assert.equal(health.networkListener, "disabled");
@@ -79,6 +81,7 @@ test("capabilities pass shared validation", () => {
   const result = service.capabilities();
 
   assert.equal(result.simulator, true);
+  assert.equal(result.driverSet, "mock");
   assert.equal(result.hardwareAccess, "disabled");
   assert.equal(result.deviceCapabilityManifests.length, 5);
   assertValid(result.validation);
@@ -132,6 +135,10 @@ test("invalid mode and config reject", async () => {
     /supports only simulator mode/
   );
   assert.throws(
+    () => loadCaptureHelperConfig({ driverSet: "real" }, {}),
+    /supports only mock drivers/
+  );
+  assert.throws(
     () => createCaptureHelperService({ simulator: { helperInstanceId: "" } }, {}),
     /helperInstanceId must be a non-empty string/
   );
@@ -147,9 +154,11 @@ test("invalid mode and config reject", async () => {
 
 test("no real hardware backend path exists", () => {
   assert.deepEqual(SUPPORTED_CAPTURE_HELPER_BACKENDS, ["simulator"]);
+  assert.deepEqual(SUPPORTED_CAPTURE_HELPER_DRIVER_SETS, ["mock"]);
   assert.equal(CAPTURE_HELPER_HARDWARE_ACCESS, "disabled");
   const config = loadCaptureHelperConfig({}, {});
   assert.equal(config.mode, "simulator");
+  assert.equal(config.driverSet, "mock");
   assert.equal(config.hardwareAccess, "disabled");
   assert.equal(config.networkListener, "disabled");
 });

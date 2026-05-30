@@ -19,10 +19,18 @@ import {
   validateDeviceCapabilityManifest,
   validateMicroSpotCapturePackage,
 } from "@tenkings/shared";
+import {
+  createMockDriverSet,
+  mockDriverCapabilities,
+  type CaptureHelperDriverSet,
+  type CaptureHelperDriverSetDrivers,
+} from "./drivers";
+export * from "./drivers";
 
 export const CAPTURE_HELPER_SERVICE_NAME = "ai-grader-capture-helper";
 export const CAPTURE_HELPER_VERSION = "0.1.0";
 export const SUPPORTED_CAPTURE_HELPER_BACKENDS = ["simulator"] as const;
+export const SUPPORTED_CAPTURE_HELPER_DRIVER_SETS = ["mock"] as const;
 export const CAPTURE_HELPER_HARDWARE_ACCESS = "disabled" as const;
 export const CAPTURE_HELPER_NETWORK_LISTENER = "disabled" as const;
 export const CAPTURE_HELPER_MANIFEST_MODES = ["QUICK", "STANDARD", "AUTH_ONLY"] as const;
@@ -33,6 +41,7 @@ export type CaptureHelperEnv = Record<string, string | undefined>;
 
 export interface CaptureHelperConfigInput {
   mode?: string;
+  driverSet?: string;
   simulator?: CaptureHelperSimulatorConfigInput;
 }
 
@@ -40,6 +49,7 @@ export interface CaptureHelperConfig {
   service: typeof CAPTURE_HELPER_SERVICE_NAME;
   version: typeof CAPTURE_HELPER_VERSION;
   mode: CaptureHelperBackend;
+  driverSet: CaptureHelperDriverSet;
   hardwareAccess: typeof CAPTURE_HELPER_HARDWARE_ACCESS;
   networkListener: typeof CAPTURE_HELPER_NETWORK_LISTENER;
   simulator: CaptureHelperSimulatorConfig;
@@ -50,6 +60,7 @@ export interface CaptureHelperHealth {
   service: typeof CAPTURE_HELPER_SERVICE_NAME;
   version: typeof CAPTURE_HELPER_VERSION;
   mode: CaptureHelperBackend;
+  driverSet: CaptureHelperDriverSet;
   status: "simulator_offline";
   hardwareAccess: typeof CAPTURE_HELPER_HARDWARE_ACCESS;
   networkListener: typeof CAPTURE_HELPER_NETWORK_LISTENER;
@@ -67,6 +78,7 @@ export interface CaptureHelperValidationSummary {
 export interface CaptureHelperCapabilityResult {
   service: typeof CAPTURE_HELPER_SERVICE_NAME;
   mode: CaptureHelperBackend;
+  driverSet: CaptureHelperDriverSet;
   simulator: true;
   hardwareAccess: typeof CAPTURE_HELPER_HARDWARE_ACCESS;
   validation: CaptureHelperValidationSummary;
@@ -87,6 +99,7 @@ export interface CaptureHelperManifestResult {
 
 export interface CaptureHelperService {
   readonly config: CaptureHelperConfig;
+  readonly drivers: CaptureHelperDriverSetDrivers;
   health(): CaptureHelperHealth;
   capabilities(): CaptureHelperCapabilityResult;
   manifest(mode: CaptureHelperManifestMode): CaptureHelperManifestResult;
@@ -157,11 +170,20 @@ function normalizeBackendMode(mode: string | undefined): CaptureHelperBackend {
   return "simulator";
 }
 
+function normalizeDriverSet(driverSet: string | undefined): CaptureHelperDriverSet {
+  const normalized = (driverSet ?? "mock").trim().toLowerCase();
+  if (normalized !== "mock") {
+    throw new CaptureHelperConfigError("AI Grader capture helper supports only mock drivers in this skeleton.");
+  }
+  return "mock";
+}
+
 export function loadCaptureHelperConfig(
   input: CaptureHelperConfigInput = {},
   env: CaptureHelperEnv = process.env
 ): CaptureHelperConfig {
   const mode = normalizeBackendMode(input.mode ?? env.AI_GRADER_CAPTURE_HELPER_MODE);
+  const driverSet = normalizeDriverSet(input.driverSet ?? env.AI_GRADER_CAPTURE_HELPER_DRIVER_SET);
   const simulator = buildCaptureHelperSimulatorConfig(
     mergeSimulatorConfig(simulatorConfigFromEnv(env), input.simulator)
   );
@@ -170,6 +192,7 @@ export function loadCaptureHelperConfig(
     service: CAPTURE_HELPER_SERVICE_NAME,
     version: CAPTURE_HELPER_VERSION,
     mode,
+    driverSet,
     hardwareAccess: CAPTURE_HELPER_HARDWARE_ACCESS,
     networkListener: CAPTURE_HELPER_NETWORK_LISTENER,
     simulator,
@@ -216,15 +239,18 @@ export function createCaptureHelperService(
 ): CaptureHelperService {
   const config = loadCaptureHelperConfig(input, env);
   const simulator = createCaptureHelperSimulator(config.simulator);
+  const drivers = createMockDriverSet(config.simulator);
 
   return {
     config,
+    drivers,
     health() {
       return {
         ok: true,
         service: CAPTURE_HELPER_SERVICE_NAME,
         version: CAPTURE_HELPER_VERSION,
         mode: config.mode,
+        driverSet: config.driverSet,
         status: "simulator_offline",
         hardwareAccess: CAPTURE_HELPER_HARDWARE_ACCESS,
         networkListener: CAPTURE_HELPER_NETWORK_LISTENER,
@@ -235,10 +261,11 @@ export function createCaptureHelperService(
       };
     },
     capabilities() {
-      const deviceCapabilityManifests = simulator.generateDeviceCapabilityManifests();
+      const deviceCapabilityManifests = mockDriverCapabilities(drivers);
       return {
         service: CAPTURE_HELPER_SERVICE_NAME,
         mode: config.mode,
+        driverSet: config.driverSet,
         simulator: true,
         hardwareAccess: CAPTURE_HELPER_HARDWARE_ACCESS,
         validation: validateCapabilities(deviceCapabilityManifests),
