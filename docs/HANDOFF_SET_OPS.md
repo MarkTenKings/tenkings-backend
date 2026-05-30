@@ -10072,3 +10072,12 @@ Build Set Ops UI flow with:
   - local capture-helper transport smoke command
   - `git diff --check`
 - Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.
+
+## Session Update (2026-05-30, AI Grader capture-helper local transport PR #21 merged)
+- PR #21 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/21`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `1d34f6c42d91df68a63b894c158b99f4cff52bcc`.
+- PR #21 added the explicit-start local capture-helper HTTP transport for simulator/mock-only health, capabilities, and manifest generation.
+- Post-merge GitHub Actions run `26693236835` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/8myQzHZc25EBEzWQx6DXej9bJ7US`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, and no next AI Grader phase work.

@@ -18510,6 +18510,26 @@ By enabling Rip It Live, I confirm:
 - No real hardware access was run.
 - No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
 
+## 2026-05-30 - AI Grader capture-helper local transport PR #21 merged
+
+### Summary
+- PR #21 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/21`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `1d34f6c42d91df68a63b894c158b99f4cff52bcc`.
+- PR #21 added the explicit-start, loopback-only local HTTP transport for `@tenkings/ai-grader-capture-helper`.
+- The merged transport remains simulator/mock-only and exposes JSON endpoints for health, capabilities, and QUICK/STANDARD/AUTH_ONLY manifest generation.
+- Post-merge GitHub Actions run `26693236835` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/8myQzHZc25EBEzWQx6DXej9bJ7US`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware access was run.
+- No real hardware SDK was imported.
+- No next AI Grader phase work was started.
+
 ## 2026-05-30 - AI Grader capture-helper service skeleton PR #19 merged
 
 ### Summary
