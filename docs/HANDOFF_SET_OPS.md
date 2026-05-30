@@ -9852,3 +9852,26 @@ Build Set Ops UI flow with:
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, and no next AI Grader phase work.
 - Remaining production rollout note: keep `AI_GRADER_API_ENABLED` disabled until the database migration and runtime rollout are explicitly approved.
+
+## Session Update (2026-05-30, AI Grader capture-helper simulator foundation)
+- Created branch `feature/ai-grader-capture-helper-simulator` from latest `origin/main`.
+- Added a new workspace package: `@tenkings/ai-grader-simulator`.
+- The package is importable/testable and does not run a daemon or expose production routes.
+- Simulator outputs:
+  - `DeviceCapabilityManifest[]` for macro camera, LED controller, microscope, XY stage, and arm interlock.
+  - QUICK `CaptureManifest` with deterministic macro frames.
+  - STANDARD capture simulation with a valid `CaptureManifest`, 11 mock micro spot packages, and deterministic evidence metadata.
+  - AUTH_ONLY `CaptureManifest` with deterministic auth patch frames.
+- STANDARD micro spot packages include the required EDR, polarized, and `FLC_LED_0` through `FLC_LED_7` frame references.
+- The simulator validates generated payloads against existing shared AI Grader validators.
+- The simulator uses deterministic local storage keys and SHA-256 checksum values only; it performs no file uploads and no hardware/device access.
+- Added focused simulator tests covering device capability validation, QUICK/STANDARD/AUTH_ONLY manifest validation, STANDARD spot/frame counts, deterministic output, and invalid config rejection.
+- Local validation passed:
+  - `pnpm --filter @tenkings/database build`
+  - `pnpm --filter @tenkings/database test`
+  - `pnpm --filter @tenkings/shared test`
+  - `pnpm --filter @tenkings/nextjs-app build`
+  - `pnpm --filter @tenkings/ai-grader-simulator build`
+  - `pnpm --filter @tenkings/ai-grader-simulator test`
+  - `git diff --check`
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware drivers, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.
