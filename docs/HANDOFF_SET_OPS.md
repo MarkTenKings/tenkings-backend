@@ -10030,3 +10030,12 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app build`
 - Capture-helper tests passed: 12 tests, including mock driver lifecycle, capability validation, deterministic fake metadata, failure injection, unsupported driver rejection, service mock capability assembly, and no hardware module dependency/import assertions.
 - Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no Basler/Dino-Lite/serial/GRBL SDK import, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.
+
+## Session Update (2026-05-30, AI Grader capture-helper driver contracts PR #20 merged)
+- PR #20 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/20`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `c31fbbef2d8118c7319037593ff41355b48bbfa8`.
+- PR #20 added the capture-helper driver abstraction layer and mock driver set for macro camera, LED controller, microscope, XY stage, and arm interlock.
+- Post-merge GitHub Actions run `26691187070` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/2ymNUeG7MHFr1pfbWxEBq23EEE7L`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, and no next AI Grader phase work.

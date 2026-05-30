@@ -18578,6 +18578,29 @@ By enabling Rip It Live, I confirm:
 - No Basler, Dino-Lite, serial, GRBL, camera, USB, or microscope SDK was imported.
 - No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
 
+## 2026-05-30 - AI Grader capture-helper driver contracts PR #20 merged
+
+### Summary
+- PR #20 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/20`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `c31fbbef2d8118c7319037593ff41355b48bbfa8`.
+- PR #20 added the capture-helper driver abstraction layer and mock driver set:
+  - macro camera
+  - LED controller
+  - microscope
+  - XY stage
+  - arm interlock
+- Post-merge GitHub Actions run `26691187070` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/2ymNUeG7MHFr1pfbWxEBq23EEE7L`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware access was run.
+- No next AI Grader phase work was started.
+
 ## 2026-05-30 - AI Grader simulated session workflow PR #18 merged
 
 ### Summary
