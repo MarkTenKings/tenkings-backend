@@ -9960,3 +9960,36 @@ Build Set Ops UI flow with:
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, and no next AI Grader phase work.
 - Recommended next chunk, pending explicit approval: begin the capture-helper service skeleton with simulator-backed runtime first.
+
+## Session Update (2026-05-30, AI Grader capture-helper service skeleton)
+- Created branch `feature/ai-grader-capture-helper-service` from latest `origin/main`.
+- Added `@tenkings/ai-grader-capture-helper` as a simulator-only workspace package.
+- The package provides an importable service boundary and JSON CLI for:
+  - `health`
+  - `capabilities`
+  - `manifest --mode QUICK`
+  - `manifest --mode STANDARD`
+  - `manifest --mode AUTH_ONLY`
+- The config loader defaults to simulator mode and rejects any non-simulator backend mode.
+- The helper reports `hardwareAccess: disabled`, `networkListener: disabled`, and `deviceAccess: none`.
+- Capability and manifest generation use `@tenkings/ai-grader-simulator` plus shared validators only.
+- Added focused tests covering simulator health, shared capability validation, QUICK/STANDARD/AUTH_ONLY manifest validation, CLI JSON behavior, invalid mode/config rejection, and the absence of a hardware backend path.
+- Added `docs/ai-grader-capture-helper.md` with local usage, simulator-only limitations, and future hardware driver boundary notes.
+- CLI smoke summary:
+  - health -> `simulator_offline`, `mode=simulator`, `hardwareAccess=disabled`
+  - capabilities -> `5` manifests, validation pass
+  - QUICK -> `4` frames, validation pass
+  - STANDARD -> `15` manifest frames, `11` micro packages, `110` evidence frames, validation pass
+  - AUTH_ONLY -> `6` frames, validation pass
+- Validation passed:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test`
+  - capture-helper CLI smoke command
+  - `pnpm --filter @tenkings/database build`
+  - `pnpm --filter @tenkings/database test`
+  - `pnpm --filter @tenkings/shared test`
+  - `pnpm --filter @tenkings/ai-grader-simulator build`
+  - `pnpm --filter @tenkings/ai-grader-simulator test`
+  - `pnpm --filter @tenkings/nextjs-app build`
+  - `git diff --check`
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.
