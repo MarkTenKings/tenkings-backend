@@ -18530,6 +18530,44 @@ By enabling Rip It Live, I confirm:
 - No real hardware SDK was imported.
 - No next AI Grader phase work was started.
 
+## 2026-05-30 - AI Grader admin helper bridge
+
+### Summary
+- Created branch `feature/ai-grader-admin-helper-bridge` from latest `origin/main`.
+- Added a disabled-by-default admin-to-capture-helper bridge behind:
+  - `AI_GRADER_HELPER_BRIDGE_ENABLED=true`
+  - `AI_GRADER_HELPER_BASE_URL=http://127.0.0.1:<port>`
+- Bridge base URLs must be loopback HTTP URLs; non-loopback URLs are rejected before auth/network/helper calls.
+- Added server-side helper bridge actions through the existing AI Grader admin API proxy:
+  - `helper/health`
+  - `helper/capabilities`
+  - `helper/manifest`
+- The browser admin client still calls only `/api/admin/ai-grader/...`; it does not call localhost directly.
+- Added a Local Helper Bridge panel to the admin AI Grader page for health, capability summary, and QUICK/STANDARD/AUTH_ONLY manifest generation.
+- Existing simulator/no-helper actions remain available without helper bridge enablement.
+
+### Validation Evidence
+- Focused AI Grader API/client tests passed: `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts tests/aiGraderAdminClient.test.ts`, 30 tests.
+- `pnpm --filter @tenkings/nextjs-app build` passed with existing lint/config warnings only.
+- `pnpm --filter @tenkings/database build` passed.
+- `pnpm --filter @tenkings/database test` passed, 36 tests.
+- `pnpm --filter @tenkings/shared test` passed, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator build` passed.
+- `pnpm --filter @tenkings/ai-grader-simulator test` passed, 6 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` passed.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` passed, 21 tests.
+- `git diff --check` passed.
+- Guardrail scan found no `RUN_DB_MIGRATIONS`, `DATABASE_URL`, Prisma, or real hardware SDK references in the touched bridge code/tests.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware access was run.
+- No real hardware SDK was imported.
+- No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
+
 ## 2026-05-30 - AI Grader capture-helper service skeleton PR #19 merged
 
 ### Summary

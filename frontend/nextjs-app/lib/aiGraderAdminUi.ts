@@ -39,3 +39,7 @@ export function canSubmitAiGraderOperation(status: AiGraderAdminApiStatus | null
 export function canRunAiGraderSimulator(status: AiGraderAdminApiStatus | null) {
   return status?.enabled === true && status.simulator?.enabled === true;
 }
+
+export function canRunAiGraderHelperBridge(status: AiGraderAdminApiStatus | null) {
+  return status?.enabled === true && status.helperBridge?.enabled === true && status.helperBridge.configured === true;
+}

@@ -3,12 +3,16 @@ import test from "node:test";
 import {
   AiGraderAdminApiError,
   fetchAiGraderAdminStatus,
+  fetchAiGraderHelperCapabilities,
+  fetchAiGraderHelperHealth,
   generateAiGraderSimulatedSessionWorkflow,
+  generateAiGraderHelperManifest,
   generateAiGraderSimulatorManifest,
   postAiGraderAdminOperation,
   type AiGraderAdminFetch,
 } from "../lib/aiGraderAdminClient";
 import {
+  canRunAiGraderHelperBridge as canRunHelperBridgeFromUi,
   canRunAiGraderSimulator as canRunSimulatorFromUi,
   canSubmitAiGraderOperation as canSubmitFromUi,
   hasAiGraderAdminAccess as hasAccessFromUi,
@@ -54,6 +58,7 @@ test("disabled status response is returned without throwing", async () => {
   });
   assert.equal(canSubmitFromUi(status), false);
   assert.equal(canRunSimulatorFromUi(status), false);
+  assert.equal(canRunHelperBridgeFromUi(status), false);
 });
 
 test("enabled status response exposes routes and allows submit", async () => {
@@ -64,6 +69,12 @@ test("enabled status response exposes routes and allows submit", async () => {
       service: "ai-grader-admin-api",
       routes: ["status", "capture-sessions/draft"],
       simulator: { enabled: true, message: "Simulator enabled." },
+      helperBridge: {
+        enabled: true,
+        configured: true,
+        message: "Helper bridge enabled.",
+        baseUrl: "http://127.0.0.1:47650",
+      },
       user: { id: "admin-1", phone: "+15555550100", displayName: "Admin" },
     })
   );
@@ -74,6 +85,7 @@ test("enabled status response exposes routes and allows submit", async () => {
   assert.equal(status.user?.id, "admin-1");
   assert.equal(canSubmitFromUi(status), true);
   assert.equal(canRunSimulatorFromUi(status), true);
+  assert.equal(canRunHelperBridgeFromUi(status), true);
 });
 
 test("operation client maps validation errors to typed api errors", async () => {
@@ -256,6 +268,100 @@ test("simulated session client maps success response", async () => {
   assert.equal(result.micro.packageCount, 11);
   assert.equal(result.micro.surfaceSuspectCount, 3);
   assert.equal(result.certificateReadiness.ready, false);
+});
+
+test("helper bridge client maps disabled response to typed api error", async () => {
+  await assert.rejects(
+    () =>
+      fetchAiGraderHelperHealth({ Authorization: "Bearer token-1" }, async (input, init) => {
+        assert.equal(input, "/api/admin/ai-grader/helper/health");
+        assert.equal(init?.method, undefined);
+        return jsonResponse(503, {
+          ok: false,
+          enabled: false,
+          code: "AI_GRADER_HELPER_BRIDGE_DISABLED",
+          message: "AI Grader helper bridge is disabled.",
+        });
+      }),
+    (error) => {
+      assert.equal(error instanceof AiGraderAdminApiError, true);
+      const apiError = error as AiGraderAdminApiError;
+      assert.equal(apiError.status, 503);
+      assert.equal(apiError.code, "AI_GRADER_HELPER_BRIDGE_DISABLED");
+      assert.equal(apiError.disabled, true);
+      return true;
+    }
+  );
+});
+
+test("helper bridge client maps health success response", async () => {
+  const result = await fetchAiGraderHelperHealth({}, async (input) => {
+    assert.equal(input, "/api/admin/ai-grader/helper/health");
+    return jsonResponse(200, {
+      ok: true,
+      enabled: true,
+      operation: "helperBridgeHealth",
+      result: {
+        service: "ai-grader-capture-helper",
+        mode: "simulator",
+        driverSet: "mock",
+        status: "simulator_offline",
+        hardwareAccess: "disabled",
+      },
+    });
+  });
+
+  assert.equal(result.service, "ai-grader-capture-helper");
+  assert.equal(result.mode, "simulator");
+  assert.equal(result.driverSet, "mock");
+  assert.equal(result.status, "simulator_offline");
+});
+
+test("helper bridge client maps capabilities success response", async () => {
+  const result = await fetchAiGraderHelperCapabilities({}, async (input) => {
+    assert.equal(input, "/api/admin/ai-grader/helper/capabilities");
+    return jsonResponse(200, {
+      ok: true,
+      enabled: true,
+      operation: "helperBridgeCapabilities",
+      result: {
+        validation: { valid: true, issues: [] },
+        deviceCapabilityManifests: [{ deviceKind: "MACRO_CAMERA" }, { deviceKind: "LED_CONTROLLER" }],
+      },
+    });
+  });
+
+  assert.equal(result.validation?.valid, true);
+  assert.equal(result.deviceCapabilityManifests?.length, 2);
+});
+
+test("helper bridge client maps manifest success response", async () => {
+  const result = await generateAiGraderHelperManifest("STANDARD", {}, async (input, init) => {
+    assert.equal(input, "/api/admin/ai-grader/helper/manifest");
+    assert.equal(init?.method, "POST");
+    assert.equal((init?.headers as Record<string, string>)["Content-Type"], "application/json");
+    assert.equal(init?.body, JSON.stringify({ mode: "STANDARD" }));
+    return jsonResponse(200, {
+      ok: true,
+      enabled: true,
+      operation: "helperBridgeManifest",
+      result: {
+        captureMode: "STANDARD",
+        validation: { valid: true, issues: [] },
+        captureManifest: {
+          helperInstanceId: "helper-1",
+          calibrationSnapshotIds: ["cal-1"],
+          frameList: Array.from({ length: 15 }, (_, index) => ({ frameId: `frame-${index}` })),
+        },
+        microSpotPackages: Array.from({ length: 11 }, (_, index) => ({ id: `spot-${index}` })),
+      },
+    });
+  });
+
+  assert.equal(result.validation?.valid, true);
+  assert.equal(result.captureManifest?.frameList?.length, 15);
+  assert.equal(result.captureManifest?.helperInstanceId, "helper-1");
+  assert.equal(result.microSpotPackages?.length, 11);
 });
 
 test("admin gate state follows existing admin auth shape", () => {

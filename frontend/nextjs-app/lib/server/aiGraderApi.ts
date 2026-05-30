@@ -29,11 +29,15 @@ import type { AdminSession } from "./admin";
 
 export const AI_GRADER_API_ENABLED_ENV = "AI_GRADER_API_ENABLED";
 export const AI_GRADER_SIMULATOR_ENABLED_ENV = "AI_GRADER_SIMULATOR_ENABLED";
+export const AI_GRADER_HELPER_BRIDGE_ENABLED_ENV = "AI_GRADER_HELPER_BRIDGE_ENABLED";
+export const AI_GRADER_HELPER_BASE_URL_ENV = "AI_GRADER_HELPER_BASE_URL";
+export const AI_GRADER_HELPER_BRIDGE_TIMEOUT_MS = 2500;
 
 type JsonRecord = Record<string, unknown>;
 type EnvLike = Record<string, string | undefined>;
 
 export type AiGraderSimulatorMode = "DEVICE_CAPABILITIES" | "QUICK" | "STANDARD" | "AUTH_ONLY";
+export type AiGraderHelperManifestMode = Exclude<AiGraderSimulatorMode, "DEVICE_CAPABILITIES">;
 
 export type AiGraderSimulatorGenerateInput = {
   mode: AiGraderSimulatorMode;
@@ -135,6 +139,31 @@ export type AiGraderSimulatedSessionGenerator = (
   input: AiGraderSimulatedSessionWorkflowInput
 ) => Promise<AiGraderSimulatedSessionWorkflowResult> | AiGraderSimulatedSessionWorkflowResult;
 
+export type AiGraderHelperBridgeStatus = {
+  enabled: boolean;
+  configured: boolean;
+  code?: string;
+  message: string;
+  baseUrl?: string;
+};
+
+export type AiGraderHelperBridgeFetchResponse = {
+  ok: boolean;
+  status: number;
+  json(): Promise<unknown>;
+};
+
+export type AiGraderHelperBridgeFetch = (
+  input: string,
+  init?: RequestInit
+) => Promise<AiGraderHelperBridgeFetchResponse>;
+
+export type AiGraderHelperBridgeClient = {
+  health(): Promise<unknown>;
+  capabilities(): Promise<unknown>;
+  manifest(mode: AiGraderHelperManifestMode): Promise<unknown>;
+};
+
 export type AiGraderAdminApiService = {
   createCaptureSessionDraft(input: CreateCaptureSessionDraftInput): Promise<unknown>;
   persistOrchestratorTransition(input: PersistOrchestratorTransitionInput): Promise<unknown>;
@@ -151,6 +180,8 @@ export type AiGraderAdminApiDependencies = {
   getService(): Promise<AiGraderAdminApiService> | AiGraderAdminApiService;
   generateSimulatorManifest?: AiGraderSimulatorGenerator;
   generateSimulatedSessionWorkflow?: AiGraderSimulatedSessionGenerator;
+  helperBridgeFetch?: AiGraderHelperBridgeFetch;
+  getHelperBridgeClient?: (env: EnvLike) => AiGraderHelperBridgeClient;
 };
 
 type RouteDefinition = {
@@ -175,6 +206,7 @@ type ApiResponse =
         code?: string;
         message: string;
       };
+      helperBridge: AiGraderHelperBridgeStatus;
       user: {
         id: string;
         phone: string | null;
@@ -200,6 +232,91 @@ export function isAiGraderApiEnabled(env: EnvLike = process.env) {
 
 export function isAiGraderSimulatorEnabled(env: EnvLike = process.env) {
   return env[AI_GRADER_SIMULATOR_ENABLED_ENV] === "true";
+}
+
+export function isAiGraderHelperBridgeEnabled(env: EnvLike = process.env) {
+  return env[AI_GRADER_HELPER_BRIDGE_ENABLED_ENV] === "true";
+}
+
+class AiGraderHelperBridgeError extends Error {
+  readonly statusCode: number;
+  readonly code: string;
+  readonly details?: unknown;
+
+  constructor(statusCode: number, code: string, message: string, details?: unknown) {
+    super(message);
+    this.name = "AiGraderHelperBridgeError";
+    this.statusCode = statusCode;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+function isLoopbackHostname(hostname: string) {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "localhost" || normalized === "127.0.0.1" || normalized === "::1" || normalized === "[::1]";
+}
+
+function normalizeHelperBridgeBaseUrl(env: EnvLike): string {
+  const raw = env[AI_GRADER_HELPER_BASE_URL_ENV]?.trim();
+  if (!raw) {
+    throw new AiGraderHelperBridgeError(
+      400,
+      "AI_GRADER_HELPER_BRIDGE_CONFIG_INVALID",
+      "AI Grader helper bridge requires AI_GRADER_HELPER_BASE_URL=http://127.0.0.1:<port>."
+    );
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new AiGraderHelperBridgeError(
+      400,
+      "AI_GRADER_HELPER_BRIDGE_CONFIG_INVALID",
+      "AI Grader helper bridge base URL must be a valid loopback HTTP URL."
+    );
+  }
+
+  if (parsed.protocol !== "http:" || !isLoopbackHostname(parsed.hostname) || parsed.username || parsed.password) {
+    throw new AiGraderHelperBridgeError(
+      400,
+      "AI_GRADER_HELPER_BRIDGE_CONFIG_INVALID",
+      "AI Grader helper bridge base URL must use http and a loopback host."
+    );
+  }
+
+  return parsed.origin;
+}
+
+function helperBridgeStatus(env: EnvLike): AiGraderHelperBridgeStatus {
+  if (!isAiGraderHelperBridgeEnabled(env)) {
+    return {
+      enabled: false,
+      configured: false,
+      code: "AI_GRADER_HELPER_BRIDGE_DISABLED",
+      message: "AI Grader helper bridge is disabled. Set AI_GRADER_HELPER_BRIDGE_ENABLED=true to enable.",
+    };
+  }
+
+  try {
+    return {
+      enabled: true,
+      configured: true,
+      baseUrl: normalizeHelperBridgeBaseUrl(env),
+      message: "AI Grader helper bridge is enabled for loopback-only local helper transport.",
+    };
+  } catch (error) {
+    return {
+      enabled: true,
+      configured: false,
+      code:
+        error instanceof AiGraderHelperBridgeError
+          ? error.code
+          : "AI_GRADER_HELPER_BRIDGE_CONFIG_INVALID",
+      message: errorMessage(error),
+    };
+  }
 }
 
 function routeKey(req: NextApiRequest) {
@@ -245,6 +362,94 @@ function errorMessage(error: unknown) {
   return "Unexpected error";
 }
 
+function helperTransportErrorMessage(payload: unknown) {
+  if (!isRecord(payload)) return null;
+  if (typeof payload.message === "string") return payload.message;
+  if (isRecord(payload.error) && typeof payload.error.message === "string") return payload.error.message;
+  return null;
+}
+
+function isAbortError(error: unknown) {
+  return isRecord(error) && error.name === "AbortError";
+}
+
+function helperRequestHeaders(headers: HeadersInit | undefined) {
+  const merged = new Headers(headers);
+  if (!merged.has("Accept")) merged.set("Accept", "application/json");
+  return merged;
+}
+
+export function createAiGraderHelperBridgeClient(
+  env: EnvLike = process.env,
+  fetchImpl: AiGraderHelperBridgeFetch = globalThis.fetch as unknown as AiGraderHelperBridgeFetch
+): AiGraderHelperBridgeClient {
+  const baseUrl = normalizeHelperBridgeBaseUrl(env);
+
+  async function fetchHelper(path: string, init: RequestInit = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AI_GRADER_HELPER_BRIDGE_TIMEOUT_MS);
+    let response: AiGraderHelperBridgeFetchResponse;
+
+    try {
+      response = await fetchImpl(`${baseUrl}${path}`, {
+        ...init,
+        headers: helperRequestHeaders(init.headers),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw new AiGraderHelperBridgeError(
+          504,
+          "AI_GRADER_HELPER_BRIDGE_TIMEOUT",
+          "AI Grader helper bridge request timed out."
+        );
+      }
+      throw new AiGraderHelperBridgeError(
+        502,
+        "AI_GRADER_HELPER_BRIDGE_UNAVAILABLE",
+        error instanceof Error ? error.message : "AI Grader helper bridge request failed."
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new AiGraderHelperBridgeError(
+        502,
+        "AI_GRADER_HELPER_BRIDGE_INVALID_RESPONSE",
+        "AI Grader helper bridge returned invalid JSON."
+      );
+    }
+
+    if (!response.ok) {
+      throw new AiGraderHelperBridgeError(
+        response.status,
+        "AI_GRADER_HELPER_BRIDGE_UPSTREAM_ERROR",
+        helperTransportErrorMessage(payload) ?? "AI Grader helper bridge returned an error.",
+        payload
+      );
+    }
+
+    return payload;
+  }
+
+  return {
+    health: () => fetchHelper("/health"),
+    capabilities: () => fetchHelper("/capabilities"),
+    manifest: (mode) =>
+      fetchHelper("/manifest", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ mode }),
+      }),
+  };
+}
+
 const ROUTES: Record<string, RouteDefinition> = {
   "capture-sessions/draft": {
     allow: "POST",
@@ -287,7 +492,20 @@ const STATUS_ROUTE_KEYS = new Set(["status", "health"]);
 const SIMULATOR_ROUTE_KEY = "simulator/generate";
 const SIMULATED_SESSION_ROUTE_KEY = "simulator/session";
 const SIMULATOR_ROUTE_KEYS = new Set([SIMULATOR_ROUTE_KEY, SIMULATED_SESSION_ROUTE_KEY]);
-const routeList = ["status", "health", SIMULATOR_ROUTE_KEY, SIMULATED_SESSION_ROUTE_KEY, ...Object.keys(ROUTES)];
+const HELPER_HEALTH_ROUTE_KEY = "helper/health";
+const HELPER_CAPABILITIES_ROUTE_KEY = "helper/capabilities";
+const HELPER_MANIFEST_ROUTE_KEY = "helper/manifest";
+const HELPER_ROUTE_KEYS = new Set([HELPER_HEALTH_ROUTE_KEY, HELPER_CAPABILITIES_ROUTE_KEY, HELPER_MANIFEST_ROUTE_KEY]);
+const routeList = [
+  "status",
+  "health",
+  SIMULATOR_ROUTE_KEY,
+  SIMULATED_SESSION_ROUTE_KEY,
+  HELPER_HEALTH_ROUTE_KEY,
+  HELPER_CAPABILITIES_ROUTE_KEY,
+  HELPER_MANIFEST_ROUTE_KEY,
+  ...Object.keys(ROUTES),
+];
 
 function simulatorStatus(env: EnvLike) {
   const enabled = isAiGraderSimulatorEnabled(env);
@@ -302,6 +520,10 @@ function simulatorStatus(env: EnvLike) {
 
 function isSimulatorMode(value: unknown): value is AiGraderSimulatorMode {
   return value === "DEVICE_CAPABILITIES" || value === "QUICK" || value === "STANDARD" || value === "AUTH_ONLY";
+}
+
+function isHelperManifestMode(value: unknown): value is AiGraderHelperManifestMode {
+  return value === "QUICK" || value === "STANDARD" || value === "AUTH_ONLY";
 }
 
 function parseSimulatorGenerateInput(body: JsonRecord): AiGraderSimulatorGenerateInput {
@@ -321,6 +543,16 @@ function parseSimulatorGenerateInput(body: JsonRecord): AiGraderSimulatorGenerat
     mode: body.mode,
     ...(isRecord(body.config) ? { config: body.config as CaptureHelperSimulatorConfigInput } : {}),
   };
+}
+
+function parseHelperManifestInput(body: JsonRecord): AiGraderHelperManifestMode {
+  if (!isHelperManifestMode(body.mode)) {
+    throw Object.assign(new Error("Helper manifest mode must be QUICK, STANDARD, or AUTH_ONLY."), {
+      name: "AiGraderServiceValidationError",
+      issues: [{ path: "mode", code: "INVALID_MODE", message: "mode must be QUICK, STANDARD, or AUTH_ONLY." }],
+    });
+  }
+  return body.mode;
 }
 
 function parseSimulatedSessionWorkflowInput(body: JsonRecord): AiGraderSimulatedSessionWorkflowInput {
@@ -526,6 +758,7 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
 
   return async function aiGraderAdminApiHandler(req: NextApiRequest, res: NextApiResponse<ApiResponse>) {
     const key = routeKey(req);
+    const isHelperRoute = HELPER_ROUTE_KEYS.has(key);
 
     if (STATUS_ROUTE_KEYS.has(key)) {
       if (req.method !== "GET") {
@@ -534,10 +767,10 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
       }
     } else {
       const route = ROUTES[key];
-      if (!route && !SIMULATOR_ROUTE_KEYS.has(key)) {
+      if (!route && !SIMULATOR_ROUTE_KEYS.has(key) && !isHelperRoute) {
         return res.status(404).json({ ok: false, message: "AI Grader admin API route not found" });
       }
-      const allow = SIMULATOR_ROUTE_KEYS.has(key) ? "POST" : route.allow;
+      const allow = SIMULATOR_ROUTE_KEYS.has(key) || key === HELPER_MANIFEST_ROUTE_KEY ? "POST" : isHelperRoute ? "GET" : route.allow;
       if (req.method !== allow) {
         res.setHeader("Allow", allow);
         return res.status(405).json({ ok: false, message: "Method not allowed" });
@@ -551,6 +784,25 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
         code: "AI_GRADER_API_DISABLED",
         message: "AI Grader admin API is disabled. Set AI_GRADER_API_ENABLED=true to enable.",
       });
+    }
+
+    if (isHelperRoute) {
+      const bridgeStatus = helperBridgeStatus(env);
+      if (!bridgeStatus.enabled) {
+        return res.status(503).json({
+          ok: false,
+          enabled: false,
+          code: "AI_GRADER_HELPER_BRIDGE_DISABLED",
+          message: bridgeStatus.message,
+        });
+      }
+      if (!bridgeStatus.configured) {
+        return res.status(400).json({
+          ok: false,
+          code: bridgeStatus.code ?? "AI_GRADER_HELPER_BRIDGE_CONFIG_INVALID",
+          message: bridgeStatus.message,
+        });
+      }
     }
 
     if (SIMULATOR_ROUTE_KEYS.has(key) && !isAiGraderSimulatorEnabled(env)) {
@@ -571,6 +823,7 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
           enabled: true,
           service: "ai-grader-admin-api",
           simulator: simulatorStatus(env),
+          helperBridge: helperBridgeStatus(env),
           user: {
             id: admin.user.id,
             phone: admin.user.phone,
@@ -580,11 +833,14 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
         });
       }
 
-      if (!isRecord(req.body)) {
+      if (!isHelperRoute && !isRecord(req.body)) {
         return res.status(400).json({ ok: false, message: "JSON object body is required" });
       }
 
       if (key === SIMULATOR_ROUTE_KEY) {
+        if (!isRecord(req.body)) {
+          return res.status(400).json({ ok: false, message: "JSON object body is required" });
+        }
         const result = await generateSimulatorManifest(parseSimulatorGenerateInput(req.body));
         return res.status(200).json({
           ok: true,
@@ -595,6 +851,9 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
       }
 
       if (key === SIMULATED_SESSION_ROUTE_KEY) {
+        if (!isRecord(req.body)) {
+          return res.status(400).json({ ok: false, message: "JSON object body is required" });
+        }
         const result = await generateSimulatedSessionWorkflow(parseSimulatedSessionWorkflowInput(req.body));
         return res.status(200).json({
           ok: true,
@@ -602,6 +861,48 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
           operation: "generateSimulatedSessionWorkflow",
           result,
         });
+      }
+
+      if (isHelperRoute) {
+        const helperClient =
+          deps.getHelperBridgeClient?.(env) ??
+          createAiGraderHelperBridgeClient(env, deps.helperBridgeFetch ?? (globalThis.fetch as unknown as AiGraderHelperBridgeFetch));
+
+        if (key === HELPER_HEALTH_ROUTE_KEY) {
+          const result = await helperClient.health();
+          return res.status(200).json({
+            ok: true,
+            enabled: true,
+            operation: "helperBridgeHealth",
+            result,
+          });
+        }
+
+        if (key === HELPER_CAPABILITIES_ROUTE_KEY) {
+          const result = await helperClient.capabilities();
+          return res.status(200).json({
+            ok: true,
+            enabled: true,
+            operation: "helperBridgeCapabilities",
+            result,
+          });
+        }
+
+        if (!isRecord(req.body)) {
+          return res.status(400).json({ ok: false, message: "JSON object body is required" });
+        }
+
+        const result = await helperClient.manifest(parseHelperManifestInput(req.body));
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "helperBridgeManifest",
+          result,
+        });
+      }
+
+      if (!isRecord(req.body)) {
+        return res.status(400).json({ ok: false, message: "JSON object body is required" });
       }
 
       const route = ROUTES[key];
@@ -615,6 +916,15 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
         result,
       });
     } catch (error) {
+      if (error instanceof AiGraderHelperBridgeError) {
+        return res.status(error.statusCode).json({
+          ok: false,
+          code: error.code,
+          message: error.message,
+          ...(error.details == null ? {} : { details: error.details }),
+        });
+      }
+
       const validationResponse = validationErrorResponse(error);
       if (validationResponse) {
         return res.status(validationResponse.status).json(validationResponse.body);
