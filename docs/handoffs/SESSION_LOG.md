@@ -18532,6 +18532,51 @@ By enabling Rip It Live, I confirm:
 - No real hardware access was run.
 - No next AI Grader phase work was started.
 
+## 2026-05-30 - AI Grader capture-helper local transport
+
+### Summary
+- Created branch `feature/ai-grader-capture-helper-transport` from latest `origin/main`.
+- Added a native Node `http` local transport to `@tenkings/ai-grader-capture-helper`.
+- Transport is disabled by default and starts only through explicit `serve` CLI usage or direct test/imported start calls.
+- Added loopback-only transport config:
+  - default host `127.0.0.1`
+  - default port `47650`
+  - non-loopback hosts rejected
+  - simulator mode and mock driver set only
+- Added JSON endpoints:
+  - `GET /health`
+  - `GET /capabilities`
+  - `POST /manifest` for `QUICK`, `STANDARD`, and `AUTH_ONLY`
+- Existing `health`, `capabilities`, and `manifest` CLI commands remain working JSON-and-exit commands.
+- Added tests for health, capabilities, QUICK/STANDARD/AUTH_ONLY manifests, invalid mode `400`, unsupported method `405`, non-loopback rejection, real driver-set rejection, and no hardware module dependency/import assertions.
+- Updated `docs/ai-grader-capture-helper.md` with transport usage, disabled-by-default behavior, simulator/mock-only limits, and future UI/helper bridge notes.
+
+### Smoke Results
+- Local server started on `127.0.0.1` with ephemeral port `60745`.
+- `GET /health` -> `200`, `mode=simulator`, `transport.localOnly=true`.
+- `POST /manifest` with `QUICK` -> `200`, `frameCount=4`.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 21 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass, existing lint warnings only.
+- local capture-helper transport smoke command -> pass.
+- `git diff --check` -> pass.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware access was run.
+- No real hardware SDK was imported.
+- No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
+
 ### Next Recommendation
 - Pending explicit approval, define device driver interfaces/adapters with mock drivers only, still without physical device access.
 

@@ -255,7 +255,7 @@ export function createCaptureHelperService(
         hardwareAccess: CAPTURE_HELPER_HARDWARE_ACCESS,
         networkListener: CAPTURE_HELPER_NETWORK_LISTENER,
         deviceAccess: "none",
-        message: "Simulator-only capture helper skeleton is healthy; no real hardware or network listener is active.",
+        message: "Simulator-only capture helper core is healthy; no real hardware is active and local transport only runs when explicitly started.",
         helperInstanceId: config.simulator.helperInstanceId,
         captureSessionId: config.simulator.captureSessionId,
       };
