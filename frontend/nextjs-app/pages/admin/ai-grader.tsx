@@ -16,9 +16,11 @@ import {
   AiGraderAdminApiError,
   type AiGraderAdminApiStatus,
   type AiGraderAdminOperation,
+  type AiGraderSimulatedSessionWorkflowResult,
   type AiGraderSimulatorMode,
   type AiGraderSimulatorResult,
   fetchAiGraderAdminStatus,
+  generateAiGraderSimulatedSessionWorkflow,
   generateAiGraderSimulatorManifest,
   postAiGraderAdminOperation,
 } from "../../lib/aiGraderAdminClient";
@@ -371,6 +373,196 @@ function SimulatorPanel({
   );
 }
 
+function SimulatedSessionPanel({
+  enabled,
+  status,
+  adminHeaders,
+}: {
+  enabled: boolean;
+  status: AiGraderAdminApiStatus | null;
+  adminHeaders: Record<string, string>;
+}) {
+  const [result, setResult] = useState<AiGraderSimulatedSessionWorkflowResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  const generateSession = async () => {
+    if (!enabled) {
+      setError(status?.simulator?.message ?? "AI Grader simulator mode is disabled.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError(null);
+    try {
+      setResult(await generateAiGraderSimulatedSessionWorkflow(adminHeaders));
+    } catch (requestError) {
+      if (requestError instanceof AiGraderAdminApiError) {
+        setError(requestError.message);
+      } else {
+        setError(requestError instanceof Error ? requestError.message : "AI Grader simulated session request failed.");
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <section className={adminPanelClass("p-5")}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">Simulated Session</p>
+          <h2 className="mt-2 text-xl font-semibold text-white">STANDARD Workflow Preview</h2>
+        </div>
+        <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.2em] ${simulatorTone(status)}`}>
+          No DB or hardware
+        </span>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.7fr_1.3fr]">
+        <div className={adminSubpanelClass("flex flex-col gap-4 p-4")}>
+          <p className="text-sm text-slate-400">
+            Generates a deterministic STANDARD capture workflow from simulator data only. The payload stops at a draft GradeRun-like
+            summary and certificate readiness placeholder.
+          </p>
+          <button
+            type="button"
+            disabled={!enabled || submitting}
+            onClick={() => generateSession().catch(() => undefined)}
+            className={adminCx(
+              "w-fit rounded-full border px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] transition",
+              enabled && !submitting
+                ? "border-gold-500/60 bg-gold-500 text-night-900 hover:bg-gold-400"
+                : "cursor-not-allowed border-white/12 bg-white/[0.03] text-slate-500"
+            )}
+          >
+            {submitting ? "Generating" : "Generate Session"}
+          </button>
+          {!enabled ? (
+            <p className="text-sm text-amber-100/80">
+              {status?.simulator?.message ?? "Simulator actions require both API and simulator flags."}
+            </p>
+          ) : null}
+          {error ? <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</p> : null}
+        </div>
+
+        <div className={adminSubpanelClass("p-4")}>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Session</p>
+              <p className="mt-2 break-all text-sm font-semibold text-white">{result?.session.sessionId ?? "pending"}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Mode</p>
+              <p className="mt-2 text-lg font-semibold text-white">{result?.session.mode ?? "STANDARD"}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Frames</p>
+              <p className="mt-2 text-lg font-semibold text-white">{result?.manifest.frameCount ?? 0}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Validation</p>
+              <p className={adminCx("mt-2 text-lg font-semibold", result?.validation.valid ? "text-emerald-200" : "text-slate-400")}>
+                {result ? (result.validation.valid ? "Valid" : "Invalid") : "Pending"}
+              </p>
+            </article>
+          </div>
+
+          {result ? (
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Manifest</p>
+                <dl className="mt-2 space-y-2 text-xs text-slate-300">
+                  <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                    <dt className="text-slate-500">ID</dt>
+                    <dd className="break-all text-white">{result.manifest.id}</dd>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                    <dt className="text-slate-500">Checksum</dt>
+                    <dd className="break-all text-white">{result.manifest.checksumSha256}</dd>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                    <dt className="text-slate-500">Helper</dt>
+                    <dd className="break-all text-white">{result.session.helperInstanceId}</dd>
+                  </div>
+                </dl>
+              </div>
+
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Pipeline Summary</p>
+                <dl className="mt-2 grid gap-2 text-xs text-slate-300 sm:grid-cols-2">
+                  <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                    <dt className="text-slate-500">Macro Frames</dt>
+                    <dd className="text-white">{result.macro.frameCount}</dd>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                    <dt className="text-slate-500">Micro Packages</dt>
+                    <dd className="text-white">{result.micro.packageCount}</dd>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                    <dt className="text-slate-500">Micro Evidence Frames</dt>
+                    <dd className="text-white">{result.micro.evidenceFrameCount}</dd>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                    <dt className="text-slate-500">Surface Suspects</dt>
+                    <dd className="text-white">{result.micro.surfaceSuspectCount}</dd>
+                  </div>
+                </dl>
+              </div>
+
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Macro Frames</p>
+                <ul className="mt-2 space-y-1 text-xs text-slate-300">
+                  {result.macro.frames.map((frame) => (
+                    <li key={frame.frameId} className="rounded-lg bg-white/[0.03] px-2 py-1">
+                      <span className="font-semibold text-white">{frame.kind}</span> · {frame.side}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Micro Spots</p>
+                <ul className="mt-2 max-h-[156px] space-y-1 overflow-auto text-xs text-slate-300">
+                  {result.micro.packages.map((microPackage) => (
+                    <li key={microPackage.id} className="rounded-lg bg-white/[0.03] px-2 py-1">
+                      <span className="font-semibold text-white">{microPackage.element}</span> {microPackage.spotIndex}/
+                      {microPackage.totalSpots} · {microPackage.frameCount} frames
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Draft GradeRun-like Summary</p>
+                <dl className="mt-2 space-y-2 text-xs text-slate-300">
+                  <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                    <dt className="text-slate-500">Status</dt>
+                    <dd className="text-white">{result.gradeRunDraft.status}</dd>
+                  </div>
+                  <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                    <dt className="text-slate-500">Input Checksum</dt>
+                    <dd className="break-all text-white">{result.gradeRunDraft.inputChecksum}</dd>
+                  </div>
+                </dl>
+              </div>
+
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Certificate Readiness</p>
+                <div className="mt-2 rounded-lg border border-amber-400/20 bg-amber-950/10 p-3 text-sm text-amber-100/85">
+                  {result.certificateReadiness.message}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-4 text-sm text-slate-500">Generate a simulated session to inspect the STANDARD workflow payload.</p>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function OperationCard({
   operation,
   enabled,
@@ -644,6 +836,8 @@ export default function AiGraderAdminPage() {
         ) : null}
 
         <SimulatorPanel enabled={canRunSimulator} status={status} adminHeaders={adminHeaders} />
+
+        <SimulatedSessionPanel enabled={canRunSimulator} status={status} adminHeaders={adminHeaders} />
 
         <section className={adminPanelClass("p-5")}>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

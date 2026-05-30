@@ -324,6 +324,142 @@ test("simulator API returns a valid manifest when enabled without loading DB ser
   assert.equal(serviceLoads, 0);
 });
 
+test("simulated session API is disabled when API gate is off", async () => {
+  let authCalls = 0;
+  let serviceLoads = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: { AI_GRADER_SIMULATOR_ENABLED: "true" },
+    requireAdminSession: async () => {
+      authCalls += 1;
+      return adminSession;
+    },
+    getService: () => {
+      serviceLoads += 1;
+      return mockService();
+    },
+  });
+  const res = mockResponse();
+
+  await handler(
+    mockRequest({
+      method: "POST",
+      action: ["simulator", "session"],
+      body: {},
+    }),
+    res
+  );
+
+  assert.equal(res.statusCodeValue, 503);
+  assert.deepEqual(res.jsonBody, {
+    ok: false,
+    enabled: false,
+    code: "AI_GRADER_API_DISABLED",
+    message: "AI Grader admin API is disabled. Set AI_GRADER_API_ENABLED=true to enable.",
+  });
+  assert.equal(authCalls, 0);
+  assert.equal(serviceLoads, 0);
+});
+
+test("simulated session API is disabled when simulator gate is off", async () => {
+  let authCalls = 0;
+  let serviceLoads = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: { AI_GRADER_API_ENABLED: "true" },
+    requireAdminSession: async () => {
+      authCalls += 1;
+      return adminSession;
+    },
+    getService: () => {
+      serviceLoads += 1;
+      return mockService();
+    },
+  });
+  const res = mockResponse();
+
+  await handler(
+    mockRequest({
+      method: "POST",
+      action: ["simulator", "session"],
+      body: {},
+    }),
+    res
+  );
+
+  assert.equal(res.statusCodeValue, 503);
+  assert.deepEqual(res.jsonBody, {
+    ok: false,
+    enabled: false,
+    code: "AI_GRADER_SIMULATOR_DISABLED",
+    message: "AI Grader simulator mode is disabled. Set AI_GRADER_SIMULATOR_ENABLED=true to enable.",
+  });
+  assert.equal(authCalls, 0);
+  assert.equal(serviceLoads, 0);
+});
+
+test("simulated session API returns a full STANDARD workflow without loading DB service", async () => {
+  let serviceLoads = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: { AI_GRADER_API_ENABLED: "true", AI_GRADER_SIMULATOR_ENABLED: "true" },
+    requireAdminSession: async () => adminSession,
+    getService: () => {
+      serviceLoads += 1;
+      return mockService();
+    },
+  });
+  const res = mockResponse();
+
+  await handler(
+    mockRequest({
+      method: "POST",
+      action: ["simulator", "session"],
+      body: {},
+    }),
+    res
+  );
+
+  assert.equal(res.statusCodeValue, 200);
+  const body = res.jsonBody as {
+    ok: boolean;
+    operation: string;
+    result: {
+      simulator: true;
+      workflow: string;
+      session: { sessionId: string; mode: string; helperInstanceId: string; calibrationSnapshotIds: string[] };
+      manifest: { id: string; checksumSha256: string; frameCount: number; validation: { valid: boolean } };
+      macro: { frameCount: number; frames: unknown[] };
+      micro: { packageCount: number; evidenceFrameCount: number; surfaceSuspectCount: number; packages: unknown[] };
+      gradeRunDraft: { status: string; computesGrades: boolean; inputChecksum: string };
+      certificateReadiness: { ready: boolean; message: string };
+      validation: { valid: boolean };
+    };
+  };
+
+  assert.equal(body.ok, true);
+  assert.equal(body.operation, "generateSimulatedSessionWorkflow");
+  assert.equal(body.result.simulator, true);
+  assert.equal(body.result.workflow, "STANDARD_SESSION");
+  assert.equal(body.result.session.mode, "STANDARD");
+  assert.equal(body.result.session.sessionId, "simulated-session");
+  assert.equal(body.result.session.helperInstanceId, "simulated-helper-instance");
+  assert.ok(body.result.session.calibrationSnapshotIds.length > 0);
+  assert.equal(body.result.manifest.frameCount, 15);
+  assert.match(body.result.manifest.checksumSha256, /^[a-f0-9]{64}$/);
+  assert.equal(body.result.manifest.validation.valid, true);
+  assert.equal(body.result.macro.frameCount, 4);
+  assert.equal(body.result.macro.frames.length, 4);
+  assert.equal(body.result.micro.packageCount, 11);
+  assert.equal(body.result.micro.evidenceFrameCount, 110);
+  assert.equal(body.result.micro.surfaceSuspectCount, 3);
+  assert.equal(body.result.micro.packages.length, 11);
+  assert.equal(body.result.gradeRunDraft.status, "SIMULATED_DRAFT");
+  assert.equal(body.result.gradeRunDraft.computesGrades, false);
+  assert.equal(body.result.gradeRunDraft.inputChecksum, body.result.manifest.checksumSha256);
+  assert.equal(body.result.certificateReadiness.ready, false);
+  assert.equal(body.result.certificateReadiness.message, "simulation only; production DB migration and hardware capture required");
+  assert.equal(body.result.validation.valid, true);
+  assert.equal(serviceLoads, 0);
+});
+
 test("simulator device capability action returns manifests without hardware or service calls", async () => {
   let serviceLoads = 0;
   let generatorCalls = 0;
@@ -400,6 +536,7 @@ test("enabled status returns route list without loading service", async () => {
       "status",
       "health",
       "simulator/generate",
+      "simulator/session",
       "capture-sessions/draft",
       "orchestrator/transition",
       "macro/suspect-regions",
