@@ -349,6 +349,9 @@ importers:
       '@stripe/stripe-js':
         specifier: ^3.4.1
         version: 3.5.0
+      '@tenkings/ai-grader-simulator':
+        specifier: workspace:*
+        version: link:../../packages/ai-grader-simulator
       '@tenkings/browser-rip-client':
         specifier: workspace:*
         version: link:../../packages/browser-rip-client

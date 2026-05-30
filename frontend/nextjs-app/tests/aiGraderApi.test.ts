@@ -233,10 +233,148 @@ test("successful mocked service call returns operation JSON", async () => {
   assert.deepEqual(receivedBody, body);
 });
 
-test("enabled status returns route list without loading service", async () => {
+test("simulator API is disabled when simulator flag is off and does not load service", async () => {
+  let authCalls = 0;
   let serviceLoads = 0;
   const handler = createAiGraderAdminApiHandler({
     env: { AI_GRADER_API_ENABLED: "true" },
+    requireAdminSession: async () => {
+      authCalls += 1;
+      return adminSession;
+    },
+    getService: () => {
+      serviceLoads += 1;
+      return mockService();
+    },
+  });
+  const res = mockResponse();
+
+  await handler(
+    mockRequest({
+      method: "POST",
+      action: ["simulator", "generate"],
+      body: { mode: "QUICK" },
+    }),
+    res
+  );
+
+  assert.equal(res.statusCodeValue, 503);
+  assert.deepEqual(res.jsonBody, {
+    ok: false,
+    enabled: false,
+    code: "AI_GRADER_SIMULATOR_DISABLED",
+    message: "AI Grader simulator mode is disabled. Set AI_GRADER_SIMULATOR_ENABLED=true to enable.",
+  });
+  assert.equal(serviceLoads, 0);
+  assert.equal(authCalls, 0);
+});
+
+test("simulator API returns a valid manifest when enabled without loading DB service", async () => {
+  let serviceLoads = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: { AI_GRADER_API_ENABLED: "true", AI_GRADER_SIMULATOR_ENABLED: "true" },
+    requireAdminSession: async () => adminSession,
+    getService: () => {
+      serviceLoads += 1;
+      return mockService();
+    },
+  });
+  const res = mockResponse();
+
+  await handler(
+    mockRequest({
+      method: "POST",
+      action: ["simulator", "generate"],
+      body: { mode: "STANDARD" },
+    }),
+    res
+  );
+
+  assert.equal(res.statusCodeValue, 200);
+  const body = res.jsonBody as {
+    ok: boolean;
+    operation: string;
+    result: {
+      simulator: true;
+      mode: string;
+      summary: {
+        frameCount: number;
+        microSpotPackageCount: number;
+        helperInstanceId: string | null;
+        calibrationSnapshotIds: string[];
+        storageKeyExamples: string[];
+        validation: { valid: boolean };
+      };
+      captureManifest?: { helperInstanceId: string; frameList: unknown[] };
+      microSpotPackages?: unknown[];
+    };
+  };
+  assert.equal(body.ok, true);
+  assert.equal(body.operation, "generateSimulatorManifest");
+  assert.equal(body.result.simulator, true);
+  assert.equal(body.result.mode, "STANDARD");
+  assert.equal(body.result.summary.validation.valid, true);
+  assert.equal(body.result.summary.frameCount, 15);
+  assert.equal(body.result.summary.microSpotPackageCount, 11);
+  assert.equal(body.result.summary.helperInstanceId, "simulated-helper-instance");
+  assert.ok(body.result.summary.calibrationSnapshotIds.length > 0);
+  assert.ok(body.result.summary.storageKeyExamples.length > 0);
+  assert.equal(body.result.captureManifest?.frameList.length, 15);
+  assert.equal(body.result.microSpotPackages?.length, 11);
+  assert.equal(serviceLoads, 0);
+});
+
+test("simulator device capability action returns manifests without hardware or service calls", async () => {
+  let serviceLoads = 0;
+  let generatorCalls = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: { AI_GRADER_API_ENABLED: "true", AI_GRADER_SIMULATOR_ENABLED: "true" },
+    requireAdminSession: async () => adminSession,
+    getService: () => {
+      serviceLoads += 1;
+      return mockService();
+    },
+    generateSimulatorManifest: async (input) => {
+      generatorCalls += 1;
+      assert.equal(input.mode, "DEVICE_CAPABILITIES");
+      return {
+        simulator: true,
+        mode: "DEVICE_CAPABILITIES",
+        summary: {
+          mode: "DEVICE_CAPABILITIES",
+          frameCount: 0,
+          microSpotPackageCount: 0,
+          evidenceArtifactCount: 0,
+          deviceCapabilityCount: 5,
+          helperInstanceId: "helper-test",
+          calibrationSnapshotIds: [],
+          storageKeyExamples: [],
+          validation: { valid: true, issues: [] },
+        },
+        deviceCapabilityManifests: [],
+      };
+    },
+  });
+  const res = mockResponse();
+
+  await handler(
+    mockRequest({
+      method: "POST",
+      action: ["simulator", "generate"],
+      body: { mode: "DEVICE_CAPABILITIES" },
+    }),
+    res
+  );
+
+  assert.equal(res.statusCodeValue, 200);
+  assert.equal(generatorCalls, 1);
+  assert.equal(serviceLoads, 0);
+});
+
+test("enabled status returns route list without loading service", async () => {
+  let serviceLoads = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: { AI_GRADER_API_ENABLED: "true", AI_GRADER_SIMULATOR_ENABLED: "true" },
     requireAdminSession: async () => adminSession,
     getService: () => {
       serviceLoads += 1;
@@ -253,10 +391,15 @@ test("enabled status returns route list without loading service", async () => {
     ok: true,
     enabled: true,
     service: "ai-grader-admin-api",
+    simulator: {
+      enabled: true,
+      message: "AI Grader simulator mode is enabled for local-only manifest generation.",
+    },
     user: adminSession.user,
     routes: [
       "status",
       "health",
+      "simulator/generate",
       "capture-sessions/draft",
       "orchestrator/transition",
       "macro/suspect-regions",

@@ -18421,3 +18421,36 @@ By enabling Rip It Live, I confirm:
 - No runtime DB operation against a real app database was run.
 - No real hardware access was run.
 - Next AI Grader phase should likely wire the simulator into feature-gated admin API/UI simulated mode, still without production/staging migration, runtime DB use, or real hardware.
+
+## 2026-05-30 - AI Grader simulator admin API/UI flow
+
+### Summary
+- Created branch `feature/ai-grader-simulator-ui-flow` from latest `origin/main`.
+- Added simulator API mode behind both `AI_GRADER_API_ENABLED=true` and `AI_GRADER_SIMULATOR_ENABLED=true`.
+- Added `POST /api/admin/ai-grader/simulator/generate` for:
+  - `DEVICE_CAPABILITIES`
+  - `QUICK`
+  - `STANDARD`
+  - `AUTH_ONLY`
+- Simulator disabled responses return before admin auth, service loading, Prisma access, or simulator generation.
+- Enabled simulator generation uses `@tenkings/ai-grader-simulator` only and does not call AI Grader DB service helpers.
+- Updated the admin AI Grader page with a simulator section that shows simulator status, mode selection, generated summary counts, helper/calibration data, storage key examples, validation status, and raw JSON.
+- Updated client/UI helpers and focused tests for disabled and enabled simulator paths.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass, existing lint/config warnings only.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts tests/aiGraderAdminClient.test.ts` -> pass, 16 tests.
+- `git diff --check` -> pass.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware access was run.
+- No real hardware driver, image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.

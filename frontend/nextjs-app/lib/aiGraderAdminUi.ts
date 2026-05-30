@@ -35,3 +35,7 @@ export function resolveAiGraderAdminGateState(input: {
 export function canSubmitAiGraderOperation(status: AiGraderAdminApiStatus | null) {
   return status?.enabled === true;
 }
+
+export function canRunAiGraderSimulator(status: AiGraderAdminApiStatus | null) {
+  return status?.enabled === true && status.simulator?.enabled === true;
+}
