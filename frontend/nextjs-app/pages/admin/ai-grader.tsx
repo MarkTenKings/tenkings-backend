@@ -16,15 +16,23 @@ import {
   AiGraderAdminApiError,
   type AiGraderAdminApiStatus,
   type AiGraderAdminOperation,
+  type AiGraderHelperCapabilitiesResult,
+  type AiGraderHelperHealthResult,
+  type AiGraderHelperManifestMode,
+  type AiGraderHelperManifestResult,
   type AiGraderSimulatedSessionWorkflowResult,
   type AiGraderSimulatorMode,
   type AiGraderSimulatorResult,
   fetchAiGraderAdminStatus,
+  fetchAiGraderHelperCapabilities,
+  fetchAiGraderHelperHealth,
   generateAiGraderSimulatedSessionWorkflow,
+  generateAiGraderHelperManifest,
   generateAiGraderSimulatorManifest,
   postAiGraderAdminOperation,
 } from "../../lib/aiGraderAdminClient";
 import {
+  canRunAiGraderHelperBridge,
   canRunAiGraderSimulator,
   canSubmitAiGraderOperation,
   hasAiGraderAdminAccess,
@@ -175,6 +183,7 @@ const PLACEHOLDER_SECTIONS = [
 ];
 
 const CAPTURE_SIMULATOR_MODES: AiGraderSimulatorMode[] = ["QUICK", "STANDARD", "AUTH_ONLY"];
+const HELPER_BRIDGE_MANIFEST_MODES: AiGraderHelperManifestMode[] = ["QUICK", "STANDARD", "AUTH_ONLY"];
 
 function formatJson(value: unknown) {
   return JSON.stringify(value, null, 2);
@@ -189,6 +198,13 @@ function statusTone(status: AiGraderAdminApiStatus | null) {
 function simulatorTone(status: AiGraderAdminApiStatus | null) {
   if (!status) return "border-slate-500/30 text-slate-300";
   if (status.enabled && status.simulator?.enabled) return "border-emerald-400/50 text-emerald-200";
+  return "border-amber-400/50 text-amber-200";
+}
+
+function helperBridgeTone(status: AiGraderAdminApiStatus | null) {
+  if (!status) return "border-slate-500/30 text-slate-300";
+  if (status.enabled && status.helperBridge?.enabled && status.helperBridge.configured) return "border-emerald-400/50 text-emerald-200";
+  if (status.helperBridge?.enabled && !status.helperBridge.configured) return "border-rose-400/50 text-rose-200";
   return "border-amber-400/50 text-amber-200";
 }
 
@@ -563,6 +579,193 @@ function SimulatedSessionPanel({
   );
 }
 
+function HelperBridgePanel({
+  enabled,
+  status,
+  adminHeaders,
+}: {
+  enabled: boolean;
+  status: AiGraderAdminApiStatus | null;
+  adminHeaders: Record<string, string>;
+}) {
+  const [mode, setMode] = useState<AiGraderHelperManifestMode>("STANDARD");
+  const [health, setHealth] = useState<AiGraderHelperHealthResult | null>(null);
+  const [capabilities, setCapabilities] = useState<AiGraderHelperCapabilitiesResult | null>(null);
+  const [manifest, setManifest] = useState<AiGraderHelperManifestResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState<string | null>(null);
+
+  const runBridgeAction = async (action: "health" | "capabilities" | "manifest") => {
+    if (!enabled) {
+      setError(status?.helperBridge?.message ?? "AI Grader helper bridge is disabled.");
+      return;
+    }
+
+    setSubmitting(action);
+    setError(null);
+    try {
+      if (action === "health") {
+        setHealth(await fetchAiGraderHelperHealth(adminHeaders));
+      } else if (action === "capabilities") {
+        setCapabilities(await fetchAiGraderHelperCapabilities(adminHeaders));
+      } else {
+        setManifest(await generateAiGraderHelperManifest(mode, adminHeaders));
+      }
+    } catch (requestError) {
+      if (requestError instanceof AiGraderAdminApiError) {
+        setError(requestError.message);
+      } else {
+        setError(requestError instanceof Error ? requestError.message : "AI Grader helper bridge request failed.");
+      }
+    } finally {
+      setSubmitting(null);
+    }
+  };
+
+  const frameCount = manifest?.captureManifest?.frameList?.length ?? 0;
+  const capabilityCount = capabilities?.deviceCapabilityManifests?.length ?? 0;
+  const microPackageCount = manifest?.microSpotPackages?.length ?? 0;
+  const calibrationSnapshotIds = manifest?.captureManifest?.calibrationSnapshotIds ?? [];
+
+  return (
+    <section className={adminPanelClass("p-5")}>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.28em] text-slate-500">Local Helper Bridge</p>
+          <h2 className="mt-2 text-xl font-semibold text-white">Loopback Transport Proxy</h2>
+        </div>
+        <span className={`rounded-full border px-3 py-1 text-[11px] uppercase tracking-[0.2em] ${helperBridgeTone(status)}`}>
+          Bridge: {enabled ? "enabled" : "disabled"}
+        </span>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+        <div className={adminSubpanelClass("flex flex-col gap-4 p-4")}>
+          <p className={adminCx("text-sm", enabled ? "text-slate-400" : "text-amber-100/80")}>
+            {status?.helperBridge?.message ?? "Helper bridge status is unavailable until the API status endpoint responds."}
+          </p>
+          {status?.helperBridge?.baseUrl ? <p className="break-all text-xs text-slate-500">{status.helperBridge.baseUrl}</p> : null}
+
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Manifest Mode</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {HELPER_BRIDGE_MANIFEST_MODES.map((candidate) => (
+                <button
+                  key={candidate}
+                  type="button"
+                  onClick={() => setMode(candidate)}
+                  className={adminCx(
+                    "rounded-full border px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] transition",
+                    mode === candidate
+                      ? "border-gold-500/70 bg-gold-500 text-night-900"
+                      : "border-white/12 bg-white/[0.03] text-slate-300 hover:border-white/35 hover:text-white"
+                  )}
+                >
+                  {candidate}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            {(["health", "capabilities", "manifest"] as const).map((action) => (
+              <button
+                key={action}
+                type="button"
+                disabled={!enabled || submitting != null}
+                onClick={() => runBridgeAction(action).catch(() => undefined)}
+                className={adminCx(
+                  "rounded-full border px-5 py-2 text-[11px] font-semibold uppercase tracking-[0.24em] transition",
+                  enabled && submitting == null
+                    ? "border-gold-500/60 bg-gold-500 text-night-900 hover:bg-gold-400"
+                    : "cursor-not-allowed border-white/12 bg-white/[0.03] text-slate-500"
+                )}
+              >
+                {submitting === action ? "Running" : action === "manifest" ? "Generate Manifest" : action}
+              </button>
+            ))}
+          </div>
+
+          <p className="text-xs text-slate-500">
+            Browser requests stay on the admin API. The server-side API proxy is the only code path that can call the loopback helper.
+          </p>
+          {error ? <p className="rounded-xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-200">{error}</p> : null}
+        </div>
+
+        <div className={adminSubpanelClass("p-4")}>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Health</p>
+              <p className="mt-2 break-all text-sm font-semibold text-white">{health?.status ?? "pending"}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Capabilities</p>
+              <p className="mt-2 text-lg font-semibold text-white">{capabilityCount}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Frames</p>
+              <p className="mt-2 text-lg font-semibold text-white">{frameCount}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Micro Packages</p>
+              <p className="mt-2 text-lg font-semibold text-white">{microPackageCount}</p>
+            </article>
+          </div>
+
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Helper</p>
+              <dl className="mt-2 space-y-2 text-xs text-slate-300">
+                <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                  <dt className="text-slate-500">Instance</dt>
+                  <dd className="break-all text-white">{health?.helperInstanceId ?? manifest?.captureManifest?.helperInstanceId ?? "pending"}</dd>
+                </div>
+                <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                  <dt className="text-slate-500">Transport</dt>
+                  <dd className="break-all text-white">
+                    {health?.transport ? `${health.transport.host}:${health.transport.port}` : "pending"}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Validation</p>
+              <dl className="mt-2 space-y-2 text-xs text-slate-300">
+                <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                  <dt className="text-slate-500">Capabilities</dt>
+                  <dd className={capabilities?.validation?.valid ? "text-emerald-200" : "text-white"}>
+                    {capabilities ? (capabilities.validation?.valid ? "Valid" : "Invalid") : "pending"}
+                  </dd>
+                </div>
+                <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                  <dt className="text-slate-500">Manifest</dt>
+                  <dd className={manifest?.validation?.valid ? "text-emerald-200" : "text-white"}>
+                    {manifest ? (manifest.validation?.valid ? "Valid" : "Invalid") : "pending"}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+
+          {calibrationSnapshotIds.length ? (
+            <div className="mt-4">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Calibration Snapshots</p>
+              <ul className="mt-2 space-y-1 text-xs text-slate-300">
+                {calibrationSnapshotIds.map((id) => (
+                  <li key={id} className="break-all rounded-lg bg-white/[0.03] px-2 py-1">
+                    {id}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function OperationCard({
   operation,
   enabled,
@@ -661,6 +864,7 @@ export default function AiGraderAdminPage() {
   const adminHeaders = useMemo(() => buildAdminHeaders(session?.token), [session?.token]);
   const canSubmit = canSubmitAiGraderOperation(status);
   const canRunSimulator = canRunAiGraderSimulator(status);
+  const canRunHelperBridge = canRunAiGraderHelperBridge(status);
 
   const refreshStatus = useCallback(async () => {
     if (!session?.token) {
@@ -770,6 +974,9 @@ export default function AiGraderAdminPage() {
               <span className={`rounded-full border px-2 py-1 ${simulatorTone(status)}`}>
                 SIM: {statusLoading ? "checking" : canRunSimulator ? "enabled" : "disabled"}
               </span>
+              <span className={`rounded-full border px-2 py-1 ${helperBridgeTone(status)}`}>
+                HELPER: {statusLoading ? "checking" : canRunHelperBridge ? "enabled" : "disabled"}
+              </span>
               <span className="rounded-full border border-white/20 px-2 py-1 text-slate-400">admin only</span>
             </>
           }
@@ -784,7 +991,7 @@ export default function AiGraderAdminPage() {
           }
         />
 
-        <section className="grid gap-4 md:grid-cols-3">
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <article className={adminStatCardClass("p-4")}>
             <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Feature Gate</p>
             <p className={adminCx("mt-2 text-2xl font-semibold", status?.enabled ? "text-emerald-200" : "text-amber-200")}>
@@ -808,6 +1015,15 @@ export default function AiGraderAdminPage() {
               {statusLoading ? "Checking" : canRunSimulator ? "Enabled" : "Disabled"}
             </p>
             <p className="mt-2 text-sm text-slate-400">{status?.simulator?.message ?? "Simulator actions require both API and simulator flags."}</p>
+          </article>
+          <article className={adminStatCardClass("p-4")}>
+            <p className="text-[11px] uppercase tracking-[0.24em] text-slate-500">Helper Bridge</p>
+            <p className={adminCx("mt-2 text-2xl font-semibold", canRunHelperBridge ? "text-emerald-200" : "text-amber-200")}>
+              {statusLoading ? "Checking" : canRunHelperBridge ? "Enabled" : "Disabled"}
+            </p>
+            <p className="mt-2 text-sm text-slate-400">
+              {status?.helperBridge?.message ?? "Helper bridge requires AI_GRADER_HELPER_BRIDGE_ENABLED=true and a loopback base URL."}
+            </p>
           </article>
         </section>
 
@@ -838,6 +1054,8 @@ export default function AiGraderAdminPage() {
         <SimulatorPanel enabled={canRunSimulator} status={status} adminHeaders={adminHeaders} />
 
         <SimulatedSessionPanel enabled={canRunSimulator} status={status} adminHeaders={adminHeaders} />
+
+        <HelperBridgePanel enabled={canRunHelperBridge} status={status} adminHeaders={adminHeaders} />
 
         <section className={adminPanelClass("p-5")}>
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

@@ -8,6 +8,13 @@ export type AiGraderAdminApiStatus = {
     message?: string;
     code?: string;
   };
+  helperBridge?: {
+    enabled: boolean;
+    configured: boolean;
+    message?: string;
+    code?: string;
+    baseUrl?: string;
+  };
   routes?: string[];
   user?: {
     id: string;
@@ -17,6 +24,7 @@ export type AiGraderAdminApiStatus = {
 };
 
 export type AiGraderSimulatorMode = "DEVICE_CAPABILITIES" | "QUICK" | "STANDARD" | "AUTH_ONLY";
+export type AiGraderHelperManifestMode = Exclude<AiGraderSimulatorMode, "DEVICE_CAPABILITIES">;
 
 export type AiGraderSimulatorSummary = {
   mode: AiGraderSimulatorMode;
@@ -41,6 +49,60 @@ export type AiGraderSimulatorResult = {
   captureManifest?: unknown;
   microSpotPackages?: unknown[];
   evidenceArtifacts?: unknown[];
+};
+
+export type AiGraderHelperHealthResult = {
+  service?: string;
+  mode?: string;
+  driverSet?: string;
+  status?: string;
+  hardwareAccess?: string;
+  networkListener?: string;
+  deviceAccess?: string;
+  message?: string;
+  helperInstanceId?: string;
+  captureSessionId?: string;
+  transport?: {
+    enabled: boolean;
+    localOnly: boolean;
+    host: string;
+    port: number;
+  };
+};
+
+export type AiGraderHelperCapabilitiesResult = {
+  deviceCapabilityManifests?: unknown[];
+  validation?: {
+    valid: boolean;
+    issues: unknown[];
+  };
+  transport?: {
+    enabled: boolean;
+    localOnly: boolean;
+    host: string;
+    port: number;
+  };
+};
+
+export type AiGraderHelperManifestResult = {
+  mode?: AiGraderHelperManifestMode;
+  captureManifest?: {
+    helperInstanceId?: string;
+    calibrationSnapshotIds?: string[];
+    frameList?: unknown[];
+  };
+  microSpotPackages?: unknown[];
+  evidenceArtifacts?: unknown[];
+  validation?: {
+    valid: boolean;
+    issues: unknown[];
+  };
+  transport?: {
+    enabled: boolean;
+    localOnly: boolean;
+    host: string;
+    port: number;
+  };
 };
 
 export type AiGraderSimulatedSessionWorkflowResult = {
@@ -194,6 +256,7 @@ export async function parseAiGraderAdminResponse<T>(response: AiGraderAdminFetch
       disabled:
         apiError.code === "AI_GRADER_API_DISABLED" ||
         apiError.code === "AI_GRADER_SIMULATOR_DISABLED" ||
+        apiError.code === "AI_GRADER_HELPER_BRIDGE_DISABLED" ||
         apiError.enabled === false,
     });
   }
@@ -246,6 +309,15 @@ export async function fetchAiGraderAdminStatus(
           enabled: payload.simulator.enabled === true,
           message: typeof payload.simulator.message === "string" ? payload.simulator.message : undefined,
           code: typeof payload.simulator.code === "string" ? payload.simulator.code : undefined,
+        }
+      : undefined,
+    helperBridge: isRecord(payload.helperBridge)
+      ? {
+          enabled: payload.helperBridge.enabled === true,
+          configured: payload.helperBridge.configured === true,
+          message: typeof payload.helperBridge.message === "string" ? payload.helperBridge.message : undefined,
+          code: typeof payload.helperBridge.code === "string" ? payload.helperBridge.code : undefined,
+          baseUrl: typeof payload.helperBridge.baseUrl === "string" ? payload.helperBridge.baseUrl : undefined,
         }
       : undefined,
     routes: Array.isArray(payload.routes) ? payload.routes.filter((route): route is string => typeof route === "string") : [],
@@ -309,6 +381,47 @@ export async function generateAiGraderSimulatedSessionWorkflow(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({}),
+    })
+  );
+
+  return payload.result;
+}
+
+export async function fetchAiGraderHelperHealth(
+  headers: Record<string, string>,
+  fetchImpl: AiGraderAdminFetch = globalThis.fetch as AiGraderAdminFetch
+): Promise<AiGraderHelperHealthResult> {
+  const payload = await parseAiGraderAdminResponse<{ ok: true; result: AiGraderHelperHealthResult }>(
+    await fetchImpl("/api/admin/ai-grader/helper/health", { headers })
+  );
+
+  return payload.result;
+}
+
+export async function fetchAiGraderHelperCapabilities(
+  headers: Record<string, string>,
+  fetchImpl: AiGraderAdminFetch = globalThis.fetch as AiGraderAdminFetch
+): Promise<AiGraderHelperCapabilitiesResult> {
+  const payload = await parseAiGraderAdminResponse<{ ok: true; result: AiGraderHelperCapabilitiesResult }>(
+    await fetchImpl("/api/admin/ai-grader/helper/capabilities", { headers })
+  );
+
+  return payload.result;
+}
+
+export async function generateAiGraderHelperManifest(
+  mode: AiGraderHelperManifestMode,
+  headers: Record<string, string>,
+  fetchImpl: AiGraderAdminFetch = globalThis.fetch as AiGraderAdminFetch
+): Promise<AiGraderHelperManifestResult> {
+  const payload = await parseAiGraderAdminResponse<{ ok: true; result: AiGraderHelperManifestResult }>(
+    await fetchImpl("/api/admin/ai-grader/helper/manifest", {
+      method: "POST",
+      headers: {
+        ...headers,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ mode }),
     })
   );
 

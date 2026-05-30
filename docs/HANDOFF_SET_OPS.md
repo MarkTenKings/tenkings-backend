@@ -10081,3 +10081,31 @@ Build Set Ops UI flow with:
 - Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/8myQzHZc25EBEzWQx6DXej9bJ7US`.
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, and no next AI Grader phase work.
+
+## Session Update (2026-05-30, AI Grader admin helper bridge)
+- Created branch `feature/ai-grader-admin-helper-bridge` from latest `origin/main`.
+- Added feature-gated admin-to-capture-helper bridge flags:
+  - `AI_GRADER_HELPER_BRIDGE_ENABLED=true`
+  - `AI_GRADER_HELPER_BASE_URL=http://127.0.0.1:<port>`
+- The bridge is disabled by default and rejects missing, invalid, credentialed, non-HTTP, or non-loopback helper base URLs before any network call.
+- Added server-side helper client behavior in the AI Grader admin API:
+  - `GET /api/admin/ai-grader/helper/health`
+  - `GET /api/admin/ai-grader/helper/capabilities`
+  - `POST /api/admin/ai-grader/helper/manifest`
+- Browser/UI code calls only the Next admin API proxy; no browser direct localhost helper calls were added.
+- Existing no-helper simulator endpoints remain unchanged and continue to work without the helper bridge.
+- Added Local Helper Bridge UI panel for bridge status, health, capabilities, and QUICK/STANDARD/AUTH_ONLY manifest generation.
+- Added focused API/client tests for disabled bridge, non-loopback rejection, health success, timeout mapping, manifest proxying, existing simulator path preservation, no DB service loading, and no hardware import path.
+- Validation passed:
+  - `pnpm --filter @tenkings/database build`
+  - `pnpm --filter @tenkings/database test`
+  - `pnpm --filter @tenkings/shared test`
+  - `pnpm --filter @tenkings/ai-grader-simulator build`
+  - `pnpm --filter @tenkings/ai-grader-simulator test`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test`
+  - `pnpm --filter @tenkings/nextjs-app build`
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts tests/aiGraderAdminClient.test.ts`
+  - `git diff --check`
+- Guardrail scan found no `RUN_DB_MIGRATIONS`, `DATABASE_URL`, Prisma, or real hardware SDK references in the touched bridge code/tests.
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.

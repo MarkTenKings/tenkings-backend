@@ -507,6 +507,221 @@ test("simulator device capability action returns manifests without hardware or s
   assert.equal(serviceLoads, 0);
 });
 
+test("helper bridge disabled returns before auth, fetch, or service loading", async () => {
+  let authCalls = 0;
+  let fetchCalls = 0;
+  let serviceLoads = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: { AI_GRADER_API_ENABLED: "true" },
+    requireAdminSession: async () => {
+      authCalls += 1;
+      return adminSession;
+    },
+    getService: () => {
+      serviceLoads += 1;
+      return mockService();
+    },
+    helperBridgeFetch: async () => {
+      fetchCalls += 1;
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+  });
+  const res = mockResponse();
+
+  await handler(mockRequest({ method: "GET", action: ["helper", "health"] }), res);
+
+  assert.equal(res.statusCodeValue, 503);
+  assert.deepEqual(res.jsonBody, {
+    ok: false,
+    enabled: false,
+    code: "AI_GRADER_HELPER_BRIDGE_DISABLED",
+    message: "AI Grader helper bridge is disabled. Set AI_GRADER_HELPER_BRIDGE_ENABLED=true to enable.",
+  });
+  assert.equal(authCalls, 0);
+  assert.equal(fetchCalls, 0);
+  assert.equal(serviceLoads, 0);
+});
+
+test("helper bridge rejects non-loopback base URL before network call", async () => {
+  let authCalls = 0;
+  let fetchCalls = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: {
+      AI_GRADER_API_ENABLED: "true",
+      AI_GRADER_HELPER_BRIDGE_ENABLED: "true",
+      AI_GRADER_HELPER_BASE_URL: "http://192.168.1.10:47650",
+    },
+    requireAdminSession: async () => {
+      authCalls += 1;
+      return adminSession;
+    },
+    getService: () => mockService(),
+    helperBridgeFetch: async () => {
+      fetchCalls += 1;
+      return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    },
+  });
+  const res = mockResponse();
+
+  await handler(mockRequest({ method: "GET", action: ["helper", "health"] }), res);
+
+  assert.equal(res.statusCodeValue, 400);
+  assert.deepEqual(res.jsonBody, {
+    ok: false,
+    code: "AI_GRADER_HELPER_BRIDGE_CONFIG_INVALID",
+    message: "AI Grader helper bridge base URL must use http and a loopback host.",
+  });
+  assert.equal(authCalls, 0);
+  assert.equal(fetchCalls, 0);
+});
+
+test("helper bridge health success maps cleanly without loading DB service", async () => {
+  let fetchCalls = 0;
+  let serviceLoads = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: {
+      AI_GRADER_API_ENABLED: "true",
+      AI_GRADER_HELPER_BRIDGE_ENABLED: "true",
+      AI_GRADER_HELPER_BASE_URL: "http://127.0.0.1:47650",
+    },
+    requireAdminSession: async () => adminSession,
+    getService: () => {
+      serviceLoads += 1;
+      return mockService();
+    },
+    helperBridgeFetch: async (input, init) => {
+      fetchCalls += 1;
+      assert.equal(input, "http://127.0.0.1:47650/health");
+      assert.equal(init?.method, undefined);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          service: "ai-grader-capture-helper",
+          status: "simulator_offline",
+          mode: "simulator",
+          driverSet: "mock",
+        }),
+      };
+    },
+  });
+  const res = mockResponse();
+
+  await handler(mockRequest({ method: "GET", action: ["helper", "health"] }), res);
+
+  assert.equal(res.statusCodeValue, 200);
+  assert.deepEqual(res.jsonBody, {
+    ok: true,
+    enabled: true,
+    operation: "helperBridgeHealth",
+    result: {
+      ok: true,
+      service: "ai-grader-capture-helper",
+      status: "simulator_offline",
+      mode: "simulator",
+      driverSet: "mock",
+    },
+  });
+  assert.equal(fetchCalls, 1);
+  assert.equal(serviceLoads, 0);
+});
+
+test("helper bridge timeout maps to clear JSON error", async () => {
+  const handler = createAiGraderAdminApiHandler({
+    env: {
+      AI_GRADER_API_ENABLED: "true",
+      AI_GRADER_HELPER_BRIDGE_ENABLED: "true",
+      AI_GRADER_HELPER_BASE_URL: "http://127.0.0.1:47650",
+    },
+    requireAdminSession: async () => adminSession,
+    getService: () => mockService(),
+    helperBridgeFetch: async () => {
+      throw Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+    },
+  });
+  const res = mockResponse();
+
+  await handler(mockRequest({ method: "GET", action: ["helper", "capabilities"] }), res);
+
+  assert.equal(res.statusCodeValue, 504);
+  assert.deepEqual(res.jsonBody, {
+    ok: false,
+    code: "AI_GRADER_HELPER_BRIDGE_TIMEOUT",
+    message: "AI Grader helper bridge request timed out.",
+  });
+});
+
+test("helper bridge manifest proxies valid simulator/mock manifest without loading service", async () => {
+  let fetchCalls = 0;
+  let serviceLoads = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: {
+      AI_GRADER_API_ENABLED: "true",
+      AI_GRADER_HELPER_BRIDGE_ENABLED: "true",
+      AI_GRADER_HELPER_BASE_URL: "http://localhost:47650",
+    },
+    requireAdminSession: async () => adminSession,
+    getService: () => {
+      serviceLoads += 1;
+      return mockService();
+    },
+    helperBridgeFetch: async (input, init) => {
+      fetchCalls += 1;
+      assert.equal(input, "http://localhost:47650/manifest");
+      assert.equal(init?.method, "POST");
+      assert.equal(init?.body, JSON.stringify({ mode: "STANDARD" }));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          service: "ai-grader-capture-helper",
+          simulator: true,
+          captureMode: "STANDARD",
+          validation: { valid: true, issues: [] },
+          captureManifest: {
+            helperInstanceId: "helper-1",
+            calibrationSnapshotIds: ["cal-1"],
+            frameList: Array.from({ length: 15 }, (_, index) => ({ frameId: `frame-${index}` })),
+          },
+          microSpotPackages: Array.from({ length: 11 }, (_, index) => ({ id: `spot-${index}` })),
+        }),
+      };
+    },
+  });
+  const res = mockResponse();
+
+  await handler(
+    mockRequest({
+      method: "POST",
+      action: ["helper", "manifest"],
+      body: { mode: "STANDARD" },
+    }),
+    res
+  );
+
+  assert.equal(res.statusCodeValue, 200);
+  const body = res.jsonBody as {
+    ok: boolean;
+    operation: string;
+    result: {
+      captureMode: string;
+      validation: { valid: boolean };
+      captureManifest: { frameList: unknown[]; helperInstanceId: string };
+      microSpotPackages: unknown[];
+    };
+  };
+  assert.equal(body.ok, true);
+  assert.equal(body.operation, "helperBridgeManifest");
+  assert.equal(body.result.captureMode, "STANDARD");
+  assert.equal(body.result.validation.valid, true);
+  assert.equal(body.result.captureManifest.frameList.length, 15);
+  assert.equal(body.result.captureManifest.helperInstanceId, "helper-1");
+  assert.equal(body.result.microSpotPackages.length, 11);
+  assert.equal(fetchCalls, 1);
+  assert.equal(serviceLoads, 0);
+});
+
 test("enabled status returns route list without loading service", async () => {
   let serviceLoads = 0;
   const handler = createAiGraderAdminApiHandler({
@@ -531,12 +746,21 @@ test("enabled status returns route list without loading service", async () => {
       enabled: true,
       message: "AI Grader simulator mode is enabled for local-only manifest generation.",
     },
+    helperBridge: {
+      enabled: false,
+      configured: false,
+      code: "AI_GRADER_HELPER_BRIDGE_DISABLED",
+      message: "AI Grader helper bridge is disabled. Set AI_GRADER_HELPER_BRIDGE_ENABLED=true to enable.",
+    },
     user: adminSession.user,
     routes: [
       "status",
       "health",
       "simulator/generate",
       "simulator/session",
+      "helper/health",
+      "helper/capabilities",
+      "helper/manifest",
       "capture-sessions/draft",
       "orchestrator/transition",
       "macro/suspect-regions",
