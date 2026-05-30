@@ -10003,3 +10003,30 @@ Build Set Ops UI flow with:
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, and no next AI Grader phase work.
 - Recommended next chunk, pending explicit approval: define device driver interfaces/adapters with mock drivers only, still without physical device access.
+
+## Session Update (2026-05-30, AI Grader capture-helper driver contracts)
+- Created branch `feature/ai-grader-device-driver-contracts` from latest `origin/main`.
+- Added capture-helper driver interfaces for:
+  - `DeviceDriver`
+  - `MacroCameraDriver`
+  - `LEDControllerDriver`
+  - `MicroscopeDriver`
+  - `StageDriver`
+  - `ArmInterlockDriver`
+- Added mock driver implementations for macro camera, LED controller, microscope, XY stage, and arm interlock.
+- Mock drivers provide lifecycle methods, `health_check()`, shared-valid `DeviceCapabilityManifest` metadata, deterministic fake macro frame/evidence metadata, in-memory LED/stage/interlock behavior, and explicit failure injection.
+- Capture-helper config now supports `driverSet: mock` and `AI_GRADER_CAPTURE_HELPER_DRIVER_SET=mock`; any non-mock driver set is rejected.
+- Service capabilities now assemble from the mock driver set while capture manifests remain simulator-generated.
+- Added `@tenkings/ai-grader-capture-helper/drivers` export for the driver boundary.
+- Updated `docs/ai-grader-capture-helper.md` with the mock driver boundary and future real-driver roadmap.
+- Validation passed:
+  - `pnpm --filter @tenkings/database build`
+  - `pnpm --filter @tenkings/database test`
+  - `pnpm --filter @tenkings/shared test`
+  - `pnpm --filter @tenkings/ai-grader-simulator build`
+  - `pnpm --filter @tenkings/ai-grader-simulator test`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test`
+  - `pnpm --filter @tenkings/nextjs-app build`
+- Capture-helper tests passed: 12 tests, including mock driver lifecycle, capability validation, deterministic fake metadata, failure injection, unsupported driver rejection, service mock capability assembly, and no hardware module dependency/import assertions.
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no Basler/Dino-Lite/serial/GRBL SDK import, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.

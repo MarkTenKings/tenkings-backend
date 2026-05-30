@@ -18535,6 +18535,49 @@ By enabling Rip It Live, I confirm:
 ### Next Recommendation
 - Pending explicit approval, define device driver interfaces/adapters with mock drivers only, still without physical device access.
 
+## 2026-05-30 - AI Grader capture-helper driver contracts
+
+### Summary
+- Created branch `feature/ai-grader-device-driver-contracts` from latest `origin/main`.
+- Added the capture-helper driver abstraction layer under `packages/ai-grader-capture-helper/src/drivers/`.
+- Added TypeScript interfaces for:
+  - `DeviceDriver`
+  - `MacroCameraDriver`
+  - `LEDControllerDriver`
+  - `MicroscopeDriver`
+  - `StageDriver`
+  - `ArmInterlockDriver`
+- Added mock drivers:
+  - `MockMacroCameraDriver`
+  - `MockLEDControllerDriver`
+  - `MockMicroscopeDriver`
+  - `MockStageDriver`
+  - `MockArmInterlockDriver`
+- Mock drivers support `open()`, `close()`, `health_check()`, shared-valid capability manifests, deterministic fake macro frame/evidence metadata, in-memory LED/stage/interlock operations, and failure injection.
+- Capture-helper config now supports `driverSet: mock` and `AI_GRADER_CAPTURE_HELPER_DRIVER_SET=mock`; any real driver set is rejected with a clear config error.
+- Capture-helper service capabilities are assembled from the mock driver set. Capture manifests still use the existing simulator path.
+- Added `@tenkings/ai-grader-capture-helper/drivers` as a package export.
+- Updated `docs/ai-grader-capture-helper.md` with driver-boundary and future real-driver roadmap notes.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 12 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass, existing lint warnings only.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware access was run.
+- No Basler, Dino-Lite, serial, GRBL, camera, USB, or microscope SDK was imported.
+- No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
+
 ## 2026-05-30 - AI Grader simulated session workflow PR #18 merged
 
 ### Summary
