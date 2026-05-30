@@ -18403,3 +18403,21 @@ By enabling Rip It Live, I confirm:
 - No manual deploy/restart was run.
 - No runtime DB operation against a real app database was run.
 - No real hardware driver, image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
+
+## 2026-05-30 - AI Grader capture-helper simulator PR #16 merged
+
+### Summary
+- PR #16 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/16`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `782a21f88032484f05a461d61645e155026db857`.
+- PR #16 added the local-only `@tenkings/ai-grader-simulator` package for deterministic DeviceCapabilityManifest and QUICK/STANDARD/AUTH_ONLY CaptureManifest generation.
+- Post-merge GitHub Actions run `26672786759` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/GSbxpNY6PynyJToN75nf3sgr7cve`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware access was run.
+- Next AI Grader phase should likely wire the simulator into feature-gated admin API/UI simulated mode, still without production/staging migration, runtime DB use, or real hardware.

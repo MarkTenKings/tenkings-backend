@@ -9875,3 +9875,17 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/ai-grader-simulator test`
   - `git diff --check`
 - Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware drivers, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.
+
+## Session Update (2026-05-30, AI Grader capture-helper simulator PR #16 merged)
+- PR #16 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/16`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `782a21f88032484f05a461d61645e155026db857`.
+- PR #16 added `@tenkings/ai-grader-simulator` as a local-only deterministic simulator package for:
+  - `DeviceCapabilityManifest[]`
+  - QUICK `CaptureManifest`
+  - STANDARD `CaptureManifest` plus mock micro spot packages/evidence metadata
+  - AUTH_ONLY `CaptureManifest`
+- Post-merge GitHub Actions run `26672786759` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/GSbxpNY6PynyJToN75nf3sgr7cve`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, and no real hardware access.
+- Suggested next chunk: wire the simulator into feature-gated admin API/UI simulated mode, still without production/staging migration, runtime DB use, or real hardware.
