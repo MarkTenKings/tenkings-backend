@@ -18473,3 +18473,39 @@ By enabling Rip It Live, I confirm:
 - No runtime DB operation against a real app database was run.
 - No real hardware access was run.
 - Do not start the next AI Grader phase until explicitly approved.
+
+## 2026-05-30 - AI Grader simulated session workflow
+
+### Summary
+- Created branch `feature/ai-grader-simulated-session-flow` from latest `origin/main`.
+- Added a simulator-only admin API action at `POST /api/admin/ai-grader/simulator/session`.
+- The action is gated by both `AI_GRADER_API_ENABLED=true` and `AI_GRADER_SIMULATOR_ENABLED=true`.
+- Disabled simulator workflow responses return before admin auth, service loading, Prisma access, or simulator generation.
+- Enabled workflow generation uses `@tenkings/ai-grader-simulator` and shared AI Grader validators only.
+- The generated STANDARD workflow response includes:
+  - session id, tenant id, helper id, and calibration snapshot ids
+  - manifest id, checksum, frame count, and validation status
+  - macro frame summary
+  - micro package, evidence frame, and surface suspect counts
+  - draft GradeRun-like provenance summary without grading computation
+  - certificate readiness placeholder: `simulation only; production DB migration and hardware capture required`
+- Updated `/admin/ai-grader` with a Simulated Session panel that lets admins generate and inspect the no-DB/no-hardware STANDARD workflow.
+- Updated focused API/client tests for disabled gates, successful workflow generation, expected STANDARD counts, and no service helper loading.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass, existing lint/config warnings only.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts tests/aiGraderAdminClient.test.ts` -> pass, 21 tests.
+- `git diff --check` -> pass.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware access was run.
+- No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.

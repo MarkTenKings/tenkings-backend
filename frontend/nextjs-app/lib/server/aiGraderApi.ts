@@ -18,7 +18,9 @@ import type {
 import {
   type AiGraderValidationIssue,
   type CaptureManifest,
+  type CaptureManifestFrame,
   type DeviceCapabilityManifest,
+  type MicroSpotCapturePackage,
   validateCaptureManifestForMode,
   validateDeviceCapabilityManifest,
   validateMicroSpotCapturePackage,
@@ -65,9 +67,73 @@ export type AiGraderSimulatorGenerateResult = {
   evidenceArtifacts?: unknown[];
 };
 
+export type AiGraderSimulatedSessionWorkflowInput = {
+  config?: CaptureHelperSimulatorConfigInput;
+};
+
+export type AiGraderSimulatedSessionWorkflowResult = {
+  simulator: true;
+  workflow: "STANDARD_SESSION";
+  session: {
+    sessionId: string;
+    tenantId: string;
+    mode: "STANDARD";
+    helperInstanceId: string;
+    calibrationSnapshotIds: string[];
+  };
+  manifest: {
+    id: string;
+    checksumSha256: string;
+    frameCount: number;
+    validation: AiGraderSimulatorValidationSummary;
+  };
+  macro: {
+    frameCount: number;
+    frames: Array<{
+      frameId: string;
+      kind: string;
+      side: string;
+      storageKey: string;
+    }>;
+  };
+  micro: {
+    packageCount: number;
+    evidenceFrameCount: number;
+    surfaceSuspectCount: number;
+    packages: Array<{
+      id: string;
+      element: string;
+      spotIndex: number;
+      totalSpots: number;
+      sourceSuspectRegionId?: string;
+      frameCount: number;
+    }>;
+  };
+  gradeRunDraft: {
+    status: "SIMULATED_DRAFT";
+    captureSessionId: string;
+    captureManifestId: string;
+    algorithmVersionId: string;
+    thresholdSetVersionId: string;
+    runtimeEnvironmentId: string;
+    inputChecksum: string;
+    computesGrades: false;
+  };
+  certificateReadiness: {
+    ready: false;
+    status: "SIMULATION_ONLY";
+    message: string;
+  };
+  validation: AiGraderSimulatorValidationSummary;
+};
+
 export type AiGraderSimulatorGenerator = (
   input: AiGraderSimulatorGenerateInput
 ) => Promise<AiGraderSimulatorGenerateResult> | AiGraderSimulatorGenerateResult;
+
+export type AiGraderSimulatedSessionGenerator = (
+  input: AiGraderSimulatedSessionWorkflowInput
+) => Promise<AiGraderSimulatedSessionWorkflowResult> | AiGraderSimulatedSessionWorkflowResult;
 
 export type AiGraderAdminApiService = {
   createCaptureSessionDraft(input: CreateCaptureSessionDraftInput): Promise<unknown>;
@@ -84,6 +150,7 @@ export type AiGraderAdminApiDependencies = {
   requireAdminSession(req: NextApiRequest): Promise<AdminSession>;
   getService(): Promise<AiGraderAdminApiService> | AiGraderAdminApiService;
   generateSimulatorManifest?: AiGraderSimulatorGenerator;
+  generateSimulatedSessionWorkflow?: AiGraderSimulatedSessionGenerator;
 };
 
 type RouteDefinition = {
@@ -218,7 +285,9 @@ const ROUTES: Record<string, RouteDefinition> = {
 
 const STATUS_ROUTE_KEYS = new Set(["status", "health"]);
 const SIMULATOR_ROUTE_KEY = "simulator/generate";
-const routeList = ["status", "health", SIMULATOR_ROUTE_KEY, ...Object.keys(ROUTES)];
+const SIMULATED_SESSION_ROUTE_KEY = "simulator/session";
+const SIMULATOR_ROUTE_KEYS = new Set([SIMULATOR_ROUTE_KEY, SIMULATED_SESSION_ROUTE_KEY]);
+const routeList = ["status", "health", SIMULATOR_ROUTE_KEY, SIMULATED_SESSION_ROUTE_KEY, ...Object.keys(ROUTES)];
 
 function simulatorStatus(env: EnvLike) {
   const enabled = isAiGraderSimulatorEnabled(env);
@@ -254,11 +323,38 @@ function parseSimulatorGenerateInput(body: JsonRecord): AiGraderSimulatorGenerat
   };
 }
 
+function parseSimulatedSessionWorkflowInput(body: JsonRecord): AiGraderSimulatedSessionWorkflowInput {
+  if (body.config != null && !isRecord(body.config)) {
+    throw Object.assign(new Error("Simulator config must be a JSON object when provided."), {
+      name: "AiGraderServiceValidationError",
+      issues: [{ path: "config", code: "INVALID_CONFIG", message: "config must be a JSON object when provided." }],
+    });
+  }
+  return {
+    ...(isRecord(body.config) ? { config: body.config as CaptureHelperSimulatorConfigInput } : {}),
+  };
+}
+
 function combineValidationIssues(results: AiGraderSimulatorValidationSummary[]): AiGraderSimulatorValidationSummary {
   const issues = results.flatMap((result) => result.issues);
   return {
     valid: results.every((result) => result.valid),
     issues,
+  };
+}
+
+function isStandardMacroFrame(frame: CaptureManifestFrame) {
+  return frame.kind === "FRONT_DIFFUSE" || frame.kind === "BACK_DIFFUSE" || frame.kind === "FRONT_DARKFIELD" || frame.kind === "BACK_DARKFIELD";
+}
+
+function summarizeMicroPackage(microPackage: MicroSpotCapturePackage) {
+  return {
+    id: microPackage.id,
+    element: microPackage.element,
+    spotIndex: microPackage.spotIndex,
+    totalSpots: microPackage.totalSpots,
+    ...(microPackage.sourceSuspectRegionId ? { sourceSuspectRegionId: microPackage.sourceSuspectRegionId } : {}),
+    frameCount: Object.keys(microPackage.frames).length,
   };
 }
 
@@ -356,9 +452,77 @@ export function generateDefaultAiGraderSimulatorManifest(
   };
 }
 
+export function generateDefaultAiGraderSimulatedSessionWorkflow(
+  input: AiGraderSimulatedSessionWorkflowInput = {}
+): AiGraderSimulatedSessionWorkflowResult {
+  const simulation = generateStandardCaptureSimulation(input.config ?? {});
+  const manifestValidation = validateCaptureManifestForMode(simulation.captureManifest, "STANDARD", { side: "FRONT" });
+  const packageValidation = combineValidationIssues(
+    simulation.microSpotPackages.map((microPackage) => validateMicroSpotCapturePackage(microPackage))
+  );
+  const validation = combineValidationIssues([manifestValidation, packageValidation]);
+  const macroFrames = simulation.captureManifest.frameList.filter(isStandardMacroFrame);
+  const surfaceSuspectCount = new Set(
+    simulation.microSpotPackages
+      .map((microPackage) => microPackage.sourceSuspectRegionId)
+      .filter((regionId): regionId is string => typeof regionId === "string" && regionId.length > 0)
+  ).size;
+
+  return {
+    simulator: true,
+    workflow: "STANDARD_SESSION",
+    session: {
+      sessionId: simulation.captureManifest.captureSessionId,
+      tenantId: simulation.captureManifest.tenantId,
+      mode: "STANDARD",
+      helperInstanceId: simulation.captureManifest.helperInstanceId,
+      calibrationSnapshotIds: simulation.captureManifest.calibrationSnapshotIds,
+    },
+    manifest: {
+      id: simulation.captureManifest.id,
+      checksumSha256: simulation.captureManifest.checksumSha256,
+      frameCount: simulation.captureManifest.frameList.length,
+      validation: manifestValidation,
+    },
+    macro: {
+      frameCount: macroFrames.length,
+      frames: macroFrames.map((frame) => ({
+        frameId: frame.frameId,
+        kind: frame.kind,
+        side: frame.side,
+        storageKey: frame.storageKey,
+      })),
+    },
+    micro: {
+      packageCount: simulation.microSpotPackages.length,
+      evidenceFrameCount: simulation.evidenceArtifacts.length,
+      surfaceSuspectCount,
+      packages: simulation.microSpotPackages.map(summarizeMicroPackage),
+    },
+    gradeRunDraft: {
+      status: "SIMULATED_DRAFT",
+      captureSessionId: simulation.captureManifest.captureSessionId,
+      captureManifestId: simulation.captureManifest.id,
+      algorithmVersionId: "simulated-standard-grader-v0",
+      thresholdSetVersionId: "simulated-standard-thresholds-v0",
+      runtimeEnvironmentId: "simulated-admin-workflow-runtime",
+      inputChecksum: simulation.captureManifest.checksumSha256,
+      computesGrades: false,
+    },
+    certificateReadiness: {
+      ready: false,
+      status: "SIMULATION_ONLY",
+      message: "simulation only; production DB migration and hardware capture required",
+    },
+    validation,
+  };
+}
+
 export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies) {
   const env = deps.env ?? process.env;
   const generateSimulatorManifest = deps.generateSimulatorManifest ?? generateDefaultAiGraderSimulatorManifest;
+  const generateSimulatedSessionWorkflow =
+    deps.generateSimulatedSessionWorkflow ?? generateDefaultAiGraderSimulatedSessionWorkflow;
 
   return async function aiGraderAdminApiHandler(req: NextApiRequest, res: NextApiResponse<ApiResponse>) {
     const key = routeKey(req);
@@ -370,10 +534,10 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
       }
     } else {
       const route = ROUTES[key];
-      if (!route && key !== SIMULATOR_ROUTE_KEY) {
+      if (!route && !SIMULATOR_ROUTE_KEYS.has(key)) {
         return res.status(404).json({ ok: false, message: "AI Grader admin API route not found" });
       }
-      const allow = key === SIMULATOR_ROUTE_KEY ? "POST" : route.allow;
+      const allow = SIMULATOR_ROUTE_KEYS.has(key) ? "POST" : route.allow;
       if (req.method !== allow) {
         res.setHeader("Allow", allow);
         return res.status(405).json({ ok: false, message: "Method not allowed" });
@@ -389,7 +553,7 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
       });
     }
 
-    if (key === SIMULATOR_ROUTE_KEY && !isAiGraderSimulatorEnabled(env)) {
+    if (SIMULATOR_ROUTE_KEYS.has(key) && !isAiGraderSimulatorEnabled(env)) {
       return res.status(503).json({
         ok: false,
         enabled: false,
@@ -426,6 +590,16 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
           ok: true,
           enabled: true,
           operation: "generateSimulatorManifest",
+          result,
+        });
+      }
+
+      if (key === SIMULATED_SESSION_ROUTE_KEY) {
+        const result = await generateSimulatedSessionWorkflow(parseSimulatedSessionWorkflowInput(req.body));
+        return res.status(200).json({
+          ok: true,
+          enabled: true,
+          operation: "generateSimulatedSessionWorkflow",
           result,
         });
       }

@@ -43,6 +43,68 @@ export type AiGraderSimulatorResult = {
   evidenceArtifacts?: unknown[];
 };
 
+export type AiGraderSimulatedSessionWorkflowResult = {
+  simulator: true;
+  workflow: "STANDARD_SESSION";
+  session: {
+    sessionId: string;
+    tenantId: string;
+    mode: "STANDARD";
+    helperInstanceId: string;
+    calibrationSnapshotIds: string[];
+  };
+  manifest: {
+    id: string;
+    checksumSha256: string;
+    frameCount: number;
+    validation: {
+      valid: boolean;
+      issues: unknown[];
+    };
+  };
+  macro: {
+    frameCount: number;
+    frames: Array<{
+      frameId: string;
+      kind: string;
+      side: string;
+      storageKey: string;
+    }>;
+  };
+  micro: {
+    packageCount: number;
+    evidenceFrameCount: number;
+    surfaceSuspectCount: number;
+    packages: Array<{
+      id: string;
+      element: string;
+      spotIndex: number;
+      totalSpots: number;
+      sourceSuspectRegionId?: string;
+      frameCount: number;
+    }>;
+  };
+  gradeRunDraft: {
+    status: "SIMULATED_DRAFT";
+    captureSessionId: string;
+    captureManifestId: string;
+    algorithmVersionId: string;
+    thresholdSetVersionId: string;
+    runtimeEnvironmentId: string;
+    inputChecksum: string;
+    computesGrades: false;
+  };
+  certificateReadiness: {
+    ready: false;
+    status: "SIMULATION_ONLY";
+    message: string;
+  };
+  validation: {
+    valid: boolean;
+    issues: unknown[];
+  };
+};
+
 export type AiGraderAdminOperation =
   | "captureSessionDraft"
   | "orchestratorTransition"
@@ -229,6 +291,24 @@ export async function generateAiGraderSimulatorManifest(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ mode }),
+    })
+  );
+
+  return payload.result;
+}
+
+export async function generateAiGraderSimulatedSessionWorkflow(
+  headers: Record<string, string>,
+  fetchImpl: AiGraderAdminFetch = globalThis.fetch as AiGraderAdminFetch
+): Promise<AiGraderSimulatedSessionWorkflowResult> {
+  const payload = await parseAiGraderAdminResponse<{ ok: true; result: AiGraderSimulatedSessionWorkflowResult }>(
+    await fetchImpl("/api/admin/ai-grader/simulator/session", {
+      method: "POST",
+      headers: {
+        ...headers,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({}),
     })
   );
 

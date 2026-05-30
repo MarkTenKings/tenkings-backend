@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   AiGraderAdminApiError,
   fetchAiGraderAdminStatus,
+  generateAiGraderSimulatedSessionWorkflow,
   generateAiGraderSimulatorManifest,
   postAiGraderAdminOperation,
   type AiGraderAdminFetch,
@@ -166,6 +167,95 @@ test("simulator client maps valid simulator response", async () => {
   assert.equal(result.summary.validation.valid, true);
   assert.equal(result.summary.frameCount, 6);
   assert.equal(result.summary.helperInstanceId, "helper-1");
+});
+
+test("simulated session client maps disabled response to typed api error", async () => {
+  await assert.rejects(
+    () =>
+      generateAiGraderSimulatedSessionWorkflow({ Authorization: "Bearer token-1" }, async (input, init) => {
+        assert.equal(input, "/api/admin/ai-grader/simulator/session");
+        assert.equal(init?.method, "POST");
+        assert.equal(init?.body, JSON.stringify({}));
+        return jsonResponse(503, {
+          ok: false,
+          enabled: false,
+          code: "AI_GRADER_SIMULATOR_DISABLED",
+          message: "AI Grader simulator mode is disabled.",
+        });
+      }),
+    (error) => {
+      assert.equal(error instanceof AiGraderAdminApiError, true);
+      const apiError = error as AiGraderAdminApiError;
+      assert.equal(apiError.status, 503);
+      assert.equal(apiError.code, "AI_GRADER_SIMULATOR_DISABLED");
+      assert.equal(apiError.disabled, true);
+      return true;
+    }
+  );
+});
+
+test("simulated session client maps success response", async () => {
+  const result = await generateAiGraderSimulatedSessionWorkflow({}, async (input, init) => {
+    assert.equal(input, "/api/admin/ai-grader/simulator/session");
+    assert.equal(init?.method, "POST");
+    assert.equal((init?.headers as Record<string, string>)["Content-Type"], "application/json");
+    assert.equal(init?.body, JSON.stringify({}));
+    return jsonResponse(200, {
+      ok: true,
+      enabled: true,
+      operation: "generateSimulatedSessionWorkflow",
+      result: {
+        simulator: true,
+        workflow: "STANDARD_SESSION",
+        session: {
+          sessionId: "simulated-session",
+          tenantId: "simulated-tenant",
+          mode: "STANDARD",
+          helperInstanceId: "helper-1",
+          calibrationSnapshotIds: ["cal-1"],
+        },
+        manifest: {
+          id: "manifest-1",
+          checksumSha256: "a".repeat(64),
+          frameCount: 15,
+          validation: { valid: true, issues: [] },
+        },
+        macro: {
+          frameCount: 4,
+          frames: [],
+        },
+        micro: {
+          packageCount: 11,
+          evidenceFrameCount: 110,
+          surfaceSuspectCount: 3,
+          packages: [],
+        },
+        gradeRunDraft: {
+          status: "SIMULATED_DRAFT",
+          captureSessionId: "simulated-session",
+          captureManifestId: "manifest-1",
+          algorithmVersionId: "simulated-standard-grader-v0",
+          thresholdSetVersionId: "simulated-standard-thresholds-v0",
+          runtimeEnvironmentId: "simulated-admin-workflow-runtime",
+          inputChecksum: "a".repeat(64),
+          computesGrades: false,
+        },
+        certificateReadiness: {
+          ready: false,
+          status: "SIMULATION_ONLY",
+          message: "simulation only; production DB migration and hardware capture required",
+        },
+        validation: { valid: true, issues: [] },
+      },
+    });
+  });
+
+  assert.equal(result.workflow, "STANDARD_SESSION");
+  assert.equal(result.session.mode, "STANDARD");
+  assert.equal(result.manifest.frameCount, 15);
+  assert.equal(result.micro.packageCount, 11);
+  assert.equal(result.micro.surfaceSuspectCount, 3);
+  assert.equal(result.certificateReadiness.ready, false);
 });
 
 test("admin gate state follows existing admin auth shape", () => {

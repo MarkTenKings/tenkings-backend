@@ -9924,3 +9924,29 @@ Build Set Ops UI flow with:
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, and no real hardware access.
 - Suggested next chunk, pending explicit approval: either a full simulated end-to-end admin session flow with no DB writes, or a staging/prod migration approval plan for real AI Grader persistence.
+
+## Session Update (2026-05-30, AI Grader simulated session workflow)
+- Created branch `feature/ai-grader-simulated-session-flow` from latest `origin/main`.
+- Added a simulator-only admin API action at `POST /api/admin/ai-grader/simulator/session`.
+- The simulated session action requires both `AI_GRADER_API_ENABLED=true` and `AI_GRADER_SIMULATOR_ENABLED=true`; disabled responses return before admin auth, service loading, Prisma access, or simulator generation.
+- Enabled simulated sessions use `@tenkings/ai-grader-simulator` and shared validators only.
+- The response models a STANDARD-style admin workflow without DB writes:
+  - session and helper/calibration identifiers
+  - manifest id/checksum/frame count
+  - macro frame summary
+  - micro package/evidence frame summary
+  - surface suspect count
+  - draft GradeRun-like provenance summary without grading computation
+  - certificate readiness placeholder: `simulation only; production DB migration and hardware capture required`
+- Updated `/admin/ai-grader` with a concise Simulated Session panel that generates and displays the STANDARD workflow payload.
+- Updated the admin client and focused tests for disabled and successful simulated session responses.
+- Validation passed:
+  - `pnpm --filter @tenkings/database build`
+  - `pnpm --filter @tenkings/database test`
+  - `pnpm --filter @tenkings/shared test`
+  - `pnpm --filter @tenkings/ai-grader-simulator build`
+  - `pnpm --filter @tenkings/ai-grader-simulator test`
+  - `pnpm --filter @tenkings/nextjs-app build`
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts tests/aiGraderAdminClient.test.ts`
+  - `git diff --check`
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.
