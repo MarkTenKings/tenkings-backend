@@ -10039,3 +10039,36 @@ Build Set Ops UI flow with:
 - Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/2ymNUeG7MHFr1pfbWxEBq23EEE7L`.
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, and no next AI Grader phase work.
+
+## Session Update (2026-05-30, AI Grader capture-helper local transport)
+- Created branch `feature/ai-grader-capture-helper-transport` from latest `origin/main`.
+- Added a native Node `http` local transport in `@tenkings/ai-grader-capture-helper`.
+- Transport is disabled by default and starts only through explicit `serve` CLI usage or direct test/imported start calls.
+- Added loopback-only config:
+  - default host `127.0.0.1`
+  - default port `47650`
+  - non-loopback hosts rejected
+  - simulator mode and mock driver set only
+- Added JSON endpoints:
+  - `GET /health`
+  - `GET /capabilities`
+  - `POST /manifest` for `QUICK`, `STANDARD`, and `AUTH_ONLY`
+- Existing `health`, `capabilities`, and `manifest` CLI commands remain JSON-and-exit commands.
+- Added transport tests for health, capabilities, QUICK/STANDARD/AUTH_ONLY manifests, invalid mode `400`, unsupported method `405`, non-loopback rejection, real driver-set rejection, and no hardware module import/dependency assertions.
+- Updated `docs/ai-grader-capture-helper.md` with local transport usage, disabled-by-default behavior, simulator/mock-only limits, and future UI/helper bridge notes.
+- Local transport smoke passed:
+  - started on `127.0.0.1` with ephemeral port `60745`
+  - `GET /health` -> `200`, `mode=simulator`, `transport.localOnly=true`
+  - `POST /manifest` with `QUICK` -> `200`, `frameCount=4`
+- Validation passed:
+  - `pnpm --filter @tenkings/database build`
+  - `pnpm --filter @tenkings/database test`
+  - `pnpm --filter @tenkings/shared test`
+  - `pnpm --filter @tenkings/ai-grader-simulator build`
+  - `pnpm --filter @tenkings/ai-grader-simulator test`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test`
+  - `pnpm --filter @tenkings/nextjs-app build`
+  - local capture-helper transport smoke command
+  - `git diff --check`
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.

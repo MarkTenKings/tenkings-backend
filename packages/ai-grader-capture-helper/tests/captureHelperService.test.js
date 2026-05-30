@@ -127,6 +127,10 @@ test("CLI prints JSON for health capabilities and manifest commands", async () =
   assert.equal(standard.stdout.captureMode, "STANDARD");
   assert.equal(standard.stdout.captureManifest.captureSessionId, "cli-standard");
   assert.equal(standard.stdout.microSpotPackages.length, 11);
+
+  const help = await runCli(["--help"]);
+  assert.equal(help.code, 0);
+  assert.equal(help.stdout.commands.includes("serve --host 127.0.0.1 --port 47650"), true);
 });
 
 test("invalid mode and config reject", async () => {
@@ -150,6 +154,10 @@ test("invalid mode and config reject", async () => {
   const cli = await runCli(["manifest", "--mode", "FORENSIC"]);
   assert.equal(cli.code, 1);
   assert.match(cli.stderr.error, /Manifest mode must be QUICK, STANDARD, or AUTH_ONLY/);
+
+  const serve = await runCli(["serve", "--host", "0.0.0.0"]);
+  assert.equal(serve.code, 1);
+  assert.match(serve.stderr.error, /only supports loopback hosts/);
 });
 
 test("no real hardware backend path exists", () => {

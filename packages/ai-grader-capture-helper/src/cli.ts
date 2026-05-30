@@ -7,6 +7,7 @@ import {
   type CaptureHelperConfigInput,
   type CaptureHelperEnv,
 } from "./index";
+import { startCaptureHelperHttpServer } from "./transport";
 
 export interface CaptureHelperCliIO {
   stdout?: (text: string) => void;
@@ -18,6 +19,7 @@ type ParsedCommand =
   | { command: "health"; config: CaptureHelperConfigInput }
   | { command: "capabilities"; config: CaptureHelperConfigInput }
   | { command: "manifest"; config: CaptureHelperConfigInput; mode: string | undefined }
+  | { command: "serve"; config: CaptureHelperConfigInput; host: string | undefined; port: string | undefined }
   | { command: "help"; config: CaptureHelperConfigInput };
 
 function readOption(argv: string[], index: number, name: string) {
@@ -32,6 +34,12 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   const [command = "help", ...rest] = argv;
   const config: CaptureHelperConfigInput = { simulator: {} };
   let mode: string | undefined;
+  let host: string | undefined;
+  let port: string | undefined;
+
+  if (command === "--help" || command === "-h") {
+    return { command: "help", config };
+  }
 
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
@@ -60,6 +68,14 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         config.driverSet = readOption(rest, index, "--driver-set");
         index += 1;
         break;
+      case "--host":
+        host = readOption(rest, index, "--host");
+        index += 1;
+        break;
+      case "--port":
+        port = readOption(rest, index, "--port");
+        index += 1;
+        break;
       case "--help":
       case "-h":
         return { command: "help", config };
@@ -68,8 +84,10 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     }
   }
 
-  if (command === "health" || command === "capabilities" || command === "manifest" || command === "help") {
-    return command === "manifest" ? { command, config, mode } : { command, config };
+  if (command === "health" || command === "capabilities" || command === "manifest" || command === "serve" || command === "help") {
+    if (command === "manifest") return { command, config, mode };
+    if (command === "serve") return { command, config, host, port };
+    return { command, config };
   }
   throw new CaptureHelperCommandError(`Unknown command: ${command}`);
 }
@@ -77,10 +95,16 @@ function parseCliArgs(argv: string[]): ParsedCommand {
 function helpPayload() {
   return {
     service: "ai-grader-capture-helper",
-    commands: ["health", "capabilities", "manifest --mode QUICK|STANDARD|AUTH_ONLY"],
-    options: ["--session-id", "--tenant-id", "--seed", "--helper-instance-id", "--driver-set mock"],
+    commands: [
+      "health",
+      "capabilities",
+      "manifest --mode QUICK|STANDARD|AUTH_ONLY",
+      "serve --host 127.0.0.1 --port 47650",
+    ],
+    options: ["--session-id", "--tenant-id", "--seed", "--helper-instance-id", "--driver-set mock", "--host", "--port"],
     mode: "simulator-only",
     driverSet: "mock-only",
+    transport: "disabled until serve is explicitly run",
   };
 }
 
@@ -106,6 +130,28 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
     }
     if (parsed.command === "capabilities") {
       writeJson(stdout, service.capabilities());
+      return 0;
+    }
+    if (parsed.command === "serve") {
+      const started = await startCaptureHelperHttpServer(
+        {
+          host: parsed.host,
+          port: parsed.port,
+          service: parsed.config,
+        },
+        io.env ?? process.env
+      );
+      writeJson(stdout, {
+        ok: true,
+        service: "ai-grader-capture-helper",
+        transport: {
+          enabled: true,
+          localOnly: true,
+          host: started.host,
+          port: started.port,
+          url: started.url,
+        },
+      });
       return 0;
     }
 
