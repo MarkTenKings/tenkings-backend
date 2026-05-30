@@ -10109,3 +10109,12 @@ Build Set Ops UI flow with:
   - `git diff --check`
 - Guardrail scan found no `RUN_DB_MIGRATIONS`, `DATABASE_URL`, Prisma, or real hardware SDK references in the touched bridge code/tests.
 - Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.
+
+## Session Update (2026-05-30, AI Grader admin helper bridge PR #22 merged)
+- PR #22 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/22`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `2e587a8bcd32bf42e0f319707e2daeb91b441654`.
+- PR #22 added the disabled-by-default admin-to-capture-helper bridge, loopback-only helper base URL validation, server-side admin API proxy actions, admin client/UI wiring, and focused tests.
+- Post-merge GitHub Actions run `26694372253` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/9s7don5wuZd4EPVkZxFvug4GubB7`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, and no next AI Grader phase work.
