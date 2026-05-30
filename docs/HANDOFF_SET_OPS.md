@@ -9993,3 +9993,13 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app build`
   - `git diff --check`
 - Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.
+
+## Session Update (2026-05-30, AI Grader capture-helper service skeleton PR #19 merged)
+- PR #19 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/19`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `be03365c666c53ce3a560694c91a9172b46189f5`.
+- PR #19 added the simulator-only `@tenkings/ai-grader-capture-helper` package, JSON CLI, local docs, and tests.
+- Post-merge GitHub Actions run `26687799261` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/5tXf4jCnj31gNF94kx1E2ywvfZEV`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, and no next AI Grader phase work.
+- Recommended next chunk, pending explicit approval: define device driver interfaces/adapters with mock drivers only, still without physical device access.
