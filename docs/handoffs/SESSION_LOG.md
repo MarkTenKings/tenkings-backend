@@ -18365,3 +18365,41 @@ By enabling Rip It Live, I confirm:
 - No manual deploy/restart was run.
 - No runtime DB operation against a real app database was run.
 - Do not enable `AI_GRADER_API_ENABLED=true` or start the next AI Grader phase until migration/runtime rollout is explicitly approved.
+
+## 2026-05-30 - AI Grader capture-helper simulator foundation
+
+### Summary
+- Created branch `feature/ai-grader-capture-helper-simulator` from latest `origin/main` after PR #15 merge.
+- Added package `@tenkings/ai-grader-simulator`.
+- The simulator is importable/testable only; it does not run as a daemon and is not exposed through production routes.
+- Generated deterministic local-only simulator payloads for:
+  - device capability manifests for macro camera, LED controller, microscope, XY stage, and arm interlock
+  - QUICK capture manifests with macro frames
+  - STANDARD capture manifests with macro frames, mock micro spot packages, and evidence metadata
+  - AUTH_ONLY capture manifests with auth patch frames
+- STANDARD simulator packages include EDR, polarized, and `FLC_LED_0` through `FLC_LED_7` evidence references for every micro spot package.
+- Generated manifests are validated with existing shared AI Grader validators.
+- The simulator uses deterministic storage keys and local SHA-256 checksum values only, and performs no file uploads or hardware access.
+
+### Files Added
+- `packages/ai-grader-simulator/package.json`
+- `packages/ai-grader-simulator/tsconfig.json`
+- `packages/ai-grader-simulator/src/index.ts`
+- `packages/ai-grader-simulator/src/captureHelperSimulator.ts`
+- `packages/ai-grader-simulator/tests/captureHelperSimulator.test.js`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass, existing `<img>` lint warnings only.
+- `pnpm --filter @tenkings/ai-grader-simulator build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `git diff --check` -> pass.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware driver, image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.

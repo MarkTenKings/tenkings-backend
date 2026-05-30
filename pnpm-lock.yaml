@@ -459,6 +459,16 @@ importers:
         specifier: 5.5.4
         version: 5.5.4
 
+  packages/ai-grader-simulator:
+    dependencies:
+      '@tenkings/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      typescript:
+        specifier: ^5.5.4
+        version: 5.5.4
+
   packages/browser-rip-client:
     devDependencies:
       typescript:
