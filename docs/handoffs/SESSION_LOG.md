@@ -18534,3 +18534,53 @@ By enabling Rip It Live, I confirm:
 
 ### Next Recommendation
 - Pending explicit approval, start the capture-helper service skeleton with simulator-backed runtime first.
+
+## 2026-05-30 - AI Grader capture-helper service skeleton
+
+### Summary
+- Created branch `feature/ai-grader-capture-helper-service` from latest `origin/main`.
+- Added `@tenkings/ai-grader-capture-helper` as a new workspace package under `packages/`.
+- The helper is simulator-only and defaults to offline simulator mode.
+- Added an importable service boundary with:
+  - config loading from env/explicit input
+  - health reporting
+  - device capability manifest generation
+  - QUICK/STANDARD/AUTH_ONLY capture manifest generation
+- Added a JSON CLI:
+  - `health`
+  - `capabilities`
+  - `manifest --mode QUICK|STANDARD|AUTH_ONLY`
+- The helper rejects non-simulator backend mode and reports:
+  - `hardwareAccess: disabled`
+  - `networkListener: disabled`
+  - `deviceAccess: none`
+- Capability and manifest generation use `@tenkings/ai-grader-simulator` plus shared AI Grader validators only.
+- Added focused tests for simulator health, shared capability validation, manifest validation, CLI JSON behavior, invalid mode/config rejection, and no hardware backend path.
+- Added `docs/ai-grader-capture-helper.md` with local usage, simulator-only limitation, and future hardware driver boundary notes.
+
+### CLI Smoke Results
+- `health` -> `simulator_offline`, `mode=simulator`, `hardwareAccess=disabled`.
+- `capabilities` -> `5` device capability manifests, validation pass.
+- `manifest --mode QUICK` -> `4` frames, validation pass.
+- `manifest --mode STANDARD` -> `15` manifest frames, `11` micro packages, `110` evidence frames, validation pass.
+- `manifest --mode AUTH_ONLY` -> `6` frames, validation pass.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 6 tests.
+- capture-helper CLI smoke command -> pass.
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass, existing lint/config warnings only.
+- `git diff --check` -> pass.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware access was run.
+- No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
