@@ -3,6 +3,13 @@ import {
   runCaptureHelperDiscoveryStubs,
   type CaptureHelperDiscoveryResult,
 } from "./discovery";
+import {
+  buildArduinoLedControllerConfig,
+  isArduinoLedControllerRequested,
+  runArduinoLedControllerHealthCheck,
+  type ArduinoLedHealthResult,
+  type ArduinoLedSerialTransport,
+} from "./drivers";
 import type {
   CaptureHelperCalibrationPaths,
   CaptureHelperConfigInput,
@@ -50,12 +57,15 @@ export interface CaptureHelperReadinessReport {
   unsupportedRealDriverNotices: string[];
   calibrationChecks: CaptureHelperReadinessCheck[];
   safetyGateStatus: CaptureHelperReadinessCheck[];
+  ledControllerChecks: CaptureHelperReadinessCheck[];
+  arduinoLedHealth?: ArduinoLedHealthResult;
   discovery: CaptureHelperDiscoveryResult[];
   notes: string[];
 }
 
 interface BuildReadinessOptions {
   pathExists?: (path: string) => boolean;
+  arduinoLedSerialTransport?: ArduinoLedSerialTransport;
 }
 
 const DEVICE_ROLES: CaptureHelperDeviceRole[] = [
@@ -159,7 +169,10 @@ function configChecks(input: {
   driverSet: string;
   rigMode: string;
   expectedDevices: CaptureHelperExpectedDeviceConfig[];
+  arduinoRequested: boolean;
+  arduinoPort?: string;
 }): CaptureHelperReadinessCheck[] {
+  const realArduinoWithPort = input.driverSet === "real" && input.arduinoRequested && Boolean(input.arduinoPort);
   const checks: CaptureHelperReadinessCheck[] = [
     requiredIdCheck("helperInstanceId", input.identity.helperInstanceId),
     requiredIdCheck("rigId", input.identity.rigId),
@@ -170,12 +183,16 @@ function configChecks(input: {
 
   checks.push({
     name: "driverSet",
-    status: input.driverSet === "mock" ? "PASS" : input.driverSet === "real" ? "FAIL" : "FAIL",
+    status: input.driverSet === "mock" || realArduinoWithPort ? "PASS" : "FAIL",
     message:
       input.driverSet === "mock"
         ? "Mock driver set is allowed."
-        : input.driverSet === "real"
-          ? "Real driver set is not implemented; readiness report only, no hardware access."
+        : realArduinoWithPort
+          ? "Real driver set is limited to explicit Arduino LED controller readiness for this slice."
+          : input.driverSet === "real" && input.arduinoRequested
+            ? "Arduino LED controller readiness requires an explicit serial port."
+            : input.driverSet === "real"
+              ? "Real driver set is not implemented except explicit Arduino LED controller readiness."
           : "driverSet must be mock or real.",
   });
 
@@ -222,13 +239,18 @@ function safetyGateChecks(input: {
   driverSet: string;
   expectedDevices: CaptureHelperExpectedDeviceConfig[];
   safety: CaptureHelperSafetyFlags;
+  arduinoRequested: boolean;
+  arduinoPort?: string;
 }): CaptureHelperReadinessCheck[] {
   const armExpected = input.expectedDevices.some((device) => device.role === "armInterlock" && device.required);
+  const realArduinoWithPort = input.driverSet === "real" && input.arduinoRequested && Boolean(input.arduinoPort);
   return [
     {
       name: "safety.noHardwareProbe",
       status: "PASS",
-      message: "Readiness mode does not open cameras, serial ports, controllers, or SDKs.",
+      message: realArduinoWithPort
+        ? "Only the explicitly requested Arduino LED serial health check may open a serial port."
+        : "Readiness mode does not open cameras, serial ports, controllers, or SDKs.",
     },
     {
       name: "safety.armInterlock",
@@ -240,13 +262,103 @@ function safetyGateChecks(input: {
     },
     {
       name: "safety.realDriverFailClosed",
-      status: input.driverSet === "real" ? "FAIL" : "PASS",
+      status: input.driverSet === "real" && !realArduinoWithPort ? "FAIL" : "PASS",
       message:
-        input.driverSet === "real"
-          ? "Real driver mode is fail-closed until explicit hardware integration is implemented."
+        input.driverSet === "real" && !realArduinoWithPort
+          ? "Real driver mode is fail-closed unless explicit Arduino LED readiness is configured with a port."
+          : realArduinoWithPort
+            ? "Real hardware access is restricted to PING and LED ALL OFF on the configured Arduino LED controller port."
           : "Mock driver mode is simulator-only and does not access hardware.",
     },
   ];
+}
+
+function ledControllerChecks(input: {
+  driverSet: string;
+  arduinoRequested: boolean;
+  arduinoPort?: string;
+  baudRate: number;
+}): CaptureHelperReadinessCheck[] {
+  if (input.driverSet !== "real") {
+    return [
+      {
+        name: "ledController.arduinoHealth",
+        status: "PASS",
+        message: "Arduino LED controller real health check is not requested; no serial port is opened.",
+      },
+    ];
+  }
+
+  if (!input.arduinoRequested) {
+    return [
+      {
+        name: "ledController.arduinoHealth",
+        status: "FAIL",
+        message: "driverSet=real requires ledController.kind=arduino for the only implemented real readiness path.",
+      },
+    ];
+  }
+
+  if (!input.arduinoPort) {
+    return [
+      {
+        name: "ledController.arduinoHealth",
+        status: "FAIL",
+        message: "Arduino LED controller readiness requires an explicit serial port.",
+      },
+    ];
+  }
+
+  return [
+    {
+      name: "ledController.arduinoHealth",
+      status: "WARN",
+      message: "Arduino LED controller health is configured; async readiness or led-health must run PING and LED ALL OFF.",
+      details: {
+        port: input.arduinoPort,
+        baudRate: input.baudRate,
+      },
+    },
+  ];
+}
+
+function checkFromArduinoHealth(result: ArduinoLedHealthResult): CaptureHelperReadinessCheck {
+  return {
+    name: "ledController.arduinoHealth",
+    status: result.status,
+    message: result.ok
+      ? "Arduino LED controller responded to PING and accepted LED ALL OFF."
+      : result.error ?? result.safeShutdownError ?? "Arduino LED controller health check failed.",
+    details: {
+      port: result.port,
+      baudRate: result.baudRate,
+      opened: result.opened,
+      closed: result.closed,
+      allOffAttempted: result.allOffAttempted,
+      allOffSucceeded: result.allOffSucceeded,
+      commands: result.commands,
+      safeShutdownError: result.safeShutdownError,
+    },
+  };
+}
+
+function replaceLedControllerChecks(
+  report: CaptureHelperReadinessReport,
+  checks: CaptureHelperReadinessCheck[],
+  arduinoLedHealth?: ArduinoLedHealthResult
+): CaptureHelperReadinessReport {
+  const allChecks = [
+    ...report.configValidation.checks,
+    ...report.calibrationChecks,
+    ...report.safetyGateStatus,
+    ...checks,
+  ];
+  return {
+    ...report,
+    overallStatus: statusFromChecks(allChecks),
+    ledControllerChecks: checks,
+    ...(arduinoLedHealth ? { arduinoLedHealth } : {}),
+  };
 }
 
 export function buildCaptureHelperReadinessReport(
@@ -269,25 +381,45 @@ export function buildCaptureHelperReadinessReport(
   const rigMode = firstNonEmpty(input.rigMode, env.AI_GRADER_CAPTURE_HELPER_RIG_MODE)?.toLowerCase() ?? "simulator";
   const knownDriverSet: CaptureHelperDriverSet | undefined =
     driverSet === "mock" || driverSet === "real" ? driverSet : undefined;
+  const arduinoRequested = isArduinoLedControllerRequested(input.ledController?.kind, env);
+  const arduinoConfig = buildArduinoLedControllerConfig(input.ledController?.arduino, env);
 
   const configValidationChecks = configChecks({
     identity,
     driverSet,
     rigMode,
     expectedDevices,
+    arduinoRequested,
+    arduinoPort: arduinoConfig.port,
   });
   const calibration = calibrationChecks(expectedDevices, safety, options.pathExists ?? existsSync);
-  const safetyGateStatus = safetyGateChecks({ driverSet, expectedDevices, safety });
+  const safetyGateStatus = safetyGateChecks({
+    driverSet,
+    expectedDevices,
+    safety,
+    arduinoRequested,
+    arduinoPort: arduinoConfig.port,
+  });
+  const ledChecks = ledControllerChecks({
+    driverSet,
+    arduinoRequested,
+    arduinoPort: arduinoConfig.port,
+    baudRate: arduinoConfig.baudRate,
+  });
   const discovery = knownDriverSet ? runCaptureHelperDiscoveryStubs(knownDriverSet) : [];
   const unsupportedRealDriverNotices =
     driverSet === "real"
       ? [
-          "Real driverSet is recognized for readiness reporting only.",
-          "No real hardware drivers are implemented or imported in this package.",
-          "No serial ports, cameras, stages, interlocks, or SDKs are probed.",
+          arduinoRequested
+            ? "Real driverSet is limited to explicit Arduino LED readiness in this slice."
+            : "Real driverSet is recognized for readiness reporting only.",
+          "Macro camera, microscope, XY stage, and arm interlock real drivers are not implemented or probed.",
+          arduinoRequested
+            ? "Arduino LED readiness uses PING and LED ALL OFF only when a port is explicitly supplied."
+            : "No serial ports, cameras, stages, interlocks, or SDKs are probed.",
         ]
       : [];
-  const allChecks = [...configValidationChecks, ...calibration, ...safetyGateStatus];
+  const allChecks = [...configValidationChecks, ...calibration, ...safetyGateStatus, ...ledChecks];
   const overallStatus = statusFromChecks(allChecks);
 
   return {
@@ -307,11 +439,35 @@ export function buildCaptureHelperReadinessReport(
     unsupportedRealDriverNotices,
     calibrationChecks: calibration,
     safetyGateStatus,
+    ledControllerChecks: ledChecks,
     discovery,
     notes: [
       "Readiness reports validate configuration only.",
       "Device discovery is a stub and does not open hardware or OS device APIs.",
-      "Real driver integration remains not implemented and fail-closed.",
+      "The only opt-in real hardware readiness path is Arduino LED controller PING plus LED ALL OFF.",
     ],
   };
+}
+
+export async function buildCaptureHelperReadinessReportAsync(
+  input: CaptureHelperConfigInput = {},
+  env: CaptureHelperEnv = process.env,
+  options: BuildReadinessOptions = {}
+): Promise<CaptureHelperReadinessReport> {
+  const report = buildCaptureHelperReadinessReport(input, env, options);
+  const driverSet = firstNonEmpty(input.driverSet, env.AI_GRADER_CAPTURE_HELPER_DRIVER_SET)?.toLowerCase() ?? "mock";
+  const arduinoRequested = isArduinoLedControllerRequested(input.ledController?.kind, env);
+  const arduinoConfig = buildArduinoLedControllerConfig(input.ledController?.arduino, env);
+
+  if (driverSet !== "real" || !arduinoRequested || !arduinoConfig.port) {
+    return report;
+  }
+
+  const arduinoLedHealth = await runArduinoLedControllerHealthCheck({
+    config: arduinoConfig,
+    env,
+    transport: options.arduinoLedSerialTransport,
+  });
+
+  return replaceLedControllerChecks(report, [checkFromArduinoHealth(arduinoLedHealth)], arduinoLedHealth);
 }

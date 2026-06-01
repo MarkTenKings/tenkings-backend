@@ -2,9 +2,11 @@
 import {
   CaptureHelperCommandError,
   CaptureHelperConfigError,
-  buildCaptureHelperReadinessReport,
+  ArduinoLedControllerHealthError,
+  buildCaptureHelperReadinessReportAsync,
   createCaptureHelperService,
   parseCaptureHelperManifestMode,
+  runArduinoLedControllerHealthCheck,
   type CaptureHelperConfigInput,
   type CaptureHelperEnv,
 } from "./index";
@@ -20,6 +22,7 @@ type ParsedCommand =
   | { command: "health"; config: CaptureHelperConfigInput }
   | { command: "capabilities"; config: CaptureHelperConfigInput }
   | { command: "readiness"; config: CaptureHelperConfigInput }
+  | { command: "led-health"; config: CaptureHelperConfigInput }
   | { command: "manifest"; config: CaptureHelperConfigInput; mode: string | undefined }
   | { command: "serve"; config: CaptureHelperConfigInput; host: string | undefined; port: string | undefined }
   | { command: "help"; config: CaptureHelperConfigInput };
@@ -93,6 +96,60 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         config.driverSet = readOption(rest, index, "--driver-set");
         index += 1;
         break;
+      case "--led-controller":
+        config.ledController = { ...config.ledController, kind: readOption(rest, index, "--led-controller") };
+        index += 1;
+        break;
+      case "--led-port":
+        config.ledController = {
+          ...config.ledController,
+          arduino: {
+            ...config.ledController?.arduino,
+            port: readOption(rest, index, "--led-port"),
+          },
+        };
+        index += 1;
+        break;
+      case "--baud":
+        config.ledController = {
+          ...config.ledController,
+          arduino: {
+            ...config.ledController?.arduino,
+            baudRate: readOption(rest, index, "--baud"),
+          },
+        };
+        index += 1;
+        break;
+      case "--command-timeout-ms":
+        config.ledController = {
+          ...config.ledController,
+          arduino: {
+            ...config.ledController?.arduino,
+            commandTimeoutMs: readOption(rest, index, "--command-timeout-ms"),
+          },
+        };
+        index += 1;
+        break;
+      case "--open-timeout-ms":
+        config.ledController = {
+          ...config.ledController,
+          arduino: {
+            ...config.ledController?.arduino,
+            openTimeoutMs: readOption(rest, index, "--open-timeout-ms"),
+          },
+        };
+        index += 1;
+        break;
+      case "--close-timeout-ms":
+        config.ledController = {
+          ...config.ledController,
+          arduino: {
+            ...config.ledController?.arduino,
+            closeTimeoutMs: readOption(rest, index, "--close-timeout-ms"),
+          },
+        };
+        index += 1;
+        break;
       case "--macro-calibration-path":
         config.calibrationPaths = { ...config.calibrationPaths, macroCamera: readOption(rest, index, "--macro-calibration-path") };
         index += 1;
@@ -126,7 +183,18 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         index += 1;
         break;
       case "--port":
-        port = readOption(rest, index, "--port");
+        if (command === "led-health") {
+          config.ledController = {
+            ...config.ledController,
+            kind: "arduino",
+            arduino: {
+              ...config.ledController?.arduino,
+              port: readOption(rest, index, "--port"),
+            },
+          };
+        } else {
+          port = readOption(rest, index, "--port");
+        }
         index += 1;
         break;
       case "--help":
@@ -141,6 +209,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "health" ||
     command === "capabilities" ||
     command === "readiness" ||
+    command === "led-health" ||
     command === "manifest" ||
     command === "serve" ||
     command === "help"
@@ -158,6 +227,7 @@ function helpPayload() {
     commands: [
       "health",
       "readiness",
+      "led-health --port <serial-port> --baud 115200",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -172,6 +242,12 @@ function helpPayload() {
       "--helper-instance-id",
       "--driver-set mock|real",
       "--rig-mode simulator|readiness",
+      "--led-controller arduino",
+      "--led-port",
+      "--baud",
+      "--command-timeout-ms",
+      "--open-timeout-ms",
+      "--close-timeout-ms",
       "--macro-calibration-path",
       "--led-calibration-path",
       "--microscope-calibration-path",
@@ -183,7 +259,7 @@ function helpPayload() {
       "--port",
     ],
     mode: "simulator-only",
-    driverSet: "mock runnable; real readiness-only",
+    driverSet: "mock runnable; real limited to explicit Arduino LED readiness",
     transport: "disabled until serve is explicitly run",
   };
 }
@@ -204,8 +280,17 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
     }
 
     if (parsed.command === "readiness") {
-      writeJson(stdout, buildCaptureHelperReadinessReport(parsed.config, io.env ?? process.env));
+      writeJson(stdout, await buildCaptureHelperReadinessReportAsync(parsed.config, io.env ?? process.env));
       return 0;
+    }
+
+    if (parsed.command === "led-health") {
+      const result = await runArduinoLedControllerHealthCheck({
+        config: parsed.config.ledController?.arduino ?? {},
+        env: io.env ?? process.env,
+      });
+      writeJson(stdout, result);
+      return result.ok ? 0 : 1;
     }
 
     const service = createCaptureHelperService(parsed.config, io.env ?? process.env);
@@ -243,7 +328,10 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
     writeJson(stdout, service.manifest(parseCaptureHelperManifestMode(parsed.mode)));
     return 0;
   } catch (error) {
-    const isExpected = error instanceof CaptureHelperCommandError || error instanceof CaptureHelperConfigError;
+    const isExpected =
+      error instanceof CaptureHelperCommandError ||
+      error instanceof CaptureHelperConfigError ||
+      error instanceof ArduinoLedControllerHealthError;
     const message = error instanceof Error ? error.message : "Unexpected capture helper CLI error.";
     writeJson(stderr, {
       ok: false,

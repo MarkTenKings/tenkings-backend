@@ -150,7 +150,8 @@ test("service assembles mock driver capabilities", () => {
 });
 
 test("no hardware modules are dependencies or imported", () => {
-  const forbidden = ["serialport", "node-hid", "usb", "basler", "dino", "grbl", "opencv"];
+  const forbiddenDependencies = ["node-hid", "usb", "basler", "dino", "grbl", "opencv"];
+  const forbiddenImports = ["serialport", "@serialport", "node-hid", "usb", "basler", "dino", "grbl", "opencv"];
   const dependencyNames = Object.keys({
     ...packageJson.dependencies,
     ...packageJson.devDependencies,
@@ -158,7 +159,7 @@ test("no hardware modules are dependencies or imported", () => {
   });
   for (const dependency of dependencyNames) {
     assert.equal(
-      forbidden.some((name) => dependency.toLowerCase().includes(name)),
+      forbiddenDependencies.some((name) => dependency.toLowerCase().includes(name)),
       false,
       `unexpected hardware dependency ${dependency}`
     );
@@ -166,7 +167,7 @@ test("no hardware modules are dependencies or imported", () => {
 
   for (const moduleId of Object.keys(require.cache)) {
     assert.equal(
-      forbidden.some((name) => moduleId.toLowerCase().includes(name)),
+      forbiddenImports.some((name) => moduleId.toLowerCase().includes(name)),
       false,
       `unexpected hardware module import ${moduleId}`
     );
