@@ -160,6 +160,7 @@ export type AiGraderHelperBridgeFetch = (
 
 export type AiGraderHelperBridgeClient = {
   health(): Promise<unknown>;
+  readiness(): Promise<unknown>;
   capabilities(): Promise<unknown>;
   manifest(mode: AiGraderHelperManifestMode): Promise<unknown>;
 };
@@ -438,6 +439,7 @@ export function createAiGraderHelperBridgeClient(
 
   return {
     health: () => fetchHelper("/health"),
+    readiness: () => fetchHelper("/readiness"),
     capabilities: () => fetchHelper("/capabilities"),
     manifest: (mode) =>
       fetchHelper("/manifest", {
@@ -493,15 +495,22 @@ const SIMULATOR_ROUTE_KEY = "simulator/generate";
 const SIMULATED_SESSION_ROUTE_KEY = "simulator/session";
 const SIMULATOR_ROUTE_KEYS = new Set([SIMULATOR_ROUTE_KEY, SIMULATED_SESSION_ROUTE_KEY]);
 const HELPER_HEALTH_ROUTE_KEY = "helper/health";
+const HELPER_READINESS_ROUTE_KEY = "helper/readiness";
 const HELPER_CAPABILITIES_ROUTE_KEY = "helper/capabilities";
 const HELPER_MANIFEST_ROUTE_KEY = "helper/manifest";
-const HELPER_ROUTE_KEYS = new Set([HELPER_HEALTH_ROUTE_KEY, HELPER_CAPABILITIES_ROUTE_KEY, HELPER_MANIFEST_ROUTE_KEY]);
+const HELPER_ROUTE_KEYS = new Set([
+  HELPER_HEALTH_ROUTE_KEY,
+  HELPER_READINESS_ROUTE_KEY,
+  HELPER_CAPABILITIES_ROUTE_KEY,
+  HELPER_MANIFEST_ROUTE_KEY,
+]);
 const routeList = [
   "status",
   "health",
   SIMULATOR_ROUTE_KEY,
   SIMULATED_SESSION_ROUTE_KEY,
   HELPER_HEALTH_ROUTE_KEY,
+  HELPER_READINESS_ROUTE_KEY,
   HELPER_CAPABILITIES_ROUTE_KEY,
   HELPER_MANIFEST_ROUTE_KEY,
   ...Object.keys(ROUTES),
@@ -874,6 +883,16 @@ export function createAiGraderAdminApiHandler(deps: AiGraderAdminApiDependencies
             ok: true,
             enabled: true,
             operation: "helperBridgeHealth",
+            result,
+          });
+        }
+
+        if (key === HELPER_READINESS_ROUTE_KEY) {
+          const result = await helperClient.readiness();
+          return res.status(200).json({
+            ok: true,
+            enabled: true,
+            operation: "helperBridgeReadiness",
             result,
           });
         }

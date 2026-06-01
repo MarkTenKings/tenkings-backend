@@ -18510,6 +18510,46 @@ By enabling Rip It Live, I confirm:
 - No real hardware access was run.
 - No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
 
+## 2026-06-01 - AI Grader hardware readiness/config validation
+
+### Summary
+- Created branch `feature/ai-grader-hardware-readiness` from latest `origin/main`.
+- Added capture-helper readiness/config validation for rig mode, driver set, expected devices, serial hints, calibration paths, helper identity, and safety flags.
+- Added readiness-only `driverSet=real` handling that fails closed and does not permit runnable helper/service commands to use real drivers.
+- Added discovery stubs for macro camera, LED controller, microscope, GRBL stage, and arm interlock. Discovery reports `NOT_PROBED` for mock and `NOT_IMPLEMENTED` for real without touching hardware.
+- Added JSON readiness surfaces:
+  - `tk-ai-grader-capture-helper readiness`
+  - local helper `GET /readiness`
+  - admin helper bridge `GET /api/admin/ai-grader/helper/readiness`
+  - admin UI readiness summary in the Local Helper Bridge panel
+- Updated `docs/ai-grader-capture-helper.md` with readiness usage, config fields, what is not probed, and a checklist before first real hardware driver integration.
+
+### Readiness Smoke Results
+- CLI `readiness` with explicit tenant/rig/location/operator/helper ids -> `overallStatus=PASS`, `driverSet=mock`, `hardwareAccess=not_probed`, discovery stubs `NOT_PROBED`.
+- Local transport `GET /readiness` on a loopback ephemeral port -> `200`, `overallStatus=PASS`, `driverSet=mock`, `discoveryCount=5`, `transport.localOnly=true`.
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 28 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass, existing lint/config warnings only.
+- `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts tests/aiGraderAdminClient.test.ts` -> pass, 32 tests.
+- `git diff --check` -> pass.
+- Existing environment warning observed: local Node v25.6.1, repo engine expects Node 20.x.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware access was run.
+- No real hardware SDK was imported.
+- No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
+
 ## 2026-05-30 - AI Grader admin helper bridge PR #22 merged
 
 ### Summary

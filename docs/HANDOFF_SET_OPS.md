@@ -10118,3 +10118,32 @@ Build Set Ops UI flow with:
 - Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/9s7don5wuZd4EPVkZxFvug4GubB7`.
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, and no next AI Grader phase work.
+
+## Session Update (2026-06-01, AI Grader hardware readiness/config validation)
+- Created branch `feature/ai-grader-hardware-readiness` from latest `origin/main`.
+- Added capture-helper hardware readiness/config validation without opening devices or importing hardware SDKs.
+- Capture-helper config now models rig mode, `mock`/`real` driver set values, expected devices, serial hints, calibration paths, helper identity, and safety flags.
+- Runnable helper commands still reject `driverSet=real`; readiness reporting recognizes it only to return a fail-closed `FAIL` report with unsupported real-driver notices.
+- Added discovery stub interfaces/results for macro camera, LED controller, microscope, GRBL stage, and arm interlock. Mock discovery reports `NOT_PROBED`; real discovery reports `NOT_IMPLEMENTED`.
+- Added JSON readiness surfaces:
+  - capture-helper CLI command `readiness`
+  - local helper transport `GET /readiness`
+  - admin helper bridge `GET /api/admin/ai-grader/helper/readiness`
+  - admin UI Local Helper Bridge readiness status
+- Updated `docs/ai-grader-capture-helper.md` with readiness command usage, config fields, non-probed discovery behavior, and first real-driver integration checklist.
+- Readiness smoke passed:
+  - CLI `readiness` with explicit tenant/rig/location/operator/helper ids -> `overallStatus=PASS`, `driverSet=mock`, `hardwareAccess=not_probed`, discovery stubs `NOT_PROBED`
+  - local transport `GET /readiness` on loopback ephemeral port -> `200`, `overallStatus=PASS`, `discoveryCount=5`, `transport.localOnly=true`
+- Validation passed:
+  - `pnpm --filter @tenkings/database build`
+  - `pnpm --filter @tenkings/database test`
+  - `pnpm --filter @tenkings/shared test`
+  - `pnpm --filter @tenkings/ai-grader-simulator build`
+  - `pnpm --filter @tenkings/ai-grader-simulator test`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test`
+  - `pnpm --filter @tenkings/nextjs-app build`
+  - `pnpm --filter @tenkings/nextjs-app exec tsx --test tests/aiGraderApi.test.ts tests/aiGraderAdminClient.test.ts`
+  - `git diff --check`
+- Existing environment/build warnings observed: local Node v25.6.1 vs repo engine Node 20.x; existing Next lint warnings for `<img>` usage; stale Browserslist/Tailwind glob warnings. No new blocking validation failure.
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.

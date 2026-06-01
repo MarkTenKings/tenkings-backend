@@ -130,6 +130,7 @@ test("CLI prints JSON for health capabilities and manifest commands", async () =
 
   const help = await runCli(["--help"]);
   assert.equal(help.code, 0);
+  assert.equal(help.stdout.commands.includes("readiness"), true);
   assert.equal(help.stdout.commands.includes("serve --host 127.0.0.1 --port 47650"), true);
 });
 
@@ -140,7 +141,7 @@ test("invalid mode and config reject", async () => {
   );
   assert.throws(
     () => loadCaptureHelperConfig({ driverSet: "real" }, {}),
-    /supports only mock drivers/
+    /real drivers are not implemented; use readiness for validation only/
   );
   assert.throws(
     () => createCaptureHelperService({ simulator: { helperInstanceId: "" } }, {}),
@@ -162,7 +163,7 @@ test("invalid mode and config reject", async () => {
 
 test("no real hardware backend path exists", () => {
   assert.deepEqual(SUPPORTED_CAPTURE_HELPER_BACKENDS, ["simulator"]);
-  assert.deepEqual(SUPPORTED_CAPTURE_HELPER_DRIVER_SETS, ["mock"]);
+  assert.deepEqual(SUPPORTED_CAPTURE_HELPER_DRIVER_SETS, ["mock", "real"]);
   assert.equal(CAPTURE_HELPER_HARDWARE_ACCESS, "disabled");
   const config = loadCaptureHelperConfig({}, {});
   assert.equal(config.mode, "simulator");

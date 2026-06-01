@@ -84,6 +84,29 @@ export type AiGraderHelperCapabilitiesResult = {
   };
 };
 
+export type AiGraderHelperReadinessResult = {
+  overallStatus?: "PASS" | "WARN" | "FAIL";
+  driverSet?: string;
+  rigMode?: string;
+  hardwareAccess?: string;
+  configValidation?: {
+    status?: "PASS" | "WARN" | "FAIL";
+    checks?: unknown[];
+  };
+  expectedDevices?: unknown[];
+  unsupportedRealDriverNotices?: string[];
+  calibrationChecks?: unknown[];
+  safetyGateStatus?: unknown[];
+  discovery?: unknown[];
+  notes?: string[];
+  transport?: {
+    enabled: boolean;
+    localOnly: boolean;
+    host: string;
+    port: number;
+  };
+};
+
 export type AiGraderHelperManifestResult = {
   mode?: AiGraderHelperManifestMode;
   captureManifest?: {
@@ -404,6 +427,17 @@ export async function fetchAiGraderHelperCapabilities(
 ): Promise<AiGraderHelperCapabilitiesResult> {
   const payload = await parseAiGraderAdminResponse<{ ok: true; result: AiGraderHelperCapabilitiesResult }>(
     await fetchImpl("/api/admin/ai-grader/helper/capabilities", { headers })
+  );
+
+  return payload.result;
+}
+
+export async function fetchAiGraderHelperReadiness(
+  headers: Record<string, string>,
+  fetchImpl: AiGraderAdminFetch = globalThis.fetch as AiGraderAdminFetch
+): Promise<AiGraderHelperReadinessResult> {
+  const payload = await parseAiGraderAdminResponse<{ ok: true; result: AiGraderHelperReadinessResult }>(
+    await fetchImpl("/api/admin/ai-grader/helper/readiness", { headers })
   );
 
   return payload.result;

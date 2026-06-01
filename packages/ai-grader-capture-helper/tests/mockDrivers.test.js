@@ -120,11 +120,11 @@ test("failure injection returns expected errors", () => {
 test("unsupported real driverSet rejects", () => {
   assert.throws(
     () => loadCaptureHelperConfig({ ...BASE_CONFIG, driverSet: "real" }, {}),
-    /supports only mock drivers/
+    /real drivers are not implemented; use readiness for validation only/
   );
   assert.throws(
     () => loadCaptureHelperConfig(BASE_CONFIG, { AI_GRADER_CAPTURE_HELPER_DRIVER_SET: "basler" }),
-    /supports only mock drivers/
+    /driverSet must be mock or real/
   );
 });
 

@@ -5,6 +5,7 @@ import {
   fetchAiGraderAdminStatus,
   fetchAiGraderHelperCapabilities,
   fetchAiGraderHelperHealth,
+  fetchAiGraderHelperReadiness,
   generateAiGraderSimulatedSessionWorkflow,
   generateAiGraderHelperManifest,
   generateAiGraderSimulatorManifest,
@@ -333,6 +334,30 @@ test("helper bridge client maps capabilities success response", async () => {
 
   assert.equal(result.validation?.valid, true);
   assert.equal(result.deviceCapabilityManifests?.length, 2);
+});
+
+test("helper bridge client maps readiness success response", async () => {
+  const result = await fetchAiGraderHelperReadiness({}, async (input) => {
+    assert.equal(input, "/api/admin/ai-grader/helper/readiness");
+    return jsonResponse(200, {
+      ok: true,
+      enabled: true,
+      operation: "helperBridgeReadiness",
+      result: {
+        overallStatus: "PASS",
+        driverSet: "mock",
+        configValidation: { status: "PASS", checks: [] },
+        expectedDevices: [{ role: "macroCamera" }, { role: "stage" }],
+        discovery: [{ kind: "macroCamera", status: "NOT_PROBED" }],
+      },
+    });
+  });
+
+  assert.equal(result.overallStatus, "PASS");
+  assert.equal(result.driverSet, "mock");
+  assert.equal(result.configValidation?.status, "PASS");
+  assert.equal(result.expectedDevices?.length, 2);
+  assert.equal(result.discovery?.length, 1);
 });
 
 test("helper bridge client maps manifest success response", async () => {

@@ -4,6 +4,7 @@ import {
   CaptureHelperCommandError,
   CaptureHelperConfigError,
   createCaptureHelperService,
+  buildCaptureHelperReadinessReport,
   parseCaptureHelperManifestMode,
   type CaptureHelperConfigInput,
   type CaptureHelperEnv,
@@ -167,6 +168,13 @@ export function createCaptureHelperHttpServer(
           return sendJson(res, 405, errorResponse(405, "METHOD_NOT_ALLOWED", "GET is required for /capabilities."));
         }
         return sendJson(res, 200, withTransport(service.capabilities(), config, server));
+      }
+
+      if (url.pathname === "/readiness") {
+        if (req.method !== "GET") {
+          return sendJson(res, 405, errorResponse(405, "METHOD_NOT_ALLOWED", "GET is required for /readiness."));
+        }
+        return sendJson(res, 200, withTransport(buildCaptureHelperReadinessReport(config.service, env), config, server));
       }
 
       if (url.pathname === "/manifest") {
