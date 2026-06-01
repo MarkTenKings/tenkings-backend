@@ -22,6 +22,7 @@ import {
 import {
   createMockDriverSet,
   mockDriverCapabilities,
+  type ArduinoLedControllerConfigInput,
   type CaptureHelperDriverSet,
   type CaptureHelperDriverSetDrivers,
 } from "./drivers";
@@ -70,6 +71,10 @@ export interface CaptureHelperConfigInput {
   mode?: string;
   rigMode?: string;
   driverSet?: string;
+  ledController?: {
+    kind?: string;
+    arduino?: ArduinoLedControllerConfigInput;
+  };
   simulator?: CaptureHelperSimulatorConfigInput;
   expectedDevices?: CaptureHelperExpectedDeviceConfig[];
   serialHints?: CaptureHelperSerialHints;

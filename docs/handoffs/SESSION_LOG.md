@@ -18510,6 +18510,61 @@ By enabling Rip It Live, I confirm:
 - No real hardware access was run.
 - No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
 
+## 2026-06-01 - AI Grader Arduino LED readiness adapter
+
+### Summary
+- Created branch `feature/ai-grader-arduino-led-readiness` from latest `origin/main` after fetching.
+- Added the first real-hardware-adjacent capture-helper adapter boundary for Arduino LED controller readiness only.
+- The Arduino path is explicit opt-in and limited to:
+  - open the supplied serial port
+  - send `PING`
+  - require `PONG`
+  - send `LED ALL OFF`
+  - require `OK`
+  - close the serial port
+- Added a serial transport abstraction so tests use fake serial and do not import or open real hardware.
+- Added a manual CLI command: `tk-ai-grader-capture-helper led-health --port <serial-port> --baud 115200`.
+- Extended readiness so `driverSet=real` plus `ledController=arduino` plus an explicit port can include the Arduino health check; missing port fails closed without opening serial.
+- Added `serialport` as an isolated dependency for the opt-in Arduino path only. It is dynamically imported by the Arduino adapter, not by default health/readiness/mock/transport paths.
+- No LED ON, LED OFF, STROBE, camera, microscope, stage, image acquisition, uploads, grading math, auth algorithm, report, or PDF work was added.
+
+### Files Changed
+- `docs/ai-grader-capture-helper.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `packages/ai-grader-capture-helper/package.json`
+- `packages/ai-grader-capture-helper/src/cli.ts`
+- `packages/ai-grader-capture-helper/src/drivers/arduinoLedController.ts`
+- `packages/ai-grader-capture-helper/src/drivers/index.ts`
+- `packages/ai-grader-capture-helper/src/index.ts`
+- `packages/ai-grader-capture-helper/src/readiness.ts`
+- `packages/ai-grader-capture-helper/tests/arduinoLedController.test.js`
+- `packages/ai-grader-capture-helper/tests/mockDrivers.test.js`
+- `packages/ai-grader-capture-helper/tests/readiness.test.js`
+- `packages/ai-grader-capture-helper/tests/transport.test.js`
+- `pnpm-lock.yaml`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 38 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` lint warnings only.
+- `git diff --check` -> pass.
+- Existing environment warning observed: local Node `v25.6.1`, repo engine expects Node `20.x`.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real serial or hardware command was run; all Arduino tests used fake serial.
+- No Basler, Dino-Lite, GRBL/stage, camera SDK, microscope, image acquisition, upload, grading math, auth algorithm, report, or PDF access was run.
+- No LED ON or STROBE command was run.
+
 ## 2026-06-01 - AI Grader hardware readiness/config validation
 
 ### Summary

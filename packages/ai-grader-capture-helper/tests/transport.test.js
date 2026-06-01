@@ -194,7 +194,8 @@ test("real driverSet rejects before server start", async () => {
 });
 
 test("transport package path imports no hardware modules", () => {
-  const forbidden = ["serialport", "node-hid", "usb", "basler", "dino", "grbl", "opencv"];
+  const forbiddenDependencies = ["node-hid", "usb", "basler", "dino", "grbl", "opencv"];
+  const forbiddenImports = ["serialport", "@serialport", "node-hid", "usb", "basler", "dino", "grbl", "opencv"];
   const dependencyNames = Object.keys({
     ...packageJson.dependencies,
     ...packageJson.devDependencies,
@@ -202,7 +203,7 @@ test("transport package path imports no hardware modules", () => {
   });
   for (const dependency of dependencyNames) {
     assert.equal(
-      forbidden.some((name) => dependency.toLowerCase().includes(name)),
+      forbiddenDependencies.some((name) => dependency.toLowerCase().includes(name)),
       false,
       `unexpected hardware dependency ${dependency}`
     );
@@ -210,7 +211,7 @@ test("transport package path imports no hardware modules", () => {
 
   for (const moduleId of Object.keys(require.cache)) {
     assert.equal(
-      forbidden.some((name) => moduleId.toLowerCase().includes(name)),
+      forbiddenImports.some((name) => moduleId.toLowerCase().includes(name)),
       false,
       `unexpected hardware module import ${moduleId}`
     );

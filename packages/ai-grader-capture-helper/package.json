@@ -30,7 +30,8 @@
   },
   "dependencies": {
     "@tenkings/ai-grader-simulator": "workspace:*",
-    "@tenkings/shared": "workspace:*"
+    "@tenkings/shared": "workspace:*",
+    "serialport": "^12.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

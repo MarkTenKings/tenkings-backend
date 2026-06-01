@@ -25,6 +25,38 @@
   - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
   - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
 
+## Session Update (2026-06-01, AI Grader Arduino LED readiness adapter)
+- Branch `feature/ai-grader-arduino-led-readiness` was created from latest fetched `origin/main`.
+- Added the first real-hardware-adjacent capture-helper adapter boundary for Arduino LED controller readiness only.
+- Scope is limited to explicit opt-in serial health:
+  - open the supplied serial port
+  - send `PING`
+  - require `PONG`
+  - send `LED ALL OFF`
+  - require `OK`
+  - close the serial port
+- Added a serial transport abstraction and fake-serial tests; default tests do not require hardware and default imports do not load `serialport`.
+- Added manual CLI support: `tk-ai-grader-capture-helper led-health --port <serial-port> --baud 115200`.
+- Extended readiness so `driverSet=real` plus `ledController=arduino` plus an explicit port can include Arduino health; missing port fails closed without opening serial.
+- Added isolated `serialport` dependency for this opt-in Arduino path only and documented the dependency/scope.
+- Validation passed locally:
+  - `pnpm --filter @tenkings/database build`
+  - `pnpm --filter @tenkings/database test` -> 36 tests
+  - `pnpm --filter @tenkings/shared test` -> 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator build`
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> 6 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> 38 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` lint warnings
+  - `git diff --check`
+- Existing local environment warning remains: Node `v25.6.1`, repo expects Node `20.x`.
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real serial or hardware command was run; all Arduino checks in this implementation used fake serial.
+- No Basler, Dino-Lite, GRBL/stage, camera SDK, microscope, image acquisition, uploads, LED ON, STROBE, grading math, auth algorithm, report, or PDF work was run or added.
+
 ## Session Update (2026-05-28, AI Grader foundation draft PR opened)
 - AI Grader v5 foundation branch was pushed and opened as a draft PR for review only.
 - Branch: `feature/ai-grader-v5-foundation`.
