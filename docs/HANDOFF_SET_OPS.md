@@ -27,6 +27,12 @@
 
 ## Session Update (2026-06-01, AI Grader Arduino LED readiness adapter)
 - Branch `feature/ai-grader-arduino-led-readiness` was created from latest fetched `origin/main`.
+- PR #24 was confirmed open, ready for review, mergeable/clean, and passing all checks before merge.
+- PR #24 was merged into `main` with merge commit `dd01a8fb91d13b29d0fa40cedbfade8d356c66db`.
+- Post-merge `origin/main` initially resolved to `dd01a8fb91d13b29d0fa40cedbfade8d356c66db` before this docs-only handoff follow-up.
+- Post-merge GitHub Actions run `26767634603` completed successfully for merge commit `dd01a8fb91d13b29d0fa40cedbfade8d356c66db`.
+- Vercel production deployment for the merge commit completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/58ZtgAxVw7HRMvQF5Wn49zmK5vdS`.
+- Production/staging AI Grader migrations remain unapplied by this session; the Vercel migration gate stayed at the default because `RUN_DB_MIGRATIONS=true` was not set.
 - Added the first real-hardware-adjacent capture-helper adapter boundary for Arduino LED controller readiness only.
 - Scope is limited to explicit opt-in serial health:
   - open the supplied serial port
