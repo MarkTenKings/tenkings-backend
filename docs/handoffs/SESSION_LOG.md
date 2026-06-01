@@ -18550,6 +18550,25 @@ By enabling Rip It Live, I confirm:
 - No real hardware SDK was imported.
 - No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
 
+## 2026-06-01 - AI Grader hardware readiness PR #23 merged
+
+### Summary
+- PR #23 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/23`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `236401dc7f8ded932bae21620b2685879414cb7f`.
+- PR #23 added the capture-helper readiness/config validation path, readiness-only real-driver fail-closed reporting, device discovery stubs, local helper `GET /readiness`, admin helper bridge readiness action, admin UI readiness summary, and docs.
+- Post-merge GitHub Actions run `26759105483` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/4pxDdvFcgptq1uSgKmi3pqS2LsPf`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real hardware access was run.
+- No real hardware SDK was imported.
+- No next AI Grader phase work was started.
+
 ## 2026-05-30 - AI Grader admin helper bridge PR #22 merged
 
 ### Summary

@@ -10147,3 +10147,12 @@ Build Set Ops UI flow with:
   - `git diff --check`
 - Existing environment/build warnings observed: local Node v25.6.1 vs repo engine Node 20.x; existing Next lint warnings for `<img>` usage; stale Browserslist/Tailwind glob warnings. No new blocking validation failure.
 - Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, no image-processing/grading math, no CMYK/auth algorithms, no reports, and no PDFs.
+
+## Session Update (2026-06-01, AI Grader hardware readiness PR #23 merged)
+- PR #23 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/23`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `236401dc7f8ded932bae21620b2685879414cb7f`.
+- PR #23 added capture-helper readiness/config validation, readiness-only real-driver fail-closed reporting, device discovery stubs, local helper `GET /readiness`, admin helper bridge readiness action, admin UI readiness summary, and docs.
+- Post-merge GitHub Actions run `26759105483` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/4pxDdvFcgptq1uSgKmi3pqS2LsPf`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, and no next AI Grader phase work.
