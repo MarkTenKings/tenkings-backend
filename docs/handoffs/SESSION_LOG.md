@@ -18510,6 +18510,59 @@ By enabling Rip It Live, I confirm:
 - No real hardware access was run.
 - No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
 
+## 2026-06-01 - AI Grader GRBL stage readiness adapter
+
+### Summary
+- Created branch `feature/ai-grader-grbl-stage-readiness` from latest `origin/main` after PR #24 and the docs-only merge handoff commit.
+- Added the next real-hardware-adjacent capture-helper adapter boundary for GRBL/OpenBuilds XY stage readiness only.
+- The GRBL path is explicit opt-in and limited to:
+  - open the supplied serial port
+  - send the safe GRBL status query `?`
+  - parse a bracketed GRBL status response such as `<Idle|MPos:0.000,0.000,0.000|FS:0,0>`
+  - close the serial port
+- Added a shared serial-line transport abstraction reused by Arduino LED readiness and GRBL stage readiness.
+- Added a manual CLI command: `tk-ai-grader-capture-helper stage-health --port <serial-port> --baud 115200`.
+- Extended readiness so `driverSet=real` plus `stage=grbl` plus an explicit port can include the GRBL status health check; missing port fails closed without opening serial.
+- Kept `serialport` isolated behind the explicit opt-in serial readiness path; default health/readiness/mock/transport tests do not import serial hardware packages.
+- No `$H`, `G0`, `G1`, jogging, unlock, reset, spindle, coolant, camera, microscope, image acquisition, uploads, grading math, auth algorithm, report, or PDF work was added.
+
+### Files Changed
+- `docs/ai-grader-capture-helper.md`
+- `docs/HANDOFF_SET_OPS.md`
+- `docs/handoffs/SESSION_LOG.md`
+- `packages/ai-grader-capture-helper/src/cli.ts`
+- `packages/ai-grader-capture-helper/src/drivers/arduinoLedController.ts`
+- `packages/ai-grader-capture-helper/src/drivers/grblStage.ts`
+- `packages/ai-grader-capture-helper/src/drivers/index.ts`
+- `packages/ai-grader-capture-helper/src/drivers/serialTransport.ts`
+- `packages/ai-grader-capture-helper/src/index.ts`
+- `packages/ai-grader-capture-helper/src/readiness.ts`
+- `packages/ai-grader-capture-helper/tests/grblStage.test.js`
+- `packages/ai-grader-capture-helper/tests/mockDrivers.test.js`
+- `packages/ai-grader-capture-helper/tests/readiness.test.js`
+- `packages/ai-grader-capture-helper/tests/transport.test.js`
+
+### Validation Evidence
+- `pnpm --filter @tenkings/database build` -> pass.
+- `pnpm --filter @tenkings/database test` -> pass, 36 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 46 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` lint warnings only.
+- `git diff --check` -> pass.
+- Existing environment warning observed: local Node `v25.6.1`, repo engine expects Node `20.x`.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No real serial or hardware command was run; all GRBL tests used fake serial.
+- No GRBL homing, motion, jogging, unlock, reset, spindle, coolant, `$H`, `G0`, or `G1` command was run.
+- No camera/microscope access, image acquisition, upload, grading math, auth algorithm, report, or PDF access was run.
+
 ## 2026-06-01 - AI Grader Arduino LED readiness adapter
 
 ### Summary

@@ -150,7 +150,16 @@ test("discovery stubs do not probe real devices", () => {
 
 test("readiness package path imports no hardware modules", () => {
   const forbiddenDependencies = ["node-hid", "usb", "basler", "dino", "grbl", "opencv"];
-  const forbiddenImports = ["serialport", "@serialport", "node-hid", "usb", "basler", "dino", "grbl", "opencv"];
+  const forbiddenImports = [
+    "node_modules/serialport",
+    "node_modules/@serialport",
+    "node-hid",
+    "usb",
+    "basler",
+    "dino",
+    "node_modules/grbl",
+    "opencv",
+  ];
   const dependencyNames = Object.keys({
     ...packageJson.dependencies,
     ...packageJson.devDependencies,

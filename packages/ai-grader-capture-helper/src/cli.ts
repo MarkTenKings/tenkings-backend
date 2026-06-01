@@ -3,10 +3,12 @@ import {
   CaptureHelperCommandError,
   CaptureHelperConfigError,
   ArduinoLedControllerHealthError,
+  GrblStageHealthError,
   buildCaptureHelperReadinessReportAsync,
   createCaptureHelperService,
   parseCaptureHelperManifestMode,
   runArduinoLedControllerHealthCheck,
+  runGrblStageHealthCheck,
   type CaptureHelperConfigInput,
   type CaptureHelperEnv,
 } from "./index";
@@ -23,6 +25,7 @@ type ParsedCommand =
   | { command: "capabilities"; config: CaptureHelperConfigInput }
   | { command: "readiness"; config: CaptureHelperConfigInput }
   | { command: "led-health"; config: CaptureHelperConfigInput }
+  | { command: "stage-health"; config: CaptureHelperConfigInput }
   | { command: "manifest"; config: CaptureHelperConfigInput; mode: string | undefined }
   | { command: "serve"; config: CaptureHelperConfigInput; host: string | undefined; port: string | undefined }
   | { command: "help"; config: CaptureHelperConfigInput };
@@ -100,6 +103,10 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         config.ledController = { ...config.ledController, kind: readOption(rest, index, "--led-controller") };
         index += 1;
         break;
+      case "--stage":
+        config.stage = { ...config.stage, kind: readOption(rest, index, "--stage") };
+        index += 1;
+        break;
       case "--led-port":
         config.ledController = {
           ...config.ledController,
@@ -110,42 +117,136 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         };
         index += 1;
         break;
+      case "--stage-port":
+        config.stage = {
+          ...config.stage,
+          grbl: {
+            ...config.stage?.grbl,
+            port: readOption(rest, index, "--stage-port"),
+          },
+        };
+        index += 1;
+        break;
       case "--baud":
-        config.ledController = {
-          ...config.ledController,
-          arduino: {
-            ...config.ledController?.arduino,
-            baudRate: readOption(rest, index, "--baud"),
+        if (command === "stage-health") {
+          config.stage = {
+            ...config.stage,
+            kind: "grbl",
+            grbl: {
+              ...config.stage?.grbl,
+              baudRate: readOption(rest, index, "--baud"),
+            },
+          };
+        } else {
+          config.ledController = {
+            ...config.ledController,
+            arduino: {
+              ...config.ledController?.arduino,
+              baudRate: readOption(rest, index, "--baud"),
+            },
+          };
+        }
+        index += 1;
+        break;
+      case "--stage-baud":
+        config.stage = {
+          ...config.stage,
+          grbl: {
+            ...config.stage?.grbl,
+            baudRate: readOption(rest, index, "--stage-baud"),
           },
         };
         index += 1;
         break;
       case "--command-timeout-ms":
-        config.ledController = {
-          ...config.ledController,
-          arduino: {
-            ...config.ledController?.arduino,
-            commandTimeoutMs: readOption(rest, index, "--command-timeout-ms"),
+        if (command === "stage-health") {
+          config.stage = {
+            ...config.stage,
+            kind: "grbl",
+            grbl: {
+              ...config.stage?.grbl,
+              commandTimeoutMs: readOption(rest, index, "--command-timeout-ms"),
+            },
+          };
+        } else {
+          config.ledController = {
+            ...config.ledController,
+            arduino: {
+              ...config.ledController?.arduino,
+              commandTimeoutMs: readOption(rest, index, "--command-timeout-ms"),
+            },
+          };
+        }
+        index += 1;
+        break;
+      case "--stage-command-timeout-ms":
+        config.stage = {
+          ...config.stage,
+          grbl: {
+            ...config.stage?.grbl,
+            commandTimeoutMs: readOption(rest, index, "--stage-command-timeout-ms"),
           },
         };
         index += 1;
         break;
       case "--open-timeout-ms":
-        config.ledController = {
-          ...config.ledController,
-          arduino: {
-            ...config.ledController?.arduino,
-            openTimeoutMs: readOption(rest, index, "--open-timeout-ms"),
+        if (command === "stage-health") {
+          config.stage = {
+            ...config.stage,
+            kind: "grbl",
+            grbl: {
+              ...config.stage?.grbl,
+              openTimeoutMs: readOption(rest, index, "--open-timeout-ms"),
+            },
+          };
+        } else {
+          config.ledController = {
+            ...config.ledController,
+            arduino: {
+              ...config.ledController?.arduino,
+              openTimeoutMs: readOption(rest, index, "--open-timeout-ms"),
+            },
+          };
+        }
+        index += 1;
+        break;
+      case "--stage-open-timeout-ms":
+        config.stage = {
+          ...config.stage,
+          grbl: {
+            ...config.stage?.grbl,
+            openTimeoutMs: readOption(rest, index, "--stage-open-timeout-ms"),
           },
         };
         index += 1;
         break;
       case "--close-timeout-ms":
-        config.ledController = {
-          ...config.ledController,
-          arduino: {
-            ...config.ledController?.arduino,
-            closeTimeoutMs: readOption(rest, index, "--close-timeout-ms"),
+        if (command === "stage-health") {
+          config.stage = {
+            ...config.stage,
+            kind: "grbl",
+            grbl: {
+              ...config.stage?.grbl,
+              closeTimeoutMs: readOption(rest, index, "--close-timeout-ms"),
+            },
+          };
+        } else {
+          config.ledController = {
+            ...config.ledController,
+            arduino: {
+              ...config.ledController?.arduino,
+              closeTimeoutMs: readOption(rest, index, "--close-timeout-ms"),
+            },
+          };
+        }
+        index += 1;
+        break;
+      case "--stage-close-timeout-ms":
+        config.stage = {
+          ...config.stage,
+          grbl: {
+            ...config.stage?.grbl,
+            closeTimeoutMs: readOption(rest, index, "--stage-close-timeout-ms"),
           },
         };
         index += 1;
@@ -192,6 +293,15 @@ function parseCliArgs(argv: string[]): ParsedCommand {
               port: readOption(rest, index, "--port"),
             },
           };
+        } else if (command === "stage-health") {
+          config.stage = {
+            ...config.stage,
+            kind: "grbl",
+            grbl: {
+              ...config.stage?.grbl,
+              port: readOption(rest, index, "--port"),
+            },
+          };
         } else {
           port = readOption(rest, index, "--port");
         }
@@ -210,6 +320,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "capabilities" ||
     command === "readiness" ||
     command === "led-health" ||
+    command === "stage-health" ||
     command === "manifest" ||
     command === "serve" ||
     command === "help"
@@ -228,6 +339,7 @@ function helpPayload() {
       "health",
       "readiness",
       "led-health --port <serial-port> --baud 115200",
+      "stage-health --port <serial-port> --baud 115200",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -243,11 +355,17 @@ function helpPayload() {
       "--driver-set mock|real",
       "--rig-mode simulator|readiness",
       "--led-controller arduino",
+      "--stage grbl",
       "--led-port",
+      "--stage-port",
       "--baud",
+      "--stage-baud",
       "--command-timeout-ms",
+      "--stage-command-timeout-ms",
       "--open-timeout-ms",
+      "--stage-open-timeout-ms",
       "--close-timeout-ms",
+      "--stage-close-timeout-ms",
       "--macro-calibration-path",
       "--led-calibration-path",
       "--microscope-calibration-path",
@@ -259,7 +377,7 @@ function helpPayload() {
       "--port",
     ],
     mode: "simulator-only",
-    driverSet: "mock runnable; real limited to explicit Arduino LED readiness",
+    driverSet: "mock runnable; real limited to explicit Arduino LED and GRBL stage readiness",
     transport: "disabled until serve is explicitly run",
   };
 }
@@ -287,6 +405,15 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
     if (parsed.command === "led-health") {
       const result = await runArduinoLedControllerHealthCheck({
         config: parsed.config.ledController?.arduino ?? {},
+        env: io.env ?? process.env,
+      });
+      writeJson(stdout, result);
+      return result.ok ? 0 : 1;
+    }
+
+    if (parsed.command === "stage-health") {
+      const result = await runGrblStageHealthCheck({
+        config: parsed.config.stage?.grbl ?? {},
         env: io.env ?? process.env,
       });
       writeJson(stdout, result);
@@ -331,7 +458,8 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
     const isExpected =
       error instanceof CaptureHelperCommandError ||
       error instanceof CaptureHelperConfigError ||
-      error instanceof ArduinoLedControllerHealthError;
+      error instanceof ArduinoLedControllerHealthError ||
+      error instanceof GrblStageHealthError;
     const message = error instanceof Error ? error.message : "Unexpected capture helper CLI error.";
     writeJson(stderr, {
       ok: false,
