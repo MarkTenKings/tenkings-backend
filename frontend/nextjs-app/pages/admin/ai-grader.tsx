@@ -20,12 +20,14 @@ import {
   type AiGraderHelperHealthResult,
   type AiGraderHelperManifestMode,
   type AiGraderHelperManifestResult,
+  type AiGraderHelperReadinessResult,
   type AiGraderSimulatedSessionWorkflowResult,
   type AiGraderSimulatorMode,
   type AiGraderSimulatorResult,
   fetchAiGraderAdminStatus,
   fetchAiGraderHelperCapabilities,
   fetchAiGraderHelperHealth,
+  fetchAiGraderHelperReadiness,
   generateAiGraderSimulatedSessionWorkflow,
   generateAiGraderHelperManifest,
   generateAiGraderSimulatorManifest,
@@ -590,12 +592,13 @@ function HelperBridgePanel({
 }) {
   const [mode, setMode] = useState<AiGraderHelperManifestMode>("STANDARD");
   const [health, setHealth] = useState<AiGraderHelperHealthResult | null>(null);
+  const [readiness, setReadiness] = useState<AiGraderHelperReadinessResult | null>(null);
   const [capabilities, setCapabilities] = useState<AiGraderHelperCapabilitiesResult | null>(null);
   const [manifest, setManifest] = useState<AiGraderHelperManifestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<string | null>(null);
 
-  const runBridgeAction = async (action: "health" | "capabilities" | "manifest") => {
+  const runBridgeAction = async (action: "health" | "readiness" | "capabilities" | "manifest") => {
     if (!enabled) {
       setError(status?.helperBridge?.message ?? "AI Grader helper bridge is disabled.");
       return;
@@ -606,6 +609,8 @@ function HelperBridgePanel({
     try {
       if (action === "health") {
         setHealth(await fetchAiGraderHelperHealth(adminHeaders));
+      } else if (action === "readiness") {
+        setReadiness(await fetchAiGraderHelperReadiness(adminHeaders));
       } else if (action === "capabilities") {
         setCapabilities(await fetchAiGraderHelperCapabilities(adminHeaders));
       } else {
@@ -668,7 +673,7 @@ function HelperBridgePanel({
           </div>
 
           <div className="flex flex-wrap gap-3">
-            {(["health", "capabilities", "manifest"] as const).map((action) => (
+            {(["health", "readiness", "capabilities", "manifest"] as const).map((action) => (
               <button
                 key={action}
                 type="button"
@@ -701,6 +706,21 @@ function HelperBridgePanel({
             <article className="rounded-xl border border-white/10 bg-black/20 p-3">
               <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Capabilities</p>
               <p className="mt-2 text-lg font-semibold text-white">{capabilityCount}</p>
+            </article>
+            <article className="rounded-xl border border-white/10 bg-black/20 p-3">
+              <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Readiness</p>
+              <p
+                className={adminCx(
+                  "mt-2 text-lg font-semibold",
+                  readiness?.overallStatus === "PASS"
+                    ? "text-emerald-200"
+                    : readiness?.overallStatus === "FAIL"
+                      ? "text-rose-200"
+                      : "text-white"
+                )}
+              >
+                {readiness?.overallStatus ?? "pending"}
+              </p>
             </article>
             <article className="rounded-xl border border-white/10 bg-black/20 p-3">
               <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Frames</p>
@@ -739,6 +759,12 @@ function HelperBridgePanel({
                   </dd>
                 </div>
                 <div className="rounded-lg bg-white/[0.03] px-2 py-1">
+                  <dt className="text-slate-500">Readiness</dt>
+                  <dd className={readiness?.configValidation?.status === "PASS" ? "text-emerald-200" : "text-white"}>
+                    {readiness ? `${readiness.configValidation?.status ?? "unknown"} config` : "pending"}
+                  </dd>
+                </div>
+                <div className="rounded-lg bg-white/[0.03] px-2 py-1">
                   <dt className="text-slate-500">Manifest</dt>
                   <dd className={manifest?.validation?.valid ? "text-emerald-200" : "text-white"}>
                     {manifest ? (manifest.validation?.valid ? "Valid" : "Invalid") : "pending"}
@@ -758,6 +784,19 @@ function HelperBridgePanel({
                   </li>
                 ))}
               </ul>
+            </div>
+          ) : null}
+
+          {readiness ? (
+            <div className="mt-4 grid gap-4 lg:grid-cols-2">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Expected Devices</p>
+                <p className="mt-2 text-sm text-slate-300">{readiness.expectedDevices?.length ?? 0} configured</p>
+              </div>
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.22em] text-slate-500">Discovery</p>
+                <p className="mt-2 text-sm text-slate-300">{readiness.discovery?.length ?? 0} stubs; no hardware probe</p>
+              </div>
             </div>
           ) : null}
         </div>

@@ -8,7 +8,7 @@ import type {
   GradingCaptureKind,
 } from "@tenkings/shared";
 
-export type CaptureHelperDriverSet = "mock";
+export type CaptureHelperDriverSet = "mock" | "real";
 
 export type DriverLifecycleState = "closed" | "open";
 

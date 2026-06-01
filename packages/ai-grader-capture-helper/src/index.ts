@@ -26,33 +26,70 @@ import {
   type CaptureHelperDriverSetDrivers,
 } from "./drivers";
 export * from "./drivers";
+export * from "./discovery";
+export * from "./readiness";
 
 export const CAPTURE_HELPER_SERVICE_NAME = "ai-grader-capture-helper";
 export const CAPTURE_HELPER_VERSION = "0.1.0";
 export const SUPPORTED_CAPTURE_HELPER_BACKENDS = ["simulator"] as const;
-export const SUPPORTED_CAPTURE_HELPER_DRIVER_SETS = ["mock"] as const;
+export const SUPPORTED_CAPTURE_HELPER_DRIVER_SETS = ["mock", "real"] as const;
+export const CAPTURE_HELPER_RIG_MODES = ["simulator", "readiness"] as const;
+export const CAPTURE_HELPER_DEVICE_ROLES = [
+  "macroCamera",
+  "ledController",
+  "microscope",
+  "stage",
+  "armInterlock",
+] as const;
 export const CAPTURE_HELPER_HARDWARE_ACCESS = "disabled" as const;
 export const CAPTURE_HELPER_NETWORK_LISTENER = "disabled" as const;
 export const CAPTURE_HELPER_MANIFEST_MODES = ["QUICK", "STANDARD", "AUTH_ONLY"] as const;
 
 export type CaptureHelperBackend = (typeof SUPPORTED_CAPTURE_HELPER_BACKENDS)[number];
+export type CaptureHelperRigMode = (typeof CAPTURE_HELPER_RIG_MODES)[number];
+export type CaptureHelperDeviceRole = (typeof CAPTURE_HELPER_DEVICE_ROLES)[number];
 export type CaptureHelperManifestMode = (typeof CAPTURE_HELPER_MANIFEST_MODES)[number];
 export type CaptureHelperEnv = Record<string, string | undefined>;
 
+export type CaptureHelperCalibrationPaths = Partial<Record<CaptureHelperDeviceRole, string>>;
+export type CaptureHelperSerialHints = Partial<Record<CaptureHelperDeviceRole, string>>;
+
+export interface CaptureHelperExpectedDeviceConfig {
+  role: CaptureHelperDeviceRole;
+  required: boolean;
+  serialHint?: string;
+  calibrationPath?: string;
+}
+
+export interface CaptureHelperSafetyFlags {
+  armInterlockRequired: boolean;
+  requireCalibrationArtifacts: boolean;
+}
+
 export interface CaptureHelperConfigInput {
   mode?: string;
+  rigMode?: string;
   driverSet?: string;
   simulator?: CaptureHelperSimulatorConfigInput;
+  expectedDevices?: CaptureHelperExpectedDeviceConfig[];
+  serialHints?: CaptureHelperSerialHints;
+  calibrationPaths?: CaptureHelperCalibrationPaths;
+  safety?: Partial<CaptureHelperSafetyFlags>;
 }
 
 export interface CaptureHelperConfig {
   service: typeof CAPTURE_HELPER_SERVICE_NAME;
   version: typeof CAPTURE_HELPER_VERSION;
   mode: CaptureHelperBackend;
+  rigMode: CaptureHelperRigMode;
   driverSet: CaptureHelperDriverSet;
   hardwareAccess: typeof CAPTURE_HELPER_HARDWARE_ACCESS;
   networkListener: typeof CAPTURE_HELPER_NETWORK_LISTENER;
   simulator: CaptureHelperSimulatorConfig;
+  expectedDevices: CaptureHelperExpectedDeviceConfig[];
+  serialHints: CaptureHelperSerialHints;
+  calibrationPaths: CaptureHelperCalibrationPaths;
+  safety: CaptureHelperSafetyFlags;
 }
 
 export interface CaptureHelperHealth {
@@ -133,6 +170,18 @@ function csv(value: string | undefined) {
   return parts.length ? parts : undefined;
 }
 
+function boolFromEnv(value: string | undefined): boolean | undefined {
+  if (value == null || value.trim().length === 0) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1" || normalized === "yes") return true;
+  if (normalized === "false" || normalized === "0" || normalized === "no") return false;
+  throw new CaptureHelperConfigError(`Invalid boolean config value: ${value}`);
+}
+
+function nonEmptyConfigValue(value: string | undefined) {
+  return value && value.trim().length > 0 ? value.trim() : undefined;
+}
+
 function simulatorConfigFromEnv(env: CaptureHelperEnv): CaptureHelperSimulatorConfigInput {
   return {
     tenantId: firstNonEmpty(env.AI_GRADER_CAPTURE_HELPER_TENANT_ID),
@@ -148,6 +197,45 @@ function simulatorConfigFromEnv(env: CaptureHelperEnv): CaptureHelperSimulatorCo
     calibrationSnapshotIds: csv(env.AI_GRADER_CAPTURE_HELPER_CALIBRATION_IDS),
     standardSurfaceSuspectRegionIds: csv(env.AI_GRADER_CAPTURE_HELPER_SURFACE_SUSPECT_IDS),
   };
+}
+
+function serialHintsFromEnv(env: CaptureHelperEnv): CaptureHelperSerialHints {
+  return {
+    macroCamera: nonEmptyConfigValue(env.AI_GRADER_CAPTURE_HELPER_MACRO_CAMERA_SERIAL_HINT),
+    ledController: nonEmptyConfigValue(env.AI_GRADER_CAPTURE_HELPER_LED_CONTROLLER_SERIAL_HINT),
+    microscope: nonEmptyConfigValue(env.AI_GRADER_CAPTURE_HELPER_MICROSCOPE_SERIAL_HINT),
+    stage: nonEmptyConfigValue(env.AI_GRADER_CAPTURE_HELPER_STAGE_SERIAL_HINT),
+    armInterlock: nonEmptyConfigValue(env.AI_GRADER_CAPTURE_HELPER_ARM_INTERLOCK_SERIAL_HINT),
+  };
+}
+
+function calibrationPathsFromEnv(env: CaptureHelperEnv): CaptureHelperCalibrationPaths {
+  return {
+    macroCamera: nonEmptyConfigValue(env.AI_GRADER_CAPTURE_HELPER_MACRO_CALIBRATION_PATH),
+    ledController: nonEmptyConfigValue(env.AI_GRADER_CAPTURE_HELPER_LED_CALIBRATION_PATH),
+    microscope: nonEmptyConfigValue(env.AI_GRADER_CAPTURE_HELPER_MICROSCOPE_CALIBRATION_PATH),
+    stage: nonEmptyConfigValue(env.AI_GRADER_CAPTURE_HELPER_STAGE_CALIBRATION_PATH),
+    armInterlock: nonEmptyConfigValue(env.AI_GRADER_CAPTURE_HELPER_ARM_CALIBRATION_PATH),
+  };
+}
+
+function safetyFromEnv(env: CaptureHelperEnv): Partial<CaptureHelperSafetyFlags> {
+  return {
+    armInterlockRequired: boolFromEnv(env.AI_GRADER_CAPTURE_HELPER_ARM_INTERLOCK_REQUIRED),
+    requireCalibrationArtifacts: boolFromEnv(env.AI_GRADER_CAPTURE_HELPER_REQUIRE_CALIBRATION_ARTIFACTS),
+  };
+}
+
+export function defaultCaptureHelperExpectedDevices(
+  serialHints: CaptureHelperSerialHints = {},
+  calibrationPaths: CaptureHelperCalibrationPaths = {}
+): CaptureHelperExpectedDeviceConfig[] {
+  return CAPTURE_HELPER_DEVICE_ROLES.map((role) => ({
+    role,
+    required: true,
+    ...(serialHints[role] ? { serialHint: serialHints[role] } : {}),
+    ...(calibrationPaths[role] ? { calibrationPath: calibrationPaths[role] } : {}),
+  }));
 }
 
 function mergeSimulatorConfig(
@@ -170,12 +258,33 @@ function normalizeBackendMode(mode: string | undefined): CaptureHelperBackend {
   return "simulator";
 }
 
+function normalizeRigMode(rigMode: string | undefined): CaptureHelperRigMode {
+  const normalized = (rigMode ?? "simulator").trim().toLowerCase();
+  if (normalized !== "simulator" && normalized !== "readiness") {
+    throw new CaptureHelperConfigError("AI Grader capture helper rigMode must be simulator or readiness.");
+  }
+  return normalized;
+}
+
 function normalizeDriverSet(driverSet: string | undefined): CaptureHelperDriverSet {
   const normalized = (driverSet ?? "mock").trim().toLowerCase();
+  if (normalized === "real") {
+    throw new CaptureHelperConfigError("AI Grader capture helper real drivers are not implemented; use readiness for validation only.");
+  }
   if (normalized !== "mock") {
-    throw new CaptureHelperConfigError("AI Grader capture helper supports only mock drivers in this skeleton.");
+    throw new CaptureHelperConfigError("AI Grader capture helper driverSet must be mock or real.");
   }
   return "mock";
+}
+
+function normalizeSafetyFlags(
+  fromEnv: Partial<CaptureHelperSafetyFlags>,
+  explicit: Partial<CaptureHelperSafetyFlags> | undefined
+): CaptureHelperSafetyFlags {
+  return {
+    armInterlockRequired: explicit?.armInterlockRequired ?? fromEnv.armInterlockRequired ?? true,
+    requireCalibrationArtifacts: explicit?.requireCalibrationArtifacts ?? fromEnv.requireCalibrationArtifacts ?? false,
+  };
 }
 
 export function loadCaptureHelperConfig(
@@ -183,7 +292,19 @@ export function loadCaptureHelperConfig(
   env: CaptureHelperEnv = process.env
 ): CaptureHelperConfig {
   const mode = normalizeBackendMode(input.mode ?? env.AI_GRADER_CAPTURE_HELPER_MODE);
+  const rigMode = normalizeRigMode(input.rigMode ?? env.AI_GRADER_CAPTURE_HELPER_RIG_MODE);
   const driverSet = normalizeDriverSet(input.driverSet ?? env.AI_GRADER_CAPTURE_HELPER_DRIVER_SET);
+  const serialHints = {
+    ...serialHintsFromEnv(env),
+    ...input.serialHints,
+  };
+  const calibrationPaths = {
+    ...calibrationPathsFromEnv(env),
+    ...input.calibrationPaths,
+  };
+  const expectedDevices =
+    input.expectedDevices ?? defaultCaptureHelperExpectedDevices(serialHints, calibrationPaths);
+  const safety = normalizeSafetyFlags(safetyFromEnv(env), input.safety);
   const simulator = buildCaptureHelperSimulatorConfig(
     mergeSimulatorConfig(simulatorConfigFromEnv(env), input.simulator)
   );
@@ -192,10 +313,15 @@ export function loadCaptureHelperConfig(
     service: CAPTURE_HELPER_SERVICE_NAME,
     version: CAPTURE_HELPER_VERSION,
     mode,
+    rigMode,
     driverSet,
     hardwareAccess: CAPTURE_HELPER_HARDWARE_ACCESS,
     networkListener: CAPTURE_HELPER_NETWORK_LISTENER,
     simulator,
+    expectedDevices,
+    serialHints,
+    calibrationPaths,
+    safety,
   };
 }
 

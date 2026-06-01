@@ -120,6 +120,25 @@ test("capabilities endpoint returns valid mock driver manifests", async () => {
   });
 });
 
+test("readiness endpoint returns JSON without hardware probing", async () => {
+  await withServer(async (started) => {
+    const response = await requestJson(started, "GET", "/readiness");
+    assert.equal(response.status, 200);
+    assert.equal(response.body.ok, true);
+    assert.equal(response.body.service, "ai-grader-capture-helper");
+    assert.equal(response.body.mode, "readiness");
+    assert.equal(response.body.overallStatus, "PASS");
+    assert.equal(response.body.driverSet, "mock");
+    assert.equal(response.body.hardwareAccess, "not_probed");
+    assert.equal(response.body.configValidation.status, "PASS");
+    assert.equal(response.body.expectedDevices.length, 5);
+    assert.equal(response.body.discovery.length, 5);
+    assert.equal(response.body.discovery.every((result) => result.status === "NOT_PROBED"), true);
+    assert.equal(response.body.transport.localOnly, true);
+    assert.equal(response.body.transport.port, started.port);
+  });
+});
+
 test("manifest endpoint returns valid QUICK STANDARD and AUTH_ONLY manifests", async () => {
   await withServer(async (started) => {
     const quick = await requestJson(started, "POST", "/manifest", { mode: "QUICK" });
@@ -170,7 +189,7 @@ test("non-loopback host config rejects", () => {
 test("real driverSet rejects before server start", async () => {
   await assert.rejects(
     () => startCaptureHelperHttpServer({ ...BASE_CONFIG, port: 0, service: { driverSet: "real" } }, {}),
-    /supports only mock drivers/
+    /real drivers are not implemented; use readiness for validation only/
   );
 });
 

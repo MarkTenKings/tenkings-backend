@@ -627,6 +627,64 @@ test("helper bridge health success maps cleanly without loading DB service", asy
   assert.equal(serviceLoads, 0);
 });
 
+test("helper bridge readiness success maps cleanly without loading DB service", async () => {
+  let fetchCalls = 0;
+  let serviceLoads = 0;
+  const handler = createAiGraderAdminApiHandler({
+    env: {
+      AI_GRADER_API_ENABLED: "true",
+      AI_GRADER_HELPER_BRIDGE_ENABLED: "true",
+      AI_GRADER_HELPER_BASE_URL: "http://127.0.0.1:47650",
+    },
+    requireAdminSession: async () => adminSession,
+    getService: () => {
+      serviceLoads += 1;
+      return mockService();
+    },
+    helperBridgeFetch: async (input, init) => {
+      fetchCalls += 1;
+      assert.equal(input, "http://127.0.0.1:47650/readiness");
+      assert.equal(init?.method, undefined);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          service: "ai-grader-capture-helper",
+          mode: "readiness",
+          overallStatus: "PASS",
+          driverSet: "mock",
+          configValidation: { status: "PASS", checks: [] },
+          expectedDevices: [{ role: "macroCamera" }],
+          discovery: [{ kind: "macroCamera", status: "NOT_PROBED" }],
+        }),
+      };
+    },
+  });
+  const res = mockResponse();
+
+  await handler(mockRequest({ method: "GET", action: ["helper", "readiness"] }), res);
+
+  assert.equal(res.statusCodeValue, 200);
+  assert.deepEqual(res.jsonBody, {
+    ok: true,
+    enabled: true,
+    operation: "helperBridgeReadiness",
+    result: {
+      ok: true,
+      service: "ai-grader-capture-helper",
+      mode: "readiness",
+      overallStatus: "PASS",
+      driverSet: "mock",
+      configValidation: { status: "PASS", checks: [] },
+      expectedDevices: [{ role: "macroCamera" }],
+      discovery: [{ kind: "macroCamera", status: "NOT_PROBED" }],
+    },
+  });
+  assert.equal(fetchCalls, 1);
+  assert.equal(serviceLoads, 0);
+});
+
 test("helper bridge timeout maps to clear JSON error", async () => {
   const handler = createAiGraderAdminApiHandler({
     env: {
@@ -759,6 +817,7 @@ test("enabled status returns route list without loading service", async () => {
       "simulator/generate",
       "simulator/session",
       "helper/health",
+      "helper/readiness",
       "helper/capabilities",
       "helper/manifest",
       "capture-sessions/draft",

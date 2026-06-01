@@ -2,6 +2,7 @@
 import {
   CaptureHelperCommandError,
   CaptureHelperConfigError,
+  buildCaptureHelperReadinessReport,
   createCaptureHelperService,
   parseCaptureHelperManifestMode,
   type CaptureHelperConfigInput,
@@ -18,6 +19,7 @@ export interface CaptureHelperCliIO {
 type ParsedCommand =
   | { command: "health"; config: CaptureHelperConfigInput }
   | { command: "capabilities"; config: CaptureHelperConfigInput }
+  | { command: "readiness"; config: CaptureHelperConfigInput }
   | { command: "manifest"; config: CaptureHelperConfigInput; mode: string | undefined }
   | { command: "serve"; config: CaptureHelperConfigInput; host: string | undefined; port: string | undefined }
   | { command: "help"; config: CaptureHelperConfigInput };
@@ -28,6 +30,13 @@ function readOption(argv: string[], index: number, name: string) {
     throw new CaptureHelperCommandError(`${name} requires a value.`);
   }
   return value;
+}
+
+function readBooleanOption(argv: string[], index: number, name: string) {
+  const value = readOption(argv, index, name).trim().toLowerCase();
+  if (value === "true" || value === "1" || value === "yes") return true;
+  if (value === "false" || value === "0" || value === "no") return false;
+  throw new CaptureHelperCommandError(`${name} must be true or false.`);
 }
 
 function parseCliArgs(argv: string[]): ParsedCommand {
@@ -64,8 +73,52 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         config.simulator = { ...config.simulator, helperInstanceId: readOption(rest, index, "--helper-instance-id") };
         index += 1;
         break;
+      case "--rig-id":
+        config.simulator = { ...config.simulator, rigId: readOption(rest, index, "--rig-id") };
+        index += 1;
+        break;
+      case "--location-id":
+        config.simulator = { ...config.simulator, locationId: readOption(rest, index, "--location-id") };
+        index += 1;
+        break;
+      case "--operator-id":
+        config.simulator = { ...config.simulator, operatorId: readOption(rest, index, "--operator-id") };
+        index += 1;
+        break;
+      case "--rig-mode":
+        config.rigMode = readOption(rest, index, "--rig-mode");
+        index += 1;
+        break;
       case "--driver-set":
         config.driverSet = readOption(rest, index, "--driver-set");
+        index += 1;
+        break;
+      case "--macro-calibration-path":
+        config.calibrationPaths = { ...config.calibrationPaths, macroCamera: readOption(rest, index, "--macro-calibration-path") };
+        index += 1;
+        break;
+      case "--led-calibration-path":
+        config.calibrationPaths = { ...config.calibrationPaths, ledController: readOption(rest, index, "--led-calibration-path") };
+        index += 1;
+        break;
+      case "--microscope-calibration-path":
+        config.calibrationPaths = { ...config.calibrationPaths, microscope: readOption(rest, index, "--microscope-calibration-path") };
+        index += 1;
+        break;
+      case "--stage-calibration-path":
+        config.calibrationPaths = { ...config.calibrationPaths, stage: readOption(rest, index, "--stage-calibration-path") };
+        index += 1;
+        break;
+      case "--arm-calibration-path":
+        config.calibrationPaths = { ...config.calibrationPaths, armInterlock: readOption(rest, index, "--arm-calibration-path") };
+        index += 1;
+        break;
+      case "--arm-interlock-required":
+        config.safety = { ...config.safety, armInterlockRequired: readBooleanOption(rest, index, "--arm-interlock-required") };
+        index += 1;
+        break;
+      case "--require-calibration-artifacts":
+        config.safety = { ...config.safety, requireCalibrationArtifacts: readBooleanOption(rest, index, "--require-calibration-artifacts") };
         index += 1;
         break;
       case "--host":
@@ -84,7 +137,14 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     }
   }
 
-  if (command === "health" || command === "capabilities" || command === "manifest" || command === "serve" || command === "help") {
+  if (
+    command === "health" ||
+    command === "capabilities" ||
+    command === "readiness" ||
+    command === "manifest" ||
+    command === "serve" ||
+    command === "help"
+  ) {
     if (command === "manifest") return { command, config, mode };
     if (command === "serve") return { command, config, host, port };
     return { command, config };
@@ -97,13 +157,33 @@ function helpPayload() {
     service: "ai-grader-capture-helper",
     commands: [
       "health",
+      "readiness",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
     ],
-    options: ["--session-id", "--tenant-id", "--seed", "--helper-instance-id", "--driver-set mock", "--host", "--port"],
+    options: [
+      "--session-id",
+      "--tenant-id",
+      "--rig-id",
+      "--location-id",
+      "--operator-id",
+      "--seed",
+      "--helper-instance-id",
+      "--driver-set mock|real",
+      "--rig-mode simulator|readiness",
+      "--macro-calibration-path",
+      "--led-calibration-path",
+      "--microscope-calibration-path",
+      "--stage-calibration-path",
+      "--arm-calibration-path",
+      "--arm-interlock-required true|false",
+      "--require-calibration-artifacts true|false",
+      "--host",
+      "--port",
+    ],
     mode: "simulator-only",
-    driverSet: "mock-only",
+    driverSet: "mock runnable; real readiness-only",
     transport: "disabled until serve is explicitly run",
   };
 }
@@ -120,6 +200,11 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
     const parsed = parseCliArgs(argv);
     if (parsed.command === "help") {
       writeJson(stdout, helpPayload());
+      return 0;
+    }
+
+    if (parsed.command === "readiness") {
+      writeJson(stdout, buildCaptureHelperReadinessReport(parsed.config, io.env ?? process.env));
       return 0;
     }
 
