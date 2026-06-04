@@ -21,6 +21,7 @@ import {
 } from "@tenkings/shared";
 import {
   createMockDriverSet,
+  type GrblStageConfigInput,
   mockDriverCapabilities,
   type ArduinoLedControllerConfigInput,
   type CaptureHelperDriverSet,
@@ -74,6 +75,10 @@ export interface CaptureHelperConfigInput {
   ledController?: {
     kind?: string;
     arduino?: ArduinoLedControllerConfigInput;
+  };
+  stage?: {
+    kind?: string;
+    grbl?: GrblStageConfigInput;
   };
   simulator?: CaptureHelperSimulatorConfigInput;
   expectedDevices?: CaptureHelperExpectedDeviceConfig[];

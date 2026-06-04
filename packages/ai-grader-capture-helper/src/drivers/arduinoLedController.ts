@@ -1,3 +1,10 @@
+import {
+  createNodeSerialLineTransport,
+  type SerialLineConnection,
+  type SerialLineOpenOptions,
+  type SerialLineTransport,
+} from "./serialTransport";
+
 export const ARDUINO_LED_DEFAULT_BAUD_RATE = 115200;
 export const ARDUINO_LED_DEFAULT_TIMEOUT_MS = 1000;
 export const ARDUINO_LED_DEFAULT_OPEN_TIMEOUT_MS = 2000;
@@ -19,21 +26,9 @@ export interface ArduinoLedControllerConfig {
   closeTimeoutMs: number;
 }
 
-export interface ArduinoLedSerialOpenOptions {
-  port: string;
-  baudRate: number;
-  openTimeoutMs: number;
-}
-
-export interface ArduinoLedSerialConnection {
-  writeLine(line: string): Promise<void>;
-  readLine(): Promise<string>;
-  close(): Promise<void>;
-}
-
-export interface ArduinoLedSerialTransport {
-  open(options: ArduinoLedSerialOpenOptions): Promise<ArduinoLedSerialConnection>;
-}
+export type ArduinoLedSerialOpenOptions = SerialLineOpenOptions;
+export type ArduinoLedSerialConnection = SerialLineConnection;
+export type ArduinoLedSerialTransport = SerialLineTransport;
 
 export type ArduinoLedCommandStatus = "PASS" | "FAIL";
 
@@ -297,128 +292,5 @@ export async function runArduinoLedControllerHealthCheck(
 }
 
 export async function createNodeSerialArduinoLedTransport(): Promise<ArduinoLedSerialTransport> {
-  let serialportModule: { SerialPort: new (options: Record<string, unknown>) => unknown };
-  try {
-    serialportModule = await import("serialport") as unknown as {
-      SerialPort: new (options: Record<string, unknown>) => unknown;
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown serialport import error.";
-    throw new ArduinoLedControllerHealthError(
-      `Unable to load serialport for Arduino LED controller readiness: ${message}`
-    );
-  }
-
-  return {
-    async open(options) {
-      const serialPort = new serialportModule.SerialPort({
-        path: options.port,
-        baudRate: options.baudRate,
-        autoOpen: false,
-      }) as NodeSerialPortLike;
-
-      await new Promise<void>((resolve, reject) => {
-        serialPort.open((error?: Error | null) => {
-          if (error) {
-            reject(
-              new ArduinoLedControllerHealthError(
-                `Unable to open Arduino LED controller serial port ${options.port}: ${error.message}`
-              )
-            );
-            return;
-          }
-          resolve();
-        });
-      });
-
-      return new NodeSerialArduinoLedConnection(serialPort);
-    },
-  };
-}
-
-interface NodeSerialPortLike {
-  open(callback: (error?: Error | null) => void): void;
-  write(data: string, callback: (error?: Error | null) => void): void;
-  drain(callback: (error?: Error | null) => void): void;
-  close(callback: (error?: Error | null) => void): void;
-  on(event: "data", listener: (chunk: Buffer | string) => void): this;
-  on(event: "error", listener: (error: Error) => void): this;
-}
-
-class NodeSerialArduinoLedConnection implements ArduinoLedSerialConnection {
-  private buffer = "";
-  private readonly pendingReads: Array<{
-    resolve: (line: string) => void;
-    reject: (error: Error) => void;
-  }> = [];
-
-  constructor(private readonly serialPort: NodeSerialPortLike) {
-    this.serialPort.on("data", (chunk) => this.handleData(chunk));
-    this.serialPort.on("error", (error) => this.rejectPending(error));
-  }
-
-  async writeLine(line: string): Promise<void> {
-    const payload = line.endsWith("\n") ? line : `${line}\n`;
-    await new Promise<void>((resolve, reject) => {
-      this.serialPort.write(payload, (writeError?: Error | null) => {
-        if (writeError) {
-          reject(writeError);
-          return;
-        }
-        this.serialPort.drain((drainError?: Error | null) => {
-          if (drainError) reject(drainError);
-          else resolve();
-        });
-      });
-    });
-  }
-
-  async readLine(): Promise<string> {
-    const existing = this.shiftLine();
-    if (existing) return existing;
-
-    return await new Promise<string>((resolve, reject) => {
-      this.pendingReads.push({ resolve, reject });
-    });
-  }
-
-  async close(): Promise<void> {
-    await new Promise<void>((resolve, reject) => {
-      this.serialPort.close((error?: Error | null) => {
-        if (error) reject(error);
-        else resolve();
-      });
-    });
-  }
-
-  private handleData(chunk: Buffer | string): void {
-    this.buffer += Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : chunk;
-    this.drainPendingReads();
-  }
-
-  private drainPendingReads(): void {
-    while (this.pendingReads.length > 0) {
-      const line = this.shiftLine();
-      if (!line) return;
-      const pending = this.pendingReads.shift();
-      pending?.resolve(line);
-    }
-  }
-
-  private shiftLine(): string | undefined {
-    while (true) {
-      const newlineIndex = this.buffer.search(/[\r\n]/);
-      if (newlineIndex < 0) return undefined;
-      const line = this.buffer.slice(0, newlineIndex).trim();
-      this.buffer = this.buffer.slice(newlineIndex + 1);
-      if (line.length > 0) return line;
-    }
-  }
-
-  private rejectPending(error: Error): void {
-    while (this.pendingReads.length > 0) {
-      const pending = this.pendingReads.shift();
-      pending?.reject(error);
-    }
-  }
+  return await createNodeSerialLineTransport("Arduino LED controller");
 }

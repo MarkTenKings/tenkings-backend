@@ -5,10 +5,15 @@ import {
 } from "./discovery";
 import {
   buildArduinoLedControllerConfig,
+  buildGrblStageConfig,
   isArduinoLedControllerRequested,
+  isGrblStageRequested,
   runArduinoLedControllerHealthCheck,
+  runGrblStageHealthCheck,
   type ArduinoLedHealthResult,
   type ArduinoLedSerialTransport,
+  type GrblStageHealthResult,
+  type GrblStageSerialTransport,
 } from "./drivers";
 import type {
   CaptureHelperCalibrationPaths,
@@ -59,6 +64,8 @@ export interface CaptureHelperReadinessReport {
   safetyGateStatus: CaptureHelperReadinessCheck[];
   ledControllerChecks: CaptureHelperReadinessCheck[];
   arduinoLedHealth?: ArduinoLedHealthResult;
+  stageChecks: CaptureHelperReadinessCheck[];
+  grblStageHealth?: GrblStageHealthResult;
   discovery: CaptureHelperDiscoveryResult[];
   notes: string[];
 }
@@ -66,6 +73,7 @@ export interface CaptureHelperReadinessReport {
 interface BuildReadinessOptions {
   pathExists?: (path: string) => boolean;
   arduinoLedSerialTransport?: ArduinoLedSerialTransport;
+  grblStageSerialTransport?: GrblStageSerialTransport;
 }
 
 const DEVICE_ROLES: CaptureHelperDeviceRole[] = [
@@ -171,8 +179,16 @@ function configChecks(input: {
   expectedDevices: CaptureHelperExpectedDeviceConfig[];
   arduinoRequested: boolean;
   arduinoPort?: string;
+  grblStageRequested: boolean;
+  grblStagePort?: string;
 }): CaptureHelperReadinessCheck[] {
-  const realArduinoWithPort = input.driverSet === "real" && input.arduinoRequested && Boolean(input.arduinoPort);
+  const arduinoMissingPort = input.arduinoRequested && !input.arduinoPort;
+  const grblStageMissingPort = input.grblStageRequested && !input.grblStagePort;
+  const supportedRealAdapterWithPort =
+    input.driverSet === "real" &&
+    ((input.arduinoRequested && Boolean(input.arduinoPort)) ||
+      (input.grblStageRequested && Boolean(input.grblStagePort)));
+  const realDriverSetAllowed = supportedRealAdapterWithPort && !arduinoMissingPort && !grblStageMissingPort;
   const checks: CaptureHelperReadinessCheck[] = [
     requiredIdCheck("helperInstanceId", input.identity.helperInstanceId),
     requiredIdCheck("rigId", input.identity.rigId),
@@ -183,17 +199,19 @@ function configChecks(input: {
 
   checks.push({
     name: "driverSet",
-    status: input.driverSet === "mock" || realArduinoWithPort ? "PASS" : "FAIL",
+    status: input.driverSet === "mock" || realDriverSetAllowed ? "PASS" : "FAIL",
     message:
       input.driverSet === "mock"
         ? "Mock driver set is allowed."
-        : realArduinoWithPort
-          ? "Real driver set is limited to explicit Arduino LED controller readiness for this slice."
-          : input.driverSet === "real" && input.arduinoRequested
+        : realDriverSetAllowed
+          ? "Real driver set is limited to explicit Arduino LED and GRBL stage readiness for this slice."
+          : input.driverSet === "real" && arduinoMissingPort
             ? "Arduino LED controller readiness requires an explicit serial port."
-            : input.driverSet === "real"
-              ? "Real driver set is not implemented except explicit Arduino LED controller readiness."
-          : "driverSet must be mock or real.",
+            : input.driverSet === "real" && grblStageMissingPort
+              ? "GRBL stage readiness requires an explicit serial port."
+              : input.driverSet === "real"
+                ? "Real driver set is not implemented except explicit Arduino LED controller or GRBL stage readiness."
+                : "driverSet must be mock or real.",
   });
 
   checks.push({
@@ -241,15 +259,23 @@ function safetyGateChecks(input: {
   safety: CaptureHelperSafetyFlags;
   arduinoRequested: boolean;
   arduinoPort?: string;
+  grblStageRequested: boolean;
+  grblStagePort?: string;
 }): CaptureHelperReadinessCheck[] {
   const armExpected = input.expectedDevices.some((device) => device.role === "armInterlock" && device.required);
-  const realArduinoWithPort = input.driverSet === "real" && input.arduinoRequested && Boolean(input.arduinoPort);
+  const arduinoMissingPort = input.arduinoRequested && !input.arduinoPort;
+  const grblStageMissingPort = input.grblStageRequested && !input.grblStagePort;
+  const supportedRealAdapterWithPort =
+    input.driverSet === "real" &&
+    ((input.arduinoRequested && Boolean(input.arduinoPort)) ||
+      (input.grblStageRequested && Boolean(input.grblStagePort)));
+  const realDriverSetAllowed = supportedRealAdapterWithPort && !arduinoMissingPort && !grblStageMissingPort;
   return [
     {
       name: "safety.noHardwareProbe",
       status: "PASS",
-      message: realArduinoWithPort
-        ? "Only the explicitly requested Arduino LED serial health check may open a serial port."
+      message: realDriverSetAllowed
+        ? "Only explicitly requested readiness checks with supplied serial ports may open serial."
         : "Readiness mode does not open cameras, serial ports, controllers, or SDKs.",
     },
     {
@@ -262,12 +288,12 @@ function safetyGateChecks(input: {
     },
     {
       name: "safety.realDriverFailClosed",
-      status: input.driverSet === "real" && !realArduinoWithPort ? "FAIL" : "PASS",
+      status: input.driverSet === "real" && !realDriverSetAllowed ? "FAIL" : "PASS",
       message:
-        input.driverSet === "real" && !realArduinoWithPort
-          ? "Real driver mode is fail-closed unless explicit Arduino LED readiness is configured with a port."
-          : realArduinoWithPort
-            ? "Real hardware access is restricted to PING and LED ALL OFF on the configured Arduino LED controller port."
+        input.driverSet === "real" && !realDriverSetAllowed
+          ? "Real driver mode is fail-closed unless explicit supported readiness is configured with required ports."
+          : realDriverSetAllowed
+            ? "Real hardware access is restricted to configured Arduino LED readiness and/or GRBL status query readiness."
           : "Mock driver mode is simulator-only and does not access hardware.",
     },
   ];
@@ -279,22 +305,12 @@ function ledControllerChecks(input: {
   arduinoPort?: string;
   baudRate: number;
 }): CaptureHelperReadinessCheck[] {
-  if (input.driverSet !== "real") {
+  if (input.driverSet !== "real" || !input.arduinoRequested) {
     return [
       {
         name: "ledController.arduinoHealth",
         status: "PASS",
         message: "Arduino LED controller real health check is not requested; no serial port is opened.",
-      },
-    ];
-  }
-
-  if (!input.arduinoRequested) {
-    return [
-      {
-        name: "ledController.arduinoHealth",
-        status: "FAIL",
-        message: "driverSet=real requires ledController.kind=arduino for the only implemented real readiness path.",
       },
     ];
   }
@@ -322,6 +338,46 @@ function ledControllerChecks(input: {
   ];
 }
 
+function stageChecks(input: {
+  driverSet: string;
+  grblStageRequested: boolean;
+  grblStagePort?: string;
+  baudRate: number;
+}): CaptureHelperReadinessCheck[] {
+  if (input.driverSet !== "real" || !input.grblStageRequested) {
+    return [
+      {
+        name: "stage.grblHealth",
+        status: "PASS",
+        message: "GRBL stage real health check is not requested; no serial port is opened.",
+      },
+    ];
+  }
+
+  if (!input.grblStagePort) {
+    return [
+      {
+        name: "stage.grblHealth",
+        status: "FAIL",
+        message: "GRBL stage readiness requires an explicit serial port.",
+      },
+    ];
+  }
+
+  return [
+    {
+      name: "stage.grblHealth",
+      status: "WARN",
+      message: "GRBL stage health is configured; async readiness or stage-health must run only the safe status query.",
+      details: {
+        port: input.grblStagePort,
+        baudRate: input.baudRate,
+        command: "?",
+      },
+    },
+  ];
+}
+
 function checkFromArduinoHealth(result: ArduinoLedHealthResult): CaptureHelperReadinessCheck {
   return {
     name: "ledController.arduinoHealth",
@@ -342,22 +398,50 @@ function checkFromArduinoHealth(result: ArduinoLedHealthResult): CaptureHelperRe
   };
 }
 
-function replaceLedControllerChecks(
+function checkFromGrblStageHealth(result: GrblStageHealthResult): CaptureHelperReadinessCheck {
+  return {
+    name: "stage.grblHealth",
+    status: result.status,
+    message: result.ok
+      ? "GRBL stage returned a well-formed status response to the safe status query."
+      : result.error ?? result.closeError ?? "GRBL stage health check failed.",
+    details: {
+      port: result.port,
+      baudRate: result.baudRate,
+      opened: result.opened,
+      closed: result.closed,
+      statusResponse: result.statusResponse,
+      queries: result.queries,
+      closeError: result.closeError,
+    },
+  };
+}
+
+function replaceReadinessChecks(
   report: CaptureHelperReadinessReport,
-  checks: CaptureHelperReadinessCheck[],
-  arduinoLedHealth?: ArduinoLedHealthResult
+  input: {
+    ledControllerChecks?: CaptureHelperReadinessCheck[];
+    stageChecks?: CaptureHelperReadinessCheck[];
+    arduinoLedHealth?: ArduinoLedHealthResult;
+    grblStageHealth?: GrblStageHealthResult;
+  }
 ): CaptureHelperReadinessReport {
+  const ledChecks = input.ledControllerChecks ?? report.ledControllerChecks;
+  const stageReadinessChecks = input.stageChecks ?? report.stageChecks;
   const allChecks = [
     ...report.configValidation.checks,
     ...report.calibrationChecks,
     ...report.safetyGateStatus,
-    ...checks,
+    ...ledChecks,
+    ...stageReadinessChecks,
   ];
   return {
     ...report,
     overallStatus: statusFromChecks(allChecks),
-    ledControllerChecks: checks,
-    ...(arduinoLedHealth ? { arduinoLedHealth } : {}),
+    ledControllerChecks: ledChecks,
+    stageChecks: stageReadinessChecks,
+    ...(input.arduinoLedHealth ? { arduinoLedHealth: input.arduinoLedHealth } : {}),
+    ...(input.grblStageHealth ? { grblStageHealth: input.grblStageHealth } : {}),
   };
 }
 
@@ -383,6 +467,8 @@ export function buildCaptureHelperReadinessReport(
     driverSet === "mock" || driverSet === "real" ? driverSet : undefined;
   const arduinoRequested = isArduinoLedControllerRequested(input.ledController?.kind, env);
   const arduinoConfig = buildArduinoLedControllerConfig(input.ledController?.arduino, env);
+  const grblStageRequested = isGrblStageRequested(input.stage?.kind, env);
+  const grblStageConfig = buildGrblStageConfig(input.stage?.grbl, env);
 
   const configValidationChecks = configChecks({
     identity,
@@ -391,6 +477,8 @@ export function buildCaptureHelperReadinessReport(
     expectedDevices,
     arduinoRequested,
     arduinoPort: arduinoConfig.port,
+    grblStageRequested,
+    grblStagePort: grblStageConfig.port,
   });
   const calibration = calibrationChecks(expectedDevices, safety, options.pathExists ?? existsSync);
   const safetyGateStatus = safetyGateChecks({
@@ -399,6 +487,8 @@ export function buildCaptureHelperReadinessReport(
     safety,
     arduinoRequested,
     arduinoPort: arduinoConfig.port,
+    grblStageRequested,
+    grblStagePort: grblStageConfig.port,
   });
   const ledChecks = ledControllerChecks({
     driverSet,
@@ -406,20 +496,26 @@ export function buildCaptureHelperReadinessReport(
     arduinoPort: arduinoConfig.port,
     baudRate: arduinoConfig.baudRate,
   });
+  const stageReadinessChecks = stageChecks({
+    driverSet,
+    grblStageRequested,
+    grblStagePort: grblStageConfig.port,
+    baudRate: grblStageConfig.baudRate,
+  });
   const discovery = knownDriverSet ? runCaptureHelperDiscoveryStubs(knownDriverSet) : [];
   const unsupportedRealDriverNotices =
     driverSet === "real"
       ? [
-          arduinoRequested
-            ? "Real driverSet is limited to explicit Arduino LED readiness in this slice."
-            : "Real driverSet is recognized for readiness reporting only.",
-          "Macro camera, microscope, XY stage, and arm interlock real drivers are not implemented or probed.",
-          arduinoRequested
-            ? "Arduino LED readiness uses PING and LED ALL OFF only when a port is explicitly supplied."
-            : "No serial ports, cameras, stages, interlocks, or SDKs are probed.",
+          "Real driverSet is limited to explicit Arduino LED readiness and GRBL stage status readiness in this slice.",
+          "Macro camera, microscope, and arm interlock real drivers are not implemented or probed.",
+          grblStageRequested
+            ? "GRBL stage readiness sends only ? when a port is explicitly supplied; no homing, unlock, reset, or motion commands are sent."
+            : arduinoRequested
+              ? "Arduino LED readiness uses PING and LED ALL OFF only when a port is explicitly supplied."
+              : "No serial ports, cameras, stages, interlocks, or SDKs are probed.",
         ]
       : [];
-  const allChecks = [...configValidationChecks, ...calibration, ...safetyGateStatus, ...ledChecks];
+  const allChecks = [...configValidationChecks, ...calibration, ...safetyGateStatus, ...ledChecks, ...stageReadinessChecks];
   const overallStatus = statusFromChecks(allChecks);
 
   return {
@@ -440,11 +536,12 @@ export function buildCaptureHelperReadinessReport(
     calibrationChecks: calibration,
     safetyGateStatus,
     ledControllerChecks: ledChecks,
+    stageChecks: stageReadinessChecks,
     discovery,
     notes: [
       "Readiness reports validate configuration only.",
       "Device discovery is a stub and does not open hardware or OS device APIs.",
-      "The only opt-in real hardware readiness path is Arduino LED controller PING plus LED ALL OFF.",
+      "Opt-in real hardware readiness paths are limited to Arduino LED controller PING plus LED ALL OFF and GRBL stage ? status query.",
     ],
   };
 }
@@ -458,16 +555,35 @@ export async function buildCaptureHelperReadinessReportAsync(
   const driverSet = firstNonEmpty(input.driverSet, env.AI_GRADER_CAPTURE_HELPER_DRIVER_SET)?.toLowerCase() ?? "mock";
   const arduinoRequested = isArduinoLedControllerRequested(input.ledController?.kind, env);
   const arduinoConfig = buildArduinoLedControllerConfig(input.ledController?.arduino, env);
+  const grblStageRequested = isGrblStageRequested(input.stage?.kind, env);
+  const grblStageConfig = buildGrblStageConfig(input.stage?.grbl, env);
+  let nextReport = report;
 
-  if (driverSet !== "real" || !arduinoRequested || !arduinoConfig.port) {
-    return report;
+  if (driverSet === "real" && arduinoRequested && arduinoConfig.port) {
+    const arduinoLedHealth = await runArduinoLedControllerHealthCheck({
+      config: arduinoConfig,
+      env,
+      transport: options.arduinoLedSerialTransport,
+    });
+
+    nextReport = replaceReadinessChecks(nextReport, {
+      ledControllerChecks: [checkFromArduinoHealth(arduinoLedHealth)],
+      arduinoLedHealth,
+    });
   }
 
-  const arduinoLedHealth = await runArduinoLedControllerHealthCheck({
-    config: arduinoConfig,
-    env,
-    transport: options.arduinoLedSerialTransport,
-  });
+  if (driverSet === "real" && grblStageRequested && grblStageConfig.port) {
+    const grblStageHealth = await runGrblStageHealthCheck({
+      config: grblStageConfig,
+      env,
+      transport: options.grblStageSerialTransport,
+    });
 
-  return replaceLedControllerChecks(report, [checkFromArduinoHealth(arduinoLedHealth)], arduinoLedHealth);
+    nextReport = replaceReadinessChecks(nextReport, {
+      stageChecks: [checkFromGrblStageHealth(grblStageHealth)],
+      grblStageHealth,
+    });
+  }
+
+  return nextReport;
 }
