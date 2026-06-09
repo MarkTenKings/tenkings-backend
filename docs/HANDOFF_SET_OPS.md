@@ -25,6 +25,18 @@
   - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
   - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
 
+## Session Update (2026-06-09, AI Grader Dino-Lite capture package PR #29 merged)
+- PR #29 (`https://github.com/MarkTenKings/tenkings-backend/pull/29`) was merged into `main`.
+- Merge commit: `66eee50c66c34d3d45eb0095658286d22598f4d4`.
+- GitHub Actions for the merge commit completed successfully:
+  - run `27240862704`
+  - `https://github.com/MarkTenKings/tenkings-backend/actions/runs/27240862704`
+- Vercel production deployment for the merge commit completed successfully:
+  - `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/HFTJtFhPxZ92mtko4TKxYbJWr1KC`
+- Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
+- No next AI Grader phase was started.
+- Guardrails held during merge and handoff: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no additional image capture, no additional microscope command, no lens/focus/exposure-setting/DPQ method, no SDK binary/OCX/DLL/vendor SDK commit, no captured image commit, and no certified grading claim.
+
 ## Session Update (2026-06-09, AI Grader Dino-Lite demo capture package)
 - Branch `feature/ai-grader-dinolite-capture-package` was created from latest `origin/main`.
 - Added manual-only DNVideoX bridge commands:
