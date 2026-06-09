@@ -62,7 +62,9 @@ Run it only with both explicit opt-ins:
 TenKings.AiGrader.DinoLiteBridge.exe --adapter dnvideox --manual-enumerate
 ```
 
-The implementation creates the registered 32-bit ActiveX control with ProgID `VIDEOCAPX.VideoCapXCtrl.1`, calls `GetVideoDeviceCount`, then calls `GetVideoDeviceName` for each detected index. `GetVideoDeviceDesc` and `GetDeviceID` are optional fields; failures are returned in `optionalErrors` without failing enumeration if device count succeeds.
+The implementation creates the registered 32-bit ActiveX control with ProgID `VIDEOCAPX.VideoCapXCtrl.1` inside a hidden offscreen WinForms `AxHost`, calls `GetVideoDeviceCount`, then calls `GetVideoDeviceName` for each detected index. `GetVideoDeviceDesc` and `GetDeviceID` are optional fields; failures are returned in `optionalErrors` without failing enumeration if device count succeeds.
+
+The hidden host is required because the vendor C#, VB6, HTML, and C++ samples all instantiate DNVideoX as an ActiveX UI control with a control site/window. Plain COM activation can instantiate the OCX and read its version, but on this Dell capture node it did not initialize enumeration correctly.
 
 This slice does not set `Connected=True`, does not set `Preview=True`, and does not call capture/control methods for LEDs, FLC, lens, focus, exposure, EDR, EDOF, DPQ, or image acquisition.
 

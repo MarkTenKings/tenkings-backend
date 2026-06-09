@@ -213,7 +213,9 @@ The fake bridge adapter is the default. It returns deterministic AF7915MZTL-like
 
 The real DNVideoX adapter is manual enumeration only. It does not instantiate `DNVideoX.ocx` during tests, CI, default bridge startup, fake mode, readiness, or normal health/capability commands. The only real COM path is the explicit `dinolite.enumerateDevices` command with `--adapter dnvideox --manual-enumerate`.
 
-Manual enumeration creates the registered 32-bit ActiveX control through ProgID `VIDEOCAPX.VideoCapXCtrl.1`, calls `GetVideoDeviceCount`, then calls `GetVideoDeviceName` for detected indexes. It may also call `GetVideoDeviceDesc` and `GetDeviceID`; optional failures are reported without failing the whole enumeration when device count succeeds.
+Manual enumeration creates the registered 32-bit ActiveX control through ProgID `VIDEOCAPX.VideoCapXCtrl.1` inside a hidden offscreen WinForms `AxHost`, calls `GetVideoDeviceCount`, then calls `GetVideoDeviceName` for detected indexes. It may also call `GetVideoDeviceDesc` and `GetDeviceID`; optional failures are reported without failing the whole enumeration when device count succeeds.
+
+The hidden host is required because the vendor C#, VB6, HTML, and C++ samples all host DNVideoX as an ActiveX control with a control site/window. Plain COM activation could instantiate `DNVideoX.ocx` and read version `3, 0, 56, 6`, but it failed the enumeration path on the Dell capture node.
 
 This slice does not set `Connected=True`, does not set `Preview=True`, and does not call capture/control methods for frame capture, LEDs, FLC, lens, focus, exposure, EDR, EDOF, DPQ, or microscope state.
 
@@ -242,7 +244,7 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-
   --bridge-timeout-ms 10000
 ```
 
-Local Dell smoke on 2026-06-09 instantiated DNVideoX and returned `SDK_NOT_READY`: `comActiveXInstantiated=true`, `connected=false`, `preview=false`, `deviceCount=0`, `devices=[]`, OCX version `3, 0, 56, 6`, error `DNVIDEOX_ENUMERATION_FAILED` with message `Exception has been thrown by the target of an invocation.` No `Connected=True`, `Preview=True`, capture, LED/FLC/lens/focus/exposure/EDR/EDOF/DPQ, or control command was used.
+Local Dell smoke on 2026-06-09 after the hidden-host fix returned one device: `comActiveXInstantiated=true`, `connected=false`, `preview=false`, `deviceCount=1`, `devices[0].name=Dino-Lite Edge`, `devices[0].description=""`, OCX version `3, 0, 56, 6`, `host=hidden-winforms-axhost`, `optionalErrors=[]`. The `GetDeviceID` value was present and is intentionally omitted from docs except for USB VID/PID evidence: `vid_a168&pid_0990`. No `Connected=True`, `Preview=True`, capture, LED/FLC/lens/focus/exposure/EDR/EDOF/DPQ, or control command was used.
 
 SDK binaries, OCX files, and DNVideoX DLLs must remain outside git. Do not run `regsvr32` from this repo flow.
 

@@ -1,14 +1,17 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Windows.Forms;
 
 namespace TenKings.AiGrader.DinoLiteBridge
 {
     public sealed class DnVideoXAdapter : IDinoLiteBridgeAdapter
     {
         private const string ProgId = "VIDEOCAPX.VideoCapXCtrl.1";
+        private const string Clsid = "922FB007-DD9A-11D3-BD8D-DAAFCB8D9378";
         private const string ActiveXPath = @"C:\Windows\SysWOW64\DNVideoX.ocx";
         private readonly BridgeOptions options;
 
@@ -71,10 +74,11 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
 
             object? control = null;
+            HiddenDnVideoXHost? host = null;
             try
             {
-                var controlType = Type.GetTypeFromProgID(ProgId, true);
-                control = Activator.CreateInstance(controlType);
+                host = HiddenDnVideoXHost.Create();
+                control = host.ControlInstance;
                 var deviceCount = Convert.ToInt32(InvokeRequired(control, "GetVideoDeviceCount"));
                 var devices = new List<object>();
                 var optionalErrors = new List<object>();
@@ -108,8 +112,10 @@ namespace TenKings.AiGrader.DinoLiteBridge
                         control = "DNVideoX",
                         version = GetOcxVersion(),
                         progId = ProgId,
+                        clsid = Clsid,
                         registeredActiveXPath = ActiveXPath
                     },
+                    host = "hidden-winforms-axhost",
                     forbiddenOperationsInvoked = false
                 };
             }
@@ -129,8 +135,10 @@ namespace TenKings.AiGrader.DinoLiteBridge
                         control = "DNVideoX",
                         version = GetOcxVersion(),
                         progId = ProgId,
+                        clsid = Clsid,
                         registeredActiveXPath = ActiveXPath
                     },
+                    host = "hidden-winforms-axhost",
                     error = new
                     {
                         code = "DNVIDEOX_ENUMERATION_FAILED",
@@ -141,10 +149,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
             finally
             {
-                if (control != null && Marshal.IsComObject(control))
-                {
-                    Marshal.FinalReleaseComObject(control);
-                }
+                host?.Dispose();
             }
         }
 
@@ -208,6 +213,63 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
 
             return error.Message;
+        }
+
+        private sealed class HiddenDnVideoXHost : IDisposable
+        {
+            private readonly Form form;
+            private readonly DnVideoXAxHost axHost;
+
+            private HiddenDnVideoXHost(Form form, DnVideoXAxHost axHost)
+            {
+                this.form = form;
+                this.axHost = axHost;
+            }
+
+            public object ControlInstance => axHost.ControlInstance;
+
+            public static HiddenDnVideoXHost Create()
+            {
+                var form = new Form
+                {
+                    ShowInTaskbar = false,
+                    StartPosition = FormStartPosition.Manual,
+                    FormBorderStyle = FormBorderStyle.FixedToolWindow,
+                    Location = new Point(-32000, -32000),
+                    Opacity = 0,
+                    Width = 1,
+                    Height = 1
+                };
+                var axHost = new DnVideoXAxHost
+                {
+                    Width = 1,
+                    Height = 1
+                };
+
+                form.Controls.Add(axHost);
+                form.CreateControl();
+                axHost.CreateControl();
+                form.Show();
+                Application.DoEvents();
+
+                return new HiddenDnVideoXHost(form, axHost);
+            }
+
+            public void Dispose()
+            {
+                axHost.Dispose();
+                form.Dispose();
+            }
+        }
+
+        private sealed class DnVideoXAxHost : AxHost
+        {
+            public DnVideoXAxHost()
+                : base(Clsid)
+            {
+            }
+
+            public object ControlInstance => GetOcx();
         }
     }
 }

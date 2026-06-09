@@ -92,8 +92,10 @@ export interface DinoLiteBridgeEnumerationResult {
     control: string;
     version?: string | null;
     progId?: string;
+    clsid?: string;
     registeredActiveXPath?: string;
   };
+  host?: string;
   status?: string;
   error?: {
     code: string;
