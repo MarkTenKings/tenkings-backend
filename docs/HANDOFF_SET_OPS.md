@@ -25,6 +25,27 @@
   - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
   - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
 
+## Session Update (2026-06-09, AI Grader Dino-Lite bridge skeleton planned)
+- Branch `feature/ai-grader-dinolite-bridge-skeleton` was created from latest fetched `origin/main` at `e2e3a6385e6255ccf897dd3648148fa3c32d3310`.
+- Planned scope: add Windows-only .NET Framework 4.8 x86 STA Dino-Lite bridge skeleton with stdio JSON Lines, fake adapter default, inert DNVideoX real adapter skeleton, TypeScript capture-helper stdio client, manual fake bridge health command, docs, and tests.
+- Guardrails for this planned implementation: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no SDK binary/OCX/DLL commit, no `regsvr32`, no DNVideoX ActiveX instantiation in tests/default commands, and no microscope control, LED/FLC/lens/focus/EDR/EDOF/image capture/hardware command.
+
+## Session Update (2026-06-09, AI Grader Dino-Lite bridge skeleton implemented)
+- Added `packages/ai-grader-dinolite-bridge` as a Windows-only .NET Framework 4.8 x86 STA JSONL bridge skeleton.
+- Fake adapter is the default and returns deterministic health, SDK info, AF7915MZTL-like device listing, and simulated still capture/AMR/FLC/EDR/EDOF capability flags without COM usage.
+- Real DNVideoX adapter skeleton exists but returns `SDK_NOT_READY`/`NOT_IMPLEMENTED`; it does not instantiate `DNVideoX.ocx`, enumerate real devices, capture images, or control microscope features.
+- Added capture-helper Dino-Lite stdio client with explicit bridge path requirement, fake-mode-only spawn guard, timeout handling, JSON parse/error mapping, and fake process tests.
+- Added manual capture-helper CLI command `dinolite-bridge-health --bridge-path <exe> --bridge-adapter fake`; default readiness only reports bridge configuration and does not spawn.
+- Local validation:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 51 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass after local codegen/build prerequisites (`pnpm --filter @tenkings/database generate`, `pnpm --filter @tenkings/browser-rip-client build`); existing `<img>`, Browserslist, baseline-browser-mapping, and Tailwind glob warnings observed.
+  - `git diff --check` -> pass with line-ending warnings only.
+- Local .NET validation blocker: installed `dotnet` has runtime only and no SDK, so `dotnet build ...` and `dotnet test ...` report `No .NET SDKs were found`.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no SDK binaries/OCX/DLLs committed, no `regsvr32`, no DNVideoX ActiveX/COM instantiation, no microscope control, no LED/FLC/lens/focus/EDR/EDOF/image capture, and no hardware command.
+
 ## Session Update (2026-06-01, AI Grader GRBL stage readiness adapter)
 - Branch `feature/ai-grader-grbl-stage-readiness` was created from latest fetched `origin/main` after PR #24 and the docs-only merge handoff commit.
 - PR #25 was confirmed open, ready for review, mergeable/clean, and passing all checks before merge.

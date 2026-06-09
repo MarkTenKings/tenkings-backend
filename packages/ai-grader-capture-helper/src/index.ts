@@ -26,6 +26,7 @@ import {
   type ArduinoLedControllerConfigInput,
   type CaptureHelperDriverSet,
   type CaptureHelperDriverSetDrivers,
+  type DinoLiteBridgeClientConfig,
 } from "./drivers";
 export * from "./drivers";
 export * from "./discovery";
@@ -80,6 +81,7 @@ export interface CaptureHelperConfigInput {
     kind?: string;
     grbl?: GrblStageConfigInput;
   };
+  dinoliteBridge?: DinoLiteBridgeClientConfig;
   simulator?: CaptureHelperSimulatorConfigInput;
   expectedDevices?: CaptureHelperExpectedDeviceConfig[];
   serialHints?: CaptureHelperSerialHints;

@@ -23,7 +23,7 @@
   },
   "scripts": {
     "build": "pnpm --filter @tenkings/ai-grader-simulator build && tsc -p .",
-    "test": "pnpm run build && node --test tests/*.test.js",
+    "test": "pnpm run build && node --test tests",
     "health": "node dist/cli.js health",
     "capabilities": "node dist/cli.js capabilities",
     "serve": "node dist/cli.js serve"

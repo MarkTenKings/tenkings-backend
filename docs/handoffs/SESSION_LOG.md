@@ -1,5 +1,52 @@
 # Session Log (Append Only)
 
+## 2026-06-09 - AI Grader Dino-Lite bridge skeleton planned
+
+### Summary
+- Created branch `feature/ai-grader-dinolite-bridge-skeleton` from fetched `origin/main` at `e2e3a6385e6255ccf897dd3648148fa3c32d3310`.
+- Planned a Windows-only Dino-Lite DNVideoX bridge skeleton with fake adapter default, TypeScript stdio client, manual fake bridge health command, docs, and tests.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy or restart was run.
+- No runtime DB operation against a real app database was run.
+- No SDK binaries, OCX files, or DNVideoX DLLs were copied into git.
+- No `regsvr32` command was run.
+- No DNVideoX ActiveX/COM path was instantiated.
+- No microscope control, LED/FLC/lens/focus/EDR/EDOF/image capture, or hardware command was run.
+
+## 2026-06-09 - AI Grader Dino-Lite bridge skeleton implementation
+
+### Summary
+- Added `packages/ai-grader-dinolite-bridge` with a .NET Framework 4.8 x86 STA stdio JSON Lines bridge skeleton.
+- Added default fake Dino-Lite adapter with deterministic `health`, `sdkInfo`, `listDevices`, `capabilities`, and `exit` command behavior.
+- Added inert DNVideoX adapter skeleton that documents the future COM/ActiveX plan and returns `SDK_NOT_READY` or `NOT_IMPLEMENTED`.
+- Added capture-helper Dino-Lite stdio client with explicit executable path requirement, fake-mode-only process spawn, timeout handling, JSON parse/error mapping, and fake process tests.
+- Added manual capture-helper CLI command `dinolite-bridge-health --bridge-path <exe> --bridge-adapter fake`.
+- Default readiness reports whether the bridge is configured but does not spawn the bridge process.
+- Updated test scripts in `@tenkings/shared`, `@tenkings/ai-grader-simulator`, and `@tenkings/ai-grader-capture-helper` from shell wildcard test paths to cross-platform `node --test tests`.
+
+### Validation Evidence
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> blocked locally: no .NET SDK installed.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86` -> blocked locally: no .NET SDK installed.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 51 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass after local generated-client/workspace build prerequisites; existing image/Browserslist/Tailwind warnings observed.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy or restart was run.
+- No runtime DB operation against a real app database was run.
+- No SDK binaries, OCX files, or DNVideoX DLLs were copied into git.
+- No `regsvr32` command was run.
+- No DNVideoX ActiveX/COM path was instantiated.
+- No microscope control, LED/FLC/lens/focus/EDR/EDOF/image capture, or hardware command was run.
+
 ## 2026-02-21 - Baseline Handoff Setup
 
 ### Summary

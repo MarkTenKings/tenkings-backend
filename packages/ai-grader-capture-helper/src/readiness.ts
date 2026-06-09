@@ -14,6 +14,7 @@ import {
   type ArduinoLedSerialTransport,
   type GrblStageHealthResult,
   type GrblStageSerialTransport,
+  getDinoLiteBridgeConfiguredStatus,
 } from "./drivers";
 import type {
   CaptureHelperCalibrationPaths,
@@ -66,6 +67,7 @@ export interface CaptureHelperReadinessReport {
   arduinoLedHealth?: ArduinoLedHealthResult;
   stageChecks: CaptureHelperReadinessCheck[];
   grblStageHealth?: GrblStageHealthResult;
+  dinoliteBridgeChecks: CaptureHelperReadinessCheck[];
   discovery: CaptureHelperDiscoveryResult[];
   notes: string[];
 }
@@ -378,6 +380,34 @@ function stageChecks(input: {
   ];
 }
 
+function dinoliteBridgeChecks(input: CaptureHelperConfigInput, env: CaptureHelperEnv): CaptureHelperReadinessCheck[] {
+  const status = getDinoLiteBridgeConfiguredStatus({
+    executablePath: input.dinoliteBridge?.executablePath ?? env.AI_GRADER_CAPTURE_HELPER_DINOLITE_BRIDGE_PATH,
+    adapter: input.dinoliteBridge?.adapter ?? bridgeAdapterFromEnv(env),
+    timeoutMs: input.dinoliteBridge?.timeoutMs,
+    args: input.dinoliteBridge?.args,
+  });
+  return [
+    {
+      name: "microscope.dinoliteBridge",
+      status: "PASS",
+      message: status.reason,
+      details: {
+        configured: status.configured,
+        executablePath: status.executablePath,
+        adapter: status.adapter,
+        canSpawn: status.canSpawn,
+      },
+    },
+  ];
+}
+
+function bridgeAdapterFromEnv(env: CaptureHelperEnv): "fake" | "dnvideox" | undefined {
+  const value = env.AI_GRADER_CAPTURE_HELPER_DINOLITE_BRIDGE_ADAPTER?.trim().toLowerCase();
+  if (value === "fake" || value === "dnvideox") return value;
+  return undefined;
+}
+
 function checkFromArduinoHealth(result: ArduinoLedHealthResult): CaptureHelperReadinessCheck {
   return {
     name: "ledController.arduinoHealth",
@@ -428,12 +458,14 @@ function replaceReadinessChecks(
 ): CaptureHelperReadinessReport {
   const ledChecks = input.ledControllerChecks ?? report.ledControllerChecks;
   const stageReadinessChecks = input.stageChecks ?? report.stageChecks;
+  const dinoliteChecks = report.dinoliteBridgeChecks;
   const allChecks = [
     ...report.configValidation.checks,
     ...report.calibrationChecks,
     ...report.safetyGateStatus,
     ...ledChecks,
     ...stageReadinessChecks,
+    ...dinoliteChecks,
   ];
   return {
     ...report,
@@ -502,6 +534,7 @@ export function buildCaptureHelperReadinessReport(
     grblStagePort: grblStageConfig.port,
     baudRate: grblStageConfig.baudRate,
   });
+  const dinoliteChecks = dinoliteBridgeChecks(input, env);
   const discovery = knownDriverSet ? runCaptureHelperDiscoveryStubs(knownDriverSet) : [];
   const unsupportedRealDriverNotices =
     driverSet === "real"
@@ -515,7 +548,14 @@ export function buildCaptureHelperReadinessReport(
               : "No serial ports, cameras, stages, interlocks, or SDKs are probed.",
         ]
       : [];
-  const allChecks = [...configValidationChecks, ...calibration, ...safetyGateStatus, ...ledChecks, ...stageReadinessChecks];
+  const allChecks = [
+    ...configValidationChecks,
+    ...calibration,
+    ...safetyGateStatus,
+    ...ledChecks,
+    ...stageReadinessChecks,
+    ...dinoliteChecks,
+  ];
   const overallStatus = statusFromChecks(allChecks);
 
   return {
@@ -537,11 +577,13 @@ export function buildCaptureHelperReadinessReport(
     safetyGateStatus,
     ledControllerChecks: ledChecks,
     stageChecks: stageReadinessChecks,
+    dinoliteBridgeChecks: dinoliteChecks,
     discovery,
     notes: [
       "Readiness reports validate configuration only.",
       "Device discovery is a stub and does not open hardware or OS device APIs.",
       "Opt-in real hardware readiness paths are limited to Arduino LED controller PING plus LED ALL OFF and GRBL stage ? status query.",
+      "Dino-Lite bridge readiness reports configuration only and does not spawn the bridge process.",
     ],
   };
 }

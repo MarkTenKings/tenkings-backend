@@ -196,6 +196,32 @@ This slice intentionally does not implement homing, motion, jogging, unlock, res
 
 The GRBL stage adapter reuses the same serial-line transport abstraction as Arduino readiness. The `serialport` module is dynamically imported only when the explicit real serial path is invoked with a port. Fake serial tests cover status success, timeout failure, malformed status failure, fail-closed missing-port readiness, and no emitted motion command strings.
 
+### Dino-Lite Bridge Skeleton
+
+The Dino-Lite bridge is a Windows-only out-of-process boundary under `packages/ai-grader-dinolite-bridge`. It targets .NET Framework 4.8, x86, and an STA entry point because DNVideoX is a registered 32-bit ActiveX/COM control. The bridge uses stdio JSON Lines so the TypeScript helper can spawn it manually without adding another localhost port.
+
+Supported bridge JSONL commands:
+
+- `health`
+- `sdkInfo`
+- `listDevices`
+- `capabilities`
+- `exit`
+
+The fake bridge adapter is the default. It returns deterministic AF7915MZTL-like device metadata and simulated support flags for still capture, AMR, FLC, EDR, and EDOF. It never uses COM and does not require SDK files.
+
+The real DNVideoX adapter is a skeleton only. It documents the COM/ActiveX plan and returns `SDK_NOT_READY` or `NOT_IMPLEMENTED`; it does not instantiate `DNVideoX.ocx`, enumerate devices, capture frames, control LEDs/FLC/lens/focus, run EDR/EDOF, or touch hardware in this PR.
+
+Capture-helper readiness reports whether a Dino-Lite bridge path is configured, but default readiness does not spawn the bridge. The only manual command added in this slice is fake bridge health:
+
+```sh
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-bridge-health \
+  --bridge-path packages/ai-grader-dinolite-bridge/src/TenKings.AiGrader.DinoLiteBridge/bin/x86/Release/net48/TenKings.AiGrader.DinoLiteBridge.exe \
+  --bridge-adapter fake
+```
+
+SDK binaries, OCX files, and DNVideoX DLLs must remain outside git. Do not run `regsvr32` from this repo flow.
+
 ## Simulator-First Limitation
 
 This package defaults to simulator mode with the mock driver set and rejects any runnable backend other than simulator/mock. The exceptions are the explicit Arduino LED and GRBL stage readiness command/paths described above, which perform only serial `PING` plus `LED ALL OFF` and GRBL `?` status query respectively. The simulator path uses `@tenkings/ai-grader-simulator` to generate:
@@ -254,3 +280,4 @@ Before the first real hardware driver integration:
 - keep real discovery non-invasive until the specific device adapter is reviewed
 - keep Arduino LED readiness limited to `PING` and `LED ALL OFF` until a later approved LED control slice
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
+- keep Dino-Lite real DNVideoX work limited to a fake stdio bridge until a later approved manual enumeration slice

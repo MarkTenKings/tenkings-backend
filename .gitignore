@@ -21,6 +21,10 @@ backend/variant-embedding-service/.venv/
 # Local TypeScript incremental build cache
 frontend/nextjs-app/tsconfig.tsbuildinfo
 
+# Local .NET build artifacts
+**/bin/
+**/obj/
+
 # Generated variant pipeline artifact
 data/variants/sports.auto.csv
 .env*.local
