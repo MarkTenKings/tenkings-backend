@@ -6,6 +6,8 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Security;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
 namespace TenKings.AiGrader.DinoLiteBridge
@@ -295,6 +297,259 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
         }
 
+        public object GetLightingStatus(int deviceIndex)
+        {
+            if (!options.ManualHardwareAccess)
+            {
+                return NotReady("DNVideoX lighting status requires --manual-hardware; no OCX was instantiated.");
+            }
+
+            object? control = null;
+            HiddenDnVideoXHost? host = null;
+            var cleanup = new CleanupState();
+            try
+            {
+                host = HiddenDnVideoXHost.Create();
+                control = host.ControlInstance;
+                ValidateDeviceIndex(control, deviceIndex);
+                SetProperty(control, "VideoDeviceIndex", deviceIndex);
+                SetProperty(control, "Connected", true);
+                Application.DoEvents();
+
+                var optionalErrors = new List<object>();
+                var config = ReadConfig(control, deviceIndex, optionalErrors);
+                return new
+                {
+                    adapter = "dnvideox",
+                    comActiveXInstantiated = true,
+                    ocxVersion = GetOcxVersion(),
+                    device = ReadDevice(control, deviceIndex, optionalErrors),
+                    connectedDuringCommand = true,
+                    previewDuringCommand = false,
+                    config,
+                    ledState = InvokeOptional(control, "GetLEDState", optionalErrors, deviceIndex),
+                    optionalErrors = optionalErrors.ToArray(),
+                    cleanup,
+                    forbiddenOperationsInvoked = false
+                };
+            }
+            catch (Exception error)
+            {
+                return RealCommandError("DNVIDEOX_LIGHTING_STATUS_FAILED", error, control != null, cleanup);
+            }
+            finally
+            {
+                CleanupControl(control, cleanup, stopPreview: false);
+                host?.Dispose();
+                cleanup.hostDisposed = true;
+            }
+        }
+
+        public object SetLightingRecipe(int deviceIndex, string? recipeName)
+        {
+            if (!options.ManualHardwareAccess)
+            {
+                return NotReady("DNVideoX lighting recipe requires --manual-hardware; no OCX was instantiated.");
+            }
+
+            object? control = null;
+            HiddenDnVideoXHost? host = null;
+            var cleanup = new CleanupState();
+            try
+            {
+                host = HiddenDnVideoXHost.Create();
+                control = host.ControlInstance;
+                ValidateDeviceIndex(control, deviceIndex);
+                SetProperty(control, "VideoDeviceIndex", deviceIndex);
+                SetProperty(control, "Connected", true);
+                Application.DoEvents();
+
+                var optionalErrors = new List<object>();
+                var configBits = ReadConfigBitfield(control, deviceIndex, optionalErrors);
+                var recipe = BuildLightingRecipe(string.IsNullOrWhiteSpace(recipeName) ? "safe-final-all-quadrants-level-3" : recipeName!);
+                var apply = ApplyLightingRecipe(control, deviceIndex, recipe, configBits, optionalErrors);
+                return new
+                {
+                    adapter = "dnvideox",
+                    comActiveXInstantiated = true,
+                    ocxVersion = GetOcxVersion(),
+                    device = ReadDevice(control, deviceIndex, optionalErrors),
+                    connectedDuringCommand = true,
+                    previewDuringCommand = false,
+                    recipe,
+                    apply,
+                    optionalErrors = optionalErrors.ToArray(),
+                    cleanup,
+                    forbiddenOperationsInvoked = false
+                };
+            }
+            catch (Exception error)
+            {
+                return RealCommandError("DNVIDEOX_SET_LIGHTING_RECIPE_FAILED", error, control != null, cleanup);
+            }
+            finally
+            {
+                CleanupControl(control, cleanup, stopPreview: false);
+                host?.Dispose();
+                cleanup.hostDisposed = true;
+            }
+        }
+
+        public object CapturePackage(int deviceIndex, string? outputDir, string? label, bool includeLightingSweep, bool includeEdr, bool includeEdof)
+        {
+            if (!options.ManualHardwareAccess)
+            {
+                return NotReady("DNVideoX capture package requires --manual-hardware; no OCX was instantiated.");
+            }
+            if (string.IsNullOrWhiteSpace(outputDir))
+            {
+                return new
+                {
+                    adapter = "dnvideox",
+                    status = "INVALID_REQUEST",
+                    comActiveXInstantiated = false,
+                    message = "dinolite.capturePackage requires outputDir."
+                };
+            }
+            if (string.IsNullOrWhiteSpace(label))
+            {
+                return new
+                {
+                    adapter = "dnvideox",
+                    status = "INVALID_REQUEST",
+                    comActiveXInstantiated = false,
+                    message = "dinolite.capturePackage requires label."
+                };
+            }
+
+            object? control = null;
+            HiddenDnVideoXHost? host = null;
+            var cleanup = new CleanupState();
+            try
+            {
+                var timestamp = DateTimeOffset.UtcNow;
+                var packageId = "dinolite-" + SanitizeFilePart(label!) + "-" + timestamp.ToString("yyyyMMddTHHmmssfffZ");
+                var absoluteOutputDir = Path.GetFullPath(outputDir);
+                var packageDir = Path.Combine(absoluteOutputDir, packageId);
+                Directory.CreateDirectory(packageDir);
+
+                host = HiddenDnVideoXHost.Create();
+                control = host.ControlInstance;
+                ValidateDeviceIndex(control, deviceIndex);
+                SetProperty(control, "VideoDeviceIndex", deviceIndex);
+                SetProperty(control, "Connected", true);
+                SetProperty(control, "Preview", true);
+                Application.DoEvents();
+
+                var optionalErrors = new List<object>();
+                var device = ReadDevice(control, deviceIndex, optionalErrors);
+                var configBits = ReadConfigBitfield(control, deviceIndex, optionalErrors);
+                var config = BuildConfigObject(configBits);
+                var amr = InvokeOptional(control, "GetAMR", optionalErrors, deviceIndex);
+                var captures = new List<object>();
+
+                captures.Add(CaptureJpg(control, Path.Combine(packageDir, "normal-still.jpg"), "normal", "normal-still", "SaveFrameJPG"));
+
+                if (includeLightingSweep)
+                {
+                    var recipes = new List<LightingRecipe>(BuildLightingSweepRecipes(configBits));
+                    if (recipes.Count == 0)
+                    {
+                        captures.Add(UnavailableCapture(packageDir, "lighting-sweep-unavailable.jpg", "lightingSweep", "lighting-sweep", "LIGHTING_SWEEP_UNSUPPORTED", "GetConfig did not report LED or FLC support."));
+                    }
+
+                    foreach (var recipe in recipes)
+                    {
+                        var apply = ApplyLightingRecipe(control, deviceIndex, recipe, configBits, optionalErrors);
+                        if (!IsSuccessfulApply(apply))
+                        {
+                            captures.Add(UnavailableCapture(packageDir, recipe.name + ".jpg", "lightingSweep", recipe.name, "FLC_UNAVAILABLE", "Lighting recipe could not be applied."));
+                            continue;
+                        }
+                        captures.Add(CaptureJpg(control, Path.Combine(packageDir, recipe.name + ".jpg"), "lightingSweep", recipe.name, "SaveFrameJPG"));
+                    }
+                }
+
+                if (includeEdr)
+                {
+                    captures.Add(TryOptionalSdkCapture(control, deviceIndex, Path.Combine(packageDir, "edr.jpg"), "edr", "edr", "SaveEDR", optionalErrors));
+                }
+
+                if (includeEdof)
+                {
+                    captures.Add(IsEdofSupported(configBits)
+                        ? TryOptionalSdkCapture(control, deviceIndex, Path.Combine(packageDir, "edof.jpg"), "edof", "edof", "SaveEDOF", optionalErrors)
+                        : UnavailableCapture(packageDir, "edof.jpg", "edof", "edof", "EDOF_UNSUPPORTED", "GetConfig did not report EDOF support."));
+                }
+
+                var finalRecipe = BuildLightingRecipe("safe-final-all-quadrants-level-3");
+                cleanup.finalLightingRecipe = ApplyLightingRecipe(control, deviceIndex, finalRecipe, configBits, optionalErrors);
+                CleanupControl(control, cleanup, stopPreview: true);
+                control = null;
+                host.Dispose();
+                host = null;
+                cleanup.hostDisposed = true;
+
+                var manifestPath = Path.Combine(packageDir, "manifest.json");
+                var previewReportPath = Path.Combine(packageDir, "preview-report.html");
+                var manifest = new
+                {
+                    packageId,
+                    label,
+                    timestamp = timestamp.ToString("o"),
+                    adapter = "dnvideox",
+                    device,
+                    ocxVersion = GetOcxVersion(),
+                    config,
+                    amr,
+                    connectedDuringCommand = true,
+                    previewDuringCommand = true,
+                    captures = captures.ToArray(),
+                    cleanup,
+                    optionalErrors = optionalErrors.ToArray(),
+                    manifestPath,
+                    previewReportPath,
+                    limitations = new[] { "Dino-Lite capture package preview -- not a certified grade." },
+                    forbiddenOperationsInvoked = false
+                };
+
+                WriteManifestAndReport(manifestPath, previewReportPath, manifest, captures);
+
+                return new
+                {
+                    adapter = "dnvideox",
+                    comActiveXInstantiated = true,
+                    packageId,
+                    label,
+                    packageDir,
+                    manifestPath,
+                    previewReportPath,
+                    timestamp = timestamp.ToString("o"),
+                    device,
+                    ocxVersion = GetOcxVersion(),
+                    connectedDuringCommand = true,
+                    previewDuringCommand = true,
+                    config,
+                    amr,
+                    captures = captures.ToArray(),
+                    cleanup,
+                    optionalErrors = optionalErrors.ToArray(),
+                    limitations = new[] { "Dino-Lite capture package preview -- not a certified grade." },
+                    forbiddenOperationsInvoked = false
+                };
+            }
+            catch (Exception error)
+            {
+                return RealCommandError("DNVIDEOX_CAPTURE_PACKAGE_FAILED", error, control != null, cleanup);
+            }
+            finally
+            {
+                CleanupControl(control, cleanup, stopPreview: true);
+                host?.Dispose();
+                cleanup.hostDisposed = true;
+            }
+        }
+
         private static object NotReady(string message)
         {
             return new
@@ -395,8 +650,17 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
         private static object ReadConfig(object control, int deviceIndex, List<object> optionalErrors)
         {
+            return BuildConfigObject(ReadConfigBitfield(control, deviceIndex, optionalErrors));
+        }
+
+        private static long? ReadConfigBitfield(object control, int deviceIndex, List<object> optionalErrors)
+        {
             var raw = InvokeOptional(control, "GetConfig", optionalErrors, deviceIndex);
-            var bitfield = raw == null ? (long?)null : Convert.ToInt64(raw);
+            return raw == null ? (long?)null : Convert.ToInt64(raw);
+        }
+
+        private static object BuildConfigObject(long? bitfield)
+        {
             return new
             {
                 bitfield,
@@ -404,13 +668,262 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     ? null
                     : new
                     {
-                        edof = (bitfield.Value & 0x08) == 0x08,
+                        edof = IsEdofSupported(bitfield),
                         amr = (bitfield.Value & 0x40) == 0x40,
-                        led = (bitfield.Value & 0x10) == 0x10,
-                        flc = (bitfield.Value & 0x20) == 0x20,
+                        led = IsLedSupported(bitfield),
+                        flc = IsFlcSupported(bitfield),
                         axi = (bitfield.Value & 0x04) == 0x04
                     }
             };
+        }
+
+        private static bool IsLedSupported(long? bitfield)
+        {
+            return bitfield != null && (bitfield.Value & 0x10) == 0x10;
+        }
+
+        private static bool IsFlcSupported(long? bitfield)
+        {
+            return bitfield != null && (bitfield.Value & 0x20) == 0x20;
+        }
+
+        private static bool IsEdofSupported(long? bitfield)
+        {
+            return bitfield != null && (bitfield.Value & 0x08) == 0x08;
+        }
+
+        private static LightingRecipe BuildLightingRecipe(string recipeName)
+        {
+            switch (recipeName)
+            {
+                case "all-leds-on-normal":
+                    return new LightingRecipe(recipeName, ledState: 1, flcSwitch: null, flcLevel: null);
+                case "flc-all-level-6":
+                    return new LightingRecipe(recipeName, ledState: null, flcSwitch: 15, flcLevel: 6);
+                case "flc-quadrant-1-level-4":
+                    return new LightingRecipe(recipeName, ledState: null, flcSwitch: 1, flcLevel: 4);
+                case "flc-quadrant-2-level-4":
+                    return new LightingRecipe(recipeName, ledState: null, flcSwitch: 2, flcLevel: 4);
+                case "flc-quadrant-3-level-4":
+                    return new LightingRecipe(recipeName, ledState: null, flcSwitch: 4, flcLevel: 4);
+                case "flc-quadrant-4-level-4":
+                    return new LightingRecipe(recipeName, ledState: null, flcSwitch: 8, flcLevel: 4);
+                case "safe-final-all-quadrants-level-3":
+                case "flc-all-level-3":
+                default:
+                    return new LightingRecipe(recipeName, ledState: null, flcSwitch: 15, flcLevel: 3);
+            }
+        }
+
+        private static IEnumerable<LightingRecipe> BuildLightingSweepRecipes(long? configBits)
+        {
+            if (IsLedSupported(configBits))
+            {
+                yield return BuildLightingRecipe("all-leds-on-normal");
+            }
+
+            if (!IsFlcSupported(configBits))
+            {
+                yield break;
+            }
+
+            yield return BuildLightingRecipe("flc-all-level-3");
+            yield return BuildLightingRecipe("flc-all-level-6");
+            yield return BuildLightingRecipe("flc-quadrant-1-level-4");
+            yield return BuildLightingRecipe("flc-quadrant-2-level-4");
+            yield return BuildLightingRecipe("flc-quadrant-3-level-4");
+            yield return BuildLightingRecipe("flc-quadrant-4-level-4");
+        }
+
+        private static object ApplyLightingRecipe(object control, int deviceIndex, LightingRecipe recipe, long? configBits, List<object> optionalErrors)
+        {
+            var steps = new List<object>();
+            try
+            {
+                if (recipe.ledState != null)
+                {
+                    if (!IsLedSupported(configBits))
+                    {
+                        return new { status = "unavailable", recipe, code = "LED_UNSUPPORTED", steps = steps.ToArray() };
+                    }
+
+                    InvokeRequired(control, "SetLEDState", deviceIndex, recipe.ledState.Value);
+                    steps.Add(new { method = "SetLEDState", value = recipe.ledState.Value, status = "success" });
+                }
+
+                if (recipe.flcSwitch != null || recipe.flcLevel != null)
+                {
+                    if (!IsFlcSupported(configBits))
+                    {
+                        return new { status = "unavailable", recipe, code = "FLC_UNSUPPORTED", steps = steps.ToArray() };
+                    }
+
+                    if (recipe.flcSwitch != null)
+                    {
+                        InvokeRequired(control, "SetFLCSwitch", deviceIndex, recipe.flcSwitch.Value);
+                        steps.Add(new { method = "SetFLCSwitch", value = recipe.flcSwitch.Value, status = "success" });
+                    }
+
+                    if (recipe.flcLevel != null)
+                    {
+                        InvokeRequired(control, "SetFLCLevel", deviceIndex, recipe.flcLevel.Value);
+                        steps.Add(new { method = "SetFLCLevel", value = recipe.flcLevel.Value, status = "success" });
+                    }
+                }
+
+                Application.DoEvents();
+                return new { status = "success", recipe, steps = steps.ToArray() };
+            }
+            catch (Exception error)
+            {
+                optionalErrors.Add(new
+                {
+                    field = "lightingRecipe",
+                    code = "LIGHTING_RECIPE_FAILED",
+                    recipe = recipe.name,
+                    message = FormatExceptionMessage(error)
+                });
+                return new { status = "error", recipe, steps = steps.ToArray(), error = new { code = "LIGHTING_RECIPE_FAILED", message = FormatExceptionMessage(error) } };
+            }
+        }
+
+        private static bool IsSuccessfulApply(object apply)
+        {
+            var status = apply.GetType().GetProperty("status")?.GetValue(apply, null);
+            return Convert.ToString(status) == "success";
+        }
+
+        private static object CaptureJpg(object control, string outputPath, string captureKind, string lightingRecipe, string sdkMethod)
+        {
+            var timestamp = DateTimeOffset.UtcNow;
+            var saved = Convert.ToBoolean(InvokeRequired(control, "SaveFrameJPG", outputPath, 90, 1.0));
+            if (!saved || !File.Exists(outputPath))
+            {
+                throw new InvalidOperationException("SaveFrameJPG did not produce " + outputPath + ".");
+            }
+
+            return CaptureRecord(outputPath, captureKind, lightingRecipe, "success", timestamp, null);
+        }
+
+        private static object TryOptionalSdkCapture(object control, int deviceIndex, string outputPath, string captureKind, string lightingRecipe, string sdkMethod, List<object> optionalErrors)
+        {
+            var timestamp = DateTimeOffset.UtcNow;
+            try
+            {
+                if (sdkMethod == "SaveEDR")
+                {
+                    InvokeRequired(control, "SaveEDR", deviceIndex, outputPath);
+                }
+                else if (sdkMethod == "SaveEDOF")
+                {
+                    InvokeRequired(control, "SaveEDOF", deviceIndex, 3, outputPath);
+                }
+                else
+                {
+                    throw new InvalidOperationException("Unsupported optional SDK capture method: " + sdkMethod);
+                }
+
+                Application.DoEvents();
+                if (!File.Exists(outputPath) || new FileInfo(outputPath).Length <= 0)
+                {
+                    return UnavailableCapture(Path.GetDirectoryName(outputPath) ?? "", Path.GetFileName(outputPath), captureKind, lightingRecipe, sdkMethod + "_NO_OUTPUT", sdkMethod + " did not produce an output file.");
+                }
+
+                return CaptureRecord(outputPath, captureKind, lightingRecipe, "success", timestamp, null);
+            }
+            catch (Exception error)
+            {
+                optionalErrors.Add(new
+                {
+                    field = sdkMethod,
+                    code = sdkMethod + "_FAILED",
+                    message = FormatExceptionMessage(error)
+                });
+                return UnavailableCapture(Path.GetDirectoryName(outputPath) ?? "", Path.GetFileName(outputPath), captureKind, lightingRecipe, sdkMethod + "_FAILED", FormatExceptionMessage(error));
+            }
+        }
+
+        private static object CaptureRecord(string outputPath, string captureKind, string lightingRecipe, string status, DateTimeOffset timestamp, object? error)
+        {
+            return new
+            {
+                path = outputPath,
+                filename = Path.GetFileName(outputPath),
+                sha256 = File.Exists(outputPath) ? ComputeSha256(outputPath) : null,
+                byteSize = File.Exists(outputPath) ? new FileInfo(outputPath).Length : 0,
+                mimeType = "image/jpeg",
+                timestamp = timestamp.ToString("o"),
+                captureKind,
+                lightingRecipe,
+                status,
+                error
+            };
+        }
+
+        private static object UnavailableCapture(string packageDir, string fileName, string captureKind, string lightingRecipe, string code, string message)
+        {
+            return new
+            {
+                path = Path.Combine(packageDir, fileName),
+                filename = fileName,
+                sha256 = (string?)null,
+                byteSize = 0,
+                mimeType = "image/jpeg",
+                timestamp = DateTimeOffset.UtcNow.ToString("o"),
+                captureKind,
+                lightingRecipe,
+                status = "unavailable",
+                error = new { code, message }
+            };
+        }
+
+        private static void WriteManifestAndReport(string manifestPath, string previewReportPath, object manifest, List<object> captures)
+        {
+            var serializer = new JavaScriptSerializer();
+            File.WriteAllText(manifestPath, serializer.Serialize(manifest));
+
+            using (var writer = new StreamWriter(previewReportPath))
+            {
+                writer.WriteLine("<!doctype html><html><head><meta charset=\"utf-8\"><title>Dino-Lite capture package preview</title>");
+                writer.WriteLine("<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1f2937}h1{font-size:24px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.item{border:1px solid #d1d5db;padding:12px;border-radius:6px}img{max-width:100%;height:auto;border:1px solid #e5e7eb}.meta{font-size:12px;color:#4b5563;word-break:break-all}</style></head><body>");
+                writer.WriteLine("<h1>Dino-Lite capture package preview -- not a certified grade.</h1>");
+                writer.WriteLine("<p>This local preview is for hardware/demo inspection only. It is not a certified AI grade.</p>");
+                writer.WriteLine("<div class=\"grid\">");
+                foreach (var capture in captures)
+                {
+                    var type = capture.GetType();
+                    var filename = Convert.ToString(type.GetProperty("filename")?.GetValue(capture, null)) ?? "";
+                    var status = Convert.ToString(type.GetProperty("status")?.GetValue(capture, null)) ?? "";
+                    var kind = Convert.ToString(type.GetProperty("captureKind")?.GetValue(capture, null)) ?? "";
+                    var recipe = Convert.ToString(type.GetProperty("lightingRecipe")?.GetValue(capture, null)) ?? "";
+                    var sha = Convert.ToString(type.GetProperty("sha256")?.GetValue(capture, null)) ?? "";
+                    var byteSize = Convert.ToString(type.GetProperty("byteSize")?.GetValue(capture, null)) ?? "";
+                    writer.WriteLine("<section class=\"item\">");
+                    writer.WriteLine("<h2>" + Html(filename) + "</h2>");
+                    if (status == "success")
+                    {
+                        writer.WriteLine("<img src=\"" + Html(filename) + "\" alt=\"" + Html(filename) + "\">");
+                    }
+                    writer.WriteLine("<p class=\"meta\">kind: " + Html(kind) + "<br>status: " + Html(status) + "<br>recipe: " + Html(recipe) + "<br>sha256: " + Html(sha.Length > 16 ? sha.Substring(0, 16) + "..." : sha) + "<br>bytes: " + Html(byteSize) + "</p>");
+                    writer.WriteLine("</section>");
+                }
+                writer.WriteLine("</div></body></html>");
+            }
+        }
+
+        private static string SanitizeFilePart(string value)
+        {
+            var sanitized = "";
+            foreach (var ch in value)
+            {
+                sanitized += char.IsLetterOrDigit(ch) || ch == '-' || ch == '_' ? ch : '-';
+            }
+            return sanitized.Trim('-').Length == 0 ? "capture-package" : sanitized.Trim('-');
+        }
+
+        private static string Html(string value)
+        {
+            return SecurityElement.Escape(value) ?? "";
         }
 
         private static object ReadVideoCaps(object control, List<object> optionalErrors)
@@ -605,11 +1118,28 @@ namespace TenKings.AiGrader.DinoLiteBridge
             public object ControlInstance => GetOcx();
         }
 
+        private sealed class LightingRecipe
+        {
+            public LightingRecipe(string name, int? ledState, int? flcSwitch, int? flcLevel)
+            {
+                this.name = name;
+                this.ledState = ledState;
+                this.flcSwitch = flcSwitch;
+                this.flcLevel = flcLevel;
+            }
+
+            public string name { get; }
+            public int? ledState { get; }
+            public int? flcSwitch { get; }
+            public int? flcLevel { get; }
+        }
+
         private sealed class CleanupState
         {
             public bool previewStopped { get; set; }
             public bool disconnected { get; set; }
             public bool hostDisposed { get; set; }
+            public object? finalLightingRecipe { get; set; }
             public List<object> cleanupErrors { get; } = new List<object>();
         }
     }

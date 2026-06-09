@@ -1,5 +1,70 @@
 # Session Log (Append Only)
 
+## 2026-06-09 - AI Grader Dino-Lite demo capture package
+
+### Summary
+- Created branch `feature/ai-grader-dinolite-capture-package` from latest `origin/main`.
+- Added manual-only DNVideoX lighting/status/package bridge commands:
+  - `dinolite.getLightingStatus`
+  - `dinolite.setLightingRecipe`
+  - `dinolite.capturePackage`
+  - alias `dinolite.captureDemoPackage`
+- Added capture-helper CLI commands `dinolite-capture-package` and `dinolite-capture-demo-package`.
+- Package commands require explicit `--adapter dnvideox`, explicit `--bridge-exe`, explicit `--device-index`, explicit `--output-dir` outside git, and explicit `--label`.
+- Package outputs include `manifest.json`, `preview-report.html`, normal JPG metadata, optional lighting/EDR/EDOF records, checksums, cleanup status, and limitation text that the preview is not a certified grade.
+- Default readiness, health, local transport, server/admin paths, and tests do not instantiate DNVideoX or spawn the real adapter.
+
+### Manual Smoke
+- Manual real DNVideoX demo package smoke was run once on the Dell Windows capture node after automated validation.
+- Output folder outside git: `C:\TenKings\capture-data\dinolite-demo\dinolite-card-demo-001-20260609T195221805Z`.
+- `manifest.json` and `preview-report.html` were written in that folder.
+- Device `Dino-Lite Edge`; device ID was redacted from docs except USB VID/PID `vid_a168&pid_0990`.
+- OCX version `3, 0, 56, 6`.
+- Config bitfield `198`; decoded `amr=true`, `axi=true`, `edof=false`, `led=false`, `flc=false`.
+- AMR `1`.
+- Normal still capture succeeded:
+  - file `normal-still.jpg`
+  - `sha256=318794724829f9d2a94ee67f41bd6df2f61090b35dd0487ec716972fe0b31a37`
+  - `byteSize=67150`
+  - `mimeType=image/jpeg`
+- Lighting sweep was requested but recorded unavailable:
+  - `captureKind=lightingSweep`
+  - `status=unavailable`
+  - `code=LIGHTING_SWEEP_UNSUPPORTED`
+  - reason: `GetConfig` did not report LED or FLC support.
+- EDR was requested; `SaveEDR` was attempted and produced no non-empty output:
+  - `captureKind=edr`
+  - `status=unavailable`
+  - `code=SaveEDR_NO_OUTPUT`
+- EDOF was requested but not called because `GetConfig` did not report EDOF support:
+  - `captureKind=edof`
+  - `status=unavailable`
+  - `code=EDOF_UNSUPPORTED`
+- Cleanup reported `previewStopped=true`, `disconnected=true`, `hostDisposed=true`, no cleanup errors, and final FLC restore recipe unavailable because FLC is unsupported on this detected config.
+- The preview report includes `Dino-Lite capture package preview -- not a certified grade.`
+
+### Validation Evidence
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 0 warnings, 0 errors.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 6 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 62 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` lint warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy or restart was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` command was run.
+- No SDK binary, OCX, DLL, or vendor SDK file was committed.
+- No captured image was committed.
+- No `GetRGB`, `GetEDRRGB`, or `GetEDOFRGB` method was called.
+- No lens, focus, exposure-setting, or DPQ method was called.
+- No certified grading/report claim was added.
+
 ## 2026-06-09 - AI Grader Dino-Lite manual DNVideoX enumeration
 
 ### Summary

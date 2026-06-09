@@ -199,6 +199,56 @@ function fakeResult(command) {
       forbiddenOperationsInvoked: false,
     };
   }
+  if (command === "dinolite.capturePackage") {
+    return {
+      adapter: "fake",
+      simulated: true,
+      comActiveXInstantiated: false,
+      packageId: "dinolite-card-demo-001-20260609T000000000Z",
+      label: "card-demo-001",
+      packageDir: "C:\\TenKings\\capture-data\\dinolite-demo\\dinolite-card-demo-001-20260609T000000000Z",
+      manifestPath: "C:\\TenKings\\capture-data\\dinolite-demo\\dinolite-card-demo-001-20260609T000000000Z\\manifest.json",
+      previewReportPath: "C:\\TenKings\\capture-data\\dinolite-demo\\dinolite-card-demo-001-20260609T000000000Z\\preview-report.html",
+      timestamp: "2026-06-09T00:00:00.0000000Z",
+      device: {
+        index: 0,
+        name: "Fake Dino-Lite Edge AF7915MZTL",
+      },
+      ocxVersion: "simulated",
+      connectedDuringCommand: true,
+      previewDuringCommand: true,
+      config: { bitfield: 124 },
+      amr: 42.5,
+      captures: [
+        {
+          path: "C:\\TenKings\\capture-data\\dinolite-demo\\normal-still.jpg",
+          filename: "normal-still.jpg",
+          sha256: "575b00ae2fefbbacf7b92d1fd8b839ecfb2979661cc2202b9b08052fb1e48a68",
+          byteSize: 16,
+          mimeType: "image/jpeg",
+          timestamp: "2026-06-09T00:00:00.0000000Z",
+          captureKind: "normal",
+          lightingRecipe: "normal-still",
+          status: "success",
+        },
+        {
+          path: "C:\\TenKings\\capture-data\\dinolite-demo\\edr.jpg",
+          filename: "edr.jpg",
+          sha256: null,
+          byteSize: 0,
+          mimeType: "image/jpeg",
+          timestamp: "2026-06-09T00:00:00.0000000Z",
+          captureKind: "edr",
+          lightingRecipe: "edr",
+          status: "unavailable",
+          error: { code: "FAKE_UNAVAILABLE", message: "Simulated unsupported Dino-Lite feature." },
+        },
+      ],
+      cleanup: { previewStopped: true, disconnected: true, hostDisposed: true },
+      limitations: ["Dino-Lite capture package preview -- not a certified grade."],
+      forbiddenOperationsInvoked: false,
+    };
+  }
   return undefined;
 }
 
@@ -309,6 +359,36 @@ test("client maps fake manual status and still capture responses", async () => {
   assert.equal(capture.forbiddenOperationsInvoked, false);
 });
 
+test("client maps fake capture package response shape", async () => {
+  const spawned = [];
+  const client = new DinoLiteBridgeClient(
+    { executablePath: "fake-bridge.exe", adapter: "fake", timeoutMs: 100, manualHardwareAccess: true },
+    (command, args) => {
+      spawned.push({ command, args });
+      return new FakeBridgeProcess();
+    }
+  );
+
+  const capturePackage = await client.capturePackage({
+    deviceIndex: 0,
+    outputDir: "C:\\TenKings\\capture-data\\dinolite-demo",
+    label: "card-demo-001",
+    includeLightingSweep: true,
+    includeEdr: true,
+    includeEdof: true,
+  });
+  await client.close();
+
+  assert.deepEqual(spawned[0].args, ["--adapter", "fake", "--manual-hardware"]);
+  assert.equal(capturePackage.packageId, "dinolite-card-demo-001-20260609T000000000Z");
+  assert.match(capturePackage.previewReportPath, /preview-report\.html$/);
+  assert.equal(capturePackage.captures[0].captureKind, "normal");
+  assert.equal(capturePackage.captures[0].status, "success");
+  assert.equal(capturePackage.captures[1].captureKind, "edr");
+  assert.equal(capturePackage.captures[1].status, "unavailable");
+  assert.equal(capturePackage.forbiddenOperationsInvoked, false);
+});
+
 test("real adapter manual hardware commands do not allow health path", async () => {
   const client = new DinoLiteBridgeClient(
     { executablePath: "bridge.exe", adapter: "dnvideox", timeoutMs: 100, manualHardwareAccess: true },
@@ -322,8 +402,14 @@ test("real adapter manual hardware commands do not allow health path", async () 
   });
 
   const status = await client.status(0);
+  const capturePackage = await client.capturePackage({
+    deviceIndex: 0,
+    outputDir: "C:\\TenKings\\capture-data\\dinolite-demo",
+    label: "card-demo-001",
+  });
   await client.close();
   assert.equal(status.connectedDuringCommand, true);
+  assert.equal(capturePackage.previewDuringCommand, true);
 });
 
 test("client times out when bridge does not respond", async () => {
@@ -409,6 +495,60 @@ test("cli capture command rejects output inside repo before spawning", async () 
       "0",
       "--output-dir",
       process.cwd(),
+    ],
+    {
+      stderr: (text) => {
+        stderr += text;
+      },
+      env: {},
+    }
+  );
+
+  assert.equal(code, 1);
+  assert.match(stderr, /outside the git repo/);
+});
+
+test("cli capture package rejects missing label before spawning", async () => {
+  let stderr = "";
+  const code = await runCaptureHelperCli(
+    [
+      "dinolite-capture-package",
+      "--bridge-exe",
+      "bridge.exe",
+      "--adapter",
+      "dnvideox",
+      "--device-index",
+      "0",
+      "--output-dir",
+      path.join(os.tmpdir(), "dinolite-demo"),
+    ],
+    {
+      stderr: (text) => {
+        stderr += text;
+      },
+      env: {},
+    }
+  );
+
+  assert.equal(code, 1);
+  assert.match(stderr, /requires --label/);
+});
+
+test("cli capture package rejects output inside repo before spawning", async () => {
+  let stderr = "";
+  const code = await runCaptureHelperCli(
+    [
+      "dinolite-capture-demo-package",
+      "--bridge-exe",
+      "bridge.exe",
+      "--adapter",
+      "dnvideox",
+      "--device-index",
+      "0",
+      "--output-dir",
+      process.cwd(),
+      "--label",
+      "card-demo-001",
     ],
     {
       stderr: (text) => {

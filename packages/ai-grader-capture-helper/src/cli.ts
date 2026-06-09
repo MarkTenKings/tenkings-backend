@@ -31,6 +31,16 @@ type ParsedCommand =
   | { command: "dinolite-enumerate"; config: CaptureHelperConfigInput }
   | { command: "dinolite-status"; config: CaptureHelperConfigInput; deviceIndex: number | undefined }
   | { command: "dinolite-capture-still"; config: CaptureHelperConfigInput; deviceIndex: number | undefined; outputDir: string | undefined }
+  | {
+      command: "dinolite-capture-package" | "dinolite-capture-demo-package";
+      config: CaptureHelperConfigInput;
+      deviceIndex: number | undefined;
+      outputDir: string | undefined;
+      label: string | undefined;
+      includeLightingSweep: boolean;
+      includeEdr: boolean;
+      includeEdof: boolean;
+    }
   | { command: "manifest"; config: CaptureHelperConfigInput; mode: string | undefined }
   | { command: "serve"; config: CaptureHelperConfigInput; host: string | undefined; port: string | undefined }
   | { command: "help"; config: CaptureHelperConfigInput };
@@ -58,6 +68,10 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let port: string | undefined;
   let deviceIndex: number | undefined;
   let outputDir: string | undefined;
+  let label: string | undefined;
+  let includeLightingSweep = false;
+  let includeEdr = false;
+  let includeEdof = false;
 
   if (command === "--help" || command === "-h") {
     return { command: "help", config };
@@ -147,6 +161,19 @@ function parseCliArgs(argv: string[]): ParsedCommand {
       case "--output-dir":
         outputDir = readOption(rest, index, "--output-dir");
         index += 1;
+        break;
+      case "--label":
+        label = readOption(rest, index, "--label");
+        index += 1;
+        break;
+      case "--include-lighting-sweep":
+        includeLightingSweep = true;
+        break;
+      case "--include-edr":
+        includeEdr = true;
+        break;
+      case "--include-edof":
+        includeEdof = true;
         break;
       case "--led-port":
         config.ledController = {
@@ -366,6 +393,8 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "dinolite-enumerate" ||
     command === "dinolite-status" ||
     command === "dinolite-capture-still" ||
+    command === "dinolite-capture-package" ||
+    command === "dinolite-capture-demo-package" ||
     command === "manifest" ||
     command === "serve" ||
     command === "help"
@@ -374,6 +403,9 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     if (command === "serve") return { command, config, host, port };
     if (command === "dinolite-status") return { command, config, deviceIndex };
     if (command === "dinolite-capture-still") return { command, config, deviceIndex, outputDir };
+    if (command === "dinolite-capture-package" || command === "dinolite-capture-demo-package") {
+      return { command, config, deviceIndex, outputDir, label, includeLightingSweep, includeEdr, includeEdof };
+    }
     return { command, config };
   }
   throw new CaptureHelperCommandError(`Unknown command: ${command}`);
@@ -391,6 +423,8 @@ function helpPayload() {
       "dinolite-enumerate --bridge-exe <exe> --adapter dnvideox",
       "dinolite-status --bridge-exe <exe> --adapter dnvideox --device-index 0",
       "dinolite-capture-still --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-smoke",
+      "dinolite-capture-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-packages --label card-demo-001 --include-lighting-sweep --include-edr --include-edof",
+      "dinolite-capture-demo-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-demo --label card-demo-001",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -414,6 +448,10 @@ function helpPayload() {
       "--bridge-timeout-ms",
       "--device-index",
       "--output-dir",
+      "--label",
+      "--include-lighting-sweep",
+      "--include-edr",
+      "--include-edof",
       "--led-port",
       "--stage-port",
       "--baud",
@@ -540,7 +578,12 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       return enumeration.error ? 1 : 0;
     }
 
-    if (parsed.command === "dinolite-status" || parsed.command === "dinolite-capture-still") {
+    if (
+      parsed.command === "dinolite-status" ||
+      parsed.command === "dinolite-capture-still" ||
+      parsed.command === "dinolite-capture-package" ||
+      parsed.command === "dinolite-capture-demo-package"
+    ) {
       const env = io.env ?? process.env;
       const executablePath =
         parsed.config.dinoliteBridge?.executablePath ?? env.AI_GRADER_CAPTURE_HELPER_DINOLITE_BRIDGE_PATH;
@@ -573,6 +616,29 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           service: "ai-grader-capture-helper",
           command: "dinolite-status",
           status,
+        });
+        return 0;
+      }
+
+      if (parsed.command === "dinolite-capture-package" || parsed.command === "dinolite-capture-demo-package") {
+        if (!parsed.label || parsed.label.trim().length === 0) {
+          throw new CaptureHelperCommandError(`${parsed.command} requires --label <label>.`);
+        }
+        const outputDir = assertDinoLiteCaptureOutputDirAllowed(parsed.outputDir ?? "");
+        const capturePackage = await client.capturePackage({
+          deviceIndex: parsed.deviceIndex,
+          outputDir,
+          label: parsed.label,
+          includeLightingSweep: parsed.includeLightingSweep,
+          includeEdr: parsed.includeEdr,
+          includeEdof: parsed.includeEdof,
+        });
+        await client.close();
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: parsed.command,
+          capturePackage,
         });
         return 0;
       }
@@ -621,8 +687,12 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       return 0;
     }
 
-    writeJson(stdout, service.manifest(parseCaptureHelperManifestMode(parsed.mode)));
-    return 0;
+    if (parsed.command === "manifest") {
+      writeJson(stdout, service.manifest(parseCaptureHelperManifestMode(parsed.mode)));
+      return 0;
+    }
+
+    throw new CaptureHelperCommandError(`Unsupported command: ${parsed.command}`);
   } catch (error) {
     const isExpected =
       error instanceof CaptureHelperCommandError ||

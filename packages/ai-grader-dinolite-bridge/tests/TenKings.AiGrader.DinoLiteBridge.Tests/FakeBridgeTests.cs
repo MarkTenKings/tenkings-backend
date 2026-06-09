@@ -17,7 +17,8 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
                 "{\"id\":\"5\",\"command\":\"dinolite.enumerateDevices\"}",
                 "{\"id\":\"6\",\"command\":\"dinolite.status\",\"deviceIndex\":0}",
                 "{\"id\":\"7\",\"command\":\"dinolite.captureStillJpg\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\"}",
-                "{\"id\":\"8\",\"command\":\"exit\"}");
+                "{\"id\":\"8\",\"command\":\"dinolite.capturePackage\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"card-demo-001\",\"includeLightingSweep\":true,\"includeEdr\":true,\"includeEdof\":true}",
+                "{\"id\":\"9\",\"command\":\"exit\"}");
 
             StringAssert.Contains(output, "\"id\":\"1\"");
             StringAssert.Contains(output, "\"status\":\"OK\"");
@@ -36,7 +37,25 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             StringAssert.Contains(output, "\"previewDuringCommand\":true");
             StringAssert.Contains(output, "\"sha256\":\"575b00ae2fefbbacf7b92d1fd8b839ecfb2979661cc2202b9b08052fb1e48a68\"");
             StringAssert.Contains(output, "\"mimeType\":\"image/jpeg\"");
+            StringAssert.Contains(output, "\"packageId\":\"dinolite-card-demo-001-20260609T000000000Z\"");
+            StringAssert.Contains(output, "\"previewReportPath\"");
+            StringAssert.Contains(output, "\"captureKind\":\"edr\"");
+            StringAssert.Contains(output, "\"captureKind\":\"edof\"");
+            StringAssert.Contains(output, "\"captureKind\":\"lightingSweep\"");
+            StringAssert.Contains(output, "not a certified grade");
             StringAssert.Contains(output, "\"status\":\"BYE\"");
+        }
+
+        [TestMethod]
+        public void FakeCapturePackageCanRepresentUnavailableOptionalFeatures()
+        {
+            var output = Run("{\"id\":\"pkg\",\"command\":\"dinolite.captureDemoPackage\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"unsupported-demo\",\"includeLightingSweep\":true,\"includeEdr\":true,\"includeEdof\":true}");
+
+            StringAssert.Contains(output, "\"id\":\"pkg\"");
+            StringAssert.Contains(output, "\"status\":\"unavailable\"");
+            StringAssert.Contains(output, "\"code\":\"FAKE_UNAVAILABLE\"");
+            StringAssert.Contains(output, "\"forbiddenOperationsInvoked\":false");
+            StringAssert.Contains(output, "\"comActiveXInstantiated\":false");
         }
 
         [TestMethod]
@@ -71,7 +90,8 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
         {
             var input = new StringReader(string.Join("\n",
                 "{\"id\":\"status\",\"command\":\"dinolite.status\",\"deviceIndex\":0}",
-                "{\"id\":\"capture\",\"command\":\"dinolite.captureStillJpg\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\"}"));
+                "{\"id\":\"capture\",\"command\":\"dinolite.captureStillJpg\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\"}",
+                "{\"id\":\"pkg\",\"command\":\"dinolite.capturePackage\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"card-demo-001\",\"includeLightingSweep\":true,\"includeEdr\":true,\"includeEdof\":true}"));
             var output = new StringWriter();
             var server = new JsonLineBridgeServer(new DnVideoXAdapter(new BridgeOptions()), input, output);
             var code = server.Run();
@@ -80,6 +100,7 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             var text = output.ToString();
             StringAssert.Contains(text, "\"id\":\"status\"");
             StringAssert.Contains(text, "\"id\":\"capture\"");
+            StringAssert.Contains(text, "\"id\":\"pkg\"");
             StringAssert.Contains(text, "\"status\":\"SDK_NOT_READY\"");
             StringAssert.Contains(text, "\"comActiveXInstantiated\":false");
             StringAssert.Contains(text, "--manual-hardware");
