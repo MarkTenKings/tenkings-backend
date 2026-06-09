@@ -1,12 +1,19 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 
-export type DinoLiteBridgeCommand = "health" | "sdkInfo" | "listDevices" | "capabilities" | "exit";
+export type DinoLiteBridgeCommand =
+  | "health"
+  | "sdkInfo"
+  | "listDevices"
+  | "capabilities"
+  | "dinolite.enumerateDevices"
+  | "exit";
 
 export interface DinoLiteBridgeClientConfig {
   executablePath?: string;
   adapter?: "fake" | "dnvideox";
   timeoutMs?: number;
   args?: string[];
+  manualEnumeration?: boolean;
 }
 
 export interface DinoLiteBridgeRequest {
@@ -58,6 +65,41 @@ export interface DinoLiteBridgeDevice {
 export interface DinoLiteBridgeDeviceList {
   adapter: string;
   devices: DinoLiteBridgeDevice[];
+}
+
+export interface DinoLiteBridgeEnumeratedDevice {
+  index: number;
+  name: string;
+  description?: string | null;
+  deviceId?: string | null;
+  simulated?: boolean;
+}
+
+export interface DinoLiteBridgeEnumerationResult {
+  adapter: "fake" | "dnvideox";
+  comActiveXInstantiated: boolean;
+  connected: false;
+  preview: false;
+  deviceCount: number;
+  devices: DinoLiteBridgeEnumeratedDevice[];
+  optionalErrors?: Array<{
+    index: number;
+    field: string;
+    code: string;
+    message: string;
+  }>;
+  sdk: {
+    control: string;
+    version?: string | null;
+    progId?: string;
+    registeredActiveXPath?: string;
+  };
+  status?: string;
+  error?: {
+    code: string;
+    message: string;
+  };
+  forbiddenOperationsInvoked: false;
 }
 
 export interface DinoLiteBridgeCapabilities {
@@ -134,8 +176,8 @@ export function getDinoLiteBridgeConfiguredStatus(
 }
 
 export class DinoLiteBridgeClient {
-  private readonly config: Required<Pick<DinoLiteBridgeClientConfig, "adapter" | "timeoutMs">> &
-    Omit<DinoLiteBridgeClientConfig, "adapter" | "timeoutMs">;
+  private readonly config: Required<Pick<DinoLiteBridgeClientConfig, "adapter" | "timeoutMs" | "manualEnumeration">> &
+    Omit<DinoLiteBridgeClientConfig, "adapter" | "timeoutMs" | "manualEnumeration">;
   private readonly spawnProcess: DinoLiteBridgeSpawn;
   private child: DinoLiteBridgeChildProcess | undefined;
   private nextId = 1;
@@ -154,16 +196,17 @@ export class DinoLiteBridgeClient {
     if (!config.executablePath || config.executablePath.trim().length === 0) {
       throw new DinoLiteBridgeClientError("BRIDGE_NOT_CONFIGURED", "Dino-Lite bridge executable path is required.");
     }
-    if ((config.adapter ?? "fake") !== "fake") {
+    if ((config.adapter ?? "fake") !== "fake" && config.manualEnumeration !== true) {
       throw new DinoLiteBridgeClientError(
         "REAL_BRIDGE_DISABLED",
-        "Capture-helper may only spawn the Dino-Lite bridge in fake mode for this slice."
+        "Capture-helper may only spawn the DNVideoX bridge for explicit manual enumeration."
       );
     }
     this.config = {
       ...config,
       adapter: config.adapter ?? "fake",
       timeoutMs: config.timeoutMs ?? 1000,
+      manualEnumeration: config.manualEnumeration ?? false,
     };
     this.spawnProcess = spawnProcess;
   }
@@ -182,6 +225,10 @@ export class DinoLiteBridgeClient {
 
   async capabilities(): Promise<DinoLiteBridgeCapabilities> {
     return this.sendResult<DinoLiteBridgeCapabilities>("capabilities");
+  }
+
+  async enumerateDevices(): Promise<DinoLiteBridgeEnumerationResult> {
+    return this.sendResult<DinoLiteBridgeEnumerationResult>("dinolite.enumerateDevices");
   }
 
   async close(): Promise<void> {
@@ -208,6 +255,14 @@ export class DinoLiteBridgeClient {
   }
 
   private send(command: DinoLiteBridgeCommand): Promise<DinoLiteBridgeResponse> {
+    if (this.config.adapter === "dnvideox" && this.config.manualEnumeration && command !== "dinolite.enumerateDevices" && command !== "exit") {
+      return Promise.reject(
+        new DinoLiteBridgeClientError(
+          "REAL_BRIDGE_COMMAND_DISABLED",
+          "DNVideoX bridge spawn is restricted to the manual enumeration command."
+        )
+      );
+    }
     const child = this.ensureStarted();
     const id = String(this.nextId++);
     const request: DinoLiteBridgeRequest = { id, command };
@@ -225,7 +280,12 @@ export class DinoLiteBridgeClient {
 
   private ensureStarted(): DinoLiteBridgeChildProcess {
     if (this.child) return this.child;
-    const args = ["--adapter", this.config.adapter, ...(this.config.args ?? [])];
+    const args = [
+      "--adapter",
+      this.config.adapter,
+      ...(this.config.manualEnumeration ? ["--manual-enumerate"] : []),
+      ...(this.config.args ?? []),
+    ];
     const child = this.spawnProcess(this.config.executablePath as string, args);
     this.child = child;
 

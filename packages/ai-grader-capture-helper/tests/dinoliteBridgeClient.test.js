@@ -125,6 +125,30 @@ function fakeResult(command) {
       captureImplemented: false,
     };
   }
+  if (command === "dinolite.enumerateDevices") {
+    return {
+      adapter: "fake",
+      comActiveXInstantiated: false,
+      connected: false,
+      preview: false,
+      deviceCount: 1,
+      devices: [
+        {
+          index: 0,
+          name: "Fake Dino-Lite Edge AF7915MZTL",
+          description: "Simulated AF7915MZTL-like Dino-Lite microscope",
+          deviceId: "FAKE-AF7915MZTL-0001",
+          simulated: true,
+        },
+      ],
+      sdk: {
+        control: "DNVideoX",
+        version: "simulated",
+        progId: "VIDEOCAPX.VideoCapXCtrl.1",
+      },
+      forbiddenOperationsInvoked: false,
+    };
+  }
   return undefined;
 }
 
@@ -153,6 +177,61 @@ test("client maps fake bridge health listDevices and capabilities", async () => 
   assert.equal(capabilities.stillCapture, true);
   assert.equal(capabilities.edr, true);
   assert.equal(capabilities.edof, true);
+});
+
+test("client maps fake manual enumeration response shape", async () => {
+  const spawned = [];
+  const client = new DinoLiteBridgeClient(
+    { executablePath: "fake-bridge.exe", adapter: "fake", timeoutMs: 100, manualEnumeration: true },
+    (command, args) => {
+      spawned.push({ command, args });
+      return new FakeBridgeProcess();
+    }
+  );
+
+  const enumeration = await client.enumerateDevices();
+  await client.close();
+
+  assert.equal(spawned.length, 1);
+  assert.deepEqual(spawned[0].args, ["--adapter", "fake", "--manual-enumerate"]);
+  assert.equal(enumeration.adapter, "fake");
+  assert.equal(enumeration.comActiveXInstantiated, false);
+  assert.equal(enumeration.connected, false);
+  assert.equal(enumeration.preview, false);
+  assert.equal(enumeration.deviceCount, 1);
+  assert.equal(enumeration.devices[0].name, "Fake Dino-Lite Edge AF7915MZTL");
+  assert.equal(enumeration.forbiddenOperationsInvoked, false);
+});
+
+test("real adapter is restricted to explicit manual enumeration", async () => {
+  const spawned = [];
+  let bridgeProcess;
+  const client = new DinoLiteBridgeClient(
+    { executablePath: "bridge.exe", adapter: "dnvideox", timeoutMs: 100, manualEnumeration: true },
+    (command, args) => {
+      spawned.push({ command, args });
+      bridgeProcess = new FakeBridgeProcess();
+      return bridgeProcess;
+    }
+  );
+
+  await assert.rejects(() => client.health(), (error) => {
+    assert.equal(error instanceof DinoLiteBridgeClientError, true);
+    assert.equal(error.code, "REAL_BRIDGE_COMMAND_DISABLED");
+    return true;
+  });
+
+  const enumeration = await client.enumerateDevices();
+  await client.close();
+
+  assert.deepEqual(spawned[0].args, ["--adapter", "dnvideox", "--manual-enumerate"]);
+  assert.equal(enumeration.deviceCount, 1);
+  assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("dinolite.enumerateDevices")), true);
+  assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("Connected")), false);
+  assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("Preview")), false);
+  assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("GrabFrame")), false);
+  assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("SetLEDState")), false);
+  assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("AutoFocus")), false);
 });
 
 test("client times out when bridge does not respond", async () => {
@@ -188,7 +267,7 @@ test("client rejects missing path and real adapter spawn", () => {
   );
   assert.throws(
     () => new DinoLiteBridgeClient({ executablePath: "bridge.exe", adapter: "dnvideox" }),
-    /fake mode/
+    /manual enumeration/
   );
 });
 

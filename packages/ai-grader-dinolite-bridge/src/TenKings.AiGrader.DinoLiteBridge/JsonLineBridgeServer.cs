@@ -44,13 +44,14 @@ namespace TenKings.AiGrader.DinoLiteBridge
             try
             {
                 request = serializer.Deserialize<BridgeRequest>(line);
-                if (request == null || string.IsNullOrWhiteSpace(request.command))
+                var requestedCommand = request?.command ?? request?.type;
+                if (request == null || string.IsNullOrWhiteSpace(requestedCommand))
                 {
-                    WriteError(request?.id, "INVALID_REQUEST", "Request must include a command.");
+                    WriteError(request?.id, "INVALID_REQUEST", "Request must include a command or type.");
                     return false;
                 }
 
-                var command = request.command!.Trim();
+                var command = requestedCommand!.Trim();
                 switch (command)
                 {
                     case "health":
@@ -64,6 +65,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
                         return false;
                     case "capabilities":
                         WriteResult(request.id, adapter.Capabilities());
+                        return false;
+                    case "dinolite.enumerateDevices":
+                        WriteResult(request.id, adapter.EnumerateDevices());
                         return false;
                     case "exit":
                         WriteResult(request.id, new { status = "BYE" });

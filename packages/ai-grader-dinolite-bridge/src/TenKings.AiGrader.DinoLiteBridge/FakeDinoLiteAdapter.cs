@@ -48,6 +48,36 @@ namespace TenKings.AiGrader.DinoLiteBridge
             };
         }
 
+        public object EnumerateDevices()
+        {
+            return new
+            {
+                adapter = "fake",
+                comActiveXInstantiated = false,
+                connected = false,
+                preview = false,
+                deviceCount = 1,
+                devices = new[]
+                {
+                    new
+                    {
+                        index = 0,
+                        name = "Fake Dino-Lite Edge AF7915MZTL",
+                        description = "Simulated AF7915MZTL-like Dino-Lite microscope",
+                        deviceId = "FAKE-AF7915MZTL-0001",
+                        simulated = true
+                    }
+                },
+                sdk = new
+                {
+                    control = "DNVideoX",
+                    version = "simulated",
+                    progId = "VIDEOCAPX.VideoCapXCtrl.1"
+                },
+                forbiddenOperationsInvoked = false
+            };
+        }
+
         public object Capabilities()
         {
             return new

@@ -12,7 +12,7 @@ import {
   type CaptureHelperConfigInput,
   type CaptureHelperEnv,
 } from "./index";
-import { DinoLiteBridgeClient } from "./drivers";
+import { DinoLiteBridgeClient, DinoLiteBridgeClientError } from "./drivers";
 import { startCaptureHelperHttpServer } from "./transport";
 
 export interface CaptureHelperCliIO {
@@ -28,6 +28,7 @@ type ParsedCommand =
   | { command: "led-health"; config: CaptureHelperConfigInput }
   | { command: "stage-health"; config: CaptureHelperConfigInput }
   | { command: "dinolite-bridge-health"; config: CaptureHelperConfigInput }
+  | { command: "dinolite-enumerate"; config: CaptureHelperConfigInput }
   | { command: "manifest"; config: CaptureHelperConfigInput; mode: string | undefined }
   | { command: "serve"; config: CaptureHelperConfigInput; host: string | undefined; port: string | undefined }
   | { command: "help"; config: CaptureHelperConfigInput };
@@ -110,16 +111,18 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         index += 1;
         break;
       case "--bridge-path":
+      case "--bridge-exe":
         config.dinoliteBridge = {
           ...config.dinoliteBridge,
-          executablePath: readOption(rest, index, "--bridge-path"),
+          executablePath: readOption(rest, index, arg),
         };
         index += 1;
         break;
       case "--bridge-adapter":
+      case "--adapter":
         config.dinoliteBridge = {
           ...config.dinoliteBridge,
-          adapter: readOption(rest, index, "--bridge-adapter") as "fake" | "dnvideox",
+          adapter: readOption(rest, index, arg) as "fake" | "dnvideox",
         };
         index += 1;
         break;
@@ -345,6 +348,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "led-health" ||
     command === "stage-health" ||
     command === "dinolite-bridge-health" ||
+    command === "dinolite-enumerate" ||
     command === "manifest" ||
     command === "serve" ||
     command === "help"
@@ -365,6 +369,7 @@ function helpPayload() {
       "led-health --port <serial-port> --baud 115200",
       "stage-health --port <serial-port> --baud 115200",
       "dinolite-bridge-health --bridge-path <exe> --bridge-adapter fake",
+      "dinolite-enumerate --bridge-exe <exe> --adapter dnvideox",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -382,7 +387,9 @@ function helpPayload() {
       "--led-controller arduino",
       "--stage grbl",
       "--bridge-path",
-      "--bridge-adapter fake",
+      "--bridge-exe",
+      "--bridge-adapter fake|dnvideox",
+      "--adapter fake|dnvideox",
       "--bridge-timeout-ms",
       "--led-port",
       "--stage-port",
@@ -405,8 +412,8 @@ function helpPayload() {
       "--port",
     ],
     mode: "simulator-only",
-    driverSet: "mock runnable; real limited to explicit Arduino LED and GRBL stage readiness",
-    dinoliteBridge: "manual fake bridge health only; default readiness does not spawn",
+    driverSet: "mock runnable; real limited to explicit Arduino LED readiness, GRBL stage readiness, and Dino-Lite enumeration",
+    dinoliteBridge: "manual fake bridge health and manual DNVideoX enumeration only; default readiness does not spawn",
     transport: "disabled until serve is explicitly run",
   };
 }
@@ -478,6 +485,38 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       return 0;
     }
 
+    if (parsed.command === "dinolite-enumerate") {
+      const env = io.env ?? process.env;
+      const executablePath =
+        parsed.config.dinoliteBridge?.executablePath ?? env.AI_GRADER_CAPTURE_HELPER_DINOLITE_BRIDGE_PATH;
+      const adapter =
+        parsed.config.dinoliteBridge?.adapter ??
+        ((env.AI_GRADER_CAPTURE_HELPER_DINOLITE_BRIDGE_ADAPTER as "fake" | "dnvideox" | undefined) ?? undefined);
+
+      if (!executablePath || executablePath.trim().length === 0) {
+        throw new CaptureHelperCommandError("dinolite-enumerate requires --bridge-exe <path>.");
+      }
+      if (adapter !== "fake" && adapter !== "dnvideox") {
+        throw new CaptureHelperCommandError("dinolite-enumerate requires --adapter fake|dnvideox.");
+      }
+
+      const client = new DinoLiteBridgeClient({
+        executablePath,
+        adapter,
+        timeoutMs: parsed.config.dinoliteBridge?.timeoutMs,
+        manualEnumeration: true,
+      });
+      const enumeration = await client.enumerateDevices();
+      await client.close();
+      writeJson(stdout, {
+        ok: !enumeration.error,
+        service: "ai-grader-capture-helper",
+        command: "dinolite-enumerate",
+        enumeration,
+      });
+      return enumeration.error ? 1 : 0;
+    }
+
     const service = createCaptureHelperService(parsed.config, io.env ?? process.env);
     if (parsed.command === "health") {
       writeJson(stdout, service.health());
@@ -517,7 +556,8 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       error instanceof CaptureHelperCommandError ||
       error instanceof CaptureHelperConfigError ||
       error instanceof ArduinoLedControllerHealthError ||
-      error instanceof GrblStageHealthError;
+      error instanceof GrblStageHealthError ||
+      error instanceof DinoLiteBridgeClientError;
     const message = error instanceof Error ? error.message : "Unexpected capture helper CLI error.";
     writeJson(stderr, {
       ok: false,

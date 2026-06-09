@@ -148,6 +148,13 @@ test("discovery stubs do not probe real devices", () => {
   assert.equal(realDiscovery.every((result) => result.status === "NOT_IMPLEMENTED"), true);
 });
 
+test("manual Dino-Lite enumeration command rejects missing bridge executable path", async () => {
+  const cli = await runCli(["dinolite-enumerate", "--adapter", "dnvideox"]);
+
+  assert.equal(cli.code, 1);
+  assert.match(cli.stderr.error, /requires --bridge-exe/);
+});
+
 test("readiness package path imports no hardware modules", () => {
   const forbiddenDependencies = ["node-hid", "usb", "basler", "dino", "grbl", "opencv"];
   const forbiddenImports = [
