@@ -25,6 +25,16 @@
   - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
   - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
 
+## Session Update (2026-06-09, AI Grader Dino-Lite bridge skeleton PR #26 merged)
+- PR #26 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/26`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `f8997b52fac2e6e94d2a7b57ee323df33a686b26`.
+- PR #26 added the Windows-only .NET Framework 4.8 x86 STA Dino-Lite bridge skeleton, default fake adapter, inert DNVideoX adapter skeleton, TypeScript capture-helper stdio client, manual fake bridge health command, docs, and tests.
+- Post-merge GitHub Actions run `27181127783` completed successfully for merge commit `f8997b52fac2e6e94d2a7b57ee323df33a686b26`, including Install & Build and Docker image jobs for frontend, ingestion, marketplace, pack, pricing, vault, vending-gw, and wallet.
+- Vercel production deployment for the merge commit completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/2wCrHS8GNGZizdXT1NkdGtF6rgmC`.
+- Production/staging AI Grader migrations remain unapplied by this session; the Vercel migration gate stayed at the default because `RUN_DB_MIGRATIONS=true` was not set.
+- Guardrails held: no DNVideoX COM/ActiveX path was instantiated, no `regsvr32`, no hardware command, no microscope control, no image capture, no LED/FLC/lens/focus/EDR/EDOF command, no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, and no SDK binaries/OCX/DLL/vendor SDK files were used or committed.
+- No next AI Grader phase was started.
+
 ## Session Update (2026-06-09, AI Grader Dino-Lite bridge skeleton planned)
 - Branch `feature/ai-grader-dinolite-bridge-skeleton` was created from latest fetched `origin/main` at `e2e3a6385e6255ccf897dd3648148fa3c32d3310`.
 - Planned scope: add Windows-only .NET Framework 4.8 x86 STA Dino-Lite bridge skeleton with stdio JSON Lines, fake adapter default, inert DNVideoX real adapter skeleton, TypeScript capture-helper stdio client, manual fake bridge health command, docs, and tests.

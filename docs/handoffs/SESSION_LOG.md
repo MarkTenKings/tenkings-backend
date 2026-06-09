@@ -1,5 +1,27 @@
 # Session Log (Append Only)
 
+## 2026-06-09 - AI Grader Dino-Lite bridge skeleton PR #26 merged
+
+### Summary
+- PR #26 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/26`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `f8997b52fac2e6e94d2a7b57ee323df33a686b26`.
+- PR #26 added the Windows-only .NET Framework 4.8 x86 STA Dino-Lite bridge skeleton, default fake adapter, inert DNVideoX adapter skeleton, TypeScript capture-helper stdio client, manual fake bridge health command, docs, and tests.
+- Post-merge GitHub Actions run `27181127783` completed successfully for merge commit `f8997b52fac2e6e94d2a7b57ee323df33a686b26`.
+- Successful GitHub Actions jobs included Install & Build and Docker image builds for frontend, ingestion, marketplace, pack, pricing, vault, vending-gw, and wallet.
+- Vercel production deployment for the merge commit completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/2wCrHS8GNGZizdXT1NkdGtF6rgmC`.
+- Production/staging AI Grader migrations remain unapplied by this session; the Vercel migration gate stayed at the default because `RUN_DB_MIGRATIONS=true` was not set.
+- No next AI Grader phase was started.
+
+### Guardrails
+- No DNVideoX COM/ActiveX path was instantiated.
+- No `regsvr32` command was run.
+- No microscope control, LED/FLC/lens/focus/EDR/EDOF/image capture, or hardware command was run.
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No SDK binaries, OCX files, DNVideoX DLLs, or vendor SDK files were used or committed.
+
 ## 2026-06-09 - AI Grader Dino-Lite bridge skeleton planned
 
 ### Summary
