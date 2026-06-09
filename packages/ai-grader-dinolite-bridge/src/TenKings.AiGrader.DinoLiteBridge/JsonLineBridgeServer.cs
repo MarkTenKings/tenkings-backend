@@ -69,6 +69,12 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     case "dinolite.enumerateDevices":
                         WriteResult(request.id, adapter.EnumerateDevices());
                         return false;
+                    case "dinolite.status":
+                        WriteResult(request.id, adapter.Status(request.deviceIndex ?? 0));
+                        return false;
+                    case "dinolite.captureStillJpg":
+                        WriteResult(request.id, adapter.CaptureStillJpg(request.deviceIndex ?? 0, request.outputDir));
+                        return false;
                     case "exit":
                         WriteResult(request.id, new { status = "BYE" });
                         return true;

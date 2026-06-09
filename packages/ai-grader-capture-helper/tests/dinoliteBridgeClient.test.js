@@ -1,12 +1,16 @@
 const { EventEmitter } = require("node:events");
+const os = require("node:os");
+const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   DinoLiteBridgeClient,
   DinoLiteBridgeClientError,
+  assertDinoLiteCaptureOutputDirAllowed,
   buildCaptureHelperReadinessReport,
   getDinoLiteBridgeConfiguredStatus,
 } = require("../dist");
+const { runCaptureHelperCli } = require("../dist/cli");
 
 class FakeStream extends EventEmitter {}
 
@@ -149,6 +153,52 @@ function fakeResult(command) {
       forbiddenOperationsInvoked: false,
     };
   }
+  if (command === "dinolite.status") {
+    return {
+      adapter: "fake",
+      simulated: true,
+      comActiveXInstantiated: false,
+      ocxVersion: "simulated",
+      device: {
+        index: 0,
+        name: "Fake Dino-Lite Edge AF7915MZTL",
+        description: "Simulated AF7915MZTL-like Dino-Lite microscope",
+        deviceId: "FAKE-AF7915MZTL-0001",
+      },
+      connectedDuringCommand: true,
+      previewDuringCommand: false,
+      config: { bitfield: 124, decoded: { edof: true, amr: true, led: true, flc: true, axi: true } },
+      amr: 42.5,
+      videoFormat: { width: 1280, height: 1024 },
+      exposure: { exposureValue: 12, gain: 3, autoExposure: 1 },
+      ledState: 1,
+      optionalErrors: [],
+      cleanup: { previewStopped: false, disconnected: true, hostDisposed: true },
+      forbiddenOperationsInvoked: false,
+    };
+  }
+  if (command === "dinolite.captureStillJpg") {
+    return {
+      adapter: "fake",
+      simulated: true,
+      comActiveXInstantiated: false,
+      device: {
+        index: 0,
+        name: "Fake Dino-Lite Edge AF7915MZTL",
+      },
+      outputFilePath: "C:\\TenKings\\capture-data\\dinolite-smoke\\fake-dinolite-still-20260609T000000Z.jpg",
+      sha256: "575b00ae2fefbbacf7b92d1fd8b839ecfb2979661cc2202b9b08052fb1e48a68",
+      byteSize: 16,
+      mimeType: "image/jpeg",
+      timestamp: "2026-06-09T00:00:00.0000000Z",
+      connectedDuringCommand: true,
+      previewDuringCommand: true,
+      config: { bitfield: 124 },
+      amr: 42.5,
+      cleanup: { previewStopped: true, disconnected: true, hostDisposed: true },
+      forbiddenOperationsInvoked: false,
+    };
+  }
   return undefined;
 }
 
@@ -234,6 +284,48 @@ test("real adapter is restricted to explicit manual enumeration", async () => {
   assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("AutoFocus")), false);
 });
 
+test("client maps fake manual status and still capture responses", async () => {
+  const spawned = [];
+  const client = new DinoLiteBridgeClient(
+    { executablePath: "fake-bridge.exe", adapter: "fake", timeoutMs: 100, manualHardwareAccess: true },
+    (command, args) => {
+      spawned.push({ command, args });
+      return new FakeBridgeProcess();
+    }
+  );
+
+  const status = await client.status(0);
+  const capture = await client.captureStillJpg(0, "C:\\TenKings\\capture-data\\dinolite-smoke");
+  await client.close();
+
+  assert.deepEqual(spawned[0].args, ["--adapter", "fake", "--manual-hardware"]);
+  assert.equal(status.connectedDuringCommand, true);
+  assert.equal(status.previewDuringCommand, false);
+  assert.equal(status.forbiddenOperationsInvoked, false);
+  assert.equal(capture.mimeType, "image/jpeg");
+  assert.equal(capture.byteSize, 16);
+  assert.equal(capture.sha256, "575b00ae2fefbbacf7b92d1fd8b839ecfb2979661cc2202b9b08052fb1e48a68");
+  assert.equal(capture.previewDuringCommand, true);
+  assert.equal(capture.forbiddenOperationsInvoked, false);
+});
+
+test("real adapter manual hardware commands do not allow health path", async () => {
+  const client = new DinoLiteBridgeClient(
+    { executablePath: "bridge.exe", adapter: "dnvideox", timeoutMs: 100, manualHardwareAccess: true },
+    () => new FakeBridgeProcess()
+  );
+
+  await assert.rejects(() => client.health(), (error) => {
+    assert.equal(error instanceof DinoLiteBridgeClientError, true);
+    assert.equal(error.code, "REAL_BRIDGE_COMMAND_DISABLED");
+    return true;
+  });
+
+  const status = await client.status(0);
+  await client.close();
+  assert.equal(status.connectedDuringCommand, true);
+});
+
 test("client times out when bridge does not respond", async () => {
   const client = new DinoLiteBridgeClient(
     { executablePath: "fake-bridge.exe", adapter: "fake", timeoutMs: 5 },
@@ -267,8 +359,67 @@ test("client rejects missing path and real adapter spawn", () => {
   );
   assert.throws(
     () => new DinoLiteBridgeClient({ executablePath: "bridge.exe", adapter: "dnvideox" }),
-    /manual enumeration/
+    /manual hardware/
   );
+});
+
+test("capture output directory guard rejects missing and repo paths", () => {
+  assert.throws(() => assertDinoLiteCaptureOutputDirAllowed(""), /requires --output-dir/);
+  assert.throws(
+    () => assertDinoLiteCaptureOutputDirAllowed(process.cwd(), process.cwd()),
+    /outside the git repo/
+  );
+  assert.equal(
+    assertDinoLiteCaptureOutputDirAllowed(path.join(os.tmpdir(), "dinolite-smoke"), process.cwd()),
+    path.resolve(os.tmpdir(), "dinolite-smoke")
+  );
+});
+
+test("cli capture command rejects missing explicit output dir before spawning", async () => {
+  let stdout = "";
+  let stderr = "";
+  const code = await runCaptureHelperCli(
+    ["dinolite-capture-still", "--bridge-exe", "bridge.exe", "--adapter", "dnvideox", "--device-index", "0"],
+    {
+      stdout: (text) => {
+        stdout += text;
+      },
+      stderr: (text) => {
+        stderr += text;
+      },
+      env: {},
+    }
+  );
+
+  assert.equal(code, 1);
+  assert.equal(stdout, "");
+  assert.match(stderr, /requires --output-dir/);
+});
+
+test("cli capture command rejects output inside repo before spawning", async () => {
+  let stderr = "";
+  const code = await runCaptureHelperCli(
+    [
+      "dinolite-capture-still",
+      "--bridge-exe",
+      "bridge.exe",
+      "--adapter",
+      "dnvideox",
+      "--device-index",
+      "0",
+      "--output-dir",
+      process.cwd(),
+    ],
+    {
+      stderr: (text) => {
+        stderr += text;
+      },
+      env: {},
+    }
+  );
+
+  assert.equal(code, 1);
+  assert.match(stderr, /outside the git repo/);
 });
 
 test("readiness default reports bridge unconfigured without spawning", () => {

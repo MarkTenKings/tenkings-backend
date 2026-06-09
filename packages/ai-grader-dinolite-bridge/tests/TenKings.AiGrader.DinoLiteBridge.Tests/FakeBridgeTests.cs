@@ -15,7 +15,9 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
                 "{\"id\":\"3\",\"command\":\"listDevices\"}",
                 "{\"id\":\"4\",\"command\":\"capabilities\"}",
                 "{\"id\":\"5\",\"command\":\"dinolite.enumerateDevices\"}",
-                "{\"id\":\"6\",\"command\":\"exit\"}");
+                "{\"id\":\"6\",\"command\":\"dinolite.status\",\"deviceIndex\":0}",
+                "{\"id\":\"7\",\"command\":\"dinolite.captureStillJpg\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\"}",
+                "{\"id\":\"8\",\"command\":\"exit\"}");
 
             StringAssert.Contains(output, "\"id\":\"1\"");
             StringAssert.Contains(output, "\"status\":\"OK\"");
@@ -29,6 +31,11 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             StringAssert.Contains(output, "\"connected\":false");
             StringAssert.Contains(output, "\"preview\":false");
             StringAssert.Contains(output, "\"forbiddenOperationsInvoked\":false");
+            StringAssert.Contains(output, "\"connectedDuringCommand\":true");
+            StringAssert.Contains(output, "\"previewDuringCommand\":false");
+            StringAssert.Contains(output, "\"previewDuringCommand\":true");
+            StringAssert.Contains(output, "\"sha256\":\"575b00ae2fefbbacf7b92d1fd8b839ecfb2979661cc2202b9b08052fb1e48a68\"");
+            StringAssert.Contains(output, "\"mimeType\":\"image/jpeg\"");
             StringAssert.Contains(output, "\"status\":\"BYE\"");
         }
 
@@ -57,6 +64,25 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             StringAssert.Contains(text, "\"status\":\"SDK_NOT_READY\"");
             StringAssert.Contains(text, "\"comActiveXInstantiated\":false");
             StringAssert.Contains(text, "--manual-enumerate");
+        }
+
+        [TestMethod]
+        public void RealAdapterStatusAndCaptureFailClosedWithoutManualHardwareFlag()
+        {
+            var input = new StringReader(string.Join("\n",
+                "{\"id\":\"status\",\"command\":\"dinolite.status\",\"deviceIndex\":0}",
+                "{\"id\":\"capture\",\"command\":\"dinolite.captureStillJpg\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\"}"));
+            var output = new StringWriter();
+            var server = new JsonLineBridgeServer(new DnVideoXAdapter(new BridgeOptions()), input, output);
+            var code = server.Run();
+
+            Assert.AreEqual(0, code);
+            var text = output.ToString();
+            StringAssert.Contains(text, "\"id\":\"status\"");
+            StringAssert.Contains(text, "\"id\":\"capture\"");
+            StringAssert.Contains(text, "\"status\":\"SDK_NOT_READY\"");
+            StringAssert.Contains(text, "\"comActiveXInstantiated\":false");
+            StringAssert.Contains(text, "--manual-hardware");
         }
 
         [TestMethod]

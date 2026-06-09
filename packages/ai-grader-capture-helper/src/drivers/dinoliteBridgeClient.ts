@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import path from "node:path";
 
 export type DinoLiteBridgeCommand =
   | "health"
@@ -6,6 +7,8 @@ export type DinoLiteBridgeCommand =
   | "listDevices"
   | "capabilities"
   | "dinolite.enumerateDevices"
+  | "dinolite.status"
+  | "dinolite.captureStillJpg"
   | "exit";
 
 export interface DinoLiteBridgeClientConfig {
@@ -14,11 +17,14 @@ export interface DinoLiteBridgeClientConfig {
   timeoutMs?: number;
   args?: string[];
   manualEnumeration?: boolean;
+  manualHardwareAccess?: boolean;
 }
 
 export interface DinoLiteBridgeRequest {
   id: string;
   command: DinoLiteBridgeCommand;
+  deviceIndex?: number;
+  outputDir?: string;
 }
 
 export interface DinoLiteBridgeErrorPayload {
@@ -104,6 +110,56 @@ export interface DinoLiteBridgeEnumerationResult {
   forbiddenOperationsInvoked: false;
 }
 
+export interface DinoLiteBridgeStatusResult {
+  adapter: "fake" | "dnvideox";
+  simulated?: boolean;
+  comActiveXInstantiated: boolean;
+  ocxVersion?: string | null;
+  device: {
+    index: number;
+    name: string;
+    description?: string | null;
+    deviceId?: string | null;
+  };
+  connectedDuringCommand: boolean;
+  previewDuringCommand: boolean;
+  config?: unknown;
+  amr?: number | null;
+  videoCaps?: unknown;
+  videoFormat?: unknown;
+  lensLimits?: unknown;
+  lensFineLimits?: unknown;
+  exposure?: unknown;
+  ledState?: number | null;
+  optionalErrors?: unknown[];
+  cleanup?: unknown;
+  forbiddenOperationsInvoked: false;
+}
+
+export interface DinoLiteBridgeCaptureStillJpgResult {
+  adapter: "fake" | "dnvideox";
+  simulated?: boolean;
+  comActiveXInstantiated: boolean;
+  device: {
+    index: number;
+    name: string;
+    description?: string | null;
+    deviceId?: string | null;
+  };
+  outputFilePath: string;
+  sha256: string;
+  byteSize: number;
+  mimeType: "image/jpeg";
+  timestamp: string;
+  connectedDuringCommand: boolean;
+  previewDuringCommand: boolean;
+  config?: unknown;
+  amr?: number | null;
+  optionalErrors?: unknown[];
+  cleanup?: unknown;
+  forbiddenOperationsInvoked: false;
+}
+
 export interface DinoLiteBridgeCapabilities {
   adapter: string;
   simulated?: boolean;
@@ -178,8 +234,10 @@ export function getDinoLiteBridgeConfiguredStatus(
 }
 
 export class DinoLiteBridgeClient {
-  private readonly config: Required<Pick<DinoLiteBridgeClientConfig, "adapter" | "timeoutMs" | "manualEnumeration">> &
-    Omit<DinoLiteBridgeClientConfig, "adapter" | "timeoutMs" | "manualEnumeration">;
+  private readonly config: Required<
+    Pick<DinoLiteBridgeClientConfig, "adapter" | "timeoutMs" | "manualEnumeration" | "manualHardwareAccess">
+  > &
+    Omit<DinoLiteBridgeClientConfig, "adapter" | "timeoutMs" | "manualEnumeration" | "manualHardwareAccess">;
   private readonly spawnProcess: DinoLiteBridgeSpawn;
   private child: DinoLiteBridgeChildProcess | undefined;
   private nextId = 1;
@@ -198,10 +256,10 @@ export class DinoLiteBridgeClient {
     if (!config.executablePath || config.executablePath.trim().length === 0) {
       throw new DinoLiteBridgeClientError("BRIDGE_NOT_CONFIGURED", "Dino-Lite bridge executable path is required.");
     }
-    if ((config.adapter ?? "fake") !== "fake" && config.manualEnumeration !== true) {
+    if ((config.adapter ?? "fake") !== "fake" && config.manualEnumeration !== true && config.manualHardwareAccess !== true) {
       throw new DinoLiteBridgeClientError(
         "REAL_BRIDGE_DISABLED",
-        "Capture-helper may only spawn the DNVideoX bridge for explicit manual enumeration."
+        "Capture-helper may only spawn the DNVideoX bridge for explicit manual hardware commands."
       );
     }
     this.config = {
@@ -209,6 +267,7 @@ export class DinoLiteBridgeClient {
       adapter: config.adapter ?? "fake",
       timeoutMs: config.timeoutMs ?? 1000,
       manualEnumeration: config.manualEnumeration ?? false,
+      manualHardwareAccess: config.manualHardwareAccess ?? false,
     };
     this.spawnProcess = spawnProcess;
   }
@@ -233,6 +292,14 @@ export class DinoLiteBridgeClient {
     return this.sendResult<DinoLiteBridgeEnumerationResult>("dinolite.enumerateDevices");
   }
 
+  async status(deviceIndex: number): Promise<DinoLiteBridgeStatusResult> {
+    return this.sendResult<DinoLiteBridgeStatusResult>("dinolite.status", { deviceIndex });
+  }
+
+  async captureStillJpg(deviceIndex: number, outputDir: string): Promise<DinoLiteBridgeCaptureStillJpgResult> {
+    return this.sendResult<DinoLiteBridgeCaptureStillJpgResult>("dinolite.captureStillJpg", { deviceIndex, outputDir });
+  }
+
   async close(): Promise<void> {
     if (!this.child) return;
     try {
@@ -245,8 +312,8 @@ export class DinoLiteBridgeClient {
     }
   }
 
-  private async sendResult<T>(command: DinoLiteBridgeCommand): Promise<T> {
-    const response = await this.send(command);
+  private async sendResult<T>(command: DinoLiteBridgeCommand, payload: Partial<DinoLiteBridgeRequest> = {}): Promise<T> {
+    const response = await this.send(command, payload);
     if (!response.ok) {
       throw new DinoLiteBridgeClientError(
         response.error?.code ?? "BRIDGE_ERROR",
@@ -256,18 +323,27 @@ export class DinoLiteBridgeClient {
     return response.result as T;
   }
 
-  private send(command: DinoLiteBridgeCommand): Promise<DinoLiteBridgeResponse> {
-    if (this.config.adapter === "dnvideox" && this.config.manualEnumeration && command !== "dinolite.enumerateDevices" && command !== "exit") {
+  private send(
+    command: DinoLiteBridgeCommand,
+    payload: Partial<DinoLiteBridgeRequest> = {}
+  ): Promise<DinoLiteBridgeResponse> {
+    const allowedRealCommands = new Set<DinoLiteBridgeCommand>([
+      "dinolite.enumerateDevices",
+      "dinolite.status",
+      "dinolite.captureStillJpg",
+      "exit",
+    ]);
+    if (this.config.adapter === "dnvideox" && (this.config.manualEnumeration || this.config.manualHardwareAccess) && !allowedRealCommands.has(command)) {
       return Promise.reject(
         new DinoLiteBridgeClientError(
           "REAL_BRIDGE_COMMAND_DISABLED",
-          "DNVideoX bridge spawn is restricted to the manual enumeration command."
+          "DNVideoX bridge spawn is restricted to explicit manual Dino-Lite hardware commands."
         )
       );
     }
     const child = this.ensureStarted();
     const id = String(this.nextId++);
-    const request: DinoLiteBridgeRequest = { id, command };
+    const request: DinoLiteBridgeRequest = { id, command, ...payload };
 
     return new Promise<DinoLiteBridgeResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -286,6 +362,7 @@ export class DinoLiteBridgeClient {
       "--adapter",
       this.config.adapter,
       ...(this.config.manualEnumeration ? ["--manual-enumerate"] : []),
+      ...(this.config.manualHardwareAccess ? ["--manual-hardware"] : []),
       ...(this.config.args ?? []),
     ];
     const child = this.spawnProcess(this.config.executablePath as string, args);
@@ -353,6 +430,22 @@ export class DinoLiteBridgeClient {
     }
     this.pending.clear();
   }
+}
+
+export function assertDinoLiteCaptureOutputDirAllowed(outputDir: string, repoRoot = process.cwd()): string {
+  if (!outputDir || outputDir.trim().length === 0) {
+    throw new DinoLiteBridgeClientError("CAPTURE_OUTPUT_DIR_REQUIRED", "Dino-Lite still capture requires --output-dir <path>.");
+  }
+  const resolvedOutputDir = path.resolve(outputDir);
+  const resolvedRepoRoot = path.resolve(repoRoot);
+  const relative = path.relative(resolvedRepoRoot, resolvedOutputDir);
+  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+    throw new DinoLiteBridgeClientError(
+      "CAPTURE_OUTPUT_DIR_INSIDE_REPO",
+      "Dino-Lite still capture output directory must be outside the git repo."
+    );
+  }
+  return resolvedOutputDir;
 }
 
 function defaultSpawn(command: string, args: string[]): DinoLiteBridgeChildProcess {

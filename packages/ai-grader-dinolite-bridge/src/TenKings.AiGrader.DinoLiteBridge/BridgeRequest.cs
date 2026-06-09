@@ -6,5 +6,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
         public string? command { get; set; }
         public string? type { get; set; }
         public string? adapter { get; set; }
+        public int? deviceIndex { get; set; }
+        public string? outputDir { get; set; }
     }
 }

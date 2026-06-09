@@ -7,5 +7,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
         object ListDevices();
         object Capabilities();
         object EnumerateDevices();
+        object Status(int deviceIndex);
+        object CaptureStillJpg(int deviceIndex, string? outputDir);
     }
 }
