@@ -10264,6 +10264,16 @@ Build Set Ops UI flow with:
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, and no next AI Grader phase work.
 
+## Session Update (2026-06-09, AI Grader Dino-Lite manual enumeration PR #27 merged)
+- PR #27 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/27`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `a7be1b12b6aef8b50b6a30edd245c2ec4450be47`.
+- PR #27 added the manual-only DNVideoX enumeration path through the x86 STA bridge. The bridge now hosts DNVideoX through a hidden offscreen WinForms `AxHost`, matching the vendor sample hosting model, and keeps enumeration read-only.
+- Local Dell smoke before merge listed the plugged-in `Dino-Lite Edge` with `deviceCount=1`, DNVideoX OCX version `3, 0, 56, 6`, `connected=false`, and `preview=false`.
+- Post-merge GitHub Actions run `27223690892` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/33uqK9MvNVrDfvsWJNDs1YiCP2pM`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no `regsvr32`, no microscope control, no image capture, no `Connected=True`, no `Preview=True`, no LED/FLC/lens/focus/exposure/EDR/EDOF/DPQ/control command, no SDK binary/OCX/DLL/vendor SDK commit, and no next AI Grader phase work.
+
 ## Session Update (2026-05-30, AI Grader admin helper bridge)
 - Created branch `feature/ai-grader-admin-helper-bridge` from latest `origin/main`.
 - Added feature-gated admin-to-capture-helper bridge flags:

@@ -18699,6 +18699,30 @@ By enabling Rip It Live, I confirm:
 - No real hardware access was run.
 - No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
 
+## 2026-06-09 - AI Grader Dino-Lite manual enumeration PR #27 merged
+
+### Summary
+- PR #27 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/27`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `a7be1b12b6aef8b50b6a30edd245c2ec4450be47`.
+- PR #27 added manual-only DNVideoX enumeration through the x86 STA Dino-Lite bridge using a hidden offscreen WinForms `AxHost`.
+- Local Dell smoke before merge listed the plugged-in `Dino-Lite Edge` with `deviceCount=1`, DNVideoX OCX version `3, 0, 56, 6`, `connected=false`, and `preview=false`.
+- Post-merge GitHub Actions run `27223690892` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/33uqK9MvNVrDfvsWJNDs1YiCP2pM`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No microscope control command was run.
+- No image capture was run.
+- No `Connected=True` or `Preview=True` command was run.
+- No LED/FLC/lens/focus/exposure/EDR/EDOF/DPQ/control command was run.
+- No SDK binary, OCX, DLL, or vendor SDK file was committed.
+- No next AI Grader phase work was started.
+
 ## 2026-06-01 - AI Grader GRBL stage readiness adapter
 
 ### Summary
