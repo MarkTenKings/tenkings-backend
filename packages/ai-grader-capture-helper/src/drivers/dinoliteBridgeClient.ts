@@ -9,6 +9,10 @@ export type DinoLiteBridgeCommand =
   | "dinolite.enumerateDevices"
   | "dinolite.status"
   | "dinolite.captureStillJpg"
+  | "dinolite.getLightingStatus"
+  | "dinolite.setLightingRecipe"
+  | "dinolite.capturePackage"
+  | "dinolite.captureDemoPackage"
   | "exit";
 
 export interface DinoLiteBridgeClientConfig {
@@ -25,6 +29,10 @@ export interface DinoLiteBridgeRequest {
   command: DinoLiteBridgeCommand;
   deviceIndex?: number;
   outputDir?: string;
+  label?: string;
+  includeLightingSweep?: boolean;
+  includeEdr?: boolean;
+  includeEdof?: boolean;
 }
 
 export interface DinoLiteBridgeErrorPayload {
@@ -157,6 +165,45 @@ export interface DinoLiteBridgeCaptureStillJpgResult {
   amr?: number | null;
   optionalErrors?: unknown[];
   cleanup?: unknown;
+  forbiddenOperationsInvoked: false;
+}
+
+export interface DinoLiteBridgeCapturePackageResult {
+  adapter: "fake" | "dnvideox";
+  simulated?: boolean;
+  comActiveXInstantiated: boolean;
+  packageId: string;
+  label: string;
+  packageDir: string;
+  manifestPath: string;
+  previewReportPath: string;
+  timestamp: string;
+  device: {
+    index: number;
+    name: string;
+    description?: string | null;
+    deviceId?: string | null;
+  };
+  ocxVersion?: string | null;
+  connectedDuringCommand: boolean;
+  previewDuringCommand: boolean;
+  config?: unknown;
+  amr?: number | null;
+  captures: Array<{
+    path: string;
+    filename: string;
+    sha256?: string | null;
+    byteSize: number;
+    mimeType: "image/jpeg";
+    timestamp: string;
+    captureKind: string;
+    lightingRecipe: string;
+    status: string;
+    error?: unknown;
+  }>;
+  cleanup?: unknown;
+  optionalErrors?: unknown[];
+  limitations?: string[];
   forbiddenOperationsInvoked: false;
 }
 
@@ -300,6 +347,17 @@ export class DinoLiteBridgeClient {
     return this.sendResult<DinoLiteBridgeCaptureStillJpgResult>("dinolite.captureStillJpg", { deviceIndex, outputDir });
   }
 
+  async capturePackage(options: {
+    deviceIndex: number;
+    outputDir: string;
+    label: string;
+    includeLightingSweep?: boolean;
+    includeEdr?: boolean;
+    includeEdof?: boolean;
+  }): Promise<DinoLiteBridgeCapturePackageResult> {
+    return this.sendResult<DinoLiteBridgeCapturePackageResult>("dinolite.capturePackage", options);
+  }
+
   async close(): Promise<void> {
     if (!this.child) return;
     try {
@@ -331,6 +389,10 @@ export class DinoLiteBridgeClient {
       "dinolite.enumerateDevices",
       "dinolite.status",
       "dinolite.captureStillJpg",
+      "dinolite.getLightingStatus",
+      "dinolite.setLightingRecipe",
+      "dinolite.capturePackage",
+      "dinolite.captureDemoPackage",
       "exit",
     ]);
     if (this.config.adapter === "dnvideox" && (this.config.manualEnumeration || this.config.manualHardwareAccess) && !allowedRealCommands.has(command)) {
@@ -434,7 +496,7 @@ export class DinoLiteBridgeClient {
 
 export function assertDinoLiteCaptureOutputDirAllowed(outputDir: string, repoRoot = process.cwd()): string {
   if (!outputDir || outputDir.trim().length === 0) {
-    throw new DinoLiteBridgeClientError("CAPTURE_OUTPUT_DIR_REQUIRED", "Dino-Lite still capture requires --output-dir <path>.");
+    throw new DinoLiteBridgeClientError("CAPTURE_OUTPUT_DIR_REQUIRED", "Dino-Lite capture requires --output-dir <path>.");
   }
   const resolvedOutputDir = path.resolve(outputDir);
   const resolvedRepoRoot = path.resolve(repoRoot);
@@ -442,7 +504,7 @@ export function assertDinoLiteCaptureOutputDirAllowed(outputDir: string, repoRoo
   if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
     throw new DinoLiteBridgeClientError(
       "CAPTURE_OUTPUT_DIR_INSIDE_REPO",
-      "Dino-Lite still capture output directory must be outside the git repo."
+      "Dino-Lite capture output directory must be outside the git repo."
     );
   }
   return resolvedOutputDir;

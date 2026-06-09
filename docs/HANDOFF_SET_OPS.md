@@ -25,6 +25,41 @@
   - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
   - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
 
+## Session Update (2026-06-09, AI Grader Dino-Lite demo capture package)
+- Branch `feature/ai-grader-dinolite-capture-package` was created from latest `origin/main`.
+- Added manual-only DNVideoX bridge commands:
+  - `dinolite.getLightingStatus`
+  - `dinolite.setLightingRecipe`
+  - `dinolite.capturePackage`
+  - alias `dinolite.captureDemoPackage`
+- Added capture-helper manual CLI commands:
+  - `dinolite-capture-package --bridge-exe <path> --adapter dnvideox --device-index 0 --output-dir C:\TenKings\capture-data\dinolite-packages --label card-demo-001 --include-lighting-sweep --include-edr --include-edof`
+  - `dinolite-capture-demo-package --bridge-exe <path> --adapter dnvideox --device-index 0 --output-dir C:\TenKings\capture-data\dinolite-demo --label card-demo-001`
+- Default readiness, health, server/admin paths, and tests still do not instantiate DNVideoX or spawn the real adapter.
+- Capture package outputs are required to be outside the git repo and include `manifest.json`, `preview-report.html`, image metadata, checksums, cleanup status, and the limitation text `Dino-Lite capture package preview -- not a certified grade.`
+- Manual real DNVideoX demo package smoke was run after automated validation:
+  - output folder outside git: `C:\TenKings\capture-data\dinolite-demo\dinolite-card-demo-001-20260609T215851704Z`
+  - device `Dino-Lite Edge`; device ID redacted except USB VID/PID `vid_a168&pid_0990`
+  - OCX version `3, 0, 56, 6`
+  - config bitfield `198`; decoded using SDK bit layout as `edof=true`, `amr=true`, `ledMode=1`, `led=true`, `flc=true`, `axi=false`
+  - AMR `1`
+  - normal still `normal-still.jpg`, `sha256=9aa3a6577a3426a97955648aedefc0495c759426e93e49a09b2b7639c4c60e06`, `byteSize=67582`, `mimeType=image/jpeg`
+  - lighting sweep succeeded with `all-leds-on-normal`, `flc-all-level-3`, `flc-quadrant-1-level-4`, and `flc-quadrant-2-level-4` JPGs
+  - EDR succeeded after file-read polling: `edr.jpg`, `sha256=63654191144d854e853959f6a4f4fe9d029d5a64e2472d2deffb26ad2d3ba71c`, `byteSize=513420`
+  - EDOF remains unavailable: `SaveEDOF(0, 3, path)` returned SDK result `1`, but no `edof.jpg` appeared after 15 seconds of polling; recorded `SaveEDOF_NO_OUTPUT_TIMEOUT`
+  - runtime dependency diagnostics showed `enfuse.exe`, `SMIUtility.dll`, and `d3dx9_31.dll` absent from the bridge executable directory and current working directory; SDK inventory lists these helper files outside git, and they were not copied into the repo
+  - cleanup: `previewStopped=true`, `disconnected=true`, `hostDisposed=true`, no cleanup errors; final FLC restore succeeded via `SetFLCLevel(0,3)` and `SetFLCSwitch(0,15)`
+- Validation passed:
+  - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 0 warnings, 0 errors
+  - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 7 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 62 tests
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no SDK binary/OCX/DLL/vendor SDK commit, no captured image commit, no `GetRGB`/`GetEDRRGB`/`GetEDOFRGB`, no lens/focus/exposure-setting/DPQ method, and no certified grade/report claim.
+
 ## Session Update (2026-06-09, AI Grader Dino-Lite manual status and still JPG capture)
 - Branch `feature/ai-grader-dinolite-connect-capture` was created from latest `origin/main`.
 - Added manual-only DNVideoX bridge commands:

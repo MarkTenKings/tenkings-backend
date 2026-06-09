@@ -153,6 +153,72 @@ namespace TenKings.AiGrader.DinoLiteBridge
             };
         }
 
+        public object GetLightingStatus(int deviceIndex)
+        {
+            return new
+            {
+                adapter = "fake",
+                simulated = true,
+                comActiveXInstantiated = false,
+                device = FakeDevice(deviceIndex),
+                ledState = 1,
+                flc = new { supported = true, switchValue = 15, level = 4 },
+                cleanup = new { previewStopped = false, disconnected = false, hostDisposed = true },
+                forbiddenOperationsInvoked = false
+            };
+        }
+
+        public object SetLightingRecipe(int deviceIndex, string? recipeName)
+        {
+            return new
+            {
+                adapter = "fake",
+                simulated = true,
+                comActiveXInstantiated = false,
+                device = FakeDevice(deviceIndex),
+                recipe = new { name = string.IsNullOrWhiteSpace(recipeName) ? "safe-final-all-quadrants-level-3" : recipeName },
+                applied = true,
+                forbiddenOperationsInvoked = false
+            };
+        }
+
+        public object CapturePackage(int deviceIndex, string? outputDir, string? label, bool includeLightingSweep, bool includeEdr, bool includeEdof)
+        {
+            var normalizedOutputDir = string.IsNullOrWhiteSpace(outputDir) ? "C:\\TenKings\\capture-data\\dinolite-demo" : outputDir!.TrimEnd('\\');
+            var normalizedLabel = string.IsNullOrWhiteSpace(label) ? "fake-demo" : label!;
+            var packageId = "dinolite-" + normalizedLabel + "-20260609T000000000Z";
+            var packageDir = normalizedOutputDir + "\\" + packageId;
+            var unsupported = normalizedLabel.Contains("unsupported");
+            return new
+            {
+                adapter = "fake",
+                simulated = true,
+                comActiveXInstantiated = false,
+                packageId,
+                label = normalizedLabel,
+                packageDir,
+                manifestPath = packageDir + "\\manifest.json",
+                previewReportPath = packageDir + "\\preview-report.html",
+                timestamp = "2026-06-09T00:00:00.0000000Z",
+                device = FakeDevice(deviceIndex),
+                ocxVersion = "simulated",
+                connectedDuringCommand = true,
+                previewDuringCommand = true,
+                config = new { bitfield = 0x7c, decoded = new { edof = true, amr = true, led = true, flc = true, axi = true } },
+                amr = 42.5,
+                captures = new object[]
+                {
+                    FakeCapture(packageDir, "normal", "normal", "normal-still", "success"),
+                    includeLightingSweep ? FakeCapture(packageDir, "flc-all-level-3", "lightingSweep", "all-quadrants-level-3", unsupported ? "unavailable" : "success") : new { captureKind = "lightingSweep", status = "skipped" },
+                    includeEdr ? FakeCapture(packageDir, "edr", "edr", "edr", unsupported ? "unavailable" : "success") : new { captureKind = "edr", status = "skipped" },
+                    includeEdof ? FakeCapture(packageDir, "edof", "edof", "edof", unsupported ? "unavailable" : "success") : new { captureKind = "edof", status = "skipped" }
+                },
+                cleanup = new { previewStopped = true, disconnected = true, hostDisposed = true, finalLightingRecipe = "safe-final-all-quadrants-level-3" },
+                limitations = new[] { "Dino-Lite capture package preview -- not a certified grade." },
+                forbiddenOperationsInvoked = false
+            };
+        }
+
         private static object FakeDevice(int deviceIndex)
         {
             return new
@@ -161,6 +227,23 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 name = "Fake Dino-Lite Edge AF7915MZTL",
                 description = "Simulated AF7915MZTL-like Dino-Lite microscope",
                 deviceId = "FAKE-AF7915MZTL-0001"
+            };
+        }
+
+        private static object FakeCapture(string packageDir, string stem, string captureKind, string recipe, string status)
+        {
+            return new
+            {
+                path = packageDir + "\\" + stem + ".jpg",
+                filename = stem + ".jpg",
+                sha256 = FakeCaptureSha256,
+                byteSize = status == "success" ? 16 : 0,
+                mimeType = "image/jpeg",
+                timestamp = "2026-06-09T00:00:00.0000000Z",
+                captureKind,
+                lightingRecipe = recipe,
+                status,
+                error = status == "success" ? null : new { code = "FAKE_UNAVAILABLE", message = "Simulated unsupported Dino-Lite feature." }
             };
         }
     }

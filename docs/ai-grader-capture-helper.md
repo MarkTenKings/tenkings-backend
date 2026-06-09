@@ -209,11 +209,15 @@ Supported bridge JSONL commands:
 - `dinolite.enumerateDevices`
 - `dinolite.status`
 - `dinolite.captureStillJpg`
+- `dinolite.getLightingStatus`
+- `dinolite.setLightingRecipe`
+- `dinolite.capturePackage`
+- `dinolite.captureDemoPackage`
 - `exit`
 
 The fake bridge adapter is the default. It returns deterministic AF7915MZTL-like device metadata and simulated support flags for still capture, AMR, FLC, EDR, and EDOF. It never uses COM and does not require SDK files.
 
-The real DNVideoX adapter is manual-only. It does not instantiate `DNVideoX.ocx` during tests, CI, default bridge startup, fake mode, readiness, or normal health/capability commands. The real COM paths are explicit `dinolite.enumerateDevices`, `dinolite.status`, and `dinolite.captureStillJpg` commands with `--adapter dnvideox` plus the manual bridge flag set by the capture-helper CLI.
+The real DNVideoX adapter is manual-only. It does not instantiate `DNVideoX.ocx` during tests, CI, default bridge startup, fake mode, readiness, or normal health/capability commands. The real COM paths are explicit `dinolite.enumerateDevices`, `dinolite.status`, `dinolite.captureStillJpg`, and `dinolite.capturePackage` commands with `--adapter dnvideox` plus the manual bridge flag set by the capture-helper CLI.
 
 Manual enumeration creates the registered 32-bit ActiveX control through ProgID `VIDEOCAPX.VideoCapXCtrl.1` inside a hidden offscreen WinForms `AxHost`, calls `GetVideoDeviceCount`, then calls `GetVideoDeviceName` for detected indexes. It may also call `GetVideoDeviceDesc` and `GetDeviceID`; optional failures are reported without failing the whole enumeration when device count succeeds.
 
@@ -272,6 +276,31 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-
 Local Dell smoke on 2026-06-09 for manual status returned `comActiveXInstantiated=true`, OCX version `3, 0, 56, 6`, device `Dino-Lite Edge`, config bitfield `198`, decoded `amr=true` and `axi=true`, AMR `0`, exposure value `1048575`, gain `239`, auto exposure `0`, LED state `0`, `connectedDuringCommand=true`, `previewDuringCommand=false`, and cleanup `disconnected=true`, `hostDisposed=true`. `GetVideoFormat` and `GetLensPosLimits` returned optional type-mismatch errors and did not fail the command. Device ID was present and is redacted except for USB VID/PID `vid_a168&pid_0990`.
 
 Local Dell smoke on 2026-06-09 for manual still JPG capture wrote `C:\TenKings\capture-data\dinolite-smoke\dinolite-still-20260609T184302837Z.jpg` outside git, `sha256=96eb68bc57756e01f35a819b403d3baa088c9d6c65216383d9faa18d3de168fb`, `byteSize=67326`, `mimeType=image/jpeg`, `connectedDuringCommand=true`, `previewDuringCommand=true`, and cleanup `previewStopped=true`, `disconnected=true`, `hostDisposed=true`. `Preview=True` was used for capture because the vendor sample capture flow enables preview before `SaveFrameJPG`; no second capture was run to test a no-preview path.
+
+Manual real DNVideoX demo capture package, for the Dell Windows capture node only:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-capture-demo-package `
+  --bridge-exe C:\TenKings\repos\tenkings-rip-it-live\packages\ai-grader-dinolite-bridge\src\TenKings.AiGrader.DinoLiteBridge\bin\x86\Release\net48\TenKings.AiGrader.DinoLiteBridge.exe `
+  --adapter dnvideox `
+  --device-index 0 `
+  --output-dir C:\TenKings\capture-data\dinolite-demo `
+  --label card-demo-001 `
+  --include-lighting-sweep `
+  --include-edr `
+  --include-edof `
+  --bridge-timeout-ms 60000
+```
+
+Local Dell smoke on 2026-06-09 wrote package folder `C:\TenKings\capture-data\dinolite-demo\dinolite-card-demo-001-20260609T215851704Z` outside git. The package contains `manifest.json`, `preview-report.html`, one normal JPG, four small lighting JPGs, and one EDR JPG. Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`.
+
+The same smoke reported config bitfield `198`, decoded per the SDK as `edof=true`, `amr=true`, `ledMode=1`, `led=true`, `flc=true`, and `axi=false`; AMR was `1`. Captures succeeded for normal still (`sha256=9aa3a6577a3426a97955648aedefc0495c759426e93e49a09b2b7639c4c60e06`, `byteSize=67582`), LED/FLC lighting sweep (`all-leds-on-normal`, `flc-all-level-3`, `flc-quadrant-1-level-4`, `flc-quadrant-2-level-4`), and EDR (`sha256=63654191144d854e853959f6a4f4fe9d029d5a64e2472d2deffb26ad2d3ba71c`, `byteSize=513420`). EDR requires polling because `SaveEDR` returns before the output file is immediately readable.
+
+EDOF is still not producing output from this bridge runtime: `SaveEDOF(0, 3, path)` returned SDK result `1`, but no `edof.jpg` appeared after 15 seconds of polling, so the manifest records `SaveEDOF_NO_OUTPUT_TIMEOUT`. Runtime dependency diagnostics showed `enfuse.exe`, `SMIUtility.dll`, and `d3dx9_31.dll` absent from both the bridge executable directory and current working directory. The SDK inventory lists these helper files outside git, so the current best explanation is that EDOF needs vendor runtime helper files available to DNVideoX or another vendor-specific runtime condition. Those files must not be copied into the repo.
+
+Cleanup reported `previewStopped=true`, `disconnected=true`, `hostDisposed=true`, no cleanup errors, and final safe FLC restore via `SetFLCLevel(0,3)` and `SetFLCSwitch(0,15)`.
+
+The package preview report is local static HTML only and includes the required text `Dino-Lite capture package preview -- not a certified grade.` No DB writes, uploads, production report, certificate, or grade claim are produced by this command.
 
 SDK binaries, OCX files, and DNVideoX DLLs must remain outside git. Do not run `regsvr32` from this repo flow.
 
@@ -333,4 +362,4 @@ Before the first real hardware driver integration:
 - keep real discovery non-invasive until the specific device adapter is reviewed
 - keep Arduino LED readiness limited to `PING` and `LED ALL OFF` until a later approved LED control slice
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
-- keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG capture until a later approved LED/FLC/lens/focus/exposure/EDR/EDOF/DPQ/control slice
+- keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package capture until a later approved lens/focus/exposure/DPQ/certified-grading slice
