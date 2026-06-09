@@ -12,6 +12,7 @@ import {
   type CaptureHelperConfigInput,
   type CaptureHelperEnv,
 } from "./index";
+import { DinoLiteBridgeClient } from "./drivers";
 import { startCaptureHelperHttpServer } from "./transport";
 
 export interface CaptureHelperCliIO {
@@ -26,6 +27,7 @@ type ParsedCommand =
   | { command: "readiness"; config: CaptureHelperConfigInput }
   | { command: "led-health"; config: CaptureHelperConfigInput }
   | { command: "stage-health"; config: CaptureHelperConfigInput }
+  | { command: "dinolite-bridge-health"; config: CaptureHelperConfigInput }
   | { command: "manifest"; config: CaptureHelperConfigInput; mode: string | undefined }
   | { command: "serve"; config: CaptureHelperConfigInput; host: string | undefined; port: string | undefined }
   | { command: "help"; config: CaptureHelperConfigInput };
@@ -105,6 +107,27 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         break;
       case "--stage":
         config.stage = { ...config.stage, kind: readOption(rest, index, "--stage") };
+        index += 1;
+        break;
+      case "--bridge-path":
+        config.dinoliteBridge = {
+          ...config.dinoliteBridge,
+          executablePath: readOption(rest, index, "--bridge-path"),
+        };
+        index += 1;
+        break;
+      case "--bridge-adapter":
+        config.dinoliteBridge = {
+          ...config.dinoliteBridge,
+          adapter: readOption(rest, index, "--bridge-adapter") as "fake" | "dnvideox",
+        };
+        index += 1;
+        break;
+      case "--bridge-timeout-ms":
+        config.dinoliteBridge = {
+          ...config.dinoliteBridge,
+          timeoutMs: Number(readOption(rest, index, "--bridge-timeout-ms")),
+        };
         index += 1;
         break;
       case "--led-port":
@@ -321,6 +344,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "readiness" ||
     command === "led-health" ||
     command === "stage-health" ||
+    command === "dinolite-bridge-health" ||
     command === "manifest" ||
     command === "serve" ||
     command === "help"
@@ -340,6 +364,7 @@ function helpPayload() {
       "readiness",
       "led-health --port <serial-port> --baud 115200",
       "stage-health --port <serial-port> --baud 115200",
+      "dinolite-bridge-health --bridge-path <exe> --bridge-adapter fake",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -356,6 +381,9 @@ function helpPayload() {
       "--rig-mode simulator|readiness",
       "--led-controller arduino",
       "--stage grbl",
+      "--bridge-path",
+      "--bridge-adapter fake",
+      "--bridge-timeout-ms",
       "--led-port",
       "--stage-port",
       "--baud",
@@ -378,6 +406,7 @@ function helpPayload() {
     ],
     mode: "simulator-only",
     driverSet: "mock runnable; real limited to explicit Arduino LED and GRBL stage readiness",
+    dinoliteBridge: "manual fake bridge health only; default readiness does not spawn",
     transport: "disabled until serve is explicitly run",
   };
 }
@@ -418,6 +447,35 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       });
       writeJson(stdout, result);
       return result.ok ? 0 : 1;
+    }
+
+    if (parsed.command === "dinolite-bridge-health") {
+      const client = new DinoLiteBridgeClient({
+        executablePath:
+          parsed.config.dinoliteBridge?.executablePath ??
+          (io.env ?? process.env).AI_GRADER_CAPTURE_HELPER_DINOLITE_BRIDGE_PATH,
+        adapter:
+          parsed.config.dinoliteBridge?.adapter ??
+          (((io.env ?? process.env).AI_GRADER_CAPTURE_HELPER_DINOLITE_BRIDGE_ADAPTER as "fake" | undefined) ?? "fake"),
+        timeoutMs: parsed.config.dinoliteBridge?.timeoutMs,
+      });
+      const [health, sdkInfo, devices, capabilities] = await Promise.all([
+        client.health(),
+        client.sdkInfo(),
+        client.listDevices(),
+        client.capabilities(),
+      ]);
+      await client.close();
+      writeJson(stdout, {
+        ok: true,
+        service: "ai-grader-capture-helper",
+        command: "dinolite-bridge-health",
+        health,
+        sdkInfo,
+        devices,
+        capabilities,
+      });
+      return 0;
     }
 
     const service = createCaptureHelperService(parsed.config, io.env ?? process.env);

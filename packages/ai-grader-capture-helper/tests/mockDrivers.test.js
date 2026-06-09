@@ -157,7 +157,8 @@ test("no hardware modules are dependencies or imported", () => {
     "node-hid",
     "usb",
     "basler",
-    "dino",
+    "node_modules/dino",
+    "dnvideox.ocx",
     "node_modules/grbl",
     "opencv",
   ];

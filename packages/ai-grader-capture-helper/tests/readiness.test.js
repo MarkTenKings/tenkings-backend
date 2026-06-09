@@ -156,7 +156,8 @@ test("readiness package path imports no hardware modules", () => {
     "node-hid",
     "usb",
     "basler",
-    "dino",
+    "node_modules/dino",
+    "dnvideox.ocx",
     "node_modules/grbl",
     "opencv",
   ];

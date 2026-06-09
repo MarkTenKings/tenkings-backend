@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "pnpm --filter @tenkings/shared build && tsc -p .",
-    "test": "pnpm run build && node --test tests/*.test.js"
+    "test": "pnpm run build && node --test tests"
   },
   "dependencies": {
     "@tenkings/shared": "workspace:*"

@@ -1,0 +1,52 @@
+using System.IO;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace TenKings.AiGrader.DinoLiteBridge.Tests
+{
+    [TestClass]
+    public sealed class FakeBridgeTests
+    {
+        [TestMethod]
+        public void FakeBridgeReturnsHealthSdkInfoDevicesAndCapabilities()
+        {
+            var output = Run(
+                "{\"id\":\"1\",\"command\":\"health\"}",
+                "{\"id\":\"2\",\"command\":\"sdkInfo\"}",
+                "{\"id\":\"3\",\"command\":\"listDevices\"}",
+                "{\"id\":\"4\",\"command\":\"capabilities\"}",
+                "{\"id\":\"5\",\"command\":\"exit\"}");
+
+            StringAssert.Contains(output, "\"id\":\"1\"");
+            StringAssert.Contains(output, "\"status\":\"OK\"");
+            StringAssert.Contains(output, "\"comActiveXInstantiated\":false");
+            StringAssert.Contains(output, "\"Dino-Lite Edge AF7915MZTL\"");
+            StringAssert.Contains(output, "\"stillCapture\":true");
+            StringAssert.Contains(output, "\"flc\":true");
+            StringAssert.Contains(output, "\"edr\":true");
+            StringAssert.Contains(output, "\"edof\":true");
+            StringAssert.Contains(output, "\"status\":\"BYE\"");
+        }
+
+        [TestMethod]
+        public void InvalidCommandReturnsStructuredError()
+        {
+            var output = Run(
+                "{\"id\":\"bad\",\"command\":\"capture\"}",
+                "{\"id\":\"exit\",\"command\":\"exit\"}");
+
+            StringAssert.Contains(output, "\"ok\":false");
+            StringAssert.Contains(output, "\"code\":\"INVALID_COMMAND\"");
+            StringAssert.Contains(output, "Unsupported command: capture");
+        }
+
+        private static string Run(params string[] lines)
+        {
+            var input = new StringReader(string.Join("\n", lines));
+            var output = new StringWriter();
+            var server = new JsonLineBridgeServer(new FakeDinoLiteAdapter(), input, output);
+            var code = server.Run();
+            Assert.AreEqual(0, code);
+            return output.ToString();
+        }
+    }
+}
