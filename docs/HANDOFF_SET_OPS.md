@@ -25,6 +25,16 @@
   - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
   - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
 
+## Session Update (2026-06-09, AI Grader Dino-Lite EDOF runtime PR #30 merged)
+- PR #30 (`https://github.com/MarkTenKings/tenkings-backend/pull/30`) was merged into `main`.
+- Merge commit: `90f2c6b58edae1c18562f3d804211c957c881018`.
+- PR #30 added outside-git DNVideoX SDK runtime directory support for manual Dino-Lite capture packages and validated EDOF output on the Dell capture node before merge.
+- GitHub Actions for the PR branch were passing before merge; post-merge `main` CI run started as `27243616575`.
+- Vercel preview for the PR branch passed before merge; production Vercel deploy status should be checked against the final `main` commit after this handoff docs commit.
+- Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
+- No next AI Grader phase was started.
+- Guardrails held during merge and handoff so far: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no additional image capture, no additional microscope command, no lens/focus/exposure-setting/DPQ method, no SDK binary/OCX/DLL/vendor SDK commit, no captured image commit, and no certified grading claim.
+
 ## Session Update (2026-06-09, AI Grader Dino-Lite EDOF runtime PR #30)
 - Branch `feature/ai-grader-dinolite-edof-runtime` was created from latest `origin/main`.
 - Added outside-git DNVideoX SDK runtime directory support for manual Dino-Lite capture packages:

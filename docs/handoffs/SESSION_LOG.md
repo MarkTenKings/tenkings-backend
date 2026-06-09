@@ -1,5 +1,29 @@
 # Session Log (Append Only)
 
+## 2026-06-09 - AI Grader Dino-Lite EDOF runtime PR #30 merged
+
+### Summary
+- PR #30 (`https://github.com/MarkTenKings/tenkings-backend/pull/30`) was merged into `main`.
+- Merge commit: `90f2c6b58edae1c18562f3d804211c957c881018`.
+- PR #30 added outside-git DNVideoX SDK runtime directory support for manual Dino-Lite capture packages and validated EDOF output on the Dell capture node before merge.
+- GitHub Actions for the PR branch were passing before merge; post-merge `main` CI run started as `27243616575`.
+- Vercel preview for the PR branch passed before merge; production Vercel deploy status should be checked against the final `main` commit after this handoff docs commit.
+- Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
+- No next AI Grader phase was started.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` command was run.
+- No additional image capture was run.
+- No additional microscope command was run.
+- No lens, focus, exposure-setting, or DPQ method was run.
+- No SDK binary, OCX, DLL, or vendor SDK file was committed.
+- No captured image was committed.
+- No certified grading claim was added.
+
 ## 2026-06-09 - AI Grader Dino-Lite EDOF runtime support
 
 ### Summary
