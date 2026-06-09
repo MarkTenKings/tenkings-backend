@@ -1,6 +1,6 @@
 # AI Grader Capture Helper
 
-The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino LED controller readiness, GRBL/OpenBuilds stage status readiness, and manual Dino-Lite DNVideoX enumeration; each requires explicit CLI/config input. Default health, readiness, manifests, transport, and tests never open cameras, microscopes, XY stages, arm interlocks, sockets, uploads, or database connections.
+The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino LED controller readiness, GRBL/OpenBuilds stage status readiness, and manual Dino-Lite DNVideoX commands; each requires explicit CLI/config input. Default health, readiness, manifests, transport, and tests never open cameras, microscopes, XY stages, arm interlocks, sockets, uploads, or database connections.
 
 ## Local Usage
 
@@ -207,17 +207,19 @@ Supported bridge JSONL commands:
 - `listDevices`
 - `capabilities`
 - `dinolite.enumerateDevices`
+- `dinolite.status`
+- `dinolite.captureStillJpg`
 - `exit`
 
 The fake bridge adapter is the default. It returns deterministic AF7915MZTL-like device metadata and simulated support flags for still capture, AMR, FLC, EDR, and EDOF. It never uses COM and does not require SDK files.
 
-The real DNVideoX adapter is manual enumeration only. It does not instantiate `DNVideoX.ocx` during tests, CI, default bridge startup, fake mode, readiness, or normal health/capability commands. The only real COM path is the explicit `dinolite.enumerateDevices` command with `--adapter dnvideox --manual-enumerate`.
+The real DNVideoX adapter is manual-only. It does not instantiate `DNVideoX.ocx` during tests, CI, default bridge startup, fake mode, readiness, or normal health/capability commands. The real COM paths are explicit `dinolite.enumerateDevices`, `dinolite.status`, and `dinolite.captureStillJpg` commands with `--adapter dnvideox` plus the manual bridge flag set by the capture-helper CLI.
 
 Manual enumeration creates the registered 32-bit ActiveX control through ProgID `VIDEOCAPX.VideoCapXCtrl.1` inside a hidden offscreen WinForms `AxHost`, calls `GetVideoDeviceCount`, then calls `GetVideoDeviceName` for detected indexes. It may also call `GetVideoDeviceDesc` and `GetDeviceID`; optional failures are reported without failing the whole enumeration when device count succeeds.
 
 The hidden host is required because the vendor C#, VB6, HTML, and C++ samples all host DNVideoX as an ActiveX control with a control site/window. Plain COM activation could instantiate `DNVideoX.ocx` and read version `3, 0, 56, 6`, but it failed the enumeration path on the Dell capture node.
 
-This slice does not set `Connected=True`, does not set `Preview=True`, and does not call capture/control methods for frame capture, LEDs, FLC, lens, focus, exposure, EDR, EDOF, DPQ, or microscope state.
+Enumeration does not set `Connected=True`, does not set `Preview=True`, and does not call capture/control methods. Manual status sets `Connected=True` only for the command, reads approved status fields, and disconnects in `finally`. Manual still capture sets `Connected=True`, enables `Preview=True` for `SaveFrameJPG` based on the vendor sample capture flow, saves one JPG to an explicit outside-git output directory, hashes it, then disables preview and disconnects in `finally`.
 
 Capture-helper readiness reports whether a Dino-Lite bridge path is configured, but default readiness does not spawn the bridge. The only manual command added in this slice is fake bridge health:
 
@@ -245,6 +247,31 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-
 ```
 
 Local Dell smoke on 2026-06-09 after the hidden-host fix returned one device: `comActiveXInstantiated=true`, `connected=false`, `preview=false`, `deviceCount=1`, `devices[0].name=Dino-Lite Edge`, `devices[0].description=""`, OCX version `3, 0, 56, 6`, `host=hidden-winforms-axhost`, `optionalErrors=[]`. The `GetDeviceID` value was present and is intentionally omitted from docs except for USB VID/PID evidence: `vid_a168&pid_0990`. No `Connected=True`, `Preview=True`, capture, LED/FLC/lens/focus/exposure/EDR/EDOF/DPQ, or control command was used.
+
+Manual real DNVideoX status, for the Dell Windows capture node only:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-status `
+  --bridge-exe C:\TenKings\repos\tenkings-rip-it-live\packages\ai-grader-dinolite-bridge\src\TenKings.AiGrader.DinoLiteBridge\bin\x86\Release\net48\TenKings.AiGrader.DinoLiteBridge.exe `
+  --adapter dnvideox `
+  --device-index 0 `
+  --bridge-timeout-ms 15000
+```
+
+Manual real DNVideoX still JPG capture, for the Dell Windows capture node only:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-capture-still `
+  --bridge-exe C:\TenKings\repos\tenkings-rip-it-live\packages\ai-grader-dinolite-bridge\src\TenKings.AiGrader.DinoLiteBridge\bin\x86\Release\net48\TenKings.AiGrader.DinoLiteBridge.exe `
+  --adapter dnvideox `
+  --device-index 0 `
+  --output-dir C:\TenKings\capture-data\dinolite-smoke `
+  --bridge-timeout-ms 15000
+```
+
+Local Dell smoke on 2026-06-09 for manual status returned `comActiveXInstantiated=true`, OCX version `3, 0, 56, 6`, device `Dino-Lite Edge`, config bitfield `198`, decoded `amr=true` and `axi=true`, AMR `0`, exposure value `1048575`, gain `239`, auto exposure `0`, LED state `0`, `connectedDuringCommand=true`, `previewDuringCommand=false`, and cleanup `disconnected=true`, `hostDisposed=true`. `GetVideoFormat` and `GetLensPosLimits` returned optional type-mismatch errors and did not fail the command. Device ID was present and is redacted except for USB VID/PID `vid_a168&pid_0990`.
+
+Local Dell smoke on 2026-06-09 for manual still JPG capture wrote `C:\TenKings\capture-data\dinolite-smoke\dinolite-still-20260609T184302837Z.jpg` outside git, `sha256=96eb68bc57756e01f35a819b403d3baa088c9d6c65216383d9faa18d3de168fb`, `byteSize=67326`, `mimeType=image/jpeg`, `connectedDuringCommand=true`, `previewDuringCommand=true`, and cleanup `previewStopped=true`, `disconnected=true`, `hostDisposed=true`. `Preview=True` was used for capture because the vendor sample capture flow enables preview before `SaveFrameJPG`; no second capture was run to test a no-preview path.
 
 SDK binaries, OCX files, and DNVideoX DLLs must remain outside git. Do not run `regsvr32` from this repo flow.
 
@@ -280,7 +307,7 @@ The runnable driver set is `mock` only. `real` is accepted by readiness reportin
 
 The mock driver set never imports Basler, Dino-Lite, serial, GRBL, camera, USB, or microscope SDKs. It does not open OS device handles or sockets.
 
-The implemented real-adjacent adapters are Arduino LED readiness, GRBL stage status readiness, and manual Dino-Lite DNVideoX enumeration. They are not part of the runnable mock driver set and require explicit CLI/config/env before they can open serial or instantiate DNVideoX.
+The implemented real-adjacent adapters are Arduino LED readiness, GRBL stage status readiness, and manual Dino-Lite DNVideoX enumeration/status/still JPG capture. They are not part of the runnable mock driver set and require explicit CLI/config/env before they can open serial or instantiate DNVideoX.
 
 ## Future Hardware Boundary
 
@@ -306,4 +333,4 @@ Before the first real hardware driver integration:
 - keep real discovery non-invasive until the specific device adapter is reviewed
 - keep Arduino LED readiness limited to `PING` and `LED ALL OFF` until a later approved LED control slice
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
-- keep Dino-Lite real DNVideoX work limited to manual enumeration until a later approved connect/preview/capture/control slice
+- keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG capture until a later approved LED/FLC/lens/focus/exposure/EDR/EDOF/DPQ/control slice

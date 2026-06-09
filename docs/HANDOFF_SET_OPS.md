@@ -25,6 +25,47 @@
   - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
   - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
 
+## Session Update (2026-06-09, AI Grader Dino-Lite manual status and still JPG capture)
+- Branch `feature/ai-grader-dinolite-connect-capture` was created from latest `origin/main`.
+- Added manual-only DNVideoX bridge commands:
+  - `dinolite.status`
+  - `dinolite.captureStillJpg`
+- Added capture-helper manual CLI commands:
+  - `dinolite-status --bridge-exe <path> --adapter dnvideox --device-index 0`
+  - `dinolite-capture-still --bridge-exe <path> --adapter dnvideox --device-index 0 --output-dir C:\TenKings\capture-data\dinolite-smoke`
+- Default readiness, health, server/admin paths, and tests still do not instantiate DNVideoX or spawn the real adapter.
+- Fake adapter/tests return deterministic status and still-capture metadata; CI does not require SDK binaries, COM, or hardware.
+- Windows read-only device inspection before smoke saw `Dino-Lite Edge`, class `Camera`, status `OK`, USB VID/PID `VID_A168&PID_0990`. No DinoCapture/sample/camera app process was observed by name before smoke.
+- Manual real DNVideoX status smoke:
+  - `comActiveXInstantiated=true`
+  - OCX version `3, 0, 56, 6`
+  - device `Dino-Lite Edge`, device ID redacted except `vid_a168&pid_0990`
+  - `connectedDuringCommand=true`
+  - `previewDuringCommand=false`
+  - config bitfield `198`; decoded `amr=true`, `axi=true`, `edof=false`, `led=false`, `flc=false`
+  - AMR `0`, exposure value `1048575`, gain `239`, auto exposure `0`, LED state `0`
+  - optional `GetVideoFormat` and `GetLensPosLimits` returned type-mismatch errors and were reported without failing the command
+  - cleanup: `disconnected=true`, `hostDisposed=true`, no cleanup errors
+- Manual real DNVideoX still JPG smoke:
+  - output path outside git: `C:\TenKings\capture-data\dinolite-smoke\dinolite-still-20260609T184302837Z.jpg`
+  - `sha256=96eb68bc57756e01f35a819b403d3baa088c9d6c65216383d9faa18d3de168fb`
+  - `byteSize=67326`
+  - `mimeType=image/jpeg`
+  - `connectedDuringCommand=true`
+  - `previewDuringCommand=true`
+  - cleanup: `previewStopped=true`, `disconnected=true`, `hostDisposed=true`, no cleanup errors
+  - `Preview=True` was used because the vendor sample capture flow enables preview before `SaveFrameJPG`; no second capture was run to test a no-preview path.
+- Validation passed:
+  - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 0 warnings, 0 errors
+  - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 5 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 59 tests
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
+- Guardrails held so far: no EDR/EDOF/DPQ method, no LED/FLC/lens/focus/exposure-setting/control command, no `regsvr32`, no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no SDK binary/OCX/DLL/vendor SDK file committed, and no captured image committed.
+
 ## Session Update (2026-06-09, AI Grader Dino-Lite manual DNVideoX enumeration)
 - Branch `feature/ai-grader-dinolite-enumeration` was created from latest `origin/main`.
 - Added manual-only DNVideoX enumeration through the Windows .NET Framework 4.8 x86 STA bridge:

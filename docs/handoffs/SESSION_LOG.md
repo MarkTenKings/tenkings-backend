@@ -18723,6 +18723,46 @@ By enabling Rip It Live, I confirm:
 - No SDK binary, OCX, DLL, or vendor SDK file was committed.
 - No next AI Grader phase work was started.
 
+## 2026-06-09 - AI Grader Dino-Lite manual status and still JPG capture
+
+### Summary
+- Created branch `feature/ai-grader-dinolite-connect-capture` from latest `origin/main`.
+- Added manual-only DNVideoX bridge commands `dinolite.status` and `dinolite.captureStillJpg`.
+- Added capture-helper manual CLI commands `dinolite-status` and `dinolite-capture-still`.
+- Capture output directories are required and rejected when inside the git repo.
+- Default readiness, health, server/admin paths, and tests do not instantiate DNVideoX or spawn the real adapter.
+- Windows read-only device inspection before smoke saw `Dino-Lite Edge`, class `Camera`, status `OK`, USB VID/PID `VID_A168&PID_0990`. No DinoCapture/sample/camera app process was observed by name before smoke.
+
+### Manual Smoke
+- Status smoke returned OCX version `3, 0, 56, 6`, device `Dino-Lite Edge`, config bitfield `198`, decoded `amr=true` and `axi=true`, AMR `0`, exposure value `1048575`, gain `239`, auto exposure `0`, LED state `0`, `connectedDuringCommand=true`, `previewDuringCommand=false`, and cleanup `disconnected=true`, `hostDisposed=true`.
+- Status optional fields `GetVideoFormat` and `GetLensPosLimits` returned type-mismatch errors and were reported without failing the command.
+- Still JPG smoke wrote `C:\TenKings\capture-data\dinolite-smoke\dinolite-still-20260609T184302837Z.jpg` outside git.
+- Still JPG metadata: `sha256=96eb68bc57756e01f35a819b403d3baa088c9d6c65216383d9faa18d3de168fb`, `byteSize=67326`, `mimeType=image/jpeg`, `connectedDuringCommand=true`, `previewDuringCommand=true`.
+- Capture cleanup reported `previewStopped=true`, `disconnected=true`, `hostDisposed=true`, and no cleanup errors.
+- `Preview=True` was used because the vendor sample capture flow enables preview before `SaveFrameJPG`; no second capture was run to test a no-preview path.
+- Device ID was present in smoke output and redacted from docs except USB VID/PID `vid_a168&pid_0990`.
+
+### Validation Evidence
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 0 warnings, 0 errors.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 5 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 59 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy/restart was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No EDR/EDOF/DPQ method was run.
+- No LED/FLC/lens/focus/exposure-setting/control command was run.
+- No SDK binary, OCX, DLL, or vendor SDK file was committed.
+- No captured JPG was committed.
+
 ## 2026-06-01 - AI Grader GRBL stage readiness adapter
 
 ### Summary

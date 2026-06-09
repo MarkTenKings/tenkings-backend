@@ -6,6 +6,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
     {
         public string Adapter { get; private set; } = "fake";
         public bool ManualEnumerate { get; private set; }
+        public bool ManualHardwareAccess { get; private set; }
 
         public static BridgeOptions Parse(string[] args)
         {
@@ -21,6 +22,11 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 else if (arg == "--manual-enumerate")
                 {
                     options.ManualEnumerate = true;
+                    options.ManualHardwareAccess = true;
+                }
+                else if (arg == "--manual-hardware")
+                {
+                    options.ManualHardwareAccess = true;
                 }
                 else
                 {

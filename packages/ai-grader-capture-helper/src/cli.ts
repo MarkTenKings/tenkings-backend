@@ -12,7 +12,7 @@ import {
   type CaptureHelperConfigInput,
   type CaptureHelperEnv,
 } from "./index";
-import { DinoLiteBridgeClient, DinoLiteBridgeClientError } from "./drivers";
+import { DinoLiteBridgeClient, DinoLiteBridgeClientError, assertDinoLiteCaptureOutputDirAllowed } from "./drivers";
 import { startCaptureHelperHttpServer } from "./transport";
 
 export interface CaptureHelperCliIO {
@@ -29,6 +29,8 @@ type ParsedCommand =
   | { command: "stage-health"; config: CaptureHelperConfigInput }
   | { command: "dinolite-bridge-health"; config: CaptureHelperConfigInput }
   | { command: "dinolite-enumerate"; config: CaptureHelperConfigInput }
+  | { command: "dinolite-status"; config: CaptureHelperConfigInput; deviceIndex: number | undefined }
+  | { command: "dinolite-capture-still"; config: CaptureHelperConfigInput; deviceIndex: number | undefined; outputDir: string | undefined }
   | { command: "manifest"; config: CaptureHelperConfigInput; mode: string | undefined }
   | { command: "serve"; config: CaptureHelperConfigInput; host: string | undefined; port: string | undefined }
   | { command: "help"; config: CaptureHelperConfigInput };
@@ -54,6 +56,8 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let mode: string | undefined;
   let host: string | undefined;
   let port: string | undefined;
+  let deviceIndex: number | undefined;
+  let outputDir: string | undefined;
 
   if (command === "--help" || command === "-h") {
     return { command: "help", config };
@@ -131,6 +135,17 @@ function parseCliArgs(argv: string[]): ParsedCommand {
           ...config.dinoliteBridge,
           timeoutMs: Number(readOption(rest, index, "--bridge-timeout-ms")),
         };
+        index += 1;
+        break;
+      case "--device-index":
+        deviceIndex = Number(readOption(rest, index, "--device-index"));
+        if (!Number.isInteger(deviceIndex) || deviceIndex < 0) {
+          throw new CaptureHelperCommandError("--device-index must be a non-negative integer.");
+        }
+        index += 1;
+        break;
+      case "--output-dir":
+        outputDir = readOption(rest, index, "--output-dir");
         index += 1;
         break;
       case "--led-port":
@@ -349,12 +364,16 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "stage-health" ||
     command === "dinolite-bridge-health" ||
     command === "dinolite-enumerate" ||
+    command === "dinolite-status" ||
+    command === "dinolite-capture-still" ||
     command === "manifest" ||
     command === "serve" ||
     command === "help"
   ) {
     if (command === "manifest") return { command, config, mode };
     if (command === "serve") return { command, config, host, port };
+    if (command === "dinolite-status") return { command, config, deviceIndex };
+    if (command === "dinolite-capture-still") return { command, config, deviceIndex, outputDir };
     return { command, config };
   }
   throw new CaptureHelperCommandError(`Unknown command: ${command}`);
@@ -370,6 +389,8 @@ function helpPayload() {
       "stage-health --port <serial-port> --baud 115200",
       "dinolite-bridge-health --bridge-path <exe> --bridge-adapter fake",
       "dinolite-enumerate --bridge-exe <exe> --adapter dnvideox",
+      "dinolite-status --bridge-exe <exe> --adapter dnvideox --device-index 0",
+      "dinolite-capture-still --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-smoke",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -391,6 +412,8 @@ function helpPayload() {
       "--bridge-adapter fake|dnvideox",
       "--adapter fake|dnvideox",
       "--bridge-timeout-ms",
+      "--device-index",
+      "--output-dir",
       "--led-port",
       "--stage-port",
       "--baud",
@@ -412,8 +435,8 @@ function helpPayload() {
       "--port",
     ],
     mode: "simulator-only",
-    driverSet: "mock runnable; real limited to explicit Arduino LED readiness, GRBL stage readiness, and Dino-Lite enumeration",
-    dinoliteBridge: "manual fake bridge health and manual DNVideoX enumeration only; default readiness does not spawn",
+    driverSet: "mock runnable; real limited to explicit Arduino LED readiness, GRBL stage readiness, and manual Dino-Lite bridge commands",
+    dinoliteBridge: "manual fake bridge health plus manual DNVideoX enumerate/status/still capture only; default readiness does not spawn",
     transport: "disabled until serve is explicitly run",
   };
 }
@@ -515,6 +538,55 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         enumeration,
       });
       return enumeration.error ? 1 : 0;
+    }
+
+    if (parsed.command === "dinolite-status" || parsed.command === "dinolite-capture-still") {
+      const env = io.env ?? process.env;
+      const executablePath =
+        parsed.config.dinoliteBridge?.executablePath ?? env.AI_GRADER_CAPTURE_HELPER_DINOLITE_BRIDGE_PATH;
+      const adapter =
+        parsed.config.dinoliteBridge?.adapter ??
+        ((env.AI_GRADER_CAPTURE_HELPER_DINOLITE_BRIDGE_ADAPTER as "fake" | "dnvideox" | undefined) ?? undefined);
+
+      if (!executablePath || executablePath.trim().length === 0) {
+        throw new CaptureHelperCommandError(`${parsed.command} requires --bridge-exe <path>.`);
+      }
+      if (adapter !== "dnvideox") {
+        throw new CaptureHelperCommandError(`${parsed.command} requires --adapter dnvideox.`);
+      }
+      if (parsed.deviceIndex === undefined) {
+        throw new CaptureHelperCommandError(`${parsed.command} requires --device-index <index>.`);
+      }
+
+      const client = new DinoLiteBridgeClient({
+        executablePath,
+        adapter,
+        timeoutMs: parsed.config.dinoliteBridge?.timeoutMs,
+        manualHardwareAccess: true,
+      });
+
+      if (parsed.command === "dinolite-status") {
+        const status = await client.status(parsed.deviceIndex);
+        await client.close();
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "dinolite-status",
+          status,
+        });
+        return 0;
+      }
+
+      const outputDir = assertDinoLiteCaptureOutputDirAllowed(parsed.outputDir ?? "");
+      const capture = await client.captureStillJpg(parsed.deviceIndex, outputDir);
+      await client.close();
+      writeJson(stdout, {
+        ok: true,
+        service: "ai-grader-capture-helper",
+        command: "dinolite-capture-still",
+        capture,
+      });
+      return 0;
     }
 
     const service = createCaptureHelperService(parsed.config, io.env ?? process.env);
