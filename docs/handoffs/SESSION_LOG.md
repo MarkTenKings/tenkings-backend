@@ -1,5 +1,61 @@
 # Session Log (Append Only)
 
+## 2026-06-09 - AI Grader Dino-Lite EDOF runtime support
+
+### Summary
+- Created branch `feature/ai-grader-dinolite-edof-runtime` from latest `origin/main`.
+- Added outside-git DNVideoX SDK runtime directory support for manual Dino-Lite capture packages through:
+  - CLI flag `--sdk-runtime-dir`
+  - env var `TENKINGS_DINOLITE_SDK_RUNTIME_DIR`
+  - bridge option `--sdk-runtime-dir`
+  - bridge command/manifest diagnostics for runtime helper files and path handling
+- The bridge validates required EDOF helpers from the configured runtime directory: `enfuse.exe`, `SMIUtility.dll`, and `d3dx9_31.dll`.
+- Optional diagnostics include `DNLBarReader.dll`, `Microsoft.VC90.CRT.manifest`, `msvcr90.dll`, `msvcp90.dll`, and `msvcm90.dll`.
+- Runtime behavior is scoped to explicit manual `dinolite.capturePackage`: when the runtime dir is outside the repo and required helpers are present, the bridge temporarily sets the process current directory and Win32 DLL search directory to the runtime dir, then restores both in `finally`.
+- If runtime helpers are missing or the runtime dir is inside the repo, EDOF is recorded as unavailable with `EDOF_RUNTIME_DEPENDENCIES_MISSING`; normal, lighting sweep, and EDR capture remain graceful.
+- Default readiness, health, local transport, server/admin paths, and tests do not instantiate DNVideoX or spawn the real adapter.
+
+### Manual Smoke
+- Manual real DNVideoX demo package smoke was run on the Dell Windows capture node after automated validation.
+- SDK runtime dir used: `C:\TenKings\sdk\dino-lite\dnvideox-sdk` outside git.
+- Runtime dependency result: required EDOF helpers present, optional VC90/helper files present, `runtimeDirInsideRepo=false`, `runtimeDirUsable=true`, `edofHelperAvailable=true`.
+- Output folder outside git: `C:\TenKings\capture-data\dinolite-demo\dinolite-card-demo-001-20260609T234417886Z`.
+- `manifest.json` and `preview-report.html` were written in that folder.
+- Device `Dino-Lite Edge`; device ID was redacted from docs except USB VID/PID `vid_a168&pid_0990`.
+- OCX version `3, 0, 56, 6`.
+- Config bitfield `198`; decoded `edof=true`, `amr=true`, `ledMode=1`, `led=true`, `flc=true`, `axi=false`.
+- Normal still capture succeeded: `sha256=68c67b2d31b734041028fd29683ddc074e9270f9f83d87896d6949080fa0f33c`, `byteSize=67640`.
+- Lighting sweep succeeded:
+  - `all-leds-on-normal.jpg`, `byteSize=67419`
+  - `flc-all-level-3.jpg`, `byteSize=119091`
+  - `flc-quadrant-1-level-4.jpg`, `byteSize=117858`
+  - `flc-quadrant-2-level-4.jpg`, `byteSize=104818`
+- EDR succeeded: `edr.jpg`, `sha256=8243097c7598e1a7855ae2cdaee0fc63964b651749143418889eb3bf01093fd6`, `byteSize=507954`, SDK result `1`.
+- EDOF succeeded: `edof.jpg`, `sha256=5fefc49b0e562758be57c8f2154eedee213b65e96c6f54aba4aed57435def226`, `byteSize=359574`, SDK result `1`.
+- Cleanup reported `previewStopped=true`, `disconnected=true`, `hostDisposed=true`, no cleanup errors, and safe final FLC restore succeeded.
+- The preview report includes `Dino-Lite capture package preview -- not a certified grade.`
+
+### Validation Evidence
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 0 warnings, 0 errors.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 9 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 65 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy or restart was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` command was run.
+- No SDK binary, OCX, DLL, or vendor SDK file was committed.
+- No captured image was committed.
+- No lens, focus, exposure-setting, or DPQ method was called.
+- No certified grading/report claim was added.
+
 ## 2026-06-09 - AI Grader Dino-Lite capture package PR #29 merged
 
 ### Summary

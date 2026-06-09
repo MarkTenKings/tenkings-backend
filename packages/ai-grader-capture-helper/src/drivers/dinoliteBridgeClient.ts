@@ -11,6 +11,7 @@ export type DinoLiteBridgeCommand =
   | "dinolite.captureStillJpg"
   | "dinolite.getLightingStatus"
   | "dinolite.setLightingRecipe"
+  | "dinolite.runtimeDiagnostics"
   | "dinolite.capturePackage"
   | "dinolite.captureDemoPackage"
   | "exit";
@@ -22,6 +23,7 @@ export interface DinoLiteBridgeClientConfig {
   args?: string[];
   manualEnumeration?: boolean;
   manualHardwareAccess?: boolean;
+  sdkRuntimeDir?: string;
 }
 
 export interface DinoLiteBridgeRequest {
@@ -29,6 +31,7 @@ export interface DinoLiteBridgeRequest {
   command: DinoLiteBridgeCommand;
   deviceIndex?: number;
   outputDir?: string;
+  sdkRuntimeDir?: string;
   label?: string;
   includeLightingSweep?: boolean;
   includeEdr?: boolean;
@@ -189,6 +192,7 @@ export interface DinoLiteBridgeCapturePackageResult {
   previewDuringCommand: boolean;
   config?: unknown;
   amr?: number | null;
+  runtimeDependencies?: unknown;
   captures: Array<{
     path: string;
     filename: string;
@@ -205,6 +209,22 @@ export interface DinoLiteBridgeCapturePackageResult {
   optionalErrors?: unknown[];
   limitations?: string[];
   forbiddenOperationsInvoked: false;
+}
+
+export interface DinoLiteBridgeRuntimeDiagnostics {
+  adapter: "fake" | "dnvideox";
+  simulated?: boolean;
+  configuredRuntimeDir?: string | null;
+  runtimeDirConfigured: boolean;
+  runtimeDirExists?: boolean;
+  runtimeDirInsideRepo?: boolean;
+  runtimeDirUsable: boolean;
+  edofHelperAvailable: boolean;
+  requiredFiles: unknown[];
+  optionalFiles?: unknown[];
+  currentDirectory: string;
+  baseDirectory: string;
+  pathMutation: string;
 }
 
 export interface DinoLiteBridgeCapabilities {
@@ -358,6 +378,10 @@ export class DinoLiteBridgeClient {
     return this.sendResult<DinoLiteBridgeCapturePackageResult>("dinolite.capturePackage", options);
   }
 
+  async runtimeDiagnostics(): Promise<DinoLiteBridgeRuntimeDiagnostics> {
+    return this.sendResult<DinoLiteBridgeRuntimeDiagnostics>("dinolite.runtimeDiagnostics");
+  }
+
   async close(): Promise<void> {
     if (!this.child) return;
     try {
@@ -391,6 +415,7 @@ export class DinoLiteBridgeClient {
       "dinolite.captureStillJpg",
       "dinolite.getLightingStatus",
       "dinolite.setLightingRecipe",
+      "dinolite.runtimeDiagnostics",
       "dinolite.capturePackage",
       "dinolite.captureDemoPackage",
       "exit",
@@ -425,6 +450,7 @@ export class DinoLiteBridgeClient {
       this.config.adapter,
       ...(this.config.manualEnumeration ? ["--manual-enumerate"] : []),
       ...(this.config.manualHardwareAccess ? ["--manual-hardware"] : []),
+      ...(this.config.sdkRuntimeDir ? ["--sdk-runtime-dir", this.config.sdkRuntimeDir] : []),
       ...(this.config.args ?? []),
     ];
     const child = this.spawnProcess(this.config.executablePath as string, args);
@@ -508,6 +534,25 @@ export function assertDinoLiteCaptureOutputDirAllowed(outputDir: string, repoRoo
     );
   }
   return resolvedOutputDir;
+}
+
+export function assertDinoLiteSdkRuntimeDirAllowed(sdkRuntimeDir: string, repoRoot = process.cwd()): string {
+  if (!sdkRuntimeDir || sdkRuntimeDir.trim().length === 0) {
+    throw new DinoLiteBridgeClientError(
+      "SDK_RUNTIME_DIR_REQUIRED",
+      "Dino-Lite SDK runtime directory requires --sdk-runtime-dir <path>."
+    );
+  }
+  const resolvedRuntimeDir = path.resolve(sdkRuntimeDir);
+  const resolvedRepoRoot = path.resolve(repoRoot);
+  const relative = path.relative(resolvedRepoRoot, resolvedRuntimeDir);
+  if (relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))) {
+    throw new DinoLiteBridgeClientError(
+      "SDK_RUNTIME_DIR_INSIDE_REPO",
+      "Dino-Lite SDK runtime directory must be outside the git repo."
+    );
+  }
+  return resolvedRuntimeDir;
 }
 
 function defaultSpawn(command: string, args: string[]): DinoLiteBridgeChildProcess {

@@ -22,7 +22,19 @@ namespace TenKings.AiGrader.DinoLiteBridge
         private const int LightingSettleDelayMs = 250;
         private const int OptionalCapturePollTimeoutMs = 15000;
         private const int OptionalCapturePollIntervalMs = 100;
+        private static readonly string[] RequiredEdofRuntimeFiles = { "enfuse.exe", "SMIUtility.dll", "d3dx9_31.dll" };
+        private static readonly string[] OptionalRuntimeFiles =
+        {
+            "DNLBarReader.dll",
+            "Microsoft.VC90.CRT.manifest",
+            "msvcr90.dll",
+            "msvcp90.dll",
+            "msvcm90.dll"
+        };
         private readonly BridgeOptions options;
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool SetDllDirectory(string? lpPathName);
 
         public DnVideoXAdapter(BridgeOptions options)
         {
@@ -432,6 +444,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
             object? control = null;
             HiddenDnVideoXHost? host = null;
             var cleanup = new CleanupState();
+            RuntimeDirectoryScope? runtimeScope = null;
             try
             {
                 var timestamp = DateTimeOffset.UtcNow;
@@ -439,6 +452,8 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 var absoluteOutputDir = Path.GetFullPath(outputDir);
                 var packageDir = Path.Combine(absoluteOutputDir, packageId);
                 Directory.CreateDirectory(packageDir);
+                var runtimeDependencies = InspectRuntimeDependencies(options.SdkRuntimeDir);
+                runtimeScope = RuntimeDirectoryScope.TryEnter(options.SdkRuntimeDir, runtimeDependencies);
 
                 host = HiddenDnVideoXHost.Create();
                 control = host.ControlInstance;
@@ -456,7 +471,6 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 var pid = ExtractUsbPid(deviceId);
                 var config = BuildConfigObject(configBits, pid);
                 var amr = InvokeOptional(control, "GetAMR", optionalErrors, deviceIndex);
-                var runtimeDependencies = InspectRuntimeDependencies();
                 var captures = new List<object>();
 
                 captures.Add(CaptureJpg(control, Path.Combine(packageDir, "normal-still.jpg"), "normal", "normal-still", "SaveFrameJPG"));
@@ -488,9 +502,25 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
                 if (includeEdof)
                 {
-                    captures.Add(IsEdofSupported(configBits, pid)
-                        ? TryOptionalSdkCapture(control, deviceIndex, Path.Combine(packageDir, "edof.jpg"), "edof", "edof", "SaveEDOF", optionalErrors)
-                        : UnavailableCapture(packageDir, "edof.jpg", "edof", "edof", "EDOF_UNSUPPORTED", "GetConfig did not report EDOF support.", null));
+                    if (!IsEdofSupported(configBits, pid))
+                    {
+                        captures.Add(UnavailableCapture(packageDir, "edof.jpg", "edof", "edof", "EDOF_UNSUPPORTED", "GetConfig did not report EDOF support.", null));
+                    }
+                    else if (!IsEdofRuntimeReady(runtimeDependencies))
+                    {
+                        captures.Add(UnavailableCapture(
+                            packageDir,
+                            "edof.jpg",
+                            "edof",
+                            "edof",
+                            "EDOF_RUNTIME_DEPENDENCIES_MISSING",
+                            "EDOF is reported by GetConfig, but required DNVideoX helper runtime files are not available from the configured SDK runtime directory.",
+                            runtimeDependencies));
+                    }
+                    else
+                    {
+                        captures.Add(TryOptionalSdkCapture(control, deviceIndex, Path.Combine(packageDir, "edof.jpg"), "edof", "edof", "SaveEDOF", optionalErrors));
+                    }
                 }
 
                 var finalRecipe = BuildLightingRecipe("safe-final-all-quadrants-level-3");
@@ -560,7 +590,13 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 CleanupControl(control, cleanup, stopPreview: true);
                 host?.Dispose();
                 cleanup.hostDisposed = true;
+                runtimeScope?.Dispose();
             }
+        }
+
+        public object RuntimeDiagnostics()
+        {
+            return InspectRuntimeDependencies(options.SdkRuntimeDir);
         }
 
         private static object NotReady(string message)
@@ -1216,30 +1252,110 @@ namespace TenKings.AiGrader.DinoLiteBridge
             throw new IOException("Timed out waiting to read file size: " + path, lastError);
         }
 
-        private static object InspectRuntimeDependencies()
+        public static object InspectRuntimeDependenciesForTests(string? runtimeDir, string? repoRoot)
+        {
+            return InspectRuntimeDependencies(runtimeDir, repoRoot);
+        }
+
+        private static object InspectRuntimeDependencies(string? runtimeDir, string? repoRoot = null)
         {
             var baseDir = AppDomain.CurrentDomain.BaseDirectory;
             var currentDir = Environment.CurrentDirectory;
+            var configuredRuntimeDir = string.IsNullOrWhiteSpace(runtimeDir) ? null : Path.GetFullPath(runtimeDir!);
+            var detectedRepoRoot = string.IsNullOrWhiteSpace(repoRoot) ? FindRepoRoot(currentDir) : Path.GetFullPath(repoRoot!);
+            var runtimeDirExists = configuredRuntimeDir != null && Directory.Exists(configuredRuntimeDir);
+            var runtimeDirInsideRepo = configuredRuntimeDir != null && detectedRepoRoot != null && IsPathInside(configuredRuntimeDir, detectedRepoRoot);
+            var runtimeDirUsable = runtimeDirExists && !runtimeDirInsideRepo;
+            var requiredFiles = BuildDependencyPresence(RequiredEdofRuntimeFiles, configuredRuntimeDir, baseDir, currentDir);
+            var optionalFiles = BuildDependencyPresence(OptionalRuntimeFiles, configuredRuntimeDir, baseDir, currentDir);
+            var edofHelperAvailable = runtimeDirUsable && AllPresentInRuntimeDir(requiredFiles);
+
             return new
             {
+                adapter = "dnvideox",
                 baseDirectory = baseDir,
                 currentDirectory = currentDir,
-                enfuse = DependencyPresence("enfuse.exe", baseDir, currentDir),
-                smiUtility = DependencyPresence("SMIUtility.dll", baseDir, currentDir),
-                d3dx931 = DependencyPresence("d3dx9_31.dll", baseDir, currentDir)
+                configuredRuntimeDir,
+                runtimeDirConfigured = configuredRuntimeDir != null,
+                runtimeDirExists,
+                runtimeDirInsideRepo,
+                runtimeDirUsable,
+                repoRoot = detectedRepoRoot,
+                requiredFiles,
+                optionalFiles,
+                edofHelperAvailable,
+                pathMutation = runtimeDirUsable
+                    ? "During manual capturePackage only, bridge temporarily sets current directory and Win32 DLL search directory to configuredRuntimeDir, then restores both in finally."
+                    : "none"
             };
         }
 
-        private static object DependencyPresence(string fileName, string baseDir, string currentDir)
+        private static object[] BuildDependencyPresence(IEnumerable<string> fileNames, string? runtimeDir, string baseDir, string currentDir)
         {
+            var results = new List<object>();
+            foreach (var fileName in fileNames)
+            {
+                results.Add(DependencyPresence(fileName, runtimeDir, baseDir, currentDir));
+            }
+
+            return results.ToArray();
+        }
+
+        private static object DependencyPresence(string fileName, string? runtimeDir, string baseDir, string currentDir)
+        {
+            var runtimePath = runtimeDir == null ? null : Path.Combine(runtimeDir, fileName);
             var basePath = Path.Combine(baseDir, fileName);
             var currentPath = Path.Combine(currentDir, fileName);
             return new
             {
                 fileName,
+                runtimeDirectoryPresent = runtimePath != null && File.Exists(runtimePath),
                 baseDirectoryPresent = File.Exists(basePath),
                 currentDirectoryPresent = File.Exists(currentPath)
             };
+        }
+
+        private static bool AllPresentInRuntimeDir(object[] dependencies)
+        {
+            foreach (var dependency in dependencies)
+            {
+                var present = dependency.GetType().GetProperty("runtimeDirectoryPresent")?.GetValue(dependency, null);
+                if (Convert.ToBoolean(present) != true)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool IsEdofRuntimeReady(object diagnostics)
+        {
+            var value = diagnostics.GetType().GetProperty("edofHelperAvailable")?.GetValue(diagnostics, null);
+            return Convert.ToBoolean(value);
+        }
+
+        private static string? FindRepoRoot(string startDirectory)
+        {
+            var directory = new DirectoryInfo(Path.GetFullPath(startDirectory));
+            while (directory != null)
+            {
+                if (Directory.Exists(Path.Combine(directory.FullName, ".git")))
+                {
+                    return directory.FullName;
+                }
+
+                directory = directory.Parent;
+            }
+
+            return null;
+        }
+
+        private static bool IsPathInside(string candidate, string root)
+        {
+            var normalizedCandidate = Path.GetFullPath(candidate).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            return normalizedCandidate.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase);
         }
 
         private static string? GetOcxVersion()
@@ -1364,6 +1480,44 @@ namespace TenKings.AiGrader.DinoLiteBridge
             public bool hostDisposed { get; set; }
             public object? finalLightingRecipe { get; set; }
             public List<object> cleanupErrors { get; } = new List<object>();
+        }
+
+        private sealed class RuntimeDirectoryScope : IDisposable
+        {
+            private readonly string originalCurrentDirectory;
+            private bool entered;
+
+            private RuntimeDirectoryScope(string originalCurrentDirectory)
+            {
+                this.originalCurrentDirectory = originalCurrentDirectory;
+            }
+
+            public static RuntimeDirectoryScope? TryEnter(string? runtimeDir, object diagnostics)
+            {
+                if (!IsEdofRuntimeReady(diagnostics) || string.IsNullOrWhiteSpace(runtimeDir))
+                {
+                    return null;
+                }
+
+                var scope = new RuntimeDirectoryScope(Environment.CurrentDirectory);
+                var absoluteRuntimeDir = Path.GetFullPath(runtimeDir!);
+                Environment.CurrentDirectory = absoluteRuntimeDir;
+                SetDllDirectory(absoluteRuntimeDir);
+                scope.entered = true;
+                return scope;
+            }
+
+            public void Dispose()
+            {
+                if (!entered)
+                {
+                    return;
+                }
+
+                SetDllDirectory(null);
+                Environment.CurrentDirectory = originalCurrentDirectory;
+                entered = false;
+            }
         }
     }
 }

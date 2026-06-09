@@ -7,6 +7,7 @@ const {
   DinoLiteBridgeClient,
   DinoLiteBridgeClientError,
   assertDinoLiteCaptureOutputDirAllowed,
+  assertDinoLiteSdkRuntimeDirAllowed,
   buildCaptureHelperReadinessReport,
   getDinoLiteBridgeConfiguredStatus,
 } = require("../dist");
@@ -219,6 +220,21 @@ function fakeResult(command) {
       previewDuringCommand: true,
       config: { bitfield: 124 },
       amr: 42.5,
+      runtimeDependencies: {
+        adapter: "fake",
+        simulated: true,
+        runtimeDirConfigured: false,
+        runtimeDirUsable: false,
+        edofHelperAvailable: true,
+        requiredFiles: [
+          { fileName: "enfuse.exe", present: true },
+          { fileName: "SMIUtility.dll", present: true },
+          { fileName: "d3dx9_31.dll", present: true },
+        ],
+        currentDirectory: "simulated",
+        baseDirectory: "simulated",
+        pathMutation: "none",
+      },
       captures: [
         {
           path: "C:\\TenKings\\capture-data\\dinolite-demo\\normal-still.jpg",
@@ -247,6 +263,23 @@ function fakeResult(command) {
       cleanup: { previewStopped: true, disconnected: true, hostDisposed: true },
       limitations: ["Dino-Lite capture package preview -- not a certified grade."],
       forbiddenOperationsInvoked: false,
+    };
+  }
+  if (command === "dinolite.runtimeDiagnostics") {
+    return {
+      adapter: "fake",
+      simulated: true,
+      runtimeDirConfigured: false,
+      runtimeDirUsable: false,
+      edofHelperAvailable: true,
+      requiredFiles: [
+        { fileName: "enfuse.exe", present: true },
+        { fileName: "SMIUtility.dll", present: true },
+        { fileName: "d3dx9_31.dll", present: true },
+      ],
+      currentDirectory: "simulated",
+      baseDirectory: "simulated",
+      pathMutation: "none",
     };
   }
   return undefined;
@@ -386,7 +419,37 @@ test("client maps fake capture package response shape", async () => {
   assert.equal(capturePackage.captures[0].status, "success");
   assert.equal(capturePackage.captures[1].captureKind, "edr");
   assert.equal(capturePackage.captures[1].status, "unavailable");
+  assert.equal(capturePackage.runtimeDependencies.edofHelperAvailable, true);
   assert.equal(capturePackage.forbiddenOperationsInvoked, false);
+});
+
+test("client passes sdk runtime dir only for explicit manual hardware spawn", async () => {
+  const spawned = [];
+  const client = new DinoLiteBridgeClient(
+    {
+      executablePath: "bridge.exe",
+      adapter: "dnvideox",
+      timeoutMs: 100,
+      manualHardwareAccess: true,
+      sdkRuntimeDir: "C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
+    },
+    (command, args) => {
+      spawned.push({ command, args });
+      return new FakeBridgeProcess();
+    }
+  );
+
+  const diagnostics = await client.runtimeDiagnostics();
+  await client.close();
+
+  assert.deepEqual(spawned[0].args, [
+    "--adapter",
+    "dnvideox",
+    "--manual-hardware",
+    "--sdk-runtime-dir",
+    "C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
+  ]);
+  assert.equal(diagnostics.edofHelperAvailable, true);
 });
 
 test("real adapter manual hardware commands do not allow health path", async () => {
@@ -458,6 +521,18 @@ test("capture output directory guard rejects missing and repo paths", () => {
   assert.equal(
     assertDinoLiteCaptureOutputDirAllowed(path.join(os.tmpdir(), "dinolite-smoke"), process.cwd()),
     path.resolve(os.tmpdir(), "dinolite-smoke")
+  );
+});
+
+test("sdk runtime directory guard rejects missing and repo paths", () => {
+  assert.throws(() => assertDinoLiteSdkRuntimeDirAllowed(""), /requires --sdk-runtime-dir/);
+  assert.throws(
+    () => assertDinoLiteSdkRuntimeDirAllowed(process.cwd(), process.cwd()),
+    /outside the git repo/
+  );
+  assert.equal(
+    assertDinoLiteSdkRuntimeDirAllowed(path.join(os.tmpdir(), "dnvideox-runtime"), process.cwd()),
+    path.resolve(os.tmpdir(), "dnvideox-runtime")
   );
 });
 
@@ -560,6 +635,36 @@ test("cli capture package rejects output inside repo before spawning", async () 
 
   assert.equal(code, 1);
   assert.match(stderr, /outside the git repo/);
+});
+
+test("cli capture package rejects sdk runtime dir inside repo before spawning", async () => {
+  let stderr = "";
+  const code = await runCaptureHelperCli(
+    [
+      "dinolite-capture-demo-package",
+      "--bridge-exe",
+      "bridge.exe",
+      "--adapter",
+      "dnvideox",
+      "--device-index",
+      "0",
+      "--output-dir",
+      path.join(os.tmpdir(), "dinolite-demo"),
+      "--label",
+      "card-demo-001",
+      "--sdk-runtime-dir",
+      process.cwd(),
+    ],
+    {
+      stderr: (text) => {
+        stderr += text;
+      },
+      env: {},
+    }
+  );
+
+  assert.equal(code, 1);
+  assert.match(stderr, /SDK runtime directory must be outside the git repo/);
 });
 
 test("readiness default reports bridge unconfigured without spawning", () => {

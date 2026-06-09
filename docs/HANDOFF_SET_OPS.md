@@ -25,6 +25,39 @@
   - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
   - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
 
+## Session Update (2026-06-09, AI Grader Dino-Lite EDOF runtime PR #30)
+- Branch `feature/ai-grader-dinolite-edof-runtime` was created from latest `origin/main`.
+- Added outside-git DNVideoX SDK runtime directory support for manual Dino-Lite capture packages:
+  - CLI flag `--sdk-runtime-dir`
+  - env var `TENKINGS_DINOLITE_SDK_RUNTIME_DIR`
+  - bridge option `--sdk-runtime-dir`
+  - bridge command/manifest diagnostics for required helper files and runtime-dir usability
+- Required EDOF helper files are validated from the configured runtime directory: `enfuse.exe`, `SMIUtility.dll`, and `d3dx9_31.dll`. Optional diagnostics include `DNLBarReader.dll`, `Microsoft.VC90.CRT.manifest`, `msvcr90.dll`, `msvcp90.dll`, and `msvcm90.dll`.
+- Runtime behavior: during explicit manual `dinolite.capturePackage` only, when the runtime directory is outside the repo and required helpers are present, the bridge temporarily sets process current directory and Win32 DLL search directory to the runtime directory, then restores both in `finally`.
+- SDK runtime dir used for local smoke: `C:\TenKings\sdk\dino-lite\dnvideox-sdk` (outside git).
+- Runtime dependency result: required EDOF helpers present, optional VC90/helper files present, `runtimeDirInsideRepo=false`, `runtimeDirUsable=true`, `edofHelperAvailable=true`.
+- Manual real DNVideoX demo package smoke after automated validation:
+  - output folder outside git: `C:\TenKings\capture-data\dinolite-demo\dinolite-card-demo-001-20260609T234417886Z`
+  - device `Dino-Lite Edge`; device ID redacted except USB VID/PID `vid_a168&pid_0990`
+  - OCX version `3, 0, 56, 6`
+  - config bitfield `198`; decoded `edof=true`, `amr=true`, `ledMode=1`, `led=true`, `flc=true`, `axi=false`
+  - normal still `sha256=68c67b2d31b734041028fd29683ddc074e9270f9f83d87896d6949080fa0f33c`, `byteSize=67640`
+  - lighting sweep succeeded: `all-leds-on-normal.jpg` `67419`, `flc-all-level-3.jpg` `119091`, `flc-quadrant-1-level-4.jpg` `117858`, `flc-quadrant-2-level-4.jpg` `104818`
+  - EDR succeeded: `edr.jpg`, `sha256=8243097c7598e1a7855ae2cdaee0fc63964b651749143418889eb3bf01093fd6`, `byteSize=507954`, SDK result `1`
+  - EDOF succeeded: `edof.jpg`, `sha256=5fefc49b0e562758be57c8f2154eedee213b65e96c6f54aba4aed57435def226`, `byteSize=359574`, SDK result `1`
+  - preview report: `C:\TenKings\capture-data\dinolite-demo\dinolite-card-demo-001-20260609T234417886Z\preview-report.html`
+  - cleanup: `previewStopped=true`, `disconnected=true`, `hostDisposed=true`, no cleanup errors; safe final FLC restore succeeded
+- Validation passed:
+  - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 0 warnings, 0 errors
+  - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 9 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 65 tests
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no SDK binary/OCX/DLL/vendor SDK commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, and no certified grade/report claim.
+
 ## Session Update (2026-06-09, AI Grader Dino-Lite capture package PR #29 merged)
 - PR #29 (`https://github.com/MarkTenKings/tenkings-backend/pull/29`) was merged into `main`.
 - Merge commit: `66eee50c66c34d3d45eb0095658286d22598f4d4`.

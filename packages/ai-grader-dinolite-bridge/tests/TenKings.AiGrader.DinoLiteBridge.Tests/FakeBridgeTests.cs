@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace TenKings.AiGrader.DinoLiteBridge.Tests
@@ -18,7 +19,8 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
                 "{\"id\":\"6\",\"command\":\"dinolite.status\",\"deviceIndex\":0}",
                 "{\"id\":\"7\",\"command\":\"dinolite.captureStillJpg\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\"}",
                 "{\"id\":\"8\",\"command\":\"dinolite.capturePackage\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"card-demo-001\",\"includeLightingSweep\":true,\"includeEdr\":true,\"includeEdof\":true}",
-                "{\"id\":\"9\",\"command\":\"exit\"}");
+                "{\"id\":\"9\",\"command\":\"dinolite.runtimeDiagnostics\"}",
+                "{\"id\":\"10\",\"command\":\"exit\"}");
 
             StringAssert.Contains(output, "\"id\":\"1\"");
             StringAssert.Contains(output, "\"status\":\"OK\"");
@@ -42,6 +44,8 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             StringAssert.Contains(output, "\"captureKind\":\"edr\"");
             StringAssert.Contains(output, "\"captureKind\":\"edof\"");
             StringAssert.Contains(output, "\"captureKind\":\"lightingSweep\"");
+            StringAssert.Contains(output, "\"edofHelperAvailable\":true");
+            StringAssert.Contains(output, "\"runtimeDirConfigured\":false");
             StringAssert.Contains(output, "not a certified grade");
             StringAssert.Contains(output, "\"status\":\"BYE\"");
         }
@@ -82,6 +86,49 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             Assert.AreEqual(true, decoded.GetType().GetProperty("led")!.GetValue(decoded, null));
             Assert.AreEqual(true, decoded.GetType().GetProperty("flc")!.GetValue(decoded, null));
             Assert.AreEqual(false, decoded.GetType().GetProperty("axi")!.GetValue(decoded, null));
+        }
+
+        [TestMethod]
+        public void RuntimeDiagnosticsRequireOutsideRepoRuntimeDirAndRequiredFiles()
+        {
+            var tempRoot = Path.Combine(Path.GetTempPath(), "tenkings-dinolite-runtime-tests", Path.GetRandomFileName());
+            var repoRoot = Path.Combine(tempRoot, "repo");
+            var runtimeRoot = Path.Combine(tempRoot, "runtime");
+            Directory.CreateDirectory(repoRoot);
+            Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
+            Directory.CreateDirectory(runtimeRoot);
+            foreach (var fileName in new[] { "enfuse.exe", "SMIUtility.dll", "d3dx9_31.dll" })
+            {
+                File.WriteAllText(Path.Combine(runtimeRoot, fileName), "fake");
+            }
+
+            var diagnostics = DnVideoXAdapter.InspectRuntimeDependenciesForTests(runtimeRoot, repoRoot);
+            var requiredFiles = (object[])diagnostics.GetType().GetProperty("requiredFiles")!.GetValue(diagnostics, null)!;
+
+            Assert.AreEqual(true, diagnostics.GetType().GetProperty("runtimeDirExists")!.GetValue(diagnostics, null));
+            Assert.AreEqual(false, diagnostics.GetType().GetProperty("runtimeDirInsideRepo")!.GetValue(diagnostics, null));
+            Assert.AreEqual(true, diagnostics.GetType().GetProperty("runtimeDirUsable")!.GetValue(diagnostics, null));
+            Assert.AreEqual(true, diagnostics.GetType().GetProperty("edofHelperAvailable")!.GetValue(diagnostics, null));
+            Assert.AreEqual(3, requiredFiles.Count(file => (bool)file.GetType().GetProperty("runtimeDirectoryPresent")!.GetValue(file, null)!));
+        }
+
+        [TestMethod]
+        public void RuntimeDiagnosticsRejectRepoRuntimeDirAndReportMissingFiles()
+        {
+            var tempRoot = Path.Combine(Path.GetTempPath(), "tenkings-dinolite-runtime-tests", Path.GetRandomFileName());
+            var repoRoot = Path.Combine(tempRoot, "repo-missing");
+            var runtimeRoot = Path.Combine(repoRoot, "runtime");
+            Directory.CreateDirectory(runtimeRoot);
+            Directory.CreateDirectory(Path.Combine(repoRoot, ".git"));
+            File.WriteAllText(Path.Combine(runtimeRoot, "enfuse.exe"), "fake");
+
+            var diagnostics = DnVideoXAdapter.InspectRuntimeDependenciesForTests(runtimeRoot, repoRoot);
+            var requiredFiles = (object[])diagnostics.GetType().GetProperty("requiredFiles")!.GetValue(diagnostics, null)!;
+
+            Assert.AreEqual(true, diagnostics.GetType().GetProperty("runtimeDirInsideRepo")!.GetValue(diagnostics, null));
+            Assert.AreEqual(false, diagnostics.GetType().GetProperty("runtimeDirUsable")!.GetValue(diagnostics, null));
+            Assert.AreEqual(false, diagnostics.GetType().GetProperty("edofHelperAvailable")!.GetValue(diagnostics, null));
+            Assert.AreEqual(1, requiredFiles.Count(file => (bool)file.GetType().GetProperty("runtimeDirectoryPresent")!.GetValue(file, null)!));
         }
 
         [TestMethod]
