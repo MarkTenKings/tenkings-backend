@@ -4,5 +4,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
     {
         public string? id { get; set; }
         public string? command { get; set; }
+        public string? type { get; set; }
+        public string? adapter { get; set; }
     }
 }

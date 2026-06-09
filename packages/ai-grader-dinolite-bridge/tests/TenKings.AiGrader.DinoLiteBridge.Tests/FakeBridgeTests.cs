@@ -14,7 +14,8 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
                 "{\"id\":\"2\",\"command\":\"sdkInfo\"}",
                 "{\"id\":\"3\",\"command\":\"listDevices\"}",
                 "{\"id\":\"4\",\"command\":\"capabilities\"}",
-                "{\"id\":\"5\",\"command\":\"exit\"}");
+                "{\"id\":\"5\",\"command\":\"dinolite.enumerateDevices\"}",
+                "{\"id\":\"6\",\"command\":\"exit\"}");
 
             StringAssert.Contains(output, "\"id\":\"1\"");
             StringAssert.Contains(output, "\"status\":\"OK\"");
@@ -24,7 +25,38 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             StringAssert.Contains(output, "\"flc\":true");
             StringAssert.Contains(output, "\"edr\":true");
             StringAssert.Contains(output, "\"edof\":true");
+            StringAssert.Contains(output, "\"deviceCount\":1");
+            StringAssert.Contains(output, "\"connected\":false");
+            StringAssert.Contains(output, "\"preview\":false");
+            StringAssert.Contains(output, "\"forbiddenOperationsInvoked\":false");
             StringAssert.Contains(output, "\"status\":\"BYE\"");
+        }
+
+        [TestMethod]
+        public void TypeAliasCanRequestManualEnumeration()
+        {
+            var output = Run("{\"id\":\"enum\",\"type\":\"dinolite.enumerateDevices\",\"adapter\":\"fake\"}");
+
+            StringAssert.Contains(output, "\"id\":\"enum\"");
+            StringAssert.Contains(output, "\"adapter\":\"fake\"");
+            StringAssert.Contains(output, "\"deviceCount\":1");
+            StringAssert.Contains(output, "\"comActiveXInstantiated\":false");
+        }
+
+        [TestMethod]
+        public void RealAdapterEnumerationFailsClosedWithoutManualFlag()
+        {
+            var input = new StringReader("{\"id\":\"manual\",\"command\":\"dinolite.enumerateDevices\"}");
+            var output = new StringWriter();
+            var server = new JsonLineBridgeServer(new DnVideoXAdapter(new BridgeOptions()), input, output);
+            var code = server.Run();
+
+            Assert.AreEqual(0, code);
+            var text = output.ToString();
+            StringAssert.Contains(text, "\"ok\":true");
+            StringAssert.Contains(text, "\"status\":\"SDK_NOT_READY\"");
+            StringAssert.Contains(text, "\"comActiveXInstantiated\":false");
+            StringAssert.Contains(text, "--manual-enumerate");
         }
 
         [TestMethod]

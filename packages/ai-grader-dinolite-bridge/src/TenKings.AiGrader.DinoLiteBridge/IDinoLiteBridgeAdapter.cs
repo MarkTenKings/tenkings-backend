@@ -6,5 +6,6 @@ namespace TenKings.AiGrader.DinoLiteBridge
         object SdkInfo();
         object ListDevices();
         object Capabilities();
+        object EnumerateDevices();
     }
 }

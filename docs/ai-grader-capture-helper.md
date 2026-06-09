@@ -1,6 +1,6 @@
 # AI Grader Capture Helper
 
-The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino LED controller readiness and GRBL/OpenBuilds stage status readiness, and they open serial only when an explicit port is supplied; default health, readiness, manifests, transport, and tests never open cameras, microscopes, XY stages, arm interlocks, sockets, uploads, or database connections.
+The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino LED controller readiness, GRBL/OpenBuilds stage status readiness, and manual Dino-Lite DNVideoX enumeration; each requires explicit CLI/config input. Default health, readiness, manifests, transport, and tests never open cameras, microscopes, XY stages, arm interlocks, sockets, uploads, or database connections.
 
 ## Local Usage
 
@@ -206,11 +206,18 @@ Supported bridge JSONL commands:
 - `sdkInfo`
 - `listDevices`
 - `capabilities`
+- `dinolite.enumerateDevices`
 - `exit`
 
 The fake bridge adapter is the default. It returns deterministic AF7915MZTL-like device metadata and simulated support flags for still capture, AMR, FLC, EDR, and EDOF. It never uses COM and does not require SDK files.
 
-The real DNVideoX adapter is a skeleton only. It documents the COM/ActiveX plan and returns `SDK_NOT_READY` or `NOT_IMPLEMENTED`; it does not instantiate `DNVideoX.ocx`, enumerate devices, capture frames, control LEDs/FLC/lens/focus, run EDR/EDOF, or touch hardware in this PR.
+The real DNVideoX adapter is manual enumeration only. It does not instantiate `DNVideoX.ocx` during tests, CI, default bridge startup, fake mode, readiness, or normal health/capability commands. The only real COM path is the explicit `dinolite.enumerateDevices` command with `--adapter dnvideox --manual-enumerate`.
+
+Manual enumeration creates the registered 32-bit ActiveX control through ProgID `VIDEOCAPX.VideoCapXCtrl.1` inside a hidden offscreen WinForms `AxHost`, calls `GetVideoDeviceCount`, then calls `GetVideoDeviceName` for detected indexes. It may also call `GetVideoDeviceDesc` and `GetDeviceID`; optional failures are reported without failing the whole enumeration when device count succeeds.
+
+The hidden host is required because the vendor C#, VB6, HTML, and C++ samples all host DNVideoX as an ActiveX control with a control site/window. Plain COM activation could instantiate `DNVideoX.ocx` and read version `3, 0, 56, 6`, but it failed the enumeration path on the Dell capture node.
+
+This slice does not set `Connected=True`, does not set `Preview=True`, and does not call capture/control methods for frame capture, LEDs, FLC, lens, focus, exposure, EDR, EDOF, DPQ, or microscope state.
 
 Capture-helper readiness reports whether a Dino-Lite bridge path is configured, but default readiness does not spawn the bridge. The only manual command added in this slice is fake bridge health:
 
@@ -219,6 +226,25 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-
   --bridge-path packages/ai-grader-dinolite-bridge/src/TenKings.AiGrader.DinoLiteBridge/bin/x86/Release/net48/TenKings.AiGrader.DinoLiteBridge.exe \
   --bridge-adapter fake
 ```
+
+Manual fake enumeration smoke:
+
+```sh
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-enumerate \
+  --bridge-exe packages/ai-grader-dinolite-bridge/src/TenKings.AiGrader.DinoLiteBridge/bin/x86/Release/net48/TenKings.AiGrader.DinoLiteBridge.exe \
+  --adapter fake
+```
+
+Manual real DNVideoX enumeration, for the Dell Windows capture node only:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-enumerate `
+  --bridge-exe C:\TenKings\repos\tenkings-rip-it-live\packages\ai-grader-dinolite-bridge\src\TenKings.AiGrader.DinoLiteBridge\bin\x86\Release\net48\TenKings.AiGrader.DinoLiteBridge.exe `
+  --adapter dnvideox `
+  --bridge-timeout-ms 10000
+```
+
+Local Dell smoke on 2026-06-09 after the hidden-host fix returned one device: `comActiveXInstantiated=true`, `connected=false`, `preview=false`, `deviceCount=1`, `devices[0].name=Dino-Lite Edge`, `devices[0].description=""`, OCX version `3, 0, 56, 6`, `host=hidden-winforms-axhost`, `optionalErrors=[]`. The `GetDeviceID` value was present and is intentionally omitted from docs except for USB VID/PID evidence: `vid_a168&pid_0990`. No `Connected=True`, `Preview=True`, capture, LED/FLC/lens/focus/exposure/EDR/EDOF/DPQ, or control command was used.
 
 SDK binaries, OCX files, and DNVideoX DLLs must remain outside git. Do not run `regsvr32` from this repo flow.
 
@@ -254,7 +280,7 @@ The runnable driver set is `mock` only. `real` is accepted by readiness reportin
 
 The mock driver set never imports Basler, Dino-Lite, serial, GRBL, camera, USB, or microscope SDKs. It does not open OS device handles or sockets.
 
-The implemented real-adjacent adapters are Arduino LED readiness and GRBL stage status readiness. They are not part of the runnable mock driver set and require explicit ports through CLI/config/env before they can open serial.
+The implemented real-adjacent adapters are Arduino LED readiness, GRBL stage status readiness, and manual Dino-Lite DNVideoX enumeration. They are not part of the runnable mock driver set and require explicit CLI/config/env before they can open serial or instantiate DNVideoX.
 
 ## Future Hardware Boundary
 
@@ -280,4 +306,4 @@ Before the first real hardware driver integration:
 - keep real discovery non-invasive until the specific device adapter is reviewed
 - keep Arduino LED readiness limited to `PING` and `LED ALL OFF` until a later approved LED control slice
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
-- keep Dino-Lite real DNVideoX work limited to a fake stdio bridge until a later approved manual enumeration slice
+- keep Dino-Lite real DNVideoX work limited to manual enumeration until a later approved connect/preview/capture/control slice

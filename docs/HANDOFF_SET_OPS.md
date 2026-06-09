@@ -25,6 +25,60 @@
   - `LIVE_RIP_CONSENT_TEXT_VERSION` default `v1.0-2026-04-24`
   - `LIVE_RIP_CONSENT_TEXT` default is the checked-in Rip It Live consent block in `frontend/nextjs-app/lib/liveRipConsent.ts`
 
+## Session Update (2026-06-09, AI Grader Dino-Lite manual DNVideoX enumeration)
+- Branch `feature/ai-grader-dinolite-enumeration` was created from latest `origin/main`.
+- Added manual-only DNVideoX enumeration through the Windows .NET Framework 4.8 x86 STA bridge:
+  - JSONL command `dinolite.enumerateDevices`
+  - fake adapter deterministic enumeration payload
+  - real adapter opt-in only with `--adapter dnvideox --manual-enumerate`
+  - COM ProgID `VIDEOCAPX.VideoCapXCtrl.1`
+  - allowed calls only: `GetVideoDeviceCount`, `GetVideoDeviceName`, optional `GetVideoDeviceDesc`, optional `GetDeviceID`
+- Added capture-helper manual CLI command:
+  - `dinolite-enumerate --bridge-exe <path> --adapter fake|dnvideox`
+  - missing bridge exe/config fails before spawning
+  - `dnvideox` spawn is restricted to manual enumeration only
+- Default readiness, health, local transport, admin UI paths, and tests do not instantiate DNVideoX or spawn the real adapter.
+- Manual fake enumeration smoke passed with `comActiveXInstantiated=false`, `connected=false`, `preview=false`, `deviceCount=1`, and fake AF7915MZTL-like device metadata.
+- Manual real DNVideoX enumeration smoke was run once on the Dell Windows capture node after automated validation:
+  - command used explicit bridge exe path, `--adapter dnvideox`, and `--bridge-timeout-ms 10000`
+  - DNVideoX ActiveX instantiated: `comActiveXInstantiated=true`
+  - OCX version reported: `3, 0, 56, 6`
+  - result: `SDK_NOT_READY`, `deviceCount=0`, `devices=[]`
+  - error code: `DNVIDEOX_ENUMERATION_FAILED`
+  - error message observed before error-unwrapping cleanup: `Exception has been thrown by the target of an invocation.`
+  - `connected=false`, `preview=false`, `forbiddenOperationsInvoked=false`
+- Follow-up diagnostic on PR #27 found the root cause: DNVideoX enumeration requires an ActiveX host/control site. The SDK C#, VB6, HTML, and C++ samples host DNVideoX as a UI ActiveX control; plain COM activation can instantiate the OCX and read version info but does not initialize enumeration correctly on this Dell PC.
+- Windows read-only device inspection sees the microscope:
+  - `Dino-Lite Edge`
+  - class `Camera`
+  - status `OK`
+  - USB VID/PID `VID_A168&PID_0990`
+- SDK sample app was not run because the sample source includes normal UI paths that set `Connected=True`, `Preview=True`, light, and capture/control methods. Source inspection confirmed that its read-only initial enumeration happens from a hosted WinForms ActiveX control in `Form1_Load`.
+- Bridge fix: real manual enumeration now creates DNVideoX inside a hidden offscreen WinForms `AxHost`, then calls only the allowed read-only enumeration methods.
+- Final manual real DNVideoX enumeration smoke after the hidden-host fix:
+  - `ok=true`
+  - `adapter=dnvideox`
+  - `comActiveXInstantiated=true`
+  - `connected=false`
+  - `preview=false`
+  - `deviceCount=1`
+  - `devices[0].name=Dino-Lite Edge`
+  - `devices[0].description=""`
+  - `devices[0].deviceId` present and redacted from docs; contains USB VID/PID `vid_a168&pid_0990`
+  - `optionalErrors=[]`
+  - OCX version `3, 0, 56, 6`
+  - `host=hidden-winforms-axhost`
+  - `forbiddenOperationsInvoked=false`
+- Validation passed so far:
+  - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 0 warnings, 0 errors
+  - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 4 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 54 tests
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+- Guardrails held: no `Connected=True`, no `Preview=True`, no capture method, no LED/FLC/lens/focus/exposure/EDR/EDOF/DPQ/control command, no `regsvr32`, no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, and no SDK binaries/OCX/DLL/vendor SDK files were committed.
+
 ## Session Update (2026-06-09, AI Grader Dino-Lite bridge skeleton PR #26 merged)
 - PR #26 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/26`.
 - Merge commit/final `origin/main` HEAD before this handoff docs update: `f8997b52fac2e6e94d2a7b57ee323df33a686b26`.
