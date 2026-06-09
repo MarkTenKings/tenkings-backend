@@ -206,6 +206,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 previewDuringCommand = true,
                 config = new { bitfield = 0x7c, decoded = new { edof = true, amr = true, led = true, flc = true, axi = true } },
                 amr = 42.5,
+                runtimeDependencies = RuntimeDiagnostics(),
                 captures = new object[]
                 {
                     FakeCapture(packageDir, "normal", "normal", "normal-still", "success"),
@@ -216,6 +217,28 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 cleanup = new { previewStopped = true, disconnected = true, hostDisposed = true, finalLightingRecipe = "safe-final-all-quadrants-level-3" },
                 limitations = new[] { "Dino-Lite capture package preview -- not a certified grade." },
                 forbiddenOperationsInvoked = false
+            };
+        }
+
+        public object RuntimeDiagnostics()
+        {
+            return new
+            {
+                adapter = "fake",
+                simulated = true,
+                configuredRuntimeDir = (string?)null,
+                runtimeDirConfigured = false,
+                runtimeDirUsable = false,
+                edofHelperAvailable = true,
+                requiredFiles = new[]
+                {
+                    new { fileName = "enfuse.exe", present = true },
+                    new { fileName = "SMIUtility.dll", present = true },
+                    new { fileName = "d3dx9_31.dll", present = true }
+                },
+                currentDirectory = "simulated",
+                baseDirectory = "simulated",
+                pathMutation = "none"
             };
         }
 

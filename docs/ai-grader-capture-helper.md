@@ -140,6 +140,7 @@ The same values can be supplied through environment variables:
 - `AI_GRADER_CAPTURE_HELPER_REQUIRE_CALIBRATION_ARTIFACTS`
 - `AI_GRADER_CAPTURE_HELPER_TRANSPORT_HOST`, only loopback hosts are accepted
 - `AI_GRADER_CAPTURE_HELPER_TRANSPORT_PORT`
+- `TENKINGS_DINOLITE_SDK_RUNTIME_DIR`, optional outside-git DNVideoX helper runtime folder for manual Dino-Lite capture packages
 
 ## Local Transport
 
@@ -211,6 +212,7 @@ Supported bridge JSONL commands:
 - `dinolite.captureStillJpg`
 - `dinolite.getLightingStatus`
 - `dinolite.setLightingRecipe`
+- `dinolite.runtimeDiagnostics`
 - `dinolite.capturePackage`
 - `dinolite.captureDemoPackage`
 - `exit`
@@ -286,17 +288,20 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-
   --device-index 0 `
   --output-dir C:\TenKings\capture-data\dinolite-demo `
   --label card-demo-001 `
+  --sdk-runtime-dir C:\TenKings\sdk\dino-lite\dnvideox-sdk `
   --include-lighting-sweep `
   --include-edr `
   --include-edof `
   --bridge-timeout-ms 60000
 ```
 
-Local Dell smoke on 2026-06-09 wrote package folder `C:\TenKings\capture-data\dinolite-demo\dinolite-card-demo-001-20260609T215851704Z` outside git. The package contains `manifest.json`, `preview-report.html`, one normal JPG, four small lighting JPGs, and one EDR JPG. Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`.
+The optional `--sdk-runtime-dir` flag, or `TENKINGS_DINOLITE_SDK_RUNTIME_DIR`, points the bridge at a DNVideoX helper runtime directory outside git. The bridge validates the directory is outside the repo and reports required helper presence for `enfuse.exe`, `SMIUtility.dll`, and `d3dx9_31.dll`, plus optional VC90/helper files. During the explicit manual capture package command only, when the runtime directory is usable, the bridge temporarily sets the process current directory and Win32 DLL search directory to that runtime directory, then restores both in `finally`. Vendor runtime files must not be copied into the repo.
 
-The same smoke reported config bitfield `198`, decoded per the SDK as `edof=true`, `amr=true`, `ledMode=1`, `led=true`, `flc=true`, and `axi=false`; AMR was `1`. Captures succeeded for normal still (`sha256=9aa3a6577a3426a97955648aedefc0495c759426e93e49a09b2b7639c4c60e06`, `byteSize=67582`), LED/FLC lighting sweep (`all-leds-on-normal`, `flc-all-level-3`, `flc-quadrant-1-level-4`, `flc-quadrant-2-level-4`), and EDR (`sha256=63654191144d854e853959f6a4f4fe9d029d5a64e2472d2deffb26ad2d3ba71c`, `byteSize=513420`). EDR requires polling because `SaveEDR` returns before the output file is immediately readable.
+Local Dell smoke on 2026-06-09 with SDK runtime support wrote package folder `C:\TenKings\capture-data\dinolite-demo\dinolite-card-demo-001-20260609T234417886Z` outside git. The package contains `manifest.json`, `preview-report.html`, one normal JPG, four small lighting JPGs, one EDR JPG, and one EDOF JPG. Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`.
 
-EDOF is still not producing output from this bridge runtime: `SaveEDOF(0, 3, path)` returned SDK result `1`, but no `edof.jpg` appeared after 15 seconds of polling, so the manifest records `SaveEDOF_NO_OUTPUT_TIMEOUT`. Runtime dependency diagnostics showed `enfuse.exe`, `SMIUtility.dll`, and `d3dx9_31.dll` absent from both the bridge executable directory and current working directory. The SDK inventory lists these helper files outside git, so the current best explanation is that EDOF needs vendor runtime helper files available to DNVideoX or another vendor-specific runtime condition. Those files must not be copied into the repo.
+Earlier PR #29 smoke without SDK runtime support wrote normal, lighting sweep, and EDR outputs, but EDOF did not produce a file. `SaveEDOF(0, 3, path)` returned SDK result `1`, then timed out waiting for `edof.jpg`; diagnostics showed `enfuse.exe`, `SMIUtility.dll`, and `d3dx9_31.dll` absent from both the bridge executable directory and current working directory.
+
+Updated PR #30 smoke with `--sdk-runtime-dir C:\TenKings\sdk\dino-lite\dnvideox-sdk` reported all required EDOF helper files present outside git and `edofHelperAvailable=true`. Captures succeeded for normal still (`sha256=68c67b2d31b734041028fd29683ddc074e9270f9f83d87896d6949080fa0f33c`, `byteSize=67640`), LED/FLC lighting sweep (`all-leds-on-normal`, `flc-all-level-3`, `flc-quadrant-1-level-4`, `flc-quadrant-2-level-4`), EDR (`sha256=8243097c7598e1a7855ae2cdaee0fc63964b651749143418889eb3bf01093fd6`, `byteSize=507954`), and EDOF (`sha256=5fefc49b0e562758be57c8f2154eedee213b65e96c6f54aba4aed57435def226`, `byteSize=359574`). `SaveEDOF(0, 3, path)` returned SDK result `1` and produced `edof.jpg`.
 
 Cleanup reported `previewStopped=true`, `disconnected=true`, `hostDisposed=true`, no cleanup errors, and final safe FLC restore via `SetFLCLevel(0,3)` and `SetFLCSwitch(0,15)`.
 
@@ -362,4 +367,4 @@ Before the first real hardware driver integration:
 - keep real discovery non-invasive until the specific device adapter is reviewed
 - keep Arduino LED readiness limited to `PING` and `LED ALL OFF` until a later approved LED control slice
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
-- keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package capture until a later approved lens/focus/exposure/DPQ/certified-grading slice
+- keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package capture, including outside-git SDK runtime diagnostics for EDOF, until a later approved lens/focus/exposure/DPQ/certified-grading slice

@@ -12,7 +12,12 @@ import {
   type CaptureHelperConfigInput,
   type CaptureHelperEnv,
 } from "./index";
-import { DinoLiteBridgeClient, DinoLiteBridgeClientError, assertDinoLiteCaptureOutputDirAllowed } from "./drivers";
+import {
+  DinoLiteBridgeClient,
+  DinoLiteBridgeClientError,
+  assertDinoLiteCaptureOutputDirAllowed,
+  assertDinoLiteSdkRuntimeDirAllowed,
+} from "./drivers";
 import { startCaptureHelperHttpServer } from "./transport";
 
 export interface CaptureHelperCliIO {
@@ -68,6 +73,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let port: string | undefined;
   let deviceIndex: number | undefined;
   let outputDir: string | undefined;
+  let sdkRuntimeDir: string | undefined;
   let label: string | undefined;
   let includeLightingSweep = false;
   let includeEdr = false;
@@ -148,6 +154,14 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         config.dinoliteBridge = {
           ...config.dinoliteBridge,
           timeoutMs: Number(readOption(rest, index, "--bridge-timeout-ms")),
+        };
+        index += 1;
+        break;
+      case "--sdk-runtime-dir":
+        sdkRuntimeDir = readOption(rest, index, "--sdk-runtime-dir");
+        config.dinoliteBridge = {
+          ...config.dinoliteBridge,
+          sdkRuntimeDir,
         };
         index += 1;
         break;
@@ -423,8 +437,8 @@ function helpPayload() {
       "dinolite-enumerate --bridge-exe <exe> --adapter dnvideox",
       "dinolite-status --bridge-exe <exe> --adapter dnvideox --device-index 0",
       "dinolite-capture-still --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-smoke",
-      "dinolite-capture-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-packages --label card-demo-001 --include-lighting-sweep --include-edr --include-edof",
-      "dinolite-capture-demo-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-demo --label card-demo-001",
+      "dinolite-capture-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-packages --label card-demo-001 --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk --include-lighting-sweep --include-edr --include-edof",
+      "dinolite-capture-demo-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-demo --label card-demo-001 --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -446,6 +460,7 @@ function helpPayload() {
       "--bridge-adapter fake|dnvideox",
       "--adapter fake|dnvideox",
       "--bridge-timeout-ms",
+      "--sdk-runtime-dir",
       "--device-index",
       "--output-dir",
       "--label",
@@ -475,6 +490,8 @@ function helpPayload() {
     mode: "simulator-only",
     driverSet: "mock runnable; real limited to explicit Arduino LED readiness, GRBL stage readiness, and manual Dino-Lite bridge commands",
     dinoliteBridge: "manual fake bridge health plus manual DNVideoX enumerate/status/still capture only; default readiness does not spawn",
+    dinoliteSdkRuntimeDir:
+      "optional for manual capture packages; use --sdk-runtime-dir or TENKINGS_DINOLITE_SDK_RUNTIME_DIR and keep vendor runtime files outside git",
     transport: "disabled until serve is explicitly run",
   };
 }
@@ -606,6 +623,9 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         adapter,
         timeoutMs: parsed.config.dinoliteBridge?.timeoutMs,
         manualHardwareAccess: true,
+        sdkRuntimeDir:
+          parsed.config.dinoliteBridge?.sdkRuntimeDir ??
+          env.TENKINGS_DINOLITE_SDK_RUNTIME_DIR,
       });
 
       if (parsed.command === "dinolite-status") {
@@ -625,6 +645,11 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           throw new CaptureHelperCommandError(`${parsed.command} requires --label <label>.`);
         }
         const outputDir = assertDinoLiteCaptureOutputDirAllowed(parsed.outputDir ?? "");
+        const sdkRuntimeDir =
+          parsed.config.dinoliteBridge?.sdkRuntimeDir ?? env.TENKINGS_DINOLITE_SDK_RUNTIME_DIR;
+        if (sdkRuntimeDir) {
+          assertDinoLiteSdkRuntimeDirAllowed(sdkRuntimeDir);
+        }
         const capturePackage = await client.capturePackage({
           deviceIndex: parsed.deviceIndex,
           outputDir,

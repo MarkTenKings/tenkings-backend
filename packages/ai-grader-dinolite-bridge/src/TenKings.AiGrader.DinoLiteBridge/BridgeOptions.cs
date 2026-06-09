@@ -7,6 +7,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
         public string Adapter { get; private set; } = "fake";
         public bool ManualEnumerate { get; private set; }
         public bool ManualHardwareAccess { get; private set; }
+        public string? SdkRuntimeDir { get; private set; }
 
         public static BridgeOptions Parse(string[] args)
         {
@@ -28,10 +29,20 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 {
                     options.ManualHardwareAccess = true;
                 }
+                else if (arg == "--sdk-runtime-dir")
+                {
+                    options.SdkRuntimeDir = ReadValue(args, index, "--sdk-runtime-dir").Trim();
+                    index += 1;
+                }
                 else
                 {
                     throw new ArgumentException("Unknown option: " + arg);
                 }
+            }
+
+            if (string.IsNullOrWhiteSpace(options.SdkRuntimeDir))
+            {
+                options.SdkRuntimeDir = Environment.GetEnvironmentVariable("TENKINGS_DINOLITE_SDK_RUNTIME_DIR");
             }
 
             return options;

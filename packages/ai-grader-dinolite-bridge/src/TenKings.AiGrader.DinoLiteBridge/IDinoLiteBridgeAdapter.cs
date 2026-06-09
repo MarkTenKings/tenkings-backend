@@ -12,5 +12,6 @@ namespace TenKings.AiGrader.DinoLiteBridge
         object GetLightingStatus(int deviceIndex);
         object SetLightingRecipe(int deviceIndex, string? recipeName);
         object CapturePackage(int deviceIndex, string? outputDir, string? label, bool includeLightingSweep, bool includeEdr, bool includeEdof);
+        object RuntimeDiagnostics();
     }
 }

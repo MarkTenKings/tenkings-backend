@@ -84,6 +84,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     case "dinolite.setLightingRecipe":
                         WriteResult(request.id, adapter.SetLightingRecipe(request.deviceIndex ?? 0, request.label));
                         return false;
+                    case "dinolite.runtimeDiagnostics":
+                        WriteResult(request.id, adapter.RuntimeDiagnostics());
+                        return false;
                     case "dinolite.capturePackage":
                     case "dinolite.captureDemoPackage":
                         WriteResult(
