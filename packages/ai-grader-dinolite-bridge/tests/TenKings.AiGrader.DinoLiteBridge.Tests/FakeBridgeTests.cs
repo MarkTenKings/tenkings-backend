@@ -70,6 +70,21 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
         }
 
         [TestMethod]
+        public void DnVideoXConfig198DecodesUsingSdkBitLayout()
+        {
+            var config = DnVideoXAdapter.DecodeConfigForTests(198);
+            var decoded = config.GetType().GetProperty("decoded")!.GetValue(config, null)!;
+
+            Assert.AreEqual(198L, config.GetType().GetProperty("bitfield")!.GetValue(config, null));
+            Assert.AreEqual(true, decoded.GetType().GetProperty("edof")!.GetValue(decoded, null));
+            Assert.AreEqual(true, decoded.GetType().GetProperty("amr")!.GetValue(decoded, null));
+            Assert.AreEqual(1L, decoded.GetType().GetProperty("ledMode")!.GetValue(decoded, null));
+            Assert.AreEqual(true, decoded.GetType().GetProperty("led")!.GetValue(decoded, null));
+            Assert.AreEqual(true, decoded.GetType().GetProperty("flc")!.GetValue(decoded, null));
+            Assert.AreEqual(false, decoded.GetType().GetProperty("axi")!.GetValue(decoded, null));
+        }
+
+        [TestMethod]
         public void RealAdapterEnumerationFailsClosedWithoutManualFlag()
         {
             var input = new StringReader("{\"id\":\"manual\",\"command\":\"dinolite.enumerateDevices\"}");

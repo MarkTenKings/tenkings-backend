@@ -15,37 +15,41 @@
 - Default readiness, health, local transport, server/admin paths, and tests do not instantiate DNVideoX or spawn the real adapter.
 
 ### Manual Smoke
-- Manual real DNVideoX demo package smoke was run once on the Dell Windows capture node after automated validation.
-- Output folder outside git: `C:\TenKings\capture-data\dinolite-demo\dinolite-card-demo-001-20260609T195221805Z`.
+- Manual real DNVideoX demo package smoke was run on the Dell Windows capture node after automated validation.
+- Output folder outside git: `C:\TenKings\capture-data\dinolite-demo\dinolite-card-demo-001-20260609T215851704Z`.
 - `manifest.json` and `preview-report.html` were written in that folder.
 - Device `Dino-Lite Edge`; device ID was redacted from docs except USB VID/PID `vid_a168&pid_0990`.
 - OCX version `3, 0, 56, 6`.
-- Config bitfield `198`; decoded `amr=true`, `axi=true`, `edof=false`, `led=false`, `flc=false`.
+- Config bitfield `198`; decoded using the SDK bit layout as `edof=true`, `amr=true`, `ledMode=1`, `led=true`, `flc=true`, `axi=false`.
 - AMR `1`.
 - Normal still capture succeeded:
   - file `normal-still.jpg`
-  - `sha256=318794724829f9d2a94ee67f41bd6df2f61090b35dd0487ec716972fe0b31a37`
-  - `byteSize=67150`
+  - `sha256=9aa3a6577a3426a97955648aedefc0495c759426e93e49a09b2b7639c4c60e06`
+  - `byteSize=67582`
   - `mimeType=image/jpeg`
-- Lighting sweep was requested but recorded unavailable:
-  - `captureKind=lightingSweep`
-  - `status=unavailable`
-  - `code=LIGHTING_SWEEP_UNSUPPORTED`
-  - reason: `GetConfig` did not report LED or FLC support.
-- EDR was requested; `SaveEDR` was attempted and produced no non-empty output:
-  - `captureKind=edr`
-  - `status=unavailable`
-  - `code=SaveEDR_NO_OUTPUT`
-- EDOF was requested but not called because `GetConfig` did not report EDOF support:
+- Lighting sweep succeeded:
+  - `all-leds-on-normal.jpg`, `byteSize=67647`
+  - `flc-all-level-3.jpg`, `byteSize=118025`
+  - `flc-quadrant-1-level-4.jpg`, `byteSize=118855`
+  - `flc-quadrant-2-level-4.jpg`, `byteSize=109106`
+- EDR succeeded after file-read polling:
+  - file `edr.jpg`
+  - `sha256=63654191144d854e853959f6a4f4fe9d029d5a64e2472d2deffb26ad2d3ba71c`
+  - `byteSize=513420`
+  - SDK result `1`
+- EDOF was requested and called with the vendor sample argument shape `SaveEDOF(0, 3, path)`:
   - `captureKind=edof`
   - `status=unavailable`
-  - `code=EDOF_UNSUPPORTED`
-- Cleanup reported `previewStopped=true`, `disconnected=true`, `hostDisposed=true`, no cleanup errors, and final FLC restore recipe unavailable because FLC is unsupported on this detected config.
+  - SDK result `1`
+  - `code=SaveEDOF_NO_OUTPUT_TIMEOUT`
+  - no `edof.jpg` appeared after 15 seconds of polling
+- Runtime dependency diagnostics showed `enfuse.exe`, `SMIUtility.dll`, and `d3dx9_31.dll` absent from both the bridge executable directory and current working directory. The SDK inventory lists these helper files outside git; they were not copied into the repo.
+- Cleanup reported `previewStopped=true`, `disconnected=true`, `hostDisposed=true`, no cleanup errors, and final FLC restore succeeded through `SetFLCLevel(0,3)` and `SetFLCSwitch(0,15)`.
 - The preview report includes `Dino-Lite capture package preview -- not a certified grade.`
 
 ### Validation Evidence
 - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 0 warnings, 0 errors.
-- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 6 tests.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 7 tests.
 - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
 - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 62 tests.
 - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.

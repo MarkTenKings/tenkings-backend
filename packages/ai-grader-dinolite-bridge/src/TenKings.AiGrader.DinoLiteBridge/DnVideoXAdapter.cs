@@ -7,6 +7,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security;
+using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
 
@@ -17,6 +18,10 @@ namespace TenKings.AiGrader.DinoLiteBridge
         private const string ProgId = "VIDEOCAPX.VideoCapXCtrl.1";
         private const string Clsid = "922FB007-DD9A-11D3-BD8D-DAAFCB8D9378";
         private const string ActiveXPath = @"C:\Windows\SysWOW64\DNVideoX.ocx";
+        private const int StreamSettleDelayMs = 750;
+        private const int LightingSettleDelayMs = 250;
+        private const int OptionalCapturePollTimeoutMs = 15000;
+        private const int OptionalCapturePollIntervalMs = 100;
         private readonly BridgeOptions options;
 
         public DnVideoXAdapter(BridgeOptions options)
@@ -366,14 +371,16 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
                 var optionalErrors = new List<object>();
                 var configBits = ReadConfigBitfield(control, deviceIndex, optionalErrors);
+                var device = ReadDevice(control, deviceIndex, optionalErrors);
+                var pid = ExtractUsbPid(GetDeviceIdFromDeviceObject(device));
                 var recipe = BuildLightingRecipe(string.IsNullOrWhiteSpace(recipeName) ? "safe-final-all-quadrants-level-3" : recipeName!);
-                var apply = ApplyLightingRecipe(control, deviceIndex, recipe, configBits, optionalErrors);
+                var apply = ApplyLightingRecipe(control, deviceIndex, recipe, configBits, pid, optionalErrors);
                 return new
                 {
                     adapter = "dnvideox",
                     comActiveXInstantiated = true,
                     ocxVersion = GetOcxVersion(),
-                    device = ReadDevice(control, deviceIndex, optionalErrors),
+                    device,
                     connectedDuringCommand = true,
                     previewDuringCommand = false,
                     recipe,
@@ -440,30 +447,34 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 SetProperty(control, "Connected", true);
                 SetProperty(control, "Preview", true);
                 Application.DoEvents();
+                WaitWithEvents(StreamSettleDelayMs);
 
                 var optionalErrors = new List<object>();
                 var device = ReadDevice(control, deviceIndex, optionalErrors);
                 var configBits = ReadConfigBitfield(control, deviceIndex, optionalErrors);
-                var config = BuildConfigObject(configBits);
+                var deviceId = GetDeviceIdFromDeviceObject(device);
+                var pid = ExtractUsbPid(deviceId);
+                var config = BuildConfigObject(configBits, pid);
                 var amr = InvokeOptional(control, "GetAMR", optionalErrors, deviceIndex);
+                var runtimeDependencies = InspectRuntimeDependencies();
                 var captures = new List<object>();
 
                 captures.Add(CaptureJpg(control, Path.Combine(packageDir, "normal-still.jpg"), "normal", "normal-still", "SaveFrameJPG"));
 
                 if (includeLightingSweep)
                 {
-                    var recipes = new List<LightingRecipe>(BuildLightingSweepRecipes(configBits));
+                    var recipes = new List<LightingRecipe>(BuildLightingSweepRecipes(configBits, pid));
                     if (recipes.Count == 0)
                     {
-                        captures.Add(UnavailableCapture(packageDir, "lighting-sweep-unavailable.jpg", "lightingSweep", "lighting-sweep", "LIGHTING_SWEEP_UNSUPPORTED", "GetConfig did not report LED or FLC support."));
+                        captures.Add(UnavailableCapture(packageDir, "lighting-sweep-unavailable.jpg", "lightingSweep", "lighting-sweep", "LIGHTING_SWEEP_UNSUPPORTED", "GetConfig did not report LED or FLC support.", null));
                     }
 
                     foreach (var recipe in recipes)
                     {
-                        var apply = ApplyLightingRecipe(control, deviceIndex, recipe, configBits, optionalErrors);
+                        var apply = ApplyLightingRecipe(control, deviceIndex, recipe, configBits, pid, optionalErrors);
                         if (!IsSuccessfulApply(apply))
                         {
-                            captures.Add(UnavailableCapture(packageDir, recipe.name + ".jpg", "lightingSweep", recipe.name, "FLC_UNAVAILABLE", "Lighting recipe could not be applied."));
+                            captures.Add(UnavailableCapture(packageDir, recipe.name + ".jpg", "lightingSweep", recipe.name, "FLC_UNAVAILABLE", "Lighting recipe could not be applied.", apply));
                             continue;
                         }
                         captures.Add(CaptureJpg(control, Path.Combine(packageDir, recipe.name + ".jpg"), "lightingSweep", recipe.name, "SaveFrameJPG"));
@@ -477,13 +488,13 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
                 if (includeEdof)
                 {
-                    captures.Add(IsEdofSupported(configBits)
+                    captures.Add(IsEdofSupported(configBits, pid)
                         ? TryOptionalSdkCapture(control, deviceIndex, Path.Combine(packageDir, "edof.jpg"), "edof", "edof", "SaveEDOF", optionalErrors)
-                        : UnavailableCapture(packageDir, "edof.jpg", "edof", "edof", "EDOF_UNSUPPORTED", "GetConfig did not report EDOF support."));
+                        : UnavailableCapture(packageDir, "edof.jpg", "edof", "edof", "EDOF_UNSUPPORTED", "GetConfig did not report EDOF support.", null));
                 }
 
                 var finalRecipe = BuildLightingRecipe("safe-final-all-quadrants-level-3");
-                cleanup.finalLightingRecipe = ApplyLightingRecipe(control, deviceIndex, finalRecipe, configBits, optionalErrors);
+                cleanup.finalLightingRecipe = ApplyLightingRecipe(control, deviceIndex, finalRecipe, configBits, pid, optionalErrors);
                 CleanupControl(control, cleanup, stopPreview: true);
                 control = null;
                 host.Dispose();
@@ -501,6 +512,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     device,
                     ocxVersion = GetOcxVersion(),
                     config,
+                    runtimeDependencies,
                     amr,
                     connectedDuringCommand = true,
                     previewDuringCommand = true,
@@ -530,6 +542,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     connectedDuringCommand = true,
                     previewDuringCommand = true,
                     config,
+                    runtimeDependencies,
                     amr,
                     captures = captures.ToArray(),
                     cleanup,
@@ -650,7 +663,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
         private static object ReadConfig(object control, int deviceIndex, List<object> optionalErrors)
         {
-            return BuildConfigObject(ReadConfigBitfield(control, deviceIndex, optionalErrors));
+            return BuildConfigObject(ReadConfigBitfield(control, deviceIndex, optionalErrors), null);
         }
 
         private static long? ReadConfigBitfield(object control, int deviceIndex, List<object> optionalErrors)
@@ -659,37 +672,48 @@ namespace TenKings.AiGrader.DinoLiteBridge
             return raw == null ? (long?)null : Convert.ToInt64(raw);
         }
 
-        private static object BuildConfigObject(long? bitfield)
+        public static object DecodeConfigForTests(long bitfield)
         {
+            return BuildConfigObject(bitfield, null);
+        }
+
+        private static object BuildConfigObject(long? bitfield, string? pid)
+        {
+            var ledMode = bitfield == null ? (long?)null : (bitfield.Value >> 2) & 0x03;
             return new
             {
                 bitfield,
+                source = "DNVideoX GetConfig: bit7 EDOF, bit6 AMR, bits3:2 LED mode, bit1 FLC, bit0 AXI",
                 decoded = bitfield == null
                     ? null
                     : new
                     {
-                        edof = IsEdofSupported(bitfield),
+                        edof = IsEdofSupported(bitfield, pid),
                         amr = (bitfield.Value & 0x40) == 0x40,
-                        led = IsLedSupported(bitfield),
-                        flc = IsFlcSupported(bitfield),
-                        axi = (bitfield.Value & 0x04) == 0x04
+                        ledMode,
+                        led = IsLedSupported(bitfield, pid),
+                        flc = IsFlcSupported(bitfield, pid),
+                        axi = (bitfield.Value & 0x01) == 0x01,
+                        pid
                     }
             };
         }
 
-        private static bool IsLedSupported(long? bitfield)
+        private static bool IsLedSupported(long? bitfield, string? pid)
         {
-            return bitfield != null && (bitfield.Value & 0x10) == 0x10;
+            if (bitfield == null) return false;
+            var ledMode = (bitfield.Value >> 2) & 0x03;
+            return ledMode > 0 || IsKnownLedPid(pid);
         }
 
-        private static bool IsFlcSupported(long? bitfield)
+        private static bool IsFlcSupported(long? bitfield, string? pid)
         {
-            return bitfield != null && (bitfield.Value & 0x20) == 0x20;
+            return bitfield != null && ((bitfield.Value & 0x02) == 0x02 || IsKnownFlcPid(pid));
         }
 
-        private static bool IsEdofSupported(long? bitfield)
+        private static bool IsEdofSupported(long? bitfield, string? pid)
         {
-            return bitfield != null && (bitfield.Value & 0x08) == 0x08;
+            return bitfield != null && (bitfield.Value & 0x80) == 0x80;
         }
 
         private static LightingRecipe BuildLightingRecipe(string recipeName)
@@ -715,63 +739,61 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
         }
 
-        private static IEnumerable<LightingRecipe> BuildLightingSweepRecipes(long? configBits)
+        private static IEnumerable<LightingRecipe> BuildLightingSweepRecipes(long? configBits, string? pid)
         {
-            if (IsLedSupported(configBits))
+            if (IsLedSupported(configBits, pid))
             {
                 yield return BuildLightingRecipe("all-leds-on-normal");
             }
 
-            if (!IsFlcSupported(configBits))
+            if (!IsFlcSupported(configBits, pid))
             {
                 yield break;
             }
 
             yield return BuildLightingRecipe("flc-all-level-3");
-            yield return BuildLightingRecipe("flc-all-level-6");
             yield return BuildLightingRecipe("flc-quadrant-1-level-4");
             yield return BuildLightingRecipe("flc-quadrant-2-level-4");
-            yield return BuildLightingRecipe("flc-quadrant-3-level-4");
-            yield return BuildLightingRecipe("flc-quadrant-4-level-4");
         }
 
-        private static object ApplyLightingRecipe(object control, int deviceIndex, LightingRecipe recipe, long? configBits, List<object> optionalErrors)
+        private static object ApplyLightingRecipe(object control, int deviceIndex, LightingRecipe recipe, long? configBits, string? pid, List<object> optionalErrors)
         {
             var steps = new List<object>();
             try
             {
                 if (recipe.ledState != null)
                 {
-                    if (!IsLedSupported(configBits))
+                    if (!IsLedSupported(configBits, pid))
                     {
                         return new { status = "unavailable", recipe, code = "LED_UNSUPPORTED", steps = steps.ToArray() };
                     }
 
-                    InvokeRequired(control, "SetLEDState", deviceIndex, recipe.ledState.Value);
-                    steps.Add(new { method = "SetLEDState", value = recipe.ledState.Value, status = "success" });
+                    var result = InvokeRequired(control, "SetLEDState", deviceIndex, recipe.ledState.Value);
+                    steps.Add(new { method = "SetLEDState", value = recipe.ledState.Value, result, status = "success" });
                 }
 
                 if (recipe.flcSwitch != null || recipe.flcLevel != null)
                 {
-                    if (!IsFlcSupported(configBits))
+                    if (!IsFlcSupported(configBits, pid))
                     {
                         return new { status = "unavailable", recipe, code = "FLC_UNSUPPORTED", steps = steps.ToArray() };
                     }
 
-                    if (recipe.flcSwitch != null)
-                    {
-                        InvokeRequired(control, "SetFLCSwitch", deviceIndex, recipe.flcSwitch.Value);
-                        steps.Add(new { method = "SetFLCSwitch", value = recipe.flcSwitch.Value, status = "success" });
-                    }
-
                     if (recipe.flcLevel != null)
                     {
-                        InvokeRequired(control, "SetFLCLevel", deviceIndex, recipe.flcLevel.Value);
-                        steps.Add(new { method = "SetFLCLevel", value = recipe.flcLevel.Value, status = "success" });
+                        var result = InvokeRequired(control, "SetFLCLevel", deviceIndex, recipe.flcLevel.Value);
+                        steps.Add(new { method = "SetFLCLevel", value = recipe.flcLevel.Value, result, status = "success" });
+                    }
+
+                    if (recipe.flcSwitch != null)
+                    {
+                        var result = InvokeRequired(control, "SetFLCSwitch", deviceIndex, recipe.flcSwitch.Value);
+                        steps.Add(new { method = "SetFLCSwitch", value = recipe.flcSwitch.Value, result, status = "success" });
                     }
                 }
 
                 Application.DoEvents();
+                WaitWithEvents(LightingSettleDelayMs);
                 return new { status = "success", recipe, steps = steps.ToArray() };
             }
             catch (Exception error)
@@ -808,15 +830,16 @@ namespace TenKings.AiGrader.DinoLiteBridge
         private static object TryOptionalSdkCapture(object control, int deviceIndex, string outputPath, string captureKind, string lightingRecipe, string sdkMethod, List<object> optionalErrors)
         {
             var timestamp = DateTimeOffset.UtcNow;
+            object? result = null;
             try
             {
                 if (sdkMethod == "SaveEDR")
                 {
-                    InvokeRequired(control, "SaveEDR", deviceIndex, outputPath);
+                    result = InvokeRequired(control, "SaveEDR", deviceIndex, outputPath);
                 }
                 else if (sdkMethod == "SaveEDOF")
                 {
-                    InvokeRequired(control, "SaveEDOF", deviceIndex, 3, outputPath);
+                    result = InvokeRequired(control, "SaveEDOF", deviceIndex, 3, outputPath);
                 }
                 else
                 {
@@ -824,12 +847,26 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 }
 
                 Application.DoEvents();
-                if (!File.Exists(outputPath) || new FileInfo(outputPath).Length <= 0)
+                var poll = PollForNonEmptyFile(outputPath, OptionalCapturePollTimeoutMs);
+                if (!poll.available || !poll.exists || poll.byteSize <= 0)
                 {
-                    return UnavailableCapture(Path.GetDirectoryName(outputPath) ?? "", Path.GetFileName(outputPath), captureKind, lightingRecipe, sdkMethod + "_NO_OUTPUT", sdkMethod + " did not produce an output file.");
+                    return UnavailableCapture(
+                        Path.GetDirectoryName(outputPath) ?? "",
+                        Path.GetFileName(outputPath),
+                        captureKind,
+                        lightingRecipe,
+                        sdkMethod + "_NO_OUTPUT_TIMEOUT",
+                        sdkMethod + " did not produce a non-empty output file before the polling timeout.",
+                        new
+                        {
+                            method = sdkMethod,
+                            result,
+                            poll,
+                            outputPath
+                        });
                 }
 
-                return CaptureRecord(outputPath, captureKind, lightingRecipe, "success", timestamp, null);
+                return CaptureRecord(outputPath, captureKind, lightingRecipe, "success", timestamp, new { method = sdkMethod, result, poll });
             }
             catch (Exception error)
             {
@@ -839,7 +876,14 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     code = sdkMethod + "_FAILED",
                     message = FormatExceptionMessage(error)
                 });
-                return UnavailableCapture(Path.GetDirectoryName(outputPath) ?? "", Path.GetFileName(outputPath), captureKind, lightingRecipe, sdkMethod + "_FAILED", FormatExceptionMessage(error));
+                return UnavailableCapture(
+                    Path.GetDirectoryName(outputPath) ?? "",
+                    Path.GetFileName(outputPath),
+                    captureKind,
+                    lightingRecipe,
+                    sdkMethod + "_FAILED",
+                    FormatExceptionMessage(error),
+                    new { method = sdkMethod, result, outputPath });
             }
         }
 
@@ -849,18 +893,18 @@ namespace TenKings.AiGrader.DinoLiteBridge
             {
                 path = outputPath,
                 filename = Path.GetFileName(outputPath),
-                sha256 = File.Exists(outputPath) ? ComputeSha256(outputPath) : null,
-                byteSize = File.Exists(outputPath) ? new FileInfo(outputPath).Length : 0,
+                sha256 = File.Exists(outputPath) ? ComputeSha256WithRetry(outputPath, OptionalCapturePollTimeoutMs) : null,
+                byteSize = File.Exists(outputPath) ? GetFileSizeWithRetry(outputPath, OptionalCapturePollTimeoutMs) : 0,
                 mimeType = "image/jpeg",
                 timestamp = timestamp.ToString("o"),
                 captureKind,
                 lightingRecipe,
                 status,
-                error
+                diagnostics = error
             };
         }
 
-        private static object UnavailableCapture(string packageDir, string fileName, string captureKind, string lightingRecipe, string code, string message)
+        private static object UnavailableCapture(string packageDir, string fileName, string captureKind, string lightingRecipe, string code, string message, object? diagnostics)
         {
             return new
             {
@@ -873,8 +917,91 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 captureKind,
                 lightingRecipe,
                 status = "unavailable",
-                error = new { code, message }
+                error = new { code, message },
+                diagnostics
             };
+        }
+
+        private static FilePollResult PollForNonEmptyFile(string path, int timeoutMs)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            var checks = 0;
+            string? lastError = null;
+            while (stopwatch.ElapsedMilliseconds <= timeoutMs)
+            {
+                checks += 1;
+                Application.DoEvents();
+                try
+                {
+                    if (File.Exists(path))
+                    {
+                        var byteSize = new FileInfo(path).Length;
+                        if (byteSize > 0)
+                        {
+                            return new FilePollResult(true, true, byteSize, checks, stopwatch.ElapsedMilliseconds, null);
+                        }
+                    }
+                }
+                catch (IOException error)
+                {
+                    lastError = error.Message;
+                }
+                catch (UnauthorizedAccessException error)
+                {
+                    lastError = error.Message;
+                }
+                Thread.Sleep(OptionalCapturePollIntervalMs);
+            }
+
+            try
+            {
+                var exists = File.Exists(path);
+                var byteSize = exists ? new FileInfo(path).Length : 0;
+                return new FilePollResult(true, exists, byteSize, checks, stopwatch.ElapsedMilliseconds, lastError);
+            }
+            catch (Exception error)
+            {
+                return new FilePollResult(false, true, 0, checks, stopwatch.ElapsedMilliseconds, error.Message);
+            }
+        }
+
+        private static void WaitWithEvents(int milliseconds)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            while (stopwatch.ElapsedMilliseconds < milliseconds)
+            {
+                Application.DoEvents();
+                Thread.Sleep(50);
+            }
+        }
+
+        private static string? GetDeviceIdFromDeviceObject(object device)
+        {
+            return Convert.ToString(device.GetType().GetProperty("deviceId")?.GetValue(device, null));
+        }
+
+        private static string? ExtractUsbPid(string? deviceId)
+        {
+            if (string.IsNullOrWhiteSpace(deviceId)) return null;
+            var lower = deviceId!.ToLowerInvariant();
+            var marker = "pid_";
+            var index = lower.IndexOf(marker, StringComparison.Ordinal);
+            if (index < 0 || index + marker.Length + 4 > lower.Length) return null;
+            return lower.Substring(index + marker.Length, 4);
+        }
+
+        private static bool IsKnownFlcPid(string? pid)
+        {
+            if (string.IsNullOrWhiteSpace(pid)) return false;
+            return string.Compare(pid, "0960", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                string.Compare(pid, "099f", StringComparison.OrdinalIgnoreCase) <= 0;
+        }
+
+        private static bool IsKnownLedPid(string? pid)
+        {
+            if (string.IsNullOrWhiteSpace(pid)) return false;
+            return string.Compare(pid, "0970", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                string.Compare(pid, "099f", StringComparison.OrdinalIgnoreCase) <= 0;
         }
 
         private static void WriteManifestAndReport(string manifestPath, string previewReportPath, object manifest, List<object> captures)
@@ -1039,6 +1166,82 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
         }
 
+        private static string ComputeSha256WithRetry(string path, int timeoutMs)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            Exception? lastError = null;
+            while (stopwatch.ElapsedMilliseconds <= timeoutMs)
+            {
+                try
+                {
+                    return ComputeSha256(path);
+                }
+                catch (IOException error)
+                {
+                    lastError = error;
+                }
+                catch (UnauthorizedAccessException error)
+                {
+                    lastError = error;
+                }
+
+                WaitWithEvents(OptionalCapturePollIntervalMs);
+            }
+
+            throw new IOException("Timed out waiting to read file for SHA-256: " + path, lastError);
+        }
+
+        private static long GetFileSizeWithRetry(string path, int timeoutMs)
+        {
+            var stopwatch = Stopwatch.StartNew();
+            Exception? lastError = null;
+            while (stopwatch.ElapsedMilliseconds <= timeoutMs)
+            {
+                try
+                {
+                    return new FileInfo(path).Length;
+                }
+                catch (IOException error)
+                {
+                    lastError = error;
+                }
+                catch (UnauthorizedAccessException error)
+                {
+                    lastError = error;
+                }
+
+                WaitWithEvents(OptionalCapturePollIntervalMs);
+            }
+
+            throw new IOException("Timed out waiting to read file size: " + path, lastError);
+        }
+
+        private static object InspectRuntimeDependencies()
+        {
+            var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+            var currentDir = Environment.CurrentDirectory;
+            return new
+            {
+                baseDirectory = baseDir,
+                currentDirectory = currentDir,
+                enfuse = DependencyPresence("enfuse.exe", baseDir, currentDir),
+                smiUtility = DependencyPresence("SMIUtility.dll", baseDir, currentDir),
+                d3dx931 = DependencyPresence("d3dx9_31.dll", baseDir, currentDir)
+            };
+        }
+
+        private static object DependencyPresence(string fileName, string baseDir, string currentDir)
+        {
+            var basePath = Path.Combine(baseDir, fileName);
+            var currentPath = Path.Combine(currentDir, fileName);
+            return new
+            {
+                fileName,
+                baseDirectoryPresent = File.Exists(basePath),
+                currentDirectoryPresent = File.Exists(currentPath)
+            };
+        }
+
         private static string? GetOcxVersion()
         {
             try
@@ -1132,6 +1335,26 @@ namespace TenKings.AiGrader.DinoLiteBridge
             public int? ledState { get; }
             public int? flcSwitch { get; }
             public int? flcLevel { get; }
+        }
+
+        private sealed class FilePollResult
+        {
+            public FilePollResult(bool available, bool exists, long byteSize, int checks, long elapsedMs, string? lastError)
+            {
+                this.available = available;
+                this.exists = exists;
+                this.byteSize = byteSize;
+                this.checks = checks;
+                this.elapsedMs = elapsedMs;
+                this.lastError = lastError;
+            }
+
+            public bool available { get; }
+            public bool exists { get; }
+            public long byteSize { get; }
+            public int checks { get; }
+            public long elapsedMs { get; }
+            public string? lastError { get; }
         }
 
         private sealed class CleanupState
