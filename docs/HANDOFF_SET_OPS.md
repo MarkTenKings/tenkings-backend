@@ -46,6 +46,29 @@
 - Local .NET validation blocker: installed `dotnet` has runtime only and no SDK, so `dotnet build ...` and `dotnet test ...` report `No .NET SDKs were found`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no SDK binaries/OCX/DLLs committed, no `regsvr32`, no DNVideoX ActiveX/COM instantiation, no microscope control, no LED/FLC/lens/focus/EDR/EDOF/image capture, and no hardware command.
 
+## Session Update (2026-06-09, AI Grader Dino-Lite bridge local Windows validation)
+- Installed official Microsoft Visual Studio Build Tools 2022 via the Microsoft `vs_BuildTools.exe` bootstrapper from `https://aka.ms/vs/17/release/vs_BuildTools.exe`.
+- Installed tooling evidence:
+  - Visual Studio Build Tools 2022 at `C:\BuildTools`
+  - installation version `17.14.37314.3`
+  - .NET SDK `9.0.314`
+  - dotnet MSBuild `17.14.43+2a0eb78b3`
+  - Build Tools MSBuild `17.14.40.60911`
+- Local bridge validation on the Dell Windows capture node passed:
+  - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 0 warnings, 0 errors.
+  - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 2 tests.
+  - Manual fake bridge smoke through capture-helper `dinolite-bridge-health` with absolute exe path -> pass; returned fake AF7915MZTL-like device and `comActiveXInstantiated=false`.
+- Repo validation passed:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build`
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> 51 tests
+  - `pnpm --filter @tenkings/shared test` -> 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
+- Small code cleanup: removed the nullable warning in `JsonLineBridgeServer.cs`; bridge build now reports 0 warnings.
+- Build outputs under `bin/` and `obj/` are ignored and were not committed.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no SDK binaries/OCX/DLLs committed, no `regsvr32`, no DNVideoX ActiveX/COM instantiation, no microscope control, no LED/FLC/lens/focus/EDR/EDOF/image capture, and no hardware command.
+
 ## Session Update (2026-06-01, AI Grader GRBL stage readiness adapter)
 - Branch `feature/ai-grader-grbl-stage-readiness` was created from latest fetched `origin/main` after PR #24 and the docs-only merge handoff commit.
 - PR #25 was confirmed open, ready for review, mergeable/clean, and passing all checks before merge.

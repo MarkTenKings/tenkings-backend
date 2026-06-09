@@ -50,7 +50,8 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     return false;
                 }
 
-                switch (request.command.Trim())
+                var command = request.command!.Trim();
+                switch (command)
                 {
                     case "health":
                         WriteResult(request.id, adapter.Health());
@@ -68,7 +69,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                         WriteResult(request.id, new { status = "BYE" });
                         return true;
                     default:
-                        WriteError(request.id, "INVALID_COMMAND", "Unsupported command: " + request.command);
+                        WriteError(request.id, "INVALID_COMMAND", "Unsupported command: " + command);
                         return false;
                 }
             }
