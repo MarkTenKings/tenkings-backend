@@ -66,6 +66,16 @@
   - `git diff --check` -> pass with line-ending warnings only
 - Guardrails held so far: no EDR/EDOF/DPQ method, no LED/FLC/lens/focus/exposure-setting/control command, no `regsvr32`, no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no SDK binary/OCX/DLL/vendor SDK file committed, and no captured image committed.
 
+## Session Update (2026-06-09, AI Grader Dino-Lite manual status/capture PR #28 merged)
+- PR #28 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/28`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `fc1983598eb14aae21eec730dacd69697d683671`.
+- PR #28 added manual-only DNVideoX status and still JPG capture commands through the x86 STA bridge and capture-helper CLI.
+- The implementation remains opt-in/manual-only; default readiness, health, server/admin paths, and tests do not instantiate DNVideoX or spawn the real adapter.
+- Post-merge GitHub Actions run `27229123807` succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/7jQGqSaHtxmjNNU7stoyBu2EhjVQ`.
+- Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
+- Guardrails held: no additional image capture, no microscope control, no EDR/EDOF/DPQ method, no LED/FLC/lens/focus/exposure-setting/control command, no `regsvr32`, no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no SDK binary/OCX/DLL/vendor SDK commit, no captured image commit, and no next AI Grader phase work.
+
 ## Session Update (2026-06-09, AI Grader Dino-Lite manual DNVideoX enumeration)
 - Branch `feature/ai-grader-dinolite-enumeration` was created from latest `origin/main`.
 - Added manual-only DNVideoX enumeration through the Windows .NET Framework 4.8 x86 STA bridge:
