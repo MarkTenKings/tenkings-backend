@@ -10645,6 +10645,7 @@ Build Set Ops UI flow with:
   - `captureGuides`, default enabled
   - target-level `captureGuide`, `captureGuidesEnabled`, `guideVisualKind`, `guideVisualOrientation`, `guideVisualLegend`, and `cornerProfile` fields in fake/real operator workflow manifests
   - visible adjacent WinForms operator guide diagram panel for overview/corner/edge/surface target alignment
+  - attempted in-preview guide overlay using an owned borderless transparent WinForms window positioned over the DNVideoX ActiveX preview rectangle
 - Added capture-helper CLI flags:
   - `--corner-profile sharp_90`
   - `--capture-guides true|false`
@@ -10693,4 +10694,16 @@ Build Set Ops UI flow with:
   - target guide metadata: `guideVisualKind=surface`, `guideVisualOrientation=center`, `guideVisualLegend="Fill the yellow central patch with card surface only; avoid border and background."`
   - artifact: `01-center-surface-attempt-01-normal.jpg` - 210536 bytes - `52fb0f26eccb4ea05934dbdee599ba50adfe8359b671027ee5248fb90a3afb0e`
   - cleanup succeeded: preview stopped, disconnected, host disposed
+- Supervised PR #33 in-preview overlay follow-up smoke completed on the Dell capture node:
+  - command: `dinolite-operator-workflow --plan operator-smoke-single --capture-guides true`, normal JPG only
+  - overlay technique: owned transparent top-level WinForms window, `ShowWithoutActivation`, positioned to `axHost.RectangleToScreen(axHost.ClientRectangle)`, with the existing side guide panel retained as fallback/legend
+  - DNVideoX `SetBitmapOverlay`/`SetTextOverlay` were not used, so the overlay is outside the video frame pipeline
+  - output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-preview-overlay-smoke-20260610T165908190Z`
+  - manifest: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-preview-overlay-smoke-20260610T165908190Z\manifest.json`
+  - report: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-preview-overlay-smoke-20260610T165908190Z\preview-report.html`
+  - captured target count: 1, `center-surface`
+  - artifact: `01-center-surface-attempt-01-normal.jpg` - 149798 bytes - `8147f31196c3b64ff42f2f8f6724ff0b57049e64a43fd7e5241cf8a09e23423c`
+  - saved JPG was visually inspected and contained no guide graphics
+  - cleanup succeeded: preview stopped, disconnected, host disposed
+  - Mark's explicit confirmation that the guide appeared inside the live preview is pending
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, no fake/manual/operator-entered/placeholder score, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.

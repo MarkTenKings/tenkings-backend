@@ -1932,6 +1932,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
         {
             private readonly Form form;
             private readonly DnVideoXAxHost axHost;
+            private readonly PreviewGuideOverlayForm previewOverlay;
             private readonly Label titleLabel;
             private readonly Label typeLabel;
             private readonly GuideDiagramControl guideDiagram;
@@ -1945,6 +1946,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
             private OperatorDnVideoXHost(
                 Form form,
                 DnVideoXAxHost axHost,
+                PreviewGuideOverlayForm previewOverlay,
                 Label titleLabel,
                 Label typeLabel,
                 GuideDiagramControl guideDiagram,
@@ -1956,6 +1958,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
             {
                 this.form = form;
                 this.axHost = axHost;
+                this.previewOverlay = previewOverlay;
                 this.titleLabel = titleLabel;
                 this.typeLabel = typeLabel;
                 this.guideDiagram = guideDiagram;
@@ -2034,12 +2037,17 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 var retakeButton = (Button)buttons.Controls[2];
                 var abortButton = (Button)buttons.Controls[3];
 
-                var host = new OperatorDnVideoXHost(form, axHost, titleLabel, typeLabel, guideDiagram, guideLabel, instructionLabel, progressLabel, overviewNoticeLabel, fallbackLabel);
+                var previewOverlay = new PreviewGuideOverlayForm();
+                var host = new OperatorDnVideoXHost(form, axHost, previewOverlay, titleLabel, typeLabel, guideDiagram, guideLabel, instructionLabel, progressLabel, overviewNoticeLabel, fallbackLabel);
                 captureButton.Click += (_, __) => host.requestedAction = OperatorAction.Capture;
                 skipButton.Click += (_, __) => host.requestedAction = OperatorAction.Skip;
                 retakeButton.Click += (_, __) => host.requestedAction = OperatorAction.Retake;
                 abortButton.Click += (_, __) => host.requestedAction = OperatorAction.Abort;
                 form.FormClosing += (_, __) => host.requestedAction = OperatorAction.Abort;
+                form.Move += (_, __) => host.UpdatePreviewOverlayBounds();
+                form.Resize += (_, __) => host.UpdatePreviewOverlayBounds();
+                split.SplitterMoved += (_, __) => host.UpdatePreviewOverlayBounds();
+                axHost.Resize += (_, __) => host.UpdatePreviewOverlayBounds();
 
                 panel.Controls.Add(titleLabel, 0, 0);
                 panel.Controls.Add(typeLabel, 0, 1);
@@ -2056,6 +2064,8 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 form.CreateControl();
                 axHost.CreateControl();
                 form.Show();
+                previewOverlay.Show(form);
+                host.UpdatePreviewOverlayBounds();
                 form.BringToFront();
                 form.Activate();
                 var topMostTimer = new System.Windows.Forms.Timer { Interval = 1500 };
@@ -2079,6 +2089,8 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 titleLabel.Text = target.name;
                 typeLabel.Text = "Target type: " + target.type;
                 guideDiagram.SetTarget(target);
+                previewOverlay.SetTarget(target);
+                UpdatePreviewOverlayBounds();
                 guideLabel.Text = string.IsNullOrWhiteSpace(target.captureGuide) ? "Guide: center the target in the preview and keep background out of the frame." : target.captureGuide;
                 instructionLabel.Text = target.instruction + Environment.NewLine + Environment.NewLine + "Adjust focus manually, then confirm capture.";
                 overviewNoticeLabel.Text = showPostOverviewNotice
@@ -2096,6 +2108,20 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 }
 
                 return requestedAction ?? OperatorAction.Abort;
+            }
+
+            public void UpdatePreviewOverlayBounds()
+            {
+                if (form.IsDisposed || axHost.IsDisposed || previewOverlay.IsDisposed)
+                {
+                    return;
+                }
+
+                var screenBounds = axHost.RectangleToScreen(axHost.ClientRectangle);
+                previewOverlay.Bounds = screenBounds;
+                previewOverlay.Visible = form.Visible && form.WindowState != FormWindowState.Minimized && screenBounds.Width > 0 && screenBounds.Height > 0;
+                previewOverlay.Invalidate();
+                previewOverlay.BringToFront();
             }
 
             private static Label BuildOperatorLabel(float size, bool bold)
@@ -2124,8 +2150,142 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
             public void Dispose()
             {
+                previewOverlay.Close();
+                previewOverlay.Dispose();
                 axHost.Dispose();
                 form.Dispose();
+            }
+        }
+
+        private sealed class PreviewGuideOverlayForm : Form
+        {
+            private static readonly Color TransparentColor = Color.FromArgb(255, 0, 255);
+            private OperatorTarget? target;
+
+            public PreviewGuideOverlayForm()
+            {
+                ShowInTaskbar = false;
+                FormBorderStyle = FormBorderStyle.None;
+                StartPosition = FormStartPosition.Manual;
+                BackColor = TransparentColor;
+                TransparencyKey = TransparentColor;
+                TopMost = true;
+                DoubleBuffered = true;
+                Font = new Font("Segoe UI", 10, FontStyle.Bold);
+            }
+
+            protected override bool ShowWithoutActivation => true;
+
+            protected override CreateParams CreateParams
+            {
+                get
+                {
+                    const int wsExToolWindow = 0x00000080;
+                    const int wsExNoActivate = 0x08000000;
+                    const int wsExTransparent = 0x00000020;
+                    var cp = base.CreateParams;
+                    cp.ExStyle |= wsExToolWindow | wsExNoActivate | wsExTransparent;
+                    return cp;
+                }
+            }
+
+            public void SetTarget(OperatorTarget nextTarget)
+            {
+                target = nextTarget;
+                Invalidate();
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                var g = e.Graphics;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using (var guidePen = new Pen(Color.FromArgb(255, 214, 64), Math.Max(4, Width / 160)))
+                using (var accentPen = new Pen(Color.FromArgb(94, 234, 212), Math.Max(2, Width / 260)))
+                using (var shadowPen = new Pen(Color.FromArgb(20, 24, 32), Math.Max(6, Width / 120)))
+                using (var textBack = new SolidBrush(Color.FromArgb(170, 15, 23, 42)))
+                using (var textBrush = new SolidBrush(Color.White))
+                {
+                    var canvas = new Rectangle(18, 18, Math.Max(40, Width - 36), Math.Max(40, Height - 58));
+                    var kind = target?.guideVisualKind ?? "surface";
+                    var orientation = target?.guideVisualOrientation ?? "center";
+                    DrawCenterTickMarks(g, accentPen, canvas);
+                    if (kind == "full-card")
+                    {
+                        DrawFullCardGuide(g, shadowPen, canvas);
+                        DrawFullCardGuide(g, guidePen, canvas);
+                    }
+                    else if (kind == "corner")
+                    {
+                        DrawCornerGuide(g, shadowPen, shadowPen, canvas, orientation);
+                        DrawCornerGuide(g, guidePen, accentPen, canvas, orientation);
+                    }
+                    else if (kind == "edge")
+                    {
+                        DrawEdgeGuide(g, shadowPen, canvas, orientation);
+                        DrawEdgeGuide(g, guidePen, canvas, orientation);
+                    }
+                    else
+                    {
+                        DrawSurfaceGuide(g, shadowPen, shadowPen, canvas);
+                        DrawSurfaceGuide(g, guidePen, accentPen, canvas);
+                    }
+
+                    var legend = target?.guideVisualLegend ?? "Align the target to the yellow guide.";
+                    var legendRect = new RectangleF(14, Math.Max(8, Height - 42), Math.Max(80, Width - 28), 30);
+                    g.FillRectangle(textBack, legendRect);
+                    g.DrawString(legend, Font, textBrush, legendRect);
+                }
+            }
+
+            private static void DrawCenterTickMarks(Graphics g, Pen pen, Rectangle canvas)
+            {
+                var cx = canvas.Left + canvas.Width / 2;
+                var cy = canvas.Top + canvas.Height / 2;
+                var tick = Math.Min(canvas.Width, canvas.Height) / 12;
+                g.DrawLine(pen, cx - tick, cy, cx + tick, cy);
+                g.DrawLine(pen, cx, cy - tick, cx, cy + tick);
+            }
+
+            private static void DrawFullCardGuide(Graphics g, Pen pen, Rectangle canvas)
+            {
+                var rect = Rectangle.Inflate(canvas, -canvas.Width / 6, -canvas.Height / 8);
+                g.DrawRectangle(pen, rect);
+            }
+
+            private static void DrawCornerGuide(Graphics g, Pen pen, Pen accentPen, Rectangle canvas, string orientation)
+            {
+                var cx = canvas.Left + canvas.Width / 2;
+                var cy = canvas.Top + canvas.Height / 2;
+                var len = Math.Min(canvas.Width, canvas.Height) / 3;
+                var left = orientation.Contains("left");
+                var top = orientation.Contains("top");
+                var xEnd = left ? cx + len : cx - len;
+                var yEnd = top ? cy + len : cy - len;
+                g.DrawLine(pen, cx, cy, xEnd, cy);
+                g.DrawLine(pen, cx, cy, cx, yEnd);
+                g.DrawRectangle(accentPen, cx - 10, cy - 10, 20, 20);
+            }
+
+            private static void DrawEdgeGuide(Graphics g, Pen pen, Rectangle canvas, string orientation)
+            {
+                var cx = canvas.Left + canvas.Width / 2;
+                var cy = canvas.Top + canvas.Height / 2;
+                if (orientation == "vertical")
+                {
+                    g.DrawLine(pen, cx, canvas.Top + canvas.Height / 8, cx, canvas.Bottom - canvas.Height / 8);
+                }
+                else
+                {
+                    g.DrawLine(pen, canvas.Left + canvas.Width / 8, cy, canvas.Right - canvas.Width / 8, cy);
+                }
+            }
+
+            private static void DrawSurfaceGuide(Graphics g, Pen pen, Pen accentPen, Rectangle canvas)
+            {
+                var rect = Rectangle.Inflate(canvas, -canvas.Width / 4, -canvas.Height / 4);
+                g.DrawRectangle(pen, rect);
+                g.DrawEllipse(accentPen, rect);
             }
         }
 

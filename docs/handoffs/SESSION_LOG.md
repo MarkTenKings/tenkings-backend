@@ -19737,6 +19737,8 @@ By enabling Rip It Live, I confirm:
 - Continued PR #33 on branch `feature/ai-grader-dinolite-report-diagnostics`; PR remains unmerged.
 - Fixed the remaining operator-guide usability issue by adding a real adjacent WinForms visual guide diagram panel to the visible `Ten Kings Dino-Lite Operator Workflow` window.
 - The guide panel is adjacent to the DNVideoX ActiveX preview instead of drawn over the OCX surface, reducing overlay risk while still providing target-specific visual diagrams.
+- Added a follow-up in-preview overlay attempt using an owned borderless transparent WinForms window positioned over the DNVideoX ActiveX preview rectangle. The adjacent guide panel remains as fallback/legend.
+- DNVideoX `SetBitmapOverlay` and `SetTextOverlay` were not used, so the in-preview guide is outside the DNVideoX video frame pipeline and should not be captured by `SaveFrameJPG`.
 - Added target-level guide metadata through fake and real operator workflow manifests:
   - `guideVisualKind`
   - `guideVisualOrientation`
@@ -19773,6 +19775,18 @@ By enabling Rip It Live, I confirm:
 - Target metadata recorded `guideVisualKind=surface`, `guideVisualOrientation=center`, and `guideVisualLegend="Fill the yellow central patch with card surface only; avoid border and background."`.
 - Artifact: `01-center-surface-attempt-01-normal.jpg` - 210536 bytes - `52fb0f26eccb4ea05934dbdee599ba50adfe8359b671027ee5248fb90a3afb0e`.
 - Cleanup succeeded: `previewStopped=true`, `disconnected=true`, `hostDisposed=true`.
+
+### Supervised In-Preview Overlay Smoke
+- Ran `dinolite-operator-workflow --plan operator-smoke-single --capture-guides true`, normal JPG only, with Mark present.
+- Output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-preview-overlay-smoke-20260610T165908190Z`.
+- Manifest: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-preview-overlay-smoke-20260610T165908190Z\manifest.json`.
+- Report: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-preview-overlay-smoke-20260610T165908190Z\preview-report.html`.
+- Captured target count: 1, `center-surface`.
+- Target metadata recorded `guideVisualKind=surface`, `guideVisualOrientation=center`, and `guideVisualLegend="Fill the yellow central patch with card surface only; avoid border and background."`.
+- Artifact: `01-center-surface-attempt-01-normal.jpg` - 149798 bytes - `8147f31196c3b64ff42f2f8f6724ff0b57049e64a43fd7e5241cf8a09e23423c`.
+- Saved JPG was visually inspected and contained no guide graphics.
+- Cleanup succeeded: `previewStopped=true`, `disconnected=true`, `hostDisposed=true`.
+- Mark's explicit confirmation that the yellow guide appeared inside the live camera preview, not only in the side panel, is pending.
 
 ### Guardrails
 - No production/staging migration was run.
