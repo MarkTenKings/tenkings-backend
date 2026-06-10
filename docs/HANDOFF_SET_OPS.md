@@ -10501,16 +10501,20 @@ Build Set Ops UI flow with:
 - Default operator workflow captures normal JPG only. Optional flags enable FLC sweep, EDR, and EDOF.
 - Output remains outside git with `manifest.json`, `preview-report.html`, target-level metadata, SHA-256, byte size, MIME type, and timestamps. No base64 image data is embedded in JSON.
 - Tests added for fake operator workflow shape, card-interim overview ordering/labels, fail-closed real adapter behavior, CLI output-path rejection, and no default readiness/health hardware spawn.
-- Validation completed so far:
+- Validation completed:
   - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass
   - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 10 tests
   - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
   - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 68 tests
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
 - Manual operator workflow smoke attempt:
   - command launched `dinolite-operator-workflow` with `plan=card-interim`, normal JPG only, explicit bridge exe, explicit `--sdk-runtime-dir`, and outside-git output dir `C:\TenKings\capture-data\dinolite-operator`
   - preview workflow remained pending for operator input and the shell command timed out after 11 minutes
   - no target captures, `manifest.json`, or `preview-report.html` were written
   - stuck bridge/node processes were terminated after a normal window close did not exit the bridge
   - follow-up fix added: stdio client now kills the bridge child process on command timeout to avoid leaked manual workflow processes
-- Remaining before PR #31 ready: full repo validation, one manual operator workflow smoke on the Dell PC if the operator can complete the visible preview prompts, docs finalization, commit/push/PR.
+- Remaining before PR #31 ready: one manual operator workflow smoke on the Dell PC with the operator completing the visible preview prompts.
 - Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, and no certified grade/certificate/final AI grade claim.

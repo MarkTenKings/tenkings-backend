@@ -19454,6 +19454,10 @@ By enabling Rip It Live, I confirm:
 - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 10 tests.
 - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
 - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 68 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
 - Manual operator workflow smoke attempt launched `dinolite-operator-workflow` with `plan=card-interim`, normal JPG only, explicit bridge exe, explicit SDK runtime dir, and outside-git output dir `C:\TenKings\capture-data\dinolite-operator`.
 - The workflow remained pending for operator input and the shell command timed out after 11 minutes. No target captures, `manifest.json`, or `preview-report.html` were written.
 - Stuck bridge/node processes were terminated after a normal window close did not exit the bridge.
