@@ -1350,7 +1350,23 @@ namespace TenKings.AiGrader.DinoLiteBridge
             var guideVisualKind = BuildGuideVisualKind(type);
             var guideVisualOrientation = BuildGuideVisualOrientation(id, type);
             var guideVisualLegend = captureGuides ? BuildGuideVisualLegend(id, type, cornerProfile) : "";
-            return new OperatorTarget(id, name, type, reportLabel, instruction, guide, captureGuides, guideVisualKind, guideVisualOrientation, guideVisualLegend, type == "corner" ? cornerProfile : null);
+            var guideTemplateKind = BuildGuideTemplateKind(type);
+            var guideTemplateAspectRatio = type == "interim_macro_overview" ? "2.5:3.5" : null;
+            return new OperatorTarget(
+                id,
+                name,
+                type,
+                reportLabel,
+                instruction,
+                guide,
+                captureGuides,
+                guideVisualKind,
+                guideVisualOrientation,
+                guideVisualLegend,
+                guideTemplateKind,
+                guideTemplateAspectRatio,
+                "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
+                type == "corner" ? cornerProfile : null);
         }
 
         private static string BuildCaptureGuide(string id, string type, string cornerProfile)
@@ -1405,23 +1421,30 @@ namespace TenKings.AiGrader.DinoLiteBridge
         {
             if (type == "interim_macro_overview")
             {
-                return "Fit as much of the card as possible inside the yellow rectangle; keep card edges visible.";
+                return "Fit full card inside this frame. Raise/zoom out/refocus; interim, not calibrated macro capture.";
             }
             if (type == "corner")
             {
-                return "Place the " + BuildGuideVisualOrientation(id, type) + " corner tip in the yellow box; align both card edges to the L guide. Profile: " + cornerProfile + ".";
+                return "Place corner tip on crosshair; align both card edges with yellow guides. Profile: " + cornerProfile + ".";
             }
             if (type == "edge")
             {
-                return BuildGuideVisualOrientation(id, type) == "horizontal"
-                    ? "Align the card edge along the yellow horizontal guide line."
-                    : "Align the card edge along the yellow vertical guide line.";
+                return "Align card edge inside the strip; minimize background.";
             }
             if (type == "surface")
             {
-                return "Fill the yellow central patch with card surface only; avoid border and background.";
+                return "Fill this patch with card surface only; avoid border and background.";
             }
             return "Center the requested target inside the yellow guide.";
+        }
+
+        private static string BuildGuideTemplateKind(string type)
+        {
+            if (type == "interim_macro_overview") return "full_card_frame";
+            if (type == "corner") return "sharp_90_corner_template";
+            if (type == "edge") return "edge_strip_template";
+            if (type == "surface") return "surface_patch_template";
+            return "center_template";
         }
 
         private static object[] CaptureOperatorTargetArtifacts(
@@ -1503,6 +1526,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     target.guideVisualKind,
                     target.guideVisualOrientation,
                     target.guideVisualLegend,
+                    target.guideTemplateKind,
+                    target.guideTemplateAspectRatio,
+                    target.guideTemplateScaleNote,
                     target.cornerProfile
                 },
                 targetIndex,
@@ -2088,8 +2114,8 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 requestedAction = null;
                 titleLabel.Text = target.name;
                 typeLabel.Text = "Target type: " + target.type;
-                guideDiagram.SetTarget(target);
-                previewOverlay.SetTarget(target);
+                guideDiagram.SetTarget(target, targetIndex, totalTargets);
+                previewOverlay.SetTarget(target, targetIndex, totalTargets);
                 UpdatePreviewOverlayBounds();
                 guideLabel.Text = string.IsNullOrWhiteSpace(target.captureGuide) ? "Guide: center the target in the preview and keep background out of the frame." : target.captureGuide;
                 instructionLabel.Text = target.instruction + Environment.NewLine + Environment.NewLine + "Adjust focus manually, then confirm capture.";
@@ -2161,6 +2187,8 @@ namespace TenKings.AiGrader.DinoLiteBridge
         {
             private static readonly Color TransparentColor = Color.FromArgb(255, 0, 255);
             private OperatorTarget? target;
+            private int targetIndex;
+            private int totalTargets;
 
             public PreviewGuideOverlayForm()
             {
@@ -2189,9 +2217,11 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 }
             }
 
-            public void SetTarget(OperatorTarget nextTarget)
+            public void SetTarget(OperatorTarget nextTarget, int nextTargetIndex, int nextTotalTargets)
             {
                 target = nextTarget;
+                targetIndex = nextTargetIndex;
+                totalTargets = nextTotalTargets;
                 Invalidate();
             }
 
@@ -2200,98 +2230,16 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 base.OnPaint(e);
                 var g = e.Graphics;
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                using (var guidePen = new Pen(Color.FromArgb(255, 214, 64), Math.Max(4, Width / 160)))
-                using (var accentPen = new Pen(Color.FromArgb(94, 234, 212), Math.Max(2, Width / 260)))
-                using (var shadowPen = new Pen(Color.FromArgb(20, 24, 32), Math.Max(6, Width / 120)))
-                using (var textBack = new SolidBrush(Color.FromArgb(170, 15, 23, 42)))
-                using (var textBrush = new SolidBrush(Color.White))
-                {
-                    var canvas = new Rectangle(18, 18, Math.Max(40, Width - 36), Math.Max(40, Height - 58));
-                    var kind = target?.guideVisualKind ?? "surface";
-                    var orientation = target?.guideVisualOrientation ?? "center";
-                    DrawCenterTickMarks(g, accentPen, canvas);
-                    if (kind == "full-card")
-                    {
-                        DrawFullCardGuide(g, shadowPen, canvas);
-                        DrawFullCardGuide(g, guidePen, canvas);
-                    }
-                    else if (kind == "corner")
-                    {
-                        DrawCornerGuide(g, shadowPen, shadowPen, canvas, orientation);
-                        DrawCornerGuide(g, guidePen, accentPen, canvas, orientation);
-                    }
-                    else if (kind == "edge")
-                    {
-                        DrawEdgeGuide(g, shadowPen, canvas, orientation);
-                        DrawEdgeGuide(g, guidePen, canvas, orientation);
-                    }
-                    else
-                    {
-                        DrawSurfaceGuide(g, shadowPen, shadowPen, canvas);
-                        DrawSurfaceGuide(g, guidePen, accentPen, canvas);
-                    }
-
-                    var legend = target?.guideVisualLegend ?? "Align the target to the yellow guide.";
-                    var legendRect = new RectangleF(14, Math.Max(8, Height - 42), Math.Max(80, Width - 28), 30);
-                    g.FillRectangle(textBack, legendRect);
-                    g.DrawString(legend, Font, textBrush, legendRect);
-                }
-            }
-
-            private static void DrawCenterTickMarks(Graphics g, Pen pen, Rectangle canvas)
-            {
-                var cx = canvas.Left + canvas.Width / 2;
-                var cy = canvas.Top + canvas.Height / 2;
-                var tick = Math.Min(canvas.Width, canvas.Height) / 12;
-                g.DrawLine(pen, cx - tick, cy, cx + tick, cy);
-                g.DrawLine(pen, cx, cy - tick, cx, cy + tick);
-            }
-
-            private static void DrawFullCardGuide(Graphics g, Pen pen, Rectangle canvas)
-            {
-                var rect = Rectangle.Inflate(canvas, -canvas.Width / 6, -canvas.Height / 8);
-                g.DrawRectangle(pen, rect);
-            }
-
-            private static void DrawCornerGuide(Graphics g, Pen pen, Pen accentPen, Rectangle canvas, string orientation)
-            {
-                var cx = canvas.Left + canvas.Width / 2;
-                var cy = canvas.Top + canvas.Height / 2;
-                var len = Math.Min(canvas.Width, canvas.Height) / 3;
-                var left = orientation.Contains("left");
-                var top = orientation.Contains("top");
-                var xEnd = left ? cx + len : cx - len;
-                var yEnd = top ? cy + len : cy - len;
-                g.DrawLine(pen, cx, cy, xEnd, cy);
-                g.DrawLine(pen, cx, cy, cx, yEnd);
-                g.DrawRectangle(accentPen, cx - 10, cy - 10, 20, 20);
-            }
-
-            private static void DrawEdgeGuide(Graphics g, Pen pen, Rectangle canvas, string orientation)
-            {
-                var cx = canvas.Left + canvas.Width / 2;
-                var cy = canvas.Top + canvas.Height / 2;
-                if (orientation == "vertical")
-                {
-                    g.DrawLine(pen, cx, canvas.Top + canvas.Height / 8, cx, canvas.Bottom - canvas.Height / 8);
-                }
-                else
-                {
-                    g.DrawLine(pen, canvas.Left + canvas.Width / 8, cy, canvas.Right - canvas.Width / 8, cy);
-                }
-            }
-
-            private static void DrawSurfaceGuide(Graphics g, Pen pen, Pen accentPen, Rectangle canvas)
-            {
-                var rect = Rectangle.Inflate(canvas, -canvas.Width / 4, -canvas.Height / 4);
-                g.DrawRectangle(pen, rect);
-                g.DrawEllipse(accentPen, rect);
+                var canvas = new Rectangle(18, 18, Math.Max(40, Width - 36), Math.Max(40, Height - 58));
+                GuideTemplateRenderer.Draw(g, canvas, target, targetIndex, totalTargets, overlayMode: true, Font);
             }
         }
 
         private sealed class GuideDiagramControl : Control
         {
             private OperatorTarget? target;
+            private int targetIndex;
+            private int totalTargets;
 
             public GuideDiagramControl()
             {
@@ -2301,9 +2249,11 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 Font = new Font("Segoe UI", 10, FontStyle.Bold);
             }
 
-            public void SetTarget(OperatorTarget nextTarget)
+            public void SetTarget(OperatorTarget nextTarget, int nextTargetIndex, int nextTotalTargets)
             {
                 target = nextTarget;
+                targetIndex = nextTargetIndex;
+                totalTargets = nextTotalTargets;
                 Invalidate();
             }
 
@@ -2313,89 +2263,171 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 var g = e.Graphics;
                 g.Clear(BackColor);
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                var canvas = new Rectangle(18, 18, Math.Max(40, Width - 36), Math.Max(40, Height - 58));
+                GuideTemplateRenderer.Draw(g, canvas, target, targetIndex, totalTargets, overlayMode: false, Font);
+            }
+        }
+
+        private static class GuideTemplateRenderer
+        {
+            public static void Draw(Graphics g, Rectangle canvas, OperatorTarget? target, int targetIndex, int totalTargets, bool overlayMode, Font font)
+            {
+                using (var guidePen = new Pen(Color.FromArgb(255, 214, 64), Math.Max(4, canvas.Width / 150)))
+                using (var accentPen = new Pen(Color.FromArgb(94, 234, 212), Math.Max(2, canvas.Width / 250)))
+                using (var shadowPen = new Pen(Color.FromArgb(12, 18, 28), Math.Max(8, canvas.Width / 105)))
                 using (var borderPen = new Pen(Color.FromArgb(76, 154, 255), 2))
-                using (var guidePen = new Pen(Color.FromArgb(255, 214, 64), 5))
-                using (var accentPen = new Pen(Color.FromArgb(94, 234, 212), 3))
-                using (var mutedPen = new Pen(Color.FromArgb(148, 163, 184), 1))
-                using (var brush = new SolidBrush(Color.White))
+                using (var textBack = new SolidBrush(Color.FromArgb(185, 15, 23, 42)))
+                using (var textBrush = new SolidBrush(Color.White))
+                using (var maskBrush = new SolidBrush(Color.FromArgb(overlayMode ? 92 : 60, 0, 0, 0)))
                 using (var mutedBrush = new SolidBrush(Color.FromArgb(203, 213, 225)))
                 {
-                    var canvas = new Rectangle(18, 18, Math.Max(40, Width - 36), Math.Max(40, Height - 58));
-                    g.DrawRectangle(borderPen, canvas);
-                    DrawCenterCrosshair(g, mutedPen, canvas);
+                    if (!overlayMode)
+                    {
+                        g.DrawRectangle(borderPen, canvas);
+                        g.DrawString("Blue frame = preview area. Yellow/cyan = in-preview alignment template.", new Font("Segoe UI", 8, FontStyle.Regular), mutedBrush, new PointF(canvas.Left + 2, Math.Max(2, canvas.Top - 16)));
+                    }
 
-                    var kind = target?.guideVisualKind ?? "surface";
+                    var kind = target?.guideTemplateKind ?? "surface_patch_template";
                     var orientation = target?.guideVisualOrientation ?? "center";
-                    if (kind == "full-card")
+                    Rectangle templateRect;
+                    if (kind == "full_card_frame")
                     {
-                        DrawFullCardGuide(g, guidePen, canvas);
+                        templateRect = CardFrameRect(canvas);
+                        MaskOutside(g, maskBrush, canvas, templateRect);
+                        DrawFullCardFrame(g, shadowPen, templateRect);
+                        DrawFullCardFrame(g, guidePen, templateRect);
                     }
-                    else if (kind == "corner")
+                    else if (kind == "sharp_90_corner_template")
                     {
-                        DrawCornerGuide(g, guidePen, accentPen, canvas, orientation);
+                        templateRect = CornerTemplateRect(canvas);
+                        MaskOutside(g, maskBrush, canvas, templateRect);
+                        DrawCornerTemplate(g, shadowPen, shadowPen, templateRect, orientation);
+                        DrawCornerTemplate(g, guidePen, accentPen, templateRect, orientation);
                     }
-                    else if (kind == "edge")
+                    else if (kind == "edge_strip_template")
                     {
-                        DrawEdgeGuide(g, guidePen, canvas, orientation);
+                        templateRect = EdgeTemplateRect(canvas, orientation);
+                        MaskOutside(g, maskBrush, canvas, templateRect);
+                        DrawEdgeTemplate(g, shadowPen, templateRect, orientation);
+                        DrawEdgeTemplate(g, guidePen, templateRect, orientation);
                     }
                     else
                     {
-                        DrawSurfaceGuide(g, guidePen, accentPen, canvas);
+                        templateRect = SurfaceTemplateRect(canvas);
+                        MaskOutside(g, maskBrush, canvas, templateRect);
+                        DrawSurfaceTemplate(g, shadowPen, shadowPen, templateRect);
+                        DrawSurfaceTemplate(g, guidePen, accentPen, templateRect);
                     }
 
+                    var caption = target == null
+                        ? "Align target to template"
+                        : target.name + "  |  " + Math.Max(1, targetIndex) + " / " + Math.Max(1, totalTargets);
                     var legend = target?.guideVisualLegend ?? "Align the target to the yellow guide.";
-                    g.DrawString(legend, Font, brush, new RectangleF(18, Height - 35, Width - 36, 30));
-                    g.DrawString("Blue frame = preview area. Yellow = target alignment guide.", new Font("Segoe UI", 8, FontStyle.Regular), mutedBrush, new PointF(20, 2));
+                    DrawLabel(g, textBack, textBrush, font, new RectangleF(canvas.Left, canvas.Top, canvas.Width, 34), caption);
+                    DrawLabel(g, textBack, textBrush, font, new RectangleF(canvas.Left, Math.Max(canvas.Top + 38, canvas.Bottom - 38), canvas.Width, 34), legend);
                 }
             }
 
-            private static void DrawCenterCrosshair(Graphics g, Pen pen, Rectangle canvas)
+            private static Rectangle CardFrameRect(Rectangle canvas)
             {
-                var cx = canvas.Left + canvas.Width / 2;
-                var cy = canvas.Top + canvas.Height / 2;
-                g.DrawLine(pen, cx, canvas.Top + 8, cx, canvas.Bottom - 8);
-                g.DrawLine(pen, canvas.Left + 8, cy, canvas.Right - 8, cy);
+                var safe = Rectangle.Inflate(canvas, -canvas.Width / 10, -canvas.Height / 12);
+                var targetRatio = 2.5 / 3.5;
+                var width = safe.Width;
+                var height = (int)(width / targetRatio);
+                if (height > safe.Height)
+                {
+                    height = safe.Height;
+                    width = (int)(height * targetRatio);
+                }
+                return new Rectangle(safe.Left + (safe.Width - width) / 2, safe.Top + (safe.Height - height) / 2, width, height);
             }
 
-            private static void DrawFullCardGuide(Graphics g, Pen pen, Rectangle canvas)
+            private static Rectangle CornerTemplateRect(Rectangle canvas)
             {
-                var rect = Rectangle.Inflate(canvas, -canvas.Width / 6, -canvas.Height / 8);
-                g.DrawRectangle(pen, rect);
+                var size = Math.Min(canvas.Width, canvas.Height) * 62 / 100;
+                return new Rectangle(canvas.Left + (canvas.Width - size) / 2, canvas.Top + (canvas.Height - size) / 2, size, size);
             }
 
-            private static void DrawCornerGuide(Graphics g, Pen pen, Pen accentPen, Rectangle canvas, string orientation)
+            private static Rectangle EdgeTemplateRect(Rectangle canvas, string orientation)
             {
-                var cx = canvas.Left + canvas.Width / 2;
-                var cy = canvas.Top + canvas.Height / 2;
-                var len = Math.Min(canvas.Width, canvas.Height) / 3;
-                var left = orientation.Contains("left");
-                var top = orientation.Contains("top");
-                var xEnd = left ? cx + len : cx - len;
-                var yEnd = top ? cy + len : cy - len;
-                g.DrawLine(pen, cx, cy, xEnd, cy);
-                g.DrawLine(pen, cx, cy, cx, yEnd);
-                g.DrawRectangle(accentPen, cx - 9, cy - 9, 18, 18);
-            }
-
-            private static void DrawEdgeGuide(Graphics g, Pen pen, Rectangle canvas, string orientation)
-            {
-                var cx = canvas.Left + canvas.Width / 2;
-                var cy = canvas.Top + canvas.Height / 2;
                 if (orientation == "vertical")
                 {
-                    g.DrawLine(pen, cx, canvas.Top + 16, cx, canvas.Bottom - 16);
+                    var width = Math.Max(44, canvas.Width / 5);
+                    return new Rectangle(canvas.Left + (canvas.Width - width) / 2, canvas.Top + canvas.Height / 9, width, canvas.Height * 7 / 9);
+                }
+                var height = Math.Max(44, canvas.Height / 5);
+                return new Rectangle(canvas.Left + canvas.Width / 9, canvas.Top + (canvas.Height - height) / 2, canvas.Width * 7 / 9, height);
+            }
+
+            private static Rectangle SurfaceTemplateRect(Rectangle canvas)
+            {
+                return Rectangle.Inflate(canvas, -canvas.Width / 4, -canvas.Height / 4);
+            }
+
+            private static void MaskOutside(Graphics g, Brush brush, Rectangle canvas, Rectangle clear)
+            {
+                g.FillRectangle(brush, canvas.Left, canvas.Top, canvas.Width, Math.Max(0, clear.Top - canvas.Top));
+                g.FillRectangle(brush, canvas.Left, clear.Bottom, canvas.Width, Math.Max(0, canvas.Bottom - clear.Bottom));
+                g.FillRectangle(brush, canvas.Left, clear.Top, Math.Max(0, clear.Left - canvas.Left), clear.Height);
+                g.FillRectangle(brush, clear.Right, clear.Top, Math.Max(0, canvas.Right - clear.Right), clear.Height);
+            }
+
+            private static void DrawFullCardFrame(Graphics g, Pen pen, Rectangle rect)
+            {
+                g.DrawRectangle(pen, rect);
+                var tick = Math.Min(rect.Width, rect.Height) / 10;
+                g.DrawLine(pen, rect.Left, rect.Top, rect.Left + tick, rect.Top);
+                g.DrawLine(pen, rect.Left, rect.Top, rect.Left, rect.Top + tick);
+                g.DrawLine(pen, rect.Right, rect.Top, rect.Right - tick, rect.Top);
+                g.DrawLine(pen, rect.Right, rect.Top, rect.Right, rect.Top + tick);
+                g.DrawLine(pen, rect.Right, rect.Bottom, rect.Right - tick, rect.Bottom);
+                g.DrawLine(pen, rect.Right, rect.Bottom, rect.Right, rect.Bottom - tick);
+                g.DrawLine(pen, rect.Left, rect.Bottom, rect.Left + tick, rect.Bottom);
+                g.DrawLine(pen, rect.Left, rect.Bottom, rect.Left, rect.Bottom - tick);
+            }
+
+            private static void DrawCornerTemplate(Graphics g, Pen pen, Pen accentPen, Rectangle rect, string orientation)
+            {
+                var cx = rect.Left + rect.Width / 2;
+                var cy = rect.Top + rect.Height / 2;
+                var len = Math.Min(rect.Width, rect.Height) * 42 / 100;
+                var opensRight = orientation.Contains("left");
+                var opensDown = orientation.Contains("top");
+                var xEnd = opensRight ? cx + len : cx - len;
+                var yEnd = opensDown ? cy + len : cy - len;
+                g.DrawLine(pen, cx, cy, xEnd, cy);
+                g.DrawLine(pen, cx, cy, cx, yEnd);
+                g.DrawEllipse(accentPen, cx - 14, cy - 14, 28, 28);
+                g.DrawLine(accentPen, cx - 22, cy, cx + 22, cy);
+                g.DrawLine(accentPen, cx, cy - 22, cx, cy + 22);
+            }
+
+            private static void DrawEdgeTemplate(Graphics g, Pen pen, Rectangle rect, string orientation)
+            {
+                g.DrawRectangle(pen, rect);
+                if (orientation == "vertical")
+                {
+                    var cx = rect.Left + rect.Width / 2;
+                    g.DrawLine(pen, cx, rect.Top, cx, rect.Bottom);
                 }
                 else
                 {
-                    g.DrawLine(pen, canvas.Left + 16, cy, canvas.Right - 16, cy);
+                    var cy = rect.Top + rect.Height / 2;
+                    g.DrawLine(pen, rect.Left, cy, rect.Right, cy);
                 }
             }
 
-            private static void DrawSurfaceGuide(Graphics g, Pen pen, Pen accentPen, Rectangle canvas)
+            private static void DrawSurfaceTemplate(Graphics g, Pen pen, Pen accentPen, Rectangle rect)
             {
-                var rect = Rectangle.Inflate(canvas, -canvas.Width / 4, -canvas.Height / 4);
                 g.DrawRectangle(pen, rect);
-                g.DrawEllipse(accentPen, rect);
+                g.DrawLine(accentPen, rect.Left + rect.Width / 2, rect.Top + rect.Height / 6, rect.Left + rect.Width / 2, rect.Bottom - rect.Height / 6);
+                g.DrawLine(accentPen, rect.Left + rect.Width / 6, rect.Top + rect.Height / 2, rect.Right - rect.Width / 6, rect.Top + rect.Height / 2);
+            }
+
+            private static void DrawLabel(Graphics g, Brush background, Brush textBrush, Font font, RectangleF rect, string text)
+            {
+                g.FillRectangle(background, rect);
+                g.DrawString(text, font, textBrush, rect);
             }
         }
 
@@ -2430,6 +2462,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 string guideVisualKind,
                 string guideVisualOrientation,
                 string guideVisualLegend,
+                string guideTemplateKind,
+                string? guideTemplateAspectRatio,
+                string guideTemplateScaleNote,
                 string? cornerProfile)
             {
                 this.id = id;
@@ -2442,6 +2477,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 this.guideVisualKind = guideVisualKind;
                 this.guideVisualOrientation = guideVisualOrientation;
                 this.guideVisualLegend = guideVisualLegend;
+                this.guideTemplateKind = guideTemplateKind;
+                this.guideTemplateAspectRatio = guideTemplateAspectRatio;
+                this.guideTemplateScaleNote = guideTemplateScaleNote;
                 this.cornerProfile = cornerProfile;
             }
 
@@ -2455,6 +2493,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
             public string guideVisualKind { get; }
             public string guideVisualOrientation { get; }
             public string guideVisualLegend { get; }
+            public string guideTemplateKind { get; }
+            public string? guideTemplateAspectRatio { get; }
+            public string guideTemplateScaleNote { get; }
             public string? cornerProfile { get; }
         }
 

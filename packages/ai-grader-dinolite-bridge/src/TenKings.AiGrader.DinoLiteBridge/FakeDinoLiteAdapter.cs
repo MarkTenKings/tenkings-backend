@@ -360,6 +360,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     guideVisualKind = FakeGuideVisualKind(type),
                     guideVisualOrientation = FakeGuideVisualOrientation(id, type),
                     guideVisualLegend = captureGuides ? FakeGuideVisualLegend(id, type, cornerProfile) : "",
+                    guideTemplateKind = FakeGuideTemplateKind(type),
+                    guideTemplateAspectRatio = type == "interim_macro_overview" ? "2.5:3.5" : null,
+                    guideTemplateScaleNote = "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
                     cornerProfile = type == "corner" ? cornerProfile : null
                 },
                 targetIndex = index,
@@ -410,11 +413,20 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
         private static string FakeGuideVisualLegend(string id, string type, string cornerProfile)
         {
-            if (type == "interim_macro_overview") return "Fit as much of the card as possible inside the yellow rectangle; keep card edges visible.";
-            if (type == "corner") return "Place the " + FakeGuideVisualOrientation(id, type) + " corner tip in the yellow box; align both card edges to the L guide. Profile: " + cornerProfile + ".";
-            if (type == "edge") return FakeGuideVisualOrientation(id, type) == "horizontal" ? "Align the card edge along the yellow horizontal guide line." : "Align the card edge along the yellow vertical guide line.";
-            if (type == "surface") return "Fill the yellow central patch with card surface only; avoid border and background.";
+            if (type == "interim_macro_overview") return "Fit full card inside this frame. Raise/zoom out/refocus; interim, not calibrated macro capture.";
+            if (type == "corner") return "Place corner tip on crosshair; align both card edges with yellow guides. Profile: " + cornerProfile + ".";
+            if (type == "edge") return "Align card edge inside the strip; minimize background.";
+            if (type == "surface") return "Fill this patch with card surface only; avoid border and background.";
             return "Center the requested target inside the yellow guide.";
+        }
+
+        private static string FakeGuideTemplateKind(string type)
+        {
+            if (type == "interim_macro_overview") return "full_card_frame";
+            if (type == "corner") return "sharp_90_corner_template";
+            if (type == "edge") return "edge_strip_template";
+            if (type == "surface") return "surface_patch_template";
+            return "center_template";
         }
 
         private static string[] OperatorLimitations()

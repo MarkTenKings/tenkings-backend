@@ -302,7 +302,10 @@ function fakeResult(command) {
             captureGuidesEnabled: true,
             guideVisualKind: "full-card",
             guideVisualOrientation: "center",
-            guideVisualLegend: "Fit as much of the card as possible inside the yellow rectangle; keep card edges visible.",
+            guideVisualLegend: "Fit full card inside this frame. Raise/zoom out/refocus; interim, not calibrated macro capture.",
+            guideTemplateKind: "full_card_frame",
+            guideTemplateAspectRatio: "2.5:3.5",
+            guideTemplateScaleNote: "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
             cornerProfile: null,
           },
           targetIndex: 1,
@@ -335,7 +338,10 @@ function fakeResult(command) {
             captureGuidesEnabled: true,
             guideVisualKind: "corner",
             guideVisualOrientation: "top-left",
-            guideVisualLegend: "Place the top-left corner tip in the yellow box; align both card edges to the L guide. Profile: sharp_90.",
+            guideVisualLegend: "Place corner tip on crosshair; align both card edges with yellow guides. Profile: sharp_90.",
+            guideTemplateKind: "sharp_90_corner_template",
+            guideTemplateAspectRatio: null,
+            guideTemplateScaleNote: "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
             cornerProfile: "sharp_90",
           },
           targetIndex: 2,
@@ -542,10 +548,14 @@ test("client maps fake operator workflow response shape", async () => {
   assert.match(workflow.targets[0].target.captureGuide, /fit as much of the card as possible/);
   assert.equal(workflow.targets[0].target.guideVisualKind, "full-card");
   assert.equal(workflow.targets[0].target.guideVisualOrientation, "center");
-  assert.match(workflow.targets[0].target.guideVisualLegend, /yellow rectangle/);
+  assert.match(workflow.targets[0].target.guideVisualLegend, /Fit full card inside this frame/);
+  assert.equal(workflow.targets[0].target.guideTemplateKind, "full_card_frame");
+  assert.equal(workflow.targets[0].target.guideTemplateAspectRatio, "2.5:3.5");
+  assert.match(workflow.targets[0].target.guideTemplateScaleNote, /Physical scale is uncalibrated/);
   assert.equal(workflow.targets[1].target.cornerProfile, "sharp_90");
   assert.equal(workflow.targets[1].target.guideVisualKind, "corner");
   assert.equal(workflow.targets[1].target.guideVisualOrientation, "top-left");
+  assert.equal(workflow.targets[1].target.guideTemplateKind, "sharp_90_corner_template");
   assert.equal(workflow.targets[0].artifacts[0].mimeType, "image/jpeg");
   assert.match(workflow.limitations.join(" "), /not production macro evidence/);
   assert.match(workflow.limitations.join(" "), /not calibrated macro capture/);

@@ -133,6 +133,9 @@ test("experimental report explains low surface visual signals without changing a
           guideVisualKind: "surface",
           guideVisualOrientation: "center",
           guideVisualLegend: "Fill the yellow central patch with card surface only; avoid border and background.",
+          guideTemplateKind: "surface_patch_template",
+          guideTemplateAspectRatio: null,
+          guideTemplateScaleNote: "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
           cornerProfile: null,
         },
         targetIndex: 1,
@@ -162,6 +165,7 @@ test("experimental report explains low surface visual signals without changing a
   const html = fs.readFileSync(previewReportPath, "utf8");
   assert.equal(analysis.algorithmVersion, "tenkings-dinolite-grading-v0.1");
   assert.equal(analysis.thresholdSetVersion, "tenkings-dinolite-thresholds-v0.1");
+  assert.equal(analysis.guideTemplates[0].guideTemplateKind, "surface_patch_template");
   assert.match(html, /Surface score is driven by high texture\/anomaly\/scratch proxy metrics/);
   assert.match(html, /review source images/i);
 });
@@ -235,6 +239,9 @@ test("experimental report carries non-certified warning language", async () => {
           guideVisualKind: "full-card",
           guideVisualOrientation: "center",
           guideVisualLegend: "Fit as much of the card as possible inside the yellow rectangle; keep card edges visible.",
+          guideTemplateKind: "full_card_frame",
+          guideTemplateAspectRatio: "2.5:3.5",
+          guideTemplateScaleNote: "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
           cornerProfile: null,
         },
         targetIndex: 1,
@@ -281,12 +288,18 @@ test("experimental report carries non-certified warning language", async () => {
   assert.match(html, /blurPenalty/);
   assert.match(html, /Underexposure and overexposure warnings are diagnostic-only/i);
   assert.match(html, /Card coverage heuristic/);
+  assert.match(html, /Capture Template Metadata/);
+  assert.match(html, /full_card_frame/);
+  assert.match(html, /2\.5:3\.5/);
+  assert.match(html, /Physical scale is uncalibrated/);
   assert.doesNotMatch(html, /Card coverage estimate/);
   assert.match(html, /Surface score is driven by high texture\/anomaly\/scratch proxy metrics|surface was not_computed/i);
   assert.equal(analysis.operatorOptions.cornerProfile, "sharp_90");
   assert.equal(analysis.scoreScale.displayFormat, "x.xx / 10");
   assert.equal(analysis.algorithmVersion, "tenkings-dinolite-grading-v0.1");
   assert.equal(analysis.thresholdSetVersion, "tenkings-dinolite-thresholds-v0.1");
+  assert.equal(analysis.guideTemplates[0].guideTemplateKind, "full_card_frame");
+  assert.equal(analysis.guideTemplates[0].guideTemplateAspectRatio, "2.5:3.5");
   assert.equal(analysis.qualityDiagnostics.length, 1);
   assert.equal(typeof analysis.qualityDiagnostics[0].cardCoverageHeuristic, "number");
   assert.notEqual(analysis.qualityDiagnostics[0].cardCoverageHeuristicLimitations, "");

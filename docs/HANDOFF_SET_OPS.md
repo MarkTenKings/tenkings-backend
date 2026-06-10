@@ -10707,3 +10707,58 @@ Build Set Ops UI flow with:
   - cleanup succeeded: preview stopped, disconnected, host disposed
   - Mark's explicit confirmation that the guide appeared inside the live preview is pending
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, no fake/manual/operator-entered/placeholder score, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.
+
+## Session Update (2026-06-10, AI Grader Dino-Lite report diagnostics PR #33 target templates)
+- Continued PR #33 on branch `feature/ai-grader-dinolite-report-diagnostics`; PR remains unmerged.
+- Mark confirmed the yellow visual guide appears on top of the live Dino-Lite camera preview, so the accepted technique remains an owned transparent top-level WinForms overlay positioned over the DNVideoX ActiveX preview. The adjacent side panel remains as a legend/fallback.
+- Improved the in-preview guide from generic alignment shapes to target-specific capture templates:
+  - full-card overview: centered `2.5:3.5` card-shaped frame with safe margin and label `Fit full card inside this frame`
+  - `sharp_90` corners: close-up L template plus crosshair, oriented per target: top-left opens down/right, top-right opens down/left, bottom-right opens up/left, bottom-left opens up/right
+  - edges: horizontal strip for top/bottom and vertical strip for left/right, with minimize-background instruction
+  - surfaces: centered patch box for card surface only
+- Added target/report metadata:
+  - `guideTemplateKind`
+  - `guideTemplateAspectRatio` (`2.5:3.5` for full-card overview)
+  - `guideTemplateScaleNote`
+  - analysis/report capture-template metadata table
+- Scoring math did not change. Algorithm version remains `tenkings-dinolite-grading-v0.1`; threshold set remains `tenkings-dinolite-thresholds-v0.1`.
+- Focused validation completed:
+  - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass
+  - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 80 tests
+- Full validation completed:
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
+- Supervised template smoke completed:
+  - command: `dinolite-experimental-grading-run --corner-profile sharp_90 --capture-guides true`, normal JPG only
+  - output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z`
+  - manifest: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z\manifest.json`
+  - analysis: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z\analysis.json`
+  - report: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z\preview-report.html`
+  - captured target count: 12
+  - template metadata recorded: `full_card_frame`, `sharp_90_corner_template`, `edge_strip_template`, `surface_patch_template`, full-card aspect ratio `2.5:3.5`, and physical-scale-uncalibrated note
+  - representative full-card/corner/edge/surface JPGs were visually inspected and contained no overlay graphics
+  - centering: `10.00 / 10`, confidence `0.809`
+  - corners: `2.24 / 10`, confidence `0.737`
+  - edges: `3.59 / 10`, confidence `0.75`
+  - surface: `1.00 / 10`, confidence `0.71`
+  - overall: `4.14 / 10`, confidence `0.71`
+  - quality warnings on 12 targets, mostly blur/underexposure risk
+- Artifacts:
+  - `01-full-card-overview-attempt-01-normal.jpg` - 132535 bytes - `42dd1352e6a620df1174f88d69253ab299b3d0347583c42e5e88d22ba07599a5`
+  - `02-top-left-corner-attempt-01-normal.jpg` - 136501 bytes - `8c1742ca4b1d45b25970e08450c47014bd9494dd9b352bcf44708eb9621aa953`
+  - `03-top-right-corner-attempt-01-normal.jpg` - 132419 bytes - `42333ddc09eaf54c3794f221b2b0a94919d88182891ff6e241712b3939cf88e2`
+  - `04-bottom-right-corner-attempt-01-normal.jpg` - 139425 bytes - `e796920c72a717fc53bebe8e3dbc50328a2d5a9d522bae82525703503bdd736d`
+  - `05-bottom-left-corner-attempt-01-normal.jpg` - 135488 bytes - `1eb3bb0b678dc4ab7762c9aa6ae70a9c3ccf64f26752d0c7e01c58320a6614e7`
+  - `06-top-edge-attempt-01-normal.jpg` - 135091 bytes - `8039a5987565b8afc6176ad4c5d63afedceeb72e30b17b1435fd09382d317574`
+  - `07-right-edge-attempt-01-normal.jpg` - 135070 bytes - `40b36a42aa805bcbbdc8930f4a22c5c2fd6c64f5e05a22540e314da9d95589c5`
+  - `08-bottom-edge-attempt-01-normal.jpg` - 166737 bytes - `eb537bd9244ce44f0e071031274a451ac9bdd9ac8d0ad8ba35ff612accc98e0e`
+  - `09-left-edge-attempt-01-normal.jpg` - 119634 bytes - `1de1c32e269ac5bfc80b39cf2015e518f335729ab2473221fb7a0974120fa4bd`
+  - `10-center-surface-attempt-01-normal.jpg` - 128275 bytes - `7f6e68f21be6c5a2260cd7b97b785ccec7e0571cb56a1a691d5ecf453d9f6edf`
+  - `11-upper-surface-attempt-01-normal.jpg` - 128405 bytes - `6620bf0f4f55ec69871f0e5e458b8dfc2e42885d3b579d5b5b8ff1a18ed34035`
+  - `12-lower-surface-attempt-01-normal.jpg` - 138857 bytes - `fe795c2fb056a79a884f9ee5bcbda917627427bfba266e9263e20dcd8ed3e8cf`
+- Pending: final explicit Mark confirmation that the full-card, corner, edge, and surface templates were visible/useful during the workflow before treating PR #33 as ready to merge.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, no fake/manual/operator-entered/placeholder score, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.

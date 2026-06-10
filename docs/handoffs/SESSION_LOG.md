@@ -19798,3 +19798,74 @@ By enabling Rip It Live, I confirm:
 - No lens/focus/exposure-setting/DPQ method was added or run.
 - No fake, manual, operator-entered, or placeholder score was added.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite report diagnostics PR #33 target-template continuation
+
+### Summary
+- Continued PR #33 on branch `feature/ai-grader-dinolite-report-diagnostics`; PR remains unmerged.
+- Mark confirmed the yellow visual guide appears on top of the live Dino-Lite camera preview, so the transparent in-preview overlay technique is accepted technically.
+- Kept the accepted overlay technique: owned transparent top-level WinForms window positioned over the DNVideoX ActiveX preview rectangle; side visual panel remains as legend/fallback.
+- Improved the in-preview guide from generic alignment shapes to target-specific capture templates:
+  - full-card overview: centered `2.5:3.5` card-shaped frame with safe margin and label `Fit full card inside this frame`
+  - `sharp_90` corners: close-up L template plus crosshair, target-oriented for top-left/top-right/bottom-right/bottom-left
+  - edges: horizontal strip for top/bottom and vertical strip for left/right
+  - surfaces: centered patch box for card surface only
+- Added target/report metadata: `guideTemplateKind`, `guideTemplateAspectRatio`, and `guideTemplateScaleNote`.
+- Added analysis/report capture-template metadata table and physical-scale uncalibrated limitation.
+- Scoring math did not change. Algorithm version remains `tenkings-dinolite-grading-v0.1`; threshold set remains `tenkings-dinolite-thresholds-v0.1`.
+
+### Focused Validation
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 80 tests.
+
+### Pending
+- Final explicit Mark confirmation that the full-card, corner, edge, and surface templates were visible/useful during the workflow before treating PR #33 as ready to merge.
+
+### Full Validation
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Supervised Template Smoke
+- Ran `dinolite-experimental-grading-run --corner-profile sharp_90 --capture-guides true`, normal JPG only, with Mark present.
+- Output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z`.
+- Manifest: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z\manifest.json`.
+- Analysis: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z\analysis.json`.
+- Report: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z\preview-report.html`.
+- Captured target count: 12.
+- Template metadata recorded: `full_card_frame`, `sharp_90_corner_template`, `edge_strip_template`, `surface_patch_template`, full-card aspect ratio `2.5:3.5`, and physical-scale-uncalibrated note.
+- Representative saved JPGs for full-card, corner, edge, and surface targets were visually inspected and contained no overlay graphics.
+- Element results:
+  - centering: `10.00 / 10`, confidence `0.809`
+  - corners: `2.24 / 10`, confidence `0.737`
+  - edges: `3.59 / 10`, confidence `0.75`
+  - surface: `1.00 / 10`, confidence `0.71`
+  - overall: `4.14 / 10`, confidence `0.71`
+- Quality warnings were recorded on 12 targets, mostly blur/underexposure risk.
+- Artifacts:
+  - `01-full-card-overview-attempt-01-normal.jpg` - 132535 bytes - `42dd1352e6a620df1174f88d69253ab299b3d0347583c42e5e88d22ba07599a5`
+  - `02-top-left-corner-attempt-01-normal.jpg` - 136501 bytes - `8c1742ca4b1d45b25970e08450c47014bd9494dd9b352bcf44708eb9621aa953`
+  - `03-top-right-corner-attempt-01-normal.jpg` - 132419 bytes - `42333ddc09eaf54c3794f221b2b0a94919d88182891ff6e241712b3939cf88e2`
+  - `04-bottom-right-corner-attempt-01-normal.jpg` - 139425 bytes - `e796920c72a717fc53bebe8e3dbc50328a2d5a9d522bae82525703503bdd736d`
+  - `05-bottom-left-corner-attempt-01-normal.jpg` - 135488 bytes - `1eb3bb0b678dc4ab7762c9aa6ae70a9c3ccf64f26752d0c7e01c58320a6614e7`
+  - `06-top-edge-attempt-01-normal.jpg` - 135091 bytes - `8039a5987565b8afc6176ad4c5d63afedceeb72e30b17b1435fd09382d317574`
+  - `07-right-edge-attempt-01-normal.jpg` - 135070 bytes - `40b36a42aa805bcbbdc8930f4a22c5c2fd6c64f5e05a22540e314da9d95589c5`
+  - `08-bottom-edge-attempt-01-normal.jpg` - 166737 bytes - `eb537bd9244ce44f0e071031274a451ac9bdd9ac8d0ad8ba35ff612accc98e0e`
+  - `09-left-edge-attempt-01-normal.jpg` - 119634 bytes - `1de1c32e269ac5bfc80b39cf2015e518f335729ab2473221fb7a0974120fa4bd`
+  - `10-center-surface-attempt-01-normal.jpg` - 128275 bytes - `7f6e68f21be6c5a2260cd7b97b785ccec7e0571cb56a1a691d5ecf453d9f6edf`
+  - `11-upper-surface-attempt-01-normal.jpg` - 128405 bytes - `6620bf0f4f55ec69871f0e5e458b8dfc2e42885d3b579d5b5b8ff1a18ed34035`
+  - `12-lower-surface-attempt-01-normal.jpg` - 138857 bytes - `fe795c2fb056a79a884f9ee5bcbda917627427bfba266e9263e20dcd8ed3e8cf`
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No lens/focus/exposure-setting/DPQ method was added or run.
+- No fake, manual, operator-entered, or placeholder score was added.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

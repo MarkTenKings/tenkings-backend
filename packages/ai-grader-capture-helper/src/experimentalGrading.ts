@@ -89,6 +89,15 @@ export interface ExperimentalGradingAnalysis {
     cornerProfile: "sharp_90";
     captureGuides: boolean;
   };
+  guideTemplates: Array<{
+    targetId: string;
+    targetName: string;
+    targetType: string;
+    guideTemplateKind?: string;
+    guideTemplateAspectRatio?: string | null;
+    guideTemplateScaleNote?: string;
+    guideVisualOrientation?: string;
+  }>;
   qualityDiagnostics: TargetQualityDiagnostics[];
   qualityWarningPolicy: {
     summary: string;
@@ -109,6 +118,10 @@ interface TargetImage {
   targetName: string;
   targetType: string;
   reportLabel: string;
+  guideTemplateKind?: string;
+  guideTemplateAspectRatio?: string | null;
+  guideTemplateScaleNote?: string;
+  guideVisualOrientation?: string;
   artifactId: string;
   path: string;
   filename: string;
@@ -688,6 +701,10 @@ async function buildTargetImages(workflow: DinoLiteBridgeOperatorWorkflowResult)
       targetName: target.target.name,
       targetType: target.target.type,
       reportLabel: target.target.reportLabel,
+      guideTemplateKind: target.target.guideTemplateKind,
+      guideTemplateAspectRatio: target.target.guideTemplateAspectRatio,
+      guideTemplateScaleNote: target.target.guideTemplateScaleNote,
+      guideVisualOrientation: target.target.guideVisualOrientation,
       artifactId: `${target.target.id}:${artifact.filename}`,
       path: artifact.path,
       filename: artifact.filename,
@@ -803,6 +820,15 @@ export async function analyzeDinoLiteExperimentalGradingWorkflow(
   const surfaceResult = aggregateElement("surface", surfaces, 1);
   const overall = fuseExperimentalScores({ centering, corners: cornerResult, edges: edgeResult, surface: surfaceResult });
   const qualityDiagnostics = targetImages.flatMap((image) => (image.quality ? [image.quality] : []));
+  const guideTemplates = targetImages.map((image) => ({
+    targetId: image.targetId,
+    targetName: image.targetName,
+    targetType: image.targetType,
+    guideTemplateKind: image.guideTemplateKind,
+    guideTemplateAspectRatio: image.guideTemplateAspectRatio,
+    guideTemplateScaleNote: image.guideTemplateScaleNote,
+    guideVisualOrientation: image.guideVisualOrientation,
+  }));
   const enrichedElements = enrichElements({ centering, corners: cornerResult, edges: edgeResult, surface: surfaceResult, overall }, targetImages);
   const analysisPath = path.join(workflow.sessionDir, "analysis.json");
   const analysis: ExperimentalGradingAnalysis = {
@@ -827,6 +853,7 @@ export async function analyzeDinoLiteExperimentalGradingWorkflow(
       cornerProfile: options.cornerProfile ?? "sharp_90",
       captureGuides: options.captureGuides ?? true,
     },
+    guideTemplates,
     qualityDiagnostics,
     qualityWarningPolicy: QUALITY_WARNING_POLICY,
     warnings: [
@@ -840,6 +867,7 @@ export async function analyzeDinoLiteExperimentalGradingWorkflow(
       "If a metric cannot be computed, it is reported as not_computed instead of using a placeholder score.",
       "Quality warnings explain capture risk and confidence context; blurPenalty is part of close-up scoring, while exposure warnings are diagnostic-only in v0.1.",
       "Card coverage heuristic is approximate and cannot prove perfect framing.",
+      "Guide templates improve manual positioning consistency, but physical scale remains uncalibrated until AMR/calibration workflow is finalized.",
     ],
     captureManifestPath: workflow.manifestPath,
     analysisPath,
@@ -897,13 +925,19 @@ function writeExperimentalReport(
   const imageCards = images
     .map(
       (image) =>
-        `<section class="card"><h3>${escapeHtml(image.targetName)}</h3><img src="${escapeHtml(relativeReportPath(workflow.previewReportPath, image.path))}" alt="${escapeHtml(image.targetName)} capture"><p>${escapeHtml(image.targetType)} / ${escapeHtml(image.reportLabel)}</p><p class="meta">${escapeHtml(image.filename)}<br>${escapeHtml(image.sha256 ?? "")}<br>${escapeHtml(image.byteSize ?? "")} bytes</p>${image.quality ? `<p class="meta">coverage heuristic: ${escapeHtml(image.quality.cardCoverageHeuristic)} (${escapeHtml(image.quality.cardCoverageHeuristicLabel)})<br>${escapeHtml(image.quality.cardCoverageHeuristicLimitations)}<br>blur risk: ${escapeHtml(image.quality.blurRisk)}<br>warnings: ${escapeHtml(image.quality.warnings.join("; ") || "none")}</p>` : ""}</section>`
+        `<section class="card"><h3>${escapeHtml(image.targetName)}</h3><img src="${escapeHtml(relativeReportPath(workflow.previewReportPath, image.path))}" alt="${escapeHtml(image.targetName)} capture"><p>${escapeHtml(image.targetType)} / ${escapeHtml(image.reportLabel)}</p><p class="meta">guide template: ${escapeHtml(image.guideTemplateKind ?? "unavailable")}<br>orientation: ${escapeHtml(image.guideVisualOrientation ?? "center")}<br>aspect ratio: ${escapeHtml(image.guideTemplateAspectRatio ?? "n/a")}<br>${escapeHtml(image.guideTemplateScaleNote ?? "Physical scale is uncalibrated until AMR/calibration workflow is finalized.")}</p><p class="meta">${escapeHtml(image.filename)}<br>${escapeHtml(image.sha256 ?? "")}<br>${escapeHtml(image.byteSize ?? "")} bytes</p>${image.quality ? `<p class="meta">coverage heuristic: ${escapeHtml(image.quality.cardCoverageHeuristic)} (${escapeHtml(image.quality.cardCoverageHeuristicLabel)})<br>${escapeHtml(image.quality.cardCoverageHeuristicLimitations)}<br>blur risk: ${escapeHtml(image.quality.blurRisk)}<br>warnings: ${escapeHtml(image.quality.warnings.join("; ") || "none")}</p>` : ""}</section>`
+    )
+    .join("\n");
+  const guideTemplateRows = analysis.guideTemplates
+    .map(
+      (item) =>
+        `<tr><td>${escapeHtml(item.targetName)}</td><td>${escapeHtml(item.targetType)}</td><td>${escapeHtml(item.guideTemplateKind ?? "unavailable")}</td><td>${escapeHtml(item.guideVisualOrientation ?? "center")}</td><td>${escapeHtml(item.guideTemplateAspectRatio ?? "n/a")}</td><td>${escapeHtml(item.guideTemplateScaleNote ?? "")}</td></tr>`
     )
     .join("\n");
   const warningPolicy = `<section class="panel"><h2>Quality Warning Impact</h2><p>${escapeHtml(analysis.qualityWarningPolicy.summary)}</p><ul><li>${escapeHtml(analysis.qualityWarningPolicy.blurImpact)}</li><li>${escapeHtml(analysis.qualityWarningPolicy.exposureImpact)}</li><li>${escapeHtml(analysis.qualityWarningPolicy.coverageImpact)}</li><li>${escapeHtml(analysis.qualityWarningPolicy.surfaceInterpretation)}</li></ul></section>`;
   fs.writeFileSync(
     workflow.previewReportPath,
-    `<!doctype html><html><head><meta charset="utf-8"><title>Experimental AI Grader Test Run - Not Certified</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#172033;line-height:1.45}h1{font-size:26px}.warn{font-weight:700;color:#8a3200}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.card,.panel{border:1px solid #cbd5e1;border-radius:6px;padding:12px;margin:12px 0;background:#fff}img{max-width:100%;height:auto;border:1px solid #e2e8f0}table{border-collapse:collapse;width:100%;margin:16px 0}td,th{border:1px solid #cbd5e1;padding:8px;text-align:left;vertical-align:top}.meta{font-size:12px;word-break:break-all;color:#475569}.small{font-size:13px;color:#334155}</style></head><body><h1>Experimental AI Grader Test Run - Not Certified</h1><p class="warn">This is not a certified grade, not a certificate, not calibrated production macro evidence, and not a final AI grade.</p><p>Algorithm: ${escapeHtml(analysis.algorithmVersion)}<br>Thresholds: ${escapeHtml(analysis.thresholdSetVersion)}<br>Corner profile: ${escapeHtml(analysis.operatorOptions.cornerProfile)}<br>Capture guides: ${escapeHtml(analysis.operatorOptions.captureGuides ? "enabled" : "disabled")}</p><section class="panel"><h2>Score Scale</h2><p>All computed element scores use a 1.0 to 10.0 scale. 10.0 is the best / cleanest detected condition, 1.0 is the worst / highest detected defect signal, and higher is better. Scores are displayed as x.xx / 10.</p><ul>${scoreBands}</ul></section><section class="panel"><h2>Element Definitions</h2><ul>${elementDefinitions}</ul></section><section class="panel"><h2>Perfect 10/10 Definitions</h2><ul>${perfectDefinitions}</ul></section><section class="panel"><h2>Weighting and Formula</h2><p class="small">The v0.1 fusion uses centering 25%, corners 30%, edges 20%, and surface 25% when all are computed. Corners and surface are required, plus at least centering or edges. If centering or edges is missing, its weight is redistributed across the computed required elements and confidence is lowered. Severe defect caps remain unchanged: if any computed element is 5.0 or below, overall cannot exceed 6.0; if any computed element is 6.0 or below, overall cannot exceed 7.0.</p></section>${warningPolicy}<h2>Scores</h2><table><thead><tr><th>Element</th><th>Status</th><th>Score</th><th>Band</th><th>Confidence</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table><h2>Why This Score?</h2>${whySections}<h2>Quality Warning Summary</h2><table><thead><tr><th>Target</th><th>File</th><th>Card coverage heuristic</th><th>Coverage label</th><th>Heuristic limitation</th><th>Background risk</th><th>Sharpness</th><th>Blur risk</th><th>Brightness mean</th><th>Contrast range</th><th>Alignment confidence</th><th>Warnings</th></tr></thead><tbody>${qualityRows}</tbody></table><h2>Captured Evidence</h2><div class="grid">${imageCards}</div><h2>Limitations</h2><ul>${analysis.limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h2>Manifest and Checksums</h2><p class="meta">${escapeHtml(workflow.manifestPath)}<br>${escapeHtml(analysis.analysisPath)}</p></body></html>`
+    `<!doctype html><html><head><meta charset="utf-8"><title>Experimental AI Grader Test Run - Not Certified</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#172033;line-height:1.45}h1{font-size:26px}.warn{font-weight:700;color:#8a3200}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.card,.panel{border:1px solid #cbd5e1;border-radius:6px;padding:12px;margin:12px 0;background:#fff}img{max-width:100%;height:auto;border:1px solid #e2e8f0}table{border-collapse:collapse;width:100%;margin:16px 0}td,th{border:1px solid #cbd5e1;padding:8px;text-align:left;vertical-align:top}.meta{font-size:12px;word-break:break-all;color:#475569}.small{font-size:13px;color:#334155}</style></head><body><h1>Experimental AI Grader Test Run - Not Certified</h1><p class="warn">This is not a certified grade, not a certificate, not calibrated production macro evidence, and not a final AI grade.</p><p>Algorithm: ${escapeHtml(analysis.algorithmVersion)}<br>Thresholds: ${escapeHtml(analysis.thresholdSetVersion)}<br>Corner profile: ${escapeHtml(analysis.operatorOptions.cornerProfile)}<br>Capture guides: ${escapeHtml(analysis.operatorOptions.captureGuides ? "enabled" : "disabled")}</p><section class="panel"><h2>Score Scale</h2><p>All computed element scores use a 1.0 to 10.0 scale. 10.0 is the best / cleanest detected condition, 1.0 is the worst / highest detected defect signal, and higher is better. Scores are displayed as x.xx / 10.</p><ul>${scoreBands}</ul></section><section class="panel"><h2>Element Definitions</h2><ul>${elementDefinitions}</ul></section><section class="panel"><h2>Perfect 10/10 Definitions</h2><ul>${perfectDefinitions}</ul></section><section class="panel"><h2>Capture Template Metadata</h2><p class="small">The operator window uses target-specific in-preview templates. These improve manual positioning consistency only; physical scale remains uncalibrated until AMR/calibration workflow is finalized.</p><table><thead><tr><th>Target</th><th>Type</th><th>Template</th><th>Orientation</th><th>Aspect ratio</th><th>Scale note</th></tr></thead><tbody>${guideTemplateRows}</tbody></table></section><section class="panel"><h2>Weighting and Formula</h2><p class="small">The v0.1 fusion uses centering 25%, corners 30%, edges 20%, and surface 25% when all are computed. Corners and surface are required, plus at least centering or edges. If centering or edges is missing, its weight is redistributed across the computed required elements and confidence is lowered. Severe defect caps remain unchanged: if any computed element is 5.0 or below, overall cannot exceed 6.0; if any computed element is 6.0 or below, overall cannot exceed 7.0.</p></section>${warningPolicy}<h2>Scores</h2><table><thead><tr><th>Element</th><th>Status</th><th>Score</th><th>Band</th><th>Confidence</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table><h2>Why This Score?</h2>${whySections}<h2>Quality Warning Summary</h2><table><thead><tr><th>Target</th><th>File</th><th>Card coverage heuristic</th><th>Coverage label</th><th>Heuristic limitation</th><th>Background risk</th><th>Sharpness</th><th>Blur risk</th><th>Brightness mean</th><th>Contrast range</th><th>Alignment confidence</th><th>Warnings</th></tr></thead><tbody>${qualityRows}</tbody></table><h2>Captured Evidence</h2><div class="grid">${imageCards}</div><h2>Limitations</h2><ul>${analysis.limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h2>Manifest and Checksums</h2><p class="meta">${escapeHtml(workflow.manifestPath)}<br>${escapeHtml(analysis.analysisPath)}</p></body></html>`
   );
 }
 

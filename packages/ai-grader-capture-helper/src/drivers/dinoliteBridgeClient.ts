@@ -253,6 +253,9 @@ export interface DinoLiteBridgeOperatorWorkflowResult {
       guideVisualKind?: "full-card" | "corner" | "edge" | "surface" | "center" | string;
       guideVisualOrientation?: string;
       guideVisualLegend?: string;
+      guideTemplateKind?: "full_card_frame" | "sharp_90_corner_template" | "edge_strip_template" | "surface_patch_template" | string;
+      guideTemplateAspectRatio?: string | null;
+      guideTemplateScaleNote?: string;
       cornerProfile?: string | null;
     };
     targetIndex: number;
