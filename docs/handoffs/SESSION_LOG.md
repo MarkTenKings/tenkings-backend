@@ -19624,3 +19624,35 @@ By enabling Rip It Live, I confirm:
 - No lens/focus/exposure-setting/DPQ method was run.
 - No fake, manual, operator-entered, or placeholder score was added.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite experimental grading PR #32 merged
+
+### Summary
+- PR #32 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/32`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `aa94399d60052dd113f6c4e71d4aaa20356db07c`.
+- PR #32 delivered the manual-only local Dino-Lite experimental grading run:
+  - visible operator workflow plan `experimental-card-grading`
+  - 12 target captures for interim overview, corners, edges, and surfaces
+  - deterministic pixel analysis in `packages/ai-grader-capture-helper`
+  - local `analysis.json` and `preview-report.html`
+  - algorithm provenance `tenkings-dinolite-grading-v0.1`
+  - threshold set provenance `tenkings-dinolite-thresholds-v0.1`
+- The generated report remains explicitly experimental and not certified.
+- Supervised smoke evidence remains outside git at `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-experimental-card-grading-smoke-20260610T065153354Z`.
+
+### Post-Merge Evidence
+- GitHub Actions run `27260874339` started for merge commit `aa94399d60052dd113f6c4e71d4aaa20356db07c` and was still in progress at handoff-doc update time.
+- Vercel production deployment status will be checked after the docs handoff commit; no manual deploy was run.
+- Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No additional image capture was run.
+- No additional microscope command was run.
+- No lens/focus/exposure-setting/DPQ method was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
