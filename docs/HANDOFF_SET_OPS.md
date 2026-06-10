@@ -10631,7 +10631,8 @@ Build Set Ops UI flow with:
   - threshold set provenance `tenkings-dinolite-thresholds-v0.1`
 - The generated report remains explicitly experimental and not certified.
 - Supervised smoke evidence remains outside git at `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-experimental-card-grading-smoke-20260610T065153354Z`.
-- Post-merge GitHub Actions run `27260874339` started for merge commit `aa94399d60052dd113f6c4e71d4aaa20356db07c` and was still in progress at handoff-doc update time.
-- Vercel production deployment status will be checked after this docs handoff commit; no manual deploy was run.
+- Post-merge GitHub Actions run `27260874339` succeeded for merge commit `aa94399d60052dd113f6c4e71d4aaa20356db07c`, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deployment for the merge commit completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/HD455DThJDMjgGSjP8uuAR7RZnET`.
+- Handoff docs commit `b70d5669000d5c002c6ca4a7c10c8927d4d92181` was pushed to `main`; its GitHub Actions run `27260970599` and Vercel production deploy `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/8BquejvyqzGLQZkSXz7sBoEHKV7T` both succeeded.
 - Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no additional image capture, no additional microscope command, no lens/focus/exposure-setting/DPQ method, no SDK/OCX/DLL/vendor file commit, no captured image commit, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.
