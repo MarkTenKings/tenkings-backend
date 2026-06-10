@@ -19479,3 +19479,34 @@ By enabling Rip It Live, I confirm:
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No lens/focus/exposure-setting/DPQ methods were added or run.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite operator preview PR #31 merged
+
+### Summary
+- PR #31 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/31`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `0eb3790e2cd3e4526730970803542504257729f4`.
+- PR #31 delivered the manual-only Dino-Lite operator preview/fallback workflow:
+  - visible Windows DNVideoX ActiveX operator window titled `Ten Kings Dino-Lite Operator Workflow`
+  - target plans `operator-smoke-single`, `corners-basic`, `surface-basic`, `card-basic`, and `card-interim`
+  - human controls for Capture/continue, Skip target, Retake current target, and Abort session safely
+  - local-only session `manifest.json`, `preview-report.html`, and target-level artifact metadata
+- The `card-interim` overview remains explicitly labeled as interim only: not production macro evidence, not calibrated macro capture, and not certified grading evidence.
+- The supervised `operator-smoke-single` artifact evidence remains outside git at `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-operator-smoke-single-20260610T034854043Z`.
+
+### Post-Merge Evidence
+- GitHub Actions run `27252945760` initially had a transient Docker Buildx setup failure for `vending-gw`.
+- Reran failed jobs only; final GitHub Actions result succeeded, including Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deployment for merge commit `0eb3790e2cd3e4526730970803542504257729f4` completed successfully: `https://tenkings-backend-nextjs-1iqfdqluo-ten-kings.vercel.app`.
+- Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No additional image capture was run.
+- No additional microscope command was run.
+- No lens/focus/exposure-setting/DPQ method was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

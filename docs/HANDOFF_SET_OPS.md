@@ -10527,3 +10527,17 @@ Build Set Ops UI flow with:
   - `card-interim` was deferred because the single-target supervised workflow proved the visible operator flow.
 - PR #31 can be converted from draft to ready for review after final validation and checks pass.
 - Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, and no certified grade/certificate/final AI grade claim.
+
+## Session Update (2026-06-10, AI Grader Dino-Lite operator preview PR #31 merged)
+- PR #31 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/31`.
+- Merge commit/final `origin/main` HEAD before this handoff docs update: `0eb3790e2cd3e4526730970803542504257729f4`.
+- PR #31 added the manual-only Dino-Lite local operator preview/fallback workflow:
+  - visible Windows DNVideoX ActiveX operator window titled `Ten Kings Dino-Lite Operator Workflow`
+  - manual target plans including `operator-smoke-single`, `corners-basic`, `surface-basic`, `card-basic`, and `card-interim`
+  - `card-interim` interim full-card overview labeling that states it is not production macro evidence, not calibrated macro capture, and not certified grading evidence
+  - local-only session `manifest.json`, `preview-report.html`, and target artifact metadata for explicitly invoked operator workflows
+- The supervised single-target smoke evidence remains outside git at `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-operator-smoke-single-20260610T034854043Z`.
+- Post-merge GitHub Actions run `27252945760` succeeded after rerunning a transient failed Docker Buildx setup job for `vending-gw`; final result included Install & Build and Docker image jobs for frontend, wallet, vault, marketplace, pricing, pack, ingestion, and vending-gw.
+- Vercel production deploy completed successfully for merge commit `0eb3790e2cd3e4526730970803542504257729f4`: `https://tenkings-backend-nextjs-1iqfdqluo-ten-kings.vercel.app`.
+- Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no additional image capture, no additional microscope command, no lens/focus/exposure-setting/DPQ method, no SDK/OCX/DLL/vendor file commit, no captured image commit, and no calibrated macro evidence, final AI grade, certificate, or certified grading claim.
