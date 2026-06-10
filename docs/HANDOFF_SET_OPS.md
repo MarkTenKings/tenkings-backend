@@ -10762,3 +10762,34 @@ Build Set Ops UI flow with:
   - `12-lower-surface-attempt-01-normal.jpg` - 138857 bytes - `fe795c2fb056a79a884f9ee5bcbda917627427bfba266e9263e20dcd8ed3e8cf`
 - Pending: final explicit Mark confirmation that the full-card, corner, edge, and surface templates were visible/useful during the workflow before treating PR #33 as ready to merge.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, no fake/manual/operator-entered/placeholder score, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.
+
+## Session Update (2026-06-10, AI Grader Dino-Lite report diagnostics PR #33 controlled rerun attempts)
+- Continued PR #33 on branch `feature/ai-grader-dinolite-report-diagnostics`; PR remains unmerged.
+- No code changes were made for the controlled indoor rerun attempt.
+- Attempted a controlled supervised `experimental-card-grading` rerun with `--corner-profile sharp_90 --capture-guides true`, normal JPG only, output outside git.
+- Operator guidance before rerun:
+  - use target-specific overlays
+  - use a plain matte background if available
+  - avoid wood grain / car lighting / reflective surfaces
+  - improve room lighting if possible
+  - manually focus before every capture
+  - full-card overview: fit card inside the `2.5:3.5` frame
+  - corners: put corner tip on crosshair and align edges to L-guide
+  - edges: align edge inside strip guide
+  - surfaces: fill patch box with card surface only
+- First controlled attempt timed out waiting for `dinolite.operatorWorkflow` after the long timeout window.
+  - partial output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-controlled-smoke-20260610T195721833Z`
+  - files present: 4 normal JPGs only
+  - no `manifest.json`, no `analysis.json`, and no `preview-report.html`
+  - partial artifacts:
+    - `01-full-card-overview-attempt-01-normal.jpg` - 101945 bytes - `9342eb3a6747dc1a4f9f8efefb34795cb0ecd21641d0d87343624e4e98ce1d64`
+    - `02-top-left-corner-attempt-01-normal.jpg` - 138218 bytes - `11a15113c5c8ca04f22ce5274c618660858ccaaaa2dc7d20a37568bd8f5b2660`
+    - `03-top-right-corner-attempt-01-normal.jpg` - 79027 bytes - `4de5cec5a58494ae6e4954532e24d796842360a5f6a1b9bc7bbcbbd59bc48117`
+    - `04-bottom-right-corner-attempt-01-normal.jpg` - 77036 bytes - `36de7b1f94b3d9fd7627d2db0b03e6e61d8b22b6344c3742d59e34ca0e0856ad`
+- Second controlled rerun used a longer 90-minute bridge timeout and also timed out waiting for `dinolite.operatorWorkflow`.
+  - partial output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-controlled-smoke-rerun-20260610T204255292Z`
+  - no captured files were present in the folder after timeout
+  - no `manifest.json`, no `analysis.json`, and no `preview-report.html`
+- After both timeouts, no matching bridge/node/camera processes were left running.
+- This did not produce a cleaner controlled report for review. PR #33 remains based on the previous successful template smoke (`dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z`) and still needs final explicit Mark confirmation that the full-card/corner/edge/surface templates were visible/useful during a completed workflow.
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, no fake/manual/operator-entered/placeholder score, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.
