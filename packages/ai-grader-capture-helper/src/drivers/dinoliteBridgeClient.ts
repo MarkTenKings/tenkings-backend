@@ -39,6 +39,8 @@ export interface DinoLiteBridgeRequest {
   includeFlcSweep?: boolean;
   includeEdr?: boolean;
   includeEdof?: boolean;
+  cornerProfile?: string;
+  captureGuides?: boolean;
 }
 
 export interface DinoLiteBridgeErrorPayload {
@@ -246,6 +248,9 @@ export interface DinoLiteBridgeOperatorWorkflowResult {
       type: string;
       reportLabel: string;
       instruction: string;
+      captureGuide?: string;
+      captureGuidesEnabled?: boolean;
+      cornerProfile?: string | null;
     };
     targetIndex: number;
     action: string;
@@ -454,6 +459,8 @@ export class DinoLiteBridgeClient {
     includeFlcSweep?: boolean;
     includeEdr?: boolean;
     includeEdof?: boolean;
+    cornerProfile?: string;
+    captureGuides?: boolean;
   }): Promise<DinoLiteBridgeOperatorWorkflowResult> {
     return this.sendResult<DinoLiteBridgeOperatorWorkflowResult>("dinolite.operatorWorkflow", options);
   }

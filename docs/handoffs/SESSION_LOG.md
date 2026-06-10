@@ -19657,3 +19657,76 @@ By enabling Rip It Live, I confirm:
 - No lens/focus/exposure-setting/DPQ method was run.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite report diagnostics PR #33 in progress
+
+### Summary
+- Created branch `feature/ai-grader-dinolite-report-diagnostics` from latest `origin/main`.
+- Implemented report clarity and operator guide diagnostics for the experimental Dino-Lite grading workflow.
+- Preserved the existing PR #32 / v0.1 scoring formulas, thresholds, weights, and fusion caps.
+- Added JSONL bridge fields and CLI flags for `cornerProfile=sharp_90` and `captureGuides`.
+- Added target-level guide metadata and a visible operator guide panel for full-card overview, corner, edge, and surface targets.
+- Enhanced `analysis.json` and `preview-report.html` with score scale, score bands, perfect `10/10` definitions, element definitions, "Why this score?" sections, quality warning summaries, target quality diagnostics, and operator options metadata.
+- Unsupported corner profiles now fail before the TypeScript client spawns the bridge.
+
+### Focused Validation
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 79 tests.
+
+### Validation
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 79 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Supervised Smoke
+- Ran `dinolite-experimental-grading-run --corner-profile sharp_90 --capture-guides true`, normal JPG only, with Mark present.
+- Output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z`.
+- Manifest: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z\manifest.json`.
+- Analysis: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z\analysis.json`.
+- Report: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z\preview-report.html`.
+- Captured target count: 12.
+- Report verified to include score scale, `x.xx / 10` score formatting, perfect `10/10` definitions, "Why this score?" sections, quality warning summary, and non-certified warning.
+- Analysis results:
+  - centering: `10.00 / 10`, confidence `0.805`
+  - corners: `6.49 / 10`
+  - edges: `2.17 / 10`
+  - surface: `1.00 / 10`
+  - overall: `5.13 / 10`, `Needs Review`, confidence `0.71`
+  - no `not_computed` reasons
+  - severe defect cap applied
+  - quality warnings on 11 targets, mostly blur/underexposure risk
+- Artifact evidence:
+  - `01-full-card-overview-attempt-01-normal.jpg` - 126268 bytes - `857fa828215b694b85de0ddb54aada2eec5713fb0ea2db2ac20034aced46eaa2`
+  - `02-top-left-corner-attempt-01-normal.jpg` - 192826 bytes - `ba1a9b2ba5db4bd18b9cf6e1c20af13b30744569f40e2c5c09530b858d63c96b`
+  - `03-top-right-corner-attempt-01-normal.jpg` - 129093 bytes - `6bff243e0615d86142eb0ae6ca2459c9f4024542809ca8f4fa47e9709072953e`
+  - `04-bottom-right-corner-attempt-01-normal.jpg` - 135272 bytes - `e97cdcf7d5c4b9b603088ffb539e082f49d645dc9329905a8f62bb2359ccbce7`
+  - `05-bottom-left-corner-attempt-01-normal.jpg` - 140411 bytes - `980e75bf15ecc056b8e83dc48477abf9a6369944012ecbfebad5ea9020b5a51b`
+  - `06-top-edge-attempt-01-normal.jpg` - 134659 bytes - `fb38a4ca527134aa439088533ca00472b7ef5c74e55ec0c4356a2dcd54c19c77`
+  - `07-right-edge-attempt-01-normal.jpg` - 78195 bytes - `5bd8f6ba1a4716dd384902dfcc5818a2d7bd2e608a4b1689f6f008173dc4cf75`
+  - `08-bottom-edge-attempt-01-normal.jpg` - 115056 bytes - `0d19d8f5517c09c03bb78b97b0e5b5d907ea16e6ea14b5929c58b017627fd845`
+  - `09-left-edge-attempt-01-normal.jpg` - 127504 bytes - `070a6e7d66049276cbb06347aaef9f51eb9e7b989b38f3aa0ceaec6efed9ed0d`
+  - `10-center-surface-attempt-01-normal.jpg` - 242065 bytes - `5f9aaccb27dd502e6fc6d42edaff8b23ca9e16e5af12323d2c66c788ab84f008`
+  - `11-upper-surface-attempt-01-normal.jpg` - 249403 bytes - `edd48ade984c186e4af9930d0034c1cd29e69a3d2660ada2c97b56201a9db226`
+  - `12-lower-surface-attempt-01-normal.jpg` - 276669 bytes - `c51a889186e775e1c2db5590a48fa38b281259ff45fa9b895a8c098cc73f6b1b`
+
+### Pending
+- PR creation and checks.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- One explicit supervised Dino-Lite operator workflow and normal JPG capture run was performed for PR #33 smoke only; outputs stayed outside git.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No lens/focus/exposure-setting/DPQ method was added or run.
+- No fake, manual, operator-entered, or placeholder score was added.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

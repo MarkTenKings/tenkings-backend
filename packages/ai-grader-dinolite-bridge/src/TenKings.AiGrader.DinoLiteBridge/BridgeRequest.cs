@@ -15,5 +15,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
         public bool? includeFlcSweep { get; set; }
         public bool? includeEdr { get; set; }
         public bool? includeEdof { get; set; }
+        public string? cornerProfile { get; set; }
+        public bool? captureGuides { get; set; }
     }
 }

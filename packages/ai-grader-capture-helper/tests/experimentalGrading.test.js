@@ -123,7 +123,7 @@ test("experimental report carries non-certified warning language", async () => {
     .jpeg()
     .toFile(imagePath);
 
-  await analyzeDinoLiteExperimentalGradingWorkflow({
+  const analysis = await analyzeDinoLiteExperimentalGradingWorkflow({
     adapter: "fake",
     simulated: true,
     comActiveXInstantiated: false,
@@ -150,6 +150,9 @@ test("experimental report carries non-certified warning language", async () => {
           type: "interim_macro_overview",
           reportLabel: "interim_full_card_overview",
           instruction: "Synthetic test overview.",
+          captureGuide: "Guide: fit as much of the card as possible, avoid background, keep card edges visible.",
+          captureGuidesEnabled: true,
+          cornerProfile: null,
         },
         targetIndex: 1,
         action: "capture",
@@ -173,7 +176,7 @@ test("experimental report carries non-certified warning language", async () => {
     cleanup: { previewStopped: true, disconnected: true, hostDisposed: true },
     limitations: [],
     forbiddenOperationsInvoked: false,
-  });
+  }, { cornerProfile: "sharp_90", captureGuides: true });
 
   const html = fs.readFileSync(previewReportPath, "utf8");
   assert.match(html, /Experimental AI Grader Test Run - Not Certified/);
@@ -181,6 +184,48 @@ test("experimental report carries non-certified warning language", async () => {
   assert.match(html, /not a certificate/);
   assert.match(html, /not calibrated production macro evidence/);
   assert.match(html, /not a final AI grade/);
+  assert.match(html, /Score Scale/);
+  assert.match(html, /x\.xx \/ 10/);
+  assert.match(html, /centering 10\/10/i);
+  assert.match(html, /corners 10\/10/i);
+  assert.match(html, /edges 10\/10/i);
+  assert.match(html, /surface 10\/10/i);
+  assert.match(html, /overall 10\/10/i);
+  assert.match(html, /Why this score\?/i);
+  assert.match(html, /Quality Warning Summary/);
+  assert.equal(analysis.operatorOptions.cornerProfile, "sharp_90");
+  assert.equal(analysis.scoreScale.displayFormat, "x.xx / 10");
+  assert.equal(analysis.qualityDiagnostics.length, 1);
+});
+
+test("experimental grading CLI rejects unsupported corner profile before spawning bridge", async () => {
+  let stderr = "";
+  const code = await runCaptureHelperCli(
+    [
+      "dinolite-experimental-grading-run",
+      "--bridge-exe",
+      "bridge.exe",
+      "--adapter",
+      "dnvideox",
+      "--device-index",
+      "0",
+      "--output-dir",
+      path.join(os.tmpdir(), "dinolite-grading-runs"),
+      "--label",
+      "profile-test",
+      "--corner-profile",
+      "rounded",
+    ],
+    {
+      stderr: (text) => {
+        stderr += text;
+      },
+      env: {},
+    }
+  );
+
+  assert.equal(code, 1);
+  assert.match(stderr, /sharp_90 only/);
 });
 
 test("experimental grading CLI rejects missing label before spawning bridge", async () => {

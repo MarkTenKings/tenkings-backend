@@ -10636,3 +10636,48 @@ Build Set Ops UI flow with:
 - Handoff docs commit `b70d5669000d5c002c6ca4a7c10c8927d4d92181` was pushed to `main`; its GitHub Actions run `27260970599` and Vercel production deploy `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/8BquejvyqzGLQZkSXz7sBoEHKV7T` both succeeded.
 - Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no additional image capture, no additional microscope command, no lens/focus/exposure-setting/DPQ method, no SDK/OCX/DLL/vendor file commit, no captured image commit, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.
+
+## Session Update (2026-06-10, AI Grader Dino-Lite report diagnostics PR #33 in progress)
+- Created branch `feature/ai-grader-dinolite-report-diagnostics` from latest `origin/main`.
+- Implemented PR #33 report/diagnostic improvements without changing the PR #32 v0.1 scoring formulas, thresholds, weights, or fusion caps.
+- Added operator guide/profile metadata through the Dino-Lite JSONL bridge:
+  - `cornerProfile`, default `sharp_90`
+  - `captureGuides`, default enabled
+  - target-level `captureGuide`, `captureGuidesEnabled`, and `cornerProfile` fields in fake/real operator workflow manifests
+  - visible WinForms operator guide panel for overview/corner/edge/surface target alignment
+- Added capture-helper CLI flags:
+  - `--corner-profile sharp_90`
+  - `--capture-guides true|false`
+  - unsupported corner profiles fail before spawning the bridge
+- Enhanced `analysis.json` and `preview-report.html` with score scale definitions, score bands, perfect `10/10` definitions, element definitions, "Why this score?" sections, quality warning summaries, target quality diagnostics, and operator options metadata.
+- Quality diagnostics are separate from scoring and do not feed back into the v0.1 score math in this PR.
+- Focused validation completed:
+  - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass
+  - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 79 tests
+- Full validation completed:
+  - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass
+  - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 79 tests
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
+- Supervised PR #33 manual smoke completed on the Dell capture node:
+  - command: `dinolite-experimental-grading-run --corner-profile sharp_90 --capture-guides true`, normal JPG only
+  - output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z`
+  - manifest: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z\manifest.json`
+  - analysis: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z\analysis.json`
+  - report: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z\preview-report.html`
+  - captured target count: 12
+  - report contains score scale, perfect `10/10` definitions, "Why this score?" sections, and quality warning summary
+  - centering: `10.00 / 10`
+  - corners: `6.49 / 10`
+  - edges: `2.17 / 10`
+  - surface: `1.00 / 10`
+  - overall: `5.13 / 10`, `Needs Review`, confidence `0.71`
+  - quality warnings were recorded for 11 targets, mostly blur/underexposure risk
+  - no `not_computed` reasons in this smoke; all required elements computed
+- Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, no fake/manual/operator-entered/placeholder score, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.

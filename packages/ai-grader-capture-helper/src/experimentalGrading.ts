@@ -20,14 +20,43 @@ export interface ElementAnalysis {
   element: TargetElement;
   status: AnalysisStatus;
   score?: number;
+  displayScore?: string;
+  scoreBand?: string;
   confidence: number;
   rawMetrics: Record<string, unknown>;
   evidenceArtifactIds: string[];
   evidencePaths: string[];
   limitations: string[];
   notComputedReason?: string;
+  definition?: string;
+  perfectScoreDefinition?: string;
+  why?: {
+    summary: string;
+    topContributingMetrics: string[];
+    topPenalties: string[];
+    affectedTargetImages: string[];
+    qualityWarnings: string[];
+  };
   algorithmVersion: string;
   thresholdSetVersion: string;
+}
+
+export interface TargetQualityDiagnostics {
+  artifactId: string;
+  targetId: string;
+  targetName: string;
+  targetType: string;
+  filename: string;
+  cardCoverageEstimate: number;
+  backgroundRisk: "low" | "medium" | "high";
+  sharpness: number;
+  blurRisk: "low" | "medium" | "high";
+  brightnessMean: number;
+  contrastRange: number;
+  overexposureRisk: "low" | "medium" | "high";
+  underexposureRisk: "low" | "medium" | "high";
+  targetAlignmentConfidence: number;
+  warnings: string[];
 }
 
 export interface ExperimentalGradingAnalysis {
@@ -45,6 +74,20 @@ export interface ExperimentalGradingAnalysis {
     surface: ElementAnalysis;
     overall: ElementAnalysis;
   };
+  scoreScale: {
+    min: 1;
+    max: 10;
+    higherIsBetter: true;
+    displayFormat: "x.xx / 10";
+    bands: Array<{ range: string; label: string }>;
+  };
+  perfectScoreDefinitions: Record<TargetElement, string>;
+  elementDefinitions: Record<Exclude<TargetElement, "overall">, string>;
+  operatorOptions: {
+    cornerProfile: "sharp_90";
+    captureGuides: boolean;
+  };
+  qualityDiagnostics: TargetQualityDiagnostics[];
   warnings: string[];
   limitations: string[];
   captureManifestPath: string;
@@ -63,6 +106,12 @@ interface TargetImage {
   sha256?: string | null;
   byteSize?: number;
   image: RgbaImage;
+  quality?: TargetQualityDiagnostics;
+}
+
+export interface ExperimentalGradingAnalyzeOptions {
+  cornerProfile?: "sharp_90";
+  captureGuides?: boolean;
 }
 
 function baseResult(element: TargetElement, evidence: TargetImage[], limitations: string[]): ElementAnalysis {
@@ -86,6 +135,47 @@ function clamp(value: number, min = 1, max = 10): number {
 function round(value: number, digits = 4): number {
   const scale = 10 ** digits;
   return Math.round(value * scale) / scale;
+}
+
+const SCORE_BANDS = [
+  { range: "9.0-10.0", label: "Excellent" },
+  { range: "8.0-8.9", label: "Very Good" },
+  { range: "7.0-7.9", label: "Good" },
+  { range: "6.0-6.9", label: "Fair / Review" },
+  { range: "below 6.0", label: "Needs Review" },
+];
+
+const ELEMENT_DEFINITIONS = {
+  centering: "Centering measures balance of card borders and inner print area in the interim full-card overview.",
+  corners: "Corners measure corner geometry, chipping/whitening, edge continuity, and sharpness in close-up corner targets.",
+  edges: "Edges measure edge whitening/chipping/roughness and line defect signals in close-up edge targets.",
+  surface: "Surface measures specks, scratches, texture anomalies, and print/surface defect signals in close-up surface targets.",
+};
+
+const PERFECT_SCORE_DEFINITIONS: Record<TargetElement, string> = {
+  centering:
+    "10/10 means left/right and top/bottom border balance are nearly equal under detected geometry, rectangle detection is strong, blur is low, and no major framing limitation is present.",
+  corners:
+    "10/10 means intact expected corner geometry for the selected sharp_90 profile, a clean 90-degree corner shape, no detected whitening/chipping/crushing/delamination, clean edge continuity, good focus, and minimal background interference.",
+  edges:
+    "10/10 means a clean continuous edge with no detected whitening/chipping/fraying/roughness, no strong scratch/line defect signal near the edge band, good focus, and minimal background interference.",
+  surface:
+    "10/10 means a clean print/surface patch with no detected scratches, specks, stains, dents, or anomaly clusters; normal print texture is not over-penalized, focus is good, and background interference is minimal.",
+  overall:
+    "10/10 means all required element scores are near 10, no severe defect caps apply, confidence is high, and capture quality is sufficient.",
+};
+
+function displayScore(score: number | undefined): string {
+  return score == null ? "not_computed" : `${score.toFixed(2)} / 10`;
+}
+
+function scoreBand(score: number | undefined): string | undefined {
+  if (score == null) return undefined;
+  if (score >= 9) return "Excellent";
+  if (score >= 8) return "Very Good";
+  if (score >= 7) return "Good";
+  if (score >= 6) return "Fair / Review";
+  return "Needs Review";
 }
 
 export function scoreFromRatio(ratioPercent: number): number {
@@ -229,6 +319,87 @@ function densityMetrics(image: RgbaImage, rect: { x: number; y: number; w: numbe
     brightDensity: count ? bright / count : 0,
     darkDensity: count ? dark / count : 0,
     localMean,
+  };
+}
+
+function grayStats(image: RgbaImage) {
+  let min = 255;
+  let max = 0;
+  let sum = 0;
+  let over = 0;
+  let under = 0;
+  const count = image.width * image.height;
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      const gray = grayAt(image, x, y);
+      min = Math.min(min, gray);
+      max = Math.max(max, gray);
+      sum += gray;
+      if (gray > 245) over += 1;
+      if (gray < 15) under += 1;
+    }
+  }
+  return {
+    min,
+    max,
+    mean: count ? sum / count : 0,
+    overexposedFraction: count ? over / count : 0,
+    underexposedFraction: count ? under / count : 0,
+  };
+}
+
+function estimateCardCoverage(image: RgbaImage): number {
+  const background = (grayAt(image, 0, 0) + grayAt(image, image.width - 1, 0) + grayAt(image, 0, image.height - 1) + grayAt(image, image.width - 1, image.height - 1)) / 4;
+  const box = boundingBoxFromPredicate(image, (gray) => Math.abs(gray - background) > 18);
+  if (!box) return 0;
+  return (box.w * box.h) / (image.width * image.height);
+}
+
+function riskFrom(value: number, medium: number, high: number, inverse = false): "low" | "medium" | "high" {
+  if (inverse) {
+    if (value <= high) return "high";
+    if (value <= medium) return "medium";
+    return "low";
+  }
+  if (value >= high) return "high";
+  if (value >= medium) return "medium";
+  return "low";
+}
+
+function buildQualityDiagnostics(input: TargetImage): TargetQualityDiagnostics {
+  const stats = grayStats(input.image);
+  const sharpness = varianceOfLaplacian(input.image);
+  const cardCoverageEstimate = round(estimateCardCoverage(input.image), 4);
+  const blurRisk = riskFrom(sharpness, 180, 70, true);
+  const overexposureRisk = riskFrom(stats.overexposedFraction, 0.01, 0.05);
+  const underexposureRisk = riskFrom(stats.underexposedFraction, 0.01, 0.05);
+  const expectedCoverage = input.targetType === "surface" ? 0.85 : input.targetType === "interim_macro_overview" ? 0.2 : 0.55;
+  const backgroundRisk = cardCoverageEstimate < expectedCoverage ? (cardCoverageEstimate < expectedCoverage * 0.65 ? "high" : "medium") : "low";
+  const contrastRange = stats.max - stats.min;
+  const warnings: string[] = [];
+  if (backgroundRisk !== "low") warnings.push(backgroundRisk === "high" ? "Possible background interference" : "Low card coverage");
+  if (cardCoverageEstimate < expectedCoverage) warnings.push("Target may not be centered");
+  if (blurRisk !== "low") warnings.push("Image may be blurry");
+  if (contrastRange < 35) warnings.push("Lighting may be uneven");
+  if (overexposureRisk !== "low") warnings.push("Overexposure risk");
+  if (underexposureRisk !== "low") warnings.push("Underexposure risk");
+  if (warnings.length) warnings.push("Score confidence reduced");
+  return {
+    artifactId: input.artifactId,
+    targetId: input.targetId,
+    targetName: input.targetName,
+    targetType: input.targetType,
+    filename: input.filename,
+    cardCoverageEstimate,
+    backgroundRisk,
+    sharpness: round(sharpness, 3),
+    blurRisk,
+    brightnessMean: round(stats.mean, 3),
+    contrastRange: round(contrastRange, 3),
+    overexposureRisk,
+    underexposureRisk,
+    targetAlignmentConfidence: round(Math.max(0.1, Math.min(0.95, 1 - Math.max(0, expectedCoverage - cardCoverageEstimate))), 3),
+    warnings,
   };
 }
 
@@ -461,7 +632,8 @@ function normalArtifacts(workflow: DinoLiteBridgeOperatorWorkflowResult) {
 async function buildTargetImages(workflow: DinoLiteBridgeOperatorWorkflowResult): Promise<TargetImage[]> {
   const images: TargetImage[] = [];
   for (const { target, artifact } of normalArtifacts(workflow)) {
-    images.push({
+    const image = await loadImage(artifact.path);
+    const record: TargetImage = {
       targetId: target.target.id,
       targetName: target.target.name,
       targetType: target.target.type,
@@ -471,14 +643,100 @@ async function buildTargetImages(workflow: DinoLiteBridgeOperatorWorkflowResult)
       filename: artifact.filename,
       sha256: artifact.sha256,
       byteSize: artifact.byteSize,
-      image: await loadImage(artifact.path),
-    });
+      image,
+    };
+    record.quality = buildQualityDiagnostics(record);
+    images.push(record);
   }
   return images;
 }
 
+function relatedImages(element: TargetElement, images: TargetImage[]): TargetImage[] {
+  if (element === "centering") return images.filter((image) => image.targetType === "interim_macro_overview");
+  if (element === "corners") return images.filter((image) => image.targetType === "corner");
+  if (element === "edges") return images.filter((image) => image.targetType === "edge");
+  if (element === "surface") return images.filter((image) => image.targetType === "surface");
+  return images;
+}
+
+function metricRows(rawMetrics: Record<string, unknown>): string[] {
+  const rows: string[] = [];
+  for (const [key, value] of Object.entries(rawMetrics)) {
+    if (typeof value === "number" || typeof value === "string" || typeof value === "boolean") {
+      rows.push(`${key}: ${value}`);
+    }
+  }
+  const perImage = rawMetrics.perImage;
+  if (Array.isArray(perImage)) {
+    for (const item of perImage.slice().sort((a, b) => Number(b.metrics?.defectIndex ?? 0) - Number(a.metrics?.defectIndex ?? 0)).slice(0, 3)) {
+      rows.push(`${item.targetId}: defectIndex ${item.metrics?.defectIndex ?? "unavailable"}, score ${item.score ?? "unavailable"}`);
+    }
+  }
+  const availableScores = rawMetrics.availableScores;
+  if (availableScores && typeof availableScores === "object") {
+    for (const [key, value] of Object.entries(availableScores as Record<string, unknown>)) {
+      if (value != null) rows.push(`${key}: ${value}`);
+    }
+  }
+  return rows.length ? rows : ["Metric details unavailable."];
+}
+
+function penaltyRows(element: ElementAnalysis): string[] {
+  const rows: string[] = [];
+  const perImage = element.rawMetrics.perImage;
+  if (Array.isArray(perImage)) {
+    for (const item of perImage.slice().sort((a, b) => Number(b.metrics?.defectIndex ?? 0) - Number(a.metrics?.defectIndex ?? 0)).slice(0, 3)) {
+      rows.push(`${item.targetId}: strongest penalty signal defectIndex=${item.metrics?.defectIndex ?? "unavailable"}, blurPenalty=${item.metrics?.blurPenalty ?? "unavailable"}`);
+    }
+  }
+  if (element.element === "centering") {
+    rows.push(`horizontal ratio ${element.rawMetrics.horizontalRatioPercent ?? "unavailable"}%, vertical ratio ${element.rawMetrics.verticalRatioPercent ?? "unavailable"}%`);
+  }
+  if (element.element === "overall") {
+    rows.push(element.rawMetrics.severeDefectCapsApplied ? "Severe defect cap applied because at least one computed element was 6.0 or below." : "No severe defect cap applied.");
+  }
+  return rows.length ? rows : ["No dominant penalty metric available."];
+}
+
+function enrichElement(element: ElementAnalysis, images: TargetImage[]): ElementAnalysis {
+  const affected = relatedImages(element.element, images);
+  const qualityWarnings = Array.from(new Set(affected.flatMap((image) => image.quality?.warnings ?? [])));
+  const computedText = element.status === "computed" ? `${element.element} scored ${displayScore(element.score)} (${scoreBand(element.score)}).` : `${element.element} was ${element.status}: ${element.notComputedReason ?? "reason unavailable"}.`;
+  return {
+    ...element,
+    displayScore: displayScore(element.score),
+    scoreBand: scoreBand(element.score),
+    definition: element.element === "overall" ? "Overall combines computed element scores using the v0.1 fusion weights and severe defect caps." : ELEMENT_DEFINITIONS[element.element],
+    perfectScoreDefinition: PERFECT_SCORE_DEFINITIONS[element.element],
+    why: {
+      summary: computedText,
+      topContributingMetrics: metricRows(element.rawMetrics),
+      topPenalties: penaltyRows(element),
+      affectedTargetImages: affected.map((image) => image.filename),
+      qualityWarnings: qualityWarnings.length ? qualityWarnings : ["No target-level quality warnings recorded."],
+    },
+  };
+}
+
+function enrichElements(elements: {
+  centering: ElementAnalysis;
+  corners: ElementAnalysis;
+  edges: ElementAnalysis;
+  surface: ElementAnalysis;
+  overall: ElementAnalysis;
+}, images: TargetImage[]) {
+  return {
+    centering: enrichElement(elements.centering, images),
+    corners: enrichElement(elements.corners, images),
+    edges: enrichElement(elements.edges, images),
+    surface: enrichElement(elements.surface, images),
+    overall: enrichElement(elements.overall, images),
+  };
+}
+
 export async function analyzeDinoLiteExperimentalGradingWorkflow(
-  workflow: DinoLiteBridgeOperatorWorkflowResult
+  workflow: DinoLiteBridgeOperatorWorkflowResult,
+  options: ExperimentalGradingAnalyzeOptions = {}
 ): Promise<ExperimentalGradingAnalysis> {
   const targetImages = await buildTargetImages(workflow);
   const overview = targetImages.find((item) => item.targetId === "full-card-overview");
@@ -490,6 +748,8 @@ export async function analyzeDinoLiteExperimentalGradingWorkflow(
   const edgeResult = aggregateElement("edges", edges, 1);
   const surfaceResult = aggregateElement("surface", surfaces, 1);
   const overall = fuseExperimentalScores({ centering, corners: cornerResult, edges: edgeResult, surface: surfaceResult });
+  const qualityDiagnostics = targetImages.flatMap((image) => (image.quality ? [image.quality] : []));
+  const enrichedElements = enrichElements({ centering, corners: cornerResult, edges: edgeResult, surface: surfaceResult, overall }, targetImages);
   const analysisPath = path.join(workflow.sessionDir, "analysis.json");
   const analysis: ExperimentalGradingAnalysis = {
     title: "Experimental AI Grader Test Run - Not Certified",
@@ -499,10 +759,25 @@ export async function analyzeDinoLiteExperimentalGradingWorkflow(
     generatedAt: new Date().toISOString(),
     algorithmVersion: DINOLITE_GRADING_ALGORITHM_VERSION,
     thresholdSetVersion: DINOLITE_GRADING_THRESHOLD_SET_VERSION,
-    elements: { centering, corners: cornerResult, edges: edgeResult, surface: surfaceResult, overall },
+    elements: enrichedElements,
+    scoreScale: {
+      min: 1,
+      max: 10,
+      higherIsBetter: true,
+      displayFormat: "x.xx / 10",
+      bands: SCORE_BANDS,
+    },
+    perfectScoreDefinitions: PERFECT_SCORE_DEFINITIONS,
+    elementDefinitions: ELEMENT_DEFINITIONS,
+    operatorOptions: {
+      cornerProfile: options.cornerProfile ?? "sharp_90",
+      captureGuides: options.captureGuides ?? true,
+    },
+    qualityDiagnostics,
     warnings: [
       "Experimental/unvalidated deterministic pixel analysis only.",
       "Not a certified grade, final AI grade, certificate, or calibrated production macro result.",
+      ...(qualityDiagnostics.some((item) => item.warnings.length) ? ["One or more captures produced quality warnings; review target diagnostics before interpreting scores."] : []),
     ],
     limitations: [
       "Dino-Lite overview is interim and not calibrated production macro evidence.",
@@ -538,18 +813,39 @@ function writeExperimentalReport(
   const rows = Object.values(analysis.elements)
     .map(
       (element) =>
-        `<tr><td>${escapeHtml(element.element)}</td><td>${escapeHtml(element.status)}</td><td>${escapeHtml(element.score ?? "not_computed")}</td><td>${escapeHtml(element.confidence)}</td><td>${escapeHtml(element.notComputedReason ?? "")}</td></tr>`
+        `<tr><td>${escapeHtml(element.element)}</td><td>${escapeHtml(element.status)}</td><td>${escapeHtml(element.displayScore ?? displayScore(element.score))}</td><td>${escapeHtml(element.scoreBand ?? "")}</td><td>${escapeHtml(element.confidence)}</td><td>${escapeHtml(element.notComputedReason ?? "")}</td></tr>`
     )
     .join("\n");
+  const whySections = Object.values(analysis.elements)
+    .map(
+      (element) =>
+        `<section class="panel"><h3>Why this score? ${escapeHtml(element.element)}</h3><p>${escapeHtml(element.why?.summary ?? "")}</p><p><strong>Definition:</strong> ${escapeHtml(element.definition ?? "")}</p><p><strong>Perfect 10/10:</strong> ${escapeHtml(element.perfectScoreDefinition ?? "")}</p><h4>Top contributing metrics</h4><ul>${(element.why?.topContributingMetrics ?? ["unavailable"]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h4>Top penalties</h4><ul>${(element.why?.topPenalties ?? ["unavailable"]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h4>Quality warnings</h4><ul>${(element.why?.qualityWarnings ?? ["unavailable"]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><p class="meta">Affected images: ${escapeHtml((element.why?.affectedTargetImages ?? []).join(", ") || "none")}</p></section>`
+    )
+    .join("\n");
+  const qualityRows = analysis.qualityDiagnostics
+    .map(
+      (item) =>
+        `<tr><td>${escapeHtml(item.targetName)}</td><td>${escapeHtml(item.filename)}</td><td>${escapeHtml(item.cardCoverageEstimate)}</td><td>${escapeHtml(item.backgroundRisk)}</td><td>${escapeHtml(item.sharpness)}</td><td>${escapeHtml(item.blurRisk)}</td><td>${escapeHtml(item.brightnessMean)}</td><td>${escapeHtml(item.contrastRange)}</td><td>${escapeHtml(item.targetAlignmentConfidence)}</td><td>${escapeHtml(item.warnings.join("; ") || "none")}</td></tr>`
+    )
+    .join("\n");
+  const perfectDefinitions = Object.entries(analysis.perfectScoreDefinitions)
+    .map(([element, definition]) => `<li><strong>${escapeHtml(element)} 10/10:</strong> ${escapeHtml(definition)}</li>`)
+    .join("");
+  const elementDefinitions = Object.entries(analysis.elementDefinitions)
+    .map(([element, definition]) => `<li><strong>${escapeHtml(element)}:</strong> ${escapeHtml(definition)}</li>`)
+    .join("");
+  const scoreBands = analysis.scoreScale.bands
+    .map((band) => `<li>${escapeHtml(band.range)} ${escapeHtml(band.label)}</li>`)
+    .join("");
   const imageCards = images
     .map(
       (image) =>
-        `<section class="card"><h3>${escapeHtml(image.targetName)}</h3><img src="${escapeHtml(relativeReportPath(workflow.previewReportPath, image.path))}" alt="${escapeHtml(image.targetName)} capture"><p>${escapeHtml(image.targetType)} / ${escapeHtml(image.reportLabel)}</p><p class="meta">${escapeHtml(image.filename)}<br>${escapeHtml(image.sha256 ?? "")}<br>${escapeHtml(image.byteSize ?? "")} bytes</p></section>`
+        `<section class="card"><h3>${escapeHtml(image.targetName)}</h3><img src="${escapeHtml(relativeReportPath(workflow.previewReportPath, image.path))}" alt="${escapeHtml(image.targetName)} capture"><p>${escapeHtml(image.targetType)} / ${escapeHtml(image.reportLabel)}</p><p class="meta">${escapeHtml(image.filename)}<br>${escapeHtml(image.sha256 ?? "")}<br>${escapeHtml(image.byteSize ?? "")} bytes</p>${image.quality ? `<p class="meta">coverage estimate: ${escapeHtml(image.quality.cardCoverageEstimate)}<br>blur risk: ${escapeHtml(image.quality.blurRisk)}<br>warnings: ${escapeHtml(image.quality.warnings.join("; ") || "none")}</p>` : ""}</section>`
     )
     .join("\n");
   fs.writeFileSync(
     workflow.previewReportPath,
-    `<!doctype html><html><head><meta charset="utf-8"><title>Experimental AI Grader Test Run - Not Certified</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#172033}h1{font-size:26px}.warn{font-weight:700;color:#8a3200}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.card{border:1px solid #cbd5e1;border-radius:6px;padding:12px}img{max-width:100%;height:auto;border:1px solid #e2e8f0}table{border-collapse:collapse;width:100%;margin:16px 0}td,th{border:1px solid #cbd5e1;padding:8px;text-align:left}.meta{font-size:12px;word-break:break-all;color:#475569}</style></head><body><h1>Experimental AI Grader Test Run - Not Certified</h1><p class="warn">This is not a certified grade, not a certificate, not calibrated production macro evidence, and not a final AI grade.</p><p>Algorithm: ${escapeHtml(analysis.algorithmVersion)}<br>Thresholds: ${escapeHtml(analysis.thresholdSetVersion)}</p><h2>Scores</h2><table><thead><tr><th>Element</th><th>Status</th><th>Score</th><th>Confidence</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table><h2>Captured Evidence</h2><div class="grid">${imageCards}</div><h2>Limitations</h2><ul>${analysis.limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h2>Manifest</h2><p class="meta">${escapeHtml(workflow.manifestPath)}<br>${escapeHtml(analysis.analysisPath)}</p></body></html>`
+    `<!doctype html><html><head><meta charset="utf-8"><title>Experimental AI Grader Test Run - Not Certified</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#172033;line-height:1.45}h1{font-size:26px}.warn{font-weight:700;color:#8a3200}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.card,.panel{border:1px solid #cbd5e1;border-radius:6px;padding:12px;margin:12px 0;background:#fff}img{max-width:100%;height:auto;border:1px solid #e2e8f0}table{border-collapse:collapse;width:100%;margin:16px 0}td,th{border:1px solid #cbd5e1;padding:8px;text-align:left;vertical-align:top}.meta{font-size:12px;word-break:break-all;color:#475569}.small{font-size:13px;color:#334155}</style></head><body><h1>Experimental AI Grader Test Run - Not Certified</h1><p class="warn">This is not a certified grade, not a certificate, not calibrated production macro evidence, and not a final AI grade.</p><p>Algorithm: ${escapeHtml(analysis.algorithmVersion)}<br>Thresholds: ${escapeHtml(analysis.thresholdSetVersion)}<br>Corner profile: ${escapeHtml(analysis.operatorOptions.cornerProfile)}<br>Capture guides: ${escapeHtml(analysis.operatorOptions.captureGuides ? "enabled" : "disabled")}</p><section class="panel"><h2>Score Scale</h2><p>All computed element scores use a 1.0 to 10.0 scale. 10.0 is the best / cleanest detected condition, 1.0 is the worst / highest detected defect signal, and higher is better. Scores are displayed as x.xx / 10.</p><ul>${scoreBands}</ul></section><section class="panel"><h2>Element Definitions</h2><ul>${elementDefinitions}</ul></section><section class="panel"><h2>Perfect 10/10 Definitions</h2><ul>${perfectDefinitions}</ul></section><section class="panel"><h2>Weighting and Formula</h2><p class="small">The v0.1 fusion uses centering 25%, corners 30%, edges 20%, and surface 25% when all are computed. Corners and surface are required, plus at least centering or edges. If centering or edges is missing, its weight is redistributed across the computed required elements and confidence is lowered. Severe defect caps remain unchanged: if any computed element is 5.0 or below, overall cannot exceed 6.0; if any computed element is 6.0 or below, overall cannot exceed 7.0.</p></section><h2>Scores</h2><table><thead><tr><th>Element</th><th>Status</th><th>Score</th><th>Band</th><th>Confidence</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table><h2>Why This Score?</h2>${whySections}<h2>Quality Warning Summary</h2><table><thead><tr><th>Target</th><th>File</th><th>Card coverage estimate</th><th>Background risk</th><th>Sharpness</th><th>Blur risk</th><th>Brightness mean</th><th>Contrast range</th><th>Alignment confidence</th><th>Warnings</th></tr></thead><tbody>${qualityRows}</tbody></table><h2>Captured Evidence</h2><div class="grid">${imageCards}</div><h2>Limitations</h2><ul>${analysis.limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h2>Manifest and Checksums</h2><p class="meta">${escapeHtml(workflow.manifestPath)}<br>${escapeHtml(analysis.analysisPath)}</p></body></html>`
   );
 }
 

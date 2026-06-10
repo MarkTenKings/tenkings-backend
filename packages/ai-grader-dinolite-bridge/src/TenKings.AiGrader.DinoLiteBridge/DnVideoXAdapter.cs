@@ -594,7 +594,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
         }
 
-        public object OperatorWorkflow(int deviceIndex, string? outputDir, string? label, string? plan, bool includeFlcSweep, bool includeEdr, bool includeEdof)
+        public object OperatorWorkflow(int deviceIndex, string? outputDir, string? label, string? plan, bool includeFlcSweep, bool includeEdr, bool includeEdof, string? cornerProfile, bool captureGuides)
         {
             if (!options.ManualHardwareAccess)
             {
@@ -611,7 +611,8 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 };
             }
 
-            var targets = BuildOperatorPlan(plan);
+            var normalizedCornerProfile = NormalizeCornerProfile(cornerProfile);
+            var targets = BuildOperatorPlan(plan, normalizedCornerProfile, captureGuides);
             if (targets.Count == 0)
             {
                 return new
@@ -744,7 +745,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     amr,
                     connectedDuringCommand = true,
                     previewDuringCommand = true,
-                    options = new { includeFlcSweep, includeEdr, includeEdof },
+                    options = new { includeFlcSweep, includeEdr, includeEdof, cornerProfile = normalizedCornerProfile, captureGuides },
                     targets = targetRecords.ToArray(),
                     cleanup,
                     optionalErrors = optionalErrors.ToArray(),
@@ -775,7 +776,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     config,
                     runtimeDependencies,
                     amr,
-                    options = new { includeFlcSweep, includeEdr, includeEdof },
+                    options = new { includeFlcSweep, includeEdr, includeEdof, cornerProfile = normalizedCornerProfile, captureGuides },
                     targets = targetRecords.ToArray(),
                     cleanup,
                     optionalErrors = optionalErrors.ToArray(),
@@ -1278,61 +1279,97 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
         public static object[] BuildOperatorPlanForTests(string? plan)
         {
-            return BuildOperatorPlan(plan).ToArray();
+            return BuildOperatorPlan(plan, "sharp_90", true).ToArray();
         }
 
-        private static List<OperatorTarget> BuildOperatorPlan(string? plan)
+        private static string NormalizeCornerProfile(string? cornerProfile)
+        {
+            var normalized = string.IsNullOrWhiteSpace(cornerProfile) ? "sharp_90" : cornerProfile!.Trim().ToLowerInvariant();
+            return normalized == "sharp_90" ? normalized : "sharp_90";
+        }
+
+        private static List<OperatorTarget> BuildOperatorPlan(string? plan, string cornerProfile, bool captureGuides)
         {
             var normalizedPlan = string.IsNullOrWhiteSpace(plan) ? "corners-basic" : plan!.Trim();
             var targets = new List<OperatorTarget>();
             if (normalizedPlan == "operator-smoke-single")
             {
-                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Place the target detail under the microscope, adjust focus manually, then click Capture."));
+                targets.Add(BuildOperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Place the target detail under the microscope, adjust focus manually, then click Capture.", cornerProfile, captureGuides));
                 return targets;
             }
 
             if (normalizedPlan == "card-interim" || normalizedPlan == "experimental-card-grading")
             {
-                targets.Add(new OperatorTarget(
+                targets.Add(BuildOperatorTarget(
                     "full-card-overview",
                     "Full-card overview",
                     "interim_macro_overview",
                     "interim_full_card_overview",
-                    "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated."));
+                    "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated.",
+                    cornerProfile,
+                    captureGuides));
             }
 
             if (normalizedPlan == "corners-basic" || normalizedPlan == "card-basic" || normalizedPlan == "card-interim" || normalizedPlan == "experimental-card-grading")
             {
-                targets.Add(new OperatorTarget("top-left-corner", "Top-left corner", "corner", "top_left_corner", "Move the card so the top-left corner is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("top-right-corner", "Top-right corner", "corner", "top_right_corner", "Move the card so the top-right corner is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", "Move the card so the bottom-right corner is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", "Move the card so the bottom-left corner is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(BuildOperatorTarget("top-left-corner", "Top-left corner", "corner", "top_left_corner", "Move the card so the top-left corner is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("top-right-corner", "Top-right corner", "corner", "top_right_corner", "Move the card so the top-right corner is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", "Move the card so the bottom-right corner is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", "Move the card so the bottom-left corner is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
             }
 
             if (normalizedPlan == "experimental-card-grading")
             {
-                targets.Add(new OperatorTarget("top-edge", "Top edge", "edge", "top_edge", "Move the card so the top edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("right-edge", "Right edge", "edge", "right_edge", "Move the card so the right edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("bottom-edge", "Bottom edge", "edge", "bottom_edge", "Move the card so the bottom edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("left-edge", "Left edge", "edge", "left_edge", "Move the card so the left edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("upper-surface", "Upper surface", "surface", "upper_surface", "Move the card so the upper surface is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("lower-surface", "Lower surface", "surface", "lower_surface", "Move the card so the lower surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(BuildOperatorTarget("top-edge", "Top edge", "edge", "top_edge", "Move the card so the top edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("right-edge", "Right edge", "edge", "right_edge", "Move the card so the right edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("bottom-edge", "Bottom edge", "edge", "bottom_edge", "Move the card so the bottom edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("left-edge", "Left edge", "edge", "left_edge", "Move the card so the left edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("upper-surface", "Upper surface", "surface", "upper_surface", "Move the card so the upper surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("lower-surface", "Lower surface", "surface", "lower_surface", "Move the card so the lower surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
                 return targets;
             }
 
             if (normalizedPlan == "surface-basic")
             {
-                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("upper-surface", "Upper surface", "surface", "upper_surface", "Move the card so the upper surface is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("lower-surface", "Lower surface", "surface", "lower_surface", "Move the card so the lower surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(BuildOperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("upper-surface", "Upper surface", "surface", "upper_surface", "Move the card so the upper surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("lower-surface", "Lower surface", "surface", "lower_surface", "Move the card so the lower surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
             }
             else if (normalizedPlan == "card-basic" || normalizedPlan == "card-interim")
             {
-                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(BuildOperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
             }
 
             return targets;
+        }
+
+        private static OperatorTarget BuildOperatorTarget(string id, string name, string type, string reportLabel, string instruction, string cornerProfile, bool captureGuides)
+        {
+            var guide = captureGuides ? BuildCaptureGuide(id, type, cornerProfile) : "";
+            return new OperatorTarget(id, name, type, reportLabel, instruction, guide, captureGuides, type == "corner" ? cornerProfile : null);
+        }
+
+        private static string BuildCaptureGuide(string id, string type, string cornerProfile)
+        {
+            if (type == "interim_macro_overview")
+            {
+                return "Guide: fit as much of the card as possible inside the preview, keep all card edges visible, avoid excess background. This overview is interim and not calibrated macro capture.";
+            }
+            if (type == "corner")
+            {
+                return "Guide: place the corner tip at the center guide, include both edges, fill the frame mostly with card, avoid background. Corner profile: " + cornerProfile + ".";
+            }
+            if (type == "edge")
+            {
+                var direction = (id.Contains("top") || id.Contains("bottom")) ? "horizontal" : "vertical";
+                return "Guide: align this " + direction + " edge along the center guide line, fill the frame with the card edge, include minimal background.";
+            }
+            if (type == "surface")
+            {
+                return "Guide: fill the central patch with card surface only, avoid border/background, and focus on the print surface.";
+            }
+            return "Guide: center the target under the microscope, fill the frame with the card, and avoid background.";
         }
 
         private static object[] CaptureOperatorTargetArtifacts(
@@ -1408,7 +1445,10 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     target.name,
                     target.type,
                     target.reportLabel,
-                    target.instruction
+                    target.instruction,
+                    target.captureGuide,
+                    target.captureGuidesEnabled,
+                    target.cornerProfile
                 },
                 targetIndex,
                 action = action.ToString().ToLowerInvariant(),
@@ -1839,6 +1879,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
             private readonly DnVideoXAxHost axHost;
             private readonly Label titleLabel;
             private readonly Label typeLabel;
+            private readonly Label guideLabel;
             private readonly Label instructionLabel;
             private readonly Label progressLabel;
             private readonly Label overviewNoticeLabel;
@@ -1850,6 +1891,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 DnVideoXAxHost axHost,
                 Label titleLabel,
                 Label typeLabel,
+                Label guideLabel,
                 Label instructionLabel,
                 Label progressLabel,
                 Label overviewNoticeLabel,
@@ -1859,6 +1901,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 this.axHost = axHost;
                 this.titleLabel = titleLabel;
                 this.typeLabel = typeLabel;
+                this.guideLabel = guideLabel;
                 this.instructionLabel = instructionLabel;
                 this.progressLabel = progressLabel;
                 this.overviewNoticeLabel = overviewNoticeLabel;
@@ -1894,11 +1937,12 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 {
                     Dock = DockStyle.Fill,
                     ColumnCount = 1,
-                    RowCount = 7,
+                    RowCount = 8,
                     Padding = new Padding(16)
                 };
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+                panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 110));
                 panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
@@ -1907,6 +1951,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
                 var titleLabel = BuildOperatorLabel(16, true);
                 var typeLabel = BuildOperatorLabel(10, false);
+                var guideLabel = BuildOperatorLabel(11, true);
                 var instructionLabel = BuildOperatorLabel(12, false);
                 var overviewNoticeLabel = BuildOperatorLabel(10, true);
                 var progressLabel = BuildOperatorLabel(11, false);
@@ -1929,7 +1974,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 var retakeButton = (Button)buttons.Controls[2];
                 var abortButton = (Button)buttons.Controls[3];
 
-                var host = new OperatorDnVideoXHost(form, axHost, titleLabel, typeLabel, instructionLabel, progressLabel, overviewNoticeLabel, fallbackLabel);
+                var host = new OperatorDnVideoXHost(form, axHost, titleLabel, typeLabel, guideLabel, instructionLabel, progressLabel, overviewNoticeLabel, fallbackLabel);
                 captureButton.Click += (_, __) => host.requestedAction = OperatorAction.Capture;
                 skipButton.Click += (_, __) => host.requestedAction = OperatorAction.Skip;
                 retakeButton.Click += (_, __) => host.requestedAction = OperatorAction.Retake;
@@ -1938,11 +1983,12 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
                 panel.Controls.Add(titleLabel, 0, 0);
                 panel.Controls.Add(typeLabel, 0, 1);
-                panel.Controls.Add(instructionLabel, 0, 2);
-                panel.Controls.Add(overviewNoticeLabel, 0, 3);
-                panel.Controls.Add(progressLabel, 0, 4);
-                panel.Controls.Add(fallbackLabel, 0, 5);
-                panel.Controls.Add(buttons, 0, 6);
+                panel.Controls.Add(guideLabel, 0, 2);
+                panel.Controls.Add(instructionLabel, 0, 3);
+                panel.Controls.Add(overviewNoticeLabel, 0, 4);
+                panel.Controls.Add(progressLabel, 0, 5);
+                panel.Controls.Add(fallbackLabel, 0, 6);
+                panel.Controls.Add(buttons, 0, 7);
                 split.Panel2.Controls.Add(panel);
                 form.Controls.Add(split);
 
@@ -1971,6 +2017,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 requestedAction = null;
                 titleLabel.Text = target.name;
                 typeLabel.Text = "Target type: " + target.type;
+                guideLabel.Text = string.IsNullOrWhiteSpace(target.captureGuide) ? "Guide: center the target in the preview and keep background out of the frame." : target.captureGuide;
                 instructionLabel.Text = target.instruction + Environment.NewLine + Environment.NewLine + "Adjust focus manually, then confirm capture.";
                 overviewNoticeLabel.Text = showPostOverviewNotice
                     ? "Now zoom/refocus for close-up detail captures before continuing to corners/surface targets."
@@ -2040,13 +2087,16 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
         public sealed class OperatorTarget
         {
-            public OperatorTarget(string id, string name, string type, string reportLabel, string instruction)
+            public OperatorTarget(string id, string name, string type, string reportLabel, string instruction, string captureGuide, bool captureGuidesEnabled, string? cornerProfile)
             {
                 this.id = id;
                 this.name = name;
                 this.type = type;
                 this.reportLabel = reportLabel;
                 this.instruction = instruction;
+                this.captureGuide = captureGuide;
+                this.captureGuidesEnabled = captureGuidesEnabled;
+                this.cornerProfile = cornerProfile;
             }
 
             public string id { get; }
@@ -2054,6 +2104,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
             public string type { get; }
             public string reportLabel { get; }
             public string instruction { get; }
+            public string captureGuide { get; }
+            public bool captureGuidesEnabled { get; }
+            public string? cornerProfile { get; }
         }
 
         private sealed class LightingRecipe

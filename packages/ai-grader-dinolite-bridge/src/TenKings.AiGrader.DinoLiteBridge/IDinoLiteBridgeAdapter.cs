@@ -12,7 +12,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
         object GetLightingStatus(int deviceIndex);
         object SetLightingRecipe(int deviceIndex, string? recipeName);
         object CapturePackage(int deviceIndex, string? outputDir, string? label, bool includeLightingSweep, bool includeEdr, bool includeEdof);
-        object OperatorWorkflow(int deviceIndex, string? outputDir, string? label, string? plan, bool includeFlcSweep, bool includeEdr, bool includeEdof);
+        object OperatorWorkflow(int deviceIndex, string? outputDir, string? label, string? plan, bool includeFlcSweep, bool includeEdr, bool includeEdof, string? cornerProfile, bool captureGuides);
         object RuntimeDiagnostics();
     }
 }

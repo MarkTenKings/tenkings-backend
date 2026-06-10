@@ -109,7 +109,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
                                 request.plan,
                                 request.includeFlcSweep == true || request.includeLightingSweep == true,
                                 request.includeEdr == true,
-                                request.includeEdof == true));
+                                request.includeEdof == true,
+                                request.cornerProfile,
+                                request.captureGuides != false));
                         return false;
                     case "exit":
                         WriteResult(request.id, new { status = "BYE" });

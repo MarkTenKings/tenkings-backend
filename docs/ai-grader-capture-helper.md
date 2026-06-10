@@ -331,6 +331,8 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-
   --output-dir C:\TenKings\capture-data\dinolite-grading-runs `
   --label card-experimental-001 `
   --sdk-runtime-dir C:\TenKings\sdk\dino-lite\dnvideox-sdk `
+  --corner-profile sharp_90 `
+  --capture-guides true `
   --bridge-timeout-ms 1800000
 ```
 
@@ -365,6 +367,27 @@ The v0.1 analyzers are pure TypeScript helpers under `packages/ai-grader-capture
 - overall experimental fusion only when corners and surface are computed and at least one of centering or edges is computed
 
 If detection or inputs are insufficient, the relevant result is `not_computed` with a reason and no placeholder score. All scores are labeled experimental and unvalidated. The report states the output is not a certified grade, not a certificate, not calibrated production macro evidence, and not a final AI grade.
+
+PR #33 improves report clarity without changing the v0.1 scoring formulas, weights, thresholds, or fusion caps. Generated `analysis.json` and `preview-report.html` now include:
+
+- score scale: all computed element scores are `1.0` to `10.0`, higher is better, displayed as `x.xx / 10`
+- score bands: `9.0-10.0 Excellent`, `8.0-8.9 Very Good`, `7.0-7.9 Good`, `6.0-6.9 Fair / Review`, and below `6.0 Needs Review`
+- element definitions for centering, corners, edges, and surface
+- perfect `10/10` definitions for centering, corners, edges, surface, and overall
+- "Why this score?" sections with top contributing metrics, top penalties, confidence, affected target images, limitations, and quality warnings
+- quality diagnostics per target: card coverage estimate, background risk, sharpness/blur risk, brightness mean, contrast range, over/underexposure risk, target alignment confidence, and warnings such as possible background interference, low card coverage, target may not be centered, image may be blurry, lighting may be uneven, and score confidence reduced
+- operator options metadata including `cornerProfile=sharp_90` and whether capture guides were enabled
+
+The operator preview workflow now passes optional guide/profile metadata through the JSONL bridge protocol. The visible Windows operator panel shows guide text for each target class:
+
+- full-card overview: fit as much of the card as possible, avoid background, keep card edges visible, and label it interim/not calibrated macro capture
+- corner targets: place the corner tip at the center guide, include both edges, fill the frame mostly with card, avoid background, and use the `sharp_90` corner profile
+- edge targets: align top/bottom edges with the horizontal guide and left/right edges with the vertical guide
+- surface targets: fill the central patch with card surface only and avoid border/background
+
+`--corner-profile sharp_90` is the only active corner profile in this slice. Unsupported values fail before spawning the bridge. `--capture-guides true|false` defaults to `true`; when enabled, guide metadata is recorded in the manifest and shown in the preview workflow. These changes are guidance and diagnostics only; they do not create fake/manual scores and do not retune analysis thresholds.
+
+Local Dell supervised PR #33 smoke on 2026-06-10 used `dinolite-experimental-grading-run --corner-profile sharp_90 --capture-guides true`, normal JPG only, and output outside git at `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z`. It completed `status=completed` with 12 captured targets, `manifest.json`, `analysis.json`, and `preview-report.html`. The report includes score scale, perfect `10/10` definitions, "Why this score?" sections, and quality warning summary. Computed outputs were centering `10.00 / 10`, corners `6.49 / 10`, edges `2.17 / 10`, surface `1.00 / 10`, and overall `5.13 / 10` (`Needs Review`, confidence `0.71`). Quality diagnostics recorded warnings on 11 targets, mostly blur/underexposure risk. Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`.
 
 Local Dell supervised smoke on 2026-06-09/2026-06-10 used `operator-smoke-single` after fixing the child-process hidden-window spawn option. The operator window appeared as `Ten Kings Dino-Lite Operator Workflow`, Mark clicked `Capture / continue`, and the command completed with `status=completed`, `connectedDuringCommand=true`, `previewDuringCommand=true`, and cleanup `previewStopped=true`, `disconnected=true`, `hostDisposed=true`. Output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-operator-smoke-single-20260610T034854043Z`. It contains `manifest.json`, `preview-report.html`, and `01-center-surface-attempt-01-normal.jpg` (`sha256=74016465bd7ee8a00c033f98ac72047abb3b302b40c33d7314f44baf42a9fd5f`, `byteSize=130542`). Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`. The optional `card-interim` run was deferred because the single-target supervised workflow proved the visible operator flow.
 

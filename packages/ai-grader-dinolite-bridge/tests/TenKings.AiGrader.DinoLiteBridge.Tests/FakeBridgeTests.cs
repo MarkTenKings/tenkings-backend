@@ -20,7 +20,7 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
                 "{\"id\":\"7\",\"command\":\"dinolite.captureStillJpg\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\"}",
                 "{\"id\":\"8\",\"command\":\"dinolite.capturePackage\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"card-demo-001\",\"includeLightingSweep\":true,\"includeEdr\":true,\"includeEdof\":true}",
                 "{\"id\":\"9\",\"command\":\"dinolite.runtimeDiagnostics\"}",
-                "{\"id\":\"10\",\"command\":\"dinolite.operatorWorkflow\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"operator-demo\",\"plan\":\"card-interim\"}",
+                "{\"id\":\"10\",\"command\":\"dinolite.operatorWorkflow\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"operator-demo\",\"plan\":\"card-interim\",\"cornerProfile\":\"sharp_90\",\"captureGuides\":true}",
                 "{\"id\":\"11\",\"command\":\"exit\"}");
 
             StringAssert.Contains(output, "\"id\":\"1\"");
@@ -52,6 +52,9 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             StringAssert.Contains(output, "\"id\":\"full-card-overview\"");
             StringAssert.Contains(output, "\"type\":\"interim_macro_overview\"");
             StringAssert.Contains(output, "\"reportLabel\":\"interim_full_card_overview\"");
+            StringAssert.Contains(output, "\"captureGuide\"");
+            StringAssert.Contains(output, "\"captureGuidesEnabled\":true");
+            StringAssert.Contains(output, "\"cornerProfile\":\"sharp_90\"");
             StringAssert.Contains(output, "not production macro evidence");
             StringAssert.Contains(output, "not calibrated macro capture");
             StringAssert.Contains(output, "not certified grading evidence");
@@ -69,6 +72,7 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             Assert.AreEqual("interim_macro_overview", first.GetType().GetProperty("type")!.GetValue(first, null));
             Assert.AreEqual("interim_full_card_overview", first.GetType().GetProperty("reportLabel")!.GetValue(first, null));
             StringAssert.Contains((string)first.GetType().GetProperty("instruction")!.GetValue(first, null)!, "interim overview");
+            StringAssert.Contains((string)first.GetType().GetProperty("captureGuide")!.GetValue(first, null)!, "fit as much of the card as possible");
             Assert.AreEqual(6, plan.Length);
         }
 
@@ -85,6 +89,9 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             Assert.AreEqual("edge", plan[8].GetType().GetProperty("type")!.GetValue(plan[8], null));
             Assert.AreEqual("lower-surface", plan[11].GetType().GetProperty("id")!.GetValue(plan[11], null));
             Assert.AreEqual("surface", plan[11].GetType().GetProperty("type")!.GetValue(plan[11], null));
+            StringAssert.Contains((string)plan[1].GetType().GetProperty("captureGuide")!.GetValue(plan[1], null)!, "Corner profile: sharp_90");
+            StringAssert.Contains((string)plan[5].GetType().GetProperty("captureGuide")!.GetValue(plan[5], null)!, "horizontal edge");
+            StringAssert.Contains((string)plan[9].GetType().GetProperty("captureGuide")!.GetValue(plan[9], null)!, "central patch");
         }
 
         [TestMethod]
