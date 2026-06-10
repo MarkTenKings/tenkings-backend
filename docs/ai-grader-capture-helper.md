@@ -321,6 +321,19 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-
   --bridge-timeout-ms 1200000
 ```
 
+Manual experimental Dino-Lite grading run, for the Dell Windows capture node only:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-experimental-grading-run `
+  --bridge-exe C:\TenKings\repos\tenkings-rip-it-live\packages\ai-grader-dinolite-bridge\src\TenKings.AiGrader.DinoLiteBridge\bin\x86\Release\net48\TenKings.AiGrader.DinoLiteBridge.exe `
+  --adapter dnvideox `
+  --device-index 0 `
+  --output-dir C:\TenKings\capture-data\dinolite-grading-runs `
+  --label card-experimental-001 `
+  --sdk-runtime-dir C:\TenKings\sdk\dino-lite\dnvideox-sdk `
+  --bridge-timeout-ms 1800000
+```
+
 The operator workflow opens a local Windows preview window using the DNVideoX-hosted ActiveX control. The operator sees target name, target type, instructions, capture count, and manual fallback mode text. Controls are `Capture / continue`, `Skip target`, `Retake current target`, and `Abort session safely`. The default capture set is normal JPG only; optional flags are `--include-flc-sweep`, `--include-edr`, and `--include-edof`. The TypeScript stdio client leaves manual hardware child windows visible; default health/readiness paths still do not spawn the bridge.
 
 Built-in operator plans:
@@ -330,10 +343,28 @@ Built-in operator plans:
 - `surface-basic`: center, upper, and lower surface targets.
 - `card-basic`: four corners plus center surface.
 - `card-interim`: full-card overview, four corners, and center surface.
+- `experimental-card-grading`: interim full-card overview, four corners, four edge midpoints, and center/upper/lower surface.
 
 The `card-interim` overview target is intentionally labeled `interim_full_card_overview` with target type `interim_macro_overview`. The preview/report/manifest state that this overview is not production macro evidence, not calibrated macro capture, and not certified grading evidence. After the overview capture, the preview window instructs the operator to zoom/refocus for close-up detail captures before continuing. This is a manual fallback workflow until GRBL stage motion and dedicated macro camera evidence are integrated.
 
 Operator workflow output is a local session folder outside git with `manifest.json`, `preview-report.html`, target-level artifact metadata, SHA-256 hashes, byte sizes, MIME type, timestamps, and no embedded image data. No DB writes, uploads, production report, certificate, final AI grade, or certified grading claim are produced by this command.
+
+The experimental grading run is explicit and manual-only. It launches the `experimental-card-grading` operator plan, captures normal JPG targets by default, then runs deterministic local pixel analysis in the capture-helper process. The analysis writes `analysis.json` and replaces `preview-report.html` with `Experimental AI Grader Test Run - Not Certified`.
+
+Algorithm provenance:
+
+- `algorithmVersion`: `tenkings-dinolite-grading-v0.1`
+- `thresholdSetVersion`: `tenkings-dinolite-thresholds-v0.1`
+
+The v0.1 analyzers are pure TypeScript helpers under `packages/ai-grader-capture-helper/src/experimentalGrading.ts`. They use `sharp` only to decode local JPG files into pixels; no Windows bridge, DNVideoX, database, upload, Next.js/browser, or production runtime path imports the analyzer by default. The analyzer computes:
+
+- centering from the interim overview when outer/inner rectangles can be detected
+- corner defect-density proxy scores from four close-up corner targets, partial only when at least three corners exist
+- edge whitening/dark/scratch/roughness proxy scores from edge midpoint targets
+- surface speck/scratch/texture proxy scores from surface targets
+- overall experimental fusion only when corners and surface are computed and at least one of centering or edges is computed
+
+If detection or inputs are insufficient, the relevant result is `not_computed` with a reason and no placeholder score. All scores are labeled experimental and unvalidated. The report states the output is not a certified grade, not a certificate, not calibrated production macro evidence, and not a final AI grade.
 
 Local Dell supervised smoke on 2026-06-09/2026-06-10 used `operator-smoke-single` after fixing the child-process hidden-window spawn option. The operator window appeared as `Ten Kings Dino-Lite Operator Workflow`, Mark clicked `Capture / continue`, and the command completed with `status=completed`, `connectedDuringCommand=true`, `previewDuringCommand=true`, and cleanup `previewStopped=true`, `disconnected=true`, `hostDisposed=true`. Output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-operator-smoke-single-20260610T034854043Z`. It contains `manifest.json`, `preview-report.html`, and `01-center-surface-attempt-01-normal.jpg` (`sha256=74016465bd7ee8a00c033f98ac72047abb3b302b40c33d7314f44baf42a9fd5f`, `byteSize=130542`). Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`. The optional `card-interim` run was deferred because the single-target supervised workflow proved the visible operator flow.
 
@@ -371,7 +402,7 @@ The runnable driver set is `mock` only. `real` is accepted by readiness reportin
 
 The mock driver set never imports Basler, Dino-Lite, serial, GRBL, camera, USB, or microscope SDKs. It does not open OS device handles or sockets.
 
-The implemented real-adjacent adapters are Arduino LED readiness, GRBL stage status readiness, and manual Dino-Lite DNVideoX enumeration/status/still JPG/package/operator workflow capture. They are not part of the runnable mock driver set and require explicit CLI/config/env before they can open serial or instantiate DNVideoX.
+The implemented real-adjacent adapters are Arduino LED readiness, GRBL stage status readiness, and manual Dino-Lite DNVideoX enumeration/status/still JPG/package/operator workflow/experimental grading capture. They are not part of the runnable mock driver set and require explicit CLI/config/env before they can open serial or instantiate DNVideoX.
 
 ## Future Hardware Boundary
 
@@ -397,4 +428,4 @@ Before the first real hardware driver integration:
 - keep real discovery non-invasive until the specific device adapter is reviewed
 - keep Arduino LED readiness limited to `PING` and `LED ALL OFF` until a later approved LED control slice
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
-- keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package/operator workflow capture, including outside-git SDK runtime diagnostics for EDOF, until a later approved lens/focus/exposure/DPQ/certified-grading slice
+- keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package/operator workflow/experimental non-certified grading capture, including outside-git SDK runtime diagnostics for EDOF, until a later approved lens/focus/exposure/DPQ/certified-grading slice

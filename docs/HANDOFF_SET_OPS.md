@@ -10541,3 +10541,30 @@ Build Set Ops UI flow with:
 - Vercel production deploy completed successfully for merge commit `0eb3790e2cd3e4526730970803542504257729f4`: `https://tenkings-backend-nextjs-1iqfdqluo-ten-kings.vercel.app`.
 - Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no additional image capture, no additional microscope command, no lens/focus/exposure-setting/DPQ method, no SDK/OCX/DLL/vendor file commit, no captured image commit, and no calibrated macro evidence, final AI grade, certificate, or certified grading claim.
+
+## Session Update (2026-06-10, AI Grader Dino-Lite experimental grading PR #32 in progress)
+- Created branch `feature/ai-grader-dinolite-experimental-grading` from latest `origin/main`.
+- Added explicit manual CLI command `dinolite-experimental-grading-run` for the Dell capture node. It requires `--adapter dnvideox`, explicit bridge exe, explicit device index, explicit outside-git output dir, explicit label, and optional outside-git SDK runtime dir.
+- Added bridge operator plan `experimental-card-grading` with 12 manual targets:
+  - interim full-card overview
+  - four corners
+  - four edge midpoints
+  - center/upper/lower surface
+- Added pure capture-helper deterministic analyzer in `packages/ai-grader-capture-helper/src/experimentalGrading.ts`.
+- Analyzer provenance:
+  - `algorithmVersion=tenkings-dinolite-grading-v0.1`
+  - `thresholdSetVersion=tenkings-dinolite-thresholds-v0.1`
+- Analyzer output writes local `analysis.json` and `preview-report.html` titled `Experimental AI Grader Test Run - Not Certified`.
+- Analyzer computes real pixel-derived metrics for centering, corners, edges, surface, and fusion when possible. Missing or failed metrics return `not_computed` with a reason and no placeholder score.
+- Added `sharp` as a capture-helper dependency for maintained local JPG decoding into pixels; the analyzer remains isolated from Next.js/browser/production paths and default readiness/health/server/admin paths.
+- Validation completed before supervised smoke:
+  - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass
+  - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 78 tests
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
+- Supervised manual experimental grading smoke is still pending Mark present at the Dell PC.
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no new hardware command run, no additional image capture, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, no fake/manual/operator-entered score, no placeholder score, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.

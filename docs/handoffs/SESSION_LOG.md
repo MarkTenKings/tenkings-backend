@@ -19510,3 +19510,49 @@ By enabling Rip It Live, I confirm:
 - No lens/focus/exposure-setting/DPQ method was run.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite experimental grading PR #32 in progress
+
+### Summary
+- Created branch `feature/ai-grader-dinolite-experimental-grading` from latest `origin/main`.
+- Added explicit manual Dino-Lite experimental grading workflow:
+  - CLI command `dinolite-experimental-grading-run`
+  - bridge operator plan `experimental-card-grading`
+  - output directory remains required and outside git
+  - label is required
+- `experimental-card-grading` contains 12 operator targets: interim full-card overview, four corners, four edge midpoints, and center/upper/lower surface.
+- Added pure TypeScript local pixel analyzer:
+  - file: `packages/ai-grader-capture-helper/src/experimentalGrading.ts`
+  - `algorithmVersion=tenkings-dinolite-grading-v0.1`
+  - `thresholdSetVersion=tenkings-dinolite-thresholds-v0.1`
+  - uses maintained `sharp` dependency for local JPG decoding into pixels
+- Analyzer/report behavior:
+  - writes `analysis.json`
+  - writes local `preview-report.html` titled `Experimental AI Grader Test Run - Not Certified`
+  - computes centering/corners/edges/surface/fusion from image pixels when possible
+  - reports `not_computed` with reasons and no score when inputs or detection are insufficient
+  - states the run is not a certified grade, certificate, calibrated production macro result, or final AI grade
+
+### Validation So Far
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 78 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+- Supervised manual experimental grading smoke remains pending Mark present at the Dell PC.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No new hardware command was run.
+- No additional image capture was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No lens/focus/exposure-setting/DPQ method was added or run.
+- No fake, manual, operator-entered, or placeholder score was added.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

@@ -30,6 +30,7 @@ import {
 } from "./drivers";
 export * from "./drivers";
 export * from "./discovery";
+export * from "./experimentalGrading";
 export * from "./readiness";
 
 export const CAPTURE_HELPER_SERVICE_NAME = "ai-grader-capture-helper";
