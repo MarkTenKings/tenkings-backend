@@ -12,6 +12,7 @@ import {
   type CaptureHelperConfigInput,
   type CaptureHelperEnv,
 } from "./index";
+import { analyzeDinoLiteExperimentalGradingWorkflow } from "./experimentalGrading";
 import {
   DinoLiteBridgeClient,
   DinoLiteBridgeClientError,
@@ -47,7 +48,7 @@ type ParsedCommand =
       includeEdof: boolean;
     }
   | {
-      command: "dinolite-operator-workflow";
+      command: "dinolite-operator-workflow" | "dinolite-experimental-grading-run";
       config: CaptureHelperConfigInput;
       deviceIndex: number | undefined;
       outputDir: string | undefined;
@@ -430,6 +431,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "dinolite-capture-package" ||
     command === "dinolite-capture-demo-package" ||
     command === "dinolite-operator-workflow" ||
+    command === "dinolite-experimental-grading-run" ||
     command === "manifest" ||
     command === "serve" ||
     command === "help"
@@ -441,7 +443,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     if (command === "dinolite-capture-package" || command === "dinolite-capture-demo-package") {
       return { command, config, deviceIndex, outputDir, label, includeLightingSweep, includeEdr, includeEdof };
     }
-    if (command === "dinolite-operator-workflow") {
+    if (command === "dinolite-operator-workflow" || command === "dinolite-experimental-grading-run") {
       return { command, config, deviceIndex, outputDir, label, plan, includeFlcSweep, includeEdr, includeEdof };
     }
     return { command, config };
@@ -464,6 +466,7 @@ function helpPayload() {
       "dinolite-capture-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-packages --label card-demo-001 --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk --include-lighting-sweep --include-edr --include-edof",
       "dinolite-capture-demo-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-demo --label card-demo-001 --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
       "dinolite-operator-workflow --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-operator --plan card-interim --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
+      "dinolite-experimental-grading-run --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-grading-runs --label <label> --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -548,6 +551,26 @@ function describeDinoLiteOperatorPlan(plan: string) {
       { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
       { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
       { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
+    ];
+  }
+  if (plan === "experimental-card-grading") {
+    return [
+      {
+        name: "Full-card overview",
+        instruction:
+          "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated.",
+      },
+      { name: "Top-left corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
+      { name: "Top-right corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
+      { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
+      { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
+      { name: "Top edge", instruction: "Move the card so the top edge midpoint is centered under the microscope." },
+      { name: "Right edge", instruction: "Move the card so the right edge midpoint is centered under the microscope." },
+      { name: "Bottom edge", instruction: "Move the card so the bottom edge midpoint is centered under the microscope." },
+      { name: "Left edge", instruction: "Move the card so the left edge midpoint is centered under the microscope." },
+      { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
+      { name: "Upper surface", instruction: "Move the card so the upper surface is centered under the microscope." },
+      { name: "Lower surface", instruction: "Move the card so the lower surface is centered under the microscope." },
     ];
   }
   if (plan === "surface-basic") {
@@ -674,7 +697,8 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       parsed.command === "dinolite-capture-still" ||
       parsed.command === "dinolite-capture-package" ||
       parsed.command === "dinolite-capture-demo-package" ||
-      parsed.command === "dinolite-operator-workflow"
+      parsed.command === "dinolite-operator-workflow" ||
+      parsed.command === "dinolite-experimental-grading-run"
     ) {
       const env = io.env ?? process.env;
       const executablePath =
@@ -743,14 +767,19 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         return 0;
       }
 
-      if (parsed.command === "dinolite-operator-workflow") {
+      if (parsed.command === "dinolite-operator-workflow" || parsed.command === "dinolite-experimental-grading-run") {
+        if (parsed.command === "dinolite-experimental-grading-run" && (!parsed.label || parsed.label.trim().length === 0)) {
+          throw new CaptureHelperCommandError("dinolite-experimental-grading-run requires --label <label>.");
+        }
         const outputDir = assertDinoLiteCaptureOutputDirAllowed(parsed.outputDir ?? "");
         const sdkRuntimeDir =
           parsed.config.dinoliteBridge?.sdkRuntimeDir ?? env.TENKINGS_DINOLITE_SDK_RUNTIME_DIR;
         if (sdkRuntimeDir) {
           assertDinoLiteSdkRuntimeDirAllowed(sdkRuntimeDir);
         }
-        const workflowPlan = parsed.plan ?? "corners-basic";
+        const workflowPlan = parsed.command === "dinolite-experimental-grading-run"
+          ? "experimental-card-grading"
+          : parsed.plan ?? "corners-basic";
         const targets = describeDinoLiteOperatorPlan(workflowPlan);
         stderr("Operator window shown\n");
         stderr(`Plan: ${workflowPlan}\n`);
@@ -769,6 +798,17 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           includeEdof: parsed.includeEdof,
         });
         await client.close();
+        if (parsed.command === "dinolite-experimental-grading-run") {
+          const analysis = await analyzeDinoLiteExperimentalGradingWorkflow(workflow);
+          writeJson(stdout, {
+            ok: workflow.status !== "aborted",
+            service: "ai-grader-capture-helper",
+            command: "dinolite-experimental-grading-run",
+            workflow,
+            analysis,
+          });
+          return workflow.status === "aborted" ? 1 : 0;
+        }
         writeJson(stdout, {
           ok: workflow.status !== "aborted",
           service: "ai-grader-capture-helper",

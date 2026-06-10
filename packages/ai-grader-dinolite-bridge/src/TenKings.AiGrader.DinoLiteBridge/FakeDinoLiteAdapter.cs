@@ -232,6 +232,22 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 {
                     FakeTarget(sessionDir, "center-surface", "Center surface", "surface", "center_surface", 1)
                 }
+                : normalizedPlan == "experimental-card-grading"
+                ? new[]
+                {
+                    FakeTarget(sessionDir, "full-card-overview", "Full-card overview", "interim_macro_overview", "interim_full_card_overview", 1),
+                    FakeTarget(sessionDir, "top-left-corner", "Top-left corner", "corner", "top_left_corner", 2),
+                    FakeTarget(sessionDir, "top-right-corner", "Top-right corner", "corner", "top_right_corner", 3),
+                    FakeTarget(sessionDir, "bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", 4),
+                    FakeTarget(sessionDir, "bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", 5),
+                    FakeTarget(sessionDir, "top-edge", "Top edge", "edge", "top_edge", 6),
+                    FakeTarget(sessionDir, "right-edge", "Right edge", "edge", "right_edge", 7),
+                    FakeTarget(sessionDir, "bottom-edge", "Bottom edge", "edge", "bottom_edge", 8),
+                    FakeTarget(sessionDir, "left-edge", "Left edge", "edge", "left_edge", 9),
+                    FakeTarget(sessionDir, "center-surface", "Center surface", "surface", "center_surface", 10),
+                    FakeTarget(sessionDir, "upper-surface", "Upper surface", "surface", "upper_surface", 11),
+                    FakeTarget(sessionDir, "lower-surface", "Lower surface", "surface", "lower_surface", 12)
+                }
                 : normalizedPlan == "card-interim"
                 ? new[]
                 {

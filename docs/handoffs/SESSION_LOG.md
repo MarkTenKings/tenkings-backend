@@ -19510,3 +19510,117 @@ By enabling Rip It Live, I confirm:
 - No lens/focus/exposure-setting/DPQ method was run.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite experimental grading PR #32 in progress
+
+### Summary
+- Created branch `feature/ai-grader-dinolite-experimental-grading` from latest `origin/main`.
+- Added explicit manual Dino-Lite experimental grading workflow:
+  - CLI command `dinolite-experimental-grading-run`
+  - bridge operator plan `experimental-card-grading`
+  - output directory remains required and outside git
+  - label is required
+- `experimental-card-grading` contains 12 operator targets: interim full-card overview, four corners, four edge midpoints, and center/upper/lower surface.
+- Added pure TypeScript local pixel analyzer:
+  - file: `packages/ai-grader-capture-helper/src/experimentalGrading.ts`
+  - `algorithmVersion=tenkings-dinolite-grading-v0.1`
+  - `thresholdSetVersion=tenkings-dinolite-thresholds-v0.1`
+  - uses maintained `sharp` dependency for local JPG decoding into pixels
+- Analyzer/report behavior:
+  - writes `analysis.json`
+  - writes local `preview-report.html` titled `Experimental AI Grader Test Run - Not Certified`
+  - computes centering/corners/edges/surface/fusion from image pixels when possible
+  - reports `not_computed` with reasons and no score when inputs or detection are insufficient
+  - states the run is not a certified grade, certificate, calibrated production macro result, or final AI grade
+
+### Validation So Far
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 78 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+- Supervised manual experimental grading smoke remains pending Mark present at the Dell PC.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No new hardware command was run.
+- No additional image capture was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No lens/focus/exposure-setting/DPQ method was added or run.
+- No fake, manual, operator-entered, or placeholder score was added.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite experimental grading PR #32 supervised smoke
+
+### Summary
+- Ran the supervised real Dino-Lite `dinolite-experimental-grading-run` workflow with Mark present at the Dell PC.
+- PR #32 remains unmerged. The run used explicit manual DNVideoX bridge invocation, normal JPG only, and output outside git.
+- Session output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-experimental-card-grading-smoke-20260610T065153354Z`.
+- Output files verified:
+  - `manifest.json`
+  - `analysis.json`
+  - `preview-report.html`
+  - 12 captured normal JPG artifacts
+- Target count: 12 captured targets:
+  - interim full-card overview
+  - four corners
+  - four edge midpoints
+  - center/upper/lower surface
+- DNVideoX/bridge result:
+  - adapter `dnvideox`
+  - OCX version `3, 0, 56, 6`
+  - `connectedDuringCommand=true`
+  - `previewDuringCommand=true`
+  - cleanup succeeded: preview stopped, disconnected, host disposed
+  - no forbidden operation flag was raised
+
+### Artifact Evidence
+- `01-full-card-overview-attempt-01-normal.jpg` - 126165 bytes - `2c5e6e3b85e9caea8ec19d10323d0c8e89d644592f722e9d5dc7b342e894490a`
+- `02-top-left-corner-attempt-01-normal.jpg` - 326854 bytes - `2062d68ddab8b2ab327f36008b53130309e0c32360f83933a600a9cd6b6ae72e`
+- `03-top-right-corner-attempt-01-normal.jpg` - 288365 bytes - `18ea08c0af11cb22af845467fd8f80486467e43571a9547413e3648be016492d`
+- `04-bottom-right-corner-attempt-01-normal.jpg` - 330237 bytes - `cbcf60ea98c03c5e4e2bdc0b119097df9488f95a6941f910ca9f7915829ba710`
+- `05-bottom-left-corner-attempt-01-normal.jpg` - 317732 bytes - `4eb52efb5442298314a0ced35bc395ce5a43dbe2558b9f2fd59c9128c217d989`
+- `06-top-edge-attempt-01-normal.jpg` - 368135 bytes - `b8d8de96f375b1a84baeb530b6b0ee5a66180c004cd24c059d888901b7cd05e2`
+- `07-right-edge-attempt-01-normal.jpg` - 242629 bytes - `61f44f904b91e8a934f3f4b89d8bc3287ad3b341a925c3ff0eb0fe89a6a79941`
+- `08-bottom-edge-attempt-01-normal.jpg` - 265148 bytes - `6cd236ab039e80bb6552c454411728ad696e62722e307f578ec9eb44cd351a15`
+- `09-left-edge-attempt-01-normal.jpg` - 332969 bytes - `52b71cd24aee48589e19ade356726f763f7d181ba27fb783b36aed9b05174ae5`
+- `10-center-surface-attempt-01-normal.jpg` - 224264 bytes - `8ffb963c32ffd68d9cb9cdbee35bbd0b64e142193ff0541f7ca7315647adb7c1`
+- `11-upper-surface-attempt-01-normal.jpg` - 231513 bytes - `adaee852fd7e60db5dd88aa10c30f0b1d2092bc36ce26eae6b72cbdbed2a361f`
+- `12-lower-surface-attempt-01-normal.jpg` - 227614 bytes - `3807443b5fab62bb80d83af4c41438491a761676115deaf53c46f716051756b4`
+
+### Analysis Result
+- `analysis.json`: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-experimental-card-grading-smoke-20260610T065153354Z\analysis.json`
+- Report: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-experimental-card-grading-smoke-20260610T065153354Z\preview-report.html`
+- Algorithm provenance:
+  - `algorithmVersion=tenkings-dinolite-grading-v0.1`
+  - `thresholdSetVersion=tenkings-dinolite-thresholds-v0.1`
+- Computed element results:
+  - centering: `computed`, score `9.1`, confidence `0.764`
+  - corners: `computed`, score `4.64`, confidence `0.751`
+  - edges: `computed`, score `2.55`, confidence `0.741`
+  - surface: `computed`, score `1.23`, confidence `0.714`
+  - overall experimental score: `computed`, score `4.48`, confidence `0.714`
+- Not-computed reasons: none. All required elements computed from captured pixels.
+- Severe defect caps were applied by the experimental fusion logic.
+- Limitations recorded in the generated analysis:
+  - Dino-Lite overview is interim and not calibrated production macro evidence.
+  - Manual positioning/refocus and uncalibrated lighting can affect measurements.
+  - If a metric cannot be computed, it is reported as `not_computed` instead of using a placeholder score.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No lens/focus/exposure-setting/DPQ method was run.
+- No fake, manual, operator-entered, or placeholder score was added.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

@@ -73,6 +73,21 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
         }
 
         [TestMethod]
+        public void ExperimentalCardGradingPlanIncludesOverviewCornersEdgesAndSurface()
+        {
+            var plan = DnVideoXAdapter.BuildOperatorPlanForTests("experimental-card-grading");
+
+            Assert.AreEqual(12, plan.Length);
+            Assert.AreEqual("full-card-overview", plan[0].GetType().GetProperty("id")!.GetValue(plan[0], null));
+            Assert.AreEqual("interim_macro_overview", plan[0].GetType().GetProperty("type")!.GetValue(plan[0], null));
+            Assert.AreEqual("top-left-corner", plan[1].GetType().GetProperty("id")!.GetValue(plan[1], null));
+            Assert.AreEqual("left-edge", plan[8].GetType().GetProperty("id")!.GetValue(plan[8], null));
+            Assert.AreEqual("edge", plan[8].GetType().GetProperty("type")!.GetValue(plan[8], null));
+            Assert.AreEqual("lower-surface", plan[11].GetType().GetProperty("id")!.GetValue(plan[11], null));
+            Assert.AreEqual("surface", plan[11].GetType().GetProperty("type")!.GetValue(plan[11], null));
+        }
+
+        [TestMethod]
         public void OperatorSmokeSinglePlanHasOneCenterSurfaceTarget()
         {
             var plan = DnVideoXAdapter.BuildOperatorPlanForTests("operator-smoke-single");

@@ -1291,7 +1291,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 return targets;
             }
 
-            if (normalizedPlan == "card-interim")
+            if (normalizedPlan == "card-interim" || normalizedPlan == "experimental-card-grading")
             {
                 targets.Add(new OperatorTarget(
                     "full-card-overview",
@@ -1301,12 +1301,24 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated."));
             }
 
-            if (normalizedPlan == "corners-basic" || normalizedPlan == "card-basic" || normalizedPlan == "card-interim")
+            if (normalizedPlan == "corners-basic" || normalizedPlan == "card-basic" || normalizedPlan == "card-interim" || normalizedPlan == "experimental-card-grading")
             {
                 targets.Add(new OperatorTarget("top-left-corner", "Top-left corner", "corner", "top_left_corner", "Move the card so the top-left corner is centered under the microscope. Adjust focus manually, then confirm capture."));
                 targets.Add(new OperatorTarget("top-right-corner", "Top-right corner", "corner", "top_right_corner", "Move the card so the top-right corner is centered under the microscope. Adjust focus manually, then confirm capture."));
                 targets.Add(new OperatorTarget("bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", "Move the card so the bottom-right corner is centered under the microscope. Adjust focus manually, then confirm capture."));
                 targets.Add(new OperatorTarget("bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", "Move the card so the bottom-left corner is centered under the microscope. Adjust focus manually, then confirm capture."));
+            }
+
+            if (normalizedPlan == "experimental-card-grading")
+            {
+                targets.Add(new OperatorTarget("top-edge", "Top edge", "edge", "top_edge", "Move the card so the top edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(new OperatorTarget("right-edge", "Right edge", "edge", "right_edge", "Move the card so the right edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(new OperatorTarget("bottom-edge", "Bottom edge", "edge", "bottom_edge", "Move the card so the bottom edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(new OperatorTarget("left-edge", "Left edge", "edge", "left_edge", "Move the card so the left edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(new OperatorTarget("upper-surface", "Upper surface", "surface", "upper_surface", "Move the card so the upper surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(new OperatorTarget("lower-surface", "Lower surface", "surface", "lower_surface", "Move the card so the lower surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+                return targets;
             }
 
             if (normalizedPlan == "surface-basic")
