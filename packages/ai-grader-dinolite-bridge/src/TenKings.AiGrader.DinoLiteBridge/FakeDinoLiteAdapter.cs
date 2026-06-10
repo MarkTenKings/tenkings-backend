@@ -227,7 +227,12 @@ namespace TenKings.AiGrader.DinoLiteBridge
             var normalizedPlan = string.IsNullOrWhiteSpace(plan) ? "corners-basic" : plan!;
             var sessionId = "dinolite-operator-" + normalizedLabel + "-20260609T000000000Z";
             var sessionDir = normalizedOutputDir + "\\" + sessionId;
-            var targets = normalizedPlan == "card-interim"
+            var targets = normalizedPlan == "operator-smoke-single"
+                ? new[]
+                {
+                    FakeTarget(sessionDir, "center-surface", "Center surface", "surface", "center_surface", 1)
+                }
+                : normalizedPlan == "card-interim"
                 ? new[]
                 {
                     FakeTarget(sessionDir, "full-card-overview", "Full-card overview", "interim_macro_overview", "interim_full_card_overview", 1),

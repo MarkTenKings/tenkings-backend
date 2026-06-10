@@ -19462,6 +19462,13 @@ By enabling Rip It Live, I confirm:
 - The workflow remained pending for operator input and the shell command timed out after 11 minutes. No target captures, `manifest.json`, or `preview-report.html` were written.
 - Stuck bridge/node processes were terminated after a normal window close did not exit the bridge.
 - Follow-up fix added: the TypeScript stdio bridge client now kills the child process on command timeout to avoid leaked manual workflow processes.
+- Supervised smoke with Mark present confirmed the missing-window root cause was the TypeScript stdio client spawning manual hardware bridge processes with `windowsHide=true`.
+- Fix added: manual hardware bridge spawns now leave child windows visible, the operator form starts centered/normal and briefly topmost, and the CLI prints operator plan/target progress before waiting.
+- Added `operator-smoke-single`, a one-target center-surface plan for supervised smoke.
+- `operator-smoke-single` completed successfully with visible window title `Ten Kings Dino-Lite Operator Workflow`, one target captured, and cleanup `previewStopped=true`, `disconnected=true`, `hostDisposed=true`.
+- Output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-operator-smoke-single-20260610T034854043Z`.
+- Artifacts outside git: `manifest.json`, `preview-report.html`, and `01-center-surface-attempt-01-normal.jpg` (`sha256=74016465bd7ee8a00c033f98ac72047abb3b302b40c33d7314f44baf42a9fd5f`, `byteSize=130542`).
+- Optional `card-interim` was deferred because the single-target supervised workflow proved the visible operator flow.
 
 ### Guardrails
 - No production/staging migration was run.

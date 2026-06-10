@@ -316,15 +316,16 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-
   --adapter dnvideox `
   --device-index 0 `
   --output-dir C:\TenKings\capture-data\dinolite-operator `
-  --plan card-interim `
+  --plan operator-smoke-single `
   --sdk-runtime-dir C:\TenKings\sdk\dino-lite\dnvideox-sdk `
-  --bridge-timeout-ms 600000
+  --bridge-timeout-ms 1200000
 ```
 
-The operator workflow opens a local Windows preview window using the DNVideoX-hosted ActiveX control. The operator sees target name, target type, instructions, capture count, and manual fallback mode text. Controls are `Capture / continue`, `Skip target`, `Retake current target`, and `Abort session safely`. The default capture set is normal JPG only; optional flags are `--include-flc-sweep`, `--include-edr`, and `--include-edof`.
+The operator workflow opens a local Windows preview window using the DNVideoX-hosted ActiveX control. The operator sees target name, target type, instructions, capture count, and manual fallback mode text. Controls are `Capture / continue`, `Skip target`, `Retake current target`, and `Abort session safely`. The default capture set is normal JPG only; optional flags are `--include-flc-sweep`, `--include-edr`, and `--include-edof`. The TypeScript stdio client leaves manual hardware child windows visible; default health/readiness paths still do not spawn the bridge.
 
 Built-in operator plans:
 
+- `operator-smoke-single`: one center-surface target for supervised window/capture smoke.
 - `corners-basic`: top-left, top-right, bottom-right, and bottom-left corners.
 - `surface-basic`: center, upper, and lower surface targets.
 - `card-basic`: four corners plus center surface.
@@ -333,6 +334,8 @@ Built-in operator plans:
 The `card-interim` overview target is intentionally labeled `interim_full_card_overview` with target type `interim_macro_overview`. The preview/report/manifest state that this overview is not production macro evidence, not calibrated macro capture, and not certified grading evidence. After the overview capture, the preview window instructs the operator to zoom/refocus for close-up detail captures before continuing. This is a manual fallback workflow until GRBL stage motion and dedicated macro camera evidence are integrated.
 
 Operator workflow output is a local session folder outside git with `manifest.json`, `preview-report.html`, target-level artifact metadata, SHA-256 hashes, byte sizes, MIME type, timestamps, and no embedded image data. No DB writes, uploads, production report, certificate, final AI grade, or certified grading claim are produced by this command.
+
+Local Dell supervised smoke on 2026-06-09/2026-06-10 used `operator-smoke-single` after fixing the child-process hidden-window spawn option. The operator window appeared as `Ten Kings Dino-Lite Operator Workflow`, Mark clicked `Capture / continue`, and the command completed with `status=completed`, `connectedDuringCommand=true`, `previewDuringCommand=true`, and cleanup `previewStopped=true`, `disconnected=true`, `hostDisposed=true`. Output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-operator-smoke-single-20260610T034854043Z`. It contains `manifest.json`, `preview-report.html`, and `01-center-surface-attempt-01-normal.jpg` (`sha256=74016465bd7ee8a00c033f98ac72047abb3b302b40c33d7314f44baf42a9fd5f`, `byteSize=130542`). Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`. The optional `card-interim` run was deferred because the single-target supervised workflow proved the visible operator flow.
 
 SDK binaries, OCX files, and DNVideoX DLLs must remain outside git. Do not run `regsvr32` from this repo flow.
 

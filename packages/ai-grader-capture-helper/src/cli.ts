@@ -527,6 +527,53 @@ function writeJson(stdout: (text: string) => void, value: unknown) {
   stdout(`${JSON.stringify(value, null, 2)}\n`);
 }
 
+function describeDinoLiteOperatorPlan(plan: string) {
+  if (plan === "operator-smoke-single") {
+    return [
+      {
+        name: "Center surface",
+        instruction: "Place the target detail under the microscope, adjust focus manually, then click Capture.",
+      },
+    ];
+  }
+  if (plan === "card-interim") {
+    return [
+      {
+        name: "Full-card overview",
+        instruction:
+          "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated.",
+      },
+      { name: "Top-left corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
+      { name: "Top-right corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
+      { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
+      { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
+      { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
+    ];
+  }
+  if (plan === "surface-basic") {
+    return [
+      { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
+      { name: "Upper surface", instruction: "Move the card so the upper surface is centered under the microscope." },
+      { name: "Lower surface", instruction: "Move the card so the lower surface is centered under the microscope." },
+    ];
+  }
+  if (plan === "card-basic") {
+    return [
+      { name: "Top-left corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
+      { name: "Top-right corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
+      { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
+      { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
+      { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
+    ];
+  }
+  return [
+    { name: "Top-left corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
+    { name: "Top-right corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
+    { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
+    { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
+  ];
+}
+
 export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO = {}): Promise<number> {
   const stdout = io.stdout ?? ((text: string) => process.stdout.write(text));
   const stderr = io.stderr ?? ((text: string) => process.stderr.write(text));
@@ -703,11 +750,20 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         if (sdkRuntimeDir) {
           assertDinoLiteSdkRuntimeDirAllowed(sdkRuntimeDir);
         }
+        const workflowPlan = parsed.plan ?? "corners-basic";
+        const targets = describeDinoLiteOperatorPlan(workflowPlan);
+        stderr("Operator window shown\n");
+        stderr(`Plan: ${workflowPlan}\n`);
+        targets.forEach((target, index) => {
+          stderr(`Target ${index + 1}/${targets.length}: ${target.name}\n`);
+          stderr(`Instruction: ${target.instruction}\n`);
+        });
+        stderr("Waiting for Capture/Skip/Abort in the local operator window.\n");
         const workflow = await client.operatorWorkflow({
           deviceIndex: parsed.deviceIndex,
           outputDir,
           label: parsed.label,
-          plan: parsed.plan ?? "corners-basic",
+          plan: workflowPlan,
           includeFlcSweep: parsed.includeFlcSweep,
           includeEdr: parsed.includeEdr,
           includeEdof: parsed.includeEdof,

@@ -323,7 +323,15 @@ export interface DinoLiteBridgeChildProcess {
   kill(signal?: NodeJS.Signals | number): boolean;
 }
 
-export type DinoLiteBridgeSpawn = (command: string, args: string[]) => DinoLiteBridgeChildProcess;
+export interface DinoLiteBridgeSpawnOptions {
+  windowsHide?: boolean;
+}
+
+export type DinoLiteBridgeSpawn = (
+  command: string,
+  args: string[],
+  options?: DinoLiteBridgeSpawnOptions
+) => DinoLiteBridgeChildProcess;
 
 export class DinoLiteBridgeClientError extends Error {
   readonly code: string;
@@ -527,7 +535,9 @@ export class DinoLiteBridgeClient {
       ...(this.config.sdkRuntimeDir ? ["--sdk-runtime-dir", this.config.sdkRuntimeDir] : []),
       ...(this.config.args ?? []),
     ];
-    const child = this.spawnProcess(this.config.executablePath as string, args);
+    const child = this.spawnProcess(this.config.executablePath as string, args, {
+      windowsHide: this.config.manualHardwareAccess ? false : true,
+    });
     this.child = child;
 
     child.stdout.on("data", (chunk) => {
@@ -629,10 +639,10 @@ export function assertDinoLiteSdkRuntimeDirAllowed(sdkRuntimeDir: string, repoRo
   return resolvedRuntimeDir;
 }
 
-function defaultSpawn(command: string, args: string[]): DinoLiteBridgeChildProcess {
+function defaultSpawn(command: string, args: string[], options: DinoLiteBridgeSpawnOptions = {}): DinoLiteBridgeChildProcess {
   return spawn(command, args, {
     stdio: "pipe",
-    windowsHide: true,
+    windowsHide: options.windowsHide ?? true,
   }) as ChildProcessWithoutNullStreams;
 }
 

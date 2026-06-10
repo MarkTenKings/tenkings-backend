@@ -73,6 +73,18 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
         }
 
         [TestMethod]
+        public void OperatorSmokeSinglePlanHasOneCenterSurfaceTarget()
+        {
+            var plan = DnVideoXAdapter.BuildOperatorPlanForTests("operator-smoke-single");
+            var first = plan[0];
+
+            Assert.AreEqual(1, plan.Length);
+            Assert.AreEqual("center-surface", first.GetType().GetProperty("id")!.GetValue(first, null));
+            Assert.AreEqual("surface", first.GetType().GetProperty("type")!.GetValue(first, null));
+            StringAssert.Contains((string)first.GetType().GetProperty("instruction")!.GetValue(first, null)!, "click Capture");
+        }
+
+        [TestMethod]
         public void FakeCapturePackageCanRepresentUnavailableOptionalFeatures()
         {
             var output = Run("{\"id\":\"pkg\",\"command\":\"dinolite.captureDemoPackage\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"unsupported-demo\",\"includeLightingSweep\":true,\"includeEdr\":true,\"includeEdof\":true}");

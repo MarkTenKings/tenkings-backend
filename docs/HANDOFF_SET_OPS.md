@@ -10516,5 +10516,14 @@ Build Set Ops UI flow with:
   - no target captures, `manifest.json`, or `preview-report.html` were written
   - stuck bridge/node processes were terminated after a normal window close did not exit the bridge
   - follow-up fix added: stdio client now kills the bridge child process on command timeout to avoid leaked manual workflow processes
-- Remaining before PR #31 ready: one manual operator workflow smoke on the Dell PC with the operator completing the visible preview prompts.
+- Follow-up supervised smoke with Mark present:
+  - root cause of missing operator window was the TypeScript stdio client spawning manual hardware bridge processes with `windowsHide=true`
+  - fix: manual hardware bridge spawns now use visible child windows, the operator form starts centered/normal and briefly topmost, and the CLI prints operator plan/target progress before waiting
+  - added `operator-smoke-single`, a one-target center-surface plan for supervised smoke
+  - command completed with `status=completed`, visible window title `Ten Kings Dino-Lite Operator Workflow`, and cleanup `previewStopped=true`, `disconnected=true`, `hostDisposed=true`
+  - output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-operator-smoke-single-20260610T034854043Z`
+  - artifacts outside git: `manifest.json`, `preview-report.html`, `01-center-surface-attempt-01-normal.jpg`
+  - normal JPG `sha256=74016465bd7ee8a00c033f98ac72047abb3b302b40c33d7314f44baf42a9fd5f`, `byteSize=130542`
+  - `card-interim` was deferred because the single-target supervised workflow proved the visible operator flow.
+- PR #31 can be converted from draft to ready for review after final validation and checks pass.
 - Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, and no certified grade/certificate/final AI grade claim.

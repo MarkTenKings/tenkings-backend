@@ -1285,6 +1285,12 @@ namespace TenKings.AiGrader.DinoLiteBridge
         {
             var normalizedPlan = string.IsNullOrWhiteSpace(plan) ? "corners-basic" : plan!.Trim();
             var targets = new List<OperatorTarget>();
+            if (normalizedPlan == "operator-smoke-single")
+            {
+                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Place the target detail under the microscope, adjust focus manually, then click Capture."));
+                return targets;
+            }
+
             if (normalizedPlan == "card-interim")
             {
                 targets.Add(new OperatorTarget(
@@ -1673,7 +1679,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 optionalFiles,
                 edofHelperAvailable,
                 pathMutation = runtimeDirUsable
-                    ? "During manual capturePackage only, bridge temporarily sets current directory and Win32 DLL search directory to configuredRuntimeDir, then restores both in finally."
+                    ? "During manual capture package and operator workflow commands only, bridge temporarily sets current directory and Win32 DLL search directory to configuredRuntimeDir, then restores both in finally."
                     : "none"
             };
         }
@@ -1856,6 +1862,8 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     Text = "Ten Kings Dino-Lite Operator Workflow",
                     ShowInTaskbar = true,
                     StartPosition = FormStartPosition.CenterScreen,
+                    WindowState = FormWindowState.Normal,
+                    TopMost = true,
                     Width = 1180,
                     Height = 820,
                     MinimumSize = new Size(900, 650)
@@ -1929,6 +1937,19 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 form.CreateControl();
                 axHost.CreateControl();
                 form.Show();
+                form.BringToFront();
+                form.Activate();
+                var topMostTimer = new System.Windows.Forms.Timer { Interval = 1500 };
+                topMostTimer.Tick += (_, __) =>
+                {
+                    topMostTimer.Stop();
+                    topMostTimer.Dispose();
+                    if (!form.IsDisposed)
+                    {
+                        form.TopMost = false;
+                    }
+                };
+                topMostTimer.Start();
                 Application.DoEvents();
                 return host;
             }

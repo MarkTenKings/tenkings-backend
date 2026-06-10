@@ -503,8 +503,8 @@ test("client maps fake operator workflow response shape", async () => {
   const spawned = [];
   const client = new DinoLiteBridgeClient(
     { executablePath: "fake-bridge.exe", adapter: "fake", timeoutMs: 100, manualHardwareAccess: true },
-    (command, args) => {
-      spawned.push({ command, args });
+    (command, args, options) => {
+      spawned.push({ command, args, options });
       return new FakeBridgeProcess();
     }
   );
@@ -518,6 +518,7 @@ test("client maps fake operator workflow response shape", async () => {
   await client.close();
 
   assert.deepEqual(spawned[0].args, ["--adapter", "fake", "--manual-hardware"]);
+  assert.equal(spawned[0].options.windowsHide, false);
   assert.equal(workflow.plan, "card-interim");
   assert.equal(workflow.targets[0].target.id, "full-card-overview");
   assert.equal(workflow.targets[0].target.type, "interim_macro_overview");
