@@ -10643,24 +10643,27 @@ Build Set Ops UI flow with:
 - Added operator guide/profile metadata through the Dino-Lite JSONL bridge:
   - `cornerProfile`, default `sharp_90`
   - `captureGuides`, default enabled
-  - target-level `captureGuide`, `captureGuidesEnabled`, and `cornerProfile` fields in fake/real operator workflow manifests
-  - visible WinForms operator guide panel for overview/corner/edge/surface target alignment
+  - target-level `captureGuide`, `captureGuidesEnabled`, `guideVisualKind`, `guideVisualOrientation`, `guideVisualLegend`, and `cornerProfile` fields in fake/real operator workflow manifests
+  - visible adjacent WinForms operator guide diagram panel for overview/corner/edge/surface target alignment
 - Added capture-helper CLI flags:
   - `--corner-profile sharp_90`
   - `--capture-guides true|false`
   - unsupported corner profiles fail before spawning the bridge
-- Enhanced `analysis.json` and `preview-report.html` with score scale definitions, score bands, perfect `10/10` definitions, element definitions, "Why this score?" sections, quality warning summaries, target quality diagnostics, and operator options metadata.
-- Quality diagnostics are separate from scoring and do not feed back into the v0.1 score math in this PR.
+- Enhanced `analysis.json` and `preview-report.html` with score scale definitions, score bands, perfect `10/10` definitions, element definitions, "Why this score?" sections, quality warning summaries, target quality diagnostics, warning-impact policy, and operator options metadata.
+- Replaced misleading primary `cardCoverageEstimate` reporting with `cardCoverageHeuristic`, label, and limitation text. The heuristic is not a calibrated card mask and cannot prove perfect framing.
+- Clarified warning impact: blur is represented by the existing close-up `blurPenalty` and centering confidence; exposure warnings are diagnostic-only in v0.1; coverage warnings are approximate framing/background risk diagnostics.
+- Added clearer surface low-score explanation that high texture/anomaly/scratch proxy signals can reflect print texture, focus, lighting, or background and source images should be reviewed.
+- PR #32 scoring math, algorithm version `tenkings-dinolite-grading-v0.1`, threshold set `tenkings-dinolite-thresholds-v0.1`, weights, thresholds, and fusion caps remained unchanged.
 - Focused validation completed:
   - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass
   - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests
   - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
-  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 79 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 80 tests
 - Full validation completed:
   - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass
   - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests
   - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
-  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 79 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 80 tests
   - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
   - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
   - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
@@ -10680,4 +10683,14 @@ Build Set Ops UI flow with:
   - overall: `5.13 / 10`, `Needs Review`, confidence `0.71`
   - quality warnings were recorded for 11 targets, mostly blur/underexposure risk
   - no `not_computed` reasons in this smoke; all required elements computed
+- Supervised PR #33 visual-guide follow-up smoke completed on the Dell capture node:
+  - command: `dinolite-operator-workflow --plan operator-smoke-single --capture-guides true`, normal JPG only
+  - first attempt failed before spawning hardware because the bridge exe path was relative under `pnpm exec`; rerun used the absolute bridge exe path
+  - output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-guide-smoke-20260610T101537418Z`
+  - manifest: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-guide-smoke-20260610T101537418Z\manifest.json`
+  - report: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-guide-smoke-20260610T101537418Z\preview-report.html`
+  - captured target count: 1, `center-surface`
+  - target guide metadata: `guideVisualKind=surface`, `guideVisualOrientation=center`, `guideVisualLegend="Fill the yellow central patch with card surface only; avoid border and background."`
+  - artifact: `01-center-surface-attempt-01-normal.jpg` - 210536 bytes - `52fb0f26eccb4ea05934dbdee599ba50adfe8359b671027ee5248fb90a3afb0e`
+  - cleanup succeeded: preview stopped, disconnected, host disposed
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, no fake/manual/operator-entered/placeholder score, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.

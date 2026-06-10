@@ -1347,7 +1347,10 @@ namespace TenKings.AiGrader.DinoLiteBridge
         private static OperatorTarget BuildOperatorTarget(string id, string name, string type, string reportLabel, string instruction, string cornerProfile, bool captureGuides)
         {
             var guide = captureGuides ? BuildCaptureGuide(id, type, cornerProfile) : "";
-            return new OperatorTarget(id, name, type, reportLabel, instruction, guide, captureGuides, type == "corner" ? cornerProfile : null);
+            var guideVisualKind = BuildGuideVisualKind(type);
+            var guideVisualOrientation = BuildGuideVisualOrientation(id, type);
+            var guideVisualLegend = captureGuides ? BuildGuideVisualLegend(id, type, cornerProfile) : "";
+            return new OperatorTarget(id, name, type, reportLabel, instruction, guide, captureGuides, guideVisualKind, guideVisualOrientation, guideVisualLegend, type == "corner" ? cornerProfile : null);
         }
 
         private static string BuildCaptureGuide(string id, string type, string cornerProfile)
@@ -1370,6 +1373,55 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 return "Guide: fill the central patch with card surface only, avoid border/background, and focus on the print surface.";
             }
             return "Guide: center the target under the microscope, fill the frame with the card, and avoid background.";
+        }
+
+        private static string BuildGuideVisualKind(string type)
+        {
+            if (type == "interim_macro_overview") return "full-card";
+            if (type == "corner") return "corner";
+            if (type == "edge") return "edge";
+            if (type == "surface") return "surface";
+            return "center";
+        }
+
+        private static string BuildGuideVisualOrientation(string id, string type)
+        {
+            if (type == "corner")
+            {
+                if (id.Contains("top-left")) return "top-left";
+                if (id.Contains("top-right")) return "top-right";
+                if (id.Contains("bottom-right")) return "bottom-right";
+                if (id.Contains("bottom-left")) return "bottom-left";
+                return "center";
+            }
+            if (type == "edge")
+            {
+                return id.Contains("top") || id.Contains("bottom") ? "horizontal" : "vertical";
+            }
+            return "center";
+        }
+
+        private static string BuildGuideVisualLegend(string id, string type, string cornerProfile)
+        {
+            if (type == "interim_macro_overview")
+            {
+                return "Fit as much of the card as possible inside the yellow rectangle; keep card edges visible.";
+            }
+            if (type == "corner")
+            {
+                return "Place the " + BuildGuideVisualOrientation(id, type) + " corner tip in the yellow box; align both card edges to the L guide. Profile: " + cornerProfile + ".";
+            }
+            if (type == "edge")
+            {
+                return BuildGuideVisualOrientation(id, type) == "horizontal"
+                    ? "Align the card edge along the yellow horizontal guide line."
+                    : "Align the card edge along the yellow vertical guide line.";
+            }
+            if (type == "surface")
+            {
+                return "Fill the yellow central patch with card surface only; avoid border and background.";
+            }
+            return "Center the requested target inside the yellow guide.";
         }
 
         private static object[] CaptureOperatorTargetArtifacts(
@@ -1448,6 +1500,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     target.instruction,
                     target.captureGuide,
                     target.captureGuidesEnabled,
+                    target.guideVisualKind,
+                    target.guideVisualOrientation,
+                    target.guideVisualLegend,
                     target.cornerProfile
                 },
                 targetIndex,
@@ -1879,6 +1934,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
             private readonly DnVideoXAxHost axHost;
             private readonly Label titleLabel;
             private readonly Label typeLabel;
+            private readonly GuideDiagramControl guideDiagram;
             private readonly Label guideLabel;
             private readonly Label instructionLabel;
             private readonly Label progressLabel;
@@ -1891,6 +1947,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 DnVideoXAxHost axHost,
                 Label titleLabel,
                 Label typeLabel,
+                GuideDiagramControl guideDiagram,
                 Label guideLabel,
                 Label instructionLabel,
                 Label progressLabel,
@@ -1901,6 +1958,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 this.axHost = axHost;
                 this.titleLabel = titleLabel;
                 this.typeLabel = typeLabel;
+                this.guideDiagram = guideDiagram;
                 this.guideLabel = guideLabel;
                 this.instructionLabel = instructionLabel;
                 this.progressLabel = progressLabel;
@@ -1937,11 +1995,12 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 {
                     Dock = DockStyle.Fill,
                     ColumnCount = 1,
-                    RowCount = 8,
+                    RowCount = 9,
                     Padding = new Padding(16)
                 };
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+                panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 180));
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 110));
                 panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
@@ -1951,6 +2010,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
                 var titleLabel = BuildOperatorLabel(16, true);
                 var typeLabel = BuildOperatorLabel(10, false);
+                var guideDiagram = new GuideDiagramControl { Dock = DockStyle.Fill };
                 var guideLabel = BuildOperatorLabel(11, true);
                 var instructionLabel = BuildOperatorLabel(12, false);
                 var overviewNoticeLabel = BuildOperatorLabel(10, true);
@@ -1974,7 +2034,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 var retakeButton = (Button)buttons.Controls[2];
                 var abortButton = (Button)buttons.Controls[3];
 
-                var host = new OperatorDnVideoXHost(form, axHost, titleLabel, typeLabel, guideLabel, instructionLabel, progressLabel, overviewNoticeLabel, fallbackLabel);
+                var host = new OperatorDnVideoXHost(form, axHost, titleLabel, typeLabel, guideDiagram, guideLabel, instructionLabel, progressLabel, overviewNoticeLabel, fallbackLabel);
                 captureButton.Click += (_, __) => host.requestedAction = OperatorAction.Capture;
                 skipButton.Click += (_, __) => host.requestedAction = OperatorAction.Skip;
                 retakeButton.Click += (_, __) => host.requestedAction = OperatorAction.Retake;
@@ -1983,12 +2043,13 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
                 panel.Controls.Add(titleLabel, 0, 0);
                 panel.Controls.Add(typeLabel, 0, 1);
-                panel.Controls.Add(guideLabel, 0, 2);
-                panel.Controls.Add(instructionLabel, 0, 3);
-                panel.Controls.Add(overviewNoticeLabel, 0, 4);
-                panel.Controls.Add(progressLabel, 0, 5);
-                panel.Controls.Add(fallbackLabel, 0, 6);
-                panel.Controls.Add(buttons, 0, 7);
+                panel.Controls.Add(guideDiagram, 0, 2);
+                panel.Controls.Add(guideLabel, 0, 3);
+                panel.Controls.Add(instructionLabel, 0, 4);
+                panel.Controls.Add(overviewNoticeLabel, 0, 5);
+                panel.Controls.Add(progressLabel, 0, 6);
+                panel.Controls.Add(fallbackLabel, 0, 7);
+                panel.Controls.Add(buttons, 0, 8);
                 split.Panel2.Controls.Add(panel);
                 form.Controls.Add(split);
 
@@ -2017,6 +2078,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 requestedAction = null;
                 titleLabel.Text = target.name;
                 typeLabel.Text = "Target type: " + target.type;
+                guideDiagram.SetTarget(target);
                 guideLabel.Text = string.IsNullOrWhiteSpace(target.captureGuide) ? "Guide: center the target in the preview and keep background out of the frame." : target.captureGuide;
                 instructionLabel.Text = target.instruction + Environment.NewLine + Environment.NewLine + "Adjust focus manually, then confirm capture.";
                 overviewNoticeLabel.Text = showPostOverviewNotice
@@ -2067,6 +2129,116 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
         }
 
+        private sealed class GuideDiagramControl : Control
+        {
+            private OperatorTarget? target;
+
+            public GuideDiagramControl()
+            {
+                DoubleBuffered = true;
+                BackColor = Color.FromArgb(18, 25, 38);
+                ForeColor = Color.White;
+                Font = new Font("Segoe UI", 10, FontStyle.Bold);
+            }
+
+            public void SetTarget(OperatorTarget nextTarget)
+            {
+                target = nextTarget;
+                Invalidate();
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                var g = e.Graphics;
+                g.Clear(BackColor);
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                using (var borderPen = new Pen(Color.FromArgb(76, 154, 255), 2))
+                using (var guidePen = new Pen(Color.FromArgb(255, 214, 64), 5))
+                using (var accentPen = new Pen(Color.FromArgb(94, 234, 212), 3))
+                using (var mutedPen = new Pen(Color.FromArgb(148, 163, 184), 1))
+                using (var brush = new SolidBrush(Color.White))
+                using (var mutedBrush = new SolidBrush(Color.FromArgb(203, 213, 225)))
+                {
+                    var canvas = new Rectangle(18, 18, Math.Max(40, Width - 36), Math.Max(40, Height - 58));
+                    g.DrawRectangle(borderPen, canvas);
+                    DrawCenterCrosshair(g, mutedPen, canvas);
+
+                    var kind = target?.guideVisualKind ?? "surface";
+                    var orientation = target?.guideVisualOrientation ?? "center";
+                    if (kind == "full-card")
+                    {
+                        DrawFullCardGuide(g, guidePen, canvas);
+                    }
+                    else if (kind == "corner")
+                    {
+                        DrawCornerGuide(g, guidePen, accentPen, canvas, orientation);
+                    }
+                    else if (kind == "edge")
+                    {
+                        DrawEdgeGuide(g, guidePen, canvas, orientation);
+                    }
+                    else
+                    {
+                        DrawSurfaceGuide(g, guidePen, accentPen, canvas);
+                    }
+
+                    var legend = target?.guideVisualLegend ?? "Align the target to the yellow guide.";
+                    g.DrawString(legend, Font, brush, new RectangleF(18, Height - 35, Width - 36, 30));
+                    g.DrawString("Blue frame = preview area. Yellow = target alignment guide.", new Font("Segoe UI", 8, FontStyle.Regular), mutedBrush, new PointF(20, 2));
+                }
+            }
+
+            private static void DrawCenterCrosshair(Graphics g, Pen pen, Rectangle canvas)
+            {
+                var cx = canvas.Left + canvas.Width / 2;
+                var cy = canvas.Top + canvas.Height / 2;
+                g.DrawLine(pen, cx, canvas.Top + 8, cx, canvas.Bottom - 8);
+                g.DrawLine(pen, canvas.Left + 8, cy, canvas.Right - 8, cy);
+            }
+
+            private static void DrawFullCardGuide(Graphics g, Pen pen, Rectangle canvas)
+            {
+                var rect = Rectangle.Inflate(canvas, -canvas.Width / 6, -canvas.Height / 8);
+                g.DrawRectangle(pen, rect);
+            }
+
+            private static void DrawCornerGuide(Graphics g, Pen pen, Pen accentPen, Rectangle canvas, string orientation)
+            {
+                var cx = canvas.Left + canvas.Width / 2;
+                var cy = canvas.Top + canvas.Height / 2;
+                var len = Math.Min(canvas.Width, canvas.Height) / 3;
+                var left = orientation.Contains("left");
+                var top = orientation.Contains("top");
+                var xEnd = left ? cx + len : cx - len;
+                var yEnd = top ? cy + len : cy - len;
+                g.DrawLine(pen, cx, cy, xEnd, cy);
+                g.DrawLine(pen, cx, cy, cx, yEnd);
+                g.DrawRectangle(accentPen, cx - 9, cy - 9, 18, 18);
+            }
+
+            private static void DrawEdgeGuide(Graphics g, Pen pen, Rectangle canvas, string orientation)
+            {
+                var cx = canvas.Left + canvas.Width / 2;
+                var cy = canvas.Top + canvas.Height / 2;
+                if (orientation == "vertical")
+                {
+                    g.DrawLine(pen, cx, canvas.Top + 16, cx, canvas.Bottom - 16);
+                }
+                else
+                {
+                    g.DrawLine(pen, canvas.Left + 16, cy, canvas.Right - 16, cy);
+                }
+            }
+
+            private static void DrawSurfaceGuide(Graphics g, Pen pen, Pen accentPen, Rectangle canvas)
+            {
+                var rect = Rectangle.Inflate(canvas, -canvas.Width / 4, -canvas.Height / 4);
+                g.DrawRectangle(pen, rect);
+                g.DrawEllipse(accentPen, rect);
+            }
+        }
+
         private sealed class DnVideoXAxHost : AxHost
         {
             public DnVideoXAxHost()
@@ -2087,7 +2259,18 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
         public sealed class OperatorTarget
         {
-            public OperatorTarget(string id, string name, string type, string reportLabel, string instruction, string captureGuide, bool captureGuidesEnabled, string? cornerProfile)
+            public OperatorTarget(
+                string id,
+                string name,
+                string type,
+                string reportLabel,
+                string instruction,
+                string captureGuide,
+                bool captureGuidesEnabled,
+                string guideVisualKind,
+                string guideVisualOrientation,
+                string guideVisualLegend,
+                string? cornerProfile)
             {
                 this.id = id;
                 this.name = name;
@@ -2096,6 +2279,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 this.instruction = instruction;
                 this.captureGuide = captureGuide;
                 this.captureGuidesEnabled = captureGuidesEnabled;
+                this.guideVisualKind = guideVisualKind;
+                this.guideVisualOrientation = guideVisualOrientation;
+                this.guideVisualLegend = guideVisualLegend;
                 this.cornerProfile = cornerProfile;
             }
 
@@ -2106,6 +2292,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
             public string instruction { get; }
             public string captureGuide { get; }
             public bool captureGuidesEnabled { get; }
+            public string guideVisualKind { get; }
+            public string guideVisualOrientation { get; }
+            public string guideVisualLegend { get; }
             public string? cornerProfile { get; }
         }
 

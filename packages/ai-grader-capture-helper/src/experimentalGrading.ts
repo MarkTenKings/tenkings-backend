@@ -47,7 +47,9 @@ export interface TargetQualityDiagnostics {
   targetName: string;
   targetType: string;
   filename: string;
-  cardCoverageEstimate: number;
+  cardCoverageHeuristic: number;
+  cardCoverageHeuristicLabel: "low" | "medium" | "high" | "saturated";
+  cardCoverageHeuristicLimitations: string;
   backgroundRisk: "low" | "medium" | "high";
   sharpness: number;
   blurRisk: "low" | "medium" | "high";
@@ -88,6 +90,13 @@ export interface ExperimentalGradingAnalysis {
     captureGuides: boolean;
   };
   qualityDiagnostics: TargetQualityDiagnostics[];
+  qualityWarningPolicy: {
+    summary: string;
+    blurImpact: string;
+    exposureImpact: string;
+    coverageImpact: string;
+    surfaceInterpretation: string;
+  };
   warnings: string[];
   limitations: string[];
   captureManifestPath: string;
@@ -163,6 +172,19 @@ const PERFECT_SCORE_DEFINITIONS: Record<TargetElement, string> = {
     "10/10 means a clean print/surface patch with no detected scratches, specks, stains, dents, or anomaly clusters; normal print texture is not over-penalized, focus is good, and background interference is minimal.",
   overall:
     "10/10 means all required element scores are near 10, no severe defect caps apply, confidence is high, and capture quality is sufficient.",
+};
+
+const QUALITY_WARNING_POLICY = {
+  summary:
+    "Quality warnings are report diagnostics and confidence context. They are not operator-entered scores and do not replace the deterministic v0.1 scoring formulas.",
+  blurImpact:
+    "Blur is directly represented in close-up corner/edge/surface defectIndex through blurPenalty and contributes to centering confidence through sharpness.",
+  exposureImpact:
+    "Underexposure and overexposure warnings are diagnostic-only in v0.1; they do not directly change scores, but they can make defect proxies less reliable and reduce interpretation confidence.",
+  coverageImpact:
+    "Card coverage is reported as a heuristic, not a calibrated card mask or pass/fail framing result. Low coverage can warn about possible background interference; saturated coverage means the heuristic cannot prove framing was perfect.",
+  surfaceInterpretation:
+    "A low surface score means the surface images produced strong speck, scratch, texture-anomaly, or blur proxy signals. These are visual signals, not confirmed damage; review source images because print texture, focus, lighting, and background can contribute.",
 };
 
 function displayScore(score: number | undefined): string {
@@ -348,11 +370,29 @@ function grayStats(image: RgbaImage) {
   };
 }
 
-function estimateCardCoverage(image: RgbaImage): number {
+function estimateCardCoverageHeuristic(image: RgbaImage): number {
   const background = (grayAt(image, 0, 0) + grayAt(image, image.width - 1, 0) + grayAt(image, 0, image.height - 1) + grayAt(image, image.width - 1, image.height - 1)) / 4;
-  const box = boundingBoxFromPredicate(image, (gray) => Math.abs(gray - background) > 18);
-  if (!box) return 0;
-  return (box.w * box.h) / (image.width * image.height);
+  let foreground = 0;
+  for (let y = 0; y < image.height; y += 1) {
+    for (let x = 0; x < image.width; x += 1) {
+      if (Math.abs(grayAt(image, x, y) - background) > 18) foreground += 1;
+    }
+  }
+  return foreground / (image.width * image.height);
+}
+
+function coverageLabel(value: number): TargetQualityDiagnostics["cardCoverageHeuristicLabel"] {
+  if (value >= 0.98) return "saturated";
+  if (value >= 0.75) return "high";
+  if (value >= 0.35) return "medium";
+  return "low";
+}
+
+function coverageLimitations(label: TargetQualityDiagnostics["cardCoverageHeuristicLabel"]): string {
+  if (label === "saturated") {
+    return "Heuristic saturated because foreground-like pixels fill nearly the whole image; this is not a verified framing pass or card mask.";
+  }
+  return "Approximate foreground-vs-corner-background heuristic only; not a calibrated card segmentation or definitive framing pass/fail.";
 }
 
 function riskFrom(value: number, medium: number, high: number, inverse = false): "low" | "medium" | "high" {
@@ -369,16 +409,18 @@ function riskFrom(value: number, medium: number, high: number, inverse = false):
 function buildQualityDiagnostics(input: TargetImage): TargetQualityDiagnostics {
   const stats = grayStats(input.image);
   const sharpness = varianceOfLaplacian(input.image);
-  const cardCoverageEstimate = round(estimateCardCoverage(input.image), 4);
+  const cardCoverageHeuristic = round(estimateCardCoverageHeuristic(input.image), 4);
+  const cardCoverageHeuristicLabel = coverageLabel(cardCoverageHeuristic);
   const blurRisk = riskFrom(sharpness, 180, 70, true);
   const overexposureRisk = riskFrom(stats.overexposedFraction, 0.01, 0.05);
   const underexposureRisk = riskFrom(stats.underexposedFraction, 0.01, 0.05);
   const expectedCoverage = input.targetType === "surface" ? 0.85 : input.targetType === "interim_macro_overview" ? 0.2 : 0.55;
-  const backgroundRisk = cardCoverageEstimate < expectedCoverage ? (cardCoverageEstimate < expectedCoverage * 0.65 ? "high" : "medium") : "low";
+  const backgroundRisk = cardCoverageHeuristic < expectedCoverage ? (cardCoverageHeuristic < expectedCoverage * 0.65 ? "high" : "medium") : "low";
   const contrastRange = stats.max - stats.min;
   const warnings: string[] = [];
   if (backgroundRisk !== "low") warnings.push(backgroundRisk === "high" ? "Possible background interference" : "Low card coverage");
-  if (cardCoverageEstimate < expectedCoverage) warnings.push("Target may not be centered");
+  if (cardCoverageHeuristic < expectedCoverage) warnings.push("Target may not be centered");
+  if (cardCoverageHeuristicLabel === "saturated") warnings.push("Card coverage heuristic saturated; review framing manually");
   if (blurRisk !== "low") warnings.push("Image may be blurry");
   if (contrastRange < 35) warnings.push("Lighting may be uneven");
   if (overexposureRisk !== "low") warnings.push("Overexposure risk");
@@ -390,7 +432,9 @@ function buildQualityDiagnostics(input: TargetImage): TargetQualityDiagnostics {
     targetName: input.targetName,
     targetType: input.targetType,
     filename: input.filename,
-    cardCoverageEstimate,
+    cardCoverageHeuristic,
+    cardCoverageHeuristicLabel,
+    cardCoverageHeuristicLimitations: coverageLimitations(cardCoverageHeuristicLabel),
     backgroundRisk,
     sharpness: round(sharpness, 3),
     blurRisk,
@@ -398,7 +442,13 @@ function buildQualityDiagnostics(input: TargetImage): TargetQualityDiagnostics {
     contrastRange: round(contrastRange, 3),
     overexposureRisk,
     underexposureRisk,
-    targetAlignmentConfidence: round(Math.max(0.1, Math.min(0.95, 1 - Math.max(0, expectedCoverage - cardCoverageEstimate))), 3),
+    targetAlignmentConfidence: round(
+      Math.max(
+        0.1,
+        Math.min(0.95, (cardCoverageHeuristicLabel === "saturated" ? 0.72 : 1) - Math.max(0, expectedCoverage - cardCoverageHeuristic))
+      ),
+      3
+    ),
     warnings,
   };
 }
@@ -701,7 +751,11 @@ function penaltyRows(element: ElementAnalysis): string[] {
 function enrichElement(element: ElementAnalysis, images: TargetImage[]): ElementAnalysis {
   const affected = relatedImages(element.element, images);
   const qualityWarnings = Array.from(new Set(affected.flatMap((image) => image.quality?.warnings ?? [])));
-  const computedText = element.status === "computed" ? `${element.element} scored ${displayScore(element.score)} (${scoreBand(element.score)}).` : `${element.element} was ${element.status}: ${element.notComputedReason ?? "reason unavailable"}.`;
+  let computedText = element.status === "computed" ? `${element.element} scored ${displayScore(element.score)} (${scoreBand(element.score)}).` : `${element.element} was ${element.status}: ${element.notComputedReason ?? "reason unavailable"}.`;
+  if (element.element === "surface" && element.status === "computed") {
+    computedText +=
+      " Surface score is driven by high texture/anomaly/scratch proxy metrics in the surface zones. These pixel signals are not confirmed damage; print texture, focus, lighting, or background can contribute, so review source images before interpreting the score as true surface damage.";
+  }
   return {
     ...element,
     displayScore: displayScore(element.score),
@@ -774,6 +828,7 @@ export async function analyzeDinoLiteExperimentalGradingWorkflow(
       captureGuides: options.captureGuides ?? true,
     },
     qualityDiagnostics,
+    qualityWarningPolicy: QUALITY_WARNING_POLICY,
     warnings: [
       "Experimental/unvalidated deterministic pixel analysis only.",
       "Not a certified grade, final AI grade, certificate, or calibrated production macro result.",
@@ -783,6 +838,8 @@ export async function analyzeDinoLiteExperimentalGradingWorkflow(
       "Dino-Lite overview is interim and not calibrated production macro evidence.",
       "Manual positioning/refocus and uncalibrated lighting can affect measurements.",
       "If a metric cannot be computed, it is reported as not_computed instead of using a placeholder score.",
+      "Quality warnings explain capture risk and confidence context; blurPenalty is part of close-up scoring, while exposure warnings are diagnostic-only in v0.1.",
+      "Card coverage heuristic is approximate and cannot prove perfect framing.",
     ],
     captureManifestPath: workflow.manifestPath,
     analysisPath,
@@ -825,7 +882,7 @@ function writeExperimentalReport(
   const qualityRows = analysis.qualityDiagnostics
     .map(
       (item) =>
-        `<tr><td>${escapeHtml(item.targetName)}</td><td>${escapeHtml(item.filename)}</td><td>${escapeHtml(item.cardCoverageEstimate)}</td><td>${escapeHtml(item.backgroundRisk)}</td><td>${escapeHtml(item.sharpness)}</td><td>${escapeHtml(item.blurRisk)}</td><td>${escapeHtml(item.brightnessMean)}</td><td>${escapeHtml(item.contrastRange)}</td><td>${escapeHtml(item.targetAlignmentConfidence)}</td><td>${escapeHtml(item.warnings.join("; ") || "none")}</td></tr>`
+        `<tr><td>${escapeHtml(item.targetName)}</td><td>${escapeHtml(item.filename)}</td><td>${escapeHtml(item.cardCoverageHeuristic)}</td><td>${escapeHtml(item.cardCoverageHeuristicLabel)}</td><td>${escapeHtml(item.cardCoverageHeuristicLimitations)}</td><td>${escapeHtml(item.backgroundRisk)}</td><td>${escapeHtml(item.sharpness)}</td><td>${escapeHtml(item.blurRisk)}</td><td>${escapeHtml(item.brightnessMean)}</td><td>${escapeHtml(item.contrastRange)}</td><td>${escapeHtml(item.targetAlignmentConfidence)}</td><td>${escapeHtml(item.warnings.join("; ") || "none")}</td></tr>`
     )
     .join("\n");
   const perfectDefinitions = Object.entries(analysis.perfectScoreDefinitions)
@@ -840,12 +897,13 @@ function writeExperimentalReport(
   const imageCards = images
     .map(
       (image) =>
-        `<section class="card"><h3>${escapeHtml(image.targetName)}</h3><img src="${escapeHtml(relativeReportPath(workflow.previewReportPath, image.path))}" alt="${escapeHtml(image.targetName)} capture"><p>${escapeHtml(image.targetType)} / ${escapeHtml(image.reportLabel)}</p><p class="meta">${escapeHtml(image.filename)}<br>${escapeHtml(image.sha256 ?? "")}<br>${escapeHtml(image.byteSize ?? "")} bytes</p>${image.quality ? `<p class="meta">coverage estimate: ${escapeHtml(image.quality.cardCoverageEstimate)}<br>blur risk: ${escapeHtml(image.quality.blurRisk)}<br>warnings: ${escapeHtml(image.quality.warnings.join("; ") || "none")}</p>` : ""}</section>`
+        `<section class="card"><h3>${escapeHtml(image.targetName)}</h3><img src="${escapeHtml(relativeReportPath(workflow.previewReportPath, image.path))}" alt="${escapeHtml(image.targetName)} capture"><p>${escapeHtml(image.targetType)} / ${escapeHtml(image.reportLabel)}</p><p class="meta">${escapeHtml(image.filename)}<br>${escapeHtml(image.sha256 ?? "")}<br>${escapeHtml(image.byteSize ?? "")} bytes</p>${image.quality ? `<p class="meta">coverage heuristic: ${escapeHtml(image.quality.cardCoverageHeuristic)} (${escapeHtml(image.quality.cardCoverageHeuristicLabel)})<br>${escapeHtml(image.quality.cardCoverageHeuristicLimitations)}<br>blur risk: ${escapeHtml(image.quality.blurRisk)}<br>warnings: ${escapeHtml(image.quality.warnings.join("; ") || "none")}</p>` : ""}</section>`
     )
     .join("\n");
+  const warningPolicy = `<section class="panel"><h2>Quality Warning Impact</h2><p>${escapeHtml(analysis.qualityWarningPolicy.summary)}</p><ul><li>${escapeHtml(analysis.qualityWarningPolicy.blurImpact)}</li><li>${escapeHtml(analysis.qualityWarningPolicy.exposureImpact)}</li><li>${escapeHtml(analysis.qualityWarningPolicy.coverageImpact)}</li><li>${escapeHtml(analysis.qualityWarningPolicy.surfaceInterpretation)}</li></ul></section>`;
   fs.writeFileSync(
     workflow.previewReportPath,
-    `<!doctype html><html><head><meta charset="utf-8"><title>Experimental AI Grader Test Run - Not Certified</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#172033;line-height:1.45}h1{font-size:26px}.warn{font-weight:700;color:#8a3200}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.card,.panel{border:1px solid #cbd5e1;border-radius:6px;padding:12px;margin:12px 0;background:#fff}img{max-width:100%;height:auto;border:1px solid #e2e8f0}table{border-collapse:collapse;width:100%;margin:16px 0}td,th{border:1px solid #cbd5e1;padding:8px;text-align:left;vertical-align:top}.meta{font-size:12px;word-break:break-all;color:#475569}.small{font-size:13px;color:#334155}</style></head><body><h1>Experimental AI Grader Test Run - Not Certified</h1><p class="warn">This is not a certified grade, not a certificate, not calibrated production macro evidence, and not a final AI grade.</p><p>Algorithm: ${escapeHtml(analysis.algorithmVersion)}<br>Thresholds: ${escapeHtml(analysis.thresholdSetVersion)}<br>Corner profile: ${escapeHtml(analysis.operatorOptions.cornerProfile)}<br>Capture guides: ${escapeHtml(analysis.operatorOptions.captureGuides ? "enabled" : "disabled")}</p><section class="panel"><h2>Score Scale</h2><p>All computed element scores use a 1.0 to 10.0 scale. 10.0 is the best / cleanest detected condition, 1.0 is the worst / highest detected defect signal, and higher is better. Scores are displayed as x.xx / 10.</p><ul>${scoreBands}</ul></section><section class="panel"><h2>Element Definitions</h2><ul>${elementDefinitions}</ul></section><section class="panel"><h2>Perfect 10/10 Definitions</h2><ul>${perfectDefinitions}</ul></section><section class="panel"><h2>Weighting and Formula</h2><p class="small">The v0.1 fusion uses centering 25%, corners 30%, edges 20%, and surface 25% when all are computed. Corners and surface are required, plus at least centering or edges. If centering or edges is missing, its weight is redistributed across the computed required elements and confidence is lowered. Severe defect caps remain unchanged: if any computed element is 5.0 or below, overall cannot exceed 6.0; if any computed element is 6.0 or below, overall cannot exceed 7.0.</p></section><h2>Scores</h2><table><thead><tr><th>Element</th><th>Status</th><th>Score</th><th>Band</th><th>Confidence</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table><h2>Why This Score?</h2>${whySections}<h2>Quality Warning Summary</h2><table><thead><tr><th>Target</th><th>File</th><th>Card coverage estimate</th><th>Background risk</th><th>Sharpness</th><th>Blur risk</th><th>Brightness mean</th><th>Contrast range</th><th>Alignment confidence</th><th>Warnings</th></tr></thead><tbody>${qualityRows}</tbody></table><h2>Captured Evidence</h2><div class="grid">${imageCards}</div><h2>Limitations</h2><ul>${analysis.limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h2>Manifest and Checksums</h2><p class="meta">${escapeHtml(workflow.manifestPath)}<br>${escapeHtml(analysis.analysisPath)}</p></body></html>`
+    `<!doctype html><html><head><meta charset="utf-8"><title>Experimental AI Grader Test Run - Not Certified</title><style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#172033;line-height:1.45}h1{font-size:26px}.warn{font-weight:700;color:#8a3200}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.card,.panel{border:1px solid #cbd5e1;border-radius:6px;padding:12px;margin:12px 0;background:#fff}img{max-width:100%;height:auto;border:1px solid #e2e8f0}table{border-collapse:collapse;width:100%;margin:16px 0}td,th{border:1px solid #cbd5e1;padding:8px;text-align:left;vertical-align:top}.meta{font-size:12px;word-break:break-all;color:#475569}.small{font-size:13px;color:#334155}</style></head><body><h1>Experimental AI Grader Test Run - Not Certified</h1><p class="warn">This is not a certified grade, not a certificate, not calibrated production macro evidence, and not a final AI grade.</p><p>Algorithm: ${escapeHtml(analysis.algorithmVersion)}<br>Thresholds: ${escapeHtml(analysis.thresholdSetVersion)}<br>Corner profile: ${escapeHtml(analysis.operatorOptions.cornerProfile)}<br>Capture guides: ${escapeHtml(analysis.operatorOptions.captureGuides ? "enabled" : "disabled")}</p><section class="panel"><h2>Score Scale</h2><p>All computed element scores use a 1.0 to 10.0 scale. 10.0 is the best / cleanest detected condition, 1.0 is the worst / highest detected defect signal, and higher is better. Scores are displayed as x.xx / 10.</p><ul>${scoreBands}</ul></section><section class="panel"><h2>Element Definitions</h2><ul>${elementDefinitions}</ul></section><section class="panel"><h2>Perfect 10/10 Definitions</h2><ul>${perfectDefinitions}</ul></section><section class="panel"><h2>Weighting and Formula</h2><p class="small">The v0.1 fusion uses centering 25%, corners 30%, edges 20%, and surface 25% when all are computed. Corners and surface are required, plus at least centering or edges. If centering or edges is missing, its weight is redistributed across the computed required elements and confidence is lowered. Severe defect caps remain unchanged: if any computed element is 5.0 or below, overall cannot exceed 6.0; if any computed element is 6.0 or below, overall cannot exceed 7.0.</p></section>${warningPolicy}<h2>Scores</h2><table><thead><tr><th>Element</th><th>Status</th><th>Score</th><th>Band</th><th>Confidence</th><th>Reason</th></tr></thead><tbody>${rows}</tbody></table><h2>Why This Score?</h2>${whySections}<h2>Quality Warning Summary</h2><table><thead><tr><th>Target</th><th>File</th><th>Card coverage heuristic</th><th>Coverage label</th><th>Heuristic limitation</th><th>Background risk</th><th>Sharpness</th><th>Blur risk</th><th>Brightness mean</th><th>Contrast range</th><th>Alignment confidence</th><th>Warnings</th></tr></thead><tbody>${qualityRows}</tbody></table><h2>Captured Evidence</h2><div class="grid">${imageCards}</div><h2>Limitations</h2><ul>${analysis.limitations.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul><h2>Manifest and Checksums</h2><p class="meta">${escapeHtml(workflow.manifestPath)}<br>${escapeHtml(analysis.analysisPath)}</p></body></html>`
   );
 }
 

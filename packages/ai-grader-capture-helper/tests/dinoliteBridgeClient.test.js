@@ -300,6 +300,9 @@ function fakeResult(command) {
             captureGuide:
               "Guide: fit as much of the card as possible inside the preview, keep all card edges visible, avoid excess background. This overview is interim and not calibrated macro capture.",
             captureGuidesEnabled: true,
+            guideVisualKind: "full-card",
+            guideVisualOrientation: "center",
+            guideVisualLegend: "Fit as much of the card as possible inside the yellow rectangle; keep card edges visible.",
             cornerProfile: null,
           },
           targetIndex: 1,
@@ -330,6 +333,9 @@ function fakeResult(command) {
             captureGuide:
               "Guide: place the corner tip at the center guide, include both edges, fill the frame mostly with card, avoid background. Corner profile: sharp_90.",
             captureGuidesEnabled: true,
+            guideVisualKind: "corner",
+            guideVisualOrientation: "top-left",
+            guideVisualLegend: "Place the top-left corner tip in the yellow box; align both card edges to the L guide. Profile: sharp_90.",
             cornerProfile: "sharp_90",
           },
           targetIndex: 2,
@@ -534,7 +540,12 @@ test("client maps fake operator workflow response shape", async () => {
   assert.equal(workflow.targets[0].target.type, "interim_macro_overview");
   assert.equal(workflow.targets[0].target.reportLabel, "interim_full_card_overview");
   assert.match(workflow.targets[0].target.captureGuide, /fit as much of the card as possible/);
+  assert.equal(workflow.targets[0].target.guideVisualKind, "full-card");
+  assert.equal(workflow.targets[0].target.guideVisualOrientation, "center");
+  assert.match(workflow.targets[0].target.guideVisualLegend, /yellow rectangle/);
   assert.equal(workflow.targets[1].target.cornerProfile, "sharp_90");
+  assert.equal(workflow.targets[1].target.guideVisualKind, "corner");
+  assert.equal(workflow.targets[1].target.guideVisualOrientation, "top-left");
   assert.equal(workflow.targets[0].artifacts[0].mimeType, "image/jpeg");
   assert.match(workflow.limitations.join(" "), /not production macro evidence/);
   assert.match(workflow.limitations.join(" "), /not calibrated macro capture/);

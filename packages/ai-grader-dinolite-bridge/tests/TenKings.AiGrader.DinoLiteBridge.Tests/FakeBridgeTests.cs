@@ -54,6 +54,9 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             StringAssert.Contains(output, "\"reportLabel\":\"interim_full_card_overview\"");
             StringAssert.Contains(output, "\"captureGuide\"");
             StringAssert.Contains(output, "\"captureGuidesEnabled\":true");
+            StringAssert.Contains(output, "\"guideVisualKind\":\"full-card\"");
+            StringAssert.Contains(output, "\"guideVisualOrientation\":\"top-left\"");
+            StringAssert.Contains(output, "\"guideVisualLegend\"");
             StringAssert.Contains(output, "\"cornerProfile\":\"sharp_90\"");
             StringAssert.Contains(output, "not production macro evidence");
             StringAssert.Contains(output, "not calibrated macro capture");
@@ -73,6 +76,8 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             Assert.AreEqual("interim_full_card_overview", first.GetType().GetProperty("reportLabel")!.GetValue(first, null));
             StringAssert.Contains((string)first.GetType().GetProperty("instruction")!.GetValue(first, null)!, "interim overview");
             StringAssert.Contains((string)first.GetType().GetProperty("captureGuide")!.GetValue(first, null)!, "fit as much of the card as possible");
+            Assert.AreEqual("full-card", first.GetType().GetProperty("guideVisualKind")!.GetValue(first, null));
+            Assert.AreEqual("center", first.GetType().GetProperty("guideVisualOrientation")!.GetValue(first, null));
             Assert.AreEqual(6, plan.Length);
         }
 
@@ -89,6 +94,14 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             Assert.AreEqual("edge", plan[8].GetType().GetProperty("type")!.GetValue(plan[8], null));
             Assert.AreEqual("lower-surface", plan[11].GetType().GetProperty("id")!.GetValue(plan[11], null));
             Assert.AreEqual("surface", plan[11].GetType().GetProperty("type")!.GetValue(plan[11], null));
+            Assert.AreEqual("corner", plan[1].GetType().GetProperty("guideVisualKind")!.GetValue(plan[1], null));
+            Assert.AreEqual("top-left", plan[1].GetType().GetProperty("guideVisualOrientation")!.GetValue(plan[1], null));
+            Assert.AreEqual("top-right", plan[2].GetType().GetProperty("guideVisualOrientation")!.GetValue(plan[2], null));
+            Assert.AreEqual("bottom-right", plan[3].GetType().GetProperty("guideVisualOrientation")!.GetValue(plan[3], null));
+            Assert.AreEqual("bottom-left", plan[4].GetType().GetProperty("guideVisualOrientation")!.GetValue(plan[4], null));
+            Assert.AreEqual("horizontal", plan[5].GetType().GetProperty("guideVisualOrientation")!.GetValue(plan[5], null));
+            Assert.AreEqual("vertical", plan[6].GetType().GetProperty("guideVisualOrientation")!.GetValue(plan[6], null));
+            Assert.AreEqual("surface", plan[9].GetType().GetProperty("guideVisualKind")!.GetValue(plan[9], null));
             StringAssert.Contains((string)plan[1].GetType().GetProperty("captureGuide")!.GetValue(plan[1], null)!, "Corner profile: sharp_90");
             StringAssert.Contains((string)plan[5].GetType().GetProperty("captureGuide")!.GetValue(plan[5], null)!, "horizontal edge");
             StringAssert.Contains((string)plan[9].GetType().GetProperty("captureGuide")!.GetValue(plan[9], null)!, "central patch");

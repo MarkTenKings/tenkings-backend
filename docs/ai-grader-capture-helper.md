@@ -375,8 +375,10 @@ PR #33 improves report clarity without changing the v0.1 scoring formulas, weigh
 - element definitions for centering, corners, edges, and surface
 - perfect `10/10` definitions for centering, corners, edges, surface, and overall
 - "Why this score?" sections with top contributing metrics, top penalties, confidence, affected target images, limitations, and quality warnings
-- quality diagnostics per target: card coverage estimate, background risk, sharpness/blur risk, brightness mean, contrast range, over/underexposure risk, target alignment confidence, and warnings such as possible background interference, low card coverage, target may not be centered, image may be blurry, lighting may be uneven, and score confidence reduced
+- quality diagnostics per target: card coverage heuristic, heuristic label/limitations, background risk, sharpness/blur risk, brightness mean, contrast range, over/underexposure risk, target alignment confidence, and warnings such as possible background interference, low card coverage, target may not be centered, image may be blurry, lighting may be uneven, and score confidence reduced
+- quality warning impact policy: blur is directly represented in the existing close-up `blurPenalty` and centering confidence; exposure warnings are diagnostic-only in v0.1; coverage is an approximate heuristic, not a calibrated card mask or pass/fail framing result
 - operator options metadata including `cornerProfile=sharp_90` and whether capture guides were enabled
+- clearer surface low-score explanation translating surface speck/scratch/texture anomaly proxy metrics into plain English, with explicit caution that print texture, focus, lighting, or background can contribute and source images should be reviewed
 
 The operator preview workflow now passes optional guide/profile metadata through the JSONL bridge protocol. The visible Windows operator panel shows guide text for each target class:
 
@@ -385,7 +387,16 @@ The operator preview workflow now passes optional guide/profile metadata through
 - edge targets: align top/bottom edges with the horizontal guide and left/right edges with the vertical guide
 - surface targets: fill the central patch with card surface only and avoid border/background
 
-`--corner-profile sharp_90` is the only active corner profile in this slice. Unsupported values fail before spawning the bridge. `--capture-guides true|false` defaults to `true`; when enabled, guide metadata is recorded in the manifest and shown in the preview workflow. These changes are guidance and diagnostics only; they do not create fake/manual scores and do not retune analysis thresholds.
+PR #33 follow-up added an adjacent high-contrast visual guide diagram panel in the visible Windows operator workflow. The panel is not drawn over the DNVideoX ActiveX surface; it sits beside the preview to avoid OCX overlay risk. The diagram is target-specific:
+
+- full-card overview: yellow card-framing rectangle
+- `sharp_90` corner targets: yellow L-shaped corner guide oriented for top-left, top-right, bottom-right, or bottom-left
+- edge targets: yellow horizontal or vertical line depending target orientation
+- surface targets: yellow central patch box
+
+`--corner-profile sharp_90` is the only active corner profile in this slice. Unsupported values fail before spawning the bridge. `--capture-guides true|false` defaults to `true`; when enabled, guide text plus `guideVisualKind`, `guideVisualOrientation`, and `guideVisualLegend` metadata are recorded in the manifest and shown in the preview workflow. These changes are guidance and diagnostics only; they do not create fake/manual scores and do not retune analysis thresholds.
+
+Local Dell supervised follow-up smoke on 2026-06-10 used `operator-smoke-single`, normal JPG only, and output outside git at `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-guide-smoke-20260610T101537418Z`. The visible operator workflow completed with one `center-surface` target, `guideVisualKind=surface`, `guideVisualOrientation=center`, and `guideVisualLegend="Fill the yellow central patch with card surface only; avoid border and background."` It captured `01-center-surface-attempt-01-normal.jpg` (`sha256=52fb0f26eccb4ea05934dbdee599ba50adfe8359b671027ee5248fb90a3afb0e`, `byteSize=210536`), wrote `manifest.json` and `preview-report.html`, and cleanup succeeded with preview stopped, disconnected, host disposed. Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`.
 
 Local Dell supervised PR #33 smoke on 2026-06-10 used `dinolite-experimental-grading-run --corner-profile sharp_90 --capture-guides true`, normal JPG only, and output outside git at `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z`. It completed `status=completed` with 12 captured targets, `manifest.json`, `analysis.json`, and `preview-report.html`. The report includes score scale, perfect `10/10` definitions, "Why this score?" sections, and quality warning summary. Computed outputs were centering `10.00 / 10`, corners `6.49 / 10`, edges `2.17 / 10`, surface `1.00 / 10`, and overall `5.13 / 10` (`Needs Review`, confidence `0.71`). Quality diagnostics recorded warnings on 11 targets, mostly blur/underexposure risk. Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`.
 

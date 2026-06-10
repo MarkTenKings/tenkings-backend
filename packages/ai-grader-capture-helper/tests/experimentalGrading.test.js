@@ -86,6 +86,86 @@ test("surface analyzer scores synthetic specked surface below clean surface", ()
   assert.ok(analyzeSurfaceImageForTests(damaged).score < analyzeSurfaceImageForTests(clean).score);
 });
 
+test("experimental report explains low surface visual signals without changing algorithm version", async () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), "dinolite-surface-report-"));
+  const imagePath = path.join(sessionDir, "01-center-surface-normal.jpg");
+  const previewReportPath = path.join(sessionDir, "preview-report.html");
+  const manifestPath = path.join(sessionDir, "manifest.json");
+  const damaged = createSyntheticImage(140, 140, { r: 150, g: 150, b: 150 });
+  for (let i = 20; i < 120; i += 12) {
+    fillRect(damaged, { x: i, y: 40, w: 5, h: 5 }, { r: 250, g: 250, b: 250 });
+    fillRect(damaged, { x: 120 - i, y: 86, w: 4, h: 4 }, { r: 20, g: 20, b: 20 });
+  }
+  fillRect(damaged, { x: 20, y: 70, w: 95, h: 3 }, { r: 245, g: 245, b: 245 });
+  await sharp(Buffer.from(damaged.data), { raw: { width: damaged.width, height: damaged.height, channels: 4 } })
+    .jpeg()
+    .toFile(imagePath);
+
+  const analysis = await analyzeDinoLiteExperimentalGradingWorkflow({
+    adapter: "fake",
+    simulated: true,
+    comActiveXInstantiated: false,
+    sessionId: "synthetic-surface-session",
+    label: "synthetic-surface",
+    plan: "experimental-card-grading",
+    sessionDir,
+    manifestPath,
+    previewReportPath,
+    timestamp: "2026-06-10T00:00:00.000Z",
+    status: "completed",
+    device: { index: 0, name: "Synthetic Dino-Lite" },
+    ocxVersion: "simulated",
+    connectedDuringCommand: false,
+    previewDuringCommand: false,
+    config: { bitfield: 0 },
+    amr: null,
+    options: { includeFlcSweep: false, includeEdr: false, includeEdof: false },
+    targets: [
+      {
+        target: {
+          id: "center-surface",
+          name: "Center surface",
+          type: "surface",
+          reportLabel: "center_surface",
+          instruction: "Synthetic surface.",
+          captureGuide: "Guide: fill the central patch with card surface only.",
+          captureGuidesEnabled: true,
+          guideVisualKind: "surface",
+          guideVisualOrientation: "center",
+          guideVisualLegend: "Fill the yellow central patch with card surface only; avoid border and background.",
+          cornerProfile: null,
+        },
+        targetIndex: 1,
+        action: "capture",
+        attempt: 1,
+        status: "success",
+        artifacts: [
+          {
+            path: imagePath,
+            filename: path.basename(imagePath),
+            sha256: "synthetic",
+            byteSize: fs.statSync(imagePath).size,
+            mimeType: "image/jpeg",
+            timestamp: "2026-06-10T00:00:00.000Z",
+            captureKind: "normal",
+            lightingRecipe: "normal",
+            status: "success",
+          },
+        ],
+      },
+    ],
+    cleanup: { previewStopped: true, disconnected: true, hostDisposed: true },
+    limitations: [],
+    forbiddenOperationsInvoked: false,
+  }, { cornerProfile: "sharp_90", captureGuides: true });
+
+  const html = fs.readFileSync(previewReportPath, "utf8");
+  assert.equal(analysis.algorithmVersion, "tenkings-dinolite-grading-v0.1");
+  assert.equal(analysis.thresholdSetVersion, "tenkings-dinolite-thresholds-v0.1");
+  assert.match(html, /Surface score is driven by high texture\/anomaly\/scratch proxy metrics/);
+  assert.match(html, /review source images/i);
+});
+
 test("fusion computes experimental score and applies severe defect cap", () => {
   const result = fuseExperimentalScores({
     centering: fakeElement("centering", 9.5),
@@ -152,6 +232,9 @@ test("experimental report carries non-certified warning language", async () => {
           instruction: "Synthetic test overview.",
           captureGuide: "Guide: fit as much of the card as possible, avoid background, keep card edges visible.",
           captureGuidesEnabled: true,
+          guideVisualKind: "full-card",
+          guideVisualOrientation: "center",
+          guideVisualLegend: "Fit as much of the card as possible inside the yellow rectangle; keep card edges visible.",
           cornerProfile: null,
         },
         targetIndex: 1,
@@ -193,9 +276,20 @@ test("experimental report carries non-certified warning language", async () => {
   assert.match(html, /overall 10\/10/i);
   assert.match(html, /Why this score\?/i);
   assert.match(html, /Quality Warning Summary/);
+  assert.match(html, /Quality Warning Impact/);
+  assert.match(html, /diagnostic/i);
+  assert.match(html, /blurPenalty/);
+  assert.match(html, /Underexposure and overexposure warnings are diagnostic-only/i);
+  assert.match(html, /Card coverage heuristic/);
+  assert.doesNotMatch(html, /Card coverage estimate/);
+  assert.match(html, /Surface score is driven by high texture\/anomaly\/scratch proxy metrics|surface was not_computed/i);
   assert.equal(analysis.operatorOptions.cornerProfile, "sharp_90");
   assert.equal(analysis.scoreScale.displayFormat, "x.xx / 10");
+  assert.equal(analysis.algorithmVersion, "tenkings-dinolite-grading-v0.1");
+  assert.equal(analysis.thresholdSetVersion, "tenkings-dinolite-thresholds-v0.1");
   assert.equal(analysis.qualityDiagnostics.length, 1);
+  assert.equal(typeof analysis.qualityDiagnostics[0].cardCoverageHeuristic, "number");
+  assert.notEqual(analysis.qualityDiagnostics[0].cardCoverageHeuristicLimitations, "");
 });
 
 test("experimental grading CLI rejects unsupported corner profile before spawning bridge", async () => {

@@ -19730,3 +19730,57 @@ By enabling Rip It Live, I confirm:
 - No lens/focus/exposure-setting/DPQ method was added or run.
 - No fake, manual, operator-entered, or placeholder score was added.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite report diagnostics PR #33 continuation
+
+### Summary
+- Continued PR #33 on branch `feature/ai-grader-dinolite-report-diagnostics`; PR remains unmerged.
+- Fixed the remaining operator-guide usability issue by adding a real adjacent WinForms visual guide diagram panel to the visible `Ten Kings Dino-Lite Operator Workflow` window.
+- The guide panel is adjacent to the DNVideoX ActiveX preview instead of drawn over the OCX surface, reducing overlay risk while still providing target-specific visual diagrams.
+- Added target-level guide metadata through fake and real operator workflow manifests:
+  - `guideVisualKind`
+  - `guideVisualOrientation`
+  - `guideVisualLegend`
+- Guide visuals now cover:
+  - full-card overview: card-framing rectangle
+  - `sharp_90` corners: L-shaped guide oriented for top-left, top-right, bottom-right, or bottom-left
+  - edges: horizontal guide for top/bottom and vertical guide for left/right
+  - surface: central patch box
+- Replaced misleading primary `cardCoverageEstimate` reporting with `cardCoverageHeuristic`, label, and limitation text. The heuristic is not a calibrated card mask and does not indicate perfect framing.
+- Added report warning-impact explanation:
+  - blur is directly represented in existing close-up `blurPenalty` and centering confidence
+  - under/overexposure warnings are diagnostic-only in v0.1
+  - coverage is an approximate framing/background risk heuristic only
+- Added clearer surface low-score language explaining that high texture/anomaly/scratch proxy signals can reflect print texture, focus, lighting, or background and source images should be reviewed.
+- Scoring math did not change. Algorithm version remains `tenkings-dinolite-grading-v0.1`; threshold set remains `tenkings-dinolite-thresholds-v0.1`.
+
+### Validation
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 80 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+
+### Supervised Visual Guide Smoke
+- Ran `dinolite-operator-workflow --plan operator-smoke-single --capture-guides true`, normal JPG only, with Mark present.
+- First command attempt failed before hardware access because the bridge exe path was relative under `pnpm exec`; the rerun used the absolute bridge exe path.
+- Output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-guide-smoke-20260610T101537418Z`.
+- Manifest: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-guide-smoke-20260610T101537418Z\manifest.json`.
+- Report: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-guide-smoke-20260610T101537418Z\preview-report.html`.
+- Captured target count: 1, `center-surface`.
+- Target metadata recorded `guideVisualKind=surface`, `guideVisualOrientation=center`, and `guideVisualLegend="Fill the yellow central patch with card surface only; avoid border and background."`.
+- Artifact: `01-center-surface-attempt-01-normal.jpg` - 210536 bytes - `52fb0f26eccb4ea05934dbdee599ba50adfe8359b671027ee5248fb90a3afb0e`.
+- Cleanup succeeded: `previewStopped=true`, `disconnected=true`, `hostDisposed=true`.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No lens/focus/exposure-setting/DPQ method was added or run.
+- No fake, manual, operator-entered, or placeholder score was added.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

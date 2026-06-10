@@ -250,6 +250,9 @@ export interface DinoLiteBridgeOperatorWorkflowResult {
       instruction: string;
       captureGuide?: string;
       captureGuidesEnabled?: boolean;
+      guideVisualKind?: "full-card" | "corner" | "edge" | "surface" | "center" | string;
+      guideVisualOrientation?: string;
+      guideVisualLegend?: string;
       cornerProfile?: string | null;
     };
     targetIndex: number;

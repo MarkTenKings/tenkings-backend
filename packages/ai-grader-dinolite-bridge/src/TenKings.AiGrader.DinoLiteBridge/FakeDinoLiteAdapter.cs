@@ -357,6 +357,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
                         : "Move the card so the " + name.ToLowerInvariant() + " is centered under the microscope. Adjust focus manually, then confirm capture.",
                     captureGuide = captureGuides ? FakeCaptureGuide(id, type, cornerProfile) : "",
                     captureGuidesEnabled = captureGuides,
+                    guideVisualKind = FakeGuideVisualKind(type),
+                    guideVisualOrientation = FakeGuideVisualOrientation(id, type),
+                    guideVisualLegend = captureGuides ? FakeGuideVisualLegend(id, type, cornerProfile) : "",
                     cornerProfile = type == "corner" ? cornerProfile : null
                 },
                 targetIndex = index,
@@ -377,6 +380,41 @@ namespace TenKings.AiGrader.DinoLiteBridge
             if (type == "edge") return "Guide: align this " + ((id.Contains("top") || id.Contains("bottom")) ? "horizontal" : "vertical") + " edge along the center guide line, fill the frame with the card edge, include minimal background.";
             if (type == "surface") return "Guide: fill the central patch with card surface only, avoid border/background, and focus on the print surface.";
             return "Guide: center the target under the microscope, fill the frame with the card, and avoid background.";
+        }
+
+        private static string FakeGuideVisualKind(string type)
+        {
+            if (type == "interim_macro_overview") return "full-card";
+            if (type == "corner") return "corner";
+            if (type == "edge") return "edge";
+            if (type == "surface") return "surface";
+            return "center";
+        }
+
+        private static string FakeGuideVisualOrientation(string id, string type)
+        {
+            if (type == "corner")
+            {
+                if (id.Contains("top-left")) return "top-left";
+                if (id.Contains("top-right")) return "top-right";
+                if (id.Contains("bottom-right")) return "bottom-right";
+                if (id.Contains("bottom-left")) return "bottom-left";
+                return "center";
+            }
+            if (type == "edge")
+            {
+                return id.Contains("top") || id.Contains("bottom") ? "horizontal" : "vertical";
+            }
+            return "center";
+        }
+
+        private static string FakeGuideVisualLegend(string id, string type, string cornerProfile)
+        {
+            if (type == "interim_macro_overview") return "Fit as much of the card as possible inside the yellow rectangle; keep card edges visible.";
+            if (type == "corner") return "Place the " + FakeGuideVisualOrientation(id, type) + " corner tip in the yellow box; align both card edges to the L guide. Profile: " + cornerProfile + ".";
+            if (type == "edge") return FakeGuideVisualOrientation(id, type) == "horizontal" ? "Align the card edge along the yellow horizontal guide line." : "Align the card edge along the yellow vertical guide line.";
+            if (type == "surface") return "Fill the yellow central patch with card surface only; avoid border and background.";
+            return "Center the requested target inside the yellow guide.";
         }
 
         private static string[] OperatorLimitations()
