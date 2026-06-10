@@ -14,6 +14,7 @@ export type DinoLiteBridgeCommand =
   | "dinolite.runtimeDiagnostics"
   | "dinolite.capturePackage"
   | "dinolite.captureDemoPackage"
+  | "dinolite.operatorWorkflow"
   | "exit";
 
 export interface DinoLiteBridgeClientConfig {
@@ -33,7 +34,9 @@ export interface DinoLiteBridgeRequest {
   outputDir?: string;
   sdkRuntimeDir?: string;
   label?: string;
+  plan?: string;
   includeLightingSweep?: boolean;
+  includeFlcSweep?: boolean;
   includeEdr?: boolean;
   includeEdof?: boolean;
 }
@@ -211,6 +214,63 @@ export interface DinoLiteBridgeCapturePackageResult {
   forbiddenOperationsInvoked: false;
 }
 
+export interface DinoLiteBridgeOperatorWorkflowResult {
+  adapter: "fake" | "dnvideox";
+  simulated?: boolean;
+  comActiveXInstantiated: boolean;
+  sessionId: string;
+  label: string;
+  plan: string;
+  sessionDir: string;
+  manifestPath: string;
+  previewReportPath: string;
+  timestamp: string;
+  status: "completed" | "aborted" | string;
+  device: {
+    index: number;
+    name: string;
+    description?: string | null;
+    deviceId?: string | null;
+  };
+  ocxVersion?: string | null;
+  connectedDuringCommand: boolean;
+  previewDuringCommand: boolean;
+  config?: unknown;
+  amr?: number | null;
+  runtimeDependencies?: unknown;
+  options?: unknown;
+  targets: Array<{
+    target: {
+      id: string;
+      name: string;
+      type: string;
+      reportLabel: string;
+      instruction: string;
+    };
+    targetIndex: number;
+    action: string;
+    attempt: number;
+    status: string;
+    artifacts: Array<{
+      path: string;
+      filename: string;
+      sha256?: string | null;
+      byteSize: number;
+      mimeType: "image/jpeg";
+      timestamp: string;
+      captureKind: string;
+      lightingRecipe: string;
+      status: string;
+      error?: unknown;
+      diagnostics?: unknown;
+    }>;
+  }>;
+  cleanup?: unknown;
+  optionalErrors?: unknown[];
+  limitations?: string[];
+  forbiddenOperationsInvoked: false;
+}
+
 export interface DinoLiteBridgeRuntimeDiagnostics {
   adapter: "fake" | "dnvideox";
   simulated?: boolean;
@@ -263,7 +323,15 @@ export interface DinoLiteBridgeChildProcess {
   kill(signal?: NodeJS.Signals | number): boolean;
 }
 
-export type DinoLiteBridgeSpawn = (command: string, args: string[]) => DinoLiteBridgeChildProcess;
+export interface DinoLiteBridgeSpawnOptions {
+  windowsHide?: boolean;
+}
+
+export type DinoLiteBridgeSpawn = (
+  command: string,
+  args: string[],
+  options?: DinoLiteBridgeSpawnOptions
+) => DinoLiteBridgeChildProcess;
 
 export class DinoLiteBridgeClientError extends Error {
   readonly code: string;
@@ -378,6 +446,18 @@ export class DinoLiteBridgeClient {
     return this.sendResult<DinoLiteBridgeCapturePackageResult>("dinolite.capturePackage", options);
   }
 
+  async operatorWorkflow(options: {
+    deviceIndex: number;
+    outputDir: string;
+    label?: string;
+    plan: string;
+    includeFlcSweep?: boolean;
+    includeEdr?: boolean;
+    includeEdof?: boolean;
+  }): Promise<DinoLiteBridgeOperatorWorkflowResult> {
+    return this.sendResult<DinoLiteBridgeOperatorWorkflowResult>("dinolite.operatorWorkflow", options);
+  }
+
   async runtimeDiagnostics(): Promise<DinoLiteBridgeRuntimeDiagnostics> {
     return this.sendResult<DinoLiteBridgeRuntimeDiagnostics>("dinolite.runtimeDiagnostics");
   }
@@ -418,6 +498,7 @@ export class DinoLiteBridgeClient {
       "dinolite.runtimeDiagnostics",
       "dinolite.capturePackage",
       "dinolite.captureDemoPackage",
+      "dinolite.operatorWorkflow",
       "exit",
     ]);
     if (this.config.adapter === "dnvideox" && (this.config.manualEnumeration || this.config.manualHardwareAccess) && !allowedRealCommands.has(command)) {
@@ -435,6 +516,7 @@ export class DinoLiteBridgeClient {
     return new Promise<DinoLiteBridgeResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        child.kill();
         reject(new DinoLiteBridgeClientError("BRIDGE_TIMEOUT", `Dino-Lite bridge command timed out: ${command}`));
       }, this.config.timeoutMs);
 
@@ -453,7 +535,9 @@ export class DinoLiteBridgeClient {
       ...(this.config.sdkRuntimeDir ? ["--sdk-runtime-dir", this.config.sdkRuntimeDir] : []),
       ...(this.config.args ?? []),
     ];
-    const child = this.spawnProcess(this.config.executablePath as string, args);
+    const child = this.spawnProcess(this.config.executablePath as string, args, {
+      windowsHide: this.config.manualHardwareAccess ? false : true,
+    });
     this.child = child;
 
     child.stdout.on("data", (chunk) => {
@@ -555,10 +639,10 @@ export function assertDinoLiteSdkRuntimeDirAllowed(sdkRuntimeDir: string, repoRo
   return resolvedRuntimeDir;
 }
 
-function defaultSpawn(command: string, args: string[]): DinoLiteBridgeChildProcess {
+function defaultSpawn(command: string, args: string[], options: DinoLiteBridgeSpawnOptions = {}): DinoLiteBridgeChildProcess {
   return spawn(command, args, {
     stdio: "pipe",
-    windowsHide: true,
+    windowsHide: options.windowsHide ?? true,
   }) as ChildProcessWithoutNullStreams;
 }
 

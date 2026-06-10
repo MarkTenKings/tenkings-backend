@@ -46,6 +46,17 @@ type ParsedCommand =
       includeEdr: boolean;
       includeEdof: boolean;
     }
+  | {
+      command: "dinolite-operator-workflow";
+      config: CaptureHelperConfigInput;
+      deviceIndex: number | undefined;
+      outputDir: string | undefined;
+      label: string | undefined;
+      plan: string | undefined;
+      includeFlcSweep: boolean;
+      includeEdr: boolean;
+      includeEdof: boolean;
+    }
   | { command: "manifest"; config: CaptureHelperConfigInput; mode: string | undefined }
   | { command: "serve"; config: CaptureHelperConfigInput; host: string | undefined; port: string | undefined }
   | { command: "help"; config: CaptureHelperConfigInput };
@@ -75,7 +86,9 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let outputDir: string | undefined;
   let sdkRuntimeDir: string | undefined;
   let label: string | undefined;
+  let plan: string | undefined;
   let includeLightingSweep = false;
+  let includeFlcSweep = false;
   let includeEdr = false;
   let includeEdof = false;
 
@@ -180,8 +193,15 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         label = readOption(rest, index, "--label");
         index += 1;
         break;
+      case "--plan":
+        plan = readOption(rest, index, "--plan");
+        index += 1;
+        break;
       case "--include-lighting-sweep":
         includeLightingSweep = true;
+        break;
+      case "--include-flc-sweep":
+        includeFlcSweep = true;
         break;
       case "--include-edr":
         includeEdr = true;
@@ -409,6 +429,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "dinolite-capture-still" ||
     command === "dinolite-capture-package" ||
     command === "dinolite-capture-demo-package" ||
+    command === "dinolite-operator-workflow" ||
     command === "manifest" ||
     command === "serve" ||
     command === "help"
@@ -419,6 +440,9 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     if (command === "dinolite-capture-still") return { command, config, deviceIndex, outputDir };
     if (command === "dinolite-capture-package" || command === "dinolite-capture-demo-package") {
       return { command, config, deviceIndex, outputDir, label, includeLightingSweep, includeEdr, includeEdof };
+    }
+    if (command === "dinolite-operator-workflow") {
+      return { command, config, deviceIndex, outputDir, label, plan, includeFlcSweep, includeEdr, includeEdof };
     }
     return { command, config };
   }
@@ -439,6 +463,7 @@ function helpPayload() {
       "dinolite-capture-still --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-smoke",
       "dinolite-capture-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-packages --label card-demo-001 --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk --include-lighting-sweep --include-edr --include-edof",
       "dinolite-capture-demo-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-demo --label card-demo-001 --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
+      "dinolite-operator-workflow --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-operator --plan card-interim --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -464,7 +489,9 @@ function helpPayload() {
       "--device-index",
       "--output-dir",
       "--label",
+      "--plan",
       "--include-lighting-sweep",
+      "--include-flc-sweep",
       "--include-edr",
       "--include-edof",
       "--led-port",
@@ -498,6 +525,53 @@ function helpPayload() {
 
 function writeJson(stdout: (text: string) => void, value: unknown) {
   stdout(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function describeDinoLiteOperatorPlan(plan: string) {
+  if (plan === "operator-smoke-single") {
+    return [
+      {
+        name: "Center surface",
+        instruction: "Place the target detail under the microscope, adjust focus manually, then click Capture.",
+      },
+    ];
+  }
+  if (plan === "card-interim") {
+    return [
+      {
+        name: "Full-card overview",
+        instruction:
+          "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated.",
+      },
+      { name: "Top-left corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
+      { name: "Top-right corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
+      { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
+      { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
+      { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
+    ];
+  }
+  if (plan === "surface-basic") {
+    return [
+      { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
+      { name: "Upper surface", instruction: "Move the card so the upper surface is centered under the microscope." },
+      { name: "Lower surface", instruction: "Move the card so the lower surface is centered under the microscope." },
+    ];
+  }
+  if (plan === "card-basic") {
+    return [
+      { name: "Top-left corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
+      { name: "Top-right corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
+      { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
+      { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
+      { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
+    ];
+  }
+  return [
+    { name: "Top-left corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
+    { name: "Top-right corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
+    { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
+    { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
+  ];
 }
 
 export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO = {}): Promise<number> {
@@ -599,7 +673,8 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       parsed.command === "dinolite-status" ||
       parsed.command === "dinolite-capture-still" ||
       parsed.command === "dinolite-capture-package" ||
-      parsed.command === "dinolite-capture-demo-package"
+      parsed.command === "dinolite-capture-demo-package" ||
+      parsed.command === "dinolite-operator-workflow"
     ) {
       const env = io.env ?? process.env;
       const executablePath =
@@ -666,6 +741,41 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           capturePackage,
         });
         return 0;
+      }
+
+      if (parsed.command === "dinolite-operator-workflow") {
+        const outputDir = assertDinoLiteCaptureOutputDirAllowed(parsed.outputDir ?? "");
+        const sdkRuntimeDir =
+          parsed.config.dinoliteBridge?.sdkRuntimeDir ?? env.TENKINGS_DINOLITE_SDK_RUNTIME_DIR;
+        if (sdkRuntimeDir) {
+          assertDinoLiteSdkRuntimeDirAllowed(sdkRuntimeDir);
+        }
+        const workflowPlan = parsed.plan ?? "corners-basic";
+        const targets = describeDinoLiteOperatorPlan(workflowPlan);
+        stderr("Operator window shown\n");
+        stderr(`Plan: ${workflowPlan}\n`);
+        targets.forEach((target, index) => {
+          stderr(`Target ${index + 1}/${targets.length}: ${target.name}\n`);
+          stderr(`Instruction: ${target.instruction}\n`);
+        });
+        stderr("Waiting for Capture/Skip/Abort in the local operator window.\n");
+        const workflow = await client.operatorWorkflow({
+          deviceIndex: parsed.deviceIndex,
+          outputDir,
+          label: parsed.label,
+          plan: workflowPlan,
+          includeFlcSweep: parsed.includeFlcSweep,
+          includeEdr: parsed.includeEdr,
+          includeEdof: parsed.includeEdof,
+        });
+        await client.close();
+        writeJson(stdout, {
+          ok: workflow.status !== "aborted",
+          service: "ai-grader-capture-helper",
+          command: "dinolite-operator-workflow",
+          workflow,
+        });
+        return workflow.status === "aborted" ? 1 : 0;
       }
 
       const outputDir = assertDinoLiteCaptureOutputDirAllowed(parsed.outputDir ?? "");

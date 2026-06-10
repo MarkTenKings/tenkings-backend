@@ -594,6 +594,208 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
         }
 
+        public object OperatorWorkflow(int deviceIndex, string? outputDir, string? label, string? plan, bool includeFlcSweep, bool includeEdr, bool includeEdof)
+        {
+            if (!options.ManualHardwareAccess)
+            {
+                return NotReady("DNVideoX operator workflow requires --manual-hardware; no OCX was instantiated.");
+            }
+            if (string.IsNullOrWhiteSpace(outputDir))
+            {
+                return new
+                {
+                    adapter = "dnvideox",
+                    status = "INVALID_REQUEST",
+                    comActiveXInstantiated = false,
+                    message = "dinolite.operatorWorkflow requires outputDir."
+                };
+            }
+
+            var targets = BuildOperatorPlan(plan);
+            if (targets.Count == 0)
+            {
+                return new
+                {
+                    adapter = "dnvideox",
+                    status = "INVALID_REQUEST",
+                    comActiveXInstantiated = false,
+                    message = "Unsupported Dino-Lite operator plan: " + (plan ?? "")
+                };
+            }
+
+            object? control = null;
+            OperatorDnVideoXHost? host = null;
+            var cleanup = new CleanupState();
+            RuntimeDirectoryScope? runtimeScope = null;
+            try
+            {
+                var timestamp = DateTimeOffset.UtcNow;
+                var normalizedLabel = string.IsNullOrWhiteSpace(label) ? "operator-session" : label!;
+                var normalizedPlan = string.IsNullOrWhiteSpace(plan) ? "corners-basic" : plan!.Trim();
+                var sessionId = "dinolite-operator-" + SanitizeFilePart(normalizedLabel) + "-" + timestamp.ToString("yyyyMMddTHHmmssfffZ");
+                var absoluteOutputDir = Path.GetFullPath(outputDir);
+                var sessionDir = Path.Combine(absoluteOutputDir, sessionId);
+                Directory.CreateDirectory(sessionDir);
+                var runtimeDependencies = InspectRuntimeDependencies(options.SdkRuntimeDir);
+                runtimeScope = RuntimeDirectoryScope.TryEnter(options.SdkRuntimeDir, runtimeDependencies);
+
+                host = OperatorDnVideoXHost.Create();
+                control = host.ControlInstance;
+                ValidateDeviceIndex(control, deviceIndex);
+                SetProperty(control, "VideoDeviceIndex", deviceIndex);
+                SetProperty(control, "Connected", true);
+                SetProperty(control, "Preview", true);
+                Application.DoEvents();
+                WaitWithEvents(StreamSettleDelayMs);
+
+                var optionalErrors = new List<object>();
+                var device = ReadDevice(control, deviceIndex, optionalErrors);
+                var configBits = ReadConfigBitfield(control, deviceIndex, optionalErrors);
+                var deviceId = GetDeviceIdFromDeviceObject(device);
+                var pid = ExtractUsbPid(deviceId);
+                var config = BuildConfigObject(configBits, pid);
+                var amr = InvokeOptional(control, "GetAMR", optionalErrors, deviceIndex);
+                var targetRecords = new List<object>();
+                var sessionStatus = "completed";
+                var showPostOverviewNotice = false;
+
+                for (var index = 0; index < targets.Count; index += 1)
+                {
+                    var target = targets[index];
+                    var attempt = 1;
+                    var advance = false;
+                    while (!advance)
+                    {
+                        var action = host.WaitForAction(target, index + 1, targets.Count, showPostOverviewNotice);
+                        showPostOverviewNotice = false;
+                        if (action == OperatorAction.Abort)
+                        {
+                            sessionStatus = "aborted";
+                            targetRecords.Add(BuildOperatorTargetRecord(target, index + 1, action, attempt, "aborted", new object[0]));
+                            advance = true;
+                            break;
+                        }
+
+                        if (action == OperatorAction.Skip)
+                        {
+                            targetRecords.Add(BuildOperatorTargetRecord(target, index + 1, action, attempt, "skipped", new object[0]));
+                            advance = true;
+                            break;
+                        }
+
+                        var artifacts = CaptureOperatorTargetArtifacts(
+                            control,
+                            deviceIndex,
+                            sessionDir,
+                            target,
+                            index + 1,
+                            attempt,
+                            configBits,
+                            pid,
+                            runtimeDependencies,
+                            includeFlcSweep,
+                            includeEdr,
+                            includeEdof,
+                            optionalErrors);
+                        targetRecords.Add(BuildOperatorTargetRecord(target, index + 1, action, attempt, "success", artifacts));
+                        if (target.id == "full-card-overview")
+                        {
+                            showPostOverviewNotice = true;
+                        }
+
+                        if (action == OperatorAction.Retake)
+                        {
+                            attempt += 1;
+                            continue;
+                        }
+
+                        advance = true;
+                    }
+
+                    if (sessionStatus == "aborted")
+                    {
+                        break;
+                    }
+                }
+
+                var finalRecipe = BuildLightingRecipe("safe-final-all-quadrants-level-3");
+                cleanup.finalLightingRecipe = ApplyLightingRecipe(control, deviceIndex, finalRecipe, configBits, pid, optionalErrors);
+                CleanupControl(control, cleanup, stopPreview: true);
+                control = null;
+                host.Dispose();
+                host = null;
+                cleanup.hostDisposed = true;
+
+                var manifestPath = Path.Combine(sessionDir, "manifest.json");
+                var previewReportPath = Path.Combine(sessionDir, "preview-report.html");
+                var limitations = OperatorLimitations();
+                var manifest = new
+                {
+                    sessionId,
+                    label = normalizedLabel,
+                    plan = normalizedPlan,
+                    timestamp = timestamp.ToString("o"),
+                    status = sessionStatus,
+                    adapter = "dnvideox",
+                    device,
+                    ocxVersion = GetOcxVersion(),
+                    config,
+                    runtimeDependencies,
+                    amr,
+                    connectedDuringCommand = true,
+                    previewDuringCommand = true,
+                    options = new { includeFlcSweep, includeEdr, includeEdof },
+                    targets = targetRecords.ToArray(),
+                    cleanup,
+                    optionalErrors = optionalErrors.ToArray(),
+                    manifestPath,
+                    previewReportPath,
+                    limitations,
+                    forbiddenOperationsInvoked = false
+                };
+
+                WriteOperatorManifestAndReport(manifestPath, previewReportPath, manifest, targetRecords);
+
+                return new
+                {
+                    adapter = "dnvideox",
+                    comActiveXInstantiated = true,
+                    sessionId,
+                    label = normalizedLabel,
+                    plan = normalizedPlan,
+                    sessionDir,
+                    manifestPath,
+                    previewReportPath,
+                    timestamp = timestamp.ToString("o"),
+                    status = sessionStatus,
+                    device,
+                    ocxVersion = GetOcxVersion(),
+                    connectedDuringCommand = true,
+                    previewDuringCommand = true,
+                    config,
+                    runtimeDependencies,
+                    amr,
+                    options = new { includeFlcSweep, includeEdr, includeEdof },
+                    targets = targetRecords.ToArray(),
+                    cleanup,
+                    optionalErrors = optionalErrors.ToArray(),
+                    limitations,
+                    forbiddenOperationsInvoked = false
+                };
+            }
+            catch (Exception error)
+            {
+                return RealCommandError("DNVIDEOX_OPERATOR_WORKFLOW_FAILED", error, control != null, cleanup);
+            }
+            finally
+            {
+                CleanupControl(control, cleanup, stopPreview: true);
+                host?.Dispose();
+                cleanup.hostDisposed = true;
+                runtimeScope?.Dispose();
+            }
+        }
+
         public object RuntimeDiagnostics()
         {
             return InspectRuntimeDependencies(options.SdkRuntimeDir);
@@ -1074,6 +1276,198 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
         }
 
+        public static object[] BuildOperatorPlanForTests(string? plan)
+        {
+            return BuildOperatorPlan(plan).ToArray();
+        }
+
+        private static List<OperatorTarget> BuildOperatorPlan(string? plan)
+        {
+            var normalizedPlan = string.IsNullOrWhiteSpace(plan) ? "corners-basic" : plan!.Trim();
+            var targets = new List<OperatorTarget>();
+            if (normalizedPlan == "operator-smoke-single")
+            {
+                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Place the target detail under the microscope, adjust focus manually, then click Capture."));
+                return targets;
+            }
+
+            if (normalizedPlan == "card-interim")
+            {
+                targets.Add(new OperatorTarget(
+                    "full-card-overview",
+                    "Full-card overview",
+                    "interim_macro_overview",
+                    "interim_full_card_overview",
+                    "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated."));
+            }
+
+            if (normalizedPlan == "corners-basic" || normalizedPlan == "card-basic" || normalizedPlan == "card-interim")
+            {
+                targets.Add(new OperatorTarget("top-left-corner", "Top-left corner", "corner", "top_left_corner", "Move the card so the top-left corner is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(new OperatorTarget("top-right-corner", "Top-right corner", "corner", "top_right_corner", "Move the card so the top-right corner is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(new OperatorTarget("bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", "Move the card so the bottom-right corner is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(new OperatorTarget("bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", "Move the card so the bottom-left corner is centered under the microscope. Adjust focus manually, then confirm capture."));
+            }
+
+            if (normalizedPlan == "surface-basic")
+            {
+                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(new OperatorTarget("upper-surface", "Upper surface", "surface", "upper_surface", "Move the card so the upper surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(new OperatorTarget("lower-surface", "Lower surface", "surface", "lower_surface", "Move the card so the lower surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+            }
+            else if (normalizedPlan == "card-basic" || normalizedPlan == "card-interim")
+            {
+                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+            }
+
+            return targets;
+        }
+
+        private static object[] CaptureOperatorTargetArtifacts(
+            object control,
+            int deviceIndex,
+            string sessionDir,
+            OperatorTarget target,
+            int targetIndex,
+            int attempt,
+            long? configBits,
+            string? pid,
+            object runtimeDependencies,
+            bool includeFlcSweep,
+            bool includeEdr,
+            bool includeEdof,
+            List<object> optionalErrors)
+        {
+            var artifacts = new List<object>();
+            var stem = targetIndex.ToString("00") + "-" + target.id + "-attempt-" + attempt.ToString("00");
+            artifacts.Add(CaptureJpg(control, Path.Combine(sessionDir, stem + "-normal.jpg"), "normal", target.id + "-normal", "SaveFrameJPG"));
+
+            if (includeFlcSweep)
+            {
+                var recipes = new List<LightingRecipe>(BuildLightingSweepRecipes(configBits, pid));
+                if (recipes.Count == 0)
+                {
+                    artifacts.Add(UnavailableCapture(sessionDir, stem + "-lighting-sweep-unavailable.jpg", "lightingSweep", target.id + "-lighting-sweep", "LIGHTING_SWEEP_UNSUPPORTED", "GetConfig did not report LED or FLC support.", null));
+                }
+
+                foreach (var recipe in recipes)
+                {
+                    var apply = ApplyLightingRecipe(control, deviceIndex, recipe, configBits, pid, optionalErrors);
+                    if (!IsSuccessfulApply(apply))
+                    {
+                        artifacts.Add(UnavailableCapture(sessionDir, stem + "-" + recipe.name + ".jpg", "lightingSweep", recipe.name, "FLC_UNAVAILABLE", "Lighting recipe could not be applied.", apply));
+                        continue;
+                    }
+                    artifacts.Add(CaptureJpg(control, Path.Combine(sessionDir, stem + "-" + recipe.name + ".jpg"), "lightingSweep", recipe.name, "SaveFrameJPG"));
+                }
+            }
+
+            if (includeEdr)
+            {
+                artifacts.Add(TryOptionalSdkCapture(control, deviceIndex, Path.Combine(sessionDir, stem + "-edr.jpg"), "edr", target.id + "-edr", "SaveEDR", optionalErrors));
+            }
+
+            if (includeEdof)
+            {
+                if (!IsEdofSupported(configBits, pid))
+                {
+                    artifacts.Add(UnavailableCapture(sessionDir, stem + "-edof.jpg", "edof", target.id + "-edof", "EDOF_UNSUPPORTED", "GetConfig did not report EDOF support.", null));
+                }
+                else if (!IsEdofRuntimeReady(runtimeDependencies))
+                {
+                    artifacts.Add(UnavailableCapture(sessionDir, stem + "-edof.jpg", "edof", target.id + "-edof", "EDOF_RUNTIME_DEPENDENCIES_MISSING", "EDOF is reported by GetConfig, but required DNVideoX helper runtime files are not available from the configured SDK runtime directory.", runtimeDependencies));
+                }
+                else
+                {
+                    artifacts.Add(TryOptionalSdkCapture(control, deviceIndex, Path.Combine(sessionDir, stem + "-edof.jpg"), "edof", target.id + "-edof", "SaveEDOF", optionalErrors));
+                }
+            }
+
+            return artifacts.ToArray();
+        }
+
+        private static object BuildOperatorTargetRecord(OperatorTarget target, int targetIndex, OperatorAction action, int attempt, string status, object[] artifacts)
+        {
+            return new
+            {
+                target = new
+                {
+                    target.id,
+                    target.name,
+                    target.type,
+                    target.reportLabel,
+                    target.instruction
+                },
+                targetIndex,
+                action = action.ToString().ToLowerInvariant(),
+                attempt,
+                status,
+                artifacts
+            };
+        }
+
+        private static string[] OperatorLimitations()
+        {
+            return new[]
+            {
+                "Dino-Lite operator workflow preview -- not a certified grade.",
+                "Interim full-card overview is not production macro evidence.",
+                "Interim full-card overview is not calibrated macro capture.",
+                "Session output is not certified grading evidence.",
+                "Manual fallback mode until GRBL stage motion is integrated."
+            };
+        }
+
+        private static void WriteOperatorManifestAndReport(string manifestPath, string previewReportPath, object manifest, List<object> targetRecords)
+        {
+            var serializer = new JavaScriptSerializer();
+            File.WriteAllText(manifestPath, serializer.Serialize(manifest));
+
+            using (var writer = new StreamWriter(previewReportPath))
+            {
+                writer.WriteLine("<!doctype html><html><head><meta charset=\"utf-8\"><title>Dino-Lite operator workflow preview</title>");
+                writer.WriteLine("<style>body{font-family:Segoe UI,Arial,sans-serif;margin:24px;color:#1f2937}h1{font-size:24px}h2{font-size:18px;margin-top:28px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.item{border:1px solid #d1d5db;padding:12px;border-radius:6px}img{max-width:100%;height:auto;border:1px solid #e5e7eb}.meta{font-size:12px;color:#4b5563;word-break:break-all}.warning{font-weight:600;color:#7c2d12}</style></head><body>");
+                writer.WriteLine("<h1>Dino-Lite operator workflow preview -- not a certified grade.</h1>");
+                writer.WriteLine("<p class=\"warning\">This manual fallback session is not production macro evidence, not calibrated macro capture, and not certified grading evidence.</p>");
+                foreach (var targetRecord in targetRecords)
+                {
+                    var recordType = targetRecord.GetType();
+                    var target = recordType.GetProperty("target")?.GetValue(targetRecord, null);
+                    var targetType = target?.GetType();
+                    var targetName = Convert.ToString(targetType?.GetProperty("name")?.GetValue(target, null)) ?? "";
+                    var targetKind = Convert.ToString(targetType?.GetProperty("type")?.GetValue(target, null)) ?? "";
+                    var reportLabel = Convert.ToString(targetType?.GetProperty("reportLabel")?.GetValue(target, null)) ?? "";
+                    var action = Convert.ToString(recordType.GetProperty("action")?.GetValue(targetRecord, null)) ?? "";
+                    var status = Convert.ToString(recordType.GetProperty("status")?.GetValue(targetRecord, null)) ?? "";
+                    writer.WriteLine("<section>");
+                    writer.WriteLine("<h2>" + Html(targetName) + "</h2>");
+                    writer.WriteLine("<p class=\"meta\">target type: " + Html(targetKind) + "<br>report label: " + Html(reportLabel) + "<br>action: " + Html(action) + "<br>status: " + Html(status) + "</p>");
+                    writer.WriteLine("<div class=\"grid\">");
+                    var artifacts = recordType.GetProperty("artifacts")?.GetValue(targetRecord, null) as object[] ?? new object[0];
+                    foreach (var artifact in artifacts)
+                    {
+                        var artifactType = artifact.GetType();
+                        var filename = Convert.ToString(artifactType.GetProperty("filename")?.GetValue(artifact, null)) ?? "";
+                        var artifactStatus = Convert.ToString(artifactType.GetProperty("status")?.GetValue(artifact, null)) ?? "";
+                        var kind = Convert.ToString(artifactType.GetProperty("captureKind")?.GetValue(artifact, null)) ?? "";
+                        var recipe = Convert.ToString(artifactType.GetProperty("lightingRecipe")?.GetValue(artifact, null)) ?? "";
+                        var sha = Convert.ToString(artifactType.GetProperty("sha256")?.GetValue(artifact, null)) ?? "";
+                        var byteSize = Convert.ToString(artifactType.GetProperty("byteSize")?.GetValue(artifact, null)) ?? "";
+                        writer.WriteLine("<article class=\"item\">");
+                        writer.WriteLine("<h3>" + Html(filename) + "</h3>");
+                        if (artifactStatus == "success")
+                        {
+                            writer.WriteLine("<img src=\"" + Html(filename) + "\" alt=\"" + Html(filename) + "\">");
+                        }
+                        writer.WriteLine("<p class=\"meta\">kind: " + Html(kind) + "<br>status: " + Html(artifactStatus) + "<br>recipe: " + Html(recipe) + "<br>sha256: " + Html(sha.Length > 16 ? sha.Substring(0, 16) + "..." : sha) + "<br>bytes: " + Html(byteSize) + "</p>");
+                        writer.WriteLine("</article>");
+                    }
+                    writer.WriteLine("</div></section>");
+                }
+                writer.WriteLine("</body></html>");
+            }
+        }
+
         private static string SanitizeFilePart(string value)
         {
             var sanitized = "";
@@ -1285,7 +1679,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 optionalFiles,
                 edofHelperAvailable,
                 pathMutation = runtimeDirUsable
-                    ? "During manual capturePackage only, bridge temporarily sets current directory and Win32 DLL search directory to configuredRuntimeDir, then restores both in finally."
+                    ? "During manual capture package and operator workflow commands only, bridge temporarily sets current directory and Win32 DLL search directory to configuredRuntimeDir, then restores both in finally."
                     : "none"
             };
         }
@@ -1427,6 +1821,193 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
         }
 
+        private sealed class OperatorDnVideoXHost : IDisposable
+        {
+            private readonly Form form;
+            private readonly DnVideoXAxHost axHost;
+            private readonly Label titleLabel;
+            private readonly Label typeLabel;
+            private readonly Label instructionLabel;
+            private readonly Label progressLabel;
+            private readonly Label overviewNoticeLabel;
+            private readonly Label fallbackLabel;
+            private OperatorAction? requestedAction;
+
+            private OperatorDnVideoXHost(
+                Form form,
+                DnVideoXAxHost axHost,
+                Label titleLabel,
+                Label typeLabel,
+                Label instructionLabel,
+                Label progressLabel,
+                Label overviewNoticeLabel,
+                Label fallbackLabel)
+            {
+                this.form = form;
+                this.axHost = axHost;
+                this.titleLabel = titleLabel;
+                this.typeLabel = typeLabel;
+                this.instructionLabel = instructionLabel;
+                this.progressLabel = progressLabel;
+                this.overviewNoticeLabel = overviewNoticeLabel;
+                this.fallbackLabel = fallbackLabel;
+            }
+
+            public object ControlInstance => axHost.ControlInstance;
+
+            public static OperatorDnVideoXHost Create()
+            {
+                var form = new Form
+                {
+                    Text = "Ten Kings Dino-Lite Operator Workflow",
+                    ShowInTaskbar = true,
+                    StartPosition = FormStartPosition.CenterScreen,
+                    WindowState = FormWindowState.Normal,
+                    TopMost = true,
+                    Width = 1180,
+                    Height = 820,
+                    MinimumSize = new Size(900, 650)
+                };
+
+                var split = new SplitContainer
+                {
+                    Dock = DockStyle.Fill,
+                    Orientation = Orientation.Vertical,
+                    SplitterDistance = 760
+                };
+                var axHost = new DnVideoXAxHost { Dock = DockStyle.Fill };
+                split.Panel1.Controls.Add(axHost);
+
+                var panel = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    ColumnCount = 1,
+                    RowCount = 7,
+                    Padding = new Padding(16)
+                };
+                panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
+                panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+                panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+                panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
+                panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+                panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
+                panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 80));
+
+                var titleLabel = BuildOperatorLabel(16, true);
+                var typeLabel = BuildOperatorLabel(10, false);
+                var instructionLabel = BuildOperatorLabel(12, false);
+                var overviewNoticeLabel = BuildOperatorLabel(10, true);
+                var progressLabel = BuildOperatorLabel(11, false);
+                var fallbackLabel = BuildOperatorLabel(9, false);
+                fallbackLabel.Text = "Manual fallback mode until GRBL stage motion is integrated. Adjust focus manually, then confirm capture.";
+
+                var buttons = new FlowLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    FlowDirection = FlowDirection.LeftToRight,
+                    WrapContents = true
+                };
+                buttons.Controls.Add(BuildOperatorButton("Capture / continue", () => { }));
+                buttons.Controls.Add(BuildOperatorButton("Skip target", () => { }));
+                buttons.Controls.Add(BuildOperatorButton("Retake current target", () => { }));
+                buttons.Controls.Add(BuildOperatorButton("Abort session safely", () => { }));
+
+                var captureButton = (Button)buttons.Controls[0];
+                var skipButton = (Button)buttons.Controls[1];
+                var retakeButton = (Button)buttons.Controls[2];
+                var abortButton = (Button)buttons.Controls[3];
+
+                var host = new OperatorDnVideoXHost(form, axHost, titleLabel, typeLabel, instructionLabel, progressLabel, overviewNoticeLabel, fallbackLabel);
+                captureButton.Click += (_, __) => host.requestedAction = OperatorAction.Capture;
+                skipButton.Click += (_, __) => host.requestedAction = OperatorAction.Skip;
+                retakeButton.Click += (_, __) => host.requestedAction = OperatorAction.Retake;
+                abortButton.Click += (_, __) => host.requestedAction = OperatorAction.Abort;
+                form.FormClosing += (_, __) => host.requestedAction = OperatorAction.Abort;
+
+                panel.Controls.Add(titleLabel, 0, 0);
+                panel.Controls.Add(typeLabel, 0, 1);
+                panel.Controls.Add(instructionLabel, 0, 2);
+                panel.Controls.Add(overviewNoticeLabel, 0, 3);
+                panel.Controls.Add(progressLabel, 0, 4);
+                panel.Controls.Add(fallbackLabel, 0, 5);
+                panel.Controls.Add(buttons, 0, 6);
+                split.Panel2.Controls.Add(panel);
+                form.Controls.Add(split);
+
+                form.CreateControl();
+                axHost.CreateControl();
+                form.Show();
+                form.BringToFront();
+                form.Activate();
+                var topMostTimer = new System.Windows.Forms.Timer { Interval = 1500 };
+                topMostTimer.Tick += (_, __) =>
+                {
+                    topMostTimer.Stop();
+                    topMostTimer.Dispose();
+                    if (!form.IsDisposed)
+                    {
+                        form.TopMost = false;
+                    }
+                };
+                topMostTimer.Start();
+                Application.DoEvents();
+                return host;
+            }
+
+            public OperatorAction WaitForAction(OperatorTarget target, int targetIndex, int totalTargets, bool showPostOverviewNotice)
+            {
+                requestedAction = null;
+                titleLabel.Text = target.name;
+                typeLabel.Text = "Target type: " + target.type;
+                instructionLabel.Text = target.instruction + Environment.NewLine + Environment.NewLine + "Adjust focus manually, then confirm capture.";
+                overviewNoticeLabel.Text = showPostOverviewNotice
+                    ? "Now zoom/refocus for close-up detail captures before continuing to corners/surface targets."
+                    : "";
+                progressLabel.Text = "Capture " + targetIndex + " / " + totalTargets;
+                fallbackLabel.Text = "Manual fallback mode until GRBL stage motion is integrated.";
+                form.Activate();
+                Application.DoEvents();
+
+                while (requestedAction == null && !form.IsDisposed)
+                {
+                    Application.DoEvents();
+                    Thread.Sleep(50);
+                }
+
+                return requestedAction ?? OperatorAction.Abort;
+            }
+
+            private static Label BuildOperatorLabel(float size, bool bold)
+            {
+                return new Label
+                {
+                    Dock = DockStyle.Fill,
+                    AutoSize = false,
+                    Font = new Font("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular),
+                    TextAlign = ContentAlignment.MiddleLeft
+                };
+            }
+
+            private static Button BuildOperatorButton(string text, Action noop)
+            {
+                var button = new Button
+                {
+                    Text = text,
+                    Width = 168,
+                    Height = 42,
+                    Margin = new Padding(0, 0, 8, 8)
+                };
+                noop();
+                return button;
+            }
+
+            public void Dispose()
+            {
+                axHost.Dispose();
+                form.Dispose();
+            }
+        }
+
         private sealed class DnVideoXAxHost : AxHost
         {
             public DnVideoXAxHost()
@@ -1435,6 +2016,32 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
 
             public object ControlInstance => GetOcx();
+        }
+
+        private enum OperatorAction
+        {
+            Capture,
+            Skip,
+            Retake,
+            Abort
+        }
+
+        public sealed class OperatorTarget
+        {
+            public OperatorTarget(string id, string name, string type, string reportLabel, string instruction)
+            {
+                this.id = id;
+                this.name = name;
+                this.type = type;
+                this.reportLabel = reportLabel;
+                this.instruction = instruction;
+            }
+
+            public string id { get; }
+            public string name { get; }
+            public string type { get; }
+            public string reportLabel { get; }
+            public string instruction { get; }
         }
 
         private sealed class LightingRecipe

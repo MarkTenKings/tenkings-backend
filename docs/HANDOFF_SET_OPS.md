@@ -10489,3 +10489,41 @@ Build Set Ops UI flow with:
 - Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/4pxDdvFcgptq1uSgKmi3pqS2LsPf`.
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, and no next AI Grader phase work.
+## Session Update (2026-06-09, AI Grader Dino-Lite operator preview PR #31 in progress)
+- Created branch `feature/ai-grader-dinolite-operator-preview` from latest `origin/main`.
+- Added a manual-only Dino-Lite operator workflow command for local Dell preview/fallback capture:
+  - bridge JSONL command `dinolite.operatorWorkflow`
+  - capture-helper CLI command `dinolite-operator-workflow`
+  - visible Windows DNVideoX ActiveX preview host with Capture/continue, Skip, Retake, and Abort controls
+  - built-in plans `corners-basic`, `surface-basic`, `card-basic`, and `card-interim`
+- `card-interim` starts with `full-card-overview`, target type `interim_macro_overview`, and report label `interim_full_card_overview`.
+- Manifest/report text states the overview is not production macro evidence, not calibrated macro capture, and not certified grading evidence.
+- Default operator workflow captures normal JPG only. Optional flags enable FLC sweep, EDR, and EDOF.
+- Output remains outside git with `manifest.json`, `preview-report.html`, target-level metadata, SHA-256, byte size, MIME type, and timestamps. No base64 image data is embedded in JSON.
+- Tests added for fake operator workflow shape, card-interim overview ordering/labels, fail-closed real adapter behavior, CLI output-path rejection, and no default readiness/health hardware spawn.
+- Validation completed:
+  - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass
+  - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 10 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 68 tests
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
+- Manual operator workflow smoke attempt:
+  - command launched `dinolite-operator-workflow` with `plan=card-interim`, normal JPG only, explicit bridge exe, explicit `--sdk-runtime-dir`, and outside-git output dir `C:\TenKings\capture-data\dinolite-operator`
+  - preview workflow remained pending for operator input and the shell command timed out after 11 minutes
+  - no target captures, `manifest.json`, or `preview-report.html` were written
+  - stuck bridge/node processes were terminated after a normal window close did not exit the bridge
+  - follow-up fix added: stdio client now kills the bridge child process on command timeout to avoid leaked manual workflow processes
+- Follow-up supervised smoke with Mark present:
+  - root cause of missing operator window was the TypeScript stdio client spawning manual hardware bridge processes with `windowsHide=true`
+  - fix: manual hardware bridge spawns now use visible child windows, the operator form starts centered/normal and briefly topmost, and the CLI prints operator plan/target progress before waiting
+  - added `operator-smoke-single`, a one-target center-surface plan for supervised smoke
+  - command completed with `status=completed`, visible window title `Ten Kings Dino-Lite Operator Workflow`, and cleanup `previewStopped=true`, `disconnected=true`, `hostDisposed=true`
+  - output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-operator-smoke-single-20260610T034854043Z`
+  - artifacts outside git: `manifest.json`, `preview-report.html`, `01-center-surface-attempt-01-normal.jpg`
+  - normal JPG `sha256=74016465bd7ee8a00c033f98ac72047abb3b302b40c33d7314f44baf42a9fd5f`, `byteSize=130542`
+  - `card-interim` was deferred because the single-target supervised workflow proved the visible operator flow.
+- PR #31 can be converted from draft to ready for review after final validation and checks pass.
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, and no certified grade/certificate/final AI grade claim.

@@ -20,7 +20,8 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
                 "{\"id\":\"7\",\"command\":\"dinolite.captureStillJpg\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\"}",
                 "{\"id\":\"8\",\"command\":\"dinolite.capturePackage\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"card-demo-001\",\"includeLightingSweep\":true,\"includeEdr\":true,\"includeEdof\":true}",
                 "{\"id\":\"9\",\"command\":\"dinolite.runtimeDiagnostics\"}",
-                "{\"id\":\"10\",\"command\":\"exit\"}");
+                "{\"id\":\"10\",\"command\":\"dinolite.operatorWorkflow\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"operator-demo\",\"plan\":\"card-interim\"}",
+                "{\"id\":\"11\",\"command\":\"exit\"}");
 
             StringAssert.Contains(output, "\"id\":\"1\"");
             StringAssert.Contains(output, "\"status\":\"OK\"");
@@ -46,8 +47,41 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             StringAssert.Contains(output, "\"captureKind\":\"lightingSweep\"");
             StringAssert.Contains(output, "\"edofHelperAvailable\":true");
             StringAssert.Contains(output, "\"runtimeDirConfigured\":false");
+            StringAssert.Contains(output, "\"sessionId\":\"dinolite-operator-operator-demo-20260609T000000000Z\"");
+            StringAssert.Contains(output, "\"plan\":\"card-interim\"");
+            StringAssert.Contains(output, "\"id\":\"full-card-overview\"");
+            StringAssert.Contains(output, "\"type\":\"interim_macro_overview\"");
+            StringAssert.Contains(output, "\"reportLabel\":\"interim_full_card_overview\"");
+            StringAssert.Contains(output, "not production macro evidence");
+            StringAssert.Contains(output, "not calibrated macro capture");
+            StringAssert.Contains(output, "not certified grading evidence");
             StringAssert.Contains(output, "not a certified grade");
             StringAssert.Contains(output, "\"status\":\"BYE\"");
+        }
+
+        [TestMethod]
+        public void CardInterimOperatorPlanStartsWithInterimOverview()
+        {
+            var plan = DnVideoXAdapter.BuildOperatorPlanForTests("card-interim");
+            var first = plan[0];
+
+            Assert.AreEqual("full-card-overview", first.GetType().GetProperty("id")!.GetValue(first, null));
+            Assert.AreEqual("interim_macro_overview", first.GetType().GetProperty("type")!.GetValue(first, null));
+            Assert.AreEqual("interim_full_card_overview", first.GetType().GetProperty("reportLabel")!.GetValue(first, null));
+            StringAssert.Contains((string)first.GetType().GetProperty("instruction")!.GetValue(first, null)!, "interim overview");
+            Assert.AreEqual(6, plan.Length);
+        }
+
+        [TestMethod]
+        public void OperatorSmokeSinglePlanHasOneCenterSurfaceTarget()
+        {
+            var plan = DnVideoXAdapter.BuildOperatorPlanForTests("operator-smoke-single");
+            var first = plan[0];
+
+            Assert.AreEqual(1, plan.Length);
+            Assert.AreEqual("center-surface", first.GetType().GetProperty("id")!.GetValue(first, null));
+            Assert.AreEqual("surface", first.GetType().GetProperty("type")!.GetValue(first, null));
+            StringAssert.Contains((string)first.GetType().GetProperty("instruction")!.GetValue(first, null)!, "click Capture");
         }
 
         [TestMethod]
@@ -153,7 +187,8 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             var input = new StringReader(string.Join("\n",
                 "{\"id\":\"status\",\"command\":\"dinolite.status\",\"deviceIndex\":0}",
                 "{\"id\":\"capture\",\"command\":\"dinolite.captureStillJpg\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\"}",
-                "{\"id\":\"pkg\",\"command\":\"dinolite.capturePackage\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"card-demo-001\",\"includeLightingSweep\":true,\"includeEdr\":true,\"includeEdof\":true}"));
+                "{\"id\":\"pkg\",\"command\":\"dinolite.capturePackage\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"label\":\"card-demo-001\",\"includeLightingSweep\":true,\"includeEdr\":true,\"includeEdof\":true}",
+                "{\"id\":\"operator\",\"command\":\"dinolite.operatorWorkflow\",\"deviceIndex\":0,\"outputDir\":\"C:\\\\TenKings\\\\capture-data\\\\fake\",\"plan\":\"card-interim\"}"));
             var output = new StringWriter();
             var server = new JsonLineBridgeServer(new DnVideoXAdapter(new BridgeOptions()), input, output);
             var code = server.Run();
@@ -163,6 +198,7 @@ namespace TenKings.AiGrader.DinoLiteBridge.Tests
             StringAssert.Contains(text, "\"id\":\"status\"");
             StringAssert.Contains(text, "\"id\":\"capture\"");
             StringAssert.Contains(text, "\"id\":\"pkg\"");
+            StringAssert.Contains(text, "\"id\":\"operator\"");
             StringAssert.Contains(text, "\"status\":\"SDK_NOT_READY\"");
             StringAssert.Contains(text, "\"comActiveXInstantiated\":false");
             StringAssert.Contains(text, "--manual-hardware");

@@ -99,6 +99,18 @@ namespace TenKings.AiGrader.DinoLiteBridge
                                 request.includeEdr == true,
                                 request.includeEdof == true));
                         return false;
+                    case "dinolite.operatorWorkflow":
+                        WriteResult(
+                            request.id,
+                            adapter.OperatorWorkflow(
+                                request.deviceIndex ?? 0,
+                                request.outputDir,
+                                request.label,
+                                request.plan,
+                                request.includeFlcSweep == true || request.includeLightingSweep == true,
+                                request.includeEdr == true,
+                                request.includeEdof == true));
+                        return false;
                     case "exit":
                         WriteResult(request.id, new { status = "BYE" });
                         return true;
