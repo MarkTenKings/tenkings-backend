@@ -10489,3 +10489,28 @@ Build Set Ops UI flow with:
 - Vercel production deploy completed successfully: `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/4pxDdvFcgptq1uSgKmi3pqS2LsPf`.
 - Migrations remained skipped by the Vercel build gate because `RUN_DB_MIGRATIONS` was not set to `true`.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy/restart, no runtime DB operation against a real app DB, no real hardware access, no real hardware SDK imports, and no next AI Grader phase work.
+## Session Update (2026-06-09, AI Grader Dino-Lite operator preview PR #31 in progress)
+- Created branch `feature/ai-grader-dinolite-operator-preview` from latest `origin/main`.
+- Added a manual-only Dino-Lite operator workflow command for local Dell preview/fallback capture:
+  - bridge JSONL command `dinolite.operatorWorkflow`
+  - capture-helper CLI command `dinolite-operator-workflow`
+  - visible Windows DNVideoX ActiveX preview host with Capture/continue, Skip, Retake, and Abort controls
+  - built-in plans `corners-basic`, `surface-basic`, `card-basic`, and `card-interim`
+- `card-interim` starts with `full-card-overview`, target type `interim_macro_overview`, and report label `interim_full_card_overview`.
+- Manifest/report text states the overview is not production macro evidence, not calibrated macro capture, and not certified grading evidence.
+- Default operator workflow captures normal JPG only. Optional flags enable FLC sweep, EDR, and EDOF.
+- Output remains outside git with `manifest.json`, `preview-report.html`, target-level metadata, SHA-256, byte size, MIME type, and timestamps. No base64 image data is embedded in JSON.
+- Tests added for fake operator workflow shape, card-interim overview ordering/labels, fail-closed real adapter behavior, CLI output-path rejection, and no default readiness/health hardware spawn.
+- Validation completed so far:
+  - `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass
+  - `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 10 tests
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 68 tests
+- Manual operator workflow smoke attempt:
+  - command launched `dinolite-operator-workflow` with `plan=card-interim`, normal JPG only, explicit bridge exe, explicit `--sdk-runtime-dir`, and outside-git output dir `C:\TenKings\capture-data\dinolite-operator`
+  - preview workflow remained pending for operator input and the shell command timed out after 11 minutes
+  - no target captures, `manifest.json`, or `preview-report.html` were written
+  - stuck bridge/node processes were terminated after a normal window close did not exit the bridge
+  - follow-up fix added: stdio client now kills the bridge child process on command timeout to avoid leaked manual workflow processes
+- Remaining before PR #31 ready: full repo validation, one manual operator workflow smoke on the Dell PC if the operator can complete the visible preview prompts, docs finalization, commit/push/PR.
+- Guardrails held so far: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, and no certified grade/certificate/final AI grade claim.

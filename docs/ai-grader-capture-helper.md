@@ -215,11 +215,12 @@ Supported bridge JSONL commands:
 - `dinolite.runtimeDiagnostics`
 - `dinolite.capturePackage`
 - `dinolite.captureDemoPackage`
+- `dinolite.operatorWorkflow`
 - `exit`
 
 The fake bridge adapter is the default. It returns deterministic AF7915MZTL-like device metadata and simulated support flags for still capture, AMR, FLC, EDR, and EDOF. It never uses COM and does not require SDK files.
 
-The real DNVideoX adapter is manual-only. It does not instantiate `DNVideoX.ocx` during tests, CI, default bridge startup, fake mode, readiness, or normal health/capability commands. The real COM paths are explicit `dinolite.enumerateDevices`, `dinolite.status`, `dinolite.captureStillJpg`, and `dinolite.capturePackage` commands with `--adapter dnvideox` plus the manual bridge flag set by the capture-helper CLI.
+The real DNVideoX adapter is manual-only. It does not instantiate `DNVideoX.ocx` during tests, CI, default bridge startup, fake mode, readiness, or normal health/capability commands. The real COM paths are explicit `dinolite.enumerateDevices`, `dinolite.status`, `dinolite.captureStillJpg`, `dinolite.capturePackage`, and `dinolite.operatorWorkflow` commands with `--adapter dnvideox` plus the manual bridge flag set by the capture-helper CLI.
 
 Manual enumeration creates the registered 32-bit ActiveX control through ProgID `VIDEOCAPX.VideoCapXCtrl.1` inside a hidden offscreen WinForms `AxHost`, calls `GetVideoDeviceCount`, then calls `GetVideoDeviceName` for detected indexes. It may also call `GetVideoDeviceDesc` and `GetDeviceID`; optional failures are reported without failing the whole enumeration when device count succeeds.
 
@@ -307,6 +308,32 @@ Cleanup reported `previewStopped=true`, `disconnected=true`, `hostDisposed=true`
 
 The package preview report is local static HTML only and includes the required text `Dino-Lite capture package preview -- not a certified grade.` No DB writes, uploads, production report, certificate, or grade claim are produced by this command.
 
+Manual real DNVideoX operator workflow, for the Dell Windows capture node only:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-operator-workflow `
+  --bridge-exe C:\TenKings\repos\tenkings-rip-it-live\packages\ai-grader-dinolite-bridge\src\TenKings.AiGrader.DinoLiteBridge\bin\x86\Release\net48\TenKings.AiGrader.DinoLiteBridge.exe `
+  --adapter dnvideox `
+  --device-index 0 `
+  --output-dir C:\TenKings\capture-data\dinolite-operator `
+  --plan card-interim `
+  --sdk-runtime-dir C:\TenKings\sdk\dino-lite\dnvideox-sdk `
+  --bridge-timeout-ms 600000
+```
+
+The operator workflow opens a local Windows preview window using the DNVideoX-hosted ActiveX control. The operator sees target name, target type, instructions, capture count, and manual fallback mode text. Controls are `Capture / continue`, `Skip target`, `Retake current target`, and `Abort session safely`. The default capture set is normal JPG only; optional flags are `--include-flc-sweep`, `--include-edr`, and `--include-edof`.
+
+Built-in operator plans:
+
+- `corners-basic`: top-left, top-right, bottom-right, and bottom-left corners.
+- `surface-basic`: center, upper, and lower surface targets.
+- `card-basic`: four corners plus center surface.
+- `card-interim`: full-card overview, four corners, and center surface.
+
+The `card-interim` overview target is intentionally labeled `interim_full_card_overview` with target type `interim_macro_overview`. The preview/report/manifest state that this overview is not production macro evidence, not calibrated macro capture, and not certified grading evidence. After the overview capture, the preview window instructs the operator to zoom/refocus for close-up detail captures before continuing. This is a manual fallback workflow until GRBL stage motion and dedicated macro camera evidence are integrated.
+
+Operator workflow output is a local session folder outside git with `manifest.json`, `preview-report.html`, target-level artifact metadata, SHA-256 hashes, byte sizes, MIME type, timestamps, and no embedded image data. No DB writes, uploads, production report, certificate, final AI grade, or certified grading claim are produced by this command.
+
 SDK binaries, OCX files, and DNVideoX DLLs must remain outside git. Do not run `regsvr32` from this repo flow.
 
 ## Simulator-First Limitation
@@ -341,7 +368,7 @@ The runnable driver set is `mock` only. `real` is accepted by readiness reportin
 
 The mock driver set never imports Basler, Dino-Lite, serial, GRBL, camera, USB, or microscope SDKs. It does not open OS device handles or sockets.
 
-The implemented real-adjacent adapters are Arduino LED readiness, GRBL stage status readiness, and manual Dino-Lite DNVideoX enumeration/status/still JPG capture. They are not part of the runnable mock driver set and require explicit CLI/config/env before they can open serial or instantiate DNVideoX.
+The implemented real-adjacent adapters are Arduino LED readiness, GRBL stage status readiness, and manual Dino-Lite DNVideoX enumeration/status/still JPG/package/operator workflow capture. They are not part of the runnable mock driver set and require explicit CLI/config/env before they can open serial or instantiate DNVideoX.
 
 ## Future Hardware Boundary
 
@@ -367,4 +394,4 @@ Before the first real hardware driver integration:
 - keep real discovery non-invasive until the specific device adapter is reviewed
 - keep Arduino LED readiness limited to `PING` and `LED ALL OFF` until a later approved LED control slice
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
-- keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package capture, including outside-git SDK runtime diagnostics for EDOF, until a later approved lens/focus/exposure/DPQ/certified-grading slice
+- keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package/operator workflow capture, including outside-git SDK runtime diagnostics for EDOF, until a later approved lens/focus/exposure/DPQ/certified-grading slice

@@ -10,7 +10,9 @@ namespace TenKings.AiGrader.DinoLiteBridge
         public string? outputDir { get; set; }
         public string? sdkRuntimeDir { get; set; }
         public string? label { get; set; }
+        public string? plan { get; set; }
         public bool? includeLightingSweep { get; set; }
+        public bool? includeFlcSweep { get; set; }
         public bool? includeEdr { get; set; }
         public bool? includeEdof { get; set; }
     }

@@ -19435,3 +19435,36 @@ By enabling Rip It Live, I confirm:
 - No runtime DB operation against a real app database was run.
 - No real hardware access was run.
 - No image-processing/grading math, CMYK/auth algorithm, report, or PDF work was added.
+## 2026-06-09 - AI Grader Dino-Lite operator preview PR #31 in progress
+
+### Summary
+- Created branch `feature/ai-grader-dinolite-operator-preview` from latest `origin/main`.
+- Added manual-only Dino-Lite operator workflow support:
+  - bridge JSONL command `dinolite.operatorWorkflow`
+  - capture-helper CLI command `dinolite-operator-workflow`
+  - visible Windows DNVideoX ActiveX preview host
+  - human controls for Capture/continue, Skip target, Retake current target, and Abort session safely
+- Added built-in plans `corners-basic`, `surface-basic`, `card-basic`, and `card-interim`.
+- `card-interim` begins with `full-card-overview`, target type `interim_macro_overview`, report label `interim_full_card_overview`, and explicit text that it is interim only until dedicated macro camera integration.
+- Session output is local-only outside git: target-level normal JPG artifacts by default, optional FLC/EDR/EDOF flags, `manifest.json`, `preview-report.html`, checksums, byte sizes, MIME type, timestamps, and no base64 image data.
+- Manifest/report limitations state the overview is not production macro evidence, not calibrated macro capture, and not certified grading evidence. The command does not produce a final AI grade, certificate, production report, upload, or DB write.
+
+### Validation So Far
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 10 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 68 tests.
+- Manual operator workflow smoke attempt launched `dinolite-operator-workflow` with `plan=card-interim`, normal JPG only, explicit bridge exe, explicit SDK runtime dir, and outside-git output dir `C:\TenKings\capture-data\dinolite-operator`.
+- The workflow remained pending for operator input and the shell command timed out after 11 minutes. No target captures, `manifest.json`, or `preview-report.html` were written.
+- Stuck bridge/node processes were terminated after a normal window close did not exit the bridge.
+- Follow-up fix added: the TypeScript stdio bridge client now kills the child process on command timeout to avoid leaked manual workflow processes.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No lens/focus/exposure-setting/DPQ methods were added or run.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

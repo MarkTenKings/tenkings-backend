@@ -265,6 +265,82 @@ function fakeResult(command) {
       forbiddenOperationsInvoked: false,
     };
   }
+  if (command === "dinolite.operatorWorkflow") {
+    return {
+      adapter: "fake",
+      simulated: true,
+      comActiveXInstantiated: false,
+      sessionId: "dinolite-operator-card-interim-smoke-20260609T000000000Z",
+      label: "card-interim-smoke",
+      plan: "card-interim",
+      sessionDir: "C:\\TenKings\\capture-data\\dinolite-operator\\dinolite-operator-card-interim-smoke-20260609T000000000Z",
+      manifestPath: "C:\\TenKings\\capture-data\\dinolite-operator\\dinolite-operator-card-interim-smoke-20260609T000000000Z\\manifest.json",
+      previewReportPath: "C:\\TenKings\\capture-data\\dinolite-operator\\dinolite-operator-card-interim-smoke-20260609T000000000Z\\preview-report.html",
+      timestamp: "2026-06-09T00:00:00.0000000Z",
+      status: "completed",
+      device: {
+        index: 0,
+        name: "Fake Dino-Lite Edge AF7915MZTL",
+      },
+      ocxVersion: "simulated",
+      connectedDuringCommand: true,
+      previewDuringCommand: true,
+      config: { bitfield: 124 },
+      amr: 42.5,
+      options: { includeFlcSweep: false, includeEdr: false, includeEdof: false },
+      targets: [
+        {
+          target: {
+            id: "full-card-overview",
+            name: "Full-card overview",
+            type: "interim_macro_overview",
+            reportLabel: "interim_full_card_overview",
+            instruction:
+              "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated.",
+          },
+          targetIndex: 1,
+          action: "capture",
+          attempt: 1,
+          status: "success",
+          artifacts: [
+            {
+              path: "C:\\TenKings\\capture-data\\dinolite-operator\\01-full-card-overview-normal.jpg",
+              filename: "01-full-card-overview-normal.jpg",
+              sha256: "575b00ae2fefbbacf7b92d1fd8b839ecfb2979661cc2202b9b08052fb1e48a68",
+              byteSize: 16,
+              mimeType: "image/jpeg",
+              timestamp: "2026-06-09T00:00:00.0000000Z",
+              captureKind: "normal",
+              lightingRecipe: "full-card-overview-normal",
+              status: "success",
+            },
+          ],
+        },
+        {
+          target: {
+            id: "top-left-corner",
+            name: "Top-left corner",
+            type: "corner",
+            reportLabel: "top_left_corner",
+            instruction: "Move the card so the top-left corner is centered under the microscope.",
+          },
+          targetIndex: 2,
+          action: "capture",
+          attempt: 1,
+          status: "success",
+          artifacts: [],
+        },
+      ],
+      cleanup: { previewStopped: true, disconnected: true, hostDisposed: true },
+      limitations: [
+        "Dino-Lite operator workflow preview -- not a certified grade.",
+        "Interim full-card overview is not production macro evidence.",
+        "Interim full-card overview is not calibrated macro capture.",
+        "Session output is not certified grading evidence.",
+      ],
+      forbiddenOperationsInvoked: false,
+    };
+  }
   if (command === "dinolite.runtimeDiagnostics") {
     return {
       adapter: "fake",
@@ -423,6 +499,36 @@ test("client maps fake capture package response shape", async () => {
   assert.equal(capturePackage.forbiddenOperationsInvoked, false);
 });
 
+test("client maps fake operator workflow response shape", async () => {
+  const spawned = [];
+  const client = new DinoLiteBridgeClient(
+    { executablePath: "fake-bridge.exe", adapter: "fake", timeoutMs: 100, manualHardwareAccess: true },
+    (command, args) => {
+      spawned.push({ command, args });
+      return new FakeBridgeProcess();
+    }
+  );
+
+  const workflow = await client.operatorWorkflow({
+    deviceIndex: 0,
+    outputDir: "C:\\TenKings\\capture-data\\dinolite-operator",
+    label: "card-interim-smoke",
+    plan: "card-interim",
+  });
+  await client.close();
+
+  assert.deepEqual(spawned[0].args, ["--adapter", "fake", "--manual-hardware"]);
+  assert.equal(workflow.plan, "card-interim");
+  assert.equal(workflow.targets[0].target.id, "full-card-overview");
+  assert.equal(workflow.targets[0].target.type, "interim_macro_overview");
+  assert.equal(workflow.targets[0].target.reportLabel, "interim_full_card_overview");
+  assert.equal(workflow.targets[0].artifacts[0].mimeType, "image/jpeg");
+  assert.match(workflow.limitations.join(" "), /not production macro evidence/);
+  assert.match(workflow.limitations.join(" "), /not calibrated macro capture/);
+  assert.match(workflow.limitations.join(" "), /not certified grading evidence/);
+  assert.equal(workflow.forbiddenOperationsInvoked, false);
+});
+
 test("client passes sdk runtime dir only for explicit manual hardware spawn", async () => {
   const spawned = [];
   const client = new DinoLiteBridgeClient(
@@ -475,10 +581,44 @@ test("real adapter manual hardware commands do not allow health path", async () 
   assert.equal(capturePackage.previewDuringCommand, true);
 });
 
+test("real adapter manual hardware commands allow operator workflow but not health", async () => {
+  let bridgeProcess;
+  const client = new DinoLiteBridgeClient(
+    { executablePath: "bridge.exe", adapter: "dnvideox", timeoutMs: 100, manualHardwareAccess: true },
+    () => {
+      bridgeProcess = new FakeBridgeProcess();
+      return bridgeProcess;
+    }
+  );
+
+  await assert.rejects(() => client.health(), (error) => {
+    assert.equal(error instanceof DinoLiteBridgeClientError, true);
+    assert.equal(error.code, "REAL_BRIDGE_COMMAND_DISABLED");
+    return true;
+  });
+
+  const workflow = await client.operatorWorkflow({
+    deviceIndex: 0,
+    outputDir: "C:\\TenKings\\capture-data\\dinolite-operator",
+    plan: "card-interim",
+  });
+  await client.close();
+
+  assert.equal(workflow.targets[0].target.id, "full-card-overview");
+  assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("dinolite.operatorWorkflow")), true);
+  assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("SetLensPos")), false);
+  assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("AutoFocus")), false);
+  assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("SetExposureValue")), false);
+});
+
 test("client times out when bridge does not respond", async () => {
+  let bridgeProcess;
   const client = new DinoLiteBridgeClient(
     { executablePath: "fake-bridge.exe", adapter: "fake", timeoutMs: 5 },
-    () => new FakeBridgeProcess({ ignoreWrites: true })
+    () => {
+      bridgeProcess = new FakeBridgeProcess({ ignoreWrites: true });
+      return bridgeProcess;
+    }
   );
 
   await assert.rejects(() => client.health(), (error) => {
@@ -486,6 +626,7 @@ test("client times out when bridge does not respond", async () => {
     assert.equal(error.code, "BRIDGE_TIMEOUT");
     return true;
   });
+  assert.equal(bridgeProcess.killed, true);
 });
 
 test("client maps process exit before response", async () => {
@@ -665,6 +806,34 @@ test("cli capture package rejects sdk runtime dir inside repo before spawning", 
 
   assert.equal(code, 1);
   assert.match(stderr, /SDK runtime directory must be outside the git repo/);
+});
+
+test("cli operator workflow rejects output inside repo before spawning", async () => {
+  let stderr = "";
+  const code = await runCaptureHelperCli(
+    [
+      "dinolite-operator-workflow",
+      "--bridge-exe",
+      "bridge.exe",
+      "--adapter",
+      "dnvideox",
+      "--device-index",
+      "0",
+      "--output-dir",
+      process.cwd(),
+      "--plan",
+      "card-interim",
+    ],
+    {
+      stderr: (text) => {
+        stderr += text;
+      },
+      env: {},
+    }
+  );
+
+  assert.equal(code, 1);
+  assert.match(stderr, /outside the git repo/);
 });
 
 test("readiness default reports bridge unconfigured without spawning", () => {

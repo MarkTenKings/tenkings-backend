@@ -220,6 +220,56 @@ namespace TenKings.AiGrader.DinoLiteBridge
             };
         }
 
+        public object OperatorWorkflow(int deviceIndex, string? outputDir, string? label, string? plan, bool includeFlcSweep, bool includeEdr, bool includeEdof)
+        {
+            var normalizedOutputDir = string.IsNullOrWhiteSpace(outputDir) ? "C:\\TenKings\\capture-data\\dinolite-operator" : outputDir!.TrimEnd('\\');
+            var normalizedLabel = string.IsNullOrWhiteSpace(label) ? "fake-operator" : label!;
+            var normalizedPlan = string.IsNullOrWhiteSpace(plan) ? "corners-basic" : plan!;
+            var sessionId = "dinolite-operator-" + normalizedLabel + "-20260609T000000000Z";
+            var sessionDir = normalizedOutputDir + "\\" + sessionId;
+            var targets = normalizedPlan == "card-interim"
+                ? new[]
+                {
+                    FakeTarget(sessionDir, "full-card-overview", "Full-card overview", "interim_macro_overview", "interim_full_card_overview", 1),
+                    FakeTarget(sessionDir, "top-left-corner", "Top-left corner", "corner", "top_left_corner", 2),
+                    FakeTarget(sessionDir, "top-right-corner", "Top-right corner", "corner", "top_right_corner", 3),
+                    FakeTarget(sessionDir, "bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", 4),
+                    FakeTarget(sessionDir, "bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", 5),
+                    FakeTarget(sessionDir, "center-surface", "Center surface", "surface", "center_surface", 6)
+                }
+                : new[]
+                {
+                    FakeTarget(sessionDir, "top-left-corner", "Top-left corner", "corner", "top_left_corner", 1),
+                    FakeTarget(sessionDir, "top-right-corner", "Top-right corner", "corner", "top_right_corner", 2)
+                };
+
+            return new
+            {
+                adapter = "fake",
+                simulated = true,
+                comActiveXInstantiated = false,
+                sessionId,
+                label = normalizedLabel,
+                plan = normalizedPlan,
+                sessionDir,
+                manifestPath = sessionDir + "\\manifest.json",
+                previewReportPath = sessionDir + "\\preview-report.html",
+                timestamp = "2026-06-09T00:00:00.0000000Z",
+                status = normalizedLabel.Contains("abort") ? "aborted" : "completed",
+                device = FakeDevice(deviceIndex),
+                ocxVersion = "simulated",
+                connectedDuringCommand = true,
+                previewDuringCommand = true,
+                config = new { bitfield = 0x7c, decoded = new { edof = true, amr = true, led = true, flc = true, axi = true } },
+                amr = 42.5,
+                options = new { includeFlcSweep, includeEdr, includeEdof },
+                targets,
+                cleanup = new { previewStopped = true, disconnected = true, hostDisposed = true, finalLightingRecipe = "safe-final-all-quadrants-level-3" },
+                limitations = OperatorLimitations(),
+                forbiddenOperationsInvoked = false
+            };
+        }
+
         public object RuntimeDiagnostics()
         {
             return new
@@ -267,6 +317,42 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 lightingRecipe = recipe,
                 status,
                 error = status == "success" ? null : new { code = "FAKE_UNAVAILABLE", message = "Simulated unsupported Dino-Lite feature." }
+            };
+        }
+
+        private static object FakeTarget(string sessionDir, string id, string name, string type, string reportLabel, int index)
+        {
+            return new
+            {
+                target = new
+                {
+                    id,
+                    name,
+                    type,
+                    reportLabel,
+                    instruction = id == "full-card-overview"
+                        ? "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated."
+                        : "Move the card so the " + name.ToLowerInvariant() + " is centered under the microscope. Adjust focus manually, then confirm capture."
+                },
+                targetIndex = index,
+                action = "captured",
+                attempt = 1,
+                status = "success",
+                artifacts = new[]
+                {
+                    FakeCapture(sessionDir, index.ToString("00") + "-" + id + "-normal", "normal", "operator-target-normal", "success")
+                }
+            };
+        }
+
+        private static string[] OperatorLimitations()
+        {
+            return new[]
+            {
+                "Dino-Lite operator workflow preview -- not a certified grade.",
+                "Interim full-card overview is not production macro evidence.",
+                "Interim full-card overview is not calibrated macro capture.",
+                "Session output is not certified grading evidence."
             };
         }
     }
