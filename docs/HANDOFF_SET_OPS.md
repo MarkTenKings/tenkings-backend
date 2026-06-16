@@ -10793,3 +10793,54 @@ Build Set Ops UI flow with:
 - After both timeouts, no matching bridge/node/camera processes were left running.
 - This did not produce a cleaner controlled report for review. PR #33 remains based on the previous successful template smoke (`dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z`) and still needs final explicit Mark confirmation that the full-card/corner/edge/surface templates were visible/useful during a completed workflow.
 - Guardrails held: no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, no fake/manual/operator-entered/placeholder score, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.
+
+## Session Update (2026-06-16 UTC / 2026-06-15 ET, AI Grader Dino-Lite report diagnostics PR #33 indoor supervised run)
+- Continued PR #33 on branch `feature/ai-grader-dinolite-report-diagnostics`; PR remains unmerged.
+- Mark confirmed the current Dell USB hub/dock Dino-Lite connection is acceptable for this PR #33 supervised indoor workflow because prior Dino-Lite preview/capture workflows worked through the same connection. The direct-to-Dell USB precondition was waived for this run.
+- No code changes were made before the run.
+- Ran a supervised indoor `experimental-card-grading` workflow with normal JPG only:
+  - command shape: `dinolite-experimental-grading-run --label report-diagnostics-indoor-final --corner-profile sharp_90 --capture-guides true --bridge-timeout-ms 5400000`
+  - output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-indoor-final-20260616T011349194Z`
+  - manifest: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-indoor-final-20260616T011349194Z\manifest.json`
+  - analysis: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-indoor-final-20260616T011349194Z\analysis.json`
+  - report: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-indoor-final-20260616T011349194Z\preview-report.html`
+  - captured target count: 12
+- Verified output files:
+  - `manifest.json` exists
+  - `analysis.json` exists
+  - `preview-report.html` exists
+  - 12 normal JPG artifacts exist
+- Visual inspection through a temporary contact sheet showed the saved JPG artifacts do not include the yellow guide/template overlay graphics.
+- Element results:
+  - centering: `10.00 / 10`, confidence `0.838`, band `Excellent`
+  - corners: `6.45 / 10`, confidence `0.765`, band `Fair / Review`
+  - edges: `6.39 / 10`, confidence `0.764`, band `Fair / Review`
+  - surface: `1.23 / 10`, confidence `0.714`, band `Needs Review`
+  - overall: `6.00 / 10`, confidence `0.714`, band `Fair / Review`
+- Quality warnings:
+  - warning summary: `Experimental/unvalidated deterministic pixel analysis only`; `Not a certified grade, final AI grade, certificate, or calibrated production macro result`; `One or more captures produced quality warnings; review target diagnostics before interpreting scores.`
+  - target quality warnings on 11 of 12 targets; `center-surface` had no target warnings
+  - common warning types: blur risk, underexposure risk, score confidence reduced, and saturated card-coverage heuristic on some close-up targets
+  - saturated coverage heuristic targets: `top-left-corner`, `bottom-right-corner`, `bottom-left-corner`, `bottom-edge`
+  - underexposure risk remained on most targets; exposure warnings remain diagnostic-only in v0.1
+- Compared with the earlier completed PR #33 template smoke (`overall 4.14 / 10`, corners `2.24 / 10`, edges `3.59 / 10`, warnings on 12 targets), this indoor run produced cleaner objective output: overall `6.00 / 10`, corners `6.45 / 10`, edges `6.39 / 10`, and one target with no quality warnings. It still is not calibrated macro evidence and remains experimental/non-certified.
+- Mark template confirmation status:
+  - full-card template visible/useful: confirmed accepted by Mark after the run
+  - corner templates visible/useful: confirmed accepted by Mark after the run
+  - edge templates visible/useful: confirmed accepted by Mark after the run
+  - surface template visible/useful: confirmed accepted by Mark after the run
+  - Mark confirmed product acceptance for PR #33. PR #33 is ready to merge after the docs-only acceptance commit is pushed and PR checks remain passing/merge state remains clean.
+- Artifacts:
+  - `01-full-card-overview-attempt-01-normal.jpg` - 134076 bytes - `04bfa46f4808d2294ae87bc92b9125c0ea390c5912789e819c53e546f6aad56b`
+  - `02-top-left-corner-attempt-01-normal.jpg` - 91762 bytes - `969901ea0cb9400b49ec954412d50e5d267b29bbddf7c6e4d339a33477582e2d`
+  - `03-top-right-corner-attempt-01-normal.jpg` - 83956 bytes - `ffad2db4919fea21db01e99a3ce21da5d00fc77731beffb57cbedb04e091079b`
+  - `04-bottom-right-corner-attempt-01-normal.jpg` - 73058 bytes - `5e836de00906a8e8a4102ce59d3f16d53315c0669bbc743301607e5b4cf19214`
+  - `05-bottom-left-corner-attempt-01-normal.jpg` - 86405 bytes - `abcb8bf3d98288349e804b8a925aa66bf7f74aba335cd14ec553490380cd7bc1`
+  - `06-top-edge-attempt-01-normal.jpg` - 205914 bytes - `d84d3f0aea3937f94ef446411de27afe90bfc0c90db295fb50d0198712624cb5`
+  - `07-right-edge-attempt-01-normal.jpg` - 88230 bytes - `23d6236269b47298ec0c3fc737d3678ff7812426f244e2b9527456becde2633b`
+  - `08-bottom-edge-attempt-01-normal.jpg` - 101028 bytes - `5bd4d4a0c49e8f9058ca45ee85bc7453f8552833dc3385e4d76d0c82ce1ae2d1`
+  - `09-left-edge-attempt-01-normal.jpg` - 191637 bytes - `e9af2f95f5acd1824057645cf2587aaacc0b95309f54280c40ddfd982c90d589`
+  - `10-center-surface-attempt-01-normal.jpg` - 336943 bytes - `356ea4e9ff47ef4015e4526325d40eeee096d0f504aaabaab8dba36111fcb194`
+  - `11-upper-surface-attempt-01-normal.jpg` - 208141 bytes - `71a09ec2fa9eb93e8996a2a996260c3d6e4bebfc2b9041971f73a67a017a6bc2`
+  - `12-lower-surface-attempt-01-normal.jpg` - 306275 bytes - `87e7c70d82592fb94226bf2521480cd9163bd49e5bb92d486969622269623806`
+- Guardrails held: no merge, no production/staging migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no SDK/OCX/DLL/vendor file commit, no captured image commit, no Basler/pylon install, no Basler control, no Leimac control, no Arduino control, no network setting change, no lens/focus/exposure-setting/DPQ method, no fake/manual/operator-entered/placeholder score, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.
