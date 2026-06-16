@@ -57,6 +57,8 @@ type ParsedCommand =
       includeFlcSweep: boolean;
       includeEdr: boolean;
       includeEdof: boolean;
+      cornerProfile: string | undefined;
+      captureGuides: boolean;
     }
   | { command: "manifest"; config: CaptureHelperConfigInput; mode: string | undefined }
   | { command: "serve"; config: CaptureHelperConfigInput; host: string | undefined; port: string | undefined }
@@ -92,6 +94,8 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let includeFlcSweep = false;
   let includeEdr = false;
   let includeEdof = false;
+  let cornerProfile: string | undefined;
+  let captureGuides = true;
 
   if (command === "--help" || command === "-h") {
     return { command: "help", config };
@@ -196,6 +200,14 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         break;
       case "--plan":
         plan = readOption(rest, index, "--plan");
+        index += 1;
+        break;
+      case "--corner-profile":
+        cornerProfile = readOption(rest, index, "--corner-profile");
+        index += 1;
+        break;
+      case "--capture-guides":
+        captureGuides = readBooleanOption(rest, index, "--capture-guides");
         index += 1;
         break;
       case "--include-lighting-sweep":
@@ -444,7 +456,7 @@ function parseCliArgs(argv: string[]): ParsedCommand {
       return { command, config, deviceIndex, outputDir, label, includeLightingSweep, includeEdr, includeEdof };
     }
     if (command === "dinolite-operator-workflow" || command === "dinolite-experimental-grading-run") {
-      return { command, config, deviceIndex, outputDir, label, plan, includeFlcSweep, includeEdr, includeEdof };
+      return { command, config, deviceIndex, outputDir, label, plan, includeFlcSweep, includeEdr, includeEdof, cornerProfile, captureGuides };
     }
     return { command, config };
   }
@@ -466,7 +478,7 @@ function helpPayload() {
       "dinolite-capture-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-packages --label card-demo-001 --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk --include-lighting-sweep --include-edr --include-edof",
       "dinolite-capture-demo-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-demo --label card-demo-001 --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
       "dinolite-operator-workflow --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-operator --plan card-interim --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
-      "dinolite-experimental-grading-run --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-grading-runs --label <label> --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
+      "dinolite-experimental-grading-run --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-grading-runs --label <label> --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk --corner-profile sharp_90 --capture-guides true",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -497,6 +509,8 @@ function helpPayload() {
       "--include-flc-sweep",
       "--include-edr",
       "--include-edof",
+      "--corner-profile sharp_90",
+      "--capture-guides true|false",
       "--led-port",
       "--stage-port",
       "--baud",
@@ -530,71 +544,92 @@ function writeJson(stdout: (text: string) => void, value: unknown) {
   stdout(`${JSON.stringify(value, null, 2)}\n`);
 }
 
-function describeDinoLiteOperatorPlan(plan: string) {
+function guideForDinoLiteTarget(name: string, type: string, cornerProfile = "sharp_90") {
+  if (type === "interim_macro_overview") {
+    return "Guide: fit as much of the card as possible, avoid background, keep card edges visible. Interim overview only; not calibrated macro capture.";
+  }
+  if (type === "corner") {
+    return `Guide: place the ${name.toLowerCase()} tip at the center guide, include both edges, fill the frame mostly with card, avoid background. Corner profile: ${cornerProfile}.`;
+  }
+  if (type === "edge") {
+    const direction = name.toLowerCase().includes("top") || name.toLowerCase().includes("bottom") ? "horizontal" : "vertical";
+    return `Guide: align the edge on the ${direction} guide line, fill the frame with the card edge, include minimal background.`;
+  }
+  return "Guide: fill the central patch with card surface only, avoid border/background, and focus on the print surface.";
+}
+
+function describeDinoLiteOperatorPlan(plan: string, cornerProfile = "sharp_90", captureGuides = true) {
+  const withGuide = (target: { name: string; type: string; instruction: string }) => ({
+    ...target,
+    guide: captureGuides ? guideForDinoLiteTarget(target.name, target.type, cornerProfile) : undefined,
+  });
   if (plan === "operator-smoke-single") {
     return [
-      {
+      withGuide({
         name: "Center surface",
+        type: "surface",
         instruction: "Place the target detail under the microscope, adjust focus manually, then click Capture.",
-      },
+      }),
     ];
   }
   if (plan === "card-interim") {
     return [
       {
         name: "Full-card overview",
+        type: "interim_macro_overview",
         instruction:
           "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated.",
       },
-      { name: "Top-left corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
-      { name: "Top-right corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
-      { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
-      { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
-      { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
-    ];
+      { name: "Top-left corner", type: "corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
+      { name: "Top-right corner", type: "corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
+      { name: "Bottom-right corner", type: "corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
+      { name: "Bottom-left corner", type: "corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
+      { name: "Center surface", type: "surface", instruction: "Move the card so the center surface is centered under the microscope." },
+    ].map(withGuide);
   }
   if (plan === "experimental-card-grading") {
     return [
       {
         name: "Full-card overview",
+        type: "interim_macro_overview",
         instruction:
           "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated.",
       },
-      { name: "Top-left corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
-      { name: "Top-right corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
-      { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
-      { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
-      { name: "Top edge", instruction: "Move the card so the top edge midpoint is centered under the microscope." },
-      { name: "Right edge", instruction: "Move the card so the right edge midpoint is centered under the microscope." },
-      { name: "Bottom edge", instruction: "Move the card so the bottom edge midpoint is centered under the microscope." },
-      { name: "Left edge", instruction: "Move the card so the left edge midpoint is centered under the microscope." },
-      { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
-      { name: "Upper surface", instruction: "Move the card so the upper surface is centered under the microscope." },
-      { name: "Lower surface", instruction: "Move the card so the lower surface is centered under the microscope." },
-    ];
+      { name: "Top-left corner", type: "corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
+      { name: "Top-right corner", type: "corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
+      { name: "Bottom-right corner", type: "corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
+      { name: "Bottom-left corner", type: "corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
+      { name: "Top edge", type: "edge", instruction: "Move the card so the top edge midpoint is centered under the microscope." },
+      { name: "Right edge", type: "edge", instruction: "Move the card so the right edge midpoint is centered under the microscope." },
+      { name: "Bottom edge", type: "edge", instruction: "Move the card so the bottom edge midpoint is centered under the microscope." },
+      { name: "Left edge", type: "edge", instruction: "Move the card so the left edge midpoint is centered under the microscope." },
+      { name: "Center surface", type: "surface", instruction: "Move the card so the center surface is centered under the microscope." },
+      { name: "Upper surface", type: "surface", instruction: "Move the card so the upper surface is centered under the microscope." },
+      { name: "Lower surface", type: "surface", instruction: "Move the card so the lower surface is centered under the microscope." },
+    ].map(withGuide);
   }
   if (plan === "surface-basic") {
     return [
-      { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
-      { name: "Upper surface", instruction: "Move the card so the upper surface is centered under the microscope." },
-      { name: "Lower surface", instruction: "Move the card so the lower surface is centered under the microscope." },
-    ];
+      { name: "Center surface", type: "surface", instruction: "Move the card so the center surface is centered under the microscope." },
+      { name: "Upper surface", type: "surface", instruction: "Move the card so the upper surface is centered under the microscope." },
+      { name: "Lower surface", type: "surface", instruction: "Move the card so the lower surface is centered under the microscope." },
+    ].map(withGuide);
   }
   if (plan === "card-basic") {
     return [
-      { name: "Top-left corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
-      { name: "Top-right corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
-      { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
-      { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
-      { name: "Center surface", instruction: "Move the card so the center surface is centered under the microscope." },
-    ];
+      { name: "Top-left corner", type: "corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
+      { name: "Top-right corner", type: "corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
+      { name: "Bottom-right corner", type: "corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
+      { name: "Bottom-left corner", type: "corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
+      { name: "Center surface", type: "surface", instruction: "Move the card so the center surface is centered under the microscope." },
+    ].map(withGuide);
   }
   return [
-    { name: "Top-left corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
-    { name: "Top-right corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
-    { name: "Bottom-right corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
-    { name: "Bottom-left corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
-  ];
+    { name: "Top-left corner", type: "corner", instruction: "Move the card so the top-left corner is centered under the microscope." },
+    { name: "Top-right corner", type: "corner", instruction: "Move the card so the top-right corner is centered under the microscope." },
+    { name: "Bottom-right corner", type: "corner", instruction: "Move the card so the bottom-right corner is centered under the microscope." },
+    { name: "Bottom-left corner", type: "corner", instruction: "Move the card so the bottom-left corner is centered under the microscope." },
+  ].map(withGuide);
 }
 
 export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO = {}): Promise<number> {
@@ -780,12 +815,19 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
         const workflowPlan = parsed.command === "dinolite-experimental-grading-run"
           ? "experimental-card-grading"
           : parsed.plan ?? "corners-basic";
-        const targets = describeDinoLiteOperatorPlan(workflowPlan);
+        const cornerProfile = parsed.cornerProfile ?? "sharp_90";
+        if (cornerProfile !== "sharp_90") {
+          throw new CaptureHelperCommandError("--corner-profile currently supports sharp_90 only.");
+        }
+        const targets = describeDinoLiteOperatorPlan(workflowPlan, cornerProfile, parsed.captureGuides);
         stderr("Operator window shown\n");
         stderr(`Plan: ${workflowPlan}\n`);
+        stderr(`Corner profile: ${cornerProfile}\n`);
+        stderr(`Capture guides: ${parsed.captureGuides ? "enabled" : "disabled"}\n`);
         targets.forEach((target, index) => {
           stderr(`Target ${index + 1}/${targets.length}: ${target.name}\n`);
           stderr(`Instruction: ${target.instruction}\n`);
+          if (target.guide) stderr(`${target.guide}\n`);
         });
         stderr("Waiting for Capture/Skip/Abort in the local operator window.\n");
         const workflow = await client.operatorWorkflow({
@@ -796,10 +838,15 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
           includeFlcSweep: parsed.includeFlcSweep,
           includeEdr: parsed.includeEdr,
           includeEdof: parsed.includeEdof,
+          cornerProfile,
+          captureGuides: parsed.captureGuides,
         });
         await client.close();
         if (parsed.command === "dinolite-experimental-grading-run") {
-          const analysis = await analyzeDinoLiteExperimentalGradingWorkflow(workflow);
+          const analysis = await analyzeDinoLiteExperimentalGradingWorkflow(workflow, {
+            cornerProfile,
+            captureGuides: parsed.captureGuides,
+          });
           writeJson(stdout, {
             ok: workflow.status !== "aborted",
             service: "ai-grader-capture-helper",

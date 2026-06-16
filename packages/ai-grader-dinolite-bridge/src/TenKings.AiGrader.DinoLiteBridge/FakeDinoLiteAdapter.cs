@@ -220,48 +220,49 @@ namespace TenKings.AiGrader.DinoLiteBridge
             };
         }
 
-        public object OperatorWorkflow(int deviceIndex, string? outputDir, string? label, string? plan, bool includeFlcSweep, bool includeEdr, bool includeEdof)
+        public object OperatorWorkflow(int deviceIndex, string? outputDir, string? label, string? plan, bool includeFlcSweep, bool includeEdr, bool includeEdof, string? cornerProfile, bool captureGuides)
         {
             var normalizedOutputDir = string.IsNullOrWhiteSpace(outputDir) ? "C:\\TenKings\\capture-data\\dinolite-operator" : outputDir!.TrimEnd('\\');
             var normalizedLabel = string.IsNullOrWhiteSpace(label) ? "fake-operator" : label!;
             var normalizedPlan = string.IsNullOrWhiteSpace(plan) ? "corners-basic" : plan!;
+            var normalizedCornerProfile = string.IsNullOrWhiteSpace(cornerProfile) ? "sharp_90" : cornerProfile!;
             var sessionId = "dinolite-operator-" + normalizedLabel + "-20260609T000000000Z";
             var sessionDir = normalizedOutputDir + "\\" + sessionId;
             var targets = normalizedPlan == "operator-smoke-single"
                 ? new[]
                 {
-                    FakeTarget(sessionDir, "center-surface", "Center surface", "surface", "center_surface", 1)
+                    FakeTarget(sessionDir, "center-surface", "Center surface", "surface", "center_surface", 1, normalizedCornerProfile, captureGuides)
                 }
                 : normalizedPlan == "experimental-card-grading"
                 ? new[]
                 {
-                    FakeTarget(sessionDir, "full-card-overview", "Full-card overview", "interim_macro_overview", "interim_full_card_overview", 1),
-                    FakeTarget(sessionDir, "top-left-corner", "Top-left corner", "corner", "top_left_corner", 2),
-                    FakeTarget(sessionDir, "top-right-corner", "Top-right corner", "corner", "top_right_corner", 3),
-                    FakeTarget(sessionDir, "bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", 4),
-                    FakeTarget(sessionDir, "bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", 5),
-                    FakeTarget(sessionDir, "top-edge", "Top edge", "edge", "top_edge", 6),
-                    FakeTarget(sessionDir, "right-edge", "Right edge", "edge", "right_edge", 7),
-                    FakeTarget(sessionDir, "bottom-edge", "Bottom edge", "edge", "bottom_edge", 8),
-                    FakeTarget(sessionDir, "left-edge", "Left edge", "edge", "left_edge", 9),
-                    FakeTarget(sessionDir, "center-surface", "Center surface", "surface", "center_surface", 10),
-                    FakeTarget(sessionDir, "upper-surface", "Upper surface", "surface", "upper_surface", 11),
-                    FakeTarget(sessionDir, "lower-surface", "Lower surface", "surface", "lower_surface", 12)
+                    FakeTarget(sessionDir, "full-card-overview", "Full-card overview", "interim_macro_overview", "interim_full_card_overview", 1, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "top-left-corner", "Top-left corner", "corner", "top_left_corner", 2, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "top-right-corner", "Top-right corner", "corner", "top_right_corner", 3, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", 4, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", 5, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "top-edge", "Top edge", "edge", "top_edge", 6, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "right-edge", "Right edge", "edge", "right_edge", 7, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "bottom-edge", "Bottom edge", "edge", "bottom_edge", 8, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "left-edge", "Left edge", "edge", "left_edge", 9, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "center-surface", "Center surface", "surface", "center_surface", 10, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "upper-surface", "Upper surface", "surface", "upper_surface", 11, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "lower-surface", "Lower surface", "surface", "lower_surface", 12, normalizedCornerProfile, captureGuides)
                 }
                 : normalizedPlan == "card-interim"
                 ? new[]
                 {
-                    FakeTarget(sessionDir, "full-card-overview", "Full-card overview", "interim_macro_overview", "interim_full_card_overview", 1),
-                    FakeTarget(sessionDir, "top-left-corner", "Top-left corner", "corner", "top_left_corner", 2),
-                    FakeTarget(sessionDir, "top-right-corner", "Top-right corner", "corner", "top_right_corner", 3),
-                    FakeTarget(sessionDir, "bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", 4),
-                    FakeTarget(sessionDir, "bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", 5),
-                    FakeTarget(sessionDir, "center-surface", "Center surface", "surface", "center_surface", 6)
+                    FakeTarget(sessionDir, "full-card-overview", "Full-card overview", "interim_macro_overview", "interim_full_card_overview", 1, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "top-left-corner", "Top-left corner", "corner", "top_left_corner", 2, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "top-right-corner", "Top-right corner", "corner", "top_right_corner", 3, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", 4, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", 5, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "center-surface", "Center surface", "surface", "center_surface", 6, normalizedCornerProfile, captureGuides)
                 }
                 : new[]
                 {
-                    FakeTarget(sessionDir, "top-left-corner", "Top-left corner", "corner", "top_left_corner", 1),
-                    FakeTarget(sessionDir, "top-right-corner", "Top-right corner", "corner", "top_right_corner", 2)
+                    FakeTarget(sessionDir, "top-left-corner", "Top-left corner", "corner", "top_left_corner", 1, normalizedCornerProfile, captureGuides),
+                    FakeTarget(sessionDir, "top-right-corner", "Top-right corner", "corner", "top_right_corner", 2, normalizedCornerProfile, captureGuides)
                 };
 
             return new
@@ -283,7 +284,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 previewDuringCommand = true,
                 config = new { bitfield = 0x7c, decoded = new { edof = true, amr = true, led = true, flc = true, axi = true } },
                 amr = 42.5,
-                options = new { includeFlcSweep, includeEdr, includeEdof },
+                options = new { includeFlcSweep, includeEdr, includeEdof, cornerProfile = normalizedCornerProfile, captureGuides },
                 targets,
                 cleanup = new { previewStopped = true, disconnected = true, hostDisposed = true, finalLightingRecipe = "safe-final-all-quadrants-level-3" },
                 limitations = OperatorLimitations(),
@@ -341,7 +342,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
             };
         }
 
-        private static object FakeTarget(string sessionDir, string id, string name, string type, string reportLabel, int index)
+        private static object FakeTarget(string sessionDir, string id, string name, string type, string reportLabel, int index, string cornerProfile, bool captureGuides)
         {
             return new
             {
@@ -353,7 +354,16 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     reportLabel,
                     instruction = id == "full-card-overview"
                         ? "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated."
-                        : "Move the card so the " + name.ToLowerInvariant() + " is centered under the microscope. Adjust focus manually, then confirm capture."
+                        : "Move the card so the " + name.ToLowerInvariant() + " is centered under the microscope. Adjust focus manually, then confirm capture.",
+                    captureGuide = captureGuides ? FakeCaptureGuide(id, type, cornerProfile) : "",
+                    captureGuidesEnabled = captureGuides,
+                    guideVisualKind = FakeGuideVisualKind(type),
+                    guideVisualOrientation = FakeGuideVisualOrientation(id, type),
+                    guideVisualLegend = captureGuides ? FakeGuideVisualLegend(id, type, cornerProfile) : "",
+                    guideTemplateKind = FakeGuideTemplateKind(type),
+                    guideTemplateAspectRatio = type == "interim_macro_overview" ? "2.5:3.5" : null,
+                    guideTemplateScaleNote = "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
+                    cornerProfile = type == "corner" ? cornerProfile : null
                 },
                 targetIndex = index,
                 action = "captured",
@@ -364,6 +374,59 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     FakeCapture(sessionDir, index.ToString("00") + "-" + id + "-normal", "normal", "operator-target-normal", "success")
                 }
             };
+        }
+
+        private static string FakeCaptureGuide(string id, string type, string cornerProfile)
+        {
+            if (type == "interim_macro_overview") return "Guide: fit as much of the card as possible inside the preview, keep all card edges visible, avoid excess background. This overview is interim and not calibrated macro capture.";
+            if (type == "corner") return "Guide: place the corner tip at the center guide, include both edges, fill the frame mostly with card, avoid background. Corner profile: " + cornerProfile + ".";
+            if (type == "edge") return "Guide: align this " + ((id.Contains("top") || id.Contains("bottom")) ? "horizontal" : "vertical") + " edge along the center guide line, fill the frame with the card edge, include minimal background.";
+            if (type == "surface") return "Guide: fill the central patch with card surface only, avoid border/background, and focus on the print surface.";
+            return "Guide: center the target under the microscope, fill the frame with the card, and avoid background.";
+        }
+
+        private static string FakeGuideVisualKind(string type)
+        {
+            if (type == "interim_macro_overview") return "full-card";
+            if (type == "corner") return "corner";
+            if (type == "edge") return "edge";
+            if (type == "surface") return "surface";
+            return "center";
+        }
+
+        private static string FakeGuideVisualOrientation(string id, string type)
+        {
+            if (type == "corner")
+            {
+                if (id.Contains("top-left")) return "top-left";
+                if (id.Contains("top-right")) return "top-right";
+                if (id.Contains("bottom-right")) return "bottom-right";
+                if (id.Contains("bottom-left")) return "bottom-left";
+                return "center";
+            }
+            if (type == "edge")
+            {
+                return id.Contains("top") || id.Contains("bottom") ? "horizontal" : "vertical";
+            }
+            return "center";
+        }
+
+        private static string FakeGuideVisualLegend(string id, string type, string cornerProfile)
+        {
+            if (type == "interim_macro_overview") return "Fit full card inside this frame. Raise/zoom out/refocus; interim, not calibrated macro capture.";
+            if (type == "corner") return "Place corner tip on crosshair; align both card edges with yellow guides. Profile: " + cornerProfile + ".";
+            if (type == "edge") return "Align card edge inside the strip; minimize background.";
+            if (type == "surface") return "Fill this patch with card surface only; avoid border and background.";
+            return "Center the requested target inside the yellow guide.";
+        }
+
+        private static string FakeGuideTemplateKind(string type)
+        {
+            if (type == "interim_macro_overview") return "full_card_frame";
+            if (type == "corner") return "sharp_90_corner_template";
+            if (type == "edge") return "edge_strip_template";
+            if (type == "surface") return "surface_patch_template";
+            return "center_template";
         }
 
         private static string[] OperatorLimitations()

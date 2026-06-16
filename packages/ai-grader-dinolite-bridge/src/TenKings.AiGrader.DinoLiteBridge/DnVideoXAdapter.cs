@@ -594,7 +594,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
             }
         }
 
-        public object OperatorWorkflow(int deviceIndex, string? outputDir, string? label, string? plan, bool includeFlcSweep, bool includeEdr, bool includeEdof)
+        public object OperatorWorkflow(int deviceIndex, string? outputDir, string? label, string? plan, bool includeFlcSweep, bool includeEdr, bool includeEdof, string? cornerProfile, bool captureGuides)
         {
             if (!options.ManualHardwareAccess)
             {
@@ -611,7 +611,8 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 };
             }
 
-            var targets = BuildOperatorPlan(plan);
+            var normalizedCornerProfile = NormalizeCornerProfile(cornerProfile);
+            var targets = BuildOperatorPlan(plan, normalizedCornerProfile, captureGuides);
             if (targets.Count == 0)
             {
                 return new
@@ -744,7 +745,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     amr,
                     connectedDuringCommand = true,
                     previewDuringCommand = true,
-                    options = new { includeFlcSweep, includeEdr, includeEdof },
+                    options = new { includeFlcSweep, includeEdr, includeEdof, cornerProfile = normalizedCornerProfile, captureGuides },
                     targets = targetRecords.ToArray(),
                     cleanup,
                     optionalErrors = optionalErrors.ToArray(),
@@ -775,7 +776,7 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     config,
                     runtimeDependencies,
                     amr,
-                    options = new { includeFlcSweep, includeEdr, includeEdof },
+                    options = new { includeFlcSweep, includeEdr, includeEdof, cornerProfile = normalizedCornerProfile, captureGuides },
                     targets = targetRecords.ToArray(),
                     cleanup,
                     optionalErrors = optionalErrors.ToArray(),
@@ -1278,61 +1279,172 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
         public static object[] BuildOperatorPlanForTests(string? plan)
         {
-            return BuildOperatorPlan(plan).ToArray();
+            return BuildOperatorPlan(plan, "sharp_90", true).ToArray();
         }
 
-        private static List<OperatorTarget> BuildOperatorPlan(string? plan)
+        private static string NormalizeCornerProfile(string? cornerProfile)
+        {
+            var normalized = string.IsNullOrWhiteSpace(cornerProfile) ? "sharp_90" : cornerProfile!.Trim().ToLowerInvariant();
+            return normalized == "sharp_90" ? normalized : "sharp_90";
+        }
+
+        private static List<OperatorTarget> BuildOperatorPlan(string? plan, string cornerProfile, bool captureGuides)
         {
             var normalizedPlan = string.IsNullOrWhiteSpace(plan) ? "corners-basic" : plan!.Trim();
             var targets = new List<OperatorTarget>();
             if (normalizedPlan == "operator-smoke-single")
             {
-                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Place the target detail under the microscope, adjust focus manually, then click Capture."));
+                targets.Add(BuildOperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Place the target detail under the microscope, adjust focus manually, then click Capture.", cornerProfile, captureGuides));
                 return targets;
             }
 
             if (normalizedPlan == "card-interim" || normalizedPlan == "experimental-card-grading")
             {
-                targets.Add(new OperatorTarget(
+                targets.Add(BuildOperatorTarget(
                     "full-card-overview",
                     "Full-card overview",
                     "interim_macro_overview",
                     "interim_full_card_overview",
-                    "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated."));
+                    "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated.",
+                    cornerProfile,
+                    captureGuides));
             }
 
             if (normalizedPlan == "corners-basic" || normalizedPlan == "card-basic" || normalizedPlan == "card-interim" || normalizedPlan == "experimental-card-grading")
             {
-                targets.Add(new OperatorTarget("top-left-corner", "Top-left corner", "corner", "top_left_corner", "Move the card so the top-left corner is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("top-right-corner", "Top-right corner", "corner", "top_right_corner", "Move the card so the top-right corner is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", "Move the card so the bottom-right corner is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", "Move the card so the bottom-left corner is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(BuildOperatorTarget("top-left-corner", "Top-left corner", "corner", "top_left_corner", "Move the card so the top-left corner is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("top-right-corner", "Top-right corner", "corner", "top_right_corner", "Move the card so the top-right corner is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("bottom-right-corner", "Bottom-right corner", "corner", "bottom_right_corner", "Move the card so the bottom-right corner is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("bottom-left-corner", "Bottom-left corner", "corner", "bottom_left_corner", "Move the card so the bottom-left corner is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
             }
 
             if (normalizedPlan == "experimental-card-grading")
             {
-                targets.Add(new OperatorTarget("top-edge", "Top edge", "edge", "top_edge", "Move the card so the top edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("right-edge", "Right edge", "edge", "right_edge", "Move the card so the right edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("bottom-edge", "Bottom edge", "edge", "bottom_edge", "Move the card so the bottom edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("left-edge", "Left edge", "edge", "left_edge", "Move the card so the left edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("upper-surface", "Upper surface", "surface", "upper_surface", "Move the card so the upper surface is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("lower-surface", "Lower surface", "surface", "lower_surface", "Move the card so the lower surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(BuildOperatorTarget("top-edge", "Top edge", "edge", "top_edge", "Move the card so the top edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("right-edge", "Right edge", "edge", "right_edge", "Move the card so the right edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("bottom-edge", "Bottom edge", "edge", "bottom_edge", "Move the card so the bottom edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("left-edge", "Left edge", "edge", "left_edge", "Move the card so the left edge midpoint is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("upper-surface", "Upper surface", "surface", "upper_surface", "Move the card so the upper surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("lower-surface", "Lower surface", "surface", "lower_surface", "Move the card so the lower surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
                 return targets;
             }
 
             if (normalizedPlan == "surface-basic")
             {
-                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("upper-surface", "Upper surface", "surface", "upper_surface", "Move the card so the upper surface is centered under the microscope. Adjust focus manually, then confirm capture."));
-                targets.Add(new OperatorTarget("lower-surface", "Lower surface", "surface", "lower_surface", "Move the card so the lower surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(BuildOperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("upper-surface", "Upper surface", "surface", "upper_surface", "Move the card so the upper surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
+                targets.Add(BuildOperatorTarget("lower-surface", "Lower surface", "surface", "lower_surface", "Move the card so the lower surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
             }
             else if (normalizedPlan == "card-basic" || normalizedPlan == "card-interim")
             {
-                targets.Add(new OperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture."));
+                targets.Add(BuildOperatorTarget("center-surface", "Center surface", "surface", "center_surface", "Move the card so the center surface is centered under the microscope. Adjust focus manually, then confirm capture.", cornerProfile, captureGuides));
             }
 
             return targets;
+        }
+
+        private static OperatorTarget BuildOperatorTarget(string id, string name, string type, string reportLabel, string instruction, string cornerProfile, bool captureGuides)
+        {
+            var guide = captureGuides ? BuildCaptureGuide(id, type, cornerProfile) : "";
+            var guideVisualKind = BuildGuideVisualKind(type);
+            var guideVisualOrientation = BuildGuideVisualOrientation(id, type);
+            var guideVisualLegend = captureGuides ? BuildGuideVisualLegend(id, type, cornerProfile) : "";
+            var guideTemplateKind = BuildGuideTemplateKind(type);
+            var guideTemplateAspectRatio = type == "interim_macro_overview" ? "2.5:3.5" : null;
+            return new OperatorTarget(
+                id,
+                name,
+                type,
+                reportLabel,
+                instruction,
+                guide,
+                captureGuides,
+                guideVisualKind,
+                guideVisualOrientation,
+                guideVisualLegend,
+                guideTemplateKind,
+                guideTemplateAspectRatio,
+                "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
+                type == "corner" ? cornerProfile : null);
+        }
+
+        private static string BuildCaptureGuide(string id, string type, string cornerProfile)
+        {
+            if (type == "interim_macro_overview")
+            {
+                return "Guide: fit as much of the card as possible inside the preview, keep all card edges visible, avoid excess background. This overview is interim and not calibrated macro capture.";
+            }
+            if (type == "corner")
+            {
+                return "Guide: place the corner tip at the center guide, include both edges, fill the frame mostly with card, avoid background. Corner profile: " + cornerProfile + ".";
+            }
+            if (type == "edge")
+            {
+                var direction = (id.Contains("top") || id.Contains("bottom")) ? "horizontal" : "vertical";
+                return "Guide: align this " + direction + " edge along the center guide line, fill the frame with the card edge, include minimal background.";
+            }
+            if (type == "surface")
+            {
+                return "Guide: fill the central patch with card surface only, avoid border/background, and focus on the print surface.";
+            }
+            return "Guide: center the target under the microscope, fill the frame with the card, and avoid background.";
+        }
+
+        private static string BuildGuideVisualKind(string type)
+        {
+            if (type == "interim_macro_overview") return "full-card";
+            if (type == "corner") return "corner";
+            if (type == "edge") return "edge";
+            if (type == "surface") return "surface";
+            return "center";
+        }
+
+        private static string BuildGuideVisualOrientation(string id, string type)
+        {
+            if (type == "corner")
+            {
+                if (id.Contains("top-left")) return "top-left";
+                if (id.Contains("top-right")) return "top-right";
+                if (id.Contains("bottom-right")) return "bottom-right";
+                if (id.Contains("bottom-left")) return "bottom-left";
+                return "center";
+            }
+            if (type == "edge")
+            {
+                return id.Contains("top") || id.Contains("bottom") ? "horizontal" : "vertical";
+            }
+            return "center";
+        }
+
+        private static string BuildGuideVisualLegend(string id, string type, string cornerProfile)
+        {
+            if (type == "interim_macro_overview")
+            {
+                return "Fit full card inside this frame. Raise/zoom out/refocus; interim, not calibrated macro capture.";
+            }
+            if (type == "corner")
+            {
+                return "Place corner tip on crosshair; align both card edges with yellow guides. Profile: " + cornerProfile + ".";
+            }
+            if (type == "edge")
+            {
+                return "Align card edge inside the strip; minimize background.";
+            }
+            if (type == "surface")
+            {
+                return "Fill this patch with card surface only; avoid border and background.";
+            }
+            return "Center the requested target inside the yellow guide.";
+        }
+
+        private static string BuildGuideTemplateKind(string type)
+        {
+            if (type == "interim_macro_overview") return "full_card_frame";
+            if (type == "corner") return "sharp_90_corner_template";
+            if (type == "edge") return "edge_strip_template";
+            if (type == "surface") return "surface_patch_template";
+            return "center_template";
         }
 
         private static object[] CaptureOperatorTargetArtifacts(
@@ -1408,7 +1520,16 @@ namespace TenKings.AiGrader.DinoLiteBridge
                     target.name,
                     target.type,
                     target.reportLabel,
-                    target.instruction
+                    target.instruction,
+                    target.captureGuide,
+                    target.captureGuidesEnabled,
+                    target.guideVisualKind,
+                    target.guideVisualOrientation,
+                    target.guideVisualLegend,
+                    target.guideTemplateKind,
+                    target.guideTemplateAspectRatio,
+                    target.guideTemplateScaleNote,
+                    target.cornerProfile
                 },
                 targetIndex,
                 action = action.ToString().ToLowerInvariant(),
@@ -1837,8 +1958,11 @@ namespace TenKings.AiGrader.DinoLiteBridge
         {
             private readonly Form form;
             private readonly DnVideoXAxHost axHost;
+            private readonly PreviewGuideOverlayForm previewOverlay;
             private readonly Label titleLabel;
             private readonly Label typeLabel;
+            private readonly GuideDiagramControl guideDiagram;
+            private readonly Label guideLabel;
             private readonly Label instructionLabel;
             private readonly Label progressLabel;
             private readonly Label overviewNoticeLabel;
@@ -1848,8 +1972,11 @@ namespace TenKings.AiGrader.DinoLiteBridge
             private OperatorDnVideoXHost(
                 Form form,
                 DnVideoXAxHost axHost,
+                PreviewGuideOverlayForm previewOverlay,
                 Label titleLabel,
                 Label typeLabel,
+                GuideDiagramControl guideDiagram,
+                Label guideLabel,
                 Label instructionLabel,
                 Label progressLabel,
                 Label overviewNoticeLabel,
@@ -1857,8 +1984,11 @@ namespace TenKings.AiGrader.DinoLiteBridge
             {
                 this.form = form;
                 this.axHost = axHost;
+                this.previewOverlay = previewOverlay;
                 this.titleLabel = titleLabel;
                 this.typeLabel = typeLabel;
+                this.guideDiagram = guideDiagram;
+                this.guideLabel = guideLabel;
                 this.instructionLabel = instructionLabel;
                 this.progressLabel = progressLabel;
                 this.overviewNoticeLabel = overviewNoticeLabel;
@@ -1894,11 +2024,13 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 {
                     Dock = DockStyle.Fill,
                     ColumnCount = 1,
-                    RowCount = 7,
+                    RowCount = 9,
                     Padding = new Padding(16)
                 };
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 56));
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+                panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 180));
+                panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 110));
                 panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
                 panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
@@ -1907,6 +2039,8 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
                 var titleLabel = BuildOperatorLabel(16, true);
                 var typeLabel = BuildOperatorLabel(10, false);
+                var guideDiagram = new GuideDiagramControl { Dock = DockStyle.Fill };
+                var guideLabel = BuildOperatorLabel(11, true);
                 var instructionLabel = BuildOperatorLabel(12, false);
                 var overviewNoticeLabel = BuildOperatorLabel(10, true);
                 var progressLabel = BuildOperatorLabel(11, false);
@@ -1929,26 +2063,35 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 var retakeButton = (Button)buttons.Controls[2];
                 var abortButton = (Button)buttons.Controls[3];
 
-                var host = new OperatorDnVideoXHost(form, axHost, titleLabel, typeLabel, instructionLabel, progressLabel, overviewNoticeLabel, fallbackLabel);
+                var previewOverlay = new PreviewGuideOverlayForm();
+                var host = new OperatorDnVideoXHost(form, axHost, previewOverlay, titleLabel, typeLabel, guideDiagram, guideLabel, instructionLabel, progressLabel, overviewNoticeLabel, fallbackLabel);
                 captureButton.Click += (_, __) => host.requestedAction = OperatorAction.Capture;
                 skipButton.Click += (_, __) => host.requestedAction = OperatorAction.Skip;
                 retakeButton.Click += (_, __) => host.requestedAction = OperatorAction.Retake;
                 abortButton.Click += (_, __) => host.requestedAction = OperatorAction.Abort;
                 form.FormClosing += (_, __) => host.requestedAction = OperatorAction.Abort;
+                form.Move += (_, __) => host.UpdatePreviewOverlayBounds();
+                form.Resize += (_, __) => host.UpdatePreviewOverlayBounds();
+                split.SplitterMoved += (_, __) => host.UpdatePreviewOverlayBounds();
+                axHost.Resize += (_, __) => host.UpdatePreviewOverlayBounds();
 
                 panel.Controls.Add(titleLabel, 0, 0);
                 panel.Controls.Add(typeLabel, 0, 1);
-                panel.Controls.Add(instructionLabel, 0, 2);
-                panel.Controls.Add(overviewNoticeLabel, 0, 3);
-                panel.Controls.Add(progressLabel, 0, 4);
-                panel.Controls.Add(fallbackLabel, 0, 5);
-                panel.Controls.Add(buttons, 0, 6);
+                panel.Controls.Add(guideDiagram, 0, 2);
+                panel.Controls.Add(guideLabel, 0, 3);
+                panel.Controls.Add(instructionLabel, 0, 4);
+                panel.Controls.Add(overviewNoticeLabel, 0, 5);
+                panel.Controls.Add(progressLabel, 0, 6);
+                panel.Controls.Add(fallbackLabel, 0, 7);
+                panel.Controls.Add(buttons, 0, 8);
                 split.Panel2.Controls.Add(panel);
                 form.Controls.Add(split);
 
                 form.CreateControl();
                 axHost.CreateControl();
                 form.Show();
+                previewOverlay.Show(form);
+                host.UpdatePreviewOverlayBounds();
                 form.BringToFront();
                 form.Activate();
                 var topMostTimer = new System.Windows.Forms.Timer { Interval = 1500 };
@@ -1971,6 +2114,10 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 requestedAction = null;
                 titleLabel.Text = target.name;
                 typeLabel.Text = "Target type: " + target.type;
+                guideDiagram.SetTarget(target, targetIndex, totalTargets);
+                previewOverlay.SetTarget(target, targetIndex, totalTargets);
+                UpdatePreviewOverlayBounds();
+                guideLabel.Text = string.IsNullOrWhiteSpace(target.captureGuide) ? "Guide: center the target in the preview and keep background out of the frame." : target.captureGuide;
                 instructionLabel.Text = target.instruction + Environment.NewLine + Environment.NewLine + "Adjust focus manually, then confirm capture.";
                 overviewNoticeLabel.Text = showPostOverviewNotice
                     ? "Now zoom/refocus for close-up detail captures before continuing to corners/surface targets."
@@ -1987,6 +2134,20 @@ namespace TenKings.AiGrader.DinoLiteBridge
                 }
 
                 return requestedAction ?? OperatorAction.Abort;
+            }
+
+            public void UpdatePreviewOverlayBounds()
+            {
+                if (form.IsDisposed || axHost.IsDisposed || previewOverlay.IsDisposed)
+                {
+                    return;
+                }
+
+                var screenBounds = axHost.RectangleToScreen(axHost.ClientRectangle);
+                previewOverlay.Bounds = screenBounds;
+                previewOverlay.Visible = form.Visible && form.WindowState != FormWindowState.Minimized && screenBounds.Width > 0 && screenBounds.Height > 0;
+                previewOverlay.Invalidate();
+                previewOverlay.BringToFront();
             }
 
             private static Label BuildOperatorLabel(float size, bool bold)
@@ -2015,8 +2176,258 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
             public void Dispose()
             {
+                previewOverlay.Close();
+                previewOverlay.Dispose();
                 axHost.Dispose();
                 form.Dispose();
+            }
+        }
+
+        private sealed class PreviewGuideOverlayForm : Form
+        {
+            private static readonly Color TransparentColor = Color.FromArgb(255, 0, 255);
+            private OperatorTarget? target;
+            private int targetIndex;
+            private int totalTargets;
+
+            public PreviewGuideOverlayForm()
+            {
+                ShowInTaskbar = false;
+                FormBorderStyle = FormBorderStyle.None;
+                StartPosition = FormStartPosition.Manual;
+                BackColor = TransparentColor;
+                TransparencyKey = TransparentColor;
+                TopMost = true;
+                DoubleBuffered = true;
+                Font = new Font("Segoe UI", 10, FontStyle.Bold);
+            }
+
+            protected override bool ShowWithoutActivation => true;
+
+            protected override CreateParams CreateParams
+            {
+                get
+                {
+                    const int wsExToolWindow = 0x00000080;
+                    const int wsExNoActivate = 0x08000000;
+                    const int wsExTransparent = 0x00000020;
+                    var cp = base.CreateParams;
+                    cp.ExStyle |= wsExToolWindow | wsExNoActivate | wsExTransparent;
+                    return cp;
+                }
+            }
+
+            public void SetTarget(OperatorTarget nextTarget, int nextTargetIndex, int nextTotalTargets)
+            {
+                target = nextTarget;
+                targetIndex = nextTargetIndex;
+                totalTargets = nextTotalTargets;
+                Invalidate();
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                var g = e.Graphics;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                var canvas = new Rectangle(18, 18, Math.Max(40, Width - 36), Math.Max(40, Height - 58));
+                GuideTemplateRenderer.Draw(g, canvas, target, targetIndex, totalTargets, overlayMode: true, Font);
+            }
+        }
+
+        private sealed class GuideDiagramControl : Control
+        {
+            private OperatorTarget? target;
+            private int targetIndex;
+            private int totalTargets;
+
+            public GuideDiagramControl()
+            {
+                DoubleBuffered = true;
+                BackColor = Color.FromArgb(18, 25, 38);
+                ForeColor = Color.White;
+                Font = new Font("Segoe UI", 10, FontStyle.Bold);
+            }
+
+            public void SetTarget(OperatorTarget nextTarget, int nextTargetIndex, int nextTotalTargets)
+            {
+                target = nextTarget;
+                targetIndex = nextTargetIndex;
+                totalTargets = nextTotalTargets;
+                Invalidate();
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+                var g = e.Graphics;
+                g.Clear(BackColor);
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                var canvas = new Rectangle(18, 18, Math.Max(40, Width - 36), Math.Max(40, Height - 58));
+                GuideTemplateRenderer.Draw(g, canvas, target, targetIndex, totalTargets, overlayMode: false, Font);
+            }
+        }
+
+        private static class GuideTemplateRenderer
+        {
+            public static void Draw(Graphics g, Rectangle canvas, OperatorTarget? target, int targetIndex, int totalTargets, bool overlayMode, Font font)
+            {
+                using (var guidePen = new Pen(Color.FromArgb(255, 214, 64), Math.Max(4, canvas.Width / 150)))
+                using (var accentPen = new Pen(Color.FromArgb(94, 234, 212), Math.Max(2, canvas.Width / 250)))
+                using (var shadowPen = new Pen(Color.FromArgb(12, 18, 28), Math.Max(8, canvas.Width / 105)))
+                using (var borderPen = new Pen(Color.FromArgb(76, 154, 255), 2))
+                using (var textBack = new SolidBrush(Color.FromArgb(185, 15, 23, 42)))
+                using (var textBrush = new SolidBrush(Color.White))
+                using (var maskBrush = new SolidBrush(Color.FromArgb(overlayMode ? 92 : 60, 0, 0, 0)))
+                using (var mutedBrush = new SolidBrush(Color.FromArgb(203, 213, 225)))
+                {
+                    if (!overlayMode)
+                    {
+                        g.DrawRectangle(borderPen, canvas);
+                        g.DrawString("Blue frame = preview area. Yellow/cyan = in-preview alignment template.", new Font("Segoe UI", 8, FontStyle.Regular), mutedBrush, new PointF(canvas.Left + 2, Math.Max(2, canvas.Top - 16)));
+                    }
+
+                    var kind = target?.guideTemplateKind ?? "surface_patch_template";
+                    var orientation = target?.guideVisualOrientation ?? "center";
+                    Rectangle templateRect;
+                    if (kind == "full_card_frame")
+                    {
+                        templateRect = CardFrameRect(canvas);
+                        MaskOutside(g, maskBrush, canvas, templateRect);
+                        DrawFullCardFrame(g, shadowPen, templateRect);
+                        DrawFullCardFrame(g, guidePen, templateRect);
+                    }
+                    else if (kind == "sharp_90_corner_template")
+                    {
+                        templateRect = CornerTemplateRect(canvas);
+                        MaskOutside(g, maskBrush, canvas, templateRect);
+                        DrawCornerTemplate(g, shadowPen, shadowPen, templateRect, orientation);
+                        DrawCornerTemplate(g, guidePen, accentPen, templateRect, orientation);
+                    }
+                    else if (kind == "edge_strip_template")
+                    {
+                        templateRect = EdgeTemplateRect(canvas, orientation);
+                        MaskOutside(g, maskBrush, canvas, templateRect);
+                        DrawEdgeTemplate(g, shadowPen, templateRect, orientation);
+                        DrawEdgeTemplate(g, guidePen, templateRect, orientation);
+                    }
+                    else
+                    {
+                        templateRect = SurfaceTemplateRect(canvas);
+                        MaskOutside(g, maskBrush, canvas, templateRect);
+                        DrawSurfaceTemplate(g, shadowPen, shadowPen, templateRect);
+                        DrawSurfaceTemplate(g, guidePen, accentPen, templateRect);
+                    }
+
+                    var caption = target == null
+                        ? "Align target to template"
+                        : target.name + "  |  " + Math.Max(1, targetIndex) + " / " + Math.Max(1, totalTargets);
+                    var legend = target?.guideVisualLegend ?? "Align the target to the yellow guide.";
+                    DrawLabel(g, textBack, textBrush, font, new RectangleF(canvas.Left, canvas.Top, canvas.Width, 34), caption);
+                    DrawLabel(g, textBack, textBrush, font, new RectangleF(canvas.Left, Math.Max(canvas.Top + 38, canvas.Bottom - 38), canvas.Width, 34), legend);
+                }
+            }
+
+            private static Rectangle CardFrameRect(Rectangle canvas)
+            {
+                var safe = Rectangle.Inflate(canvas, -canvas.Width / 10, -canvas.Height / 12);
+                var targetRatio = 2.5 / 3.5;
+                var width = safe.Width;
+                var height = (int)(width / targetRatio);
+                if (height > safe.Height)
+                {
+                    height = safe.Height;
+                    width = (int)(height * targetRatio);
+                }
+                return new Rectangle(safe.Left + (safe.Width - width) / 2, safe.Top + (safe.Height - height) / 2, width, height);
+            }
+
+            private static Rectangle CornerTemplateRect(Rectangle canvas)
+            {
+                var size = Math.Min(canvas.Width, canvas.Height) * 62 / 100;
+                return new Rectangle(canvas.Left + (canvas.Width - size) / 2, canvas.Top + (canvas.Height - size) / 2, size, size);
+            }
+
+            private static Rectangle EdgeTemplateRect(Rectangle canvas, string orientation)
+            {
+                if (orientation == "vertical")
+                {
+                    var width = Math.Max(44, canvas.Width / 5);
+                    return new Rectangle(canvas.Left + (canvas.Width - width) / 2, canvas.Top + canvas.Height / 9, width, canvas.Height * 7 / 9);
+                }
+                var height = Math.Max(44, canvas.Height / 5);
+                return new Rectangle(canvas.Left + canvas.Width / 9, canvas.Top + (canvas.Height - height) / 2, canvas.Width * 7 / 9, height);
+            }
+
+            private static Rectangle SurfaceTemplateRect(Rectangle canvas)
+            {
+                return Rectangle.Inflate(canvas, -canvas.Width / 4, -canvas.Height / 4);
+            }
+
+            private static void MaskOutside(Graphics g, Brush brush, Rectangle canvas, Rectangle clear)
+            {
+                g.FillRectangle(brush, canvas.Left, canvas.Top, canvas.Width, Math.Max(0, clear.Top - canvas.Top));
+                g.FillRectangle(brush, canvas.Left, clear.Bottom, canvas.Width, Math.Max(0, canvas.Bottom - clear.Bottom));
+                g.FillRectangle(brush, canvas.Left, clear.Top, Math.Max(0, clear.Left - canvas.Left), clear.Height);
+                g.FillRectangle(brush, clear.Right, clear.Top, Math.Max(0, canvas.Right - clear.Right), clear.Height);
+            }
+
+            private static void DrawFullCardFrame(Graphics g, Pen pen, Rectangle rect)
+            {
+                g.DrawRectangle(pen, rect);
+                var tick = Math.Min(rect.Width, rect.Height) / 10;
+                g.DrawLine(pen, rect.Left, rect.Top, rect.Left + tick, rect.Top);
+                g.DrawLine(pen, rect.Left, rect.Top, rect.Left, rect.Top + tick);
+                g.DrawLine(pen, rect.Right, rect.Top, rect.Right - tick, rect.Top);
+                g.DrawLine(pen, rect.Right, rect.Top, rect.Right, rect.Top + tick);
+                g.DrawLine(pen, rect.Right, rect.Bottom, rect.Right - tick, rect.Bottom);
+                g.DrawLine(pen, rect.Right, rect.Bottom, rect.Right, rect.Bottom - tick);
+                g.DrawLine(pen, rect.Left, rect.Bottom, rect.Left + tick, rect.Bottom);
+                g.DrawLine(pen, rect.Left, rect.Bottom, rect.Left, rect.Bottom - tick);
+            }
+
+            private static void DrawCornerTemplate(Graphics g, Pen pen, Pen accentPen, Rectangle rect, string orientation)
+            {
+                var cx = rect.Left + rect.Width / 2;
+                var cy = rect.Top + rect.Height / 2;
+                var len = Math.Min(rect.Width, rect.Height) * 42 / 100;
+                var opensRight = orientation.Contains("left");
+                var opensDown = orientation.Contains("top");
+                var xEnd = opensRight ? cx + len : cx - len;
+                var yEnd = opensDown ? cy + len : cy - len;
+                g.DrawLine(pen, cx, cy, xEnd, cy);
+                g.DrawLine(pen, cx, cy, cx, yEnd);
+                g.DrawEllipse(accentPen, cx - 14, cy - 14, 28, 28);
+                g.DrawLine(accentPen, cx - 22, cy, cx + 22, cy);
+                g.DrawLine(accentPen, cx, cy - 22, cx, cy + 22);
+            }
+
+            private static void DrawEdgeTemplate(Graphics g, Pen pen, Rectangle rect, string orientation)
+            {
+                g.DrawRectangle(pen, rect);
+                if (orientation == "vertical")
+                {
+                    var cx = rect.Left + rect.Width / 2;
+                    g.DrawLine(pen, cx, rect.Top, cx, rect.Bottom);
+                }
+                else
+                {
+                    var cy = rect.Top + rect.Height / 2;
+                    g.DrawLine(pen, rect.Left, cy, rect.Right, cy);
+                }
+            }
+
+            private static void DrawSurfaceTemplate(Graphics g, Pen pen, Pen accentPen, Rectangle rect)
+            {
+                g.DrawRectangle(pen, rect);
+                g.DrawLine(accentPen, rect.Left + rect.Width / 2, rect.Top + rect.Height / 6, rect.Left + rect.Width / 2, rect.Bottom - rect.Height / 6);
+                g.DrawLine(accentPen, rect.Left + rect.Width / 6, rect.Top + rect.Height / 2, rect.Right - rect.Width / 6, rect.Top + rect.Height / 2);
+            }
+
+            private static void DrawLabel(Graphics g, Brush background, Brush textBrush, Font font, RectangleF rect, string text)
+            {
+                g.FillRectangle(background, rect);
+                g.DrawString(text, font, textBrush, rect);
             }
         }
 
@@ -2040,13 +2451,36 @@ namespace TenKings.AiGrader.DinoLiteBridge
 
         public sealed class OperatorTarget
         {
-            public OperatorTarget(string id, string name, string type, string reportLabel, string instruction)
+            public OperatorTarget(
+                string id,
+                string name,
+                string type,
+                string reportLabel,
+                string instruction,
+                string captureGuide,
+                bool captureGuidesEnabled,
+                string guideVisualKind,
+                string guideVisualOrientation,
+                string guideVisualLegend,
+                string guideTemplateKind,
+                string? guideTemplateAspectRatio,
+                string guideTemplateScaleNote,
+                string? cornerProfile)
             {
                 this.id = id;
                 this.name = name;
                 this.type = type;
                 this.reportLabel = reportLabel;
                 this.instruction = instruction;
+                this.captureGuide = captureGuide;
+                this.captureGuidesEnabled = captureGuidesEnabled;
+                this.guideVisualKind = guideVisualKind;
+                this.guideVisualOrientation = guideVisualOrientation;
+                this.guideVisualLegend = guideVisualLegend;
+                this.guideTemplateKind = guideTemplateKind;
+                this.guideTemplateAspectRatio = guideTemplateAspectRatio;
+                this.guideTemplateScaleNote = guideTemplateScaleNote;
+                this.cornerProfile = cornerProfile;
             }
 
             public string id { get; }
@@ -2054,6 +2488,15 @@ namespace TenKings.AiGrader.DinoLiteBridge
             public string type { get; }
             public string reportLabel { get; }
             public string instruction { get; }
+            public string captureGuide { get; }
+            public bool captureGuidesEnabled { get; }
+            public string guideVisualKind { get; }
+            public string guideVisualOrientation { get; }
+            public string guideVisualLegend { get; }
+            public string guideTemplateKind { get; }
+            public string? guideTemplateAspectRatio { get; }
+            public string guideTemplateScaleNote { get; }
+            public string? cornerProfile { get; }
         }
 
         private sealed class LightingRecipe

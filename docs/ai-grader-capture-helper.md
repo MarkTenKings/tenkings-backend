@@ -331,6 +331,8 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js dinolite-
   --output-dir C:\TenKings\capture-data\dinolite-grading-runs `
   --label card-experimental-001 `
   --sdk-runtime-dir C:\TenKings\sdk\dino-lite\dnvideox-sdk `
+  --corner-profile sharp_90 `
+  --capture-guides true `
   --bridge-timeout-ms 1800000
 ```
 
@@ -365,6 +367,51 @@ The v0.1 analyzers are pure TypeScript helpers under `packages/ai-grader-capture
 - overall experimental fusion only when corners and surface are computed and at least one of centering or edges is computed
 
 If detection or inputs are insufficient, the relevant result is `not_computed` with a reason and no placeholder score. All scores are labeled experimental and unvalidated. The report states the output is not a certified grade, not a certificate, not calibrated production macro evidence, and not a final AI grade.
+
+PR #33 improves report clarity without changing the v0.1 scoring formulas, weights, thresholds, or fusion caps. Generated `analysis.json` and `preview-report.html` now include:
+
+- score scale: all computed element scores are `1.0` to `10.0`, higher is better, displayed as `x.xx / 10`
+- score bands: `9.0-10.0 Excellent`, `8.0-8.9 Very Good`, `7.0-7.9 Good`, `6.0-6.9 Fair / Review`, and below `6.0 Needs Review`
+- element definitions for centering, corners, edges, and surface
+- perfect `10/10` definitions for centering, corners, edges, surface, and overall
+- "Why this score?" sections with top contributing metrics, top penalties, confidence, affected target images, limitations, and quality warnings
+- quality diagnostics per target: card coverage heuristic, heuristic label/limitations, background risk, sharpness/blur risk, brightness mean, contrast range, over/underexposure risk, target alignment confidence, and warnings such as possible background interference, low card coverage, target may not be centered, image may be blurry, lighting may be uneven, and score confidence reduced
+- quality warning impact policy: blur is directly represented in the existing close-up `blurPenalty` and centering confidence; exposure warnings are diagnostic-only in v0.1; coverage is an approximate heuristic, not a calibrated card mask or pass/fail framing result
+- operator options metadata including `cornerProfile=sharp_90` and whether capture guides were enabled
+- clearer surface low-score explanation translating surface speck/scratch/texture anomaly proxy metrics into plain English, with explicit caution that print texture, focus, lighting, or background can contribute and source images should be reviewed
+
+The operator preview workflow now passes optional guide/profile metadata through the JSONL bridge protocol. The visible Windows operator panel shows guide text for each target class:
+
+- full-card overview: fit as much of the card as possible, avoid background, keep card edges visible, and label it interim/not calibrated macro capture
+- corner targets: place the corner tip at the center guide, include both edges, fill the frame mostly with card, avoid background, and use the `sharp_90` corner profile
+- edge targets: align top/bottom edges with the horizontal guide and left/right edges with the vertical guide
+- surface targets: fill the central patch with card surface only and avoid border/background
+
+PR #33 follow-up added both an adjacent high-contrast visual guide diagram panel and an attempted in-preview transparent WinForms overlay window in the visible Windows operator workflow. The in-preview overlay is implemented as an owned borderless transparent WinForms window positioned over the DNVideoX ActiveX preview rectangle; it does not use DNVideoX `SetBitmapOverlay` or `SetTextOverlay`, so the guide is outside the video frame pipeline and should not be baked into `SaveFrameJPG` output. The side panel remains as a fallback/legend. The diagrams are target-specific:
+
+- full-card overview: yellow card-framing rectangle
+- `sharp_90` corner targets: yellow L-shaped corner guide oriented for top-left, top-right, bottom-right, or bottom-left
+- edge targets: yellow horizontal or vertical line depending target orientation
+- surface targets: yellow central patch box
+
+PR #33 target-template follow-up keeps the accepted transparent in-preview overlay technique and changes the visual guide from generic shapes to capture templates:
+
+- full-card overview: centered `2.5:3.5` card frame with safe margin and label `Fit full card inside this frame`; it remains interim and not calibrated macro capture
+- `sharp_90` corners: close-up L template with crosshair at the corner tip; top-left opens down/right, top-right opens down/left, bottom-right opens up/left, and bottom-left opens up/right
+- edges: horizontal strip for top/bottom edges and vertical strip for left/right edges, with the operator instructed to minimize background
+- surfaces: centered patch box for card surface only, avoiding borders/background
+
+Operator workflow manifests now record `guideTemplateKind`, `guideTemplateAspectRatio` for the full-card frame (`2.5:3.5`), and `guideTemplateScaleNote`. The experimental `analysis.json` and HTML report include a capture-template metadata section. These guide templates improve manual positioning consistency before GRBL stage automation, but physical scale remains uncalibrated until AMR/calibration workflow is finalized. The guide graphics are overlay UI only and are not intended to be baked into captured JPGs.
+
+`--corner-profile sharp_90` is the only active corner profile in this slice. Unsupported values fail before spawning the bridge. `--capture-guides true|false` defaults to `true`; when enabled, guide text plus `guideVisualKind`, `guideVisualOrientation`, and `guideVisualLegend` metadata are recorded in the manifest and shown in the preview workflow. These changes are guidance and diagnostics only; they do not create fake/manual scores and do not retune analysis thresholds.
+
+Local Dell supervised follow-up smoke on 2026-06-10 used `operator-smoke-single`, normal JPG only, and output outside git at `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-guide-smoke-20260610T101537418Z`. The visible operator workflow completed with one `center-surface` target, `guideVisualKind=surface`, `guideVisualOrientation=center`, and `guideVisualLegend="Fill the yellow central patch with card surface only; avoid border and background."` It captured `01-center-surface-attempt-01-normal.jpg` (`sha256=52fb0f26eccb4ea05934dbdee599ba50adfe8359b671027ee5248fb90a3afb0e`, `byteSize=210536`), wrote `manifest.json` and `preview-report.html`, and cleanup succeeded with preview stopped, disconnected, host disposed. Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`.
+
+Local Dell in-preview overlay smoke on 2026-06-10 used `operator-smoke-single`, normal JPG only, and output outside git at `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-preview-overlay-smoke-20260610T165908190Z`. It captured `01-center-surface-attempt-01-normal.jpg` (`sha256=8147f31196c3b64ff42f2f8f6724ff0b57049e64a43fd7e5241cf8a09e23423c`, `byteSize=149798`), wrote `manifest.json` and `preview-report.html`, and cleanup succeeded. The saved JPG was visually inspected and contained no guide graphics. Mark confirmed the yellow visual guide appeared on top of the live Dino-Lite camera preview, so the current overlay technique is accepted technically.
+
+Local Dell supervised PR #33 smoke on 2026-06-10 used `dinolite-experimental-grading-run --corner-profile sharp_90 --capture-guides true`, normal JPG only, and output outside git at `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z`. It completed `status=completed` with 12 captured targets, `manifest.json`, `analysis.json`, and `preview-report.html`. The report includes score scale, perfect `10/10` definitions, "Why this score?" sections, and quality warning summary. Computed outputs were centering `10.00 / 10`, corners `6.49 / 10`, edges `2.17 / 10`, surface `1.00 / 10`, and overall `5.13 / 10` (`Needs Review`, confidence `0.71`). Quality diagnostics recorded warnings on 11 targets, mostly blur/underexposure risk. Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`.
+
+Local Dell supervised PR #33 target-template smoke on 2026-06-10 used `dinolite-experimental-grading-run --corner-profile sharp_90 --capture-guides true`, normal JPG only, and output outside git at `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z`. It completed `status=completed` with 12 captured targets, `manifest.json`, `analysis.json`, and `preview-report.html`. The manifest/analysis recorded `full_card_frame`, `sharp_90_corner_template`, `edge_strip_template`, and `surface_patch_template` metadata, including the full-card `2.5:3.5` aspect ratio and the physical-scale-uncalibrated note. Representative saved JPGs for full-card, corner, edge, and surface targets were visually inspected and contained no overlay graphics. Computed outputs were centering `10.00 / 10`, corners `2.24 / 10`, edges `3.59 / 10`, surface `1.00 / 10`, and overall `4.14 / 10` (confidence `0.71`). Quality diagnostics recorded warnings on all 12 targets, mostly blur/underexposure risk. Final explicit Mark confirmation that each target-specific template was visible/useful during the workflow is pending before treating PR #33 as ready to merge.
 
 Local Dell supervised smoke on 2026-06-09/2026-06-10 used `operator-smoke-single` after fixing the child-process hidden-window spawn option. The operator window appeared as `Ten Kings Dino-Lite Operator Workflow`, Mark clicked `Capture / continue`, and the command completed with `status=completed`, `connectedDuringCommand=true`, `previewDuringCommand=true`, and cleanup `previewStopped=true`, `disconnected=true`, `hostDisposed=true`. Output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-operator-smoke-single-20260610T034854043Z`. It contains `manifest.json`, `preview-report.html`, and `01-center-surface-attempt-01-normal.jpg` (`sha256=74016465bd7ee8a00c033f98ac72047abb3b302b40c33d7314f44baf42a9fd5f`, `byteSize=130542`). Device ID was present and is redacted from docs except USB VID/PID `vid_a168&pid_0990`. The optional `card-interim` run was deferred because the single-target supervised workflow proved the visible operator flow.
 

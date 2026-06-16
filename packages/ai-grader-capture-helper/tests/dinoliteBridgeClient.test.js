@@ -297,6 +297,16 @@ function fakeResult(command) {
             reportLabel: "interim_full_card_overview",
             instruction:
               "Raise/zoom out/refocus the Dino-Lite so as much of the full card as possible is visible. This is an interim overview until the dedicated macro camera is integrated.",
+            captureGuide:
+              "Guide: fit as much of the card as possible inside the preview, keep all card edges visible, avoid excess background. This overview is interim and not calibrated macro capture.",
+            captureGuidesEnabled: true,
+            guideVisualKind: "full-card",
+            guideVisualOrientation: "center",
+            guideVisualLegend: "Fit full card inside this frame. Raise/zoom out/refocus; interim, not calibrated macro capture.",
+            guideTemplateKind: "full_card_frame",
+            guideTemplateAspectRatio: "2.5:3.5",
+            guideTemplateScaleNote: "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
+            cornerProfile: null,
           },
           targetIndex: 1,
           action: "capture",
@@ -323,6 +333,16 @@ function fakeResult(command) {
             type: "corner",
             reportLabel: "top_left_corner",
             instruction: "Move the card so the top-left corner is centered under the microscope.",
+            captureGuide:
+              "Guide: place the corner tip at the center guide, include both edges, fill the frame mostly with card, avoid background. Corner profile: sharp_90.",
+            captureGuidesEnabled: true,
+            guideVisualKind: "corner",
+            guideVisualOrientation: "top-left",
+            guideVisualLegend: "Place corner tip on crosshair; align both card edges with yellow guides. Profile: sharp_90.",
+            guideTemplateKind: "sharp_90_corner_template",
+            guideTemplateAspectRatio: null,
+            guideTemplateScaleNote: "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
+            cornerProfile: "sharp_90",
           },
           targetIndex: 2,
           action: "capture",
@@ -514,6 +534,8 @@ test("client maps fake operator workflow response shape", async () => {
     outputDir: "C:\\TenKings\\capture-data\\dinolite-operator",
     label: "card-interim-smoke",
     plan: "card-interim",
+    cornerProfile: "sharp_90",
+    captureGuides: true,
   });
   await client.close();
 
@@ -523,6 +545,17 @@ test("client maps fake operator workflow response shape", async () => {
   assert.equal(workflow.targets[0].target.id, "full-card-overview");
   assert.equal(workflow.targets[0].target.type, "interim_macro_overview");
   assert.equal(workflow.targets[0].target.reportLabel, "interim_full_card_overview");
+  assert.match(workflow.targets[0].target.captureGuide, /fit as much of the card as possible/);
+  assert.equal(workflow.targets[0].target.guideVisualKind, "full-card");
+  assert.equal(workflow.targets[0].target.guideVisualOrientation, "center");
+  assert.match(workflow.targets[0].target.guideVisualLegend, /Fit full card inside this frame/);
+  assert.equal(workflow.targets[0].target.guideTemplateKind, "full_card_frame");
+  assert.equal(workflow.targets[0].target.guideTemplateAspectRatio, "2.5:3.5");
+  assert.match(workflow.targets[0].target.guideTemplateScaleNote, /Physical scale is uncalibrated/);
+  assert.equal(workflow.targets[1].target.cornerProfile, "sharp_90");
+  assert.equal(workflow.targets[1].target.guideVisualKind, "corner");
+  assert.equal(workflow.targets[1].target.guideVisualOrientation, "top-left");
+  assert.equal(workflow.targets[1].target.guideTemplateKind, "sharp_90_corner_template");
   assert.equal(workflow.targets[0].artifacts[0].mimeType, "image/jpeg");
   assert.match(workflow.limitations.join(" "), /not production macro evidence/);
   assert.match(workflow.limitations.join(" "), /not calibrated macro capture/);
@@ -602,11 +635,14 @@ test("real adapter manual hardware commands allow operator workflow but not heal
     deviceIndex: 0,
     outputDir: "C:\\TenKings\\capture-data\\dinolite-operator",
     plan: "card-interim",
+    cornerProfile: "sharp_90",
+    captureGuides: true,
   });
   await client.close();
 
   assert.equal(workflow.targets[0].target.id, "full-card-overview");
   assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("dinolite.operatorWorkflow")), true);
+  assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("\"cornerProfile\":\"sharp_90\"")), true);
   assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("SetLensPos")), false);
   assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("AutoFocus")), false);
   assert.equal(bridgeProcess.stdin.writes.some((chunk) => chunk.includes("SetExposureValue")), false);

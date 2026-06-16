@@ -86,6 +86,90 @@ test("surface analyzer scores synthetic specked surface below clean surface", ()
   assert.ok(analyzeSurfaceImageForTests(damaged).score < analyzeSurfaceImageForTests(clean).score);
 });
 
+test("experimental report explains low surface visual signals without changing algorithm version", async () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), "dinolite-surface-report-"));
+  const imagePath = path.join(sessionDir, "01-center-surface-normal.jpg");
+  const previewReportPath = path.join(sessionDir, "preview-report.html");
+  const manifestPath = path.join(sessionDir, "manifest.json");
+  const damaged = createSyntheticImage(140, 140, { r: 150, g: 150, b: 150 });
+  for (let i = 20; i < 120; i += 12) {
+    fillRect(damaged, { x: i, y: 40, w: 5, h: 5 }, { r: 250, g: 250, b: 250 });
+    fillRect(damaged, { x: 120 - i, y: 86, w: 4, h: 4 }, { r: 20, g: 20, b: 20 });
+  }
+  fillRect(damaged, { x: 20, y: 70, w: 95, h: 3 }, { r: 245, g: 245, b: 245 });
+  await sharp(Buffer.from(damaged.data), { raw: { width: damaged.width, height: damaged.height, channels: 4 } })
+    .jpeg()
+    .toFile(imagePath);
+
+  const analysis = await analyzeDinoLiteExperimentalGradingWorkflow({
+    adapter: "fake",
+    simulated: true,
+    comActiveXInstantiated: false,
+    sessionId: "synthetic-surface-session",
+    label: "synthetic-surface",
+    plan: "experimental-card-grading",
+    sessionDir,
+    manifestPath,
+    previewReportPath,
+    timestamp: "2026-06-10T00:00:00.000Z",
+    status: "completed",
+    device: { index: 0, name: "Synthetic Dino-Lite" },
+    ocxVersion: "simulated",
+    connectedDuringCommand: false,
+    previewDuringCommand: false,
+    config: { bitfield: 0 },
+    amr: null,
+    options: { includeFlcSweep: false, includeEdr: false, includeEdof: false },
+    targets: [
+      {
+        target: {
+          id: "center-surface",
+          name: "Center surface",
+          type: "surface",
+          reportLabel: "center_surface",
+          instruction: "Synthetic surface.",
+          captureGuide: "Guide: fill the central patch with card surface only.",
+          captureGuidesEnabled: true,
+          guideVisualKind: "surface",
+          guideVisualOrientation: "center",
+          guideVisualLegend: "Fill the yellow central patch with card surface only; avoid border and background.",
+          guideTemplateKind: "surface_patch_template",
+          guideTemplateAspectRatio: null,
+          guideTemplateScaleNote: "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
+          cornerProfile: null,
+        },
+        targetIndex: 1,
+        action: "capture",
+        attempt: 1,
+        status: "success",
+        artifacts: [
+          {
+            path: imagePath,
+            filename: path.basename(imagePath),
+            sha256: "synthetic",
+            byteSize: fs.statSync(imagePath).size,
+            mimeType: "image/jpeg",
+            timestamp: "2026-06-10T00:00:00.000Z",
+            captureKind: "normal",
+            lightingRecipe: "normal",
+            status: "success",
+          },
+        ],
+      },
+    ],
+    cleanup: { previewStopped: true, disconnected: true, hostDisposed: true },
+    limitations: [],
+    forbiddenOperationsInvoked: false,
+  }, { cornerProfile: "sharp_90", captureGuides: true });
+
+  const html = fs.readFileSync(previewReportPath, "utf8");
+  assert.equal(analysis.algorithmVersion, "tenkings-dinolite-grading-v0.1");
+  assert.equal(analysis.thresholdSetVersion, "tenkings-dinolite-thresholds-v0.1");
+  assert.equal(analysis.guideTemplates[0].guideTemplateKind, "surface_patch_template");
+  assert.match(html, /Surface score is driven by high texture\/anomaly\/scratch proxy metrics/);
+  assert.match(html, /review source images/i);
+});
+
 test("fusion computes experimental score and applies severe defect cap", () => {
   const result = fuseExperimentalScores({
     centering: fakeElement("centering", 9.5),
@@ -123,7 +207,7 @@ test("experimental report carries non-certified warning language", async () => {
     .jpeg()
     .toFile(imagePath);
 
-  await analyzeDinoLiteExperimentalGradingWorkflow({
+  const analysis = await analyzeDinoLiteExperimentalGradingWorkflow({
     adapter: "fake",
     simulated: true,
     comActiveXInstantiated: false,
@@ -150,6 +234,15 @@ test("experimental report carries non-certified warning language", async () => {
           type: "interim_macro_overview",
           reportLabel: "interim_full_card_overview",
           instruction: "Synthetic test overview.",
+          captureGuide: "Guide: fit as much of the card as possible, avoid background, keep card edges visible.",
+          captureGuidesEnabled: true,
+          guideVisualKind: "full-card",
+          guideVisualOrientation: "center",
+          guideVisualLegend: "Fit as much of the card as possible inside the yellow rectangle; keep card edges visible.",
+          guideTemplateKind: "full_card_frame",
+          guideTemplateAspectRatio: "2.5:3.5",
+          guideTemplateScaleNote: "Physical scale is uncalibrated until AMR/calibration workflow is finalized.",
+          cornerProfile: null,
         },
         targetIndex: 1,
         action: "capture",
@@ -173,7 +266,7 @@ test("experimental report carries non-certified warning language", async () => {
     cleanup: { previewStopped: true, disconnected: true, hostDisposed: true },
     limitations: [],
     forbiddenOperationsInvoked: false,
-  });
+  }, { cornerProfile: "sharp_90", captureGuides: true });
 
   const html = fs.readFileSync(previewReportPath, "utf8");
   assert.match(html, /Experimental AI Grader Test Run - Not Certified/);
@@ -181,6 +274,65 @@ test("experimental report carries non-certified warning language", async () => {
   assert.match(html, /not a certificate/);
   assert.match(html, /not calibrated production macro evidence/);
   assert.match(html, /not a final AI grade/);
+  assert.match(html, /Score Scale/);
+  assert.match(html, /x\.xx \/ 10/);
+  assert.match(html, /centering 10\/10/i);
+  assert.match(html, /corners 10\/10/i);
+  assert.match(html, /edges 10\/10/i);
+  assert.match(html, /surface 10\/10/i);
+  assert.match(html, /overall 10\/10/i);
+  assert.match(html, /Why this score\?/i);
+  assert.match(html, /Quality Warning Summary/);
+  assert.match(html, /Quality Warning Impact/);
+  assert.match(html, /diagnostic/i);
+  assert.match(html, /blurPenalty/);
+  assert.match(html, /Underexposure and overexposure warnings are diagnostic-only/i);
+  assert.match(html, /Card coverage heuristic/);
+  assert.match(html, /Capture Template Metadata/);
+  assert.match(html, /full_card_frame/);
+  assert.match(html, /2\.5:3\.5/);
+  assert.match(html, /Physical scale is uncalibrated/);
+  assert.doesNotMatch(html, /Card coverage estimate/);
+  assert.match(html, /Surface score is driven by high texture\/anomaly\/scratch proxy metrics|surface was not_computed/i);
+  assert.equal(analysis.operatorOptions.cornerProfile, "sharp_90");
+  assert.equal(analysis.scoreScale.displayFormat, "x.xx / 10");
+  assert.equal(analysis.algorithmVersion, "tenkings-dinolite-grading-v0.1");
+  assert.equal(analysis.thresholdSetVersion, "tenkings-dinolite-thresholds-v0.1");
+  assert.equal(analysis.guideTemplates[0].guideTemplateKind, "full_card_frame");
+  assert.equal(analysis.guideTemplates[0].guideTemplateAspectRatio, "2.5:3.5");
+  assert.equal(analysis.qualityDiagnostics.length, 1);
+  assert.equal(typeof analysis.qualityDiagnostics[0].cardCoverageHeuristic, "number");
+  assert.notEqual(analysis.qualityDiagnostics[0].cardCoverageHeuristicLimitations, "");
+});
+
+test("experimental grading CLI rejects unsupported corner profile before spawning bridge", async () => {
+  let stderr = "";
+  const code = await runCaptureHelperCli(
+    [
+      "dinolite-experimental-grading-run",
+      "--bridge-exe",
+      "bridge.exe",
+      "--adapter",
+      "dnvideox",
+      "--device-index",
+      "0",
+      "--output-dir",
+      path.join(os.tmpdir(), "dinolite-grading-runs"),
+      "--label",
+      "profile-test",
+      "--corner-profile",
+      "rounded",
+    ],
+    {
+      stderr: (text) => {
+        stderr += text;
+      },
+      env: {},
+    }
+  );
+
+  assert.equal(code, 1);
+  assert.match(stderr, /sharp_90 only/);
 });
 
 test("experimental grading CLI rejects missing label before spawning bridge", async () => {

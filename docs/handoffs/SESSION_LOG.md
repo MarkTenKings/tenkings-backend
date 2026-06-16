@@ -19657,3 +19657,327 @@ By enabling Rip It Live, I confirm:
 - No lens/focus/exposure-setting/DPQ method was run.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite report diagnostics PR #33 in progress
+
+### Summary
+- Created branch `feature/ai-grader-dinolite-report-diagnostics` from latest `origin/main`.
+- Implemented report clarity and operator guide diagnostics for the experimental Dino-Lite grading workflow.
+- Preserved the existing PR #32 / v0.1 scoring formulas, thresholds, weights, and fusion caps.
+- Added JSONL bridge fields and CLI flags for `cornerProfile=sharp_90` and `captureGuides`.
+- Added target-level guide metadata and a visible operator guide panel for full-card overview, corner, edge, and surface targets.
+- Enhanced `analysis.json` and `preview-report.html` with score scale, score bands, perfect `10/10` definitions, element definitions, "Why this score?" sections, quality warning summaries, target quality diagnostics, and operator options metadata.
+- Unsupported corner profiles now fail before the TypeScript client spawns the bridge.
+
+### Focused Validation
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 79 tests.
+
+### Validation
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 79 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Supervised Smoke
+- Ran `dinolite-experimental-grading-run --corner-profile sharp_90 --capture-guides true`, normal JPG only, with Mark present.
+- Output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z`.
+- Manifest: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z\manifest.json`.
+- Analysis: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z\analysis.json`.
+- Report: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-smoke-20260610T082201807Z\preview-report.html`.
+- Captured target count: 12.
+- Report verified to include score scale, `x.xx / 10` score formatting, perfect `10/10` definitions, "Why this score?" sections, quality warning summary, and non-certified warning.
+- Analysis results:
+  - centering: `10.00 / 10`, confidence `0.805`
+  - corners: `6.49 / 10`
+  - edges: `2.17 / 10`
+  - surface: `1.00 / 10`
+  - overall: `5.13 / 10`, `Needs Review`, confidence `0.71`
+  - no `not_computed` reasons
+  - severe defect cap applied
+  - quality warnings on 11 targets, mostly blur/underexposure risk
+- Artifact evidence:
+  - `01-full-card-overview-attempt-01-normal.jpg` - 126268 bytes - `857fa828215b694b85de0ddb54aada2eec5713fb0ea2db2ac20034aced46eaa2`
+  - `02-top-left-corner-attempt-01-normal.jpg` - 192826 bytes - `ba1a9b2ba5db4bd18b9cf6e1c20af13b30744569f40e2c5c09530b858d63c96b`
+  - `03-top-right-corner-attempt-01-normal.jpg` - 129093 bytes - `6bff243e0615d86142eb0ae6ca2459c9f4024542809ca8f4fa47e9709072953e`
+  - `04-bottom-right-corner-attempt-01-normal.jpg` - 135272 bytes - `e97cdcf7d5c4b9b603088ffb539e082f49d645dc9329905a8f62bb2359ccbce7`
+  - `05-bottom-left-corner-attempt-01-normal.jpg` - 140411 bytes - `980e75bf15ecc056b8e83dc48477abf9a6369944012ecbfebad5ea9020b5a51b`
+  - `06-top-edge-attempt-01-normal.jpg` - 134659 bytes - `fb38a4ca527134aa439088533ca00472b7ef5c74e55ec0c4356a2dcd54c19c77`
+  - `07-right-edge-attempt-01-normal.jpg` - 78195 bytes - `5bd8f6ba1a4716dd384902dfcc5818a2d7bd2e608a4b1689f6f008173dc4cf75`
+  - `08-bottom-edge-attempt-01-normal.jpg` - 115056 bytes - `0d19d8f5517c09c03bb78b97b0e5b5d907ea16e6ea14b5929c58b017627fd845`
+  - `09-left-edge-attempt-01-normal.jpg` - 127504 bytes - `070a6e7d66049276cbb06347aaef9f51eb9e7b989b38f3aa0ceaec6efed9ed0d`
+  - `10-center-surface-attempt-01-normal.jpg` - 242065 bytes - `5f9aaccb27dd502e6fc6d42edaff8b23ca9e16e5af12323d2c66c788ab84f008`
+  - `11-upper-surface-attempt-01-normal.jpg` - 249403 bytes - `edd48ade984c186e4af9930d0034c1cd29e69a3d2660ada2c97b56201a9db226`
+  - `12-lower-surface-attempt-01-normal.jpg` - 276669 bytes - `c51a889186e775e1c2db5590a48fa38b281259ff45fa9b895a8c098cc73f6b1b`
+
+### Pending
+- PR creation and checks.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- One explicit supervised Dino-Lite operator workflow and normal JPG capture run was performed for PR #33 smoke only; outputs stayed outside git.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No lens/focus/exposure-setting/DPQ method was added or run.
+- No fake, manual, operator-entered, or placeholder score was added.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite report diagnostics PR #33 continuation
+
+### Summary
+- Continued PR #33 on branch `feature/ai-grader-dinolite-report-diagnostics`; PR remains unmerged.
+- Fixed the remaining operator-guide usability issue by adding a real adjacent WinForms visual guide diagram panel to the visible `Ten Kings Dino-Lite Operator Workflow` window.
+- The guide panel is adjacent to the DNVideoX ActiveX preview instead of drawn over the OCX surface, reducing overlay risk while still providing target-specific visual diagrams.
+- Added a follow-up in-preview overlay attempt using an owned borderless transparent WinForms window positioned over the DNVideoX ActiveX preview rectangle. The adjacent guide panel remains as fallback/legend.
+- DNVideoX `SetBitmapOverlay` and `SetTextOverlay` were not used, so the in-preview guide is outside the DNVideoX video frame pipeline and should not be captured by `SaveFrameJPG`.
+- Added target-level guide metadata through fake and real operator workflow manifests:
+  - `guideVisualKind`
+  - `guideVisualOrientation`
+  - `guideVisualLegend`
+- Guide visuals now cover:
+  - full-card overview: card-framing rectangle
+  - `sharp_90` corners: L-shaped guide oriented for top-left, top-right, bottom-right, or bottom-left
+  - edges: horizontal guide for top/bottom and vertical guide for left/right
+  - surface: central patch box
+- Replaced misleading primary `cardCoverageEstimate` reporting with `cardCoverageHeuristic`, label, and limitation text. The heuristic is not a calibrated card mask and does not indicate perfect framing.
+- Added report warning-impact explanation:
+  - blur is directly represented in existing close-up `blurPenalty` and centering confidence
+  - under/overexposure warnings are diagnostic-only in v0.1
+  - coverage is an approximate framing/background risk heuristic only
+- Added clearer surface low-score language explaining that high texture/anomaly/scratch proxy signals can reflect print texture, focus, lighting, or background and source images should be reviewed.
+- Scoring math did not change. Algorithm version remains `tenkings-dinolite-grading-v0.1`; threshold set remains `tenkings-dinolite-thresholds-v0.1`.
+
+### Validation
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 80 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+
+### Supervised Visual Guide Smoke
+- Ran `dinolite-operator-workflow --plan operator-smoke-single --capture-guides true`, normal JPG only, with Mark present.
+- First command attempt failed before hardware access because the bridge exe path was relative under `pnpm exec`; the rerun used the absolute bridge exe path.
+- Output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-guide-smoke-20260610T101537418Z`.
+- Manifest: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-guide-smoke-20260610T101537418Z\manifest.json`.
+- Report: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-guide-smoke-20260610T101537418Z\preview-report.html`.
+- Captured target count: 1, `center-surface`.
+- Target metadata recorded `guideVisualKind=surface`, `guideVisualOrientation=center`, and `guideVisualLegend="Fill the yellow central patch with card surface only; avoid border and background."`.
+- Artifact: `01-center-surface-attempt-01-normal.jpg` - 210536 bytes - `52fb0f26eccb4ea05934dbdee599ba50adfe8359b671027ee5248fb90a3afb0e`.
+- Cleanup succeeded: `previewStopped=true`, `disconnected=true`, `hostDisposed=true`.
+
+### Supervised In-Preview Overlay Smoke
+- Ran `dinolite-operator-workflow --plan operator-smoke-single --capture-guides true`, normal JPG only, with Mark present.
+- Output folder: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-preview-overlay-smoke-20260610T165908190Z`.
+- Manifest: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-preview-overlay-smoke-20260610T165908190Z\manifest.json`.
+- Report: `C:\TenKings\capture-data\dinolite-operator\dinolite-operator-report-diagnostics-preview-overlay-smoke-20260610T165908190Z\preview-report.html`.
+- Captured target count: 1, `center-surface`.
+- Target metadata recorded `guideVisualKind=surface`, `guideVisualOrientation=center`, and `guideVisualLegend="Fill the yellow central patch with card surface only; avoid border and background."`.
+- Artifact: `01-center-surface-attempt-01-normal.jpg` - 149798 bytes - `8147f31196c3b64ff42f2f8f6724ff0b57049e64a43fd7e5241cf8a09e23423c`.
+- Saved JPG was visually inspected and contained no guide graphics.
+- Cleanup succeeded: `previewStopped=true`, `disconnected=true`, `hostDisposed=true`.
+- Mark's explicit confirmation that the yellow guide appeared inside the live camera preview, not only in the side panel, is pending.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No lens/focus/exposure-setting/DPQ method was added or run.
+- No fake, manual, operator-entered, or placeholder score was added.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite report diagnostics PR #33 controlled rerun attempts
+
+### Summary
+- Continued PR #33 on branch `feature/ai-grader-dinolite-report-diagnostics`; PR remains unmerged.
+- No code changes were made for the controlled indoor rerun attempt.
+- Attempted a controlled supervised `experimental-card-grading` rerun with `--corner-profile sharp_90 --capture-guides true`, normal JPG only, output outside git.
+- Operator guidance before rerun:
+  - use target-specific overlays
+  - use a plain matte background if available
+  - avoid wood grain / car lighting / reflective surfaces
+  - improve room lighting if possible
+  - manually focus before every capture
+  - full-card overview: fit card inside the `2.5:3.5` frame
+  - corners: put corner tip on crosshair and align edges to L-guide
+  - edges: align edge inside strip guide
+  - surfaces: fill patch box with card surface only
+
+### Controlled Attempt Results
+- First controlled attempt timed out waiting for `dinolite.operatorWorkflow`.
+  - partial output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-controlled-smoke-20260610T195721833Z`
+  - files present: 4 normal JPGs only
+  - no `manifest.json`, no `analysis.json`, and no `preview-report.html`
+  - partial artifacts:
+    - `01-full-card-overview-attempt-01-normal.jpg` - 101945 bytes - `9342eb3a6747dc1a4f9f8efefb34795cb0ecd21641d0d87343624e4e98ce1d64`
+    - `02-top-left-corner-attempt-01-normal.jpg` - 138218 bytes - `11a15113c5c8ca04f22ce5274c618660858ccaaaa2dc7d20a37568bd8f5b2660`
+    - `03-top-right-corner-attempt-01-normal.jpg` - 79027 bytes - `4de5cec5a58494ae6e4954532e24d796842360a5f6a1b9bc7bbcbbd59bc48117`
+    - `04-bottom-right-corner-attempt-01-normal.jpg` - 77036 bytes - `36de7b1f94b3d9fd7627d2db0b03e6e61d8b22b6344c3742d59e34ca0e0856ad`
+- Second controlled rerun used a longer 90-minute bridge timeout and also timed out waiting for `dinolite.operatorWorkflow`.
+  - partial output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-controlled-smoke-rerun-20260610T204255292Z`
+  - no captured files were present in the folder after timeout
+  - no `manifest.json`, no `analysis.json`, and no `preview-report.html`
+- No matching bridge/node/camera processes were left running after the timeouts.
+- These attempts did not produce a cleaner controlled report for review.
+- PR #33 remains based on the previous successful template smoke (`dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z`) and still needs final explicit Mark confirmation that the full-card/corner/edge/surface templates were visible/useful during a completed workflow.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No lens/focus/exposure-setting/DPQ method was added or run.
+- No fake, manual, operator-entered, or placeholder score was added.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-10 - AI Grader Dino-Lite report diagnostics PR #33 target-template continuation
+
+### Summary
+- Continued PR #33 on branch `feature/ai-grader-dinolite-report-diagnostics`; PR remains unmerged.
+- Mark confirmed the yellow visual guide appears on top of the live Dino-Lite camera preview, so the transparent in-preview overlay technique is accepted technically.
+- Kept the accepted overlay technique: owned transparent top-level WinForms window positioned over the DNVideoX ActiveX preview rectangle; side visual panel remains as legend/fallback.
+- Improved the in-preview guide from generic alignment shapes to target-specific capture templates:
+  - full-card overview: centered `2.5:3.5` card-shaped frame with safe margin and label `Fit full card inside this frame`
+  - `sharp_90` corners: close-up L template plus crosshair, target-oriented for top-left/top-right/bottom-right/bottom-left
+  - edges: horizontal strip for top/bottom and vertical strip for left/right
+  - surfaces: centered patch box for card surface only
+- Added target/report metadata: `guideTemplateKind`, `guideTemplateAspectRatio`, and `guideTemplateScaleNote`.
+- Added analysis/report capture-template metadata table and physical-scale uncalibrated limitation.
+- Scoring math did not change. Algorithm version remains `tenkings-dinolite-grading-v0.1`; threshold set remains `tenkings-dinolite-thresholds-v0.1`.
+
+### Focused Validation
+- `dotnet build packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass.
+- `dotnet test packages\ai-grader-dinolite-bridge\DinoLiteBridge.sln -p:Platform=x86 -p:Configuration=Release` -> pass, 12 tests.
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 80 tests.
+
+### Pending
+- Final explicit Mark confirmation that the full-card, corner, edge, and surface templates were visible/useful during the workflow before treating PR #33 as ready to merge.
+
+### Full Validation
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Supervised Template Smoke
+- Ran `dinolite-experimental-grading-run --corner-profile sharp_90 --capture-guides true`, normal JPG only, with Mark present.
+- Output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z`.
+- Manifest: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z\manifest.json`.
+- Analysis: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z\analysis.json`.
+- Report: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-template-smoke-20260610T183307867Z\preview-report.html`.
+- Captured target count: 12.
+- Template metadata recorded: `full_card_frame`, `sharp_90_corner_template`, `edge_strip_template`, `surface_patch_template`, full-card aspect ratio `2.5:3.5`, and physical-scale-uncalibrated note.
+- Representative saved JPGs for full-card, corner, edge, and surface targets were visually inspected and contained no overlay graphics.
+- Element results:
+  - centering: `10.00 / 10`, confidence `0.809`
+  - corners: `2.24 / 10`, confidence `0.737`
+  - edges: `3.59 / 10`, confidence `0.75`
+  - surface: `1.00 / 10`, confidence `0.71`
+  - overall: `4.14 / 10`, confidence `0.71`
+- Quality warnings were recorded on 12 targets, mostly blur/underexposure risk.
+- Artifacts:
+  - `01-full-card-overview-attempt-01-normal.jpg` - 132535 bytes - `42dd1352e6a620df1174f88d69253ab299b3d0347583c42e5e88d22ba07599a5`
+  - `02-top-left-corner-attempt-01-normal.jpg` - 136501 bytes - `8c1742ca4b1d45b25970e08450c47014bd9494dd9b352bcf44708eb9621aa953`
+  - `03-top-right-corner-attempt-01-normal.jpg` - 132419 bytes - `42333ddc09eaf54c3794f221b2b0a94919d88182891ff6e241712b3939cf88e2`
+  - `04-bottom-right-corner-attempt-01-normal.jpg` - 139425 bytes - `e796920c72a717fc53bebe8e3dbc50328a2d5a9d522bae82525703503bdd736d`
+  - `05-bottom-left-corner-attempt-01-normal.jpg` - 135488 bytes - `1eb3bb0b678dc4ab7762c9aa6ae70a9c3ccf64f26752d0c7e01c58320a6614e7`
+  - `06-top-edge-attempt-01-normal.jpg` - 135091 bytes - `8039a5987565b8afc6176ad4c5d63afedceeb72e30b17b1435fd09382d317574`
+  - `07-right-edge-attempt-01-normal.jpg` - 135070 bytes - `40b36a42aa805bcbbdc8930f4a22c5c2fd6c64f5e05a22540e314da9d95589c5`
+  - `08-bottom-edge-attempt-01-normal.jpg` - 166737 bytes - `eb537bd9244ce44f0e071031274a451ac9bdd9ac8d0ad8ba35ff612accc98e0e`
+  - `09-left-edge-attempt-01-normal.jpg` - 119634 bytes - `1de1c32e269ac5bfc80b39cf2015e518f335729ab2473221fb7a0974120fa4bd`
+  - `10-center-surface-attempt-01-normal.jpg` - 128275 bytes - `7f6e68f21be6c5a2260cd7b97b785ccec7e0571cb56a1a691d5ecf453d9f6edf`
+  - `11-upper-surface-attempt-01-normal.jpg` - 128405 bytes - `6620bf0f4f55ec69871f0e5e458b8dfc2e42885d3b579d5b5b8ff1a18ed34035`
+  - `12-lower-surface-attempt-01-normal.jpg` - 138857 bytes - `fe795c2fb056a79a884f9ee5bcbda917627427bfba266e9263e20dcd8ed3e8cf`
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No lens/focus/exposure-setting/DPQ method was added or run.
+- No fake, manual, operator-entered, or placeholder score was added.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-16 UTC / 2026-06-15 ET - AI Grader Dino-Lite report diagnostics PR #33 indoor supervised run
+
+### Summary
+- Continued PR #33 on branch `feature/ai-grader-dinolite-report-diagnostics`; PR remains unmerged.
+- Mark confirmed the current Dell USB hub/dock Dino-Lite connection is acceptable for this PR #33 supervised indoor workflow because prior Dino-Lite preview/capture workflows worked through the same connection.
+- No code changes were made before the run.
+- Ran a supervised indoor `experimental-card-grading` workflow with normal JPG only:
+  - command shape: `dinolite-experimental-grading-run --label report-diagnostics-indoor-final --corner-profile sharp_90 --capture-guides true --bridge-timeout-ms 5400000`
+  - output folder: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-indoor-final-20260616T011349194Z`
+  - manifest: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-indoor-final-20260616T011349194Z\manifest.json`
+  - analysis: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-indoor-final-20260616T011349194Z\analysis.json`
+  - report: `C:\TenKings\capture-data\dinolite-grading-runs\dinolite-operator-report-diagnostics-indoor-final-20260616T011349194Z\preview-report.html`
+- Verified `manifest.json`, `analysis.json`, `preview-report.html`, and 12 normal JPG artifacts exist.
+- Visual inspection through a temporary contact sheet showed the saved JPG artifacts do not include the yellow guide/template overlay graphics.
+
+### Results
+- Captured target count: 12.
+- Element results:
+  - centering: `10.00 / 10`, confidence `0.838`, band `Excellent`
+  - corners: `6.45 / 10`, confidence `0.765`, band `Fair / Review`
+  - edges: `6.39 / 10`, confidence `0.764`, band `Fair / Review`
+  - surface: `1.23 / 10`, confidence `0.714`, band `Needs Review`
+  - overall: `6.00 / 10`, confidence `0.714`, band `Fair / Review`
+- Quality warnings:
+  - warning summary: `Experimental/unvalidated deterministic pixel analysis only`; `Not a certified grade, final AI grade, certificate, or calibrated production macro result`; `One or more captures produced quality warnings; review target diagnostics before interpreting scores.`
+  - target quality warnings on 11 of 12 targets; `center-surface` had no target warnings
+  - common warning types: blur risk, underexposure risk, score confidence reduced, and saturated card-coverage heuristic on some close-up targets
+  - saturated coverage heuristic targets: `top-left-corner`, `bottom-right-corner`, `bottom-left-corner`, `bottom-edge`
+  - underexposure risk remained on most targets; exposure warnings remain diagnostic-only in v0.1
+- Compared with the earlier completed PR #33 template smoke (`overall 4.14 / 10`, corners `2.24 / 10`, edges `3.59 / 10`, warnings on 12 targets), this indoor run produced cleaner objective output: overall `6.00 / 10`, corners `6.45 / 10`, edges `6.39 / 10`, and one target with no quality warnings. It still is not calibrated macro evidence and remains experimental/non-certified.
+
+### Mark Template Confirmation
+- Full-card template visible/useful: confirmed accepted by Mark after the run.
+- Corner templates visible/useful: confirmed accepted by Mark after the run.
+- Edge templates visible/useful: confirmed accepted by Mark after the run.
+- Surface template visible/useful: confirmed accepted by Mark after the run.
+- Mark confirmed product acceptance for PR #33. PR #33 is ready to merge after the docs-only acceptance commit is pushed and PR checks remain passing/merge state remains clean.
+
+### Artifacts
+- `01-full-card-overview-attempt-01-normal.jpg` - 134076 bytes - `04bfa46f4808d2294ae87bc92b9125c0ea390c5912789e819c53e546f6aad56b`
+- `02-top-left-corner-attempt-01-normal.jpg` - 91762 bytes - `969901ea0cb9400b49ec954412d50e5d267b29bbddf7c6e4d339a33477582e2d`
+- `03-top-right-corner-attempt-01-normal.jpg` - 83956 bytes - `ffad2db4919fea21db01e99a3ce21da5d00fc77731beffb57cbedb04e091079b`
+- `04-bottom-right-corner-attempt-01-normal.jpg` - 73058 bytes - `5e836de00906a8e8a4102ce59d3f16d53315c0669bbc743301607e5b4cf19214`
+- `05-bottom-left-corner-attempt-01-normal.jpg` - 86405 bytes - `abcb8bf3d98288349e804b8a925aa66bf7f74aba335cd14ec553490380cd7bc1`
+- `06-top-edge-attempt-01-normal.jpg` - 205914 bytes - `d84d3f0aea3937f94ef446411de27afe90bfc0c90db295fb50d0198712624cb5`
+- `07-right-edge-attempt-01-normal.jpg` - 88230 bytes - `23d6236269b47298ec0c3fc737d3678ff7812426f244e2b9527456becde2633b`
+- `08-bottom-edge-attempt-01-normal.jpg` - 101028 bytes - `5bd4d4a0c49e8f9058ca45ee85bc7453f8552833dc3385e4d76d0c82ce1ae2d1`
+- `09-left-edge-attempt-01-normal.jpg` - 191637 bytes - `e9af2f95f5acd1824057645cf2587aaacc0b95309f54280c40ddfd982c90d589`
+- `10-center-surface-attempt-01-normal.jpg` - 336943 bytes - `356ea4e9ff47ef4015e4526325d40eeee096d0f504aaabaab8dba36111fcb194`
+- `11-upper-surface-attempt-01-normal.jpg` - 208141 bytes - `71a09ec2fa9eb93e8996a2a996260c3d6e4bebfc2b9041971f73a67a017a6bc2`
+- `12-lower-surface-attempt-01-normal.jpg` - 306275 bytes - `87e7c70d82592fb94226bf2521480cd9163bd49e5bb92d486969622269623806`
+
+### Guardrails
+- No merge was run.
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No Basler/pylon install was run.
+- No Basler, Leimac, Arduino, or network setting control was run.
+- No lens/focus/exposure-setting/DPQ method was added or run.
+- No fake, manual, operator-entered, or placeholder score was added.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
