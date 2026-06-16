@@ -20086,3 +20086,36 @@ By enabling Rip It Live, I confirm:
 - No Basler/pylon install was run.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-16 UTC - AI Grader Basler/pylon readiness and macro still PR #34 merged
+
+### Summary
+- PR #34 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/34`.
+- Merge commit: `0dac92a6668b1555ddde75630dd7b0535c812ee0`.
+- Final `origin/main` immediately after merge resolved to `0dac92a6668b1555ddde75630dd7b0535c812ee0` before this handoff docs update.
+- PR #34 added manual-only Basler/pylon readiness, camera listing, and still capture support for uncalibrated macro smoke testing. Capture remains explicit/manual-only and default server/admin/readiness paths do not open the Basler camera.
+- No next AI Grader phase was started.
+
+### Post-Merge Checks
+- GitHub Actions completed successfully for merge commit `0dac92a6668b1555ddde75630dd7b0535c812ee0`:
+  - run `27605963947`
+  - `https://github.com/MarkTenKings/tenkings-backend/actions/runs/27605963947`
+  - Install & Build succeeded
+  - Docker image jobs succeeded for frontend, ingestion, marketplace, pack, pricing, vault, vending-gw, and wallet
+- Vercel production deployment for merge commit `0dac92a6668b1555ddde75630dd7b0535c812ee0` completed successfully:
+  - `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/mMihhVZmQNshmiBXYkKLThcrQqc5`
+- Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
+
+### Guardrails
+- No production/staging migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No additional image capture was run after the accepted PR #34 smoke.
+- No Leimac control was run.
+- No Arduino control was run.
+- No motor/stage movement was run.
+- No network setting change was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

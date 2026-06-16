@@ -10914,3 +10914,18 @@ Build Set Ops UI flow with:
   - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
   - `git diff --check` -> pass with line-ending warnings only
 - Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no Leimac control, no Arduino control, no motor/stage movement, no network setting change, no Basler/pylon install, no SDK binary/vendor commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
+
+## Session Update (2026-06-16 UTC, AI Grader Basler/pylon readiness and macro still PR #34 merged)
+- PR #34 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/34`.
+- Merge commit: `0dac92a6668b1555ddde75630dd7b0535c812ee0`.
+- Final `origin/main` immediately after merge resolved to `0dac92a6668b1555ddde75630dd7b0535c812ee0` before this handoff docs update.
+- Post-merge GitHub Actions completed successfully for merge commit `0dac92a6668b1555ddde75630dd7b0535c812ee0`:
+  - run `27605963947`
+  - `https://github.com/MarkTenKings/tenkings-backend/actions/runs/27605963947`
+  - Install & Build succeeded
+  - Docker image jobs succeeded for frontend, ingestion, marketplace, pack, pricing, vault, vending-gw, and wallet
+- Vercel production deployment for merge commit `0dac92a6668b1555ddde75630dd7b0535c812ee0` completed successfully:
+  - `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/mMihhVZmQNshmiBXYkKLThcrQqc5`
+- Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
+- No next AI Grader phase was started.
+- Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no additional image capture after the accepted PR #34 smoke, no Leimac control, no Arduino control, no motor/stage movement, no network setting change, no Basler/pylon install, no SDK binary/vendor commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
