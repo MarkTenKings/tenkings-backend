@@ -1,6 +1,6 @@
 # AI Grader Capture Helper
 
-The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino LED controller readiness, GRBL/OpenBuilds stage status readiness, and manual Dino-Lite DNVideoX commands; each requires explicit CLI/config input. Default health, readiness, manifests, transport, and tests never open cameras, microscopes, XY stages, arm interlocks, sockets, uploads, or database connections.
+The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino LED controller readiness, GRBL/OpenBuilds stage status readiness, manual Dino-Lite DNVideoX commands, and manual Basler pylon GigE readiness/list/still capture commands; each requires explicit CLI/config input. Default health, readiness, manifests, transport, and tests never open cameras, microscopes, XY stages, arm interlocks, sockets, uploads, or database connections.
 
 ## Local Usage
 
@@ -115,6 +115,8 @@ The same values can be supplied through environment variables:
 - `AI_GRADER_CAPTURE_HELPER_CALIBRATION_IDS`, comma-separated
 - `AI_GRADER_CAPTURE_HELPER_SURFACE_SUSPECT_IDS`, comma-separated
 - `AI_GRADER_CAPTURE_HELPER_MACRO_CAMERA_SERIAL_HINT`
+- `AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT`, optional pylon install root override for manual Basler commands
+- `AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL`, optional lens model label for manual Basler smoke metadata
 - `AI_GRADER_CAPTURE_HELPER_LED_CONTROLLER_SERIAL_HINT`
 - `AI_GRADER_CAPTURE_HELPER_MICROSCOPE_SERIAL_HINT`
 - `AI_GRADER_CAPTURE_HELPER_STAGE_SERIAL_HINT`
@@ -141,6 +143,8 @@ The same values can be supplied through environment variables:
 - `AI_GRADER_CAPTURE_HELPER_TRANSPORT_HOST`, only loopback hosts are accepted
 - `AI_GRADER_CAPTURE_HELPER_TRANSPORT_PORT`
 - `TENKINGS_DINOLITE_SDK_RUNTIME_DIR`, optional outside-git DNVideoX helper runtime folder for manual Dino-Lite capture packages
+- `TENKINGS_BASLER_PYLON_ROOT`, optional pylon install root override for manual Basler commands
+- `TENKINGS_BASLER_LENS_MODEL`, optional lens model label for manual Basler smoke metadata
 
 ## Local Transport
 
@@ -417,9 +421,67 @@ Local Dell supervised smoke on 2026-06-09/2026-06-10 used `operator-smoke-single
 
 SDK binaries, OCX files, and DNVideoX DLLs must remain outside git. Do not run `regsvr32` from this repo flow.
 
+### Basler pylon Macro Smoke
+
+PR #34 adds a manual-only Basler/pylon macro camera path for readiness, GigE camera listing, and one uncalibrated still capture. The helper uses a small PowerShell bridge script under `packages/ai-grader-capture-helper/scripts/basler-pylon-bridge.ps1` and loads the locally installed pylon .NET assembly at runtime. No Basler SDK binaries, pylon DLLs, or vendor files are committed.
+
+Default helper health, readiness, manifests, transport, and admin paths do not load the Basler client, load pylon, enumerate GigE devices, or open the camera. The Basler path is only used by explicit CLI commands:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-readiness `
+  --pylon-timeout-ms 30000
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-list-cameras `
+  --pylon-timeout-ms 30000
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-capture-still `
+  --output-dir C:\TenKings\capture-data\basler-smoke `
+  --label pr34-basler-macro-smoke `
+  --format png `
+  --pylon-timeout-ms 60000
+```
+
+Optional flags:
+
+- `--pylon-root C:\Program Files\Basler\pylon`, or `TENKINGS_BASLER_PYLON_ROOT` / `AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT`
+- `--camera-index 0`
+- `--format png|tiff|jpg`; default is lossless PNG
+- `--lens-model <label>`, or `TENKINGS_BASLER_LENS_MODEL` / `AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL`
+
+The capture output directory must be outside the repo. The command saves the current camera output at native AOI/resolution, without enhancement, contrast stretching, denoising, resizing, Leimac control, Arduino control, stage motion, or network setting changes. PNG/TIFF are preferred for future calibration/macro evidence work; JPG is available only as an explicit smoke-output format.
+
+Capture metadata includes `sha256`, byte size, MIME type, timestamp, camera model/name, image width/height, source pixel format, saved image format, exposure time, gain, transport, and calibration placeholders:
+
+- `isCalibrated=false`
+- `calibrationProfileId=null`
+- `lensModel`, when supplied
+- `cameraRole=macro_overview`
+- `evidenceClass=macro_raw_smoke`
+- `coordinateFrame=basler_sensor_pixels`
+
+The captured image is labeled uncalibrated macro smoke only and is not production macro evidence or a final AI grade.
+
+Local Dell PR #34 smoke on 2026-06-16 UTC used pylon 26.05.0.18278. Readiness/list detected one Basler GigE camera: model `a2A2448-23gmBAS`, transport `GEV`, device IP `169.254.68.71`, interface IP `169.254.215.165`, serial redacted in docs. The active adapter was `Realtek USB GbE Family Controller #2`, status `Up`, link speed `1 Gbps`.
+
+Successful still smoke output:
+
+- output file: `C:\TenKings\capture-data\basler-smoke\basler-pr34-basler-macro-smoke-ok-20260616T082253727Z.png`
+- SHA-256: `3e07897f9af2028388e48c979c1a07f10fde04e4d751d3c290f5c4cfa7a7f8d2`
+- byte size: `1533587`
+- MIME type: `image/png`
+- dimensions: `2448x2048`
+- source pixel format: `Mono8`
+- saved image format: `PNG`
+- sharp metadata check: `space=b-w`, `channels=1`, `depth=uchar`, `hasAlpha=false`
+- exposure time: `5000`
+- gain: `0`
+- calibration metadata: `isCalibrated=false`, `calibrationProfileId=null`, `lensModel=null`, `cameraRole=macro_overview`, `evidenceClass=macro_raw_smoke`, `coordinateFrame=basler_sensor_pixels`
+
+Two earlier PR #34 capture attempts wrote PNG files outside the repo but failed to return metadata because PowerShell emitted a disposed pylon camera object into the JSON output stream. The bridge now suppresses pylon method outputs before metadata serialization. Those captured PNG files remain outside git and must not be committed.
+
 ## Simulator-First Limitation
 
-This package defaults to simulator mode with the mock driver set and rejects any runnable backend other than simulator/mock. The exceptions are the explicit Arduino LED and GRBL stage readiness command/paths described above, which perform only serial `PING` plus `LED ALL OFF` and GRBL `?` status query respectively. The simulator path uses `@tenkings/ai-grader-simulator` to generate:
+This package defaults to simulator mode with the mock driver set and rejects any runnable backend other than simulator/mock. The exceptions are the explicit Arduino LED and GRBL stage readiness command/paths described above, which perform only serial `PING` plus `LED ALL OFF` and GRBL `?` status query respectively, plus manual Dino-Lite and Basler commands that require explicit CLI invocation. The simulator path uses `@tenkings/ai-grader-simulator` to generate:
 
 - `DeviceCapabilityManifest[]`
 - QUICK `CaptureManifest`
@@ -449,7 +511,7 @@ The runnable driver set is `mock` only. `real` is accepted by readiness reportin
 
 The mock driver set never imports Basler, Dino-Lite, serial, GRBL, camera, USB, or microscope SDKs. It does not open OS device handles or sockets.
 
-The implemented real-adjacent adapters are Arduino LED readiness, GRBL stage status readiness, and manual Dino-Lite DNVideoX enumeration/status/still JPG/package/operator workflow/experimental grading capture. They are not part of the runnable mock driver set and require explicit CLI/config/env before they can open serial or instantiate DNVideoX.
+The implemented real-adjacent adapters are Arduino LED readiness, GRBL stage status readiness, manual Dino-Lite DNVideoX enumeration/status/still JPG/package/operator workflow/experimental grading capture, and manual Basler pylon GigE readiness/list/still PNG/TIFF/JPG capture. They are not part of the runnable mock driver set and require explicit CLI/config/env before they can open serial, instantiate DNVideoX, load pylon, enumerate GigE cameras, or open the Basler camera.
 
 ## Future Hardware Boundary
 
@@ -476,3 +538,4 @@ Before the first real hardware driver integration:
 - keep Arduino LED readiness limited to `PING` and `LED ALL OFF` until a later approved LED control slice
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
 - keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package/operator workflow/experimental non-certified grading capture, including outside-git SDK runtime diagnostics for EDOF, until a later approved lens/focus/exposure/DPQ/certified-grading slice
+- keep Basler pylon work limited to manual readiness/list/uncalibrated still smoke capture until a later approved calibration, lighting, and production macro evidence slice

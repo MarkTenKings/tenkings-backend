@@ -34,6 +34,18 @@ type ParsedCommand =
   | { command: "led-health"; config: CaptureHelperConfigInput }
   | { command: "stage-health"; config: CaptureHelperConfigInput }
   | { command: "dinolite-bridge-health"; config: CaptureHelperConfigInput }
+  | { command: "basler-readiness" | "basler-list-cameras"; config: CaptureHelperConfigInput; pylonRoot: string | undefined; pylonTimeoutMs: number | undefined }
+  | {
+      command: "basler-capture-still";
+      config: CaptureHelperConfigInput;
+      pylonRoot: string | undefined;
+      pylonTimeoutMs: number | undefined;
+      cameraIndex: number | undefined;
+      outputDir: string | undefined;
+      label: string | undefined;
+      savedFormat: string | undefined;
+      lensModel: string | undefined;
+    }
   | { command: "dinolite-enumerate"; config: CaptureHelperConfigInput }
   | { command: "dinolite-status"; config: CaptureHelperConfigInput; deviceIndex: number | undefined }
   | { command: "dinolite-capture-still"; config: CaptureHelperConfigInput; deviceIndex: number | undefined; outputDir: string | undefined }
@@ -89,6 +101,11 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let outputDir: string | undefined;
   let sdkRuntimeDir: string | undefined;
   let label: string | undefined;
+  let pylonRoot: string | undefined;
+  let pylonTimeoutMs: number | undefined;
+  let cameraIndex: number | undefined;
+  let savedFormat: string | undefined;
+  let lensModel: string | undefined;
   let plan: string | undefined;
   let includeLightingSweep = false;
   let includeFlcSweep = false;
@@ -196,6 +213,32 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         break;
       case "--label":
         label = readOption(rest, index, "--label");
+        index += 1;
+        break;
+      case "--pylon-root":
+        pylonRoot = readOption(rest, index, "--pylon-root");
+        index += 1;
+        break;
+      case "--pylon-timeout-ms":
+        pylonTimeoutMs = Number(readOption(rest, index, "--pylon-timeout-ms"));
+        if (!Number.isInteger(pylonTimeoutMs) || pylonTimeoutMs <= 0) {
+          throw new CaptureHelperCommandError("--pylon-timeout-ms must be a positive integer.");
+        }
+        index += 1;
+        break;
+      case "--camera-index":
+        cameraIndex = Number(readOption(rest, index, "--camera-index"));
+        if (!Number.isInteger(cameraIndex) || cameraIndex < 0) {
+          throw new CaptureHelperCommandError("--camera-index must be a non-negative integer.");
+        }
+        index += 1;
+        break;
+      case "--format":
+        savedFormat = readOption(rest, index, "--format");
+        index += 1;
+        break;
+      case "--lens-model":
+        lensModel = readOption(rest, index, "--lens-model");
         index += 1;
         break;
       case "--plan":
@@ -437,6 +480,9 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "led-health" ||
     command === "stage-health" ||
     command === "dinolite-bridge-health" ||
+    command === "basler-readiness" ||
+    command === "basler-list-cameras" ||
+    command === "basler-capture-still" ||
     command === "dinolite-enumerate" ||
     command === "dinolite-status" ||
     command === "dinolite-capture-still" ||
@@ -450,6 +496,10 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   ) {
     if (command === "manifest") return { command, config, mode };
     if (command === "serve") return { command, config, host, port };
+    if (command === "basler-readiness" || command === "basler-list-cameras") return { command, config, pylonRoot, pylonTimeoutMs };
+    if (command === "basler-capture-still") {
+      return { command, config, pylonRoot, pylonTimeoutMs, cameraIndex, outputDir, label, savedFormat, lensModel };
+    }
     if (command === "dinolite-status") return { command, config, deviceIndex };
     if (command === "dinolite-capture-still") return { command, config, deviceIndex, outputDir };
     if (command === "dinolite-capture-package" || command === "dinolite-capture-demo-package") {
@@ -479,6 +529,9 @@ function helpPayload() {
       "dinolite-capture-demo-package --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-demo --label card-demo-001 --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
       "dinolite-operator-workflow --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-operator --plan card-interim --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk",
       "dinolite-experimental-grading-run --bridge-exe <exe> --adapter dnvideox --device-index 0 --output-dir C:\\TenKings\\capture-data\\dinolite-grading-runs --label <label> --sdk-runtime-dir C:\\TenKings\\sdk\\dino-lite\\dnvideox-sdk --corner-profile sharp_90 --capture-guides true",
+      "basler-readiness --pylon-root C:\\Program Files\\Basler\\pylon",
+      "basler-list-cameras --pylon-root C:\\Program Files\\Basler\\pylon",
+      "basler-capture-still --output-dir C:\\TenKings\\capture-data\\basler-smoke --label <label> --format png",
       "capabilities",
       "manifest --mode QUICK|STANDARD|AUTH_ONLY",
       "serve --host 127.0.0.1 --port 47650",
@@ -504,6 +557,11 @@ function helpPayload() {
       "--device-index",
       "--output-dir",
       "--label",
+      "--pylon-root",
+      "--pylon-timeout-ms",
+      "--camera-index",
+      "--format png|tiff|jpg",
+      "--lens-model",
       "--plan",
       "--include-lighting-sweep",
       "--include-flc-sweep",
@@ -534,6 +592,8 @@ function helpPayload() {
     mode: "simulator-only",
     driverSet: "mock runnable; real limited to explicit Arduino LED readiness, GRBL stage readiness, and manual Dino-Lite bridge commands",
     dinoliteBridge: "manual fake bridge health plus manual DNVideoX enumerate/status/still capture only; default readiness does not spawn",
+    baslerPylon:
+      "manual pylon readiness/list/still capture only; default health/readiness/transport does not load pylon, enumerate cameras, or open the Basler camera",
     dinoliteSdkRuntimeDir:
       "optional for manual capture packages; use --sdk-runtime-dir or TENKINGS_DINOLITE_SDK_RUNTIME_DIR and keep vendor runtime files outside git",
     transport: "disabled until serve is explicitly run",
@@ -664,6 +724,64 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       });
       writeJson(stdout, result);
       return result.ok ? 0 : 1;
+    }
+
+    if (
+      parsed.command === "basler-readiness" ||
+      parsed.command === "basler-list-cameras" ||
+      parsed.command === "basler-capture-still"
+    ) {
+      const env = io.env ?? process.env;
+      const {
+        BaslerPylonClient,
+        normalizeBaslerSavedImageFormat,
+      } = await import("./drivers/baslerPylonClient");
+      const client = new BaslerPylonClient({
+        pylonRoot: parsed.pylonRoot ?? env.TENKINGS_BASLER_PYLON_ROOT ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_PYLON_ROOT,
+        timeoutMs: parsed.pylonTimeoutMs,
+        env,
+      });
+
+      if (parsed.command === "basler-readiness") {
+        const readiness = await client.readiness();
+        writeJson(stdout, {
+          ok: readiness.status === "reachable",
+          service: "ai-grader-capture-helper",
+          command: "basler-readiness",
+          readiness,
+        });
+        return readiness.status === "reachable" ? 0 : 1;
+      }
+
+      if (parsed.command === "basler-list-cameras") {
+        const cameraList = await client.listCameras();
+        writeJson(stdout, {
+          ok: cameraList.status === "reachable",
+          service: "ai-grader-capture-helper",
+          command: "basler-list-cameras",
+          cameraList,
+        });
+        return cameraList.status === "reachable" ? 0 : 1;
+      }
+
+      if (parsed.command === "basler-capture-still") {
+        const lensModel =
+          parsed.lensModel ?? env.TENKINGS_BASLER_LENS_MODEL ?? env.AI_GRADER_CAPTURE_HELPER_BASLER_LENS_MODEL;
+        const capture = await client.captureStill({
+          outputDir: parsed.outputDir ?? "",
+          label: parsed.label ?? "",
+          cameraIndex: parsed.cameraIndex,
+          savedFormat: normalizeBaslerSavedImageFormat(parsed.savedFormat),
+          lensModel,
+        });
+        writeJson(stdout, {
+          ok: true,
+          service: "ai-grader-capture-helper",
+          command: "basler-capture-still",
+          capture,
+        });
+        return 0;
+      }
     }
 
     if (parsed.command === "dinolite-bridge-health") {
@@ -921,7 +1039,8 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       error instanceof CaptureHelperConfigError ||
       error instanceof ArduinoLedControllerHealthError ||
       error instanceof GrblStageHealthError ||
-      error instanceof DinoLiteBridgeClientError;
+      error instanceof DinoLiteBridgeClientError ||
+      (error instanceof Error && error.name === "BaslerPylonClientError");
     const message = error instanceof Error ? error.message : "Unexpected capture helper CLI error.";
     writeJson(stderr, {
       ok: false,

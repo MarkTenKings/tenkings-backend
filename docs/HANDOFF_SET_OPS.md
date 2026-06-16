@@ -10864,3 +10864,53 @@ Build Set Ops UI flow with:
   - `https://vercel.com/ten-kings/tenkings-backend-nextjs-app/3SaYKsdz7dQDg7TkAypr1sqLo46o`
 - No production/staging migration was run manually and `RUN_DB_MIGRATIONS=true` was not set by this session.
 - Guardrails held: no manual deploy, no runtime DB operation, no `regsvr32`, no additional capture after the accepted indoor run, no Basler/pylon install, no Basler control, no Leimac control, no Arduino control, no network setting change, no SDK/OCX/DLL/vendor file commit, no captured image commit, no lens/focus/exposure-setting/DPQ method, no fake/manual/operator-entered/placeholder score, and no calibrated macro evidence/final AI grade/certificate/certified grading claim.
+
+## Session Update (2026-06-16 UTC, AI Grader Basler/pylon readiness and macro still PR #34)
+- Started PR #34 branch from fresh `main`: `feature/ai-grader-basler-readiness-capture`.
+- Added manual-only Basler pylon support to `@tenkings/ai-grader-capture-helper`:
+  - explicit CLI commands: `basler-readiness`, `basler-list-cameras`, `basler-capture-still`
+  - TypeScript client contract for readiness, camera list, and still capture
+  - PowerShell bridge script that loads the installed local pylon .NET assembly at runtime
+  - default health/readiness/manifest/transport/admin paths do not load pylon, enumerate Basler, or open the Basler camera
+  - capture output path guard rejects repo paths
+  - default still output format is lossless PNG; TIFF/JPG are explicit options
+  - metadata includes `isCalibrated=false`, `calibrationProfileId=null`, `cameraRole=macro_overview`, `evidenceClass=macro_raw_smoke`, and `coordinateFrame=basler_sensor_pixels`
+- Integration route chosen: runtime PowerShell bridge over the installed Basler pylon .NET assembly. This avoids committing Basler SDK binaries/vendor files and avoids requiring pylon in CI.
+- Pylon status:
+  - installed: yes
+  - version: `26.05.0.18278`
+  - root: `C:\Program Files\Basler\pylon`
+- Readiness/list smoke:
+  - command: `basler-readiness --pylon-timeout-ms 30000`
+  - command: `basler-list-cameras --pylon-timeout-ms 30000`
+  - result: reachable
+  - camera count: 1
+  - camera: Basler `a2A2448-23gmBAS`, transport `GEV`, device IP `169.254.68.71`, interface IP `169.254.215.165`, serial redacted in docs
+  - adapter: `Realtek USB GbE Family Controller #2`, status `Up`, link speed `1 Gbps`
+- Capture smoke:
+  - command: `basler-capture-still --output-dir C:\TenKings\capture-data\basler-smoke --label pr34-basler-macro-smoke-ok --format png --pylon-timeout-ms 60000`
+  - result: success
+  - output: `C:\TenKings\capture-data\basler-smoke\basler-pr34-basler-macro-smoke-ok-20260616T082253727Z.png`
+  - SHA-256: `3e07897f9af2028388e48c979c1a07f10fde04e4d751d3c290f5c4cfa7a7f8d2`
+  - byte size: `1533587`
+  - MIME type: `image/png`
+  - dimensions: `2448x2048`
+  - source pixel format: `Mono8`
+  - saved image format: `PNG`
+  - sharp metadata check: `space=b-w`, `channels=1`, `depth=uchar`, `hasAlpha=false`
+  - exposure time: `5000`
+  - gain: `0`
+  - lens model: `null`
+  - calibration metadata: `isCalibrated=false`, `calibrationProfileId=null`, `cameraRole=macro_overview`, `evidenceClass=macro_raw_smoke`, `coordinateFrame=basler_sensor_pixels`
+- Earlier capture attempts:
+  - `basler-pr34-basler-macro-smoke-20260616T081932791Z.png` - 1470441 bytes - `f7e3ec9e388a1f76e40bebd0aae1cf5a7045bd51152023292b29bd810ae0efe2`
+  - `basler-pr34-basler-macro-smoke-fixed-20260616T082218938Z.png` - 1513216 bytes - `ce6ca9347798280dbf60f5255c6a5e08f2d93cd91bba50486893442dc7d403f7`
+  - both files were written outside the repo during failed metadata-return attempts; the bridge now suppresses pylon method output before JSON serialization
+- Validation completed before docs update:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 87 tests
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
+- Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no Leimac control, no Arduino control, no motor/stage movement, no network setting change, no Basler/pylon install, no SDK binary/vendor commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
