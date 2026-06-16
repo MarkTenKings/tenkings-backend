@@ -20017,3 +20017,72 @@ By enabling Rip It Live, I confirm:
 - No lens/focus/exposure-setting/DPQ method was added or run.
 - No fake, manual, operator-entered, or placeholder score was added.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-16 UTC - AI Grader Basler/pylon readiness and macro still PR #34
+
+### Summary
+- Started PR #34 branch from fresh `main`: `feature/ai-grader-basler-readiness-capture`.
+- Added manual-only Basler pylon support to `@tenkings/ai-grader-capture-helper`:
+  - explicit CLI commands: `basler-readiness`, `basler-list-cameras`, `basler-capture-still`
+  - TypeScript client contract for readiness, camera list, and still capture
+  - PowerShell bridge script that loads the installed local pylon .NET assembly at runtime
+  - default health/readiness/manifest/transport/admin paths do not load pylon, enumerate Basler, or open the Basler camera
+  - capture output path guard rejects repo paths
+  - default still output format is lossless PNG; TIFF/JPG are explicit options
+- Integration route chosen: runtime PowerShell bridge over the installed Basler pylon .NET assembly. This avoids committing Basler SDK binaries/vendor files and avoids requiring pylon in CI.
+- Capture metadata labels the output as uncalibrated macro smoke only with `isCalibrated=false`, `calibrationProfileId=null`, `cameraRole=macro_overview`, `evidenceClass=macro_raw_smoke`, and `coordinateFrame=basler_sensor_pixels`.
+
+### Readiness And List Smoke
+- Pylon installed: yes.
+- Pylon version: `26.05.0.18278`.
+- Pylon root: `C:\Program Files\Basler\pylon`.
+- Commands:
+  - `basler-readiness --pylon-timeout-ms 30000`
+  - `basler-list-cameras --pylon-timeout-ms 30000`
+- Result: reachable.
+- Camera count: 1.
+- Camera: Basler `a2A2448-23gmBAS`, transport `GEV`, device IP `169.254.68.71`, interface IP `169.254.215.165`, serial redacted in docs.
+- Adapter: `Realtek USB GbE Family Controller #2`, status `Up`, link speed `1 Gbps`.
+
+### Still Smoke
+- Command: `basler-capture-still --output-dir C:\TenKings\capture-data\basler-smoke --label pr34-basler-macro-smoke-ok --format png --pylon-timeout-ms 60000`.
+- Result: success.
+- Output: `C:\TenKings\capture-data\basler-smoke\basler-pr34-basler-macro-smoke-ok-20260616T082253727Z.png`.
+- SHA-256: `3e07897f9af2028388e48c979c1a07f10fde04e4d751d3c290f5c4cfa7a7f8d2`.
+- Byte size: `1533587`.
+- MIME type: `image/png`.
+- Dimensions: `2448x2048`.
+- Source pixel format: `Mono8`.
+- Saved image format: `PNG`.
+- Sharp metadata check: `space=b-w`, `channels=1`, `depth=uchar`, `hasAlpha=false`.
+- Exposure time: `5000`.
+- Gain: `0`.
+- Lens model: `null`.
+- Calibration metadata: `isCalibrated=false`, `calibrationProfileId=null`, `cameraRole=macro_overview`, `evidenceClass=macro_raw_smoke`, `coordinateFrame=basler_sensor_pixels`.
+
+### Earlier Capture Attempts
+- `basler-pr34-basler-macro-smoke-20260616T081932791Z.png` - 1470441 bytes - `f7e3ec9e388a1f76e40bebd0aae1cf5a7045bd51152023292b29bd810ae0efe2`.
+- `basler-pr34-basler-macro-smoke-fixed-20260616T082218938Z.png` - 1513216 bytes - `ce6ca9347798280dbf60f5255c6a5e08f2d93cd91bba50486893442dc7d403f7`.
+- Both files were written outside the repo during failed metadata-return attempts. The bridge now suppresses pylon method output before JSON serialization.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 87 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Leimac control was run.
+- No Arduino control was run.
+- No motor/stage movement was run.
+- No network setting change was run.
+- No Basler/pylon install was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
