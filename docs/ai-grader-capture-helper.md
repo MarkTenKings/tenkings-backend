@@ -53,7 +53,7 @@ Leimac IDMU-P Ethernet readiness is the production lighting-controller direction
 - `16` firmware version, unit-targeted as `R1601` for base unit 1
 - `47` operation mode, targetless as `R47`
 - `80` temperature data, unit-targeted as `R8001` for base unit 1
-- `83` unit information, targetless as `R83`
+- `83` unit information, confirmed as `R830000` on the Dell Leimac controller
 
 ```powershell
 pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-readiness `
@@ -65,11 +65,24 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-id
   --host 169.254.191.156 `
   --port 1000 `
   --timeout-ms 1500
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-read-frame `
+  --host 169.254.191.156 `
+  --port 1000 `
+  --frame R0801 `
+  --timeout-ms 2000
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-trigger-sync-plan `
+  --mode basler-exposure-active-to-trg-in1
 ```
 
 The Leimac IDMU command path rejects missing/invalid hosts, rejects discovery port `50001` as a command port, rejects unknown commands, and rejects all `W` write commands. The result includes the raw request frame, raw response text, parsed fields only when the parser is confident enough, controller address/port/timeout metadata, and safety flags: `writesAllowed=false`, `lightsCommanded=false`, `outputSettingsChanged=false`, and `triggerSettingsChanged=false`.
 
 The IDMU-P manual command order is header, command number, target designation/unit where required, then data. The manual write example `W 01 01 0001` serializes as the exact ASCII frame `W01010001` with no implicit CR/LF terminator; this repo includes that composer only as an explicit test helper, while every runtime/hardware path still rejects `W` writes.
+
+`leimac-idmu-read-frame` is a manual read-only diagnostic path for a single operator-supplied frame from the manual. It requires explicit `--host` and `--frame`, uses no implicit CR/LF terminator, sends no retries, and rejects frames that do not start with `R`, contain `W`, include non-uppercase-ASCII-alphanumeric characters, exceed `32` characters, or use command numbers outside the PR #35 read allowlist (`08`, `16`, `47`, `80`, `83`).
+
+`leimac-idmu-trigger-sync-plan` is dry-run only. It does not open Basler hardware, does not connect to Leimac hardware, and reports `dryRun=true`, `writesApplied=false`, `lightsCommanded=false`, `baslerSettingsChanged=false`, and `leimacSettingsChanged=false`.
 
 Arduino LED controller readiness is the first opt-in real-hardware-adjacent slice. It is limited to opening one explicitly supplied serial port, sending `PING`, expecting `PONG`, sending `LED ALL OFF`, expecting `OK`, and closing the port:
 
@@ -255,6 +268,15 @@ The intended synchronized macro lighting architecture is:
 - Leimac lights only during the camera exposure after controller/camera acceptance in a later PR.
 - Leimac is configured/read over Ethernet using Leimac ASCII commands or GenICam/GigE Vision.
 
+The dry-run trigger-sync plan records the future vendor-guide configuration without applying it:
+
+- Basler Line Selector: `Line 2`.
+- Basler Line Mode: `Output`.
+- Basler Line Inverter: `false`.
+- Basler Line Source: `Exposure Active`.
+- Leimac trigger input: `TRG IN1`.
+- Leimac Trigger Control Mode: `Level Low`.
+
 Vendor trigger-guide wiring notes:
 
 - Requires a Basler `CEBR119` or `CEBR120` camera I/O cable.
@@ -266,6 +288,15 @@ Vendor trigger-guide wiring notes:
 - `CEBR119` / `CEBR120` cable GPIO Ground is camera pin `6`, pink wire.
 
 PR #35 does not configure the camera line, does not save Basler user sets, does not change Leimac trigger/source/mode/output settings, does not reset errors, and does not turn lights on or off. The next hardware-control PR after merge should configure and validate Basler Line 2 and Leimac trigger settings only under explicit operator approval. A later controlled low-duty Leimac smoke must verify wiring, trigger voltage, channel mapping, output limits, heat behavior, and a safe all-off strategy before any synchronized capture acceptance.
+
+PR #36 acceptance gates before any light-control or synchronized-capture acceptance:
+
+- `CEBR119` or `CEBR120` cable confirmed.
+- EXT I/O wiring confirmed with power off.
+- Leimac IP/readiness confirmed.
+- Basler Line 2 can be configured only under explicit operator approval.
+- First light-control smoke must be low-duty, short-duration, and explicit.
+- First synchronized capture must record exposure, gain, lighting profile, channel settings, and calibration status.
 
 ### Arduino LED Readiness
 

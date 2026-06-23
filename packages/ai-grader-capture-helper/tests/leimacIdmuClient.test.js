@@ -2,9 +2,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   LeimacIdmuClient,
+  buildLeimacIdmuTriggerSyncPlan,
   composeLeimacIdmuCommand,
   composeLeimacIdmuReadCommand,
   composeLeimacIdmuUnsafeWriteCommandForTest,
+  normalizeLeimacIdmuDiagnosticReadFrame,
   normalizeLeimacIdmuHost,
   normalizeLeimacIdmuPort,
 } = require("../dist/drivers/leimacIdmuClient");
@@ -71,8 +73,8 @@ test("Leimac command composer formats manual command-before-target read frames",
   assert.equal(temperature.ascii, "R8001");
   assert.equal(temperature.frame, "R8001");
   assert.equal(temperature.metadata.unit, 1);
-  assert.equal(unitInfo.ascii, "R83");
-  assert.equal(unitInfo.frame, "R83");
+  assert.equal(unitInfo.ascii, "R830000");
+  assert.equal(unitInfo.frame, "R830000");
   assert.equal(unitInfo.metadata.targetKind, "none");
 });
 
@@ -110,13 +112,22 @@ test("Leimac unknown commands and invalid hardware endpoints are rejected", () =
   assert.throws(() => normalizeLeimacIdmuPort(50001), /reserved for Leimac Discovery/);
 });
 
+test("Leimac diagnostic read-frame validation rejects unsafe frames", () => {
+  assert.throws(() => normalizeLeimacIdmuDiagnosticReadFrame("W01010001"), /rejects W\/write frames/);
+  assert.throws(() => normalizeLeimacIdmuDiagnosticReadFrame("X0801"), /must start with R/);
+  assert.throws(() => normalizeLeimacIdmuDiagnosticReadFrame("R08-01"), /uppercase ASCII alphanumeric/);
+  assert.throws(() => normalizeLeimacIdmuDiagnosticReadFrame(`R${"0".repeat(32)}`), /32 ASCII characters or fewer/);
+  assert.throws(() => normalizeLeimacIdmuDiagnosticReadFrame("R1101"), /not in the read allowlist/);
+  assert.equal(normalizeLeimacIdmuDiagnosticReadFrame(" R0801 "), "R0801");
+});
+
 test("Leimac successful read responses preserve raw data and parse confident fields only", async () => {
   const fake = fakeTransport((request) => {
     if (request.ascii === "R0801") return "R08010000\r\n";
     if (request.ascii === "R1601") return "R160101.23.45.67\r\n";
     if (request.ascii === "R47") return "R470000\r\n";
     if (request.ascii === "R8001") return "R8001010027020028\r\n";
-    if (request.ascii === "R83") return "R8300020000000800000008\r\n";
+    if (request.ascii === "R830000") return "R8300020000000800000008\r\n";
     return "WR00NAK\r\n";
   });
   const client = new LeimacIdmuClient({
@@ -134,8 +145,8 @@ test("Leimac successful read responses preserve raw data and parse confident fie
   assert.equal(readiness.safety.writesAllowed, false);
   assert.equal(readiness.safety.lightsCommanded, false);
   assert.equal(readiness.commandsAttempted.length, 5);
-  assert.deepEqual(fake.calls.map((call) => call.ascii), ["R0801", "R1601", "R47", "R8001", "R83"]);
-  assert.deepEqual(fake.calls.map((call) => call.frame), ["R0801", "R1601", "R47", "R8001", "R83"]);
+  assert.deepEqual(fake.calls.map((call) => call.ascii), ["R0801", "R1601", "R47", "R8001", "R830000"]);
+  assert.deepEqual(fake.calls.map((call) => call.frame), ["R0801", "R1601", "R47", "R8001", "R830000"]);
   assert.equal(readiness.commandsAttempted[0].requestFrame, "R0801");
   assert.equal(readiness.commandsAttempted[0].parsed.statusCode, "0000");
   assert.equal(readiness.commandsAttempted[1].parsed.firmwareVersion, "01.23.45.67");
@@ -151,6 +162,29 @@ test("Leimac successful read responses preserve raw data and parse confident fie
     { index: 2, dimmingMethodCode: "0000", lightingOutputChannels: 8 },
   ]);
   assert.doesNotMatch(JSON.stringify(readiness).toLowerCase(), /certificate|certified|final ai grade|calibrated/);
+});
+
+test("Leimac diagnostic read-frame reports the exact no-terminator request frame", async () => {
+  const fake = fakeTransport((request) => {
+    assert.equal(request.ascii, "R0801");
+    assert.equal(request.frame, "R0801");
+    return "R08010000\r\n";
+  });
+  const client = new LeimacIdmuClient({
+    host: "169.254.191.156",
+    port: 1000,
+    timeoutMs: 1500,
+    transport: fake.transport,
+  });
+
+  const result = await client.readFrame("R0801");
+
+  assert.equal(result.ok, true);
+  assert.equal(result.requestAscii, "R0801");
+  assert.equal(result.requestFrame, "R0801");
+  assert.equal(result.command.diagnosticFrame, true);
+  assert.equal(result.parsed.statusCode, "0000");
+  assert.deepEqual(fake.calls.map((call) => call.frame), ["R0801"]);
 });
 
 test("Leimac unknown responses fail closed", async () => {
@@ -213,4 +247,37 @@ test("CLI Leimac hardware path requires explicit host", async () => {
 
   assert.equal(cli.code, 1);
   assert.match(cli.stderr.error, /requires explicit --host/);
+});
+
+test("CLI Leimac diagnostic read-frame rejects unsafe frames before hardware", async () => {
+  for (const frame of ["W01010001", "X0801", "R08-01", `R${"0".repeat(32)}`]) {
+    const cli = await runCli(["leimac-idmu-read-frame", "--host", "169.254.191.156", "--frame", frame]);
+    assert.equal(cli.code, 1);
+    assert.match(cli.stderr.error, /Leimac IDMU/);
+  }
+});
+
+test("Leimac trigger sync plan is dry-run only and reports safety flags", async () => {
+  const plan = buildLeimacIdmuTriggerSyncPlan("basler-exposure-active-to-trg-in1");
+  assert.equal(plan.basler.lineSelector, "Line 2");
+  assert.equal(plan.basler.lineMode, "Output");
+  assert.equal(plan.basler.lineInverter, false);
+  assert.equal(plan.basler.lineSource, "Exposure Active");
+  assert.equal(plan.leimac.triggerInput, "TRG IN1");
+  assert.equal(plan.leimac.triggerControlMode, "Level Low");
+  assert.equal(plan.safety.dryRun, true);
+  assert.equal(plan.safety.writesApplied, false);
+  assert.equal(plan.safety.lightsCommanded, false);
+  assert.equal(plan.safety.baslerSettingsChanged, false);
+  assert.equal(plan.safety.leimacSettingsChanged, false);
+
+  const cli = await runCli(["leimac-idmu-trigger-sync-plan", "--mode", "basler-exposure-active-to-trg-in1"]);
+  assert.equal(cli.code, 0);
+  assert.equal(cli.stdout.plan.safety.dryRun, true);
+  assert.equal(cli.stdout.plan.safety.writesApplied, false);
+  assert.equal(cli.stdout.plan.safety.lightsCommanded, false);
+  assert.equal(cli.stdout.plan.safety.baslerSettingsChanged, false);
+  assert.equal(cli.stdout.plan.safety.leimacSettingsChanged, false);
+  assert.match(JSON.stringify(cli.stdout), /CEBR119 or CEBR120/);
+  assert.doesNotMatch(JSON.stringify(cli.stdout).toLowerCase(), /certificate|certified|final ai grade|calibrated/);
 });

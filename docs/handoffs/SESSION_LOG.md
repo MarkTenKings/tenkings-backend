@@ -20261,3 +20261,55 @@ By enabling Rip It Live, I confirm:
 - No Arduino control was run.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-23 UTC - AI Grader Leimac IDMU-P PR #35 final readiness pass
+
+### Summary
+- Continued PR #35 on `feature/ai-grader-leimac-idmu-readiness`; PR remains open and unmerged.
+- Added safe manual read-only diagnostic support with `leimac-idmu-read-frame --host <ip> --port 1000 --frame <R...> --timeout-ms <ms>`.
+- Added dry-run-only trigger-sync planning with `leimac-idmu-trigger-sync-plan --mode basler-exposure-active-to-trg-in1`.
+- Confirmed command framing remains header + command number + target/unit + data, with no implicit CR/LF terminator.
+- Updated unit-information framing from ambiguous `R83` to hardware-confirmed `R830000`.
+
+### Verified Frames
+- Unit status: `R0801`
+- System status: `R0800`
+- Firmware, unit 1: `R1601`
+- Operation mode: `R47`
+- Temperature, unit 1: `R8001`
+- Unit information: `R830000`
+- Test-only write example from the manual: `W01010001`
+
+### Hardware Smoke
+- Passive inventory still showed `Ethernet 2` / Realtek USB GbE up at `1 Gbps`, Basler `169.254.68.71` / `00-30-53-38-7B-E2`, and candidate `169.254.191.156` / `AC-BD-0B-00-5E-E2`.
+- Ran limited read-only diagnostics only against `169.254.191.156:1000`, timeout `2000 ms`, with no retries beyond the manual-derived frame list.
+- `R0801` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R0800` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R1601` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R47` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R470000` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R83` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R830000` -> raw `R83000100000008`, parsed as unit information: total units `1`, unit 1 dimming method code `0000`, lighting output channels `8`.
+- Candidate `169.254.191.156` is confirmed as the Leimac IDMU-P controller by the valid command `83` response.
+
+### Next PR Gates
+- PR #36 should not control lighting until CEBR119 or CEBR120 cable is confirmed, EXT I/O wiring is confirmed with power off, Leimac IP/readiness is confirmed, and Basler Line 2 configuration is explicitly operator-approved.
+- First light-control smoke must be low-duty, short-duration, and explicit.
+- First synchronized capture must record exposure, gain, lighting profile, channel settings, and calibration status.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Dino-Lite command was run.
+- No Basler capture was run.
+- No Basler setting write was run.
+- No Leimac write command was run.
+- No lights were turned on or off.
+- No PWM, brightness, output, or trigger setting was changed.
+- No network setting was changed.
+- No Arduino control was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

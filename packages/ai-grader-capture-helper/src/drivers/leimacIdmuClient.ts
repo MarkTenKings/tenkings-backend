@@ -3,6 +3,7 @@ import net from "node:net";
 export const LEIMAC_IDMU_DEFAULT_PORT = 1000;
 export const LEIMAC_IDMU_DEFAULT_TIMEOUT_MS = 1500;
 export const LEIMAC_IDMU_DISCOVERY_PORT = 50001;
+export const LEIMAC_IDMU_MAX_DIAGNOSTIC_FRAME_LENGTH = 32;
 
 export type LeimacIdmuReadCommandName =
   | "status"
@@ -19,6 +20,7 @@ export interface LeimacIdmuReadCommandDefinition {
   commandNumber: "08" | "16" | "47" | "80" | "83";
   description: string;
   targetRequirement: LeimacIdmuReadTargetRequirement;
+  requestData?: string;
 }
 
 export const LEIMAC_IDMU_READ_COMMANDS: Record<LeimacIdmuReadCommandName, LeimacIdmuReadCommandDefinition> = {
@@ -51,6 +53,7 @@ export const LEIMAC_IDMU_READ_COMMANDS: Record<LeimacIdmuReadCommandName, Leimac
     commandNumber: "83",
     description: "Unit information",
     targetRequirement: "none",
+    requestData: "0000",
   },
 };
 
@@ -84,6 +87,17 @@ export interface LeimacIdmuCommandMetadata {
   targetKind: LeimacIdmuReadTargetKind;
   description: string;
   readOnly: true;
+}
+
+export interface LeimacIdmuDiagnosticFrameMetadata {
+  name: LeimacIdmuReadCommandName;
+  commandNumber: string;
+  header: "R";
+  targetDesignation?: string;
+  targetKind: LeimacIdmuReadTargetKind;
+  description: string;
+  readOnly: true;
+  diagnosticFrame: true;
 }
 
 export interface LeimacIdmuComposedCommand {
@@ -143,6 +157,21 @@ export interface LeimacIdmuCommandResult {
   error?: string;
 }
 
+export interface LeimacIdmuDiagnosticFrameResult {
+  ok: boolean;
+  host: string;
+  port: number;
+  timeoutMs: number;
+  command: LeimacIdmuDiagnosticFrameMetadata;
+  requestAscii: string;
+  requestFrame: string;
+  rawResponse?: string;
+  parsed: LeimacIdmuParsedResponse;
+  durationMs: number;
+  safety: LeimacIdmuSafetyMetadata;
+  error?: string;
+}
+
 export interface LeimacIdmuReadinessResult {
   ok: boolean;
   status: "PASS" | "FAIL";
@@ -157,6 +186,39 @@ export interface LeimacIdmuReadinessResult {
   commandsAttempted: LeimacIdmuCommandResult[];
   safety: LeimacIdmuSafetyMetadata;
   note: string;
+}
+
+export interface LeimacIdmuTriggerSyncPlan {
+  mode: "basler-exposure-active-to-trg-in1";
+  architecture: {
+    capture: "Basler ace 2 macro image capture";
+    triggerOutput: "Basler Line 2 Exposure Active";
+    triggerInput: "Leimac TRG IN1";
+    lightingBehavior: "Leimac lighting fires during camera exposure after future approved configuration";
+  };
+  basler: {
+    lineSelector: "Line 2";
+    lineMode: "Output";
+    lineInverter: false;
+    lineSource: "Exposure Active";
+  };
+  leimac: {
+    triggerInput: "TRG IN1";
+    triggerControlMode: "Level Low";
+  };
+  wiring: Array<{
+    from: string;
+    to: string;
+  }>;
+  requiredCable: "CEBR119 or CEBR120";
+  requiredTriggerSupply: "5-24 VDC";
+  safety: {
+    dryRun: true;
+    writesApplied: false;
+    lightsCommanded: false;
+    baslerSettingsChanged: false;
+    leimacSettingsChanged: false;
+  };
 }
 
 export class LeimacIdmuClientError extends Error {
@@ -263,7 +325,7 @@ export function composeLeimacIdmuReadCommand(
     throw new LeimacIdmuClientError("LEIMAC_IDMU_COMMAND_NOT_ALLOWED", `Unsupported Leimac IDMU read command: ${name}.`);
   }
   const target = normalizeLeimacIdmuReadTarget(definition, options.unit);
-  const ascii = `R${definition.commandNumber}${target.targetDesignation ?? ""}`;
+  const ascii = `R${definition.commandNumber}${target.targetDesignation ?? ""}${definition.requestData ?? ""}`;
   return {
     ascii,
     frame: ascii,
@@ -326,6 +388,115 @@ export function composeLeimacIdmuUnsafeWriteCommandForTest(input: {
       commandNumber,
       targetDesignation,
       testOnly: true,
+    },
+  };
+}
+
+export function normalizeLeimacIdmuDiagnosticReadFrame(frame: string | undefined): string {
+  const normalized = frame?.trim();
+  if (!normalized) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_FRAME_REQUIRED", "leimac-idmu-read-frame requires explicit --frame <R...>.");
+  }
+  if (normalized.length > LEIMAC_IDMU_MAX_DIAGNOSTIC_FRAME_LENGTH) {
+    throw new LeimacIdmuClientError(
+      "LEIMAC_IDMU_FRAME_TOO_LONG",
+      `Leimac IDMU diagnostic frames must be ${LEIMAC_IDMU_MAX_DIAGNOSTIC_FRAME_LENGTH} ASCII characters or fewer.`
+    );
+  }
+  if (normalized.includes("W")) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_WRITE_REJECTED", "Leimac IDMU diagnostic read-frame rejects W/write frames.");
+  }
+  if (!/^[A-Z0-9]+$/.test(normalized)) {
+    throw new LeimacIdmuClientError(
+      "LEIMAC_IDMU_FRAME_INVALID",
+      "Leimac IDMU diagnostic frames must use uppercase ASCII alphanumeric characters only."
+    );
+  }
+  if (!normalized.startsWith("R")) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_FRAME_NOT_READ", "Leimac IDMU diagnostic frames must start with R.");
+  }
+  const commandNumber = normalized.slice(1, 3);
+  if (!Object.values(LEIMAC_IDMU_READ_COMMANDS).some((command) => command.commandNumber === commandNumber)) {
+    throw new LeimacIdmuClientError(
+      "LEIMAC_IDMU_COMMAND_NOT_ALLOWED",
+      `Leimac IDMU diagnostic frame command is not in the read allowlist: ${commandNumber}.`
+    );
+  }
+  return normalized;
+}
+
+export function metadataForLeimacIdmuDiagnosticReadFrame(frame: string): LeimacIdmuDiagnosticFrameMetadata {
+  const normalized = normalizeLeimacIdmuDiagnosticReadFrame(frame);
+  const commandNumber = normalized.slice(1, 3);
+  const definition = Object.values(LEIMAC_IDMU_READ_COMMANDS).find((command) => command.commandNumber === commandNumber);
+  if (!definition) {
+    throw new LeimacIdmuClientError(
+      "LEIMAC_IDMU_COMMAND_NOT_ALLOWED",
+      `Leimac IDMU diagnostic frame command is not in the read allowlist: ${commandNumber}.`
+    );
+  }
+  const maybeTarget = normalized.length >= 5 ? normalized.slice(3, 5) : undefined;
+  const targetKind: LeimacIdmuReadTargetKind =
+    definition.targetRequirement === "none" ? "none" : maybeTarget === "00" ? "system" : "unit";
+  return {
+    name: definition.name,
+    commandNumber: definition.commandNumber,
+    header: "R",
+    ...(maybeTarget && definition.targetRequirement !== "none" ? { targetDesignation: maybeTarget } : {}),
+    targetKind,
+    description: definition.description,
+    readOnly: true,
+    diagnosticFrame: true,
+  };
+}
+
+export function buildLeimacIdmuTriggerSyncPlan(mode = "basler-exposure-active-to-trg-in1"): LeimacIdmuTriggerSyncPlan {
+  if (mode !== "basler-exposure-active-to-trg-in1") {
+    throw new LeimacIdmuClientError(
+      "LEIMAC_IDMU_TRIGGER_SYNC_MODE_INVALID",
+      "Unsupported Leimac trigger sync plan mode. Use basler-exposure-active-to-trg-in1."
+    );
+  }
+  return {
+    mode,
+    architecture: {
+      capture: "Basler ace 2 macro image capture",
+      triggerOutput: "Basler Line 2 Exposure Active",
+      triggerInput: "Leimac TRG IN1",
+      lightingBehavior: "Leimac lighting fires during camera exposure after future approved configuration",
+    },
+    basler: {
+      lineSelector: "Line 2",
+      lineMode: "Output",
+      lineInverter: false,
+      lineSource: "Exposure Active",
+    },
+    leimac: {
+      triggerInput: "TRG IN1",
+      triggerControlMode: "Level Low",
+    },
+    wiring: [
+      {
+        from: "Basler Pin 4 / Line 2 / black wire",
+        to: "Leimac Pin 2 / TRG IN1",
+      },
+      {
+        from: "Basler Pin 6 / Ground / pink wire",
+        to: "trigger supply GND",
+      },
+      {
+        from: "Leimac Pin 1 / IN_COM",
+        to: "trigger supply V+",
+      },
+    ],
+    requiredCable: "CEBR119 or CEBR120",
+    requiredTriggerSupply: "5-24 VDC",
+    safety: {
+      dryRun: true,
+      writesApplied: false,
+      lightsCommanded: false,
+      baslerSettingsChanged: false,
+      leimacSettingsChanged: false,
     },
   };
 }
@@ -506,6 +677,56 @@ export class LeimacIdmuClient {
 
   async status(): Promise<LeimacIdmuCommandResult> {
     return this.readCommand("status");
+  }
+
+  async readFrame(frame: string): Promise<LeimacIdmuDiagnosticFrameResult> {
+    const requestFrame = normalizeLeimacIdmuDiagnosticReadFrame(frame);
+    const metadata = metadataForLeimacIdmuDiagnosticReadFrame(requestFrame);
+    const startedAt = Date.now();
+    try {
+      const rawResponse = await this.transport.send({
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        ascii: requestFrame,
+        frame: requestFrame,
+      });
+      const parsed = parseLeimacIdmuResponse(metadata, rawResponse);
+      const ok = parsed.responseKind === "data" && parsed.parseConfidence !== "unknown";
+      return {
+        ok,
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        command: metadata,
+        requestAscii: requestFrame,
+        requestFrame,
+        rawResponse,
+        parsed,
+        durationMs: Date.now() - startedAt,
+        safety: leimacIdmuSafetyMetadata(),
+        ...(parsed.responseKind === "nak"
+          ? { error: parsed.errorMeaning ?? "Leimac IDMU returned NAK." }
+          : !ok
+            ? { error: "Leimac IDMU response was empty, invalid, or not confidently parsed." }
+            : {}),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown Leimac IDMU diagnostic read-frame error.";
+      return {
+        ok: false,
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        command: metadata,
+        requestAscii: requestFrame,
+        requestFrame,
+        parsed: { responseKind: "unknown", parseConfidence: "unknown" },
+        durationMs: Date.now() - startedAt,
+        safety: leimacIdmuSafetyMetadata(),
+        error: message,
+      };
+    }
   }
 
   async readiness(): Promise<LeimacIdmuReadinessResult> {
