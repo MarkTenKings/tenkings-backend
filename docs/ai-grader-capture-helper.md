@@ -49,11 +49,11 @@ This returns JSON with `overallStatus`, config validation checks, expected devic
 
 Leimac IDMU-P Ethernet readiness is the production lighting-controller direction for this Dell rig. It is limited to a TCP connection to one explicit controller IP/port and sends only read commands from the hard allowlist:
 
-- `08` status / error status
-- `16` firmware version
-- `47` operation mode
-- `80` temperature data
-- `83` unit information
+- `08` status / error status, unit-targeted as `R0801` for base unit 1 and system-targeted as `R0800`
+- `16` firmware version, unit-targeted as `R1601` for base unit 1
+- `47` operation mode, targetless as `R47`
+- `80` temperature data, unit-targeted as `R8001` for base unit 1
+- `83` unit information, targetless as `R83`
 
 ```powershell
 pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-readiness `
@@ -67,7 +67,9 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-id
   --timeout-ms 1500
 ```
 
-The Leimac IDMU command path rejects missing/invalid hosts, rejects discovery port `50001` as a command port, rejects unknown commands, and rejects all `W` write commands. The result includes raw response text, parsed fields only when the parser is confident enough, controller address/port/timeout metadata, and safety flags: `writesAllowed=false`, `lightsCommanded=false`, `outputSettingsChanged=false`, and `triggerSettingsChanged=false`.
+The Leimac IDMU command path rejects missing/invalid hosts, rejects discovery port `50001` as a command port, rejects unknown commands, and rejects all `W` write commands. The result includes the raw request frame, raw response text, parsed fields only when the parser is confident enough, controller address/port/timeout metadata, and safety flags: `writesAllowed=false`, `lightsCommanded=false`, `outputSettingsChanged=false`, and `triggerSettingsChanged=false`.
+
+The IDMU-P manual command order is header, command number, target designation/unit where required, then data. The manual write example `W 01 01 0001` serializes as the exact ASCII frame `W01010001` with no implicit CR/LF terminator; this repo includes that composer only as an explicit test helper, while every runtime/hardware path still rejects `W` writes.
 
 Arduino LED controller readiness is the first opt-in real-hardware-adjacent slice. It is limited to opening one explicitly supplied serial port, sending `PING`, expecting `PONG`, sending `LED ALL OFF`, expecting `OK`, and closing the port:
 
@@ -210,6 +212,7 @@ Relevant vendor manual facts recorded for this rig:
 
 - Setup/control is through LAN communication.
 - Supported control protocols are Leimac ASCII commands over TCP/IP or UDP/IP and GigE Vision / GenICam.
+- Leimac ASCII command order is `Header + CommandNumber + TargetDesignation/UnitNumber + Data`; command number precedes target/unit.
 - Default first Leimac command TCP port is `1000`; the four command ports are `1000` through `1003` by default.
 - UDP command port uses the same first command port.
 - Port `50001` is Leimac Discovery and is not valid as the first command port.
@@ -262,7 +265,7 @@ Vendor trigger-guide wiring notes:
 - `CEBR119` / `CEBR120` cable Line 2 GPIO is camera pin `4`, black wire.
 - `CEBR119` / `CEBR120` cable GPIO Ground is camera pin `6`, pink wire.
 
-PR #35 does not configure the camera line, does not save Basler user sets, does not change Leimac trigger/source/mode/output settings, does not reset errors, and does not turn lights on or off. A later controlled low-duty Leimac smoke must verify wiring, trigger voltage, channel mapping, output limits, heat behavior, and a safe all-off strategy before any synchronized capture acceptance.
+PR #35 does not configure the camera line, does not save Basler user sets, does not change Leimac trigger/source/mode/output settings, does not reset errors, and does not turn lights on or off. The next hardware-control PR after merge should configure and validate Basler Line 2 and Leimac trigger settings only under explicit operator approval. A later controlled low-duty Leimac smoke must verify wiring, trigger voltage, channel mapping, output limits, heat behavior, and a safe all-off strategy before any synchronized capture acceptance.
 
 ### Arduino LED Readiness
 

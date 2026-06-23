@@ -11,10 +11,14 @@ export type LeimacIdmuReadCommandName =
   | "temperature"
   | "unitInfo";
 
+export type LeimacIdmuReadTargetRequirement = "unit" | "unitOrSystem" | "none";
+export type LeimacIdmuReadTargetKind = "unit" | "system" | "none";
+
 export interface LeimacIdmuReadCommandDefinition {
   name: LeimacIdmuReadCommandName;
   commandNumber: "08" | "16" | "47" | "80" | "83";
   description: string;
+  targetRequirement: LeimacIdmuReadTargetRequirement;
 }
 
 export const LEIMAC_IDMU_READ_COMMANDS: Record<LeimacIdmuReadCommandName, LeimacIdmuReadCommandDefinition> = {
@@ -22,26 +26,31 @@ export const LEIMAC_IDMU_READ_COMMANDS: Record<LeimacIdmuReadCommandName, Leimac
     name: "status",
     commandNumber: "08",
     description: "Status / error status",
+    targetRequirement: "unitOrSystem",
   },
   firmware: {
     name: "firmware",
     commandNumber: "16",
     description: "Firmware version",
+    targetRequirement: "unit",
   },
   operationMode: {
     name: "operationMode",
     commandNumber: "47",
     description: "Operation mode",
+    targetRequirement: "none",
   },
   temperature: {
     name: "temperature",
     commandNumber: "80",
     description: "Internal temperature data",
+    targetRequirement: "unit",
   },
   unitInfo: {
     name: "unitInfo",
     commandNumber: "83",
     description: "Unit information",
+    targetRequirement: "none",
   },
 };
 
@@ -70,7 +79,9 @@ export interface LeimacIdmuCommandMetadata {
   name: LeimacIdmuReadCommandName;
   commandNumber: string;
   header: "R";
-  unit: number;
+  unit?: number;
+  targetDesignation?: string;
+  targetKind: LeimacIdmuReadTargetKind;
   description: string;
   readOnly: true;
 }
@@ -78,7 +89,7 @@ export interface LeimacIdmuCommandMetadata {
 export interface LeimacIdmuComposedCommand {
   ascii: string;
   frame: string;
-  terminator: "\\r\\n";
+  terminator: "";
   metadata: LeimacIdmuCommandMetadata;
 }
 
@@ -96,8 +107,23 @@ export interface LeimacIdmuParsedResponse {
   errorMeaning?: string;
   firmwareVersion?: string;
   unitModel?: string;
+  unitInformation?: {
+    totalUnits?: number;
+    units: Array<{
+      index: number;
+      dimmingMethodCode: string;
+      lightingOutputChannels?: number;
+    }>;
+  };
   temperatureC?: number;
+  temperaturePoints?: Array<{
+    point: number;
+    temperatureC: number;
+  }>;
+  statusCode?: string;
+  statusMeaning?: string;
   statusText?: string;
+  operationModeCode?: string;
   operationMode?: string;
   parseConfidence: "confident" | "partial" | "unknown";
 }
@@ -109,6 +135,7 @@ export interface LeimacIdmuCommandResult {
   timeoutMs: number;
   command: LeimacIdmuCommandMetadata;
   requestAscii: string;
+  requestFrame: string;
   rawResponse?: string;
   parsed: LeimacIdmuParsedResponse;
   durationMs: number;
@@ -206,6 +233,27 @@ export function leimacIdmuSafetyMetadata(): LeimacIdmuSafetyMetadata {
   return { ...SAFETY_METADATA };
 }
 
+function normalizeLeimacIdmuReadTarget(
+  definition: LeimacIdmuReadCommandDefinition,
+  unit: number | string | undefined
+): { unit?: number; targetDesignation?: string; targetKind: LeimacIdmuReadTargetKind } {
+  if (definition.targetRequirement === "none") {
+    return { targetKind: "none" };
+  }
+  const numeric = unit == null || unit === "" ? 1 : Number(unit);
+  if (!Number.isInteger(numeric) || numeric < 0 || numeric > 5) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_UNIT_INVALID", "--unit must be an integer from 1 to 5, or 0 for system status.");
+  }
+  if (definition.targetRequirement === "unit" && numeric === 0) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_UNIT_INVALID", `Leimac IDMU ${definition.name} requires a unit from 1 to 5.`);
+  }
+  return {
+    ...(numeric > 0 ? { unit: numeric } : {}),
+    targetDesignation: String(numeric).padStart(2, "0"),
+    targetKind: numeric === 0 ? "system" : "unit",
+  };
+}
+
 export function composeLeimacIdmuReadCommand(
   name: LeimacIdmuReadCommandName,
   options: { unit?: number | string } = {}
@@ -214,17 +262,19 @@ export function composeLeimacIdmuReadCommand(
   if (!definition) {
     throw new LeimacIdmuClientError("LEIMAC_IDMU_COMMAND_NOT_ALLOWED", `Unsupported Leimac IDMU read command: ${name}.`);
   }
-  const unit = normalizeLeimacIdmuUnit(options.unit);
-  const ascii = `R${String(unit).padStart(2, "0")}${definition.commandNumber}`;
+  const target = normalizeLeimacIdmuReadTarget(definition, options.unit);
+  const ascii = `R${definition.commandNumber}${target.targetDesignation ?? ""}`;
   return {
     ascii,
-    frame: `${ascii}\r\n`,
-    terminator: "\\r\\n",
+    frame: ascii,
+    terminator: "",
     metadata: {
       name: definition.name,
       commandNumber: definition.commandNumber,
       header: "R",
-      unit,
+      ...("unit" in target ? { unit: target.unit } : {}),
+      ...("targetDesignation" in target ? { targetDesignation: target.targetDesignation } : {}),
+      targetKind: target.targetKind,
       description: definition.description,
       readOnly: true,
     },
@@ -249,6 +299,37 @@ export function composeLeimacIdmuCommand(input: {
   return composeLeimacIdmuReadCommand(input.name as LeimacIdmuReadCommandName, { unit: input.unit });
 }
 
+export function composeLeimacIdmuUnsafeWriteCommandForTest(input: {
+  commandNumber: string;
+  targetDesignation: string;
+  data: string;
+}): { ascii: string; frame: string; terminator: ""; metadata: { header: "W"; commandNumber: string; targetDesignation: string; testOnly: true } } {
+  const commandNumber = input.commandNumber.trim();
+  const targetDesignation = input.targetDesignation.trim();
+  const data = input.data.trim();
+  if (!/^\d{2}$/.test(commandNumber)) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_COMMAND_INVALID", "Leimac IDMU command number must be two decimal digits.");
+  }
+  if (!/^\d{2}$/.test(targetDesignation)) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_TARGET_INVALID", "Leimac IDMU target designation must be two decimal digits.");
+  }
+  if (!/^[A-Za-z0-9.-]*$/.test(data)) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_DATA_INVALID", "Leimac IDMU test data must be printable command data.");
+  }
+  const ascii = `W${commandNumber}${targetDesignation}${data}`;
+  return {
+    ascii,
+    frame: ascii,
+    terminator: "",
+    metadata: {
+      header: "W",
+      commandNumber,
+      targetDesignation,
+      testOnly: true,
+    },
+  };
+}
+
 export function parseLeimacIdmuResponse(command: LeimacIdmuCommandMetadata, rawResponse: string): LeimacIdmuParsedResponse {
   const trimmed = rawResponse.trim();
   const nakCode = parseNakCode(trimmed);
@@ -264,7 +345,7 @@ export function parseLeimacIdmuResponse(command: LeimacIdmuCommandMetadata, rawR
   if (!trimmed) {
     return { responseKind: "unknown", parseConfidence: "unknown" };
   }
-  const payload = stripLeimacResponsePrefix(trimmed);
+  const payload = stripLeimacResponsePrefix(command, trimmed);
 
   if (/ACK/i.test(payload)) {
     return { responseKind: "ack", parseConfidence: "partial" };
@@ -280,6 +361,14 @@ export function parseLeimacIdmuResponse(command: LeimacIdmuCommandMetadata, rawR
   }
 
   if (command.name === "unitInfo") {
+    const unitInformation = parseUnitInformation(payload);
+    if (unitInformation) {
+      return {
+        responseKind: "data",
+        unitInformation,
+        parseConfidence: "partial",
+      };
+    }
     const unitModel = payload.match(/\bIDMU-P[A-Z0-9-]+\b/i)?.[0];
     return {
       responseKind: "data",
@@ -289,6 +378,15 @@ export function parseLeimacIdmuResponse(command: LeimacIdmuCommandMetadata, rawR
   }
 
   if (command.name === "temperature") {
+    const temperaturePoints = parseTemperaturePoints(payload);
+    if (temperaturePoints.length > 0) {
+      return {
+        responseKind: "data",
+        temperatureC: temperaturePoints[0].temperatureC,
+        temperaturePoints,
+        parseConfidence: "partial",
+      };
+    }
     const numeric = payload.match(/-?\d+(?:\.\d+)?/)?.[0];
     const temperatureC = numeric == null ? undefined : Number(numeric);
     const plausible = typeof temperatureC === "number" && Number.isFinite(temperatureC) && temperatureC >= -20 && temperatureC <= 150;
@@ -300,6 +398,16 @@ export function parseLeimacIdmuResponse(command: LeimacIdmuCommandMetadata, rawR
   }
 
   if (command.name === "operationMode") {
+    const operationModeCode = payload.match(/^\d{4}/)?.[0];
+    const operationMode = operationModeCode ? operationModeMeaning(operationModeCode) : undefined;
+    if (operationMode) {
+      return {
+        responseKind: "data",
+        operationModeCode,
+        operationMode,
+        parseConfidence: "partial",
+      };
+    }
     const mode = payload.match(/\b(LevelHigh|RisingEdge|LevelLow|FallingEdge|External|Internal|Trigger|Continuous)\b/i)?.[0];
     return {
       responseKind: "data",
@@ -309,6 +417,15 @@ export function parseLeimacIdmuResponse(command: LeimacIdmuCommandMetadata, rawR
   }
 
   if (command.name === "status") {
+    const statusCode = payload.match(/^\d{4}/)?.[0];
+    if (statusCode) {
+      return {
+        responseKind: "data",
+        statusCode,
+        statusMeaning: statusMeaning(statusCode, command.targetKind),
+        parseConfidence: "partial",
+      };
+    }
     const statusText = payload.match(/\b(OK|NORMAL|ERROR|OVERCURRENT|TEMP|TEMPERATURE)\b/i)?.[0];
     return {
       responseKind: "data",
@@ -350,18 +467,24 @@ export class LeimacIdmuClient {
         frame: composed.frame,
       });
       const parsed = parseLeimacIdmuResponse(composed.metadata, rawResponse);
+      const ok = parsed.responseKind === "data" && parsed.parseConfidence !== "unknown";
       return {
-        ok: parsed.responseKind !== "nak",
+        ok,
         host: this.host,
         port: this.port,
         timeoutMs: this.timeoutMs,
         command: composed.metadata,
         requestAscii: composed.ascii,
+        requestFrame: composed.frame,
         rawResponse,
         parsed,
         durationMs: Date.now() - startedAt,
         safety: leimacIdmuSafetyMetadata(),
-        ...(parsed.responseKind === "nak" ? { error: parsed.errorMeaning ?? "Leimac IDMU returned NAK." } : {}),
+        ...(parsed.responseKind === "nak"
+          ? { error: parsed.errorMeaning ?? "Leimac IDMU returned NAK." }
+          : !ok
+            ? { error: "Leimac IDMU response was empty, invalid, or not confidently parsed." }
+            : {}),
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown Leimac IDMU command error.";
@@ -372,6 +495,7 @@ export class LeimacIdmuClient {
         timeoutMs: this.timeoutMs,
         command: composed.metadata,
         requestAscii: composed.ascii,
+        requestFrame: composed.frame,
         parsed: { responseKind: "unknown", parseConfidence: "unknown" },
         durationMs: Date.now() - startedAt,
         safety: leimacIdmuSafetyMetadata(),
@@ -387,7 +511,9 @@ export class LeimacIdmuClient {
   async readiness(): Promise<LeimacIdmuReadinessResult> {
     const commandsAttempted: LeimacIdmuCommandResult[] = [];
     for (const commandName of READINESS_COMMANDS) {
-      commandsAttempted.push(await this.readCommand(commandName));
+      const result = await this.readCommand(commandName);
+      commandsAttempted.push(result);
+      if (!result.ok) break;
     }
     const ok = commandsAttempted.every((result) => result.ok);
     return {
@@ -419,10 +545,13 @@ export function createNodeLeimacIdmuTcpTransport(): LeimacIdmuTransport {
         });
         let settled = false;
         const chunks: Buffer[] = [];
+        let idleTimer: NodeJS.Timeout | undefined;
 
         const finish = (callback: () => void) => {
           if (settled) return;
           settled = true;
+          clearTimeout(timer);
+          if (idleTimer) clearTimeout(idleTimer);
           socket.destroy();
           callback();
         };
@@ -445,13 +574,17 @@ export function createNodeLeimacIdmuTcpTransport(): LeimacIdmuTransport {
         socket.on("data", (chunk) => {
           chunks.push(Buffer.from(chunk));
           const response = Buffer.concat(chunks).toString("ascii");
-          if (response.includes("\n") || response.includes("\r") || response.length >= 3) {
-            clearTimeout(timer);
+          if (response.includes("\n") || response.includes("\r")) {
             finish(() => resolve(response));
+          } else {
+            if (idleTimer) clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => {
+              const idleResponse = Buffer.concat(chunks).toString("ascii");
+              finish(() => resolve(idleResponse));
+            }, Math.min(100, Math.max(25, Math.floor(request.timeoutMs / 10))));
           }
         });
         socket.on("error", (error) => {
-          clearTimeout(timer);
           finish(() =>
             reject(
               new LeimacIdmuClientError(
@@ -463,7 +596,6 @@ export function createNodeLeimacIdmuTcpTransport(): LeimacIdmuTransport {
         });
         socket.on("close", () => {
           if (settled) return;
-          clearTimeout(timer);
           const response = Buffer.concat(chunks).toString("ascii");
           finish(() => {
             if (response) resolve(response);
@@ -484,8 +616,14 @@ function parseNakCode(response: string): LeimacIdmuParsedResponse["nakCode"] | u
   return undefined;
 }
 
-function stripLeimacResponsePrefix(response: string): string {
-  return response.replace(/^[RW]{1,2}\d{2}/i, "").trim();
+function stripLeimacResponsePrefix(command: LeimacIdmuCommandMetadata, response: string): string {
+  let payload = response.replace(/\s+/g, "");
+  if (/^[RW]/i.test(payload)) payload = payload.slice(1);
+  if (payload.startsWith(command.commandNumber)) payload = payload.slice(command.commandNumber.length);
+  if (command.targetDesignation && payload.startsWith(command.targetDesignation)) {
+    payload = payload.slice(command.targetDesignation.length);
+  }
+  return payload.trim();
 }
 
 function nakMeaning(code: NonNullable<LeimacIdmuParsedResponse["nakCode"]>): string {
@@ -499,4 +637,68 @@ function nakMeaning(code: NonNullable<LeimacIdmuParsedResponse["nakCode"]>): str
     case "NAK":
       return "Leimac IDMU returned a NAK response.";
   }
+}
+
+function operationModeMeaning(code: string): string | undefined {
+  switch (code) {
+    case "0000":
+      return "Normal mode";
+    case "0001":
+      return "Programming mode";
+    default:
+      return undefined;
+  }
+}
+
+function statusMeaning(code: string, targetKind: LeimacIdmuReadTargetKind): string {
+  if (targetKind === "system") return `System status bitmask ${code}.`;
+  switch (code) {
+    case "0000":
+      return "No error condition.";
+    case "0001":
+      return "Overcurrent.";
+    case "0002":
+      return "Temperature abnormality.";
+    case "0003":
+      return "Inter-unit communication error.";
+    case "0004":
+      return "Other unit error.";
+    default:
+      return `Unknown status code ${code}.`;
+  }
+}
+
+function parseTemperaturePoints(payload: string): NonNullable<LeimacIdmuParsedResponse["temperaturePoints"]> {
+  const points: NonNullable<LeimacIdmuParsedResponse["temperaturePoints"]> = [];
+  for (const match of payload.matchAll(/(\d{2})(\d{4})/g)) {
+    const point = Number(match[1]);
+    const temperatureC = Number(match[2]);
+    if (Number.isInteger(point) && point > 0 && Number.isFinite(temperatureC) && temperatureC >= -20 && temperatureC <= 150) {
+      points.push({ point, temperatureC });
+    }
+  }
+  return points;
+}
+
+function parseUnitInformation(payload: string): NonNullable<LeimacIdmuParsedResponse["unitInformation"]> | undefined {
+  const numeric = payload.match(/^\d{4}(?:\d{8})*/)?.[0];
+  if (!numeric || numeric.length < 4) return undefined;
+  const totalUnits = Number(numeric.slice(0, 4));
+  if (!Number.isInteger(totalUnits) || totalUnits < 0 || totalUnits > 5) return undefined;
+  const units: NonNullable<LeimacIdmuParsedResponse["unitInformation"]>["units"] = [];
+  let offset = 4;
+  for (let index = 1; offset + 8 <= numeric.length && index <= Math.max(totalUnits, 1); index += 1) {
+    const dimmingMethodCode = numeric.slice(offset, offset + 4);
+    const channelValue = Number(numeric.slice(offset + 4, offset + 8));
+    units.push({
+      index,
+      dimmingMethodCode,
+      ...(Number.isInteger(channelValue) && channelValue >= 0 ? { lightingOutputChannels: channelValue } : {}),
+    });
+    offset += 8;
+  }
+  return {
+    totalUnits,
+    units,
+  };
 }

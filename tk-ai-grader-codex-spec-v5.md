@@ -1786,6 +1786,8 @@ Code may not begin until:
 
 On the Dell capture-node rig this is no longer the primary Leimac production lighting path. Leimac production lighting is expected to use the Leimac IDMU-P Ethernet controller, with Basler Line 2 `Exposure Active` triggering Leimac `TRG IN1`. Arduino may remain useful later for auxiliary interlocks, buttons, sensors, emergency stop, or non-Leimac devices.
 
+Leimac IDMU-P command framing uses ASCII in the order `Header + CommandNumber + TargetDesignation/UnitNumber + Data` when target/data fields apply. The manual write example `W 01 01 0001` serializes as the exact ASCII frame `W01010001` with no implicit CR/LF terminator. PR #35 readiness is read-only and does not send write commands, configure Leimac trigger/output settings, configure Basler Line 2, or control lighting.
+
 The Arduino LED controller uses ASCII serial at 115200 baud.
 
 Commands:
