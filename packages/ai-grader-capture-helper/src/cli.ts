@@ -34,6 +34,14 @@ type ParsedCommand =
   | { command: "led-health"; config: CaptureHelperConfigInput }
   | { command: "stage-health"; config: CaptureHelperConfigInput }
   | { command: "dinolite-bridge-health"; config: CaptureHelperConfigInput }
+  | {
+      command: "leimac-idmu-readiness" | "leimac-idmu-status";
+      config: CaptureHelperConfigInput;
+      leimacHost: string | undefined;
+      leimacPort: number | undefined;
+      leimacTimeoutMs: number | undefined;
+      leimacUnit: number | undefined;
+    }
   | { command: "basler-readiness" | "basler-list-cameras"; config: CaptureHelperConfigInput; pylonRoot: string | undefined; pylonTimeoutMs: number | undefined }
   | {
       command: "basler-capture-still";
@@ -103,6 +111,8 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   let label: string | undefined;
   let pylonRoot: string | undefined;
   let pylonTimeoutMs: number | undefined;
+  let leimacTimeoutMs: number | undefined;
+  let leimacUnit: number | undefined;
   let cameraIndex: number | undefined;
   let savedFormat: string | undefined;
   let lensModel: string | undefined;
@@ -223,6 +233,20 @@ function parseCliArgs(argv: string[]): ParsedCommand {
         pylonTimeoutMs = Number(readOption(rest, index, "--pylon-timeout-ms"));
         if (!Number.isInteger(pylonTimeoutMs) || pylonTimeoutMs <= 0) {
           throw new CaptureHelperCommandError("--pylon-timeout-ms must be a positive integer.");
+        }
+        index += 1;
+        break;
+      case "--timeout-ms":
+        leimacTimeoutMs = Number(readOption(rest, index, "--timeout-ms"));
+        if (!Number.isInteger(leimacTimeoutMs) || leimacTimeoutMs <= 0) {
+          throw new CaptureHelperCommandError("--timeout-ms must be a positive integer.");
+        }
+        index += 1;
+        break;
+      case "--unit":
+        leimacUnit = Number(readOption(rest, index, "--unit"));
+        if (!Number.isInteger(leimacUnit) || leimacUnit < 1 || leimacUnit > 5) {
+          throw new CaptureHelperCommandError("--unit must be an integer from 1 to 5.");
         }
         index += 1;
         break;
@@ -480,6 +504,8 @@ function parseCliArgs(argv: string[]): ParsedCommand {
     command === "led-health" ||
     command === "stage-health" ||
     command === "dinolite-bridge-health" ||
+    command === "leimac-idmu-readiness" ||
+    command === "leimac-idmu-status" ||
     command === "basler-readiness" ||
     command === "basler-list-cameras" ||
     command === "basler-capture-still" ||
@@ -496,6 +522,13 @@ function parseCliArgs(argv: string[]): ParsedCommand {
   ) {
     if (command === "manifest") return { command, config, mode };
     if (command === "serve") return { command, config, host, port };
+    if (command === "leimac-idmu-readiness" || command === "leimac-idmu-status") {
+      const leimacPort = port === undefined ? undefined : Number(port);
+      if (leimacPort !== undefined && (!Number.isInteger(leimacPort) || leimacPort <= 0)) {
+        throw new CaptureHelperCommandError("--port must be a positive integer.");
+      }
+      return { command, config, leimacHost: host, leimacPort, leimacTimeoutMs, leimacUnit };
+    }
     if (command === "basler-readiness" || command === "basler-list-cameras") return { command, config, pylonRoot, pylonTimeoutMs };
     if (command === "basler-capture-still") {
       return { command, config, pylonRoot, pylonTimeoutMs, cameraIndex, outputDir, label, savedFormat, lensModel };
@@ -521,6 +554,8 @@ function helpPayload() {
       "readiness",
       "led-health --port <serial-port> --baud 115200",
       "stage-health --port <serial-port> --baud 115200",
+      "leimac-idmu-readiness --host <ip-address> --port 1000 --timeout-ms 1500",
+      "leimac-idmu-status --host <ip-address> --port 1000 --timeout-ms 1500",
       "dinolite-bridge-health --bridge-path <exe> --bridge-adapter fake",
       "dinolite-enumerate --bridge-exe <exe> --adapter dnvideox",
       "dinolite-status --bridge-exe <exe> --adapter dnvideox --device-index 0",
@@ -559,6 +594,8 @@ function helpPayload() {
       "--label",
       "--pylon-root",
       "--pylon-timeout-ms",
+      "--timeout-ms",
+      "--unit",
       "--camera-index",
       "--format png|tiff|jpg",
       "--lens-model",
@@ -590,8 +627,10 @@ function helpPayload() {
       "--port",
     ],
     mode: "simulator-only",
-    driverSet: "mock runnable; real limited to explicit Arduino LED readiness, GRBL stage readiness, and manual Dino-Lite bridge commands",
+    driverSet: "mock runnable; real limited to explicit Arduino LED readiness, GRBL stage readiness, manual Leimac IDMU read-only readiness, and manual Dino-Lite bridge commands",
     dinoliteBridge: "manual fake bridge health plus manual DNVideoX enumerate/status/still capture only; default readiness does not spawn",
+    leimacIdmu:
+      "manual Ethernet read-only readiness/status only; requires explicit --host and sends only R commands 08, 16, 47, 80, and 83",
     baslerPylon:
       "manual pylon readiness/list/still capture only; default health/readiness/transport does not load pylon, enumerate cameras, or open the Basler camera",
     dinoliteSdkRuntimeDir:
@@ -724,6 +763,36 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       });
       writeJson(stdout, result);
       return result.ok ? 0 : 1;
+    }
+
+    if (parsed.command === "leimac-idmu-readiness" || parsed.command === "leimac-idmu-status") {
+      const { LeimacIdmuClient } = await import("./drivers/leimacIdmuClient");
+      const client = new LeimacIdmuClient({
+        host: parsed.leimacHost,
+        port: parsed.leimacPort,
+        timeoutMs: parsed.leimacTimeoutMs,
+        unit: parsed.leimacUnit,
+      });
+
+      if (parsed.command === "leimac-idmu-readiness") {
+        const readiness = await client.readiness();
+        writeJson(stdout, {
+          ok: readiness.ok,
+          service: "ai-grader-capture-helper",
+          command: "leimac-idmu-readiness",
+          readiness,
+        });
+        return readiness.ok ? 0 : 1;
+      }
+
+      const status = await client.status();
+      writeJson(stdout, {
+        ok: status.ok,
+        service: "ai-grader-capture-helper",
+        command: "leimac-idmu-status",
+        status,
+      });
+      return status.ok ? 0 : 1;
     }
 
     if (
@@ -1040,6 +1109,7 @@ export async function runCaptureHelperCli(argv: string[], io: CaptureHelperCliIO
       error instanceof ArduinoLedControllerHealthError ||
       error instanceof GrblStageHealthError ||
       error instanceof DinoLiteBridgeClientError ||
+      (error instanceof Error && error.name === "LeimacIdmuClientError") ||
       (error instanceof Error && error.name === "BaslerPylonClientError");
     const message = error instanceof Error ? error.message : "Unexpected capture helper CLI error.";
     writeJson(stderr, {

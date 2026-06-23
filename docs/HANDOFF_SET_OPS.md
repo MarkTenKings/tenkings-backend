@@ -10929,3 +10929,34 @@ Build Set Ops UI flow with:
 - Migrations remained skipped by default because `RUN_DB_MIGRATIONS=true` was not set.
 - No next AI Grader phase was started.
 - Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no additional image capture after the accepted PR #34 smoke, no Leimac control, no Arduino control, no motor/stage movement, no network setting change, no Basler/pylon install, no SDK binary/vendor commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
+
+## Session Update (2026-06-23 UTC, AI Grader Leimac IDMU-P Ethernet readiness PR #35)
+- Started branch `feature/ai-grader-leimac-idmu-readiness` from fresh `main` at `93c5646`.
+- Added manual-only Leimac IDMU-P Ethernet read-only readiness/status support to `@tenkings/ai-grader-capture-helper`:
+  - CLI commands: `leimac-idmu-readiness` and `leimac-idmu-status`.
+  - Hardware access requires explicit `--host`; command port defaults to `1000` only after a host is supplied.
+  - Read allowlist is limited to Leimac command numbers `08` status/error status, `16` firmware version, `47` operation mode, `80` temperature data, and `83` unit information.
+  - All `W` write commands, unknown commands, `writesAllowed=true`, invalid/path-like hosts, and command port `50001` are rejected.
+  - Results include raw response text, defensive parsed fields only when confident, controller host/port/timeout/unit metadata, and safety flags `writesAllowed=false`, `lightsCommanded=false`, `outputSettingsChanged=false`, and `triggerSettingsChanged=false`.
+- Updated AI Grader docs/spec for the corrected rig lighting architecture:
+  - Leimac IDMU-P Ethernet is the primary production lighting-controller path on this Dell rig.
+  - Arduino Mega + MOSFET Leimac lighting is superseded; Arduino may remain auxiliary for interlocks, buttons, sensors, emergency stop, or non-Leimac devices.
+  - Intended synchronized architecture is Basler ace 2 capture, Basler Line 2 `Exposure Active`, Line 2 to Leimac `TRG IN1`, and lighting active only during exposure after later acceptance.
+  - PR #35 remains read-only readiness only; no light output/settings writes are performed.
+  - Vendor wiring notes recorded: Basler `CEBR119`/`CEBR120` I/O cable, 5-24 VDC trigger supply, Leimac pin `1`/`IN_COM` to trigger supply `V+`, Leimac pin `2`/`TRG IN1` to Basler pin `4`/Line 2, and Basler pin `6`/Ground to trigger supply GND.
+  - Later controlled low-duty Leimac smoke is still required for command framing, safe all-off behavior, channel mapping, output limits, trigger wiring, heat behavior, and acceptance criteria.
+- Validation:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 96 tests.
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+  - `git diff --check` -> pass with line-ending warnings only.
+- Passive Windows inventory only:
+  - `Ethernet 2` / `Realtek USB GbE Family Controller #2` is `Up` at `1 Gbps`, MAC `00-05-1B-DF-02-39`, IPv4 `169.254.215.165/16`.
+  - ARP/neighbor table on `Ethernet 2` shows Basler `169.254.68.71` / `00-30-53-38-7B-E2`.
+  - ARP/neighbor table on `Ethernet 2` also shows unconfirmed `169.254.191.156` / `AC-BD-0B-00-5E-E2`; this may be the Leimac controller but was not assumed.
+  - Wi-Fi is up at `192.168.2.20/24`; default route remains via `192.168.2.254`.
+- Hardware Leimac readiness smoke was not attempted because no candidate IP was positively identified and explicitly approved for TCP read-only access. No hardware protocol read commands were sent.
+- Mock protocol coverage in tests used read frames `R0108`, `R0116`, `R0147`, `R0180`, and `R0183`; no write frames were generated.
+- Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no Dino-Lite command, no Basler capture, no Basler setting write, no Leimac write command, no lights on/off, no PWM/brightness/output/trigger change, no network setting change, no Arduino control, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.

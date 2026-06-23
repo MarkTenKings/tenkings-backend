@@ -32,7 +32,7 @@ This document is the standalone implementation blueprint. A fresh Codex agent mu
 
 Build a deterministic Ten Kings raw-card grading and print-profile comparison system that:
 
-- Captures macro evidence with a Basler ace2, Computar lens, Leimac 8-segment dome, and Arduino LED controller.
+- Captures macro evidence with a Basler ace2, Computar lens, Leimac 8-segment dome, and Leimac IDMU-P Ethernet lighting controller. On the Dell capture-node rig, Arduino Mega + MOSFET lighting is superseded for Leimac production lighting and remains auxiliary-only unless a later approved slice defines interlock/button/sensor use.
 - Captures microscope evidence with a Dino-Lite Edge AF7915MZTL on an OpenBuilds ACRO 1010 XY stage.
 - Grades four elements from first principles: centering, corners, edges, and surface.
 - Uses the microscope on corners, edges, and surface only.
@@ -89,7 +89,7 @@ One Kaiser RS-1 or equivalent copy stand column carries both optical paths.
 
 | Path | Components | Role |
 |---|---|---|
-| Macro | Basler ace2 a2A2464-23gcPRO, Computar M2514-MP2 25mm lens, Leimac IDRA-T194/140-DW-1-8ch dome, Arduino Mega + MOSFET LED controller | Whole-card capture, centering, macro corners, macro edges, macro surface heatmap, suspect generation. |
+| Macro | Basler ace2 a2A2464-23gcPRO, Computar M2514-MP2 25mm lens, Leimac IDRA-T194/140-DW-1-8ch dome, Leimac IDMU-P Ethernet PWM controller | Whole-card capture, centering, macro corners, macro edges, macro surface heatmap, suspect generation. |
 | Micro | Dino-Lite Edge AF7915MZTL, Manfrotto 196B-3 arm, Manfrotto 035 clamp, OpenBuilds ACRO 1010 with GRBL | Targeted STANDARD spot checks, FORENSIC raster/mosaics, CMYK patches. |
 | Holder | 3D-printed magnetic raw-card holder with fiducials | Raw-card placement, card-to-stage transform calibration. |
 | Capture PC | Windows 11 PC with helper service | Local device drivers, frame acquisition, capture manifests, upload retries. |
@@ -256,8 +256,8 @@ sequenceDiagram
 |---|---|---|
 | Macro camera | Basler ace2 a2A2464-23gcPRO | `basler_camera.py` using pypylon |
 | Lens | Computar M2514-MP2 25mm | Calibration metadata only |
-| Lighting | Leimac IDRA-T194/140-DW-1-8ch | Arduino LED controller |
-| LED controller | Arduino Mega 2560 + 8 MOSFET channels | `arduino_led_controller.py` using serial protocol |
+| Lighting | Leimac IDRA-T194/140-DW-1-8ch | Leimac IDMU-P Ethernet PWM controller |
+| LED controller | Leimac IDMU-P base + expansion, read/configured over LAN; Basler Exposure Active on Line 2 triggers Leimac TRG IN1 for synchronized exposure lighting | Leimac ASCII TCP/UDP or GenICam/GigE Vision; Arduino Mega may remain auxiliary only |
 | Microscope | Dino-Lite Edge AF7915MZTL | `dino_lite_microscope.py` using SDK wrapper |
 | XY stage | OpenBuilds ACRO 1010 GRBL | `grbl_stage.py` using serial G-code |
 | Holder | Raw-card magnetic holder with fiducials | Calibration transform |
@@ -1782,7 +1782,9 @@ Code may not begin until:
 9. Authentication governance and claim boundaries are defined.
 10. Override, audit, evidence retention, and custody policies are defined.
 
-## Appendix A. Arduino LED Controller Protocol
+## Appendix A. Legacy Arduino LED Controller Protocol
+
+On the Dell capture-node rig this is no longer the primary Leimac production lighting path. Leimac production lighting is expected to use the Leimac IDMU-P Ethernet controller, with Basler Line 2 `Exposure Active` triggering Leimac `TRG IN1`. Arduino may remain useful later for auxiliary interlocks, buttons, sensors, emergency stop, or non-Leimac devices.
 
 The Arduino LED controller uses ASCII serial at 115200 baud.
 

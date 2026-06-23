@@ -20119,3 +20119,54 @@ By enabling Rip It Live, I confirm:
 - No network setting change was run.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-23 UTC - AI Grader Leimac IDMU-P Ethernet readiness PR #35
+
+### Summary
+- Started branch `feature/ai-grader-leimac-idmu-readiness` from fresh `main` at `93c5646`.
+- Added manual-only Leimac IDMU-P Ethernet read-only readiness/status support to `@tenkings/ai-grader-capture-helper`.
+- Added CLI commands `leimac-idmu-readiness` and `leimac-idmu-status`; hardware access requires explicit `--host`, optional `--port` defaults to `1000`, and optional `--timeout-ms` / `--unit` stay bounded.
+- The Leimac client uses Node TCP only, sends only allowlisted `R` read commands, rejects all writes, rejects unknown commands, rejects path-like or non-IP hosts, and rejects port `50001`.
+- Read allowlist is command `08` status/error status, `16` firmware version, `47` operation mode, `80` temperature data, and `83` unit information.
+- Results include raw response text, defensive parsed fields only when confident, controller host/port/timeout/unit metadata, and safety flags `writesAllowed=false`, `lightsCommanded=false`, `outputSettingsChanged=false`, and `triggerSettingsChanged=false`.
+- Updated docs/spec to record Leimac IDMU-P Ethernet as the primary production lighting-controller path on this rig, superseding Arduino Mega + MOSFET Leimac lighting. Arduino remains auxiliary only unless a later approved slice assigns interlock/button/sensor/emergency-stop or non-Leimac use.
+- Recorded intended synchronized architecture: Basler ace 2 captures macro images, Basler Line 2 outputs `Exposure Active`, Line 2 triggers Leimac `TRG IN1`, and the Leimac lights during exposure after later hardware acceptance.
+- Recorded vendor wiring summary: Basler `CEBR119`/`CEBR120` cable, 5-24 VDC trigger supply, Leimac pin `1` / `IN_COM` to trigger supply `V+`, Leimac pin `2` / `TRG IN1` to Basler pin `4` / Line 2, and Basler pin `6` / Ground to trigger supply GND.
+- Later controlled low-duty Leimac smoke is still required for command framing, safe all-off behavior, channel mapping, output limits, trigger wiring, heat behavior, and acceptance criteria.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 96 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Passive Inventory
+- `Ethernet 2` / `Realtek USB GbE Family Controller #2` is `Up` at `1 Gbps`, MAC `00-05-1B-DF-02-39`, IPv4 `169.254.215.165/16`.
+- ARP/neighbor table on `Ethernet 2` shows Basler `169.254.68.71` / `00-30-53-38-7B-E2`.
+- ARP/neighbor table on `Ethernet 2` also shows unconfirmed `169.254.191.156` / `AC-BD-0B-00-5E-E2`; this may be the Leimac controller but was not assumed.
+- Wi-Fi is up at `192.168.2.20/24`; default route remains via `192.168.2.254`.
+- No scan was run and no network settings were changed.
+
+### Hardware Smoke
+- Leimac read-only hardware readiness smoke was not attempted because no candidate IP was positively identified and explicitly approved for TCP read-only access.
+- No hardware Leimac protocol commands were sent.
+- Mock protocol coverage in tests used read frames `R0108`, `R0116`, `R0147`, `R0180`, and `R0183`; no write frames were generated.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Dino-Lite command was run.
+- No Basler capture was run.
+- No Basler setting write was run.
+- No Leimac write command was run.
+- No lights were turned on or off.
+- No PWM, brightness, output, or trigger setting was changed.
+- No network setting was changed.
+- No Arduino control was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
