@@ -20119,3 +20119,197 @@ By enabling Rip It Live, I confirm:
 - No network setting change was run.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-23 UTC - AI Grader Leimac IDMU-P Ethernet readiness PR #35
+
+### Summary
+- Started branch `feature/ai-grader-leimac-idmu-readiness` from fresh `main` at `93c5646`.
+- Added manual-only Leimac IDMU-P Ethernet read-only readiness/status support to `@tenkings/ai-grader-capture-helper`.
+- Added CLI commands `leimac-idmu-readiness` and `leimac-idmu-status`; hardware access requires explicit `--host`, optional `--port` defaults to `1000`, and optional `--timeout-ms` / `--unit` stay bounded.
+- The Leimac client uses Node TCP only, sends only allowlisted `R` read commands, rejects all writes, rejects unknown commands, rejects path-like or non-IP hosts, and rejects port `50001`.
+- Read allowlist is command `08` status/error status, `16` firmware version, `47` operation mode, `80` temperature data, and `83` unit information.
+- Results include raw response text, defensive parsed fields only when confident, controller host/port/timeout/unit metadata, and safety flags `writesAllowed=false`, `lightsCommanded=false`, `outputSettingsChanged=false`, and `triggerSettingsChanged=false`.
+- Updated docs/spec to record Leimac IDMU-P Ethernet as the primary production lighting-controller path on this rig, superseding Arduino Mega + MOSFET Leimac lighting. Arduino remains auxiliary only unless a later approved slice assigns interlock/button/sensor/emergency-stop or non-Leimac use.
+- Recorded intended synchronized architecture: Basler ace 2 captures macro images, Basler Line 2 outputs `Exposure Active`, Line 2 triggers Leimac `TRG IN1`, and the Leimac lights during exposure after later hardware acceptance.
+- Recorded vendor wiring summary: Basler `CEBR119`/`CEBR120` cable, 5-24 VDC trigger supply, Leimac pin `1` / `IN_COM` to trigger supply `V+`, Leimac pin `2` / `TRG IN1` to Basler pin `4` / Line 2, and Basler pin `6` / Ground to trigger supply GND.
+- Later controlled low-duty Leimac smoke is still required for command framing, safe all-off behavior, channel mapping, output limits, trigger wiring, heat behavior, and acceptance criteria.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 96 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Passive Inventory
+- `Ethernet 2` / `Realtek USB GbE Family Controller #2` is `Up` at `1 Gbps`, MAC `00-05-1B-DF-02-39`, IPv4 `169.254.215.165/16`.
+- ARP/neighbor table on `Ethernet 2` shows Basler `169.254.68.71` / `00-30-53-38-7B-E2`.
+- ARP/neighbor table on `Ethernet 2` also shows unconfirmed `169.254.191.156` / `AC-BD-0B-00-5E-E2`; this may be the Leimac controller but was not assumed.
+- Wi-Fi is up at `192.168.2.20/24`; default route remains via `192.168.2.254`.
+- No scan was run and no network settings were changed.
+
+### Hardware Smoke
+- Leimac read-only hardware readiness smoke was not attempted because no candidate IP was positively identified and explicitly approved for TCP read-only access.
+- No hardware Leimac protocol commands were sent.
+- Mock protocol coverage in tests used read frames `R0108`, `R0116`, `R0147`, `R0180`, and `R0183`; no write frames were generated.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Dino-Lite command was run.
+- No Basler capture was run.
+- No Basler setting write was run.
+- No Leimac write command was run.
+- No lights were turned on or off.
+- No PWM, brightness, output, or trigger setting was changed.
+- No network setting was changed.
+- No Arduino control was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-23 UTC - AI Grader Leimac IDMU-P PR #35 command-order audit
+
+### Summary
+- Continued branch `feature/ai-grader-leimac-idmu-readiness` for PR #35 command-format audit before merge.
+- Reviewed local PDFs:
+  - `C:\Users\Mark\Downloads\idmu-p-manual.pdf`
+  - `C:\Users\Mark\Downloads\how-to-trigger-leimac-idmu-light-controller-using-basler-ace2-boostr-racer2s-camera.pdf`
+- Confirmed the original PR #35 command-frame order was wrong. Leimac ASCII command order is header + command number + target designation/unit number + data, not header + unit + command.
+- The manual write example `W 01 01 0001` serializes as `W01010001`.
+- Fixed read command composition and tests:
+  - unit status: `R0801`
+  - system status: `R0800`
+  - firmware, unit 1: `R1601`
+  - operation mode: `R47`
+  - temperature, unit 1: `R8001`
+  - unit information: `R83`
+- Added a test-only write composer for the manual `W01010001` example. Runtime/hardware paths still reject all `W` commands and `writesAllowed=true`.
+- Updated readiness to stop after the first failed read command so a timeout, NAK, invalid response, or socket error does not trigger additional hardware reads.
+- Updated parser behavior to preserve raw frames/responses, parse only confident fields, parse unit status/system status, firmware, operation mode, temperature points, and unit information, and fail closed on unknown/ambiguous responses.
+- Trigger-guide PDF review confirmed the intended later architecture remains Basler Line 2 `Exposure Active` to Leimac `TRG IN1`, `Level Low`, CEBR119/CEBR120 I/O cable, black Line 2 wire, pink GPIO ground wire, and 5-24 V trigger supply.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 98 tests.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Dino-Lite command was run.
+- No Basler capture was run.
+- No Basler setting write was run.
+- No Leimac write command was run.
+- No lights were turned on or off.
+- No PWM, brightness, output, or trigger setting was changed.
+- No network setting was changed.
+- No Arduino control was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-23 UTC - AI Grader Leimac IDMU-P PR #35 exact-frame follow-up
+
+### Summary
+- Followed up the PR #35 Leimac command-order audit after reviewing the local IDMU-P manual examples again.
+- Updated the Leimac client to use the manual ASCII frame exactly, with no implicit CR/LF terminator.
+- Added `requestFrame` to Leimac command results so hardware-readiness JSON records the raw frame the transport writes.
+- Tests now assert exact frames:
+  - unit status: `R0801`
+  - system status: `R0800`
+  - firmware, unit 1: `R1601`
+  - operation mode: `R47`
+  - temperature, unit 1: `R8001`
+  - unit information: `R83`
+  - test-only write example: `W01010001`
+- Runtime/hardware paths still reject all `W` commands and `writesAllowed=true`.
+
+### Hardware Smoke
+- Passive inventory still showed `Ethernet 2` / Realtek USB GbE up at `1 Gbps`, Basler `169.254.68.71` / `00-30-53-38-7B-E2`, and candidate `169.254.191.156` / `AC-BD-0B-00-5E-E2`.
+- Exactly one read-only Leimac readiness smoke was attempted against `169.254.191.156:1000` with timeout `2000 ms` after command-order audit and before the final exact-frame/no-terminator patch.
+- The smoke JSON recorded `requestAscii=R0801`; that build still wrote the internal CR/LF-terminated frame.
+- Raw response was `WR00NAK`.
+- Parsed result was fail-closed NAK: `WR00NAK`, meaning other error / incorrect header / incorrect command; readiness `FAIL`.
+- No retry, no alternate IP/port probing, no broad scan, and no write command was run.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 98 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Dino-Lite command was run.
+- No Basler capture was run.
+- No Basler setting write was run.
+- No Leimac write command was run.
+- No lights were turned on or off.
+- No PWM, brightness, output, or trigger setting was changed.
+- No network setting was changed.
+- No Arduino control was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-23 UTC - AI Grader Leimac IDMU-P PR #35 final readiness pass
+
+### Summary
+- Continued PR #35 on `feature/ai-grader-leimac-idmu-readiness`; PR remains open and unmerged.
+- Added safe manual read-only diagnostic support with `leimac-idmu-read-frame --host <ip> --port 1000 --frame <R...> --timeout-ms <ms>`.
+- Added dry-run-only trigger-sync planning with `leimac-idmu-trigger-sync-plan --mode basler-exposure-active-to-trg-in1`.
+- Confirmed command framing remains header + command number + target/unit + data, with no implicit CR/LF terminator.
+- Updated unit-information framing from ambiguous `R83` to hardware-confirmed `R830000`.
+
+### Verified Frames
+- Unit status: `R0801`
+- System status: `R0800`
+- Firmware, unit 1: `R1601`
+- Operation mode: `R47`
+- Temperature, unit 1: `R8001`
+- Unit information: `R830000`
+- Test-only write example from the manual: `W01010001`
+
+### Hardware Smoke
+- Passive inventory still showed `Ethernet 2` / Realtek USB GbE up at `1 Gbps`, Basler `169.254.68.71` / `00-30-53-38-7B-E2`, and candidate `169.254.191.156` / `AC-BD-0B-00-5E-E2`.
+- Ran limited read-only diagnostics only against `169.254.191.156:1000`, timeout `2000 ms`, with no retries beyond the manual-derived frame list.
+- `R0801` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R0800` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R1601` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R47` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R470000` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R83` -> raw `WR00NAK`, parsed NAK / incorrect header or command.
+- `R830000` -> raw `R83000100000008`, parsed as unit information: total units `1`, unit 1 dimming method code `0000`, lighting output channels `8`.
+- Candidate `169.254.191.156` is confirmed as the Leimac IDMU-P controller by the valid command `83` response.
+
+### Next PR Gates
+- PR #36 should not control lighting until CEBR119 or CEBR120 cable is confirmed, EXT I/O wiring is confirmed with power off, Leimac IP/readiness is confirmed, and Basler Line 2 configuration is explicitly operator-approved.
+- First light-control smoke must be low-duty, short-duration, and explicit.
+- First synchronized capture must record exposure, gain, lighting profile, channel settings, and calibration status.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Dino-Lite command was run.
+- No Basler capture was run.
+- No Basler setting write was run.
+- No Leimac write command was run.
+- No lights were turned on or off.
+- No PWM, brightness, output, or trigger setting was changed.
+- No network setting was changed.
+- No Arduino control was run.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

@@ -5,6 +5,19 @@ export * from "./arduinoLedController";
 export * from "./grblStage";
 export * from "./dinoliteBridgeClient";
 export type {
+  LeimacIdmuClientConfig,
+  LeimacIdmuCommandMetadata,
+  LeimacIdmuCommandRequest,
+  LeimacIdmuCommandResult,
+  LeimacIdmuComposedCommand,
+  LeimacIdmuParsedResponse,
+  LeimacIdmuReadCommandDefinition,
+  LeimacIdmuReadCommandName,
+  LeimacIdmuReadinessResult,
+  LeimacIdmuSafetyMetadata,
+  LeimacIdmuTransport,
+} from "./leimacIdmuClient";
+export type {
   BaslerCalibrationMetadata,
   BaslerCameraInfo,
   BaslerCaptureStillOptions,

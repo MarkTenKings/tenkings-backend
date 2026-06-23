@@ -214,3 +214,28 @@ test("default CLI health and readiness do not load Basler pylon client", async (
   const after = Object.keys(require.cache).filter((moduleId) => moduleId.includes("baslerPylonClient"));
   assert.equal(after.length, 0);
 });
+
+test("default CLI health and readiness do not load Leimac IDMU client", async () => {
+  const before = Object.keys(require.cache).filter((moduleId) => moduleId.includes("leimacIdmuClient"));
+  assert.equal(before.length, 0);
+
+  const health = await runCli(["health"]);
+  const readiness = await runCli([
+    "readiness",
+    "--tenant-id",
+    "tenant-cli",
+    "--rig-id",
+    "rig-cli",
+    "--location-id",
+    "location-cli",
+    "--operator-id",
+    "operator-cli",
+    "--helper-instance-id",
+    "helper-cli",
+  ]);
+
+  assert.equal(health.code, 0);
+  assert.equal(readiness.code, 0);
+  const after = Object.keys(require.cache).filter((moduleId) => moduleId.includes("leimacIdmuClient"));
+  assert.equal(after.length, 0);
+});

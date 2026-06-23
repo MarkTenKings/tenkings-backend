@@ -227,3 +227,20 @@ test("transport package path imports no hardware modules", () => {
     );
   }
 });
+
+test("transport server paths do not load Leimac IDMU client", async () => {
+  const before = Object.keys(require.cache).filter((moduleId) => moduleId.includes("leimacIdmuClient"));
+  assert.equal(before.length, 0);
+
+  await withServer(async (started) => {
+    const health = await requestJson(started, "GET", "/health");
+    const readiness = await requestJson(started, "GET", "/readiness");
+    const capabilities = await requestJson(started, "GET", "/capabilities");
+    assert.equal(health.status, 200);
+    assert.equal(readiness.status, 200);
+    assert.equal(capabilities.status, 200);
+  });
+
+  const after = Object.keys(require.cache).filter((moduleId) => moduleId.includes("leimacIdmuClient"));
+  assert.equal(after.length, 0);
+});

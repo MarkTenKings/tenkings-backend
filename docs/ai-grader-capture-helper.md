@@ -1,6 +1,6 @@
 # AI Grader Capture Helper
 
-The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino LED controller readiness, GRBL/OpenBuilds stage status readiness, manual Dino-Lite DNVideoX commands, and manual Basler pylon GigE readiness/list/still capture commands; each requires explicit CLI/config input. Default health, readiness, manifests, transport, and tests never open cameras, microscopes, XY stages, arm interlocks, sockets, uploads, or database connections.
+The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino auxiliary LED readiness, GRBL/OpenBuilds stage status readiness, manual Leimac IDMU-P Ethernet read-only readiness/status commands, manual Dino-Lite DNVideoX commands, and manual Basler pylon GigE readiness/list/still capture commands; each requires explicit CLI/config input. Default health, readiness, manifests, transport, and tests never open cameras, microscopes, Leimac controllers, XY stages, arm interlocks, sockets, uploads, or database connections.
 
 ## Local Usage
 
@@ -45,7 +45,44 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js readiness
   --helper-instance-id local-helper
 ```
 
-This returns JSON with `overallStatus`, config validation checks, expected devices, unsupported real-driver notices, calibration path checks, safety gate status, and discovery stub results. `driverSet=real` is fail-closed except for explicit Arduino LED readiness or GRBL stage status readiness with supplied ports; all other real drivers remain unimplemented.
+This returns JSON with `overallStatus`, config validation checks, expected devices, unsupported real-driver notices, calibration path checks, safety gate status, and discovery stub results. `driverSet=real` is fail-closed except for explicit Arduino auxiliary LED readiness or GRBL stage status readiness with supplied ports; all other default readiness drivers remain unimplemented. Leimac IDMU-P Ethernet readiness is intentionally a separate manual CLI path requiring an explicit host.
+
+Leimac IDMU-P Ethernet readiness is the production lighting-controller direction for this Dell rig. It is limited to a TCP connection to one explicit controller IP/port and sends only read commands from the hard allowlist:
+
+- `08` status / error status, unit-targeted as `R0801` for base unit 1 and system-targeted as `R0800`
+- `16` firmware version, unit-targeted as `R1601` for base unit 1
+- `47` operation mode, targetless as `R47`
+- `80` temperature data, unit-targeted as `R8001` for base unit 1
+- `83` unit information, confirmed as `R830000` on the Dell Leimac controller
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-readiness `
+  --host 169.254.191.156 `
+  --port 1000 `
+  --timeout-ms 1500
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-status `
+  --host 169.254.191.156 `
+  --port 1000 `
+  --timeout-ms 1500
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-read-frame `
+  --host 169.254.191.156 `
+  --port 1000 `
+  --frame R0801 `
+  --timeout-ms 2000
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-trigger-sync-plan `
+  --mode basler-exposure-active-to-trg-in1
+```
+
+The Leimac IDMU command path rejects missing/invalid hosts, rejects discovery port `50001` as a command port, rejects unknown commands, and rejects all `W` write commands. The result includes the raw request frame, raw response text, parsed fields only when the parser is confident enough, controller address/port/timeout metadata, and safety flags: `writesAllowed=false`, `lightsCommanded=false`, `outputSettingsChanged=false`, and `triggerSettingsChanged=false`.
+
+The IDMU-P manual command order is header, command number, target designation/unit where required, then data. The manual write example `W 01 01 0001` serializes as the exact ASCII frame `W01010001` with no implicit CR/LF terminator; this repo includes that composer only as an explicit test helper, while every runtime/hardware path still rejects `W` writes.
+
+`leimac-idmu-read-frame` is a manual read-only diagnostic path for a single operator-supplied frame from the manual. It requires explicit `--host` and `--frame`, uses no implicit CR/LF terminator, sends no retries, and rejects frames that do not start with `R`, contain `W`, include non-uppercase-ASCII-alphanumeric characters, exceed `32` characters, or use command numbers outside the PR #35 read allowlist (`08`, `16`, `47`, `80`, `83`).
+
+`leimac-idmu-trigger-sync-plan` is dry-run only. It does not open Basler hardware, does not connect to Leimac hardware, and reports `dryRun=true`, `writesApplied=false`, `lightsCommanded=false`, `baslerSettingsChanged=false`, and `leimacSettingsChanged=false`.
 
 Arduino LED controller readiness is the first opt-in real-hardware-adjacent slice. It is limited to opening one explicitly supplied serial port, sending `PING`, expecting `PONG`, sending `LED ALL OFF`, expecting `OK`, and closing the port:
 
@@ -70,7 +107,7 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js readiness
   --helper-instance-id local-helper
 ```
 
-If no port is supplied, real Arduino readiness fails closed and does not open serial.
+If no port is supplied, real Arduino readiness fails closed and does not open serial. The Arduino Mega + MOSFET path is superseded for Leimac lighting control on this rig. Arduino may remain useful later for interlocks, buttons, sensors, emergency stop, or auxiliary devices.
 
 GRBL/OpenBuilds stage readiness is the second opt-in real-hardware-adjacent slice. It is limited to opening one explicitly supplied serial port, sending the safe GRBL status query `?`, parsing one status response such as `<Idle|MPos:0.000,0.000,0.000|FS:0,0>`, and closing the port:
 
@@ -178,7 +215,88 @@ The readiness path prepares the helper configuration boundary for future hardwar
 
 Calibration artifact paths are checked with filesystem existence only. A missing supplied path returns `WARN` by default and `FAIL` when `requireCalibrationArtifacts` is enabled.
 
-Device discovery is intentionally stubbed. Mock discovery reports `NOT_PROBED`; real discovery reports `NOT_IMPLEMENTED`. No camera, USB, serial, GRBL, microscope, Basler, Dino-Lite, LED controller, stage, or interlock API is imported or opened by default readiness. The only exceptions are explicit Arduino and GRBL readiness health commands with supplied serial ports.
+Device discovery is intentionally stubbed. Mock discovery reports `NOT_PROBED`; real discovery reports `NOT_IMPLEMENTED`. No camera, USB, serial, GRBL, microscope, Basler, Dino-Lite, Leimac, LED controller, stage, or interlock API is imported or opened by default readiness. The only exceptions are explicit Arduino and GRBL readiness health commands with supplied serial ports. Leimac IDMU-P readiness remains a separate explicit-host command and does not run from ordinary readiness.
+
+### Leimac IDMU-P Ethernet Readiness
+
+PR #35 adds a manual-only read path for Leimac IDMU-P Series PWM Dimming Unit for LED Lighting controllers, including IDMU-P8B-12 base units and IDMU-P8E-12 expansion units. The base unit owns LAN communication and edge/expansion units are controlled through the base-unit bus connector. This replaces the old production-lighting assumption that the Leimac dome is controlled primarily by Arduino Mega + MOSFET channels on this rig.
+
+Relevant vendor manual facts recorded for this rig:
+
+- Setup/control is through LAN communication.
+- Supported control protocols are Leimac ASCII commands over TCP/IP or UDP/IP and GigE Vision / GenICam.
+- Leimac ASCII command order is `Header + CommandNumber + TargetDesignation/UnitNumber + Data`; command number precedes target/unit.
+- Default first Leimac command TCP port is `1000`; the four command ports are `1000` through `1003` by default.
+- UDP command port uses the same first command port.
+- Port `50001` is Leimac Discovery and is not valid as the first command port.
+- Fixed default IP is `192.168.0.30`, but fixed IP is disabled by default.
+- DHCP is enabled, and LLA is enabled and cannot be changed, so a `169.254.x.x` address is expected on a direct/no-DHCP rig network.
+- Base unit is unit `1`; edge units are units `2` through `5`.
+- Lighting outputs are PWM at approximately `125 kHz` with `1000` steps.
+- 12 V type output voltage is `12 V`.
+- 8-channel 12 V type rated capacity is `144 W` total and `36 W` per 2-channel pair.
+- Channel pairs are `1-2`, `3-4`, `5-6`, and `7-8`.
+- Overcurrent detection occurs around `113%` rated current and stops affected unit/pair outputs.
+- Temperature abnormality threshold is `90 C` and stops outputs; internal temperature can be read by LAN command.
+
+EXT I/O facts needed for later trigger acceptance:
+
+- Pin `1`: `IN_COM`, input signal common for pins `2-9`.
+- Pin `2`: `TRG IN1`.
+- Pins `3-9`: `TRG IN2` through `TRG IN8` with documented programming-mode alternates.
+- Pin `10`: `FG`.
+- Pin `11`: `OUT_COM`.
+- Pins `12-15`: `TRG OUT1-4`.
+- Pin `16`: `ERROR OUT`.
+- Pins `17-18`: DC 24 V input `+V`.
+- Pins `19-20`: DC 24 V input `-V`.
+
+External trigger input constraints:
+
+- `TRG IN1-8` use pins `2-9`.
+- NPN and PNP can be used.
+- Trigger input current is about `10 mA`.
+- Use an open collector circuit with about `50 mA` current capacity, or a contact circuit.
+- Voltage between pin `1` and pins `2-9` should be `5-24 V`.
+- Trigger activation modes are `LevelHigh`, `RisingEdge`, `LevelLow`, and `FallingEdge`.
+
+The intended synchronized macro lighting architecture is:
+
+- Basler ace 2 captures macro images.
+- Basler Line 2 outputs `Exposure Active` during exposure.
+- Basler Line 2 triggers Leimac `TRG IN1`.
+- Leimac lights only during the camera exposure after controller/camera acceptance in a later PR.
+- Leimac is configured/read over Ethernet using Leimac ASCII commands or GenICam/GigE Vision.
+
+The dry-run trigger-sync plan records the future vendor-guide configuration without applying it:
+
+- Basler Line Selector: `Line 2`.
+- Basler Line Mode: `Output`.
+- Basler Line Inverter: `false`.
+- Basler Line Source: `Exposure Active`.
+- Leimac trigger input: `TRG IN1`.
+- Leimac Trigger Control Mode: `Level Low`.
+
+Vendor trigger-guide wiring notes:
+
+- Requires a Basler `CEBR119` or `CEBR120` camera I/O cable.
+- Requires a `5-24 VDC` trigger supply for the trigger input circuit.
+- Leimac pin `1` COM / `IN_COM` goes to trigger supply `V+`.
+- Leimac pin `2` CH1 Trg In / `TRG IN1` goes to Basler camera pin `4` / Line 2.
+- Basler camera pin `6` / Ground goes to trigger supply GND.
+- `CEBR119` / `CEBR120` cable Line 2 GPIO is camera pin `4`, black wire.
+- `CEBR119` / `CEBR120` cable GPIO Ground is camera pin `6`, pink wire.
+
+PR #35 does not configure the camera line, does not save Basler user sets, does not change Leimac trigger/source/mode/output settings, does not reset errors, and does not turn lights on or off. The next hardware-control PR after merge should configure and validate Basler Line 2 and Leimac trigger settings only under explicit operator approval. A later controlled low-duty Leimac smoke must verify wiring, trigger voltage, channel mapping, output limits, heat behavior, and a safe all-off strategy before any synchronized capture acceptance.
+
+PR #36 acceptance gates before any light-control or synchronized-capture acceptance:
+
+- `CEBR119` or `CEBR120` cable confirmed.
+- EXT I/O wiring confirmed with power off.
+- Leimac IP/readiness confirmed.
+- Basler Line 2 can be configured only under explicit operator approval.
+- First light-control smoke must be low-duty, short-duration, and explicit.
+- First synchronized capture must record exposure, gain, lighting profile, channel settings, and calibration status.
 
 ### Arduino LED Readiness
 
@@ -481,7 +599,7 @@ Two earlier PR #34 capture attempts wrote PNG files outside the repo but failed 
 
 ## Simulator-First Limitation
 
-This package defaults to simulator mode with the mock driver set and rejects any runnable backend other than simulator/mock. The exceptions are the explicit Arduino LED and GRBL stage readiness command/paths described above, which perform only serial `PING` plus `LED ALL OFF` and GRBL `?` status query respectively, plus manual Dino-Lite and Basler commands that require explicit CLI invocation. The simulator path uses `@tenkings/ai-grader-simulator` to generate:
+This package defaults to simulator mode with the mock driver set and rejects any runnable backend other than simulator/mock. The exceptions are the explicit Arduino auxiliary LED and GRBL stage readiness command/paths described above, which perform only serial `PING` plus `LED ALL OFF` and GRBL `?` status query respectively, plus manual Leimac IDMU-P read-only Ethernet commands, manual Dino-Lite commands, and manual Basler commands that require explicit CLI invocation. The simulator path uses `@tenkings/ai-grader-simulator` to generate:
 
 - `DeviceCapabilityManifest[]`
 - QUICK `CaptureManifest`
@@ -511,7 +629,7 @@ The runnable driver set is `mock` only. `real` is accepted by readiness reportin
 
 The mock driver set never imports Basler, Dino-Lite, serial, GRBL, camera, USB, or microscope SDKs. It does not open OS device handles or sockets.
 
-The implemented real-adjacent adapters are Arduino LED readiness, GRBL stage status readiness, manual Dino-Lite DNVideoX enumeration/status/still JPG/package/operator workflow/experimental grading capture, and manual Basler pylon GigE readiness/list/still PNG/TIFF/JPG capture. They are not part of the runnable mock driver set and require explicit CLI/config/env before they can open serial, instantiate DNVideoX, load pylon, enumerate GigE cameras, or open the Basler camera.
+The implemented real-adjacent adapters are Arduino auxiliary LED readiness, GRBL stage status readiness, manual Leimac IDMU-P Ethernet read-only readiness/status, manual Dino-Lite DNVideoX enumeration/status/still JPG/package/operator workflow/experimental grading capture, and manual Basler pylon GigE readiness/list/still PNG/TIFF/JPG capture. They are not part of the runnable mock driver set and require explicit CLI/config/env before they can open serial, open a Leimac TCP socket to one explicit host/port, instantiate DNVideoX, load pylon, enumerate GigE cameras, or open the Basler camera.
 
 ## Future Hardware Boundary
 
@@ -535,7 +653,8 @@ Before the first real hardware driver integration:
 - add SDK dependencies only in the approved hardware slice
 - require a readiness report with configured rig/helper/operator ids and calibration paths
 - keep real discovery non-invasive until the specific device adapter is reviewed
-- keep Arduino LED readiness limited to `PING` and `LED ALL OFF` until a later approved LED control slice
+- keep Leimac IDMU-P work limited to explicit-host read-only readiness/status until a later approved controlled low-duty smoke defines command framing, safe all-off behavior, channel mapping, output limits, trigger wiring, and acceptance criteria
+- keep Arduino LED readiness limited to `PING` and `LED ALL OFF`; Arduino is auxiliary for this rig's Leimac lighting path unless a later approved slice reassigns it to interlocks, buttons, sensors, emergency stop, or non-Leimac devices
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
 - keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package/operator workflow/experimental non-certified grading capture, including outside-git SDK runtime diagnostics for EDOF, until a later approved lens/focus/exposure/DPQ/certified-grading slice
 - keep Basler pylon work limited to manual readiness/list/uncalibrated still smoke capture until a later approved calibration, lighting, and production macro evidence slice
