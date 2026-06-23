@@ -20313,3 +20313,37 @@ By enabling Rip It Live, I confirm:
 - No Arduino control was run.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-23 UTC - AI Grader Leimac IDMU-P PR #35 merged
+
+### Summary
+- Merged PR #35 into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/35`.
+- PR #35 merge commit: `5cfa6c85fa0219557c816000d1de217f35e5b06e`.
+- `origin/main` immediately after the PR merge and before this handoff-only docs commit: `5cfa6c85fa0219557c816000d1de217f35e5b06e`.
+- PR #35 added read-only Leimac IDMU-P readiness, the safe read-only diagnostic `leimac-idmu-read-frame`, and the dry-run Basler `Exposure Active` / Line 2 -> Leimac `TRG IN1` trigger-sync plan.
+
+### Confirmed Leimac Evidence
+- Confirmed Leimac IP: `169.254.191.156`.
+- Confirmed read-only response: `R830000` -> `R83000100000008`.
+- Parsed meaning: `totalUnits=1`, `dimmingMethod=0000` / PWM, `lightingOutputChannels=8`.
+
+### Merge Checks
+- PR merge state before merge: `CLEAN`.
+- CI before merge: all PR checks passing, including Install & Build, Vercel, Vercel Preview Comments, and Docker image jobs for frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
+- Vercel automatic deployment status reported by GitHub before merge: pass / deployment completed for the PR preview.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No manual deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No additional hardware command was run.
+- No Leimac write command was run.
+- No lights were turned on or off.
+- No PWM, brightness, output, or trigger setting was changed.
+- No Basler setting write was run.
+- No image capture was run.
+- No network setting was changed.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

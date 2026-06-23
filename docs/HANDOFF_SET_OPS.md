@@ -11025,3 +11025,19 @@ Build Set Ops UI flow with:
   - First light-control smoke must be low-duty, short-duration, and explicit.
   - First synchronized capture must record exposure, gain, lighting profile, channel settings, and calibration status.
 - Guardrails held: no migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no Dino-Lite command, no Basler capture, no Basler setting write, no Leimac write command, no lights on/off, no PWM/brightness/output/trigger change, no network setting change, no Arduino control, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
+
+## Session Update (2026-06-23 UTC, AI Grader Leimac IDMU-P PR #35 merged)
+- PR #35 merged into `main`: `https://github.com/MarkTenKings/tenkings-backend/pull/35`.
+- PR #35 merge commit: `5cfa6c85fa0219557c816000d1de217f35e5b06e`.
+- `origin/main` immediately after the PR merge and before this handoff-only docs commit: `5cfa6c85fa0219557c816000d1de217f35e5b06e`.
+- PR #35 added read-only Leimac IDMU-P Ethernet readiness, the `leimac-idmu-read-frame` read-only diagnostic command, and the dry-run Basler `Exposure Active` / Line 2 -> Leimac `TRG IN1` trigger-sync plan.
+- Confirmed Leimac IP on the Dell capture-node network: `169.254.191.156`.
+- Confirmed read-only Leimac unit-info response:
+  - request frame: `R830000`
+  - raw response: `R83000100000008`
+  - `totalUnits=1`
+  - `dimmingMethod=0000` / PWM
+  - `lightingOutputChannels=8`
+- CI status before merge: all PR checks passing, including Install & Build, Vercel, Vercel Preview Comments, and Docker image jobs for frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
+- Vercel automatic deployment status reported by GitHub before merge: pass / deployment completed for the PR preview.
+- Guardrails held during merge and handoff: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no hardware command, no Leimac write command, no lights on/off, no PWM/brightness/output/trigger change, no Basler setting write, no image capture, no network setting change, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
