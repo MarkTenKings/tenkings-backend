@@ -20428,3 +20428,100 @@ By enabling Rip It Live, I confirm:
 - No PWM, brightness, output, or trigger setting was changed on hardware.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-26 UTC - AI Grader Basler/Leimac sync PR #36 supervised smoke aborted
+
+### Summary
+- Continued PR #36 on `feature/ai-grader-basler-leimac-sync`, PR `https://github.com/MarkTenKings/tenkings-backend/pull/36`.
+- Mark was present for the supervised hardware run.
+- Wiring was confirmed complete; unused Basler I/O wires were insulated; Leimac STATUS light was green.
+- The ring light was initially on, so the first hardware action was safe-off.
+- The smoke was aborted before capture because the low-duty Leimac trigger profile left the ring light on continuously after all profile writes ACKed.
+- Safe-off was run immediately after the abort condition and Mark confirmed final ring-light state was off.
+- No synchronized PNG was captured and no captured image artifact was created.
+
+### Preflight Evidence
+- Branch before docs update: `feature/ai-grader-basler-leimac-sync`.
+- HEAD before docs update: `eda72c5`.
+- Pre-hardware validation:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 111 tests.
+- Passive inventory:
+  - `Ethernet 2` / Realtek USB GbE Family Controller #2 was `Up` at `1 Gbps`, IPv4 `169.254.215.165/16`.
+  - `Wi-Fi` was `Up` at `192.168.2.20/24`.
+  - Neighbor/ARP tables did not show current Basler/Leimac unicast entries before traffic; this was not treated as failure.
+- Leimac preflight:
+  - `R830000` to `169.254.191.156:1000` -> `R83000100000008`.
+  - Parsed as `totalUnits=1`, `dimmingMethod=0000` / PWM, `lightingOutputChannels=8`.
+- Basler preflight:
+  - pylon installed: `26.05.0.18278`.
+  - Camera detected: `a2A2448-23gmBAS`, transport `GEV`, device IP `169.254.185.171`, interface IP `169.254.215.165`, status `reachable`.
+
+### Hardware Sequence
+- Initial safe-off, because light was on:
+  - `W8601010000020000030000040000050000060000070000080000` -> `W86ACK0`.
+  - `W8501010000020000030000040000050000060000070000080000` -> `W85ACK0`.
+  - `W1101010000020000030000040000050000060000070000080000` -> `W11ACK0`.
+  - Mark confirmed ring light was off.
+- Basler Line2 dry-run:
+  - `applied=false`, no camera opened.
+- Leimac trigger-profile dry-run:
+  - Low-duty 5% plan only, no TCP write, no persistent save.
+- Basler transient Line2 apply:
+  - Readback `LineSelector=Line2`, `LineMode=Output`, `LineSource=ExposureActive`, `LineInverter=false`.
+  - `persistentSaved=false`.
+  - No image capture.
+  - Mark confirmed ring light stayed off.
+- Leimac trigger-profile apply:
+  - Unit-info precheck `R830000` -> `R83000100000008`.
+  - Safe-off-before-profile ACKed for `W86...0000`, `W85...0000`, and `W11...0000`.
+  - Profile writes:
+    - Trigger activation Level Low: `W0901010002020002030002040002050002060002070002080002` -> `W09ACK0`.
+    - Trigger source TRG IN1: `W6501010000020000030000040000050000060000070000080000` -> `W65ACK0`.
+    - Trigger synchronization synchronous: `W8401010000020000030000040000050000060000070000080000` -> `W84ACK0`.
+    - Output delay 0 us: `W1301010000020000030000040000050000060000070000080000` -> `W13ACK0`.
+    - Lighting output value 5% / 50 of 1000 steps: `W1101010050020050030050040050050050060050070050080050` -> `W11ACK0`.
+    - Asynchronous output OFF: `W8501010000020000030000040000050000060000070000080000` -> `W85ACK0`.
+    - Lighting output enable: `W8601010001020001030001040001050001060001070001080001` -> `W86ACK0`.
+  - Mark confirmed the ring light was on continuously after profile application.
+- Abort and cleanup:
+  - Synchronized capture was not run.
+  - Safe-off was run immediately:
+    - `W8601010000020000030000040000050000060000070000080000` -> `W86ACK0`.
+    - `W8501010000020000030000040000050000060000070000080000` -> `W85ACK0`.
+    - `W1101010000020000030000040000050000060000070000080000` -> `W11ACK0`.
+  - Mark confirmed final ring-light state was off.
+
+### Result
+- Safe-off behavior is verified on the wired Dell rig.
+- Basler Line2 transient configuration applied and read back correctly.
+- The current Leimac low-duty trigger-profile sequence is not accepted for capture because the ring light was stuck on after the profile write sequence.
+- No `basler-leimac-sync-smoke` capture was run.
+- PR #36 is not merge-ready for synchronized-lighting hardware acceptance until the Leimac trigger-only output behavior is corrected and a supervised retry confirms the light remains off between exposures.
+
+### Final Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 111 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warning only.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Dino-Lite command was run.
+- No Arduino command was run.
+- No stage/motor command was run.
+- No Windows network setting was changed.
+- No persistent Basler User Set save was run.
+- No persistent Leimac User Set save was run.
+- No Basler capture was run.
+- No synchronized image capture was run.
+- No Leimac SYSTEM RESET or FACTORY DEFAULT was run.
+- No high-duty lighting was used.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

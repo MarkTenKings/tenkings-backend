@@ -338,6 +338,10 @@ Mark confirmed the current physical wiring uses Basler `CCB-M8IO`: black wire / 
 
 Mark also reported the ring light turns on when main power is turned on. That is not accepted synchronized behavior by itself. The first PR #36 hardware smoke must be supervised, must stop if the light remains continuously on after configuration, must run safe-off/all-off if available, and must not proceed to capture until Mark visually confirms the light is not stuck continuously on.
 
+Local Dell supervised PR #36 smoke attempt on 2026-06-26 stopped before capture. Mark was present, wiring was confirmed, Leimac status was green, and the ring light was initially on. The implemented safe-off command returned ACK for `W86...0000`, `W85...0000`, and `W11...0000`; Mark confirmed the light turned off. Basler transient Line2 apply succeeded and read back `LineSelector=Line2`, `LineMode=Output`, `LineSource=ExposureActive`, and `LineInverter=false`, with no User Set save and no image capture. The Leimac low-duty trigger profile then returned ACK for `W09`, `W65`, `W84`, `W13`, `W11`, `W85`, and `W86`, but Mark confirmed the ring light was on continuously after profile application. The run was aborted before synchronized capture, safe-off was run again, and Mark confirmed the final light state was off.
+
+This means safe-off is verified, but the current Leimac trigger-profile sequence is not accepted for capture because the output-enable step appears to leave the ring light continuously on on this wired rig. Do not run `basler-leimac-sync-smoke` until the trigger-only Leimac output/activation behavior is audited and a supervised dry-run/apply sequence keeps the light off between exposures.
+
 The guarded synchronized smoke command requires an output directory outside the repo, `--apply`, exact confirmation text, Mark-present/wiring/status/light-state flags, and then captures one PNG outside git:
 
 ```powershell
@@ -355,9 +359,9 @@ pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-le
   --operator-confirmed-light-not-continuous
 ```
 
-The sync-smoke manifest records image path, SHA-256, byte size, dimensions, exposure, gain, Basler Line2 settings, Leimac IP/unit-info/profile/duty/frames, `isCalibrated=false`, and `evidenceClass=macro_sync_smoke_uncalibrated`. It is not calibrated production macro evidence and is not a final grade, certificate, or certified grading output.
+The sync-smoke manifest records image path, SHA-256, byte size, dimensions, exposure, gain, Basler Line2 settings, Leimac IP/unit-info/profile/duty/frames, `isCalibrated=false`, and `evidenceClass=macro_sync_smoke_uncalibrated`. It is not calibrated production macro evidence and is not a final grade, certificate, or certified grading output. As of the 2026-06-26 supervised attempt, this command should remain blocked until the continuous-light trigger-profile issue above is resolved.
 
-Next steps after PR #36 are calibration, repeatability testing, lighting profile/channel mapping, UI/report integration, and a later acceptance pass for persistent camera/controller settings only after explicit operator approval.
+Next steps after PR #36 are Leimac trigger-only profile correction, polarity/output-enable diagnosis, low-duty synchronized smoke retry, calibration, repeatability testing, lighting profile/channel mapping, UI/report integration, and a later acceptance pass for persistent camera/controller settings only after explicit operator approval.
 
 ### Arduino LED Readiness
 
