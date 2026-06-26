@@ -20347,3 +20347,84 @@ By enabling Rip It Live, I confirm:
 - No network setting was changed.
 - No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
 - No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.
+
+## 2026-06-26 UTC - AI Grader Basler/Leimac sync PR #36 implementation
+
+### Summary
+- Started branch `feature/ai-grader-basler-leimac-sync` from fresh `main` after PR #35 merge.
+- Implemented the PR #36 synchronized lighting foundation for the Dell capture-node rig:
+  - Basler dry-run/apply command `basler-line2-exposure-active`.
+  - Leimac dry-run/apply command `leimac-idmu-trigger-profile`.
+  - Leimac guarded safe-off command `leimac-idmu-safe-off`.
+  - Guarded synchronized smoke command `basler-leimac-sync-smoke`.
+  - Sync-smoke manifest builder with `isCalibrated=false` and `evidenceClass=macro_sync_smoke_uncalibrated`.
+- Basler Line2 apply is transient only: `LineSelector=Line2`, `LineMode=Output`, `LineInverter=false`, `LineSource=ExposureActive`; no Basler User Set save.
+- Leimac apply requires explicit host/port, exact confirmation text, a successful `R830000` unit-info read, duty `<=5`, and an allowlisted trigger profile; no arbitrary write-frame CLI, no SYSTEM RESET, no FACTORY DEFAULT, no network setting command, and no persistent save.
+- Current hardware facts recorded in docs:
+  - Leimac controller `IDMU-P8B-24`.
+  - Mean Well `HLG-150H-24A` 24 VDC supply.
+  - Basler `CCB-M8IO` cable.
+  - Basler pin 4 / black / Line2 -> Leimac pin 2 / `TRG IN1`.
+  - Basler pin 6 / pink-powder / GPIO ground -> 0 V WAGO.
+  - Mean Well +24 V -> Leimac pin 17 and Leimac pin 1 / `IN_COM`.
+  - Mean Well 0 V -> Leimac pin 19 and Basler GPIO ground.
+  - Unused Basler I/O wires must remain individually insulated.
+  - Ring light was reported to turn on at main power, so PR #36 smoke must be supervised and must abort if light is stuck continuously on.
+
+### Exact Leimac PR #36 Frames
+- Safe-off before profile:
+  - `W8601010000020000030000040000050000060000070000080000`
+  - `W8501010000020000030000040000050000060000070000080000`
+  - `W1101010000020000030000040000050000060000070000080000`
+- Trigger activation Level Low: `W0901010002020002030002040002050002060002070002080002`.
+- Trigger source TRG IN1: `W6501010000020000030000040000050000060000070000080000`.
+- Trigger synchronization synchronous: `W8401010000020000030000040000050000060000070000080000`.
+- Output delay 0 us: `W1301010000020000030000040000050000060000070000080000`.
+- Lighting output value 5% / 50 of 1000 steps: `W1101010050020050030050040050050050060050070050080050`.
+- Asynchronous output OFF: `W8501010000020000030000040000050000060000070000080000`.
+- Lighting output enable for trigger-controlled smoke: `W8601010001020001030001040001050001060001070001080001`.
+
+### Validation
+- `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass.
+- `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 111 tests.
+- `pnpm --filter @tenkings/shared test` -> pass, 105 tests.
+- `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests.
+- `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings.
+- `git diff --check` -> pass with line-ending warnings only.
+
+### Passive Inventory And Dry Runs
+- Passive Windows inventory only:
+  - `Ethernet 2` / `Realtek USB GbE Family Controller #2` is `Up` at `1 Gbps`, MAC `00-05-1B-DF-02-39`, IPv4 `169.254.215.165/16`.
+  - `Wi-Fi` is `Up` at `192.168.2.20/24`.
+  - This inventory pass did not show the Basler `169.254.68.71` or Leimac `169.254.191.156` unicast neighbors; only multicast/broadcast neighbors were present on `Ethernet 2`.
+- Dry-run commands run with no hardware access:
+  - `basler-line2-exposure-active` -> `applied=false`, `hardwareAccess=dry_run_no_camera_opened`, no User Set save, no capture.
+  - `leimac-idmu-trigger-profile --host 169.254.191.156 --port 1000 --profile basler-line2-trg-in1-low-duty --duty 5` -> dry-run profile frames only, `writesApplied=false`, `lightsCommanded=false`.
+  - `leimac-idmu-trigger-sync-plan --mode basler-exposure-active-to-trg-in1` -> dry-run plan only.
+
+### Hardware Smoke Status
+- No PR #36 hardware apply, Leimac write, Basler setting write, image capture, or safe-off command has been run yet.
+- Waiting for explicit Mark confirmation before any hardware action:
+  - Mark present.
+  - Unused Basler I/O wires insulated.
+  - Leimac STATUS green.
+  - Current ring-light state known.
+  - Approval to run transient Basler Line2 apply, Leimac 5% profile apply, one PNG outside git, and Leimac safe-off.
+
+### Guardrails
+- No migration was run.
+- `RUN_DB_MIGRATIONS=true` was not set.
+- No deploy was run.
+- No runtime DB operation against a real app database was run.
+- No `regsvr32` was run.
+- No Dino-Lite command was run.
+- No Arduino command was run.
+- No stage/motor command was run.
+- No Windows network setting was changed.
+- No Basler setting write was run.
+- No Basler capture was run.
+- No Leimac write command was run.
+- No lights were turned on or off.
+- No PWM, brightness, output, or trigger setting was changed on hardware.
+- No SDK binaries, OCX files, DLLs, vendor SDK files, or captured images were committed.
+- No calibrated macro evidence, final AI grade, certificate, or certified grading claim was added.

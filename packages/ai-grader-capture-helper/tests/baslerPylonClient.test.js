@@ -3,8 +3,10 @@ const path = require("node:path");
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
   BaslerPylonClient,
   assertBaslerCaptureOutputDirAllowed,
+  buildBaslerLine2ExposureActivePlan,
   normalizeBaslerSavedImageFormat,
 } = require("../dist/drivers/baslerPylonClient");
 const { runCaptureHelperCli } = require("../dist/cli");
@@ -91,6 +93,35 @@ function fakeCapture() {
   };
 }
 
+function fakeLine2ExposureActive() {
+  return {
+    applied: true,
+    baslerSettingsChanged: true,
+    cameraIndex: 0,
+    lineSelector: "Line2",
+    lineMode: "Output",
+    lineSource: "ExposureActive",
+    lineInverter: false,
+    persistentSaved: false,
+    hardwareAccess: "explicit_pylon_line2_configuration",
+    readback: {
+      lineSelector: "Line2",
+      lineMode: "Output",
+      lineSource: "ExposureActive",
+      lineInverter: false,
+    },
+    safety: {
+      dryRun: false,
+      writesApplied: true,
+      baslerSettingsChanged: true,
+      persistentSaved: false,
+      capturesImages: false,
+      controlsLighting: false,
+    },
+    note: "Transient Basler Line 2 ExposureActive configuration only; no User Set was saved and no image was captured.",
+  };
+}
+
 function fakeRunnerFor(result, calls) {
   return async (command, args, options) => {
     calls.push({ command, args, options });
@@ -169,6 +200,58 @@ test("mocked Basler capture returns checksum, mono pixel format, and calibration
   assert.equal(calls[0].args.includes("-Label"), true);
   assert.equal(calls[0].args.includes("-Format"), true);
   assert.equal(calls[0].args.includes("png"), true);
+});
+
+test("Basler Line2 ExposureActive dry-run does not require bridge execution", async () => {
+  const plan = buildBaslerLine2ExposureActivePlan(0);
+  assert.equal(plan.applied, false);
+  assert.equal(plan.baslerSettingsChanged, false);
+  assert.equal(plan.lineSelector, "Line2");
+  assert.equal(plan.lineMode, "Output");
+  assert.equal(plan.lineSource, "ExposureActive");
+  assert.equal(plan.lineInverter, false);
+  assert.equal(plan.persistentSaved, false);
+  assert.equal(plan.hardwareAccess, "dry_run_no_camera_opened");
+  assert.equal(plan.safety.dryRun, true);
+  assert.equal(plan.safety.capturesImages, false);
+  assert.equal(plan.safety.controlsLighting, false);
+
+  let stdout = "";
+  const code = await runCaptureHelperCli(["basler-line2-exposure-active"], {
+    env: {},
+    stdout: (chunk) => {
+      stdout += chunk;
+    },
+  });
+  const cli = JSON.parse(stdout);
+  assert.equal(code, 0);
+  assert.equal(cli.line2.hardwareAccess, "dry_run_no_camera_opened");
+  assert.equal(cli.line2.safety.writesApplied, false);
+});
+
+test("Basler Line2 apply requires explicit confirmation and calls bridge action only when confirmed", async () => {
+  const calls = [];
+  const client = new BaslerPylonClient(
+    { bridgeScriptPath: BRIDGE_SCRIPT },
+    fakeRunnerFor(fakeLine2ExposureActive(), calls)
+  );
+
+  await assert.rejects(
+    () => client.configureLine2ExposureActive({ apply: true }),
+    /requires --confirm/
+  );
+
+  const result = await client.configureLine2ExposureActive({
+    apply: true,
+    confirmation: BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION,
+  });
+
+  assert.equal(result.applied, true);
+  assert.equal(result.baslerSettingsChanged, true);
+  assert.equal(result.persistentSaved, false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].args.includes("line2-exposure-active"), true);
+  assert.equal(calls[0].args.includes("-Apply"), true);
 });
 
 test("Basler capture guard rejects output paths inside the repo", () => {

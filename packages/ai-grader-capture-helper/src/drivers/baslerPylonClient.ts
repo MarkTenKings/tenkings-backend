@@ -2,8 +2,10 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import path from "node:path";
 
-export type BaslerPylonAction = "readiness" | "list-cameras" | "capture-still";
+export type BaslerPylonAction = "readiness" | "list-cameras" | "capture-still" | "line2-exposure-active";
 export type BaslerSavedImageFormat = "png" | "tiff" | "jpg";
+
+export const BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION = "APPLY BASLER LINE2 EXPOSURE ACTIVE";
 
 export interface BaslerPylonClientConfig {
   pylonRoot?: string;
@@ -63,6 +65,33 @@ export interface BaslerPylonCameraListResult extends BaslerPylonReadinessResult 
   command: "basler-list-cameras";
 }
 
+export interface BaslerLine2ExposureActiveResult {
+  applied: boolean;
+  baslerSettingsChanged: boolean;
+  cameraIndex: number;
+  lineSelector: "Line2";
+  lineMode: "Output";
+  lineSource: "ExposureActive";
+  lineInverter: false;
+  persistentSaved: false;
+  hardwareAccess: "dry_run_no_camera_opened" | "explicit_pylon_line2_configuration";
+  readback?: {
+    lineSelector?: string | null;
+    lineMode?: string | null;
+    lineSource?: string | null;
+    lineInverter?: boolean | null;
+  };
+  safety: {
+    dryRun: boolean;
+    writesApplied: boolean;
+    baslerSettingsChanged: boolean;
+    persistentSaved: false;
+    capturesImages: false;
+    controlsLighting: false;
+  };
+  note: string;
+}
+
 export interface BaslerCalibrationMetadata {
   isCalibrated: false;
   calibrationProfileId: null;
@@ -120,6 +149,12 @@ export interface BaslerCaptureStillOptions {
   lensModel?: string;
 }
 
+export interface BaslerLine2ExposureActiveOptions {
+  apply?: boolean;
+  confirmation?: string;
+  cameraIndex?: number;
+}
+
 export class BaslerPylonClientError extends Error {
   readonly code: string;
 
@@ -151,6 +186,33 @@ export function assertBaslerCaptureOutputDirAllowed(outputDir: string, repoRoot 
     );
   }
   return resolvedOutputDir;
+}
+
+export function buildBaslerLine2ExposureActivePlan(cameraIndex = 0): BaslerLine2ExposureActiveResult {
+  if (!Number.isInteger(cameraIndex) || cameraIndex < 0) {
+    throw new BaslerPylonClientError("BASLER_CAMERA_INDEX_INVALID", "--camera-index must be a non-negative integer.");
+  }
+  return {
+    applied: false,
+    baslerSettingsChanged: false,
+    cameraIndex,
+    lineSelector: "Line2",
+    lineMode: "Output",
+    lineSource: "ExposureActive",
+    lineInverter: false,
+    persistentSaved: false,
+    hardwareAccess: "dry_run_no_camera_opened",
+    safety: {
+      dryRun: true,
+      writesApplied: false,
+      baslerSettingsChanged: false,
+      persistentSaved: false,
+      capturesImages: false,
+      controlsLighting: false,
+    },
+    note:
+      "Dry-run Basler Line 2 plan only; does not open the camera, does not save a User Set, and does not capture images.",
+  };
 }
 
 export function defaultBaslerPylonBridgeScriptPath(): string {
@@ -185,6 +247,25 @@ export class BaslerPylonClient {
 
   async listCameras(): Promise<BaslerPylonCameraListResult> {
     return this.runBridge<BaslerPylonCameraListResult>("list-cameras");
+  }
+
+  async configureLine2ExposureActive(options: BaslerLine2ExposureActiveOptions = {}): Promise<BaslerLine2ExposureActiveResult> {
+    const cameraIndex = options.cameraIndex ?? 0;
+    if (!options.apply) return buildBaslerLine2ExposureActivePlan(cameraIndex);
+    if (options.confirmation !== BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION) {
+      throw new BaslerPylonClientError(
+        "BASLER_LINE2_CONFIRMATION_REQUIRED",
+        `Basler Line 2 apply requires --confirm "${BASLER_LINE2_EXPOSURE_ACTIVE_CONFIRMATION}".`
+      );
+    }
+    if (!Number.isInteger(cameraIndex) || cameraIndex < 0) {
+      throw new BaslerPylonClientError("BASLER_CAMERA_INDEX_INVALID", "--camera-index must be a non-negative integer.");
+    }
+    return this.runBridge<BaslerLine2ExposureActiveResult>("line2-exposure-active", [
+      "-CameraIndex",
+      String(cameraIndex),
+      "-Apply",
+    ]);
   }
 
   async captureStill(options: BaslerCaptureStillOptions): Promise<BaslerCaptureStillResult> {

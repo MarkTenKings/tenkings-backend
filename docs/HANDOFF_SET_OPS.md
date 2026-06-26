@@ -11041,3 +11041,52 @@ Build Set Ops UI flow with:
 - CI status before merge: all PR checks passing, including Install & Build, Vercel, Vercel Preview Comments, and Docker image jobs for frontend, ingestion-service, marketplace-service, pack-service, pricing-service, vault-service, vending-gw, and wallet-service.
 - Vercel automatic deployment status reported by GitHub before merge: pass / deployment completed for the PR preview.
 - Guardrails held during merge and handoff: no migration, no `RUN_DB_MIGRATIONS=true`, no manual deploy, no runtime DB operation, no `regsvr32`, no hardware command, no Leimac write command, no lights on/off, no PWM/brightness/output/trigger change, no Basler setting write, no image capture, no network setting change, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.
+
+## Session Update (2026-06-26 UTC, AI Grader Basler/Leimac sync PR #36 implementation)
+- Started branch `feature/ai-grader-basler-leimac-sync` from fresh `main` after PR #35 merge.
+- Implemented PR #36 foundation in `@tenkings/ai-grader-capture-helper`:
+  - `basler-line2-exposure-active` dry-run/apply command for transient Basler `LineSelector=Line2`, `LineMode=Output`, `LineInverter=false`, `LineSource=ExposureActive`.
+  - `leimac-idmu-trigger-profile` dry-run/apply command for the low-duty `basler-line2-trg-in1-low-duty` profile.
+  - `leimac-idmu-safe-off` dry-run/apply command for verified all-off frames.
+  - `basler-leimac-sync-smoke` supervised command requiring outside-git output, explicit apply/confirmation, Mark-present/wiring/status/light-state flags, and safe-off cleanup.
+  - Sync smoke manifest metadata records image path/checksum/size/dimensions, exposure/gain, Basler Line2 settings, Leimac IP/unit-info/profile/duty/frames, `isCalibrated=false`, and `evidenceClass=macro_sync_smoke_uncalibrated`.
+- Confirmed command-safety boundaries in code/tests:
+  - no default health/readiness/server/admin path opens Basler or Leimac hardware
+  - Basler Line2 apply requires exact confirmation and does not save User Sets
+  - Leimac trigger profile requires explicit host/port, exact confirmation, `R830000` unit-info verification, and duty `<=5`
+  - Leimac profile writes are allowlisted only; no arbitrary write-frame CLI, SYSTEM RESET, FACTORY DEFAULT, network settings, or persistent saves
+  - sync smoke rejects repo output paths and requires explicit `--apply`
+- Hardware facts recorded:
+  - Basler `CCB-M8IO` pin 4 / black / Line2 -> Leimac pin 2 / `TRG IN1`
+  - Basler `CCB-M8IO` pin 6 / pink-powder / GPIO ground -> 0 V WAGO
+  - Mean Well `HLG-150H-24A` +24 V -> Leimac pin 17 and pin 1 / `IN_COM`
+  - Mean Well 0 V -> Leimac pin 19 and Basler GPIO ground
+  - Leimac controller `IDMU-P8B-24`
+  - unused Basler I/O wires must remain individually insulated
+  - ring light reported on at main power, so first smoke must abort if light remains continuously on after configuration
+- Exact PR #36 Leimac write frames tested:
+  - safe-off: `W8601010000020000030000040000050000060000070000080000`, `W8501010000020000030000040000050000060000070000080000`, `W1101010000020000030000040000050000060000070000080000`
+  - trigger activation Level Low: `W0901010002020002030002040002050002060002070002080002`
+  - trigger source TRG IN1: `W6501010000020000030000040000050000060000070000080000`
+  - trigger synchronization synchronous: `W8401010000020000030000040000050000060000070000080000`
+  - output delay 0 us: `W1301010000020000030000040000050000060000070000080000`
+  - 5% PWM / 50 of 1000 steps: `W1101010050020050030050040050050050060050070050080050`
+  - asynchronous output OFF: `W8501010000020000030000040000050000060000070000080000`
+  - lighting output enable for trigger-controlled smoke: `W8601010001020001030001040001050001060001070001080001`
+- Validation:
+  - `pnpm --filter @tenkings/ai-grader-capture-helper build` -> pass
+  - `pnpm --filter @tenkings/ai-grader-capture-helper test` -> pass, 111 tests
+  - `pnpm --filter @tenkings/shared test` -> pass, 105 tests
+  - `pnpm --filter @tenkings/ai-grader-simulator test` -> pass, 6 tests
+  - `pnpm --filter @tenkings/nextjs-app build` -> pass with existing `<img>` warnings
+  - `git diff --check` -> pass with line-ending warnings only
+- Passive inventory only:
+  - `Ethernet 2` / Realtek USB GbE Family Controller #2 is `Up` at `1 Gbps`, MAC `00-05-1B-DF-02-39`, IPv4 `169.254.215.165/16`.
+  - `Wi-Fi` is `Up` at `192.168.2.20/24`.
+  - This pass did not show Basler `169.254.68.71` or Leimac `169.254.191.156` unicast neighbors; only multicast/broadcast neighbors were present on `Ethernet 2`.
+- Safe dry-runs run with no hardware access:
+  - `basler-line2-exposure-active` -> `applied=false`, no camera opened, no User Set save, no capture.
+  - `leimac-idmu-trigger-profile --host 169.254.191.156 --port 1000 --profile basler-line2-trg-in1-low-duty --duty 5` -> dry-run frames only, no TCP connection, no writes.
+  - `leimac-idmu-trigger-sync-plan --mode basler-exposure-active-to-trg-in1` -> dry-run plan only.
+- Hardware smoke has not been attempted yet. Waiting for explicit supervised Mark confirmation before any Basler setting write, Leimac write, image capture, or safe-off command.
+- Guardrails held so far: no migration, no `RUN_DB_MIGRATIONS=true`, no deploy, no runtime DB operation, no `regsvr32`, no Dino-Lite command, no Arduino command, no stage/motor command, no network setting change, no Basler setting write, no Basler capture, no Leimac write command, no lights on/off, no PWM/brightness/output/trigger hardware change, no SDK/vendor binary commit, no captured image commit, no calibrated macro evidence claim, no final AI grade claim, no certificate claim, and no certified grading claim.

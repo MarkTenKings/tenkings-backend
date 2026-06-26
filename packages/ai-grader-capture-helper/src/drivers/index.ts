@@ -15,13 +15,20 @@ export type {
   LeimacIdmuReadCommandName,
   LeimacIdmuReadinessResult,
   LeimacIdmuSafetyMetadata,
+  LeimacIdmuSafeOffResult,
   LeimacIdmuTransport,
+  LeimacIdmuTriggerProfileApplyResult,
+  LeimacIdmuTriggerProfilePlan,
+  LeimacIdmuWriteFrame,
+  LeimacIdmuWriteResult,
 } from "./leimacIdmuClient";
 export type {
   BaslerCalibrationMetadata,
   BaslerCameraInfo,
   BaslerCaptureStillOptions,
   BaslerCaptureStillResult,
+  BaslerLine2ExposureActiveOptions,
+  BaslerLine2ExposureActiveResult,
   BaslerNetworkAdapterInfo,
   BaslerPylonCameraListResult,
   BaslerPylonClientConfig,
@@ -29,3 +36,6 @@ export type {
   BaslerPylonReadinessResult,
   BaslerSavedImageFormat,
 } from "./baslerPylonClient";
+export type {
+  BaslerLeimacSyncSmokeManifest,
+} from "./baslerLeimacSync";

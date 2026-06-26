@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("readiness", "list-cameras", "capture-still")]
+  [ValidateSet("readiness", "list-cameras", "capture-still", "line2-exposure-active")]
   [string]$Action,
 
   [string]$PylonRoot,
@@ -10,7 +10,8 @@ param(
   [int]$CameraIndex = 0,
   [ValidateSet("png", "tiff", "jpg")]
   [string]$Format = "png",
-  [string]$LensModel
+  [string]$LensModel,
+  [switch]$Apply
 )
 
 $ErrorActionPreference = "Stop"
@@ -200,6 +201,128 @@ function Get-ReadableParameterValue {
   return $null
 }
 
+function Get-ParameterValueByName {
+  param([object]$Camera, [object[]]$Names)
+  foreach ($name in $Names) {
+    try {
+      $parameter = $Camera.Parameters[$name]
+      if ($null -ne $parameter -and $parameter.IsReadable) {
+        return $parameter.GetValue()
+      }
+    } catch {
+    }
+  }
+  return $null
+}
+
+function Set-EnumParameterByName {
+  param([object]$Camera, [object[]]$Names, [string]$Value)
+  foreach ($name in $Names) {
+    try {
+      $parameter = $Camera.Parameters[$name]
+      if ($null -ne $parameter -and $parameter.IsWritable) {
+        $parameter.SetValue($Value)
+        return
+      }
+    } catch {
+    }
+  }
+  throw "Writable Basler parameter was not found for value $Value."
+}
+
+function Set-BoolParameterByName {
+  param([object]$Camera, [object[]]$Names, [bool]$Value)
+  foreach ($name in $Names) {
+    try {
+      $parameter = $Camera.Parameters[$name]
+      if ($null -ne $parameter -and $parameter.IsWritable) {
+        $parameter.SetValue($Value)
+        return
+      }
+    } catch {
+    }
+  }
+  throw "Writable Basler boolean parameter was not found."
+}
+
+function Configure-Line2ExposureActive {
+  param([System.Collections.IDictionary]$Install)
+
+  if (-not $Apply) {
+    return [ordered]@{
+      applied = $false
+      baslerSettingsChanged = $false
+      cameraIndex = $CameraIndex
+      lineSelector = "Line2"
+      lineMode = "Output"
+      lineSource = "ExposureActive"
+      lineInverter = $false
+      persistentSaved = $false
+      hardwareAccess = "dry_run_no_camera_opened"
+      safety = [ordered]@{
+        dryRun = $true
+        writesApplied = $false
+        baslerSettingsChanged = $false
+        persistentSaved = $false
+        capturesImages = $false
+        controlsLighting = $false
+      }
+      note = "Dry-run Basler Line 2 plan only; does not open the camera, does not save a User Set, and does not capture images."
+    }
+  }
+
+  $devices = [Basler.Pylon.CameraFinder]::Enumerate([Basler.Pylon.DeviceType]::GigE)
+  if ($devices.Count -eq 0) {
+    throw "No Basler GigE cameras were detected."
+  }
+  if ($CameraIndex -lt 0 -or $CameraIndex -ge $devices.Count) {
+    throw "CameraIndex $CameraIndex is out of range for $($devices.Count) detected camera(s)."
+  }
+
+  $camera = [Basler.Pylon.Camera]::new($devices[$CameraIndex])
+  try {
+    [void]$camera.Open()
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::LineSelector, "LineSelector") "Line2"
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::LineMode, "LineMode") "Output"
+    Set-BoolParameterByName $camera @([Basler.Pylon.PLCamera]::LineInverter, "LineInverter") $false
+    Set-EnumParameterByName $camera @([Basler.Pylon.PLCamera]::LineSource, "LineSource") "ExposureActive"
+
+    $readback = [ordered]@{
+      lineSelector = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineSelector, "LineSelector")
+      lineMode = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineMode, "LineMode")
+      lineSource = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineSource, "LineSource")
+      lineInverter = Get-ParameterValueByName $camera @([Basler.Pylon.PLCamera]::LineInverter, "LineInverter")
+    }
+
+    return [ordered]@{
+      applied = $true
+      baslerSettingsChanged = $true
+      cameraIndex = $CameraIndex
+      lineSelector = "Line2"
+      lineMode = "Output"
+      lineSource = "ExposureActive"
+      lineInverter = $false
+      persistentSaved = $false
+      hardwareAccess = "explicit_pylon_line2_configuration"
+      readback = $readback
+      safety = [ordered]@{
+        dryRun = $false
+        writesApplied = $true
+        baslerSettingsChanged = $true
+        persistentSaved = $false
+        capturesImages = $false
+        controlsLighting = $false
+      }
+      note = "Transient Basler Line 2 ExposureActive configuration only; no User Set was saved and no image was captured."
+    }
+  } finally {
+    if ($camera.IsOpen) {
+      try { [void]$camera.Close() } catch {}
+    }
+    try { $camera.Dispose() } catch {}
+  }
+}
+
 function Get-ImageFileFormat {
   param([string]$RequestedFormat)
   switch ($RequestedFormat) {
@@ -373,6 +496,12 @@ try {
   if ($Action -eq "list-cameras") {
     $result = New-ReadinessResult $install $cameras
     $result.command = "basler-list-cameras"
+    Write-BridgeJson ([ordered]@{ ok = $true; result = $result })
+    exit 0
+  }
+
+  if ($Action -eq "line2-exposure-active") {
+    $result = Configure-Line2ExposureActive $install
     Write-BridgeJson ([ordered]@{ ok = $true; result = $result })
     exit 0
   }

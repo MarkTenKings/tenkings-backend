@@ -1,6 +1,6 @@
 # AI Grader Capture Helper
 
-The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino auxiliary LED readiness, GRBL/OpenBuilds stage status readiness, manual Leimac IDMU-P Ethernet read-only readiness/status commands, manual Dino-Lite DNVideoX commands, and manual Basler pylon GigE readiness/list/still capture commands; each requires explicit CLI/config input. Default health, readiness, manifests, transport, and tests never open cameras, microscopes, Leimac controllers, XY stages, arm interlocks, sockets, uploads, or database connections.
+The AI Grader capture helper is the future local process boundary for rig/device control. The default implementation remains simulator/mock-only. The only opt-in real-hardware-adjacent paths are Arduino auxiliary LED readiness, GRBL/OpenBuilds stage status readiness, manual Leimac IDMU-P Ethernet readiness/status/guarded low-duty trigger-profile commands, manual Dino-Lite DNVideoX commands, and manual Basler pylon GigE readiness/list/Line2/still capture commands; each requires explicit CLI/config input. Default health, readiness, manifests, transport, and tests never open cameras, microscopes, Leimac controllers, XY stages, arm interlocks, sockets, uploads, or database connections.
 
 ## Local Usage
 
@@ -219,7 +219,7 @@ Device discovery is intentionally stubbed. Mock discovery reports `NOT_PROBED`; 
 
 ### Leimac IDMU-P Ethernet Readiness
 
-PR #35 adds a manual-only read path for Leimac IDMU-P Series PWM Dimming Unit for LED Lighting controllers, including IDMU-P8B-12 base units and IDMU-P8E-12 expansion units. The base unit owns LAN communication and edge/expansion units are controlled through the base-unit bus connector. This replaces the old production-lighting assumption that the Leimac dome is controlled primarily by Arduino Mega + MOSFET channels on this rig.
+PR #35 adds a manual-only read path for Leimac IDMU-P Series PWM Dimming Unit for LED Lighting controllers. PR #36 adds the guarded transient Basler Line2 / Leimac TRG IN1 sync foundation and low-duty smoke command surface. The Dell rig controller is confirmed as `IDMU-P8B-24`; the base unit owns LAN communication and edge/expansion units are controlled through the base-unit bus connector. This replaces the old production-lighting assumption that the Leimac dome is controlled primarily by Arduino Mega + MOSFET channels on this rig.
 
 Relevant vendor manual facts recorded for this rig:
 
@@ -233,8 +233,8 @@ Relevant vendor manual facts recorded for this rig:
 - DHCP is enabled, and LLA is enabled and cannot be changed, so a `169.254.x.x` address is expected on a direct/no-DHCP rig network.
 - Base unit is unit `1`; edge units are units `2` through `5`.
 - Lighting outputs are PWM at approximately `125 kHz` with `1000` steps.
-- 12 V type output voltage is `12 V`.
-- 8-channel 12 V type rated capacity is `144 W` total and `36 W` per 2-channel pair.
+- The confirmed Dell controller is the 24 V model and is powered by a Mean Well `HLG-150H-24A` 24 VDC supply.
+- Confirm the exact 24 V model current/watt/channel-pair limits from the manual/nameplate before any duty increase beyond the PR #36 5% smoke cap.
 - Channel pairs are `1-2`, `3-4`, `5-6`, and `7-8`.
 - Overcurrent detection occurs around `113%` rated current and stops affected unit/pair outputs.
 - Temperature abnormality threshold is `90 C` and stops outputs; internal temperature can be read by LAN command.
@@ -287,16 +287,77 @@ Vendor trigger-guide wiring notes:
 - `CEBR119` / `CEBR120` cable Line 2 GPIO is camera pin `4`, black wire.
 - `CEBR119` / `CEBR120` cable GPIO Ground is camera pin `6`, pink wire.
 
-PR #35 does not configure the camera line, does not save Basler user sets, does not change Leimac trigger/source/mode/output settings, does not reset errors, and does not turn lights on or off. The next hardware-control PR after merge should configure and validate Basler Line 2 and Leimac trigger settings only under explicit operator approval. A later controlled low-duty Leimac smoke must verify wiring, trigger voltage, channel mapping, output limits, heat behavior, and a safe all-off strategy before any synchronized capture acceptance.
+PR #35 does not configure the camera line, does not save Basler user sets, does not change Leimac trigger/source/mode/output settings, does not reset errors, and does not turn lights on or off.
 
-PR #36 acceptance gates before any light-control or synchronized-capture acceptance:
+PR #36 adds these explicit commands:
 
-- `CEBR119` or `CEBR120` cable confirmed.
-- EXT I/O wiring confirmed with power off.
-- Leimac IP/readiness confirmed.
-- Basler Line 2 can be configured only under explicit operator approval.
-- First light-control smoke must be low-duty, short-duration, and explicit.
-- First synchronized capture must record exposure, gain, lighting profile, channel settings, and calibration status.
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-line2-exposure-active
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-line2-exposure-active `
+  --apply `
+  --confirm "APPLY BASLER LINE2 EXPOSURE ACTIVE"
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-trigger-profile `
+  --host 169.254.191.156 `
+  --port 1000 `
+  --profile basler-line2-trg-in1-low-duty `
+  --duty 5
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-trigger-profile `
+  --host 169.254.191.156 `
+  --port 1000 `
+  --profile basler-line2-trg-in1-low-duty `
+  --duty 5 `
+  --apply `
+  --confirm "APPLY LEIMAC LOW DUTY TRIGGER PROFILE"
+
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js leimac-idmu-safe-off `
+  --host 169.254.191.156 `
+  --port 1000 `
+  --apply `
+  --confirm "APPLY LEIMAC SAFE OFF"
+```
+
+The Basler Line2 command is dry-run by default. The apply path opens the selected Basler GigE camera only after `--apply` plus exact confirmation text, sets only transient `LineSelector=Line2`, `LineMode=Output`, `LineInverter=false`, and `LineSource=ExposureActive`, reads back those settings when possible, and never saves a Basler User Set.
+
+The Leimac trigger-profile command is dry-run by default. The apply path requires explicit host/port, `--apply`, exact confirmation text, a successful `R830000` unit-info read showing one 8-channel unit, and duty `<= 5`. It does not use Leimac SYSTEM RESET, FACTORY DEFAULT, network setting commands, persistent saves, or arbitrary write-frame input.
+
+The PR #36 low-duty profile write frames are command-before-unit and channel/value expanded for the confirmed 8-channel base unit:
+
+- Safe-off before profile: `W8601010000020000030000040000050000060000070000080000`, `W8501010000020000030000040000050000060000070000080000`, `W1101010000020000030000040000050000060000070000080000`.
+- Trigger activation Level Low: `W0901010002020002030002040002050002060002070002080002`.
+- Trigger source TRG IN1: `W6501010000020000030000040000050000060000070000080000`.
+- Trigger synchronization synchronous: `W8401010000020000030000040000050000060000070000080000`.
+- Output delay 0 us: `W1301010000020000030000040000050000060000070000080000`.
+- Lighting output value 5% / 50 of 1000 steps: `W1101010050020050030050040050050050060050070050080050`.
+- Asynchronous output OFF: `W8501010000020000030000040000050000060000070000080000`.
+- Lighting output enable for trigger-controlled smoke: `W8601010001020001030001040001050001060001070001080001`.
+
+Mark confirmed the current physical wiring uses Basler `CCB-M8IO`: black wire / pin `4` / Line2 to Leimac pin `2` / `TRG IN1`; pink/powder wire / pin `6` / GPIO ground to the 0 V WAGO; Mean Well red +24 V to Leimac pin `17` and Leimac pin `1` / `IN_COM`; Mean Well black 0 V to Leimac pin `19` and Basler GPIO ground. Unused Basler I/O wires (`brown`, `white`, `blue`, `grey`, and shield/drain) must remain individually insulated.
+
+Mark also reported the ring light turns on when main power is turned on. That is not accepted synchronized behavior by itself. The first PR #36 hardware smoke must be supervised, must stop if the light remains continuously on after configuration, must run safe-off/all-off if available, and must not proceed to capture until Mark visually confirms the light is not stuck continuously on.
+
+The guarded synchronized smoke command requires an output directory outside the repo, `--apply`, exact confirmation text, Mark-present/wiring/status/light-state flags, and then captures one PNG outside git:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-leimac-sync-smoke `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --output-dir C:\TenKings\capture-data\basler-leimac-sync `
+  --duty 5 `
+  --exposure-us 5000 `
+  --apply `
+  --confirm "RUN SUPERVISED BASLER LEIMAC SYNC SMOKE" `
+  --mark-present `
+  --unused-basler-wires-insulated `
+  --leimac-status-green `
+  --operator-confirmed-light-not-continuous
+```
+
+The sync-smoke manifest records image path, SHA-256, byte size, dimensions, exposure, gain, Basler Line2 settings, Leimac IP/unit-info/profile/duty/frames, `isCalibrated=false`, and `evidenceClass=macro_sync_smoke_uncalibrated`. It is not calibrated production macro evidence and is not a final grade, certificate, or certified grading output.
+
+Next steps after PR #36 are calibration, repeatability testing, lighting profile/channel mapping, UI/report integration, and a later acceptance pass for persistent camera/controller settings only after explicit operator approval.
 
 ### Arduino LED Readiness
 
@@ -653,8 +714,8 @@ Before the first real hardware driver integration:
 - add SDK dependencies only in the approved hardware slice
 - require a readiness report with configured rig/helper/operator ids and calibration paths
 - keep real discovery non-invasive until the specific device adapter is reviewed
-- keep Leimac IDMU-P work limited to explicit-host read-only readiness/status until a later approved controlled low-duty smoke defines command framing, safe all-off behavior, channel mapping, output limits, trigger wiring, and acceptance criteria
+- keep Leimac IDMU-P hardware writes limited to the PR #36 explicit-host, low-duty `<=5%`, allowlisted trigger-profile and safe-off paths until calibration, channel mapping, output limits, heat behavior, and repeatability are accepted
 - keep Arduino LED readiness limited to `PING` and `LED ALL OFF`; Arduino is auxiliary for this rig's Leimac lighting path unless a later approved slice reassigns it to interlocks, buttons, sensors, emergency stop, or non-Leimac devices
 - keep GRBL stage readiness limited to `?` status query until mechanical bounds and emergency stop behavior are defined
 - keep Dino-Lite real DNVideoX work limited to manual enumerate/status/still JPG/demo package/operator workflow/experimental non-certified grading capture, including outside-git SDK runtime diagnostics for EDOF, until a later approved lens/focus/exposure/DPQ/certified-grading slice
-- keep Basler pylon work limited to manual readiness/list/uncalibrated still smoke capture until a later approved calibration, lighting, and production macro evidence slice
+- keep Basler pylon work limited to manual readiness/list/transient Line2 ExposureActive setup and uncalibrated still/sync smoke capture until a later approved calibration, lighting, persistent settings, and production macro evidence slice

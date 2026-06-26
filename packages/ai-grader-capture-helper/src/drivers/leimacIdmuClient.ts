@@ -4,6 +4,10 @@ export const LEIMAC_IDMU_DEFAULT_PORT = 1000;
 export const LEIMAC_IDMU_DEFAULT_TIMEOUT_MS = 1500;
 export const LEIMAC_IDMU_DISCOVERY_PORT = 50001;
 export const LEIMAC_IDMU_MAX_DIAGNOSTIC_FRAME_LENGTH = 32;
+export const LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION = "APPLY LEIMAC LOW DUTY TRIGGER PROFILE";
+export const LEIMAC_IDMU_SAFE_OFF_CONFIRMATION = "APPLY LEIMAC SAFE OFF";
+export const LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT = 5;
+export const LEIMAC_IDMU_CHANNEL_COUNT_BASE_UNIT = 8;
 
 export type LeimacIdmuReadCommandName =
   | "status"
@@ -113,6 +117,100 @@ export interface LeimacIdmuSafetyMetadata {
   lightsCommanded: false;
   outputSettingsChanged: false;
   triggerSettingsChanged: false;
+}
+
+export type LeimacIdmuTriggerProfileName = "basler-line2-trg-in1-low-duty";
+export type LeimacIdmuWriteCommandName =
+  | "triggerActivation"
+  | "lightingOutputValue"
+  | "lightingOutputDelay"
+  | "triggerSource"
+  | "triggerSynchronizationMode"
+  | "asynchronousOutput"
+  | "lightingOutput";
+
+export interface LeimacIdmuWriteFrame {
+  name: LeimacIdmuWriteCommandName;
+  commandNumber: "09" | "11" | "13" | "65" | "84" | "85" | "86";
+  description: string;
+  targetDesignation: string;
+  channelValues: Array<{
+    channel: number;
+    value: string;
+    meaning: string;
+  }>;
+  requestAscii: string;
+  requestFrame: string;
+  terminator: "";
+  allowlisted: true;
+}
+
+export interface LeimacIdmuWriteResult {
+  ok: boolean;
+  host: string;
+  port: number;
+  timeoutMs: number;
+  frame: LeimacIdmuWriteFrame;
+  rawResponse?: string;
+  responseKind: "ack" | "nak" | "unknown";
+  error?: string;
+}
+
+export interface LeimacIdmuTriggerProfilePlan {
+  profile: LeimacIdmuTriggerProfileName;
+  unit: number;
+  dutyPercent: number;
+  dutySteps: number;
+  maxDutyPercent: 5;
+  commandFormat: "Header + CommandNumber + UnitNumber + repeated ChannelNumber/SettingValue data";
+  persistentSaved: false;
+  outputTimeWritten: false;
+  reasonOutputTimeNotWritten: "Synchronous mode is intended to follow Basler Exposure Active; output-time command is intentionally omitted in PR #36.";
+  frames: LeimacIdmuWriteFrame[];
+  safeOffFrames: LeimacIdmuWriteFrame[];
+  safety: {
+    dryRun: boolean;
+    applyRequiresConfirmation: true;
+    writesApplied: boolean;
+    lightsCommanded: boolean;
+    outputSettingsChanged: boolean;
+    triggerSettingsChanged: boolean;
+    persistentSaved: false;
+    arbitraryWritesAllowed: false;
+    maxDutyPercent: 5;
+  };
+}
+
+export interface LeimacIdmuTriggerProfileApplyResult {
+  ok: boolean;
+  host: string;
+  port: number;
+  timeoutMs: number;
+  applied: boolean;
+  unitInfo?: LeimacIdmuCommandResult;
+  plan: LeimacIdmuTriggerProfilePlan;
+  writes: LeimacIdmuWriteResult[];
+  safeOffBeforeProfile: LeimacIdmuWriteResult[];
+  error?: string;
+}
+
+export interface LeimacIdmuSafeOffResult {
+  ok: boolean;
+  host: string;
+  port: number;
+  timeoutMs: number;
+  applied: boolean;
+  frames: LeimacIdmuWriteFrame[];
+  writes: LeimacIdmuWriteResult[];
+  safety: {
+    writesApplied: boolean;
+    lightsCommanded: false;
+    outputSettingsChanged: boolean;
+    triggerSettingsChanged: false;
+    persistentSaved: false;
+    arbitraryWritesAllowed: false;
+  };
+  error?: string;
 }
 
 export interface LeimacIdmuParsedResponse {
@@ -245,6 +343,26 @@ const SAFETY_METADATA: LeimacIdmuSafetyMetadata = {
   lightsCommanded: false,
   outputSettingsChanged: false,
   triggerSettingsChanged: false,
+};
+
+const WRITE_COMMAND_DESCRIPTIONS: Record<LeimacIdmuWriteCommandName, LeimacIdmuWriteFrame["description"]> = {
+  triggerActivation: "Trigger activation; LevelLow for Basler Line 2 guide wiring",
+  lightingOutputValue: "Lighting output value; PWM duty cycle in 1000 steps",
+  lightingOutputDelay: "Lighting output delay time; 1 microsecond steps",
+  triggerSource: "Trigger source; TRG IN1",
+  triggerSynchronizationMode: "Trigger synchronization mode; synchronous",
+  asynchronousOutput: "Asynchronous output ON/OFF; OFF for trigger-only profile",
+  lightingOutput: "Lighting output ON/OFF; channel enable or safe off",
+};
+
+const WRITE_COMMAND_NUMBERS: Record<LeimacIdmuWriteCommandName, LeimacIdmuWriteFrame["commandNumber"]> = {
+  triggerActivation: "09",
+  lightingOutputValue: "11",
+  lightingOutputDelay: "13",
+  triggerSource: "65",
+  triggerSynchronizationMode: "84",
+  asynchronousOutput: "85",
+  lightingOutput: "86",
 };
 
 export function normalizeLeimacIdmuHost(host: string | undefined): string {
@@ -501,6 +619,174 @@ export function buildLeimacIdmuTriggerSyncPlan(mode = "basler-exposure-active-to
   };
 }
 
+export function normalizeLeimacIdmuDutyPercent(value: number | string | undefined): number {
+  const numeric = value == null || value === "" ? LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT : Number(value);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_DUTY_INVALID", "--duty must be a number from 0 to 5 for the first smoke.");
+  }
+  if (numeric > LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_DUTY_TOO_HIGH", "PR #36 first-smoke duty is capped at 5%.");
+  }
+  return numeric;
+}
+
+export function leimacIdmuDutyPercentToSteps(dutyPercent: number): number {
+  const normalized = normalizeLeimacIdmuDutyPercent(dutyPercent);
+  return Math.round((normalized / 100) * 1000);
+}
+
+export function composeLeimacIdmuChannelWriteFrame(input: {
+  name: LeimacIdmuWriteCommandName;
+  unit?: number | string;
+  value: string;
+  meaning: string;
+  channels?: number;
+}): LeimacIdmuWriteFrame {
+  const unit = normalizeLeimacIdmuUnit(input.unit);
+  const targetDesignation = String(unit).padStart(2, "0");
+  const value = input.value.trim();
+  if (!/^\d{4}$/.test(value)) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_WRITE_VALUE_INVALID", "Leimac IDMU trigger-profile values must be four digits.");
+  }
+  const commandNumber = WRITE_COMMAND_NUMBERS[input.name];
+  if (!commandNumber) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_WRITE_REJECTED", "Leimac IDMU write command is not in the PR #36 trigger-profile allowlist.");
+  }
+  const channels = input.channels ?? LEIMAC_IDMU_CHANNEL_COUNT_BASE_UNIT;
+  if (!Number.isInteger(channels) || channels < 1 || channels > LEIMAC_IDMU_CHANNEL_COUNT_BASE_UNIT) {
+    throw new LeimacIdmuClientError("LEIMAC_IDMU_CHANNEL_COUNT_INVALID", "Leimac IDMU PR #36 supports 1 to 8 channels on the confirmed base unit.");
+  }
+  const channelValues = Array.from({ length: channels }, (_, index) => ({
+    channel: index + 1,
+    value,
+    meaning: input.meaning,
+  }));
+  const data = channelValues.map((entry) => `${String(entry.channel).padStart(2, "0")}${entry.value}`).join("");
+  const requestAscii = `W${commandNumber}${targetDesignation}${data}`;
+  return {
+    name: input.name,
+    commandNumber,
+    description: WRITE_COMMAND_DESCRIPTIONS[input.name],
+    targetDesignation,
+    channelValues,
+    requestAscii,
+    requestFrame: requestAscii,
+    terminator: "",
+    allowlisted: true,
+  };
+}
+
+export function buildLeimacIdmuSafeOffFrames(unit: number | string = 1): LeimacIdmuWriteFrame[] {
+  return [
+    composeLeimacIdmuChannelWriteFrame({
+      name: "lightingOutput",
+      unit,
+      value: "0000",
+      meaning: "Lighting output OFF",
+    }),
+    composeLeimacIdmuChannelWriteFrame({
+      name: "asynchronousOutput",
+      unit,
+      value: "0000",
+      meaning: "Asynchronous output OFF",
+    }),
+    composeLeimacIdmuChannelWriteFrame({
+      name: "lightingOutputValue",
+      unit,
+      value: "0000",
+      meaning: "PWM duty 0 steps for safe-off",
+    }),
+  ];
+}
+
+export function buildLeimacIdmuTriggerProfilePlan(input: {
+  profile?: string;
+  dutyPercent?: number | string;
+  unit?: number | string;
+} = {}): LeimacIdmuTriggerProfilePlan {
+  const profile = (input.profile ?? "basler-line2-trg-in1-low-duty").trim();
+  if (profile !== "basler-line2-trg-in1-low-duty") {
+    throw new LeimacIdmuClientError(
+      "LEIMAC_IDMU_PROFILE_UNSUPPORTED",
+      "Leimac IDMU PR #36 supports --profile basler-line2-trg-in1-low-duty only."
+    );
+  }
+  const unit = normalizeLeimacIdmuUnit(input.unit);
+  const dutyPercent = normalizeLeimacIdmuDutyPercent(input.dutyPercent);
+  const dutySteps = leimacIdmuDutyPercentToSteps(dutyPercent);
+  const dutyValue = String(dutySteps).padStart(4, "0");
+  const frames = [
+    ...buildLeimacIdmuSafeOffFrames(unit),
+    composeLeimacIdmuChannelWriteFrame({
+      name: "triggerActivation",
+      unit,
+      value: "0002",
+      meaning: "LevelLow",
+    }),
+    composeLeimacIdmuChannelWriteFrame({
+      name: "triggerSource",
+      unit,
+      value: "0000",
+      meaning: "TRG IN1",
+    }),
+    composeLeimacIdmuChannelWriteFrame({
+      name: "triggerSynchronizationMode",
+      unit,
+      value: "0000",
+      meaning: "Synchronous",
+    }),
+    composeLeimacIdmuChannelWriteFrame({
+      name: "lightingOutputDelay",
+      unit,
+      value: "0000",
+      meaning: "0 microseconds",
+    }),
+    composeLeimacIdmuChannelWriteFrame({
+      name: "lightingOutputValue",
+      unit,
+      value: dutyValue,
+      meaning: `PWM duty ${dutyPercent}% (${dutySteps}/1000 steps)`,
+    }),
+    composeLeimacIdmuChannelWriteFrame({
+      name: "asynchronousOutput",
+      unit,
+      value: "0000",
+      meaning: "Asynchronous output OFF",
+    }),
+    composeLeimacIdmuChannelWriteFrame({
+      name: "lightingOutput",
+      unit,
+      value: "0001",
+      meaning: "Lighting output enabled for trigger-controlled smoke",
+    }),
+  ];
+  return {
+    profile,
+    unit,
+    dutyPercent,
+    dutySteps,
+    maxDutyPercent: LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
+    commandFormat: "Header + CommandNumber + UnitNumber + repeated ChannelNumber/SettingValue data",
+    persistentSaved: false,
+    outputTimeWritten: false,
+    reasonOutputTimeNotWritten:
+      "Synchronous mode is intended to follow Basler Exposure Active; output-time command is intentionally omitted in PR #36.",
+    frames,
+    safeOffFrames: buildLeimacIdmuSafeOffFrames(unit),
+    safety: {
+      dryRun: true,
+      applyRequiresConfirmation: true,
+      writesApplied: false,
+      lightsCommanded: false,
+      outputSettingsChanged: false,
+      triggerSettingsChanged: false,
+      persistentSaved: false,
+      arbitraryWritesAllowed: false,
+      maxDutyPercent: LEIMAC_IDMU_MAX_FIRST_SMOKE_DUTY_PERCENT,
+    },
+  };
+}
+
 export function parseLeimacIdmuResponse(command: LeimacIdmuCommandMetadata, rawResponse: string): LeimacIdmuParsedResponse {
   const trimmed = rawResponse.trim();
   const nakCode = parseNakCode(trimmed);
@@ -729,6 +1015,213 @@ export class LeimacIdmuClient {
     }
   }
 
+  async safeOff(apply = false): Promise<LeimacIdmuSafeOffResult> {
+    const frames = buildLeimacIdmuSafeOffFrames(this.unit);
+    if (!apply) {
+      return {
+        ok: true,
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        applied: false,
+        frames,
+        writes: [],
+        safety: {
+          writesApplied: false,
+          lightsCommanded: false,
+          outputSettingsChanged: false,
+          triggerSettingsChanged: false,
+          persistentSaved: false,
+          arbitraryWritesAllowed: false,
+        },
+      };
+    }
+    const writes: LeimacIdmuWriteResult[] = [];
+    for (const frame of frames) {
+      const result = await this.writeAllowlistedFrame(frame);
+      writes.push(result);
+      if (!result.ok) {
+        return {
+          ok: false,
+          host: this.host,
+          port: this.port,
+          timeoutMs: this.timeoutMs,
+          applied: true,
+          frames,
+          writes,
+          safety: {
+            writesApplied: true,
+            lightsCommanded: false,
+            outputSettingsChanged: true,
+            triggerSettingsChanged: false,
+            persistentSaved: false,
+            arbitraryWritesAllowed: false,
+          },
+          error: result.error ?? "Leimac IDMU safe-off write failed.",
+        };
+      }
+    }
+    return {
+      ok: true,
+      host: this.host,
+      port: this.port,
+      timeoutMs: this.timeoutMs,
+      applied: true,
+      frames,
+      writes,
+      safety: {
+        writesApplied: true,
+        lightsCommanded: false,
+        outputSettingsChanged: true,
+        triggerSettingsChanged: false,
+        persistentSaved: false,
+        arbitraryWritesAllowed: false,
+      },
+    };
+  }
+
+  async applyTriggerProfile(input: {
+    profile?: string;
+    dutyPercent?: number | string;
+    apply?: boolean;
+    confirmation?: string;
+  } = {}): Promise<LeimacIdmuTriggerProfileApplyResult> {
+    const plan = buildLeimacIdmuTriggerProfilePlan({
+      profile: input.profile,
+      dutyPercent: input.dutyPercent,
+      unit: this.unit,
+    });
+    if (!input.apply) {
+      return {
+        ok: true,
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        applied: false,
+        plan,
+        writes: [],
+        safeOffBeforeProfile: [],
+      };
+    }
+    if (input.confirmation !== LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION) {
+      throw new LeimacIdmuClientError(
+        "LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION_REQUIRED",
+        `Leimac trigger profile apply requires --confirm "${LEIMAC_IDMU_TRIGGER_PROFILE_CONFIRMATION}".`
+      );
+    }
+    const unitInfo = await this.readCommand("unitInfo");
+    if (!unitInfo.ok) {
+      return {
+        ok: false,
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        applied: false,
+        unitInfo,
+        plan,
+        writes: [],
+        safeOffBeforeProfile: [],
+        error: "Leimac unit information read failed before trigger-profile writes.",
+      };
+    }
+    const totalUnits = unitInfo.parsed.unitInformation?.totalUnits;
+    const channelCount = unitInfo.parsed.unitInformation?.units[0]?.lightingOutputChannels;
+    if (totalUnits !== 1 || channelCount !== LEIMAC_IDMU_CHANNEL_COUNT_BASE_UNIT) {
+      return {
+        ok: false,
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        applied: false,
+        unitInfo,
+        plan,
+        writes: [],
+        safeOffBeforeProfile: [],
+        error: "Leimac unit information did not match the confirmed PR #36 base-unit profile.",
+      };
+    }
+
+    const safeOffBeforeProfile: LeimacIdmuWriteResult[] = [];
+    const safeOffFrames = buildLeimacIdmuSafeOffFrames(this.unit);
+    for (const frame of safeOffFrames) {
+      const result = await this.writeAllowlistedFrame(frame);
+      safeOffBeforeProfile.push(result);
+      if (!result.ok) {
+        return {
+          ok: false,
+          host: this.host,
+          port: this.port,
+          timeoutMs: this.timeoutMs,
+          applied: true,
+          unitInfo,
+          plan: {
+            ...plan,
+            safety: {
+              ...plan.safety,
+              dryRun: false,
+              writesApplied: true,
+              outputSettingsChanged: true,
+            },
+          },
+          writes: [],
+          safeOffBeforeProfile,
+          error: result.error ?? "Leimac IDMU pre-profile safe-off write failed.",
+        };
+      }
+    }
+
+    const writes: LeimacIdmuWriteResult[] = [];
+    for (const frame of plan.frames.slice(safeOffFrames.length)) {
+      const result = await this.writeAllowlistedFrame(frame);
+      writes.push(result);
+      if (!result.ok) {
+        return {
+          ok: false,
+          host: this.host,
+          port: this.port,
+          timeoutMs: this.timeoutMs,
+          applied: true,
+          unitInfo,
+          plan: {
+            ...plan,
+            safety: {
+              ...plan.safety,
+              dryRun: false,
+              writesApplied: true,
+              lightsCommanded: writes.some((write) => write.frame.name === "lightingOutput"),
+              outputSettingsChanged: true,
+              triggerSettingsChanged: true,
+            },
+          },
+          writes,
+          safeOffBeforeProfile,
+          error: result.error ?? "Leimac IDMU trigger-profile write failed.",
+        };
+      }
+    }
+    return {
+      ok: true,
+      host: this.host,
+      port: this.port,
+      timeoutMs: this.timeoutMs,
+      applied: true,
+      unitInfo,
+      plan: {
+        ...plan,
+        safety: {
+          ...plan.safety,
+          dryRun: false,
+          writesApplied: true,
+          lightsCommanded: true,
+          outputSettingsChanged: true,
+          triggerSettingsChanged: true,
+        },
+      },
+      writes,
+      safeOffBeforeProfile,
+    };
+  }
+
   async readiness(): Promise<LeimacIdmuReadinessResult> {
     const commandsAttempted: LeimacIdmuCommandResult[] = [];
     for (const commandName of READINESS_COMMANDS) {
@@ -753,6 +1246,56 @@ export class LeimacIdmuClient {
       note:
         "Read-only Leimac IDMU-P readiness only; sends R commands from the allowlist and never changes light output, PWM, brightness, trigger, or controller settings.",
     };
+  }
+
+  private async writeAllowlistedFrame(frame: LeimacIdmuWriteFrame): Promise<LeimacIdmuWriteResult> {
+    if (!frame.allowlisted || !Object.values(WRITE_COMMAND_NUMBERS).includes(frame.commandNumber)) {
+      throw new LeimacIdmuClientError("LEIMAC_IDMU_WRITE_REJECTED", "Leimac IDMU write frame is not in the PR #36 trigger-profile allowlist.");
+    }
+    try {
+      const rawResponse = await this.transport.send({
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        ascii: frame.requestAscii,
+        frame: frame.requestFrame,
+      });
+      const nakCode = parseNakCode(rawResponse);
+      if (nakCode) {
+        return {
+          ok: false,
+          host: this.host,
+          port: this.port,
+          timeoutMs: this.timeoutMs,
+          frame,
+          rawResponse,
+          responseKind: "nak",
+          error: nakMeaning(nakCode),
+        };
+      }
+      const ok = /\bACK\d*\b/i.test(rawResponse) || rawResponse.toUpperCase().includes("ACK");
+      return {
+        ok,
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        frame,
+        rawResponse,
+        responseKind: ok ? "ack" : "unknown",
+        ...(!ok ? { error: "Leimac IDMU write response was not an ACK." } : {}),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown Leimac IDMU write error.";
+      return {
+        ok: false,
+        host: this.host,
+        port: this.port,
+        timeoutMs: this.timeoutMs,
+        frame,
+        responseKind: "unknown",
+        error: message,
+      };
+    }
   }
 }
 
