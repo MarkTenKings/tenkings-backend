@@ -467,6 +467,64 @@ The combined full-rig output was `C:\TenKings\capture-data\full-rig-smoke\ai-gra
 
 The same full-rig run captured 12 Dino-Lite detail JPGs through the `experimental-card-grading` operator workflow under `dinolite-detail\dinolite-operator-ai-grader-full-rig-local-smoke-2026-06-29T053708147Z-20260629T053732919Z`, then wrote Dino-Lite `manifest.json`, `analysis.json`, and `preview-report.html`. The unified manifest records Basler macro as `macroOverviewSource=basler_leimac`, Dino-Lite as `detailSource=dinolite`, `centeringInput=basler_preferred_not_routed_to_score_v0`, and `scoringStatus=existing_dinolite_experimental_analysis_preserved`. The package remains local/offline and uncalibrated.
 
+PR #38 pivots the V1 product workflow to a fixed overhead Basler camera plus fixed Leimac synchronized lighting. Dobot/OpenBuilds/robotic-arm automation is V2 and is not required for V1 production. Dino-Lite remains available, but only as optional manual detail confirmation for flagged or operator-requested close-ups; V1 does not require Dino-Lite full-card tiling or moving the card to multiple corner/edge positions.
+
+The V1 human flow is:
+
+1. Place the raw card face-up in the fixed tray/position.
+2. Start the AI-Grader fixed-rig workflow.
+3. Capture front dark control and synced Basler macro with Leimac lighting.
+4. Flip the card to the back side in the same fixed tray/position.
+5. Capture back dark control and synced Basler macro with Leimac lighting.
+6. Analyze macro evidence for focus/framing quality, boundary/ROI screening, and future centering/surface screening.
+7. Suggest Dino-Lite close-up targets only when a real heuristic or later detector supports it.
+
+Manual Basler focus/framing assist:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js basler-fixed-rig-focus-assist `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --output-dir C:\TenKings\capture-data\fixed-rig-v1 `
+  --duty 5 `
+  --exposure-us 50000 `
+  --apply `
+  --confirm "RUN BASLER FIXED RIG FOCUS ASSIST" `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off
+```
+
+This command is manual focus assist, not autofocus. It reuses the accepted `line2-inverter-level-low-v0` Basler/Leimac profile, safe-offs before and after capture, writes artifacts outside the repo, and reports mean/max brightness, clipped-pixel fraction, dark-pixel fraction, sharpness score, approximate card coverage/framing, and manual guidance. Operators should adjust camera focus/height and repeat until sharpness improves/stabilizes, then lock camera height, tray position, and focus before calibration work.
+
+Fixed-rig V1 local workflow:
+
+```powershell
+pnpm --filter @tenkings/ai-grader-capture-helper exec node dist/cli.js ai-grader-fixed-rig-v1-local `
+  --leimac-host 169.254.191.156 `
+  --leimac-port 1000 `
+  --output-dir C:\TenKings\capture-data\fixed-rig-v1 `
+  --duty 5 `
+  --exposure-us 50000 `
+  --apply `
+  --confirm "RUN AI GRADER FIXED RIG V1 LOCAL" `
+  --mark-present `
+  --wiring-confirmed `
+  --leimac-status-green `
+  --operator-confirmed-light-idle-off `
+  --operator-flip-confirmed `
+  --operator-flip-delay-ms 30000
+```
+
+The fixed-rig V1 command captures front and back Basler macro packages, each with a dark control and synced macro PNG. `--operator-flip-delay-ms` is a supervised delay after the front capture; use it to give the operator time to flip the card before the back capture starts. It writes local `manifest.json`, `analysis.json`, and `preview-report.html` with `isCalibrated=false`, `evidenceClass=macro_fixed_rig_v1_uncalibrated`, `selectedLightingProfile=line2-inverter-level-low-v0`, front/back artifact metadata, quality warnings, approximate boundary/ROI metadata, and a Dino-Lite follow-up plan. If boundary detection or quality is not good enough, analysis reports `not_computed` with a warning rather than fabricating grades or defects.
+
+Local Dell PR #38 supervised bracket/front-back smoke on 2026-06-29 selected `1.2%` Leimac duty and `45000 us` Basler exposure for the fixed-rig V1 smoke. Earlier bracket points showed the tradeoff: `1% / 25000 us` stayed low-saturation but did not show a measurable synced-light delta, `1.2% / 50000 us` showed synchronized lighting but clipped slightly above the soft target, and `1.2% / 45000 us` preserved synced-light evidence while keeping clipped pixels below `0.02`.
+
+The final confirmed local package is `C:\TenKings\capture-data\fixed-rig-v1\ai-grader-fixed-rig-v1-local-confirmed-front-back-2026-06-29T092233414Z`, with `manifest.json`, `analysis.json`, and `preview-report.html`. The operator flip was managed as two explicit standalone macro-package captures because the single-command flip-delay prompt was not visible to the operator in chat. Final light state was confirmed off by Mark. Front synced PNG: SHA-256 `e156c3422e95f88d3772ec3ae347b9ed08157e7f2ab68a6bb73c25d748c8cf79`, `2068897` bytes, `2448x2048`, mean `93.9304`, clipped fraction `0.015041`, sharpness `25.8881`, `materiallyBrighter=true`. Back synced PNG: SHA-256 `0416b5e0e494548cb7ab48d2cd389d2459bee89914d64c5432bdd3bd59481675`, `2121355` bytes, `2448x2048`, mean `106.6844`, clipped fraction `0.01326`, sharpness `27.6626`, `materiallyBrighter=true`. Both sides remain uncalibrated, visually soft, and the current boundary heuristic still reports full-frame coverage, so ROI analysis remains warning/not-computed pending physical focus/framing and calibration work.
+
+The dry-run `fixed-rig-lighting-profile-plan` command records future multi-light profiles only. Channel-to-physical-light mapping is not calibrated yet, so PR #38 does not apply directional or low-angle/surface-scratch profiles and does not invent segment mapping. Production DB/report integration, pixel-to-mm calibration, lens distortion calibration, lighting profile calibration, repeatability, and any persistent camera/controller settings are future PRs.
+
 ### Arduino LED Readiness
 
 The Arduino LED readiness adapter assumes the v5 Appendix A ASCII serial protocol at `115200` baud:

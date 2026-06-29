@@ -56,3 +56,13 @@ export type {
   BaslerLeimacMacroPackageManifest,
   FullRigLocalSmokeManifest,
 } from "./baslerLeimacFullRig";
+export type {
+  FixedRigCardBoundary,
+  FixedRigCardSide,
+  FixedRigFocusAssistManifest,
+  FixedRigLightingProfilePlan,
+  FixedRigQualityMetrics,
+  FixedRigRoiDefinition,
+  FixedRigSideCapture,
+  FixedRigV1LocalManifest,
+} from "./baslerFixedRigV1";
